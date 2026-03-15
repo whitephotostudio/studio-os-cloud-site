@@ -22,16 +22,14 @@ export default function StudioOSPage() {
 
       <main className="min-h-[calc(100vh-72px)] px-4 py-10 bg-[radial-gradient(circle_at_top,rgba(239,68,68,0.08),transparent_24%)]">
         <div className="max-w-6xl mx-auto">
-          <div className="flex items-center justify-between gap-4 mb-8">
-            <div>
-              <div className="text-sm text-neutral-500">Desktop app overview</div>
-              <h1 className="text-3xl sm:text-4xl font-semibold tracking-tight text-neutral-950">
-                Studio OS
-              </h1>
-              <p className="mt-2 text-neutral-600 max-w-2xl leading-8">
-                A desktop workflow designed to make photographers faster, more organized, and more confident from capture to delivery.
-              </p>
-            </div>
+          <div className="mb-8">
+            <div className="text-sm text-neutral-500">Desktop app overview</div>
+            <h1 className="text-3xl sm:text-4xl font-semibold tracking-tight text-neutral-950">
+              Studio OS
+            </h1>
+            <p className="mt-2 text-neutral-600 max-w-2xl leading-8">
+              A desktop workflow designed to make photographers faster, more organized, and more confident from capture to delivery.
+            </p>
           </div>
 
           <div className="grid lg:grid-cols-[1.1fr_0.9fr] gap-6 items-start">
