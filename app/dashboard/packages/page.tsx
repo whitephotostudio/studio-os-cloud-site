@@ -1,7 +1,7 @@
 // app/dashboard/packages/page.tsx
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import {
@@ -134,20 +134,10 @@ export default function PackagesPage() {
 
   // Profile card menu
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
-  const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => { init(); }, []); // eslint-disable-line
 
-  // Close menu on outside click
-  useEffect(() => {
-    function handle(e: MouseEvent) {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        setMenuOpenId(null);
-      }
-    }
-    document.addEventListener("mousedown", handle);
-    return () => document.removeEventListener("mousedown", handle);
-  }, []);
+  // Outside-click is handled by a transparent backdrop rendered when menu is open
 
   // ── Init ───────────────────────────────────────────────────────────────────
 
@@ -462,14 +452,24 @@ export default function PackagesPage() {
               </button>
             </div>
           ) : (
+            {/* Transparent backdrop — closes any open kebab menu on outside click */}
+            {menuOpenId && (
+              <div
+                style={{ position: "fixed", inset: 0, zIndex: 8 }}
+                onClick={() => setMenuOpenId(null)}
+              />
+            )}
+
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 20 }}>
               {profiles.map(profile => (
                 <div
                   key={profile.id}
-                  style={{ background: "#fff", borderRadius: 12, border: "1px solid #e5e5e5", overflow: "hidden", position: "relative" }}
+                  style={{ background: "#fff", borderRadius: 12, border: "1px solid #e5e5e5", position: "relative", transition: "border-color 0.15s, box-shadow 0.15s" }}
+                  onMouseEnter={e => { e.currentTarget.style.borderColor = "#cc0000"; e.currentTarget.style.boxShadow = "0 0 0 2px rgba(204,0,0,0.12)"; }}
+                  onMouseLeave={e => { e.currentTarget.style.borderColor = "#e5e5e5"; e.currentTarget.style.boxShadow = "none"; }}
                 >
-                  {/* Top accent bar */}
-                  <div style={{ height: 4, background: "#000" }} />
+                  {/* Top accent bar — rounded top to match card radius */}
+                  <div style={{ height: 4, background: "#c00", borderRadius: "12px 12px 0 0" }} />
 
                   <div style={{ padding: 24 }}>
                     {/* Header row */}
@@ -477,14 +477,14 @@ export default function PackagesPage() {
                       <h3
                         onClick={() => { setSelectedProfile(profile); setSelectedCategory(null); }}
                         style={{ margin: 0, fontSize: 17, fontWeight: 700, color: "#111", cursor: "pointer", flex: 1, paddingRight: 8 }}
-                        onMouseEnter={e => (e.currentTarget.style.color = "#2563eb")}
+                        onMouseEnter={e => (e.currentTarget.style.color = "#cc0000")}
                         onMouseLeave={e => (e.currentTarget.style.color = "#111")}
                       >
                         {profile.name}
                       </h3>
 
                       {/* Kebab menu */}
-                      <div style={{ position: "relative" }} ref={menuOpenId === profile.id ? menuRef : null}>
+                      <div style={{ position: "relative" }}>
                         <button
                           onClick={e => { e.stopPropagation(); setMenuOpenId(menuOpenId === profile.id ? null : profile.id); }}
                           style={{ background: "none", border: "none", cursor: "pointer", padding: 4, color: "#999", borderRadius: 4, display: "flex" }}
@@ -576,9 +576,9 @@ export default function PackagesPage() {
               {/* Quick-add card */}
               <div
                 onClick={() => { setNewSheetName(""); setNewSheetDupFrom(""); setShowNewSheet(true); }}
-                style={{ background: "#fff", borderRadius: 12, border: "2px dashed #e5e5e5", padding: 24, cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: 180, gap: 8 }}
-                onMouseEnter={e => { e.currentTarget.style.borderColor = "#000"; e.currentTarget.style.background = "#fafafa"; }}
-                onMouseLeave={e => { e.currentTarget.style.borderColor = "#e5e5e5"; e.currentTarget.style.background = "#fff"; }}
+                style={{ background: "#fff", borderRadius: 12, border: "2px dashed #e5e5e5", padding: 24, cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: 180, gap: 8, transition: "border-color 0.15s, background 0.15s" }}
+                onMouseEnter={e => { e.currentTarget.style.borderColor = "#cc0000"; e.currentTarget.style.background = "#fff5f5"; (e.currentTarget.querySelector("span") as HTMLElement).style.color = "#cc0000"; (e.currentTarget.querySelector("svg") as SVGElement).style.color = "#cc0000"; }}
+                onMouseLeave={e => { e.currentTarget.style.borderColor = "#e5e5e5"; e.currentTarget.style.background = "#fff"; (e.currentTarget.querySelector("span") as HTMLElement).style.color = "#999"; (e.currentTarget.querySelector("svg") as SVGElement).style.color = "#ccc"; }}
               >
                 <Plus size={28} color="#ccc" />
                 <span style={{ color: "#999", fontSize: 14, fontWeight: 600 }}>New Price Sheet</span>
