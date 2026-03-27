@@ -452,6 +452,7 @@ export default function PackagesPage() {
               </button>
             </div>
           ) : (
+            <>
             {/* Transparent backdrop — closes any open kebab menu on outside click */}
             {menuOpenId && (
               <div
@@ -584,6 +585,7 @@ export default function PackagesPage() {
                 <span style={{ color: "#999", fontSize: 14, fontWeight: 600 }}>New Price Sheet</span>
               </div>
             </div>
+            </>
           )}
         </div>
 
