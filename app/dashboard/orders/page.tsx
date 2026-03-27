@@ -18,13 +18,18 @@ import {
   Monitor,
   Package2,
   Palette,
+  LayoutGrid,
+  List,
   Pencil,
   Printer,
   RefreshCw,
   School2,
   Settings,
   ShoppingBag,
+  Square,
+  CheckSquare,
   Sun,
+  Table2,
   Trash2,
   UserCircle2,
   Users,
@@ -384,6 +389,10 @@ export default function OrdersPage() {
   const [eventDropdownOpen, setEventDropdownOpen] = useState(false);
   const [schoolSearch, setSchoolSearch] = useState("");
   const [eventSearch, setEventSearch] = useState("");
+  const [viewMode, setViewMode] = useState<"list" | "grid" | "table">("list");
+  const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
+  const [bulkDeleteConfirm, setBulkDeleteConfirm] = useState(false);
+  const [bulkDeleting, setBulkDeleting] = useState(false);
   const [editingOrder, setEditingOrder] = useState<Order | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -586,6 +595,41 @@ export default function OrdersPage() {
       setSaving(false);
       setEditingOrder(null);
       await load();
+    }
+  }
+
+  function toggleSelect(key: string) {
+    setSelectedKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  }
+
+  function toggleSelectAll(rows: typeof combinedRows) {
+    if (selectedKeys.size === rows.length && rows.length > 0) {
+      setSelectedKeys(new Set());
+    } else {
+      setSelectedKeys(new Set(rows.map((g) => g.key)));
+    }
+  }
+
+  async function bulkDelete(rows: typeof combinedRows) {
+    setBulkDeleting(true);
+    try {
+      const orderIds = rows
+        .filter((g) => selectedKeys.has(g.key))
+        .flatMap((g) => g.orders.map((o) => o.id));
+      for (const id of orderIds) {
+        await supabase.from("order_items").delete().eq("order_id", id);
+        await supabase.from("orders").delete().eq("id", id);
+      }
+      setSelectedKeys(new Set());
+      setBulkDeleteConfirm(false);
+      if (selected && orderIds.includes(selected.id)) setSelected(null);
+      await load();
+    } finally {
+      setBulkDeleting(false);
     }
   }
 
@@ -938,6 +982,21 @@ export default function OrdersPage() {
           </div>
 
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", justifyContent: "flex-end" }}>
+            {/* View mode toggle */}
+            <div style={{ display: "inline-flex", border: `1px solid ${borderColor}`, borderRadius: 12, overflow: "hidden" }}>
+              {([["list", <List size={15} />], ["grid", <LayoutGrid size={15} />], ["table", <Table2 size={15} />]] as const).map(([mode, icon]) => (
+                <button
+                  key={mode}
+                  type="button"
+                  title={`${mode.charAt(0).toUpperCase() + mode.slice(1)} view`}
+                  onClick={() => setViewMode(mode)}
+                  style={{ padding: "9px 13px", background: viewMode === mode ? "#111827" : "#fff", color: viewMode === mode ? "#fff" : textMuted, border: "none", cursor: "pointer", display: "inline-flex", alignItems: "center" }}
+                >
+                  {icon}
+                </button>
+              ))}
+            </div>
+
             <button
               type="button"
               onClick={exportAllVisible}
@@ -1222,22 +1281,130 @@ export default function OrdersPage() {
               </div>
             </div>
 
+            {/* Select-all bar */}
+            {combinedRows.length > 0 && !loading && (
+              <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 10 }}>
+                <button
+                  type="button"
+                  onClick={() => toggleSelectAll(combinedRows)}
+                  style={{ display: "inline-flex", alignItems: "center", gap: 8, background: "transparent", border: "none", cursor: "pointer", color: textMuted, fontSize: 13, fontWeight: 700, padding: "4px 0" }}
+                >
+                  {selectedKeys.size === combinedRows.length ? <CheckSquare size={16} color="#cc0000" /> : <Square size={16} />}
+                  {selectedKeys.size === combinedRows.length ? "Deselect all" : `Select all (${combinedRows.length})`}
+                </button>
+                {selectedKeys.size > 0 && (
+                  <span style={{ fontSize: 13, color: "#cc0000", fontWeight: 800 }}>{selectedKeys.size} selected</span>
+                )}
+              </div>
+            )}
+
             {loading ? (
               <div style={{ color: textMuted, fontSize: 14 }}>Loading orders…</div>
             ) : combinedRows.length === 0 ? (
-              <div
-                style={{
-                  background: cardBg,
-                  border: `2px dashed ${borderColor}`,
-                  borderRadius: 24,
-                  padding: "64px 24px",
-                  textAlign: "center",
-                }}
-              >
+              <div style={{ background: cardBg, border: `2px dashed ${borderColor}`, borderRadius: 24, padding: "64px 24px", textAlign: "center" }}>
                 <ShoppingBag size={42} color="#cbd5e1" style={{ margin: "0 auto 12px" }} />
                 <div style={{ fontSize: 18, fontWeight: 900, color: textPrimary }}>No orders here yet</div>
                 <div style={{ fontSize: 14, color: textMuted, marginTop: 6 }}>Orders placed by parents will appear in this lab-ready workflow.</div>
               </div>
+
+            /* ── GRID VIEW ─────────────────────────────────────── */
+            ) : viewMode === "grid" ? (
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 14 }}>
+                {combinedRows.map((group) => {
+                  const order = group.representative;
+                  const cfg = STATUS_COLORS[group.combinedStatus] ?? STATUS_COLORS.new;
+                  const primaryUrl = group.imageUrls[0] ?? order.student?.photo_url ?? "";
+                  const isSelected = selectedKeys.has(group.key);
+                  const currency = order.currency?.toUpperCase() || "CAD";
+                  return (
+                    <div
+                      key={group.key}
+                      style={{ background: cardBg, border: isSelected ? "2px solid #cc0000" : `1px solid ${borderColor}`, borderRadius: 18, overflow: "hidden", boxShadow: isSelected ? "0 0 0 3px rgba(204,0,0,0.1)" : "0 4px 12px rgba(15,23,42,0.05)", cursor: "pointer", transition: "border-color 0.15s" }}
+                      onClick={() => openOrder(order)}
+                    >
+                      <div style={{ position: "relative" }}>
+                        <div style={{ width: "100%", aspectRatio: "3/4", background: "#f3f4f6", overflow: "hidden" }}>
+                          {clean(primaryUrl)
+                            ? <img src={primaryUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                            : <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "#d1d5db" }}><Users size={28} /></div>}
+                        </div>
+                        {/* Checkbox */}
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); toggleSelect(group.key); }}
+                          style={{ position: "absolute", top: 8, left: 8, background: isSelected ? "#cc0000" : "rgba(255,255,255,0.9)", border: isSelected ? "2px solid #cc0000" : "2px solid #e5e7eb", borderRadius: 6, width: 24, height: 24, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", padding: 0 }}
+                        >
+                          {isSelected && <Check size={13} color="#fff" strokeWidth={3} />}
+                        </button>
+                        {/* Status badge */}
+                        <div style={{ position: "absolute", top: 8, right: 8, background: cfg.bg, color: cfg.color, fontSize: 10, fontWeight: 900, borderRadius: 999, padding: "3px 7px" }}>{cfg.label}</div>
+                        {group.isAnyNew && <div style={{ position: "absolute", bottom: 8, left: 8, background: "#ef4444", color: "#fff", fontSize: 10, fontWeight: 900, borderRadius: 999, padding: "3px 7px" }}>NEW</div>}
+                      </div>
+                      <div style={{ padding: "10px 12px" }}>
+                        <div style={{ fontSize: 13, fontWeight: 800, color: textPrimary, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                          {`${order.student?.first_name ?? "Student"} ${order.student?.last_name ?? ""}`.trim()}
+                        </div>
+                        <div style={{ fontSize: 11, color: textMuted, marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{order.school?.school_name ?? "Event"}</div>
+                        <div style={{ fontSize: 13, fontWeight: 900, color: textPrimary, marginTop: 6 }}>{moneyFromCents(group.totalCents, currency)}</div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+            /* ── TABLE VIEW ────────────────────────────────────── */
+            ) : viewMode === "table" ? (
+              <div style={{ background: cardBg, border: `1px solid ${borderColor}`, borderRadius: 20, overflow: "hidden" }}>
+                {/* Table header */}
+                <div style={{ display: "grid", gridTemplateColumns: "36px 56px 1fr 1fr 1fr 90px 100px 36px", gap: 0, background: "#f9fafb", borderBottom: `1px solid ${borderColor}`, padding: "10px 14px", fontSize: 11, fontWeight: 900, letterSpacing: "0.08em", textTransform: "uppercase", color: textMuted }}>
+                  <div><button type="button" onClick={() => toggleSelectAll(combinedRows)} style={{ background: "none", border: "none", cursor: "pointer", padding: 0, color: textMuted, display: "flex" }}>{selectedKeys.size === combinedRows.length ? <CheckSquare size={14} color="#cc0000" /> : <Square size={14} />}</button></div>
+                  <div>Photo</div>
+                  <div>Student</div>
+                  <div>School / Event</div>
+                  <div>Package</div>
+                  <div>Total</div>
+                  <div>Status</div>
+                  <div />
+                </div>
+                {combinedRows.map((group, idx) => {
+                  const order = group.representative;
+                  const cfg = STATUS_COLORS[group.combinedStatus] ?? STATUS_COLORS.new;
+                  const primaryUrl = group.imageUrls[0] ?? order.student?.photo_url ?? "";
+                  const isSelected = selectedKeys.has(group.key);
+                  const currency = order.currency?.toUpperCase() || "CAD";
+                  return (
+                    <div
+                      key={group.key}
+                      style={{ display: "grid", gridTemplateColumns: "36px 56px 1fr 1fr 1fr 90px 100px 36px", gap: 0, alignItems: "center", padding: "10px 14px", borderTop: idx === 0 ? "none" : `1px solid #f5f5f5`, background: isSelected ? "#fff9f9" : "#fff", cursor: "pointer" }}
+                      onClick={() => openOrder(order)}
+                    >
+                      <div onClick={(e) => e.stopPropagation()}>
+                        <button type="button" onClick={() => toggleSelect(group.key)} style={{ background: isSelected ? "#cc0000" : "transparent", border: isSelected ? "2px solid #cc0000" : "2px solid #e5e7eb", borderRadius: 5, width: 20, height: 20, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", padding: 0 }}>
+                          {isSelected && <Check size={11} color="#fff" strokeWidth={3} />}
+                        </button>
+                      </div>
+                      <div>
+                        <div style={{ width: 40, height: 52, borderRadius: 8, overflow: "hidden", background: "#f3f4f6", border: `1px solid ${borderColor}` }}>
+                          {clean(primaryUrl) ? <img src={primaryUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "#d1d5db" }}><Users size={14} /></div>}
+                        </div>
+                      </div>
+                      <div>
+                        <div style={{ fontSize: 14, fontWeight: 800, color: textPrimary }}>{`${order.student?.first_name ?? "Student"} ${order.student?.last_name ?? ""}`.trim()}</div>
+                        <div style={{ fontSize: 12, color: textMuted, marginTop: 2 }}>{formatDate(order.created_at)}</div>
+                      </div>
+                      <div style={{ fontSize: 13, color: textMuted }}>{order.school?.school_name ?? "Event"}</div>
+                      <div style={{ fontSize: 13, color: textPrimary, fontWeight: 600 }}>{group.packageSummary}</div>
+                      <div style={{ fontSize: 14, fontWeight: 900, color: textPrimary }}>{moneyFromCents(group.totalCents, currency)}</div>
+                      <div><span style={{ background: cfg.bg, color: cfg.color, fontSize: 11, fontWeight: 800, borderRadius: 999, padding: "4px 9px" }}>{cfg.label}</span></div>
+                      <div onClick={(e) => e.stopPropagation()}>
+                        <button type="button" onClick={() => openOrder(order)} style={{ background: "none", border: "none", cursor: "pointer", color: textMuted, display: "flex", padding: 4 }}><ChevronRight size={16} /></button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+            /* ── LIST VIEW (default) ────────────────────────────── */
             ) : (
               <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
                 {combinedRows.map((group) => {
@@ -1249,20 +1416,31 @@ export default function OrdersPage() {
                   const primaryImageUrl = imageUrls[0] ?? order.student?.photo_url ?? "";
                   const isPhotosExpanded = !!expandedPhotos[group.key];
                   const orderTotal = group.totalCents;
+                  const isSelected = selectedKeys.has(group.key);
                   return (
                     <div
                       key={group.key}
                       onClick={() => openOrder(order)}
                       style={{
                         background: cardBg,
-                        border: isNew ? "2px solid #ef4444" : `1px solid ${borderColor}`,
+                        border: isSelected ? "2px solid #cc0000" : isNew ? "2px solid #ef4444" : `1px solid ${borderColor}`,
                         borderRadius: 24,
                         padding: 18,
-                        boxShadow: isNew ? "0 0 0 4px rgba(239,68,68,0.08)" : "0 10px 24px rgba(15,23,42,0.04)",
+                        boxShadow: isSelected ? "0 0 0 4px rgba(204,0,0,0.08)" : isNew ? "0 0 0 4px rgba(239,68,68,0.08)" : "0 10px 24px rgba(15,23,42,0.04)",
                         cursor: "pointer",
                       }}
                     >
                       <div style={{ display: "flex", gap: 16, alignItems: "stretch" }}>
+                        {/* Checkbox */}
+                        <div style={{ display: "flex", alignItems: "flex-start", paddingTop: 4 }} onClick={(e) => e.stopPropagation()}>
+                          <button
+                            type="button"
+                            onClick={() => toggleSelect(group.key)}
+                            style={{ background: isSelected ? "#cc0000" : "transparent", border: isSelected ? "2px solid #cc0000" : "2px solid #d1d5db", borderRadius: 7, width: 22, height: 22, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0, padding: 0 }}
+                          >
+                            {isSelected && <Check size={13} color="#fff" strokeWidth={3} />}
+                          </button>
+                        </div>
                         <div style={{ width: 110, flexShrink: 0 }}>
                           <div
                             style={{
@@ -1870,6 +2048,62 @@ export default function OrdersPage() {
           </div>
         </div>
       ) : null}
+
+      {/* ── Bulk action bar ───────────────────────────────────────────────── */}
+      {selectedKeys.size > 0 && (
+        <div style={{ position: "fixed", bottom: 28, left: "50%", transform: "translateX(-50%)", zIndex: 90, background: "#111827", borderRadius: 20, padding: "14px 20px", display: "flex", alignItems: "center", gap: 16, boxShadow: "0 20px 50px rgba(0,0,0,0.3)", minWidth: 340 }}>
+          <div style={{ color: "#fff", fontWeight: 800, fontSize: 14 }}>
+            {selectedKeys.size} order{selectedKeys.size === 1 ? "" : "s"} selected
+          </div>
+          <div style={{ flex: 1 }} />
+          <button
+            type="button"
+            onClick={() => setSelectedKeys(new Set())}
+            style={{ background: "transparent", color: "#9ca3af", border: "1px solid #374151", borderRadius: 10, padding: "8px 14px", fontSize: 13, fontWeight: 700, cursor: "pointer" }}
+          >
+            Deselect
+          </button>
+          <button
+            type="button"
+            onClick={() => setBulkDeleteConfirm(true)}
+            style={{ background: "#cc0000", color: "#fff", border: "none", borderRadius: 10, padding: "8px 16px", fontSize: 13, fontWeight: 800, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 8 }}
+          >
+            <Trash2 size={14} /> Delete {selectedKeys.size}
+          </button>
+        </div>
+      )}
+
+      {/* ── Bulk delete confirmation ──────────────────────────────────────── */}
+      {bulkDeleteConfirm && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 100, background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
+          <div style={{ background: "#fff", borderRadius: 24, width: "100%", maxWidth: 420, padding: 28, boxShadow: "0 24px 60px rgba(0,0,0,0.25)" }}>
+            <div style={{ width: 48, height: 48, borderRadius: 16, background: "#fff0f0", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 16 }}>
+              <Trash2 size={22} color="#cc0000" />
+            </div>
+            <div style={{ fontSize: 20, fontWeight: 900, color: textPrimary, marginBottom: 8 }}>Delete {selectedKeys.size} order{selectedKeys.size === 1 ? "" : "s"}?</div>
+            <div style={{ fontSize: 14, color: textMuted, lineHeight: 1.6, marginBottom: 24 }}>
+              This will permanently delete the selected orders and all their items. This cannot be undone.
+            </div>
+            <div style={{ display: "flex", gap: 10 }}>
+              <button
+                type="button"
+                onClick={() => bulkDelete(combinedRows)}
+                disabled={bulkDeleting}
+                style={{ flex: 1, background: "#cc0000", color: "#fff", border: "none", borderRadius: 12, padding: "12px 16px", fontWeight: 800, fontSize: 14, cursor: bulkDeleting ? "default" : "pointer", opacity: bulkDeleting ? 0.7 : 1 }}
+              >
+                {bulkDeleting ? "Deleting…" : `Delete ${selectedKeys.size} permanently`}
+              </button>
+              <button
+                type="button"
+                onClick={() => setBulkDeleteConfirm(false)}
+                style={{ flex: 1, background: "#fff", color: textPrimary, border: `1px solid ${borderColor}`, borderRadius: 12, padding: "12px 16px", fontWeight: 800, fontSize: 14, cursor: "pointer" }}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );
