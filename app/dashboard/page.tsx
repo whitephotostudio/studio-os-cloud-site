@@ -157,7 +157,7 @@ function statusStyle(status: string): React.CSSProperties {
   if (s === "completed" || s === "paid" || s === "digital_paid")
     return { background: "#f0fdf4", color: "#15803d" };
   if (s === "ready")
-    return { background: "#eff6ff", color: "#1d4ed8" };
+    return { background: "#f5f5f5", color: "#374151" };
   if (s === "pending" || s === "needs_attention")
     return { background: "#fff7ed", color: "#c2410c" };
   return { background: "#f3f4f6", color: "#374151" };
@@ -212,7 +212,7 @@ function OverviewLinkCard({
       onMouseEnter={(e) => {
         e.currentTarget.style.transform = "translateY(-2px)";
         e.currentTarget.style.boxShadow = "0 18px 40px rgba(17,24,39,0.08)";
-        e.currentTarget.style.borderColor = "#c7d2fe";
+        e.currentTarget.style.borderColor = "#cc0000";
       }}
       onMouseLeave={(e) => {
         e.currentTarget.style.transform = "translateY(0)";
@@ -226,11 +226,11 @@ function OverviewLinkCard({
             width: 42,
             height: 42,
             borderRadius: 14,
-            background: "#eef2ff",
+            background: "#f5f5f5",
             display: "inline-flex",
             alignItems: "center",
             justifyContent: "center",
-            color: "#3b82f6",
+            color: "#cc0000",
             marginBottom: 16,
           }}
         >
@@ -246,7 +246,7 @@ function OverviewLinkCard({
             display: "inline-flex",
             alignItems: "center",
             gap: 8,
-            color: "#2563eb",
+            color: "#cc0000",
             fontSize: 13,
             fontWeight: 800,
           }}
@@ -269,7 +269,7 @@ function QuickStat({
   accent?: string;
 }) {
   return (
-    <div style={{ background: "#fff", border: `1px solid #cfe0ff`, borderRadius: 18, padding: 16 }}>
+    <div style={{ background: "#fff", border: `1px solid #e5e5e5`, borderRadius: 18, padding: 16 }}>
       <div style={{ color: textMuted, fontSize: 13, fontWeight: 800, letterSpacing: "0.08em" }}>{label}</div>
       <div style={{ color: accent ?? textPrimary, fontSize: 30, fontWeight: 900, marginTop: 6 }}>{value}</div>
     </div>
@@ -563,7 +563,7 @@ export default function DashboardPage() {
             <OverviewLinkCard href="/dashboard/orders" icon={<ShoppingBag size={20} />} label="ORDERS" value={orders.length} description="Total orders received across all schools and events." />
             <div style={overviewCardStyle(false)}>
               <div>
-                <div style={{ width: 42, height: 42, borderRadius: 14, background: "#eef2ff", display: "inline-flex", alignItems: "center", justifyContent: "center", color: "#3b82f6", marginBottom: 16 }}>
+                <div style={{ width: 42, height: 42, borderRadius: 14, background: "#f5f5f5", display: "inline-flex", alignItems: "center", justifyContent: "center", color: "#cc0000", marginBottom: 16 }}>
                   <Images size={20} />
                 </div>
                 <div style={{ fontSize: 14, letterSpacing: "0.08em", fontWeight: 800, color: textMuted }}>PHOTO COVERAGE</div>
@@ -576,7 +576,7 @@ export default function DashboardPage() {
               </div>
               {/* Coverage bar */}
               <div style={{ height: 6, borderRadius: 99, background: "#e5e7eb", overflow: "hidden", marginTop: 10 }}>
-                <div style={{ height: "100%", width: `${coveragePct}%`, borderRadius: 99, background: coveragePct >= 80 ? "#22c55e" : coveragePct >= 50 ? "#3b82f6" : "#f97316", transition: "width 0.6s ease" }} />
+                <div style={{ height: "100%", width: `${coveragePct}%`, borderRadius: 99, background: coveragePct >= 80 ? "#22c55e" : "#cc0000", transition: "width 0.6s ease" }} />
               </div>
             </div>
           </div>
@@ -590,7 +590,7 @@ export default function DashboardPage() {
                 <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 18, fontWeight: 800, color: textPrimary }}>
                   {/* Bell with unread badge */}
                   <div style={{ position: "relative", display: "inline-flex" }}>
-                    <Bell size={18} color="#2563eb" />
+                    <Bell size={18} color="#cc0000" />
                     {unreadCount > 0 && (
                       <span style={{
                         position: "absolute",
@@ -623,7 +623,7 @@ export default function DashboardPage() {
                       Clear all
                     </button>
                   )}
-                  <Link href="/dashboard/orders" style={{ color: "#2563eb", fontSize: 14, fontWeight: 700, textDecoration: "none" }}>View all</Link>
+                  <Link href="/dashboard/orders" style={{ color: "#cc0000", fontSize: 14, fontWeight: 700, textDecoration: "none" }}>View all</Link>
                 </div>
               </div>
 
@@ -693,7 +693,7 @@ export default function DashboardPage() {
             <div style={{ background: cardBg, borderRadius: 24, border: `1px solid ${borderSoft}`, padding: 24 }}>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 18, fontWeight: 800, color: textPrimary }}>
-                  <Activity size={18} color="#2563eb" /> Recent activity
+                  <Activity size={18} color="#cc0000" /> Recent activity
                 </div>
               </div>
 
@@ -720,8 +720,8 @@ export default function DashboardPage() {
                       href={item.href}
                       style={{ border: `1px solid ${borderSoft}`, borderRadius: 18, padding: 16, background: "#fff", display: "flex", justifyContent: "space-between", gap: 12, textDecoration: "none", color: "inherit", transition: "border-color 0.15s, background 0.15s" }}
                       onMouseEnter={(e) => {
-                        e.currentTarget.style.borderColor = "#c7d2fe";
-                        e.currentTarget.style.background = "#fafbff";
+                        e.currentTarget.style.borderColor = "#cc0000";
+                        e.currentTarget.style.background = "#fff9f9";
                       }}
                       onMouseLeave={(e) => {
                         e.currentTarget.style.borderColor = borderSoft;
@@ -743,9 +743,9 @@ export default function DashboardPage() {
             </div>
 
             {/* Quick stats */}
-            <div style={{ background: "#eef5ff", borderRadius: 24, border: `1px solid #dbeafe`, padding: 24 }}>
+            <div style={{ background: "#f5f5f5", borderRadius: 24, border: `1px solid #e5e5e5`, padding: 24 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 18, fontWeight: 800, color: textPrimary, marginBottom: 16 }}>
-                <Package2 size={18} color="#2563eb" /> Quick stats
+                <Package2 size={18} color="#cc0000" /> Quick stats
               </div>
 
               <div style={{ display: "grid", gap: 14 }}>
@@ -757,7 +757,7 @@ export default function DashboardPage() {
                 />
                 <QuickStat label="REVENUE TRACKED" value={moneyFromCents(revenueTracked)} />
                 <QuickStat label="SCHOOL PROJECTS LINKED" value={schoolProjects.length} />
-                <QuickStat label="PHOTO COVERAGE" value={`${coveragePct}%`} accent={coveragePct >= 80 ? "#15803d" : coveragePct >= 50 ? "#1d4ed8" : "#c2410c"} />
+                <QuickStat label="PHOTO COVERAGE" value={`${coveragePct}%`} accent={coveragePct >= 80 ? "#15803d" : "#cc0000"} />
               </div>
             </div>
           </div>
