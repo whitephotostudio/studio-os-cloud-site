@@ -379,6 +379,7 @@ export default function OrdersPage() {
     reports: true,
   });
   const [expandedPhotos, setExpandedPhotos] = useState<Record<string, boolean>>({});
+  const [schoolFilter, setSchoolFilter] = useState<string | null>(null); // null=all, school_id=school, "event"=no school
   const [editingOrder, setEditingOrder] = useState<Order | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -584,9 +585,22 @@ export default function OrdersPage() {
     }
   }
 
+  const uniqueSchools = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const o of orders) {
+      if (o.school_id && o.school?.school_name) map.set(o.school_id, o.school.school_name);
+    }
+    return Array.from(map.entries()).map(([id, name]) => ({ id, name }));
+  }, [orders]);
+
+  const hasEventOrders = useMemo(() => orders.some((o) => !o.school_id), [orders]);
+
   const filtered = useMemo(() => {
-    return filter === "all" ? orders : orders.filter((o) => o.status === filter);
-  }, [orders, filter]);
+    let result = filter === "all" ? orders : orders.filter((o) => o.status === filter);
+    if (schoolFilter === "event") result = result.filter((o) => !o.school_id);
+    else if (schoolFilter) result = result.filter((o) => o.school_id === schoolFilter);
+    return result;
+  }, [orders, filter, schoolFilter]);
 
 
   const selectedOrderedPhotoGroups = useMemo(() => {
@@ -1008,6 +1022,57 @@ export default function OrdersPage() {
                 </div>
               ))}
             </div>
+
+            {/* ── School / Event filter ───────────────────────────────── */}
+            {(uniqueSchools.length > 0 || hasEventOrders) ? (
+              <div
+                style={{
+                  background: cardBg,
+                  border: `1px solid ${borderColor}`,
+                  borderRadius: 24,
+                  padding: "14px 18px",
+                  boxShadow: "0 8px 24px rgba(15,23,42,0.04)",
+                  marginBottom: 14,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 10,
+                  flexWrap: "wrap",
+                }}
+              >
+                <div style={{ fontSize: 11, fontWeight: 900, letterSpacing: "0.1em", textTransform: "uppercase", color: textMuted, marginRight: 4 }}>Filter by</div>
+                {[
+                  { id: null, label: "All Orders", count: orders.length },
+                  ...uniqueSchools.map((s) => ({ id: s.id, label: s.name, count: orders.filter((o) => o.school_id === s.id).length })),
+                  ...(hasEventOrders ? [{ id: "event", label: "Events", count: orders.filter((o) => !o.school_id).length }] : []),
+                ].map((opt) => {
+                  const isActive = schoolFilter === opt.id;
+                  return (
+                    <button
+                      key={String(opt.id)}
+                      type="button"
+                      onClick={() => setSchoolFilter(opt.id)}
+                      style={{
+                        borderRadius: 999,
+                        padding: "8px 14px",
+                        border: isActive ? "2px solid #cc0000" : `1px solid ${borderColor}`,
+                        background: isActive ? "#cc0000" : "#fff",
+                        color: isActive ? "#fff" : textPrimary,
+                        fontSize: 13,
+                        fontWeight: 800,
+                        cursor: "pointer",
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: 6,
+                      }}
+                    >
+                      {opt.id === "event" ? <FolderOpen size={13} /> : opt.id ? <GraduationCap size={13} /> : <ShoppingBag size={13} />}
+                      {opt.label}
+                      <span style={{ background: isActive ? "rgba(255,255,255,0.25)" : "#f3f4f6", borderRadius: 999, padding: "1px 7px", fontSize: 11, fontWeight: 900 }}>{opt.count}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : null}
 
             <div
               style={{
