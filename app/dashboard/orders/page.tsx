@@ -18,12 +18,14 @@ import {
   Monitor,
   Package2,
   Palette,
+  Pencil,
   Printer,
   RefreshCw,
   School2,
   Settings,
   ShoppingBag,
   Sun,
+  Trash2,
   UserCircle2,
   Users,
   WalletCards,
@@ -108,7 +110,7 @@ type CombinedOrderGroup = {
 const STATUS_COLORS: Record<string, { bg: string; color: string; label: string }> = {
   new: { bg: "#fef2f2", color: "#ef4444", label: "New" },
   reviewed: { bg: "#fffbeb", color: "#d97706", label: "Reviewed" },
-  sent_to_print: { bg: "#eff6ff", color: "#2563eb", label: "Sent to Print" },
+  sent_to_print: { bg: "#fff5f5", color: "#cc0000", label: "Sent to Print" },
   completed: { bg: "#f0fdf4", color: "#16a34a", label: "Completed" },
   payment_pending: { bg: "#fff7ed", color: "#ea580c", label: "Payment Pending" },
   paid: { bg: "#ecfeff", color: "#0891b2", label: "Paid" },
@@ -377,6 +379,16 @@ export default function OrdersPage() {
     reports: true,
   });
   const [expandedPhotos, setExpandedPhotos] = useState<Record<string, boolean>>({});
+  const [editingOrder, setEditingOrder] = useState<Order | null>(null);
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [editForm, setEditForm] = useState<{
+    parentName: string;
+    parentEmail: string;
+    parentPhone: string;
+    notes: string;
+    items: Array<{ id?: string; productName: string; sku: string }>;
+  }>({ parentName: "", parentEmail: "", parentPhone: "", notes: "", items: [] });
 
   useEffect(() => {
     load();
@@ -523,6 +535,53 @@ export default function OrdersPage() {
       .map((order) => buildManifest(order).content)
       .join("\n\n----------------------------------------\n\n");
     downloadBlob(`studio-os-orders-${filter}-manifest.txt`, "text/plain;charset=utf-8", manifest);
+  }
+
+  async function deleteOrder(orderId: string) {
+    await supabase.from("order_items").delete().eq("order_id", orderId);
+    await supabase.from("orders").delete().eq("id", orderId);
+    setDeleteConfirmId(null);
+    if (selected?.id === orderId) setSelected(null);
+    await load();
+  }
+
+  function openEdit(order: Order) {
+    setEditForm({
+      parentName: order.parent_name ?? order.customer_name ?? "",
+      parentEmail: order.parent_email ?? order.customer_email ?? "",
+      parentPhone: order.parent_phone ?? "",
+      notes: order.special_notes ?? order.notes ?? "",
+      items: (order.items ?? []).map((item) => ({
+        id: item.id,
+        productName: item.product_name ?? "",
+        sku: item.sku ?? "",
+      })),
+    });
+    setEditingOrder(order);
+  }
+
+  async function saveOrderEdit() {
+    if (!editingOrder) return;
+    setSaving(true);
+    try {
+      await supabase.from("orders").update({
+        parent_name: editForm.parentName || null,
+        customer_name: editForm.parentName || null,
+        parent_email: editForm.parentEmail || null,
+        customer_email: editForm.parentEmail || null,
+        parent_phone: editForm.parentPhone || null,
+        special_notes: editForm.notes || null,
+      }).eq("id", editingOrder.id);
+      for (const item of editForm.items) {
+        if (item.id) {
+          await supabase.from("order_items").update({ sku: item.sku || null }).eq("id", item.id);
+        }
+      }
+    } finally {
+      setSaving(false);
+      setEditingOrder(null);
+      await load();
+    }
   }
 
   const filtered = useMemo(() => {
@@ -940,7 +999,7 @@ export default function OrdersPage() {
                     boxShadow: "0 8px 24px rgba(15,23,42,0.05)",
                   }}
                 >
-                  <div style={{ display: "inline-flex", width: 40, height: 40, borderRadius: 14, background: "#eff6ff", alignItems: "center", justifyContent: "center", color: "#2563eb", marginBottom: 12 }}>
+                  <div style={{ display: "inline-flex", width: 40, height: 40, borderRadius: 14, background: "#f5f5f5", alignItems: "center", justifyContent: "center", color: "#cc0000", marginBottom: 12 }}>
                     {card.icon}
                   </div>
                   <div style={{ fontSize: 12, letterSpacing: "0.08em", textTransform: "uppercase", fontWeight: 900, color: textMuted }}>{card.label}</div>
@@ -1136,8 +1195,8 @@ export default function OrdersPage() {
                               }}
                               style={{
                                 width: "100%",
-                                background: isPhotosExpanded ? "#eef2ff" : "#f8fafc",
-                                border: isPhotosExpanded ? "1px solid #c7d2fe" : `1px solid ${borderColor}`,
+                                background: isPhotosExpanded ? "#fff5f5" : "#f8fafc",
+                                border: isPhotosExpanded ? "1px solid #cc0000" : `1px solid ${borderColor}`,
                                 borderRadius: 16,
                                 padding: 14,
                                 cursor: "pointer",
@@ -1149,7 +1208,7 @@ export default function OrdersPage() {
                             >
                               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
                                 <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
-                                  <div style={{ width: 34, height: 34, borderRadius: 12, background: isPhotosExpanded ? "#dbeafe" : "#e5e7eb", color: isPhotosExpanded ? "#2563eb" : textMuted, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                                  <div style={{ width: 34, height: 34, borderRadius: 12, background: isPhotosExpanded ? "#fde8e8" : "#e5e7eb", color: isPhotosExpanded ? "#cc0000" : textMuted, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                                     <Images size={16} />
                                   </div>
                                   <div style={{ minWidth: 0 }}>
@@ -1161,7 +1220,7 @@ export default function OrdersPage() {
                                     </div>
                                   </div>
                                 </div>
-                                <div style={{ display: "flex", alignItems: "center", gap: 8, color: isPhotosExpanded ? "#2563eb" : textMuted, fontSize: 12, fontWeight: 800, flexShrink: 0 }}>
+                                <div style={{ display: "flex", alignItems: "center", gap: 8, color: isPhotosExpanded ? "#cc0000" : textMuted, fontSize: 12, fontWeight: 800, flexShrink: 0 }}>
                                   {isPhotosExpanded ? "Hide photos" : "Show photos"}
                                   {isPhotosExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
                                 </div>
@@ -1247,9 +1306,9 @@ export default function OrdersPage() {
                                 openOrder(order);
                               }}
                               style={{
-                                background: "#eff6ff",
-                                color: "#1d4ed8",
-                                border: "1px solid #bfdbfe",
+                                background: "#fff5f5",
+                                color: "#cc0000",
+                                border: "1px solid #cc0000",
                                 borderRadius: 12,
                                 padding: "10px 14px",
                                 display: "inline-flex",
@@ -1309,7 +1368,7 @@ export default function OrdersPage() {
                   { label: "Total", value: moneyFromCents(selected.total_cents ?? Math.round((selected.total_amount ?? 0) * 100), selected.currency?.toUpperCase() || "CAD"), icon: <WalletCards size={16} /> },
                 ].map((block) => (
                   <div key={block.label} style={{ background: "#f9fafb", border: `1px solid ${borderColor}`, borderRadius: 18, padding: 14 }}>
-                    <div style={{ display: "inline-flex", width: 30, height: 30, borderRadius: 10, background: "#eef2ff", color: "#2563eb", alignItems: "center", justifyContent: "center", marginBottom: 10 }}>{block.icon}</div>
+                    <div style={{ display: "inline-flex", width: 30, height: 30, borderRadius: 10, background: "#f5f5f5", color: "#cc0000", alignItems: "center", justifyContent: "center", marginBottom: 10 }}>{block.icon}</div>
                     <div style={{ fontSize: 11, color: textMuted, fontWeight: 900, letterSpacing: "0.08em", textTransform: "uppercase" }}>{block.label}</div>
                     <div style={{ fontSize: 15, fontWeight: 800, color: textPrimary, marginTop: 6, lineHeight: 1.45 }}>{block.value}</div>
                   </div>
@@ -1366,7 +1425,7 @@ export default function OrdersPage() {
                           </div>
                           {photoGroup.url ? (
                             <div style={{ marginTop: 8 }}>
-                              <a href={photoGroup.url} target="_blank" rel="noopener noreferrer" style={{ color: "#2563eb", fontSize: 12, fontWeight: 700, textDecoration: "none" }}>
+                              <a href={photoGroup.url} target="_blank" rel="noopener noreferrer" style={{ color: "#cc0000", fontSize: 12, fontWeight: 700, textDecoration: "none" }}>
                                 Open original file
                               </a>
                             </div>
@@ -1424,6 +1483,50 @@ export default function OrdersPage() {
                 </button>
               </div>
 
+              {/* Edit & Delete */}
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 16 }}>
+                <button
+                  type="button"
+                  onClick={() => openEdit(selected)}
+                  style={{
+                    flex: 1,
+                    background: "#cc0000",
+                    color: "#fff",
+                    border: "none",
+                    borderRadius: 12,
+                    padding: "10px 14px",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: 8,
+                    fontWeight: 800,
+                    cursor: "pointer",
+                  }}
+                >
+                  <Pencil size={15} /> Edit Order
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDeleteConfirmId(selected.id)}
+                  style={{
+                    flex: 1,
+                    background: "#fff",
+                    color: "#cc0000",
+                    border: "1px solid #cc0000",
+                    borderRadius: 12,
+                    padding: "10px 14px",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: 8,
+                    fontWeight: 800,
+                    cursor: "pointer",
+                  }}
+                >
+                  <Trash2 size={15} /> Delete
+                </button>
+              </div>
+
               <div style={{ borderTop: `1px solid ${borderColor}`, paddingTop: 16 }}>
                 <div style={{ fontSize: 11, color: textMuted, fontWeight: 900, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 10 }}>Update Status</div>
                 <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -1457,7 +1560,7 @@ export default function OrdersPage() {
                         <span style={{ fontSize: 14, fontWeight: 800, color: isCurrent ? cfg.color : textPrimary }}>
                           {cfg.label}
                         </span>
-                        {statusKey === "sent_to_print" ? <Printer size={16} color="#2563eb" style={{ marginLeft: "auto" }} /> : null}
+                        {statusKey === "sent_to_print" ? <Printer size={16} color="#cc0000" style={{ marginLeft: "auto" }} /> : null}
                       </button>
                     );
                   })}
@@ -1467,6 +1570,135 @@ export default function OrdersPage() {
           ) : null}
         </main>
       </div>
+
+      {/* ── Edit Order Modal ──────────────────────────────────────────────── */}
+      {editingOrder ? (
+        <div style={{ position: "fixed", inset: 0, zIndex: 100, background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
+          <div style={{ background: "#fff", borderRadius: 24, width: "100%", maxWidth: 560, maxHeight: "90vh", overflowY: "auto", padding: 28, boxShadow: "0 24px 60px rgba(0,0,0,0.25)" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+              <div>
+                <div style={{ fontSize: 11, color: textMuted, fontWeight: 900, letterSpacing: "0.1em", textTransform: "uppercase" }}>Edit Order</div>
+                <div style={{ fontSize: 22, fontWeight: 900, color: textPrimary, marginTop: 4 }}>#{editingOrder.id.slice(0, 8)}</div>
+              </div>
+              <button type="button" onClick={() => setEditingOrder(null)} style={{ background: "#f3f4f6", border: "none", width: 36, height: 36, borderRadius: 12, cursor: "pointer", color: textMuted, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <X size={16} />
+              </button>
+            </div>
+
+            {/* Contact Info */}
+            <div style={{ fontSize: 11, color: textMuted, fontWeight: 900, letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 10 }}>Contact Information</div>
+            <div style={{ display: "grid", gap: 12, marginBottom: 20 }}>
+              {[
+                { label: "Parent / Customer Name", key: "parentName" as const, placeholder: "Full name" },
+                { label: "Email", key: "parentEmail" as const, placeholder: "email@example.com" },
+                { label: "Phone", key: "parentPhone" as const, placeholder: "+1 (xxx) xxx-xxxx" },
+              ].map(({ label, key, placeholder }) => (
+                <div key={key}>
+                  <div style={{ fontSize: 12, fontWeight: 800, color: textMuted, marginBottom: 6 }}>{label}</div>
+                  <input
+                    type="text"
+                    value={editForm[key]}
+                    onChange={(e) => setEditForm((f) => ({ ...f, [key]: e.target.value }))}
+                    placeholder={placeholder}
+                    style={{ width: "100%", border: `1px solid ${borderColor}`, borderRadius: 10, padding: "10px 12px", fontSize: 14, color: textPrimary, outline: "none", boxSizing: "border-box" }}
+                  />
+                </div>
+              ))}
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 800, color: textMuted, marginBottom: 6 }}>Special Notes</div>
+                <textarea
+                  value={editForm.notes}
+                  onChange={(e) => setEditForm((f) => ({ ...f, notes: e.target.value }))}
+                  placeholder="Any special instructions..."
+                  rows={3}
+                  style={{ width: "100%", border: `1px solid ${borderColor}`, borderRadius: 10, padding: "10px 12px", fontSize: 14, color: textPrimary, outline: "none", resize: "vertical", boxSizing: "border-box" }}
+                />
+              </div>
+            </div>
+
+            {/* Pose / Photo changes */}
+            {editForm.items.length > 0 ? (
+              <>
+                <div style={{ fontSize: 11, color: textMuted, fontWeight: 900, letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 10 }}>Pose / Photo Changes</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 20 }}>
+                  {editForm.items.map((item, idx) => (
+                    <div key={idx} style={{ border: `1px solid ${borderColor}`, borderRadius: 14, padding: 14 }}>
+                      <div style={{ fontSize: 13, fontWeight: 800, color: textPrimary, marginBottom: 8 }}>{item.productName || `Item ${idx + 1}`}</div>
+                      <div style={{ fontSize: 12, fontWeight: 800, color: textMuted, marginBottom: 6 }}>Photo URL (Pose)</div>
+                      <input
+                        type="text"
+                        value={item.sku}
+                        onChange={(e) => {
+                          const updated = [...editForm.items];
+                          updated[idx] = { ...updated[idx], sku: e.target.value };
+                          setEditForm((f) => ({ ...f, items: updated }));
+                        }}
+                        placeholder="https://... photo URL or leave blank"
+                        style={{ width: "100%", border: `1px solid ${borderColor}`, borderRadius: 10, padding: "9px 12px", fontSize: 13, color: textPrimary, outline: "none", boxSizing: "border-box" }}
+                      />
+                      {item.sku ? (
+                        <div style={{ marginTop: 10 }}>
+                          <img src={item.sku} alt="" style={{ width: 72, height: 92, objectFit: "cover", borderRadius: 10, border: `1px solid ${borderColor}` }} onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
+                        </div>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              </>
+            ) : null}
+
+            <div style={{ display: "flex", gap: 10 }}>
+              <button
+                type="button"
+                onClick={saveOrderEdit}
+                disabled={saving}
+                style={{ flex: 1, background: "#cc0000", color: "#fff", border: "none", borderRadius: 12, padding: "12px 16px", fontWeight: 800, fontSize: 14, cursor: saving ? "default" : "pointer", opacity: saving ? 0.7 : 1 }}
+              >
+                {saving ? "Saving…" : "Save Changes"}
+              </button>
+              <button
+                type="button"
+                onClick={() => setEditingOrder(null)}
+                style={{ flex: 1, background: "#fff", color: textPrimary, border: `1px solid ${borderColor}`, borderRadius: 12, padding: "12px 16px", fontWeight: 800, fontSize: 14, cursor: "pointer" }}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {/* ── Delete Confirm Modal ──────────────────────────────────────────── */}
+      {deleteConfirmId ? (
+        <div style={{ position: "fixed", inset: 0, zIndex: 100, background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
+          <div style={{ background: "#fff", borderRadius: 24, width: "100%", maxWidth: 420, padding: 28, boxShadow: "0 24px 60px rgba(0,0,0,0.25)" }}>
+            <div style={{ width: 48, height: 48, borderRadius: 16, background: "#fff0f0", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 16 }}>
+              <Trash2 size={22} color="#cc0000" />
+            </div>
+            <div style={{ fontSize: 20, fontWeight: 900, color: textPrimary, marginBottom: 8 }}>Delete this order?</div>
+            <div style={{ fontSize: 14, color: textMuted, lineHeight: 1.6, marginBottom: 24 }}>
+              This will permanently delete the order and all its items. This cannot be undone.
+            </div>
+            <div style={{ display: "flex", gap: 10 }}>
+              <button
+                type="button"
+                onClick={() => deleteOrder(deleteConfirmId)}
+                style={{ flex: 1, background: "#cc0000", color: "#fff", border: "none", borderRadius: 12, padding: "12px 16px", fontWeight: 800, fontSize: 14, cursor: "pointer" }}
+              >
+                Delete permanently
+              </button>
+              <button
+                type="button"
+                onClick={() => setDeleteConfirmId(null)}
+                style={{ flex: 1, background: "#fff", color: textPrimary, border: `1px solid ${borderColor}`, borderRadius: 12, padding: "12px 16px", fontWeight: 800, fontSize: 14, cursor: "pointer" }}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
     </div>
   );
 }
