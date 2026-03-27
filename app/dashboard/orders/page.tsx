@@ -54,6 +54,14 @@ type OrderItem = {
   sku: string | null;
 };
 
+type EventProject = {
+  id: string;
+  title: string;
+  client_name: string | null;
+  event_date: string | null;
+  portal_status: string | null;
+};
+
 type Order = {
   id: string;
   created_at: string;
@@ -76,6 +84,8 @@ type Order = {
   student_id: string | null;
   school_id: string | null;
   class_id: string | null;
+  project_id: string | null;
+  project: { id: string; title: string } | null;
   student:
     | {
         first_name: string;
@@ -92,10 +102,11 @@ type Order = {
 
 type RelatedRow<T> = T | T[] | null | undefined;
 
-type RawOrder = Omit<Order, "student" | "school" | "class"> & {
+type RawOrder = Omit<Order, "student" | "school" | "class" | "project"> & {
   student?: RelatedRow<NonNullable<Order["student"]>>;
   school?: RelatedRow<NonNullable<Order["school"]>>;
   class?: RelatedRow<NonNullable<Order["class"]>>;
+  project?: RelatedRow<NonNullable<Order["project"]>>;
 };
 
 
@@ -384,7 +395,8 @@ export default function OrdersPage() {
     reports: true,
   });
   const [expandedPhotos, setExpandedPhotos] = useState<Record<string, boolean>>({});
-  const [schoolFilter, setSchoolFilter] = useState<string | null>(null); // null=all, school_id=school, "event"=no school
+  const [eventProjects, setEventProjects] = useState<EventProject[]>([]);
+  const [schoolFilter, setSchoolFilter] = useState<string | null>(null); // null=all, school_id=school, "event"=all events, "event:{uuid}"=specific event
   const [schoolDropdownOpen, setSchoolDropdownOpen] = useState(false);
   const [eventDropdownOpen, setEventDropdownOpen] = useState(false);
   const [schoolSearch, setSchoolSearch] = useState("");
@@ -447,6 +459,15 @@ export default function OrdersPage() {
 
     setPgId(photographer.id);
 
+    // Fetch event projects for this photographer
+    const { data: projectRows } = await supabase
+      .from("projects")
+      .select("id, title, client_name, event_date, portal_status")
+      .eq("photographer_id", photographer.id)
+      .eq("workflow_type", "event")
+      .order("created_at", { ascending: false });
+    setEventProjects((projectRows as EventProject[] | null) ?? []);
+
     const { data: rows } = await supabase
       .from("orders")
       .select(
@@ -457,10 +478,11 @@ export default function OrdersPage() {
           package_name, package_price,
           subtotal_cents, tax_cents, total_cents, total_amount, currency,
           special_notes, notes,
-          student_id, school_id, class_id,
+          student_id, school_id, class_id, project_id,
           student:students(first_name, last_name, photo_url, folder_name, class_name),
           school:schools(school_name),
           class:classes(class_name),
+          project:projects(id, title),
           items:order_items(id, product_name, quantity, price, unit_price_cents, line_total_cents, sku)
         `,
       )
@@ -472,6 +494,7 @@ export default function OrdersPage() {
       student: singleRelation(order.student),
       school: singleRelation(order.school),
       class: singleRelation(order.class),
+      project: singleRelation(order.project),
       items: order.items ?? [],
     }));
 
@@ -641,12 +664,18 @@ export default function OrdersPage() {
     return Array.from(map.entries()).map(([id, name]) => ({ id, name }));
   }, [orders]);
 
-  const hasEventOrders = useMemo(() => orders.some((o) => !o.school_id), [orders]);
+  const hasEventOrders = useMemo(() => orders.some((o) => !o.school_id) || eventProjects.length > 0, [orders, eventProjects]);
 
   const filtered = useMemo(() => {
     let result = filter === "all" ? orders : orders.filter((o) => o.status === filter);
-    if (schoolFilter === "event") result = result.filter((o) => !o.school_id);
-    else if (schoolFilter) result = result.filter((o) => o.school_id === schoolFilter);
+    if (schoolFilter === "event") {
+      result = result.filter((o) => !o.school_id);
+    } else if (schoolFilter?.startsWith("event:")) {
+      const pid = schoolFilter.slice(6);
+      result = result.filter((o) => o.project_id === pid);
+    } else if (schoolFilter) {
+      result = result.filter((o) => o.school_id === schoolFilter);
+    }
     return result;
   }, [orders, filter, schoolFilter]);
 
@@ -1103,14 +1132,14 @@ export default function OrdersPage() {
                       onClick={() => { setSchoolDropdownOpen((v) => !v); setEventDropdownOpen(false); }}
                       style={{
                         display: "inline-flex", alignItems: "center", gap: 8,
-                        background: schoolFilter && schoolFilter !== "event" ? "#cc0000" : "#fff",
-                        color: schoolFilter && schoolFilter !== "event" ? "#fff" : textPrimary,
-                        border: schoolFilter && schoolFilter !== "event" ? "2px solid #cc0000" : `1px solid ${borderColor}`,
+                        background: schoolFilter && schoolFilter !== "event" && !schoolFilter.startsWith("event:") ? "#cc0000" : "#fff",
+                        color: schoolFilter && schoolFilter !== "event" && !schoolFilter.startsWith("event:") ? "#fff" : textPrimary,
+                        border: schoolFilter && schoolFilter !== "event" && !schoolFilter.startsWith("event:") ? "2px solid #cc0000" : `1px solid ${borderColor}`,
                         borderRadius: 12, padding: "10px 14px", fontWeight: 800, fontSize: 13, cursor: "pointer",
                       }}
                     >
                       <GraduationCap size={14} />
-                      {schoolFilter && schoolFilter !== "event"
+                      {schoolFilter && schoolFilter !== "event" && !schoolFilter.startsWith("event:")
                         ? (uniqueSchools.find((s) => s.id === schoolFilter)?.name ?? "School")
                         : "Schools"}
                       <ChevronDown size={13} />
@@ -1138,7 +1167,7 @@ export default function OrdersPage() {
                           <button
                             type="button"
                             onClick={() => { setSchoolFilter(null); setSchoolDropdownOpen(false); setSchoolSearch(""); }}
-                            style={{ width: "100%", display: "flex", justifyContent: "space-between", alignItems: "center", padding: "11px 14px", background: !schoolFilter || schoolFilter === "event" ? "#fff5f5" : "#fff", border: "none", cursor: "pointer", fontSize: 13, fontWeight: !schoolFilter || schoolFilter === "event" ? 800 : 500, color: !schoolFilter || schoolFilter === "event" ? "#cc0000" : textPrimary, textAlign: "left" }}
+                            style={{ width: "100%", display: "flex", justifyContent: "space-between", alignItems: "center", padding: "11px 14px", background: !schoolFilter || schoolFilter === "event" || schoolFilter.startsWith("event:") ? "#fff5f5" : "#fff", border: "none", cursor: "pointer", fontSize: 13, fontWeight: !schoolFilter || schoolFilter === "event" || schoolFilter.startsWith("event:") ? 800 : 500, color: !schoolFilter || schoolFilter === "event" || schoolFilter.startsWith("event:") ? "#cc0000" : textPrimary, textAlign: "left" }}
                           >
                             <span>All Schools</span>
                             <span style={{ fontSize: 11, background: "#f3f4f6", borderRadius: 999, padding: "1px 8px", color: textMuted }}>{orders.filter((o) => !!o.school_id).length}</span>
@@ -1168,62 +1197,99 @@ export default function OrdersPage() {
                 {/* Events dropdown */}
                 {hasEventOrders && (
                   <div style={{ position: "relative", zIndex: 30 }}>
-                    <button
-                      type="button"
-                      onClick={() => { setEventDropdownOpen((v) => !v); setSchoolDropdownOpen(false); }}
-                      style={{
-                        display: "inline-flex", alignItems: "center", gap: 8,
-                        background: schoolFilter === "event" ? "#cc0000" : "#fff",
-                        color: schoolFilter === "event" ? "#fff" : textPrimary,
-                        border: schoolFilter === "event" ? "2px solid #cc0000" : `1px solid ${borderColor}`,
-                        borderRadius: 12, padding: "10px 14px", fontWeight: 800, fontSize: 13, cursor: "pointer",
-                      }}
-                    >
-                      <FolderOpen size={14} />
-                      Events
-                      <span style={{ background: schoolFilter === "event" ? "rgba(255,255,255,0.25)" : "#f3f4f6", borderRadius: 999, padding: "1px 8px", fontSize: 11, fontWeight: 900, color: schoolFilter === "event" ? "#fff" : textMuted }}>{orders.filter((o) => !o.school_id).length}</span>
-                      <ChevronDown size={13} />
-                    </button>
-
-                    {eventDropdownOpen && (
-                      <div style={{
-                        position: "absolute", top: "calc(100% + 6px)", left: 0, zIndex: 30,
-                        background: "#fff", border: `1px solid ${borderColor}`, borderRadius: 16,
-                        boxShadow: "0 16px 40px rgba(0,0,0,0.13)", width: 280,
-                      }}>
-                        {/* Search */}
-                        <div style={{ padding: "10px 12px", borderBottom: `1px solid ${borderColor}` }}>
-                          <input
-                            type="text"
-                            value={eventSearch}
-                            onChange={(e) => setEventSearch(e.target.value)}
-                            placeholder="Search events…"
-                            autoFocus
-                            style={{ width: "100%", border: `1px solid ${borderColor}`, borderRadius: 8, padding: "8px 10px", fontSize: 13, outline: "none", boxSizing: "border-box", color: textPrimary }}
-                          />
-                        </div>
-                        <div style={{ maxHeight: 260, overflowY: "auto" }}>
+                    {(() => {
+                      const isEventActive = schoolFilter === "event" || schoolFilter?.startsWith("event:");
+                      const activeProjectId = schoolFilter?.startsWith("event:") ? schoolFilter.slice(6) : null;
+                      const activeProjectName = activeProjectId ? eventProjects.find((p) => p.id === activeProjectId)?.title : null;
+                      return (
+                        <>
                           <button
                             type="button"
-                            onClick={() => { setSchoolFilter(null); setEventDropdownOpen(false); setEventSearch(""); }}
-                            style={{ width: "100%", display: "flex", justifyContent: "space-between", alignItems: "center", padding: "11px 14px", background: schoolFilter !== "event" ? "#fff5f5" : "#fff", border: "none", cursor: "pointer", fontSize: 13, fontWeight: schoolFilter !== "event" ? 800 : 500, color: schoolFilter !== "event" ? "#cc0000" : textPrimary, textAlign: "left" }}
+                            onClick={() => { setEventDropdownOpen((v) => !v); setSchoolDropdownOpen(false); }}
+                            style={{
+                              display: "inline-flex", alignItems: "center", gap: 8,
+                              background: isEventActive ? "#cc0000" : "#fff",
+                              color: isEventActive ? "#fff" : textPrimary,
+                              border: isEventActive ? "2px solid #cc0000" : `1px solid ${borderColor}`,
+                              borderRadius: 12, padding: "10px 14px", fontWeight: 800, fontSize: 13, cursor: "pointer",
+                            }}
                           >
-                            <span>All Orders</span>
+                            <FolderOpen size={14} />
+                            {activeProjectName ?? "Events"}
+                            <span style={{ background: isEventActive ? "rgba(255,255,255,0.25)" : "#f3f4f6", borderRadius: 999, padding: "1px 8px", fontSize: 11, fontWeight: 900, color: isEventActive ? "#fff" : textMuted }}>
+                              {activeProjectId
+                                ? orders.filter((o) => o.project_id === activeProjectId).length
+                                : orders.filter((o) => !o.school_id).length}
+                            </span>
+                            <ChevronDown size={13} />
                           </button>
-                          {/* All events combined */}
-                          {"All Event Orders".toLowerCase().includes(eventSearch.toLowerCase()) && (
-                            <button
-                              type="button"
-                              onClick={() => { setSchoolFilter("event"); setEventDropdownOpen(false); setEventSearch(""); }}
-                              style={{ width: "100%", display: "flex", justifyContent: "space-between", alignItems: "center", padding: "11px 14px", background: schoolFilter === "event" ? "#fff5f5" : "#fff", border: "none", borderTop: `1px solid #f5f5f5`, cursor: "pointer", fontSize: 13, fontWeight: schoolFilter === "event" ? 800 : 500, color: schoolFilter === "event" ? "#cc0000" : textPrimary, textAlign: "left" }}
-                            >
-                              <span>All Event Orders</span>
-                              <span style={{ fontSize: 11, background: "#f3f4f6", borderRadius: 999, padding: "1px 8px", color: textMuted }}>{orders.filter((o) => !o.school_id).length}</span>
-                            </button>
+
+                          {eventDropdownOpen && (
+                            <div style={{
+                              position: "absolute", top: "calc(100% + 6px)", left: 0, zIndex: 30,
+                              background: "#fff", border: `1px solid ${borderColor}`, borderRadius: 16,
+                              boxShadow: "0 16px 40px rgba(0,0,0,0.13)", width: 300,
+                            }}>
+                              {/* Search */}
+                              <div style={{ padding: "10px 12px", borderBottom: `1px solid ${borderColor}` }}>
+                                <input
+                                  type="text"
+                                  value={eventSearch}
+                                  onChange={(e) => setEventSearch(e.target.value)}
+                                  placeholder="Search events…"
+                                  autoFocus
+                                  style={{ width: "100%", border: `1px solid ${borderColor}`, borderRadius: 8, padding: "8px 10px", fontSize: 13, outline: "none", boxSizing: "border-box", color: textPrimary }}
+                                />
+                              </div>
+                              <div style={{ maxHeight: 280, overflowY: "auto" }}>
+                                {/* All Events option */}
+                                {"All Event Orders".toLowerCase().includes(eventSearch.toLowerCase()) && (
+                                  <button
+                                    type="button"
+                                    onClick={() => { setSchoolFilter("event"); setEventDropdownOpen(false); setEventSearch(""); }}
+                                    style={{ width: "100%", display: "flex", justifyContent: "space-between", alignItems: "center", padding: "11px 14px", background: schoolFilter === "event" ? "#fff5f5" : "#fff", border: "none", cursor: "pointer", fontSize: 13, fontWeight: schoolFilter === "event" ? 800 : 500, color: schoolFilter === "event" ? "#cc0000" : textPrimary, textAlign: "left" }}
+                                  >
+                                    <span>All Event Orders</span>
+                                    <span style={{ fontSize: 11, background: "#f3f4f6", borderRadius: 999, padding: "1px 8px", color: textMuted }}>{orders.filter((o) => !o.school_id).length}</span>
+                                  </button>
+                                )}
+                                {/* Individual event projects */}
+                                {eventProjects
+                                  .filter((p) => {
+                                    const label = [p.title, p.client_name].filter(Boolean).join(" ");
+                                    return label.toLowerCase().includes(eventSearch.toLowerCase());
+                                  })
+                                  .map((proj) => {
+                                    const isSelected = schoolFilter === `event:${proj.id}`;
+                                    const orderCount = orders.filter((o) => o.project_id === proj.id).length;
+                                    return (
+                                      <button
+                                        key={proj.id}
+                                        type="button"
+                                        onClick={() => { setSchoolFilter(`event:${proj.id}`); setEventDropdownOpen(false); setEventSearch(""); }}
+                                        style={{ width: "100%", display: "flex", justifyContent: "space-between", alignItems: "center", padding: "11px 14px", background: isSelected ? "#fff5f5" : "#fff", border: "none", borderTop: `1px solid #f5f5f5`, cursor: "pointer", fontSize: 13, fontWeight: isSelected ? 800 : 500, color: isSelected ? "#cc0000" : textPrimary, textAlign: "left", gap: 8 }}
+                                      >
+                                        <div style={{ minWidth: 0 }}>
+                                          <div style={{ fontWeight: isSelected ? 800 : 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{proj.title}</div>
+                                          {proj.client_name && <div style={{ fontSize: 11, color: textMuted, marginTop: 1 }}>{proj.client_name}</div>}
+                                        </div>
+                                        <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+                                          <span style={{ fontSize: 11, background: "#f3f4f6", borderRadius: 999, padding: "1px 8px", color: textMuted }}>{orderCount}</span>
+                                          {proj.portal_status === "active" && <span style={{ fontSize: 10, background: "#f0fdf4", color: "#16a34a", borderRadius: 999, padding: "1px 7px", fontWeight: 700 }}>Live</span>}
+                                        </div>
+                                      </button>
+                                    );
+                                  })}
+                                {eventProjects.filter((p) => [p.title, p.client_name].filter(Boolean).join(" ").toLowerCase().includes(eventSearch.toLowerCase())).length === 0 &&
+                                  !("All Event Orders".toLowerCase().includes(eventSearch.toLowerCase())) && (
+                                  <div style={{ padding: "12px 14px", fontSize: 13, color: textMuted }}>No events match "{eventSearch}"</div>
+                                )}
+                              </div>
+                            </div>
                           )}
-                        </div>
-                      </div>
-                    )}
+                        </>
+                      );
+                    })()}
                   </div>
                 )}
 
