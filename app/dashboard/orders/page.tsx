@@ -366,7 +366,7 @@ export default function OrdersPage() {
   const supabase = createClient();
   const [loading, setLoading] = useState(true);
   const [orders, setOrders] = useState<Order[]>([]);
-  const [filter, setFilter] = useState<string>("all");
+  const [filter, setFilter] = useState<string>("new");
   const [selected, setSelected] = useState<Order | null>(null);
   const [updatingId, setUpdatingId] = useState<string | null>(null);
   const [userEmail, setUserEmail] = useState("");
