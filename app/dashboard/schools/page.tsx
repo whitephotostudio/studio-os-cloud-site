@@ -1,100 +1,250 @@
-// app/dashboard/schools/page.tsx
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { Logo } from "@/components/logo";
-import { LogOut, School, ChevronDown, Check } from "lucide-react";
+import { GraduationCap, Images, LogOut, School } from "lucide-react";
 
-type School = {
+type SchoolRow = {
   id: string;
   school_name: string;
   photographer_id: string | null;
   package_profile_id: string | null;
-  created_at: string;
+  local_school_id: string | null;
+  created_at: string | null;
 };
 
-type Profile = {
+type StudentRow = {
+  school_id: string;
+  class_name: string | null;
+  role: string | null;
+  photo_url: string | null;
+};
+
+type SchoolCard = {
   id: string;
-  name: string;
+  school_name: string;
+  local_school_id: string | null;
+  created_at: string | null;
+  peopleCount: number;
+  classesCount: number;
+  imagesCount: number;
+};
+
+type ProjectRow = {
+  id: string;
+  title: string | null;
+  workflow_type: string | null;
+  linked_local_school_id: string | null;
 };
 
 const sidebar: React.CSSProperties = {
-  width: 220, minHeight: "100vh", background: "#000",
-  display: "flex", flexDirection: "column",
+  width: 220,
+  minHeight: "100vh",
+  background: "#000",
+  display: "flex",
+  flexDirection: "column",
 };
+
 const navItem: React.CSSProperties = {
-  padding: "12px 24px", fontSize: 14, color: "#ccc",
-  textDecoration: "none", display: "block",
+  padding: "12px 24px",
+  fontSize: 14,
+  color: "#ccc",
+  textDecoration: "none",
+  display: "block",
 };
-const navActive: React.CSSProperties = { ...navItem, color: "#fff", background: "#1a1a1a" };
+
+const navActive: React.CSSProperties = {
+  ...navItem,
+  color: "#fff",
+  background: "#1a1a1a",
+};
+
+function clean(value: string | null | undefined) {
+  return (value ?? "").trim();
+}
+
+function normalizeRole(rawRole: string | null | undefined): string {
+  const role = clean(rawRole).toLowerCase();
+  if (!role) return "Unassigned";
+  if (role === "student" || role === "students") return "Student";
+  if (role === "teacher" || role === "teachers") return "Teacher";
+  if (role === "coach" || role === "coaches") return "Coach";
+  if (role === "principal" || role === "principle") return "Principal";
+  if (role === "office staff" || role === "office" || role === "admin" || role === "administrator") {
+    return "Office Staff";
+  }
+  if (role === "staff") return "Staff";
+  return clean(rawRole) || "Unassigned";
+}
+
+function isStudentLike(role: string, className: string) {
+  if (className) return true;
+  return role === "Student";
+}
+
+function formatDate(value: string | null) {
+  if (!value) return "No date";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return "No date";
+  return d.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
+function gradientForSchool(title: string) {
+  const gradients = [
+    "linear-gradient(135deg,#0f172a,#1d4ed8)",
+    "linear-gradient(135deg,#111827,#065f46)",
+    "linear-gradient(135deg,#1f2937,#7c3aed)",
+    "linear-gradient(135deg,#172554,#0f766e)",
+  ];
+
+  let hash = 0;
+  for (let i = 0; i < title.length; i++) {
+    hash = title.charCodeAt(i) + ((hash << 5) - hash);
+  }
+
+  return gradients[Math.abs(hash) % gradients.length];
+}
 
 export default function SchoolsPage() {
   const supabase = createClient();
-  const [schools, setSchools] = useState<School[]>([]);
-  const [profiles, setProfiles] = useState<Profile[]>([]);
+  const [schools, setSchools] = useState<SchoolCard[]>([]);
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState<string | null>(null);
-  const [saved, setSaved] = useState<string | null>(null);
-  const [openDropdown, setOpenDropdown] = useState<string | null>(null);
+  const [error, setError] = useState("");
+  const [userEmail, setUserEmail] = useState("");
 
   useEffect(() => {
-    loadData();
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  async function loadData() {
+  async function load() {
     setLoading(true);
+    setError("");
 
-    // Load schools (deduplicated by name, keep latest)
-    const { data: schoolData } = await supabase
-      .from("schools")
-      .select("id, school_name, photographer_id, package_profile_id, created_at")
-      .order("school_name");
+    try {
+      const {
+        data: { user },
+        error: userErr,
+      } = await supabase.auth.getUser();
 
-    // Deduplicate by school_name keeping the one with package_profile_id set, or latest
-    const seen = new Map<string, School>();
-    for (const s of schoolData ?? []) {
-      const key = s.school_name?.toLowerCase().trim();
-      if (!seen.has(key) || s.package_profile_id) {
-        seen.set(key, s);
+      if (userErr) throw userErr;
+      if (!user) {
+        window.location.href = "/sign-in";
+        return;
       }
-    }
-    setSchools(Array.from(seen.values()));
 
-    // Load unique profiles from packages table
-    const { data: pkgData } = await supabase
-      .from("packages")
-      .select("profile_id, profile_name");
+      setUserEmail(user.email ?? "");
 
-    const profileMap = new Map<string, string>();
-    for (const p of pkgData ?? []) {
-      if (p.profile_id && p.profile_name) {
-        profileMap.set(p.profile_id, p.profile_name);
+      const { data: photographerRow, error: photographerErr } = await supabase
+        .from("photographers")
+        .select("id")
+        .eq("user_id", user.id)
+        .maybeSingle();
+
+      if (photographerErr) throw photographerErr;
+      if (!photographerRow?.id) {
+        setSchools([]);
+        setLoading(false);
+        return;
       }
-    }
-    setProfiles(Array.from(profileMap.entries()).map(([id, name]) => ({ id, name })));
 
-    setLoading(false);
-  }
-
-  async function assignProfile(schoolId: string, profileId: string | null) {
-    setSaving(schoolId);
-    
-    // Update ALL schools with same name (handles Flutter duplicates)
-    const school = schools.find(s => s.id === schoolId);
-    if (school) {
-      await supabase
+      const { data: schoolRows, error: schoolErr } = await supabase
         .from("schools")
-        .update({ package_profile_id: profileId })
-        .eq("school_name", school.school_name);
-    }
+        .select("id,school_name,photographer_id,package_profile_id,local_school_id,created_at")
+        .eq("photographer_id", photographerRow.id)
+        .order("created_at", { ascending: false });
 
-    setSaving(null);
-    setSaved(schoolId);
-    setOpenDropdown(null);
-    setTimeout(() => setSaved(null), 2000);
-    loadData();
+      if (schoolErr) throw schoolErr;
+
+      const rawSchools = (schoolRows ?? []) as SchoolRow[];
+
+      const { data: projectRows } = await supabase
+        .from("projects")
+        .select("id,title,workflow_type,linked_local_school_id")
+        .eq("photographer_id", photographerRow.id)
+        .eq("workflow_type", "event");
+
+      const eventProjects = (projectRows ?? []) as ProjectRow[];
+      const blockedLocalIds = new Set(
+        eventProjects.map((p) => clean(p.linked_local_school_id)).filter(Boolean)
+      );
+      const blockedTitles = new Set(
+        eventProjects.map((p) => clean(p.title).toLowerCase()).filter(Boolean)
+      );
+
+      const deduped = new Map<string, SchoolRow>();
+
+      for (const school of rawSchools) {
+        const localId = clean(school.local_school_id);
+        const nameKey = clean(school.school_name).toLowerCase();
+        if (localId && blockedLocalIds.has(localId)) continue;
+        if (nameKey && blockedTitles.has(nameKey)) continue;
+        const key = localId || nameKey;
+        if (!key) continue;
+        if (!deduped.has(key)) deduped.set(key, school);
+      }
+
+      const uniqueSchools = Array.from(deduped.values());
+      if (uniqueSchools.length === 0) {
+        setSchools([]);
+        setLoading(false);
+        return;
+      }
+
+      const schoolIds = uniqueSchools.map((s) => s.id);
+      const { data: peopleRows, error: peopleErr } = await supabase
+        .from("students")
+        .select("school_id,class_name,role,photo_url")
+        .in("school_id", schoolIds);
+
+      if (peopleErr) throw peopleErr;
+
+      const people = (peopleRows ?? []) as StudentRow[];
+      const stats = new Map<string, { peopleCount: number; imagesCount: number; classNames: Set<string> }>();
+
+      for (const school of uniqueSchools) {
+        stats.set(school.id, { peopleCount: 0, imagesCount: 0, classNames: new Set<string>() });
+      }
+
+      for (const row of people) {
+        const stat = stats.get(row.school_id);
+        if (!stat) continue;
+        stat.peopleCount += 1;
+        if (clean(row.photo_url)) stat.imagesCount += 1;
+
+        const className = clean(row.class_name);
+        const role = normalizeRole(row.role);
+        if (className && isStudentLike(role, className)) {
+          stat.classNames.add(className);
+        }
+      }
+
+      const cards = uniqueSchools.map<SchoolCard>((school) => {
+        const stat = stats.get(school.id);
+        return {
+          id: school.id,
+          school_name: school.school_name,
+          local_school_id: school.local_school_id,
+          created_at: school.created_at,
+          peopleCount: stat?.peopleCount ?? 0,
+          classesCount: stat?.classNames.size ?? 0,
+          imagesCount: stat?.imagesCount ?? 0,
+        };
+      });
+
+      setSchools(cards);
+    } catch (err) {
+      console.error("[schools] load error:", err);
+      setError(err instanceof Error ? err.message : "Failed to load schools");
+    } finally {
+      setLoading(false);
+    }
   }
 
   async function signOut() {
@@ -102,134 +252,122 @@ export default function SchoolsPage() {
     window.location.href = "/sign-in";
   }
 
-  const getProfileName = (profileId: string | null) => {
-    if (!profileId) return null;
-    return profiles.find(p => p.id === profileId)?.name ?? null;
-  };
+  const sortedSchools = useMemo(
+    () => [...schools].sort((a, b) => a.school_name.localeCompare(b.school_name)),
+    [schools]
+  );
+  const [hoveredSchoolId, setHoveredSchoolId] = useState<string | null>(null);
 
   return (
-    <div style={{ display: "flex", minHeight: "100vh", background: "#f0f0f0" }}>
-      {/* Sidebar */}
+    <div style={{ display: "flex", minHeight: "100vh", background: "#f3f4f6" }}>
       <div style={sidebar}>
         <div style={{ background: "#fff", padding: "20px 24px" }}><Logo /></div>
         <nav style={{ flex: 1, paddingTop: 16 }}>
           <Link href="/dashboard" style={navItem}>Dashboard</Link>
           <Link href="/dashboard/schools" style={navActive}>Schools</Link>
+          <Link href="/dashboard/projects/events" style={navItem}>Events</Link>
           <Link href="/dashboard/orders" style={navItem}>Orders</Link>
           <Link href="/dashboard/packages" style={navItem}>Packages</Link>
           <Link href="/dashboard/settings" style={navItem}>Settings</Link>
         </nav>
+        <div style={{ padding: "0 16px 8px", color: "#8f8f8f", fontSize: 12 }}>{userEmail}</div>
         <button onClick={signOut} style={{ margin: 16, padding: "10px", background: "transparent", border: "1px solid #333", borderRadius: 8, color: "#ccc", cursor: "pointer", display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
           <LogOut size={14} /> Sign Out
         </button>
       </div>
 
-      {/* Main */}
       <div style={{ flex: 1, padding: "40px" }}>
-        <div style={{ marginBottom: 32 }}>
+        <div style={{ marginBottom: 24 }}>
           <h1 style={{ fontSize: 26, fontWeight: 700, margin: 0, color: "#111" }}>Schools</h1>
-          <p style={{ margin: "6px 0 0", color: "#666", fontSize: 14 }}>
-            Assign a pricing profile to each school — parents will see that school's specific packages.
+          <p style={{ margin: "8px 0 0", color: "#6b7280", fontSize: 15 }}>
+            All synced schools live here. Open a school to view classes, roles, and images.
           </p>
         </div>
 
-        {loading ? (
-          <div style={{ textAlign: "center", padding: 60, color: "#666" }}>Loading...</div>
-        ) : schools.length === 0 ? (
-          <div style={{ textAlign: "center", padding: 60, background: "#fff", borderRadius: 12, border: "2px dashed #e5e5e5" }}>
-            <School size={40} color="#ccc" style={{ marginBottom: 12 }} />
-            <p style={{ color: "#666" }}>No schools found. Sync from Flutter first.</p>
-          </div>
-        ) : (
-          <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #e5e5e5", overflow: "hidden" }}>
-            {/* Header row */}
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 200px", padding: "12px 20px", borderBottom: "1px solid #e5e5e5", background: "#f8f8f8" }}>
-              <span style={{ fontSize: 12, fontWeight: 600, color: "#666", textTransform: "uppercase", letterSpacing: "0.05em" }}>School Name</span>
-              <span style={{ fontSize: 12, fontWeight: 600, color: "#666", textTransform: "uppercase", letterSpacing: "0.05em" }}>Assigned Price Sheet</span>
-              <span style={{ fontSize: 12, fontWeight: 600, color: "#666", textTransform: "uppercase", letterSpacing: "0.05em" }}>Action</span>
-            </div>
-
-            {schools.map((school, i) => {
-              const assignedName = getProfileName(school.package_profile_id);
-              const isOpen = openDropdown === school.id;
-
-              return (
-                <div key={school.id} style={{ display: "grid", gridTemplateColumns: "1fr 1fr 200px", padding: "16px 20px", borderBottom: i < schools.length - 1 ? "1px solid #f0f0f0" : "none", alignItems: "center", position: "relative" }}>
-                  {/* School name */}
-                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                    <div style={{ width: 36, height: 36, borderRadius: 8, background: "#f0f0f0", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                      <School size={18} color="#666" />
-                    </div>
-                    <span style={{ fontWeight: 600, fontSize: 15, color: "#111" }}>{school.school_name}</span>
-                  </div>
-
-                  {/* Assigned profile */}
-                  <div>
-                    {assignedName ? (
-                      <span style={{ fontSize: 13, background: "#f0fdf4", color: "#16a34a", padding: "4px 12px", borderRadius: 20, fontWeight: 500 }}>
-                        ✓ {assignedName}
-                      </span>
-                    ) : (
-                      <span style={{ fontSize: 13, color: "#999", fontStyle: "italic" }}>No price sheet assigned</span>
-                    )}
-                  </div>
-
-                  {/* Dropdown */}
-                  <div style={{ position: "relative" }}>
-                    <button
-                      onClick={() => setOpenDropdown(isOpen ? null : school.id)}
-                      style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 14px", background: "#f5f5f5", border: "1px solid #e5e5e5", borderRadius: 8, cursor: "pointer", fontSize: 13, color: "#333", fontWeight: 500 }}
-                    >
-                      {saving === school.id ? "Saving..." : saved === school.id ? "✓ Saved!" : "Assign Price Sheet"}
-                      <ChevronDown size={14} />
-                    </button>
-
-                    {isOpen && (
-                      <div style={{ position: "absolute", top: "100%", right: 0, marginTop: 4, background: "#fff", border: "1px solid #e5e5e5", borderRadius: 10, boxShadow: "0 8px 24px rgba(0,0,0,0.12)", zIndex: 50, minWidth: 220, overflow: "hidden" }}>
-                        {/* No profile option */}
-                        <button
-                          onClick={() => assignProfile(school.id, null)}
-                          style={{ width: "100%", padding: "10px 16px", background: "none", border: "none", cursor: "pointer", textAlign: "left", fontSize: 13, color: "#666", display: "flex", alignItems: "center", gap: 8, borderBottom: "1px solid #f0f0f0" }}
-                        >
-                          <span style={{ width: 16 }}>{!school.package_profile_id ? "✓" : ""}</span>
-                          No specific profile (show all)
-                        </button>
-
-                        {profiles.length === 0 ? (
-                          <div style={{ padding: "12px 16px", fontSize: 13, color: "#999" }}>
-                            No profiles yet — sync packages from Flutter first
-                          </div>
-                        ) : (
-                          profiles.map(profile => (
-                            <button
-                              key={profile.id}
-                              onClick={() => assignProfile(school.id, profile.id)}
-                              style={{ width: "100%", padding: "10px 16px", background: school.package_profile_id === profile.id ? "#f0fdf4" : "none", border: "none", cursor: "pointer", textAlign: "left", fontSize: 13, color: "#111", display: "flex", alignItems: "center", gap: 8, fontWeight: school.package_profile_id === profile.id ? 600 : 400 }}
-                            >
-                              <span style={{ width: 16, color: "#16a34a" }}>{school.package_profile_id === profile.id ? "✓" : ""}</span>
-                              {profile.name}
-                            </button>
-                          ))
-                        )}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
+        {error && (
+          <div style={{ marginBottom: 18, background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 12, padding: "14px 18px", color: "#b91c1c", fontSize: 13 }}>
+            {error}
           </div>
         )}
 
-        {/* Info box */}
-        <div style={{ marginTop: 24, background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 10, padding: "14px 18px", fontSize: 13, color: "#92400e" }}>
-          💡 <strong>How it works:</strong> When a parent enters their PIN on the portal, they'll see only the packages assigned to their school's price sheet. If no price sheet is assigned, all active packages will be shown.
-        </div>
-      </div>
+        {loading ? (
+          <div style={{ textAlign: "center", padding: 60, color: "#666" }}>Loading schools...</div>
+        ) : sortedSchools.length === 0 ? (
+          <div style={{ textAlign: "center", padding: 60, background: "#fff", borderRadius: 16, border: "2px dashed #e5e7eb" }}>
+            <School size={42} color="#c4c4c4" style={{ marginBottom: 12 }} />
+            <p style={{ color: "#666", margin: 0 }}>No schools found yet. Sync from Studio OS app first.</p>
+          </div>
+        ) : (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(320px,1fr))", gap: 20 }}>
+            {sortedSchools.map((school) => {
+              const href = `/dashboard/projects/schools/${school.id}`;
+              const hovered = hoveredSchoolId === school.id;
+              return (
+              <Link
+                key={school.id}
+                href={href}
+                onMouseEnter={() => setHoveredSchoolId(school.id)}
+                onMouseLeave={() => setHoveredSchoolId((prev) => (prev === school.id ? null : prev))}
+                style={{
+                  background: "#fff",
+                  borderRadius: 20,
+                  overflow: "hidden",
+                  border: hovered ? "2px solid #b91c1c" : "1px solid #e5e7eb",
+                  boxShadow: "0 8px 28px rgba(15,23,42,0.06)",
+                  display: "block",
+                  textDecoration: "none",
+                  color: "inherit",
+                  transform: hovered ? "translateY(-1px)" : "translateY(0)",
+                  transition: "border-color 120ms ease, transform 120ms ease, box-shadow 120ms ease",
+                }}
+              >
+                <div style={{ background: gradientForSchool(school.school_name), color: "#fff", padding: "20px 20px 18px" }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 14 }}>
+                    <div style={{ display: "inline-flex", alignItems: "center", gap: 8, background: "rgba(255,255,255,0.14)", border: "1px solid rgba(255,255,255,0.2)", borderRadius: 999, padding: "7px 12px", fontSize: 12, fontWeight: 600 }}>
+                      <School size={14} /> School
+                    </div>
+                    <div style={{ display: "inline-flex", alignItems: "center", background: "rgba(255,255,255,0.14)", border: "1px solid rgba(255,255,255,0.2)", borderRadius: 999, padding: "7px 12px", fontSize: 12, fontWeight: 700 }}>
+                      local_school_sync
+                    </div>
+                  </div>
+                  <div style={{ fontSize: 18, fontWeight: 800, lineHeight: 1.2 }}>{school.school_name}</div>
+                  <div style={{ marginTop: 6, color: "rgba(255,255,255,0.82)", fontSize: 14 }}>Synced from Studio OS app</div>
+                </div>
 
-      {/* Close dropdowns on outside click */}
-      {openDropdown && (
-        <div onClick={() => setOpenDropdown(null)} style={{ position: "fixed", inset: 0, zIndex: 40 }} />
-      )}
+                <div style={{ padding: 18 }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(3,minmax(0,1fr))", gap: 12 }}>
+                    <div style={{ border: "1px solid #e5e7eb", borderRadius: 14, padding: 12 }}>
+                      <div style={{ color: "#6b7280", fontSize: 12, marginBottom: 8 }}>Classes</div>
+                      <div style={{ color: "#111827", fontSize: 17, fontWeight: 800 }}>{school.classesCount}</div>
+                    </div>
+                    <div style={{ border: "1px solid #e5e7eb", borderRadius: 14, padding: 12 }}>
+                      <div style={{ color: "#6b7280", fontSize: 12, marginBottom: 8 }}>People</div>
+                      <div style={{ color: "#111827", fontSize: 17, fontWeight: 800 }}>{school.peopleCount}</div>
+                    </div>
+                    <div style={{ border: "1px solid #e5e7eb", borderRadius: 14, padding: 12 }}>
+                      <div style={{ color: "#6b7280", fontSize: 12, marginBottom: 8 }}>Images</div>
+                      <div style={{ color: "#111827", fontSize: 17, fontWeight: 800 }}>{school.imagesCount}</div>
+                    </div>
+                  </div>
+
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 16, color: "#6b7280", fontSize: 13 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <GraduationCap size={14} /> {formatDate(school.created_at)}
+                    </div>
+                    <span style={{ color: hovered ? "#b91c1c" : "#111827", fontWeight: 700 }}>
+                      Open school ›
+                    </span>
+                  </div>
+
+                  <div style={{ display: "inline-flex", alignItems: "center", gap: 6, marginTop: 14, background: "#eff6ff", border: "1px solid #bfdbfe", color: "#2563eb", borderRadius: 999, padding: "7px 12px", fontSize: 12, fontWeight: 700 }}>
+                    <Images size={13} /> Synced school from app
+                  </div>
+                </div>
+              </Link>
+            )})}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
