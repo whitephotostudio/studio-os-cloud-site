@@ -120,6 +120,10 @@ export default function LoginForm({
     }
   }, [initialEventProjects, prefilledEventEmail, prefilledEventId, prefilledMode]);
 
+  function isSchoolPreRelease(school: SchoolRow | null) {
+    return school?.status?.toLowerCase().replaceAll("-", "_") === "pre_release";
+  }
+
   function resetErrors() {
     setLoginError("");
     setRegError("");
@@ -149,9 +153,25 @@ export default function LoginForm({
       return;
     }
     if (!schoolEmail.trim()) {
-      setLoginError("Please enter your email to open this gallery.");
+      setLoginError("Please enter your email to register for updates.");
       return;
     }
+
+    // Pre-release school: register email directly — no PIN needed
+    if (isSchoolPreRelease(selectedSchool)) {
+      setSearching(true);
+      try {
+        await fetch("/api/portal/pre-release-register", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ schoolId: selectedSchoolId, email: schoolEmail.trim().toLowerCase() }),
+        });
+      } catch { /* non-fatal */ }
+      setSchoolPrereleaseRegistered(true);
+      setSearching(false);
+      return;
+    }
+
     if (!schoolPin.trim()) {
       setLoginError("Please enter the PIN from your photo envelope.");
       return;
@@ -494,16 +514,22 @@ export default function LoginForm({
                 </div>
               </div>
 
-              <div>
-                <label style={labelStyle}>PIN</label>
-                <input
-                  value={schoolPin}
-                  onChange={(e) => setSchoolPin(e.target.value)}
-                  placeholder="Enter school PIN"
-                  required
-                  style={inputStyle}
-                />
-              </div>
+              {isSchoolPreRelease(selectedSchool) ? (
+                <div style={{ background: "#eff6ff", border: "1px solid #bfdbfe", color: "#1e40af", borderRadius: 12, padding: "13px 16px", fontSize: 13, lineHeight: 1.7 }}>
+                  <strong>This gallery isn't available yet.</strong> Enter your email and we'll send you a notification as soon as the photos are ready — no PIN needed right now.
+                </div>
+              ) : (
+                <div>
+                  <label style={labelStyle}>PIN</label>
+                  <input
+                    value={schoolPin}
+                    onChange={(e) => setSchoolPin(e.target.value)}
+                    placeholder="Enter school PIN"
+                    required={!isSchoolPreRelease(selectedSchool)}
+                    style={inputStyle}
+                  />
+                </div>
+              )}
 
               {loginError ? (
                 <div style={{ background: "#fff1f2", border: "1px solid #fecdd3", color: "#be123c", borderRadius: 12, padding: "12px 14px", fontSize: 13 }}>
@@ -522,7 +548,9 @@ export default function LoginForm({
                   disabled={searching}
                   style={{ height: 52, borderRadius: 14, border: "none", background: "#111827", color: "#fff", fontWeight: 800, fontSize: 14, cursor: "pointer" }}
                 >
-                  {searching ? "Checking access…" : "Open school gallery"}
+                  {searching
+                    ? (isSchoolPreRelease(selectedSchool) ? "Registering…" : "Checking access…")
+                    : (isSchoolPreRelease(selectedSchool) ? "Notify me when it's ready" : "Open school gallery")}
                 </button>
               )}
 
