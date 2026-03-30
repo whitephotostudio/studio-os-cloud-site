@@ -37,10 +37,7 @@ export async function POST(request: NextRequest) {
       if (error && error.code !== "23505") throw error;
 
       // Also save to general marketing captures (non-fatal)
-      await service
-        .from("portal_email_captures")
-        .insert({ email: normalizedEmail, project_id: selectedProjectId, source: "pre_release" })
-        .catch(() => null);
+      try { await service.from("portal_email_captures").insert({ email: normalizedEmail, project_id: selectedProjectId, source: "pre_release" }); } catch { /* non-fatal */ }
 
       return NextResponse.json({ ok: true });
     }
@@ -53,11 +50,7 @@ export async function POST(request: NextRequest) {
     if (error && error.code !== "23505") throw error;
 
     // Also save to general marketing captures (non-fatal)
-    await service
-      .from("portal_email_captures")
-      .insert({ email: normalizedEmail, school_id: selectedSchoolId, source: "pre_release" })
-      .then(() => null)
-      .catch(() => null);
+    try { await service.from("portal_email_captures").insert({ email: normalizedEmail, school_id: selectedSchoolId, source: "pre_release" }); } catch { /* non-fatal */ }
 
     return NextResponse.json({ ok: true });
   } catch (error) {

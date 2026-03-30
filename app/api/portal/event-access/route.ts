@@ -95,10 +95,7 @@ export async function POST(request: NextRequest) {
 
     if (portalStatus === "pre_release") {
       // Capture email for pre-release list — non-fatal, ignore duplicates
-      await service
-        .from("portal_email_captures")
-        .insert({ email: normalizedEmail, project_id: selectedEventId, source: "pre_release" })
-        .catch(() => null);
+      try { await service.from("portal_email_captures").insert({ email: normalizedEmail, project_id: selectedEventId, source: "pre_release" }); } catch { /* non-fatal */ }
 
       return NextResponse.json({
         ok: true,
@@ -186,11 +183,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Capture email for marketing — non-fatal, ignore duplicates
-    await service
-      .from("portal_email_captures")
-      .insert({ email: normalizedEmail, project_id: selectedEventId, source: "event_login" })
-      .then(() => null)
-      .catch(() => null);
+    try { await service.from("portal_email_captures").insert({ email: normalizedEmail, project_id: selectedEventId, source: "event_login" }); } catch { /* non-fatal */ }
 
     return NextResponse.json({
       ok: true,

@@ -179,10 +179,7 @@ export async function POST(request: NextRequest) {
       }
 
       // Capture email for marketing — non-fatal, ignore duplicates
-      await service
-        .from("portal_email_captures")
-        .insert({ email: selectedEmail, school_id: resolvedSchoolId, source: "school_login" })
-        .catch(() => null);
+      try { await service.from("portal_email_captures").insert({ email: selectedEmail, school_id: resolvedSchoolId, source: "school_login" }); } catch { /* non-fatal */ }
     }
 
     // ─────────────────────────────────────────────────────────────────────
