@@ -6,15 +6,17 @@
 // server-side (HTML arrives already populated) — no loading spinner,
 // no extra API round-trip on the client.
 
-import { FormEvent, useState } from "react";
+import Image from "next/image";
+import { FormEvent, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Check, ChevronDown, Images, KeyRound, Mail, School, Sparkles } from "lucide-react";
+import { Check, ChevronDown, Images, KeyRound, Mail, School } from "lucide-react";
 
 type SchoolRow = {
   id: string;
   school_name: string;
   status: string | null;
   expiration_date: string | null;
+  email_required: boolean | null;
 };
 
 type EventProjectRow = {
@@ -34,7 +36,9 @@ type Step =
   | "login"
   | "school_prerelease"
   | "school_prerelease_done"
-  | "school_closed";
+  | "school_closed"
+  | "event_prerelease"
+  | "event_prerelease_done";
 
 type SchoolAccessPayload = {
   ok?: boolean;
@@ -51,6 +55,7 @@ type SchoolAccessPayload = {
 type EventAccessPayload = {
   ok?: boolean;
   message?: string;
+  step?: Step;
   projectId?: string;
   email?: string;
   pin?: string;
@@ -63,9 +68,15 @@ function projectLabel(project: EventProjectRow) {
 export default function LoginForm({
   initialSchools,
   initialEventProjects,
+  prefilledEventId,
+  prefilledEventEmail,
+  prefilledMode,
 }: {
   initialSchools: SchoolRow[];
   initialEventProjects: EventProjectRow[];
+  prefilledEventId?: string;
+  prefilledEventEmail?: string;
+  prefilledMode?: AccessMode;
 }) {
   const router = useRouter();
 
@@ -78,6 +89,7 @@ export default function LoginForm({
 
   const [selectedSchoolId, setSelectedSchoolId] = useState("");
   const [selectedSchool, setSelectedSchool] = useState<SchoolRow | null>(null);
+  const [schoolEmail, setSchoolEmail] = useState("");
   const [schoolPin, setSchoolPin] = useState("");
 
   const [selectedEventId, setSelectedEventId] = useState("");
@@ -91,6 +103,22 @@ export default function LoginForm({
   const [regEmail, setRegEmail] = useState("");
   const [regSubmitting, setRegSubmitting] = useState(false);
   const [regError, setRegError] = useState("");
+  const [schoolPrereleaseRegistered, setSchoolPrereleaseRegistered] = useState(false);
+
+  useEffect(() => {
+    if (prefilledMode === "event" || prefilledEventId) {
+      setMode("event");
+      if (prefilledEventId) {
+        setSelectedEventId(prefilledEventId);
+        setSelectedEvent(
+          initialEventProjects.find((row) => row.id === prefilledEventId) ?? null,
+        );
+      }
+      if (prefilledEventEmail) {
+        setEventEmail(prefilledEventEmail);
+      }
+    }
+  }, [initialEventProjects, prefilledEventEmail, prefilledEventId, prefilledMode]);
 
   function resetErrors() {
     setLoginError("");
@@ -102,12 +130,14 @@ export default function LoginForm({
     setStep("login");
     setSelectedSchoolId("");
     setSelectedSchool(null);
+    setSchoolEmail("");
     setSchoolPin("");
     setSelectedEventId("");
     setSelectedEvent(null);
     setEventEmail("");
     setEventPin("");
     resetErrors();
+    setSchoolPrereleaseRegistered(false);
   }
 
   async function handleSchoolLogin(e: FormEvent<HTMLFormElement>) {
@@ -116,6 +146,10 @@ export default function LoginForm({
 
     if (!selectedSchoolId || !selectedSchool) {
       setLoginError("Please choose your school.");
+      return;
+    }
+    if (!schoolEmail.trim()) {
+      setLoginError("Please enter your email to open this gallery.");
       return;
     }
     if (!schoolPin.trim()) {
@@ -131,6 +165,7 @@ export default function LoginForm({
         body: JSON.stringify({
           schoolId: selectedSchoolId,
           pin: schoolPin.trim(),
+          email: schoolEmail.trim().toLowerCase(),
           // ✅ PERF: Ask server to also return gallery data in the same
           // response — gallery page then reads from sessionStorage instead
           // of making its own separate API call.
@@ -142,7 +177,19 @@ export default function LoginForm({
       setSearching(false);
 
       if (payload.step === "school_closed") { setStep("school_closed"); return; }
-      if (payload.step === "school_prerelease") { setStep("school_prerelease"); return; }
+      if (payload.step === "school_prerelease") {
+        // Auto-register with the email already entered — no second screen
+        try {
+          await fetch("/api/portal/pre-release-register", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ schoolId: selectedSchoolId, email: schoolEmail.trim().toLowerCase() }),
+          });
+        } catch { /* non-fatal */ }
+        setSchoolPrereleaseRegistered(true);
+        setSearching(false);
+        return;
+      }
 
       if (!response.ok || payload.ok === false || !payload.schoolId || !payload.pin) {
         setLoginError(payload.message || "No gallery was found for that school and PIN.");
@@ -165,7 +212,7 @@ export default function LoginForm({
       // window.location.href (full page reload) — avoids re-downloading
       // the JS bundle and re-running layout code.
       router.push(
-        `/parents/${encodeURIComponent(payload.pin)}?mode=school&school=${encodeURIComponent(payload.schoolId)}`,
+        `/parents/${encodeURIComponent(payload.pin)}?mode=school&school=${encodeURIComponent(payload.schoolId)}&email=${encodeURIComponent(schoolEmail.trim().toLowerCase())}`,
       );
     } catch (error) {
       setSearching(false);
@@ -185,7 +232,7 @@ export default function LoginForm({
       setLoginError("Please enter the email the photographer sent the invite to.");
       return;
     }
-    if (!eventPin.trim()) {
+    if (selectedEvent.portal_status !== "pre_release" && !eventPin.trim()) {
       setLoginError("Please enter your event access PIN.");
       return;
     }
@@ -205,6 +252,12 @@ export default function LoginForm({
       const payload = (await response.json()) as EventAccessPayload;
       setSearching(false);
 
+      if (payload.step === "event_prerelease") {
+        setRegEmail(eventEmail.trim().toLowerCase());
+        setStep("event_prerelease");
+        return;
+      }
+
       if (!response.ok || payload.ok === false || !payload.projectId || !payload.email || !payload.pin) {
         setLoginError(payload.message || "No event gallery was found for that email and PIN.");
         return;
@@ -218,6 +271,35 @@ export default function LoginForm({
       setSearching(false);
       setLoginError(error instanceof Error ? error.message : "No event gallery was found for that email and PIN.");
     }
+  }
+
+  async function handleEventPreReleaseRegister(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    setRegSubmitting(true);
+    setRegError("");
+    try {
+      const response = await fetch("/api/portal/pre-release-register", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          projectId: selectedEventId,
+          email: regEmail.trim().toLowerCase(),
+        }),
+      });
+
+      const payload = (await response.json()) as { ok?: boolean; message?: string };
+      setRegSubmitting(false);
+
+      if (!response.ok || payload.ok === false) {
+        setRegError(payload.message || "Something went wrong. Please try again.");
+        return;
+      }
+    } catch (error) {
+      setRegSubmitting(false);
+      setRegError(error instanceof Error ? error.message : "Something went wrong. Please try again.");
+      return;
+    }
+    setStep("event_prerelease_done");
   }
 
   async function handleSchoolPreReleaseRegister(e: FormEvent<HTMLFormElement>) {
@@ -360,8 +442,10 @@ export default function LoginForm({
           </h1>
           <p style={{ fontSize: 14, color: "#667085", margin: "0 0 28px", lineHeight: 1.7, textAlign: "center" }}>
             {mode === "school"
-              ? "Choose your school and enter the PIN from your child's photo envelope."
-              : "Choose your event, then enter the email and PIN the photographer provided."}
+              ? "Choose your school, then enter your email and the PIN from your child's photo envelope."
+              : selectedEvent?.portal_status === "pre_release"
+                ? "Choose your event and enter your email to join the gallery release list."
+                : "Choose your event, then enter the email and PIN the photographer provided."}
           </p>
 
           {mode === "school" ? (
@@ -372,8 +456,9 @@ export default function LoginForm({
                   <select
                     value={selectedSchoolId}
                     onChange={(e) => {
+                      const nextSchool = schools.find((s) => s.id === e.target.value) ?? null;
                       setSelectedSchoolId(e.target.value);
-                      setSelectedSchool(schools.find((s) => s.id === e.target.value) ?? null);
+                      setSelectedSchool(nextSchool);
                       resetErrors();
                     }}
                     required
@@ -395,6 +480,21 @@ export default function LoginForm({
               </div>
 
               <div>
+                <label style={labelStyle}>Email</label>
+                <div style={{ position: "relative" }}>
+                  <Mail size={16} color="#98a2b3" style={{ position: "absolute", left: 14, top: 17 }} />
+                  <input
+                    type="email"
+                    value={schoolEmail}
+                    onChange={(e) => setSchoolEmail(e.target.value)}
+                    placeholder="Enter your email"
+                    required
+                    style={{ ...inputStyle, paddingLeft: 42 }}
+                  />
+                </div>
+              </div>
+
+              <div>
                 <label style={labelStyle}>PIN</label>
                 <input
                   value={schoolPin}
@@ -411,13 +511,21 @@ export default function LoginForm({
                 </div>
               ) : null}
 
-              <button
-                type="submit"
-                disabled={searching}
-                style={{ height: 52, borderRadius: 14, border: "none", background: "#111827", color: "#fff", fontWeight: 800, fontSize: 14, cursor: "pointer" }}
-              >
-                {searching ? "Checking access…" : "Open school gallery"}
-              </button>
+              {schoolPrereleaseRegistered ? (
+                <div style={{ background: "#ecfdf3", border: "1px solid #6ee7b7", color: "#065f46", borderRadius: 14, padding: "16px 18px", fontSize: 14, lineHeight: 1.6, textAlign: "center" }}>
+                  <div style={{ fontWeight: 800, marginBottom: 4 }}>You're on the list!</div>
+                  We'll notify you at <strong>{schoolEmail.trim().toLowerCase()}</strong> when this gallery goes live.
+                </div>
+              ) : (
+                <button
+                  type="submit"
+                  disabled={searching}
+                  style={{ height: 52, borderRadius: 14, border: "none", background: "#111827", color: "#fff", fontWeight: 800, fontSize: 14, cursor: "pointer" }}
+                >
+                  {searching ? "Checking access…" : "Open school gallery"}
+                </button>
+              )}
+
             </form>
           ) : (
             <form onSubmit={handleEventLogin} style={{ display: "flex", flexDirection: "column", gap: 16 }}>
@@ -451,10 +559,16 @@ export default function LoginForm({
                 </div>
               </div>
 
-              <div>
-                <label style={labelStyle}>Event PIN</label>
-                <input value={eventPin} onChange={(e) => setEventPin(e.target.value)} placeholder="Enter event access PIN" required style={inputStyle} />
-              </div>
+              {selectedEvent?.portal_status === "pre_release" ? (
+                <div style={{ background: "#f8fafc", border: "1px solid #e4e7ec", color: "#475467", borderRadius: 12, padding: "12px 14px", fontSize: 13, lineHeight: 1.7 }}>
+                  This event is still in prerelease. Register your email now and the photographer can send the live gallery link and any access PIN as soon as the album is released.
+                </div>
+              ) : (
+                <div>
+                  <label style={labelStyle}>Event PIN</label>
+                  <input value={eventPin} onChange={(e) => setEventPin(e.target.value)} placeholder="Enter event access PIN" required style={inputStyle} />
+                </div>
+              )}
 
               {loginError ? (
                 <div style={{ background: "#fff1f2", border: "1px solid #fecdd3", color: "#be123c", borderRadius: 12, padding: "12px 14px", fontSize: 13 }}>
@@ -467,17 +581,50 @@ export default function LoginForm({
                 disabled={searching}
                 style={{ height: 52, borderRadius: 14, border: "none", background: "#111827", color: "#fff", fontWeight: 800, fontSize: 14, cursor: "pointer" }}
               >
-                {searching ? "Checking access…" : "Open event gallery"}
+                {searching
+                  ? "Checking access…"
+                  : selectedEvent?.portal_status === "pre_release"
+                    ? "Join release list"
+                    : "Open event gallery"}
               </button>
             </form>
           )}
 
-          <div style={{ marginTop: 24, display: "flex", alignItems: "center", gap: 10, padding: "14px 16px", background: "#f8fafc", borderRadius: 14, color: "#475467", fontSize: 13, lineHeight: 1.6 }}>
-            {mode === "school" ? <School size={16} /> : <Sparkles size={16} />}
-            {mode === "school"
-              ? "School packages and orders stay linked to the photographer's Studio OS sync."
-              : "Event galleries can use email + PIN access while still sending orders into the same workflow."}
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              justifyContent: "center",
+              marginTop: 14,
+              gap: 6,
+            }}
+          >
+            <Image
+              src="/studio_os_logo.png"
+              alt="Studio OS Cloud"
+              width={58}
+              height={40}
+              style={{
+                width: 58,
+                height: "auto",
+                opacity: 0.96,
+              }}
+            />
+            <div
+              style={{
+                fontSize: 9,
+                lineHeight: 1.2,
+                letterSpacing: "0.14em",
+                textTransform: "uppercase",
+                color: "#6b7280",
+                fontWeight: 700,
+              }}
+            >
+              Powered by Studio OS Cloud
+            </div>
           </div>
+
         </div>
       )}
 
@@ -518,6 +665,49 @@ export default function LoginForm({
           <h1 style={{ fontSize: 26, fontWeight: 800, textAlign: "center", margin: "0 0 10px", color: "#111" }}>You're on the list</h1>
           <p style={{ textAlign: "center", color: "#667085", lineHeight: 1.7, margin: 0 }}>
             We saved your email and will send an update when the school gallery is live.
+          </p>
+        </div>
+      )}
+
+      {step === "event_prerelease" && (
+        <div style={card}>
+          <div style={{ width: 60, height: 60, borderRadius: 18, background: "#eef2ff", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 22px" }}>
+            <Mail size={26} color="#4338ca" />
+          </div>
+          <h1 style={{ fontSize: 26, fontWeight: 800, textAlign: "center", margin: "0 0 10px", color: "#111" }}>
+            {selectedEvent ? `${projectLabel(selectedEvent)} is coming soon` : "Gallery coming soon"}
+          </h1>
+          <p style={{ textAlign: "center", color: "#667085", lineHeight: 1.7, margin: "0 0 26px" }}>
+            Leave your email and the photographer can send you the gallery link and any access PIN as soon as this event is released.
+          </p>
+          <form onSubmit={handleEventPreReleaseRegister} style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+            <div>
+              <label style={labelStyle}>Email</label>
+              <input type="email" value={regEmail} onChange={(e) => setRegEmail(e.target.value)} required style={inputStyle} placeholder="name@example.com" />
+            </div>
+            {regError ? (
+              <div style={{ background: "#fff1f2", border: "1px solid #fecdd3", color: "#be123c", borderRadius: 12, padding: "12px 14px", fontSize: 13 }}>
+                {regError}
+              </div>
+            ) : null}
+            <button type="submit" disabled={regSubmitting} style={{ height: 52, borderRadius: 14, border: "none", background: "#111827", color: "#fff", fontWeight: 800, cursor: "pointer" }}>
+              {regSubmitting ? "Saving…" : "Notify me when it opens"}
+            </button>
+            <button type="button" onClick={() => setStep("login")} style={{ height: 48, borderRadius: 14, border: "1px solid #d0d5dd", background: "#fff", color: "#344054", fontWeight: 700, cursor: "pointer" }}>
+              Back
+            </button>
+          </form>
+        </div>
+      )}
+
+      {step === "event_prerelease_done" && (
+        <div style={card}>
+          <div style={{ width: 60, height: 60, borderRadius: 999, background: "#ecfdf3", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 22px" }}>
+            <Check size={28} color="#16a34a" />
+          </div>
+          <h1 style={{ fontSize: 26, fontWeight: 800, textAlign: "center", margin: "0 0 10px", color: "#111" }}>You're on the release list</h1>
+          <p style={{ textAlign: "center", color: "#667085", lineHeight: 1.7, margin: 0 }}>
+            We saved your email. Once the photographer activates the gallery, they can share the live link and any access PIN with everyone registered here.
           </p>
         </div>
       )}
