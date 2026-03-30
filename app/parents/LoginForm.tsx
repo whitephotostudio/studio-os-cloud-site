@@ -104,6 +104,7 @@ export default function LoginForm({
   const [regSubmitting, setRegSubmitting] = useState(false);
   const [regError, setRegError] = useState("");
   const [schoolPrereleaseRegistered, setSchoolPrereleaseRegistered] = useState(false);
+  const [eventPrereleaseRegistered, setEventPrereleaseRegistered] = useState(false);
 
   useEffect(() => {
     if (prefilledMode === "event" || prefilledEventId) {
@@ -142,6 +143,7 @@ export default function LoginForm({
     setEventPin("");
     resetErrors();
     setSchoolPrereleaseRegistered(false);
+    setEventPrereleaseRegistered(false);
   }
 
   async function handleSchoolLogin(e: FormEvent<HTMLFormElement>) {
@@ -249,10 +251,26 @@ export default function LoginForm({
       return;
     }
     if (!eventEmail.trim()) {
-      setLoginError("Please enter the email the photographer sent the invite to.");
+      setLoginError("Please enter your email to register for updates.");
       return;
     }
-    if (selectedEvent.portal_status !== "pre_release" && !eventPin.trim()) {
+
+    // Pre-release event: register email directly — no PIN needed
+    if (selectedEvent.portal_status?.toLowerCase().replaceAll("-", "_") === "pre_release") {
+      setSearching(true);
+      try {
+        await fetch("/api/portal/pre-release-register", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ projectId: selectedEventId, email: eventEmail.trim().toLowerCase() }),
+        });
+      } catch { /* non-fatal */ }
+      setEventPrereleaseRegistered(true);
+      setSearching(false);
+      return;
+    }
+
+    if (!eventPin.trim()) {
       setLoginError("Please enter your event access PIN.");
       return;
     }
@@ -273,8 +291,16 @@ export default function LoginForm({
       setSearching(false);
 
       if (payload.step === "event_prerelease") {
-        setRegEmail(eventEmail.trim().toLowerCase());
-        setStep("event_prerelease");
+        // Auto-register inline — no second screen
+        try {
+          await fetch("/api/portal/pre-release-register", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ projectId: selectedEventId, email: eventEmail.trim().toLowerCase() }),
+          });
+        } catch { /* non-fatal */ }
+        setEventPrereleaseRegistered(true);
+        setSearching(false);
         return;
       }
 
@@ -587,9 +613,9 @@ export default function LoginForm({
                 </div>
               </div>
 
-              {selectedEvent?.portal_status === "pre_release" ? (
-                <div style={{ background: "#f8fafc", border: "1px solid #e4e7ec", color: "#475467", borderRadius: 12, padding: "12px 14px", fontSize: 13, lineHeight: 1.7 }}>
-                  This event is still in prerelease. Register your email now and the photographer can send the live gallery link and any access PIN as soon as the album is released.
+              {selectedEvent?.portal_status?.toLowerCase().replaceAll("-", "_") === "pre_release" ? (
+                <div style={{ background: "#eff6ff", border: "1px solid #bfdbfe", color: "#1e40af", borderRadius: 12, padding: "13px 16px", fontSize: 13, lineHeight: 1.7 }}>
+                  <strong>This event gallery isn't available yet.</strong> Enter your email and we'll send you a notification as soon as the photos are ready — no PIN needed right now.
                 </div>
               ) : (
                 <div>
@@ -604,17 +630,22 @@ export default function LoginForm({
                 </div>
               ) : null}
 
-              <button
-                type="submit"
-                disabled={searching}
-                style={{ height: 52, borderRadius: 14, border: "none", background: "#111827", color: "#fff", fontWeight: 800, fontSize: 14, cursor: "pointer" }}
-              >
-                {searching
-                  ? "Checking access…"
-                  : selectedEvent?.portal_status === "pre_release"
-                    ? "Join release list"
-                    : "Open event gallery"}
-              </button>
+              {eventPrereleaseRegistered ? (
+                <div style={{ background: "#ecfdf3", border: "1px solid #6ee7b7", color: "#065f46", borderRadius: 14, padding: "16px 18px", fontSize: 14, lineHeight: 1.6, textAlign: "center" }}>
+                  <div style={{ fontWeight: 800, marginBottom: 4 }}>You're on the list!</div>
+                  We'll notify you at <strong>{eventEmail.trim().toLowerCase()}</strong> when this gallery goes live.
+                </div>
+              ) : (
+                <button
+                  type="submit"
+                  disabled={searching}
+                  style={{ height: 52, borderRadius: 14, border: "none", background: "#111827", color: "#fff", fontWeight: 800, fontSize: 14, cursor: "pointer" }}
+                >
+                  {searching
+                    ? (selectedEvent?.portal_status?.toLowerCase().replaceAll("-", "_") === "pre_release" ? "Registering…" : "Checking access…")
+                    : (selectedEvent?.portal_status?.toLowerCase().replaceAll("-", "_") === "pre_release" ? "Notify me when it's ready" : "Open event gallery")}
+                </button>
+              )}
             </form>
           )}
 
