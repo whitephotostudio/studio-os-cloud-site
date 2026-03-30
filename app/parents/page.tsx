@@ -16,6 +16,7 @@ type SchoolRow = {
   school_name: string;
   status: string | null;
   expiration_date: string | null;
+  email_required: boolean | null;
 };
 
 type EventProjectRow = {
@@ -53,7 +54,7 @@ async function getPortalChoices(): Promise<{
     const [schoolsResult, studentsResult, eventsResult] = await Promise.all([
       service
         .from("schools")
-        .select("id,school_name,status,expiration_date")
+        .select("id,school_name,status,expiration_date,email_required")
         .order("school_name"),
       // ✅ PERF: Only fetch school_id column (minimal payload)
       service.from("students").select("school_id").not("school_id", "is", null),
@@ -105,8 +106,25 @@ async function getPortalChoices(): Promise<{
   }
 }
 
-export default async function ClientPortalPage() {
+export default async function ClientPortalPage({
+  searchParams,
+}: {
+  searchParams?: Promise<{
+    mode?: string;
+    project?: string;
+    email?: string;
+  }>;
+}) {
   const { schools, eventProjects } = await getPortalChoices();
+  const resolvedSearchParams = (await searchParams) ?? {};
 
-  return <LoginForm initialSchools={schools} initialEventProjects={eventProjects} />;
+  return (
+    <LoginForm
+      initialSchools={schools}
+      initialEventProjects={eventProjects}
+      prefilledMode={resolvedSearchParams.mode === "event" ? "event" : undefined}
+      prefilledEventId={clean(resolvedSearchParams.project)}
+      prefilledEventEmail={clean(resolvedSearchParams.email)}
+    />
+  );
 }
