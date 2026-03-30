@@ -182,7 +182,6 @@ export async function POST(request: NextRequest) {
       await service
         .from("portal_email_captures")
         .insert({ email: selectedEmail, school_id: resolvedSchoolId, source: "school_login" })
-        .then(() => null)
         .catch(() => null);
     }
 

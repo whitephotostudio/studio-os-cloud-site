@@ -40,7 +40,6 @@ export async function POST(request: NextRequest) {
       await service
         .from("portal_email_captures")
         .insert({ email: normalizedEmail, project_id: selectedProjectId, source: "pre_release" })
-        .then(() => null)
         .catch(() => null);
 
       return NextResponse.json({ ok: true });
