@@ -17,10 +17,16 @@ import {
   Sparkles,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import {
+  defaultEventGallerySettings,
+  normalizeEventGallerySettings,
+  type EventGallerySettings,
+  type EventGalleryExtraSettings,
+} from "@/lib/event-gallery-settings";
 
 type SchoolRow = {
   school_name?: string | null;
-  portal_status?: string | null;
+  photographer_id?: string | null;
   status?: string | null;
   shoot_date?: string | null;
   order_due_date?: string | null;
@@ -31,8 +37,19 @@ type SchoolRow = {
   internal_notes?: string | null;
   access_mode?: string | null;
   access_pin?: string | null;
+  gallery_settings?: unknown;
 };
-type PackageProfileRow = { id: string; name?: string | null; profile_name?: string | null };
+type PackageProfileRow = {
+  id: string;
+  name?: string | null;
+  profile_name?: string | null;
+  photographer_id?: string | null;
+  created_at?: string | null;
+};
+type PackageProfilePackageRow = {
+  profile_id: string | null;
+  profile_name: string | null;
+};
 type GalleryPreset = {
   id: string;
   name: string;
@@ -40,73 +57,16 @@ type GalleryPreset = {
   values: {
     galleryLanguage: string;
     portalStatus: string;
-    emailRequired: boolean;
     checkoutContactRequired: boolean;
     packageProfileId: string;
     extras: ExtraSettings;
   };
 };
 
-type ExtraSettings = {
-  allowSocialSharing: boolean;
-  socialShareMessage: string;
-  allowBlackWhiteFiltering: boolean;
-  galleryAccess: "public" | "private";
-  passwordProtected: boolean;
-  password: string;
-  freeDigitalRuleEnabled: boolean;
-  freeDigitalAudience: "gallery" | "album" | "person";
-  freeDigitalResolution: "original" | "large" | "web";
-  freeDigitalDownloadLimit: "unlimited" | "10" | "5" | "1";
-  showDownloadAllButton: boolean;
-  watermarkDownloads: boolean;
-  includePrintRelease: boolean;
-  enableStore: boolean;
-  minimumOrderAmount: string;
-  allowCropping: boolean;
-  enableAbandonedCartEmail: boolean;
-  showBuyAllButton: boolean;
-  offerPackagesOnly: boolean;
-  allowClientToPayLater: boolean;
-  allowClientComments: boolean;
-  hideAllPhotosAlbum: boolean;
-  hideAlbumPhotoCount: boolean;
-  autoArchiveAfterExpiration: boolean;
-  sendEmailCampaign: boolean;
-  autoChooseAlbumCover: boolean;
-  autoChooseProjectCover: boolean;
-  coverSource: "first_valid" | "newest" | "oldest" | "manual";
-};
+type ExtraSettings = EventGalleryExtraSettings;
 
 const defaultExtras: ExtraSettings = {
-  allowSocialSharing: true,
-  socialShareMessage: "Check out the photos from this gallery!",
-  allowBlackWhiteFiltering: false,
-  galleryAccess: "public",
-  passwordProtected: false,
-  password: "",
-  freeDigitalRuleEnabled: false,
-  freeDigitalAudience: "gallery",
-  freeDigitalResolution: "original",
-  freeDigitalDownloadLimit: "unlimited",
-  showDownloadAllButton: false,
-  watermarkDownloads: false,
-  includePrintRelease: false,
-  enableStore: true,
-  minimumOrderAmount: "",
-  allowCropping: false,
-  enableAbandonedCartEmail: true,
-  showBuyAllButton: false,
-  offerPackagesOnly: false,
-  allowClientToPayLater: false,
-  allowClientComments: false,
-  hideAllPhotosAlbum: false,
-  hideAlbumPhotoCount: false,
-  autoArchiveAfterExpiration: false,
-  sendEmailCampaign: false,
-  autoChooseAlbumCover: true,
-  autoChooseProjectCover: true,
-  coverSource: "first_valid",
+  ...defaultEventGallerySettings.extras,
 };
 
 const sections = [
@@ -181,7 +141,7 @@ function ToggleRow({
   onChange: (next: boolean) => void;
 }) {
   return (
-    <div className="flex items-start justify-between gap-4 rounded-2xl border border-neutral-200 bg-[#faf7f7] px-4 py-4">
+    <div className="flex items-start justify-between gap-4 rounded-2xl border border-neutral-200 bg-neutral-50 px-4 py-4">
       <div>
         <div className="text-[15px] font-semibold text-neutral-900">{title}</div>
         {description ? <div className="mt-1 text-sm text-neutral-600">{description}</div> : null}
@@ -210,47 +170,93 @@ export default function SchoolSettingsPage() {
   const [expirationDate, setExpirationDate] = useState("");
   const [galleryLanguage, setGalleryLanguage] = useState("English (US)");
   const [packageProfileId, setPackageProfileId] = useState("");
-  const [emailRequired, setEmailRequired] = useState(false);
   const [checkoutContactRequired, setCheckoutContactRequired] = useState(false);
   const [internalNotes, setInternalNotes] = useState("");
-  const [schoolAccessMode, setSchoolAccessMode] = useState<'public' | 'pin'>('public');
-  const [schoolPin, setSchoolPin] = useState('');
   const [extras, setExtras] = useState<ExtraSettings>(defaultExtras);
+  const [fullGallerySettings, setFullGallerySettings] = useState<EventGallerySettings>(
+    defaultEventGallerySettings,
+  );
 
   const storageKey = `studioos_school_settings_${schoolId}`;
 
   const loadAll = useCallback(async () => {
     setLoading(true);
 
-    const [{ data: schoolData }, packageResult] = await Promise.all([
+    const [{ data: schoolData }] = await Promise.all([
       supabase.from("schools").select("*").eq("id", schoolId).maybeSingle(),
-      supabase.from("package_profiles").select("id,name,profile_name").order("created_at", { ascending: false }),
     ]);
+
+    let nextPackageProfiles: PackageProfileRow[] = [];
+
+    if (schoolData?.photographer_id) {
+      const [profileResult, packagesResult] = await Promise.all([
+        supabase
+          .from("package_profiles")
+          .select("id,name,photographer_id,created_at")
+          .eq("photographer_id", schoolData.photographer_id)
+          .order("created_at", { ascending: false }),
+        supabase
+          .from("packages")
+          .select("profile_id,profile_name")
+          .eq("photographer_id", schoolData.photographer_id)
+          .order("profile_name"),
+      ]);
+
+      const rawProfiles = (profileResult.data ?? []) as PackageProfileRow[];
+      const rawPackages = (packagesResult.data ?? []) as PackageProfilePackageRow[];
+      const seenProfileIds = new Set(rawProfiles.map((profile) => profile.id).filter(Boolean));
+
+      nextPackageProfiles = [...rawProfiles];
+
+      for (const pkg of rawPackages) {
+        const profileId = (pkg.profile_id ?? "").trim();
+        if (!profileId || seenProfileIds.has(profileId)) continue;
+        seenProfileIds.add(profileId);
+        nextPackageProfiles.push({
+          id: profileId,
+          name: pkg.profile_name ?? profileId,
+          profile_name: pkg.profile_name ?? profileId,
+          photographer_id: schoolData.photographer_id,
+          created_at: null,
+        });
+      }
+    }
 
     if (schoolData) {
       setSchoolName(schoolData.school_name || "");
-      setPortalStatus(schoolData.portal_status || schoolData.status || "inactive");
+      setPortalStatus(schoolData.status || "inactive");
       setShootDate(schoolData.shoot_date || "");
       setOrderDueDate(schoolData.order_due_date || "");
       setExpirationDate(schoolData.expiration_date || "");
       setPackageProfileId(schoolData.package_profile_id || "");
-      setEmailRequired(Boolean(schoolData.email_required));
       setCheckoutContactRequired(Boolean(schoolData.checkout_contact_required));
       setInternalNotes(schoolData.internal_notes || "");
-      setSchoolAccessMode(schoolData.access_mode === 'pin' ? 'pin' : 'public');
-      setSchoolPin(schoolData.access_pin || '');
+      const storedSettings = normalizeEventGallerySettings(schoolData.gallery_settings);
+      setFullGallerySettings(storedSettings);
+      setGalleryLanguage(storedSettings.galleryLanguage);
+      setExtras({
+        ...defaultExtras,
+        ...storedSettings.extras,
+      });
     }
 
-    setPackageProfiles((packageResult.data as PackageProfileRow[] | null) || []);
+    setPackageProfiles(nextPackageProfiles);
 
-    try {
-      const raw = window.localStorage.getItem(storageKey);
-      if (raw) {
-        const parsed = JSON.parse(raw) as Partial<ExtraSettings> & { galleryLanguage?: string };
-        setExtras({ ...defaultExtras, ...parsed });
-        if (parsed.galleryLanguage) setGalleryLanguage(parsed.galleryLanguage);
-      }
-    } catch {}
+    if (!schoolData?.gallery_settings) {
+      try {
+        const raw = window.localStorage.getItem(storageKey);
+        if (raw) {
+          const parsed = JSON.parse(raw) as Partial<ExtraSettings> & { galleryLanguage?: string };
+          setExtras({ ...defaultExtras, ...parsed });
+          if (parsed.galleryLanguage) setGalleryLanguage(parsed.galleryLanguage);
+          setFullGallerySettings((prev) => ({
+            ...prev,
+            galleryLanguage: parsed.galleryLanguage || prev.galleryLanguage,
+            extras: { ...prev.extras, ...parsed },
+          }));
+        }
+      } catch {}
+    }
 
     setLoading(false);
   }, [schoolId, storageKey, supabase]);
@@ -271,14 +277,63 @@ export default function SchoolSettingsPage() {
     setSaving(true);
     setSaveNotice(null);
 
-    const payload: Partial<SchoolRow> = {
-      school_name: schoolName || null,
-      package_profile_id: packageProfileId || null,
+    const nextGallerySettings: EventGallerySettings = {
+      ...fullGallerySettings,
+      galleryLanguage,
+      extras: {
+        ...fullGallerySettings.extras,
+        ...extras,
+      },
     };
 
-    const { error } = await supabase.from("schools").update(payload).eq("id", schoolId);
+    const payload: Partial<SchoolRow> = {
+      school_name: schoolName || null,
+      status: portalStatus || null,
+      shoot_date: shootDate || null,
+      order_due_date: orderDueDate || null,
+      expiration_date: expirationDate || null,
+      package_profile_id: packageProfileId || null,
+      email_required: true,
+      checkout_contact_required: checkoutContactRequired,
+      internal_notes: internalNotes || null,
+      gallery_settings: nextGallerySettings,
+    };
 
-    if (!error) {
+    try {
+      const response = await fetch(`/api/dashboard/schools/${schoolId}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const rawResult = await response.text();
+      let result = {} as {
+        ok?: boolean;
+        message?: string;
+        emailSummary?: {
+          attempted: number;
+          sent: number;
+          failed: number;
+          warning?: string | null;
+          type?: "campaign" | "gallery_release";
+        } | null;
+      };
+      if (rawResult) {
+        try {
+          result = JSON.parse(rawResult) as typeof result;
+        } catch {
+          result = {};
+        }
+      }
+
+      if (!response.ok || result.ok === false) {
+        const fallbackMessage =
+          rawResult && !rawResult.trim().startsWith("<")
+            ? rawResult.trim()
+            : "Failed to save school settings.";
+        throw new Error(result.message || fallbackMessage);
+      }
+
+      setFullGallerySettings(nextGallerySettings);
       try {
         window.localStorage.setItem(
           storageKey,
@@ -286,21 +341,28 @@ export default function SchoolSettingsPage() {
             ...extras,
             galleryLanguage,
             portalStatus,
-            emailRequired,
             checkoutContactRequired,
             shootDate,
             orderDueDate,
             expirationDate,
             internalNotes,
-            schoolAccessMode,
-            schoolPin,
           })
         );
       } catch {}
-      setSaveNotice("Saved");
+      if (result.emailSummary?.warning) {
+        setSaveNotice(`Saved · ${result.emailSummary.warning}`);
+      } else if (result.emailSummary && result.emailSummary.attempted > 0) {
+        setSaveNotice(
+          `Saved · ${result.emailSummary.sent} email${result.emailSummary.sent === 1 ? "" : "s"} sent`,
+        );
+      } else if (result.emailSummary && result.emailSummary.attempted === 0) {
+        setSaveNotice("Saved · No campaign recipients yet");
+      } else {
+        setSaveNotice("Saved");
+      }
       setTimeout(() => setSaveNotice(null), 2500);
-    } else {
-      alert(error.message);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Failed to save school settings.");
     }
 
     setSaving(false);
@@ -319,7 +381,6 @@ export default function SchoolSettingsPage() {
         values: {
           galleryLanguage,
           portalStatus,
-          emailRequired,
           checkoutContactRequired,
           packageProfileId,
           extras,
@@ -334,18 +395,18 @@ export default function SchoolSettingsPage() {
   }
 
   if (loading) {
-    return <div className="flex min-h-screen items-center justify-center bg-[#faf7f7] text-sm text-neutral-600">Loading settings...</div>;
+    return <div className="flex min-h-screen items-center justify-center bg-[#f5f5f5] text-sm text-neutral-600">Loading settings...</div>;
   }
 
   const statusOptions = [
     { value: "active", label: "Active" },
     { value: "inactive", label: "Inactive" },
-    { value: "pre_release", label: "Pre-Released" },
+    { value: "pre_release", label: "Pre-Release" },
     { value: "closed", label: "Closed" },
   ];
 
   return (
-    <div className="min-h-screen bg-[#faf7f7] px-4 py-6 md:px-8">
+    <div className="min-h-screen bg-[#f5f5f5] px-4 py-6 md:px-8">
       <div className="mx-auto max-w-[1500px]">
         {/* Top bar */}
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
@@ -358,13 +419,13 @@ export default function SchoolSettingsPage() {
           <div className="flex flex-wrap items-center gap-3">
             {saveNotice ? <span className="inline-flex items-center gap-2 rounded-full border border-[#fecaca] bg-[#fff5f5] px-3 py-2 text-sm font-semibold text-[#b91c1c]"><Check size={16} />{saveNotice}</span> : null}
             <button onClick={() => router.push(`/dashboard/projects/schools/${schoolId}`)} className="rounded-2xl border border-neutral-300 bg-white px-5 py-2.5 text-sm font-semibold text-neutral-800 transition hover:border-neutral-400 hover:bg-neutral-50">Cancel</button>
-            <button onClick={saveAsPreset} className="rounded-2xl px-5 py-2.5 text-sm font-semibold text-neutral-800 hover:text-neutral-900">Save as a Preset</button>
-            <button onClick={saveAll} disabled={saving} className="rounded-2xl bg-[#111111] px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-[#1f1f1f] disabled:opacity-60">{saving ? "Saving..." : "Save"}</button>
+            <button onClick={saveAsPreset} className="rounded-2xl px-5 py-2.5 text-sm font-semibold text-neutral-800 transition hover:text-[#991b1b]">Save as a Preset</button>
+            <button onClick={saveAll} disabled={saving} className="rounded-2xl bg-neutral-950 px-5 py-2.5 text-sm font-semibold text-white shadow-[0_10px_20px_rgba(0,0,0,0.16)] transition hover:bg-[#991b1b] disabled:opacity-60">{saving ? "Saving..." : "Save"}</button>
           </div>
         </div>
 
         {/* Main card */}
-        <div className="overflow-hidden rounded-[30px] border border-neutral-200 bg-white shadow-[0_12px_50px_rgba(17,17,17,0.06)]">
+        <div className="overflow-hidden rounded-[30px] border border-neutral-200 bg-white shadow-[0_12px_40px_rgba(0,0,0,0.06)]">
           {/* Header with school name */}
           <div className="border-b border-neutral-200 px-6 py-5 md:px-8">
             <div className="flex flex-wrap items-center gap-3">
@@ -378,14 +439,14 @@ export default function SchoolSettingsPage() {
           {/* Two-column layout */}
           <div className="grid min-h-[820px] grid-cols-1 md:grid-cols-[300px_minmax(0,1fr)]">
             {/* Sidebar */}
-            <aside className="border-r border-neutral-200 bg-[#fcfbfb]">
+            <aside className="border-r border-neutral-200 bg-[#fafafa]">
               {/* Settings / Cover tabs */}
               <div className="grid grid-cols-2 gap-3 border-b border-neutral-200 px-5 py-5">
-                <button className="rounded-[18px] border border-[#fecaca] bg-[#fff5f5] px-4 py-5 text-center text-sm font-bold text-[#b91c1c]">
+                <button className="rounded-[18px] border border-[#7f1d1d] bg-neutral-950 px-4 py-5 text-center text-sm font-bold text-white shadow-[0_12px_24px_rgba(0,0,0,0.14)]">
                   <Settings2 className="mx-auto mb-2" size={26} />
                   Settings
                 </button>
-                <button onClick={() => router.push(`/dashboard/projects/schools/${schoolId}`)} className="rounded-[18px] border border-transparent px-4 py-5 text-center text-sm font-bold text-neutral-800 transition hover:bg-[#f5f5f5]">
+                <button onClick={() => router.push(`/dashboard/projects/schools/${schoolId}`)} className="rounded-[18px] px-4 py-5 text-center text-sm font-bold text-neutral-800 transition hover:bg-neutral-100">
                   <ImageIcon className="mx-auto mb-2" size={26} />
                   Cover
                 </button>
@@ -402,7 +463,9 @@ export default function SchoolSettingsPage() {
                       onClick={() => setActiveSection(section.key)}
                       className={cx(
                         "flex w-full items-center gap-3 rounded-[16px] px-4 py-3 text-left text-[15px] font-semibold transition",
-                        active ? "bg-[#111111] text-white" : "text-neutral-800 hover:bg-[#f5f5f5]"
+                        active
+                          ? "bg-neutral-950 text-white shadow-[0_10px_22px_rgba(0,0,0,0.14)]"
+                          : "text-neutral-800 hover:bg-neutral-100"
                       )}
                     >
                       <Icon size={18} />
@@ -443,6 +506,15 @@ export default function SchoolSettingsPage() {
                         </select>
                         <ChevronDown className="pointer-events-none absolute right-3 top-3.5 text-neutral-600" size={18} />
                       </div>
+                      {packageProfiles.length === 0 ? (
+                        <div className="mt-2 text-sm text-neutral-600">
+                          No price sheets found yet. Create one in{" "}
+                          <Link href="/dashboard/packages" className="font-semibold text-neutral-900 underline underline-offset-4">
+                            Price Sheets
+                          </Link>
+                          , then come back here to assign it to this school.
+                        </div>
+                      ) : null}
                     </Field>
                     <Field label="Gallery Language" hint="Choose the language for your gallery interface">
                       <div className="relative max-w-md">
@@ -478,8 +550,8 @@ export default function SchoolSettingsPage() {
                               <div className="mt-1 text-sm text-neutral-600">
                                 {option.value === "active" && "Active galleries are live and viewable."}
                                 {option.value === "inactive" && "Inactive galleries are not live and are not viewable."}
-                                {option.value === "pre_release" && "Collect visitor emails before the gallery is active."}
-                                {option.value === "closed" && "Gallery remains visible but ordering is closed."}
+                                {option.value === "pre_release" && "Collect parent emails before the gallery goes live, then send release emails when it is activated."}
+                                {option.value === "closed" && "Closed galleries are no longer viewable by parents."}
                               </div>
                             </div>
                           </label>
@@ -488,27 +560,28 @@ export default function SchoolSettingsPage() {
                     </div>
 
                     <div>
-                      <div className="mb-3 text-[13px] font-semibold text-neutral-800">Gallery Access</div>
+                      <div className="mb-3 text-[13px] font-semibold text-neutral-800">School Access</div>
                       <div className="space-y-4">
-                        <label className="flex items-start gap-3 rounded-2xl border border-neutral-200 px-4 py-4">
-                          <input type="radio" checked={schoolAccessMode === "public"} onChange={() => setSchoolAccessMode("public")} className="mt-1 h-5 w-5" />
-                          <div>
-                            <div className="text-[15px] font-semibold text-neutral-900">Public</div>
-                            <div className="mt-1 rounded-xl border border-[#fecaca] bg-[#fff5f5] px-4 py-3 text-sm text-[#b91c1c]">Anyone with the link can open this gallery unless a class uses its own PIN.</div>
+                        <div className="rounded-2xl border border-neutral-200 bg-neutral-50 px-4 py-4">
+                          <div className="text-[15px] font-semibold text-neutral-900">Parent email + student PIN</div>
+                          <div className="mt-1 text-sm leading-6 text-neutral-600">
+                            School galleries always ask for the parent email address and the student PIN from the photo envelope or synced school records.
                           </div>
-                        </label>
-                        <label className="flex items-start gap-3 rounded-2xl border border-neutral-200 px-4 py-4">
-                          <input type="radio" checked={schoolAccessMode === "pin"} onChange={() => setSchoolAccessMode("pin")} className="mt-1 h-5 w-5" />
-                          <div>
-                            <div className="text-[15px] font-semibold text-neutral-900">School PIN</div>
-                            <div className="mt-1 text-sm text-neutral-600">Clients must enter this PIN before opening the school gallery.</div>
+                        </div>
+                        <div className="rounded-2xl border border-[#fecaca] bg-[#fff5f5] px-4 py-4">
+                          <div className="text-[15px] font-semibold text-[#991b1b]">PINs stay synced from Studio OS App</div>
+                          <div className="mt-1 text-sm leading-6 text-[#7f1d1d]">
+                            If you need to change a student PIN, update the student record in the synced app workflow. School-wide public access and a separate school PIN are not used in this flow.
                           </div>
-                        </label>
+                        </div>
+                        <div className="rounded-2xl border border-neutral-200 bg-white px-4 py-4">
+                          <div className="text-[15px] font-semibold text-neutral-900">Prerelease email capture</div>
+                          <div className="mt-1 text-sm leading-6 text-neutral-600">
+                            When a school is in pre-release, parent emails collected from the portal are saved and used for gallery-ready release emails and later school campaigns.
+                          </div>
+                        </div>
                       </div>
                     </div>
-
-                    {schoolAccessMode === "pin" ? <input value={schoolPin} onChange={(e) => setSchoolPin(e.target.value)} className={cx("max-w-md", fieldClass)} placeholder="School PIN" /> : null}
-                    <ToggleRow title="Email required" description="Require visitors to enter their email address to view the gallery" checked={emailRequired} onChange={setEmailRequired} />
                   </Card>
                 </div>
               )}
@@ -518,7 +591,7 @@ export default function SchoolSettingsPage() {
                 <div className="space-y-6">
                   <Card title="Free Digitals/Downloads" description="Rules allow you to customize who gets to download photos for free.">
                     <div className="overflow-hidden rounded-2xl border border-neutral-200">
-                      <div className="grid grid-cols-[1.5fr_1fr_1fr_1fr] bg-[#faf7f7] px-5 py-3 text-xs font-semibold uppercase tracking-[0.12em] text-neutral-600">
+                      <div className="grid grid-cols-[1.5fr_1fr_1fr_1fr] bg-neutral-50 px-5 py-3 text-xs font-semibold uppercase tracking-[0.12em] text-neutral-600">
                         <div>Rule Name</div>
                         <div>Level</div>
                         <div>Downloads</div>
@@ -526,19 +599,18 @@ export default function SchoolSettingsPage() {
                       </div>
                       <div className="grid grid-cols-[1.5fr_1fr_1fr_1fr] px-5 py-4 text-sm text-neutral-800">
                         <div>{extras.freeDigitalRuleEnabled ? "Original" : "No active rule"}</div>
-                        <div>{extras.freeDigitalAudience === "gallery" ? "Gallery" : extras.freeDigitalAudience === "album" ? "Album" : "Person"}</div>
+                        <div>{extras.freeDigitalAudience === "gallery" ? "Gallery" : "Person"}</div>
                         <div>{extras.freeDigitalDownloadLimit === "unlimited" ? "Unlimited" : extras.freeDigitalDownloadLimit}</div>
                         <div>{extras.freeDigitalResolution === "original" ? "Original" : extras.freeDigitalResolution === "large" ? "Large" : "Web"}</div>
                       </div>
                     </div>
 
-                    <ToggleRow title="Enable free digital rule" description="Create a downloadable rule for this gallery or album." checked={extras.freeDigitalRuleEnabled} onChange={(next) => setExtra("freeDigitalRuleEnabled", next)} />
+                    <ToggleRow title="Enable free digital rule" description="Create a downloadable rule for this school gallery." checked={extras.freeDigitalRuleEnabled} onChange={(next) => setExtra("freeDigitalRuleEnabled", next)} />
                     {extras.freeDigitalRuleEnabled ? (
                       <div className="grid gap-4 md:grid-cols-2">
                         <Field label="Who should be able to download photos for free?">
                           <select value={extras.freeDigitalAudience} onChange={(e) => setExtra("freeDigitalAudience", e.target.value as ExtraSettings["freeDigitalAudience"])} className={fieldClass}>
                             <option value="gallery">All visitors to this gallery</option>
-                            <option value="album">Visitors to a specific album</option>
                             <option value="person">One specific person</option>
                           </select>
                         </Field>
@@ -557,6 +629,37 @@ export default function SchoolSettingsPage() {
                             <option value="1">1</option>
                           </select>
                         </Field>
+                        {extras.freeDigitalAudience === "person" ? (
+                          <>
+                            <Field
+                              label="Approved parent name"
+                              hint="Optional label for your own reference."
+                            >
+                              <input
+                                value={extras.freeDigitalTargetName}
+                                onChange={(e) =>
+                                  setExtra("freeDigitalTargetName", e.target.value)
+                                }
+                                className={fieldClass}
+                                placeholder="Ex. Nicole Abrahamyan"
+                              />
+                            </Field>
+                            <Field
+                              label="Approved parent email"
+                              hint="Only this email can use the free download rule."
+                            >
+                              <input
+                                value={extras.freeDigitalTargetEmail}
+                                onChange={(e) =>
+                                  setExtra("freeDigitalTargetEmail", e.target.value)
+                                }
+                                className={fieldClass}
+                                placeholder="parent@example.com"
+                                type="email"
+                              />
+                            </Field>
+                          </>
+                        ) : null}
                       </div>
                     ) : null}
                     <ToggleRow title='Show "Download All" button in gallery' checked={extras.showDownloadAllButton} onChange={(next) => setExtra("showDownloadAllButton", next)} />
@@ -580,6 +683,15 @@ export default function SchoolSettingsPage() {
                         </select>
                         <ChevronDown className="pointer-events-none absolute right-3 top-3.5 text-neutral-600" size={18} />
                       </div>
+                      {packageProfiles.length === 0 ? (
+                        <div className="mt-2 text-sm text-neutral-600">
+                          No price sheets found yet. Create one in{" "}
+                          <Link href="/dashboard/packages" className="font-semibold text-neutral-900 underline underline-offset-4">
+                            Price Sheets
+                          </Link>
+                          , then come back here to assign it to this school.
+                        </div>
+                      ) : null}
                     </Field>
                     <Field label="Minimum Order Amount (optional)" hint="Set a minimum order amount for this gallery">
                       <input value={extras.minimumOrderAmount} onChange={(e) => setExtra("minimumOrderAmount", e.target.value)} className={cx("max-w-md", fieldClass)} placeholder="ex. $20.00" />
@@ -623,11 +735,11 @@ export default function SchoolSettingsPage() {
 
                   <Card title="Cover shortcuts" description="Quick links to cover selection tools for this school and its classes.">
                     <div className="grid gap-4 md:grid-cols-2">
-                      <Link href={`/dashboard/projects/schools/${schoolId}`} className="flex items-center justify-between rounded-2xl border border-neutral-200 px-4 py-4 text-sm font-semibold text-neutral-900 transition hover:bg-[#faf7f7]">
+                      <Link href={`/dashboard/projects/schools/${schoolId}`} className="flex items-center justify-between rounded-2xl border border-neutral-200 px-4 py-4 text-sm font-semibold text-neutral-900 transition hover:bg-neutral-50">
                         <div className="flex items-center gap-3"><ImageIcon size={18} />Choose school cover</div>
                         <ArrowLeft className="rotate-180" size={16} />
                       </Link>
-                      <Link href={`/dashboard/projects/schools/${schoolId}`} className="flex items-center justify-between rounded-2xl border border-neutral-200 px-4 py-4 text-sm font-semibold text-neutral-900 transition hover:bg-[#faf7f7]">
+                      <Link href={`/dashboard/projects/schools/${schoolId}`} className="flex items-center justify-between rounded-2xl border border-neutral-200 px-4 py-4 text-sm font-semibold text-neutral-900 transition hover:bg-neutral-50">
                         <div className="flex items-center gap-3"><FolderOpen size={18} />Open class manager</div>
                         <ArrowLeft className="rotate-180" size={16} />
                       </Link>
