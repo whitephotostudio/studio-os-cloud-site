@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createDashboardServiceClient } from "@/lib/dashboard-auth";
+import { normalizeEventGallerySettings } from "@/lib/event-gallery-settings";
+import { buildSchoolGalleryDownloadAccess } from "@/lib/school-gallery-downloads";
 
 export const dynamic = "force-dynamic";
 
@@ -8,6 +10,10 @@ type SchoolRow = {
   school_name: string;
   status: string | null;
   expiration_date: string | null;
+  access_mode?: string | null;
+  access_pin?: string | null;
+  email_required?: boolean | null;
+  gallery_settings?: unknown;
 };
 
 type PackageRow = {
@@ -37,11 +43,20 @@ function clean(value: string | null | undefined) {
   return (value ?? "").trim();
 }
 
+function normalizedSchoolStatus(value: string | null | undefined) {
+  return clean(value).toLowerCase().replaceAll("-", "_");
+}
+
+function looksLikeEmail(value: string | null | undefined) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(clean(value));
+}
+
 export async function POST(request: NextRequest) {
   try {
     const body = (await request.json()) as {
       schoolId?: string;
       pin?: string;
+      email?: string;
       // ✅ PERF: When true, also fetch packages/backdrops/photographer in
       // the same request so the gallery page can skip its own API call.
       prefetch?: boolean;
@@ -49,6 +64,7 @@ export async function POST(request: NextRequest) {
 
     const selectedSchoolId = clean(body.schoolId);
     const selectedPin = clean(body.pin);
+    const selectedEmail = clean(body.email).toLowerCase();
     const prefetch = body.prefetch === true;
 
     if (!selectedSchoolId) {
@@ -63,7 +79,7 @@ export async function POST(request: NextRequest) {
     // Step 1: Validate school
     const { data: schoolRow, error: schoolError } = await service
       .from("schools")
-      .select("id,school_name,status,expiration_date,photographer_id,package_profile_id,local_school_id,order_due_date")
+      .select("id,school_name,status,expiration_date,photographer_id,package_profile_id,local_school_id,order_due_date,access_mode,access_pin,email_required,gallery_settings")
       .eq("id", selectedSchoolId)
       .maybeSingle();
 
@@ -83,8 +99,15 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: false, step: "school_closed" }, { status: 409 });
     }
 
-    if (selectedSchool.status === "pre-released") {
+    if (normalizedSchoolStatus(selectedSchool.status) === "pre_release") {
       return NextResponse.json({ ok: false, step: "school_prerelease" }, { status: 409 });
+    }
+
+    if (!looksLikeEmail(selectedEmail)) {
+      return NextResponse.json(
+        { ok: false, message: "Please enter your email to open this gallery." },
+        { status: 400 },
+      );
     }
 
     // Step 2: Find same-name schools + validate PIN in parallel
@@ -138,6 +161,30 @@ export async function POST(request: NextRequest) {
       matches[0];
 
     const resolvedSchoolId = best.school_id ?? selectedSchoolId;
+
+    if (looksLikeEmail(selectedEmail)) {
+      const { error: visitorError } = await service
+        .from("school_gallery_visitors")
+        .upsert(
+          {
+            school_id: resolvedSchoolId,
+            viewer_email: selectedEmail,
+            last_opened_at: new Date().toISOString(),
+          },
+          { onConflict: "school_id,viewer_email" },
+        );
+
+      if (visitorError && visitorError.code !== "42P01") {
+        throw visitorError;
+      }
+
+      // Capture email for marketing — non-fatal, ignore duplicates
+      await service
+        .from("portal_email_captures")
+        .insert({ email: selectedEmail, school_id: resolvedSchoolId, source: "school_login" })
+        .then(() => null)
+        .catch(() => null);
+    }
 
     // ─────────────────────────────────────────────────────────────────────
     // ✅ PERF: Prefetch gallery context in same request when requested.
@@ -207,11 +254,20 @@ export async function POST(request: NextRequest) {
           order_due_date: selectedSchool.order_due_date ?? null,
           expiration_date: selectedSchool.expiration_date ?? null,
         };
+        const gallerySettings = normalizeEventGallerySettings(
+          selectedSchool.gallery_settings,
+        );
+        const downloadAccess = await buildSchoolGalleryDownloadAccess({
+          service,
+          schoolId: resolvedSchoolId,
+          viewerEmail: selectedEmail,
+          gallerySettings: selectedSchool.gallery_settings,
+        });
 
         // Resolve the set of school rows needed by gallery-context consumers
         const { data: sameNameFull } = await service
           .from("schools")
-          .select("id,school_name,photographer_id,package_profile_id,local_school_id,status,order_due_date,expiration_date")
+          .select("id,school_name,photographer_id,package_profile_id,local_school_id,status,order_due_date,expiration_date,access_mode,access_pin,email_required,gallery_settings")
           .ilike("school_name", selectedSchoolName)
           .order("created_at", { ascending: false });
 
@@ -223,6 +279,8 @@ export async function POST(request: NextRequest) {
           primaryStudent,
           activeSchool: selectedSchool,
           activeProject,
+          gallerySettings,
+          downloadAccess,
           packages: packageRows,
           backdrops: backdropsResult.data ?? [],
           photographerId: photographer?.id ?? selectedSchool.photographer_id,

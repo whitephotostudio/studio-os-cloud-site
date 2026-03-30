@@ -7,11 +7,29 @@ type EventProjectRow = {
   id: string;
   status: string | null;
   workflow_type: string | null;
+  portal_status: string | null;
   email_required: boolean | null;
+  access_mode: string | null;
+  access_pin: string | null;
+};
+
+type EventCollectionAccessRow = {
+  id: string;
+  slug: string | null;
+  access_mode: string | null;
+  access_pin: string | null;
 };
 
 function clean(value: string | null | undefined) {
   return (value ?? "").trim();
+}
+
+function normalizedAccessMode(value: string | null | undefined) {
+  const raw = clean(value).toLowerCase();
+  if (!raw) return "public";
+  if (raw === "pin" || raw === "protected" || raw === "private") return "pin";
+  if (raw === "inherit" || raw === "inherit_project" || raw === "project") return "inherit_project";
+  return raw;
 }
 
 function isInactive(value: string | null | undefined) {
@@ -20,6 +38,23 @@ function isInactive(value: string | null | undefined) {
 
 function isEventProject(row: EventProjectRow) {
   return clean(row.workflow_type).toLowerCase() === "event";
+}
+
+function matchesProjectPin(row: Pick<EventProjectRow, "access_mode" | "access_pin">, pin: string) {
+  return normalizedAccessMode(row.access_mode) === "pin" && clean(row.access_pin) === pin;
+}
+
+function matchesCollectionPin(row: EventCollectionAccessRow, pin: string) {
+  return clean(row.slug) === pin || (normalizedAccessMode(row.access_mode) === "pin" && clean(row.access_pin) === pin);
+}
+
+function isMissingVisitorsTable(error: unknown) {
+  return (
+    !!error &&
+    typeof error === "object" &&
+    "code" in error &&
+    (error as { code?: string }).code === "42P01"
+  );
 }
 
 export async function POST(request: NextRequest) {
@@ -43,14 +78,10 @@ export async function POST(request: NextRequest) {
         { status: 400 },
       );
     }
-    if (!pinValue) {
-      return NextResponse.json({ ok: false, message: "Please enter your event access PIN." }, { status: 400 });
-    }
-
     const service = createDashboardServiceClient();
     const { data: eventRow, error: eventError } = await service
       .from("projects")
-      .select("id,status,workflow_type,email_required")
+      .select("id,status,workflow_type,portal_status,email_required,access_mode,access_pin")
       .eq("id", selectedEventId)
       .maybeSingle();
 
@@ -60,6 +91,27 @@ export async function POST(request: NextRequest) {
     }
 
     const selectedEvent = eventRow as EventProjectRow;
+    const portalStatus = clean(selectedEvent.portal_status).toLowerCase();
+
+    if (portalStatus === "pre_release") {
+      // Capture email for pre-release list — non-fatal, ignore duplicates
+      await service
+        .from("portal_email_captures")
+        .insert({ email: normalizedEmail, project_id: selectedEventId, source: "pre_release" })
+        .then(() => null)
+        .catch(() => null);
+
+      return NextResponse.json({
+        ok: true,
+        step: "event_prerelease",
+        projectId: selectedEventId,
+        email: normalizedEmail,
+      });
+    }
+
+    if (!pinValue) {
+      return NextResponse.json({ ok: false, message: "Please enter your event access PIN." }, { status: 400 });
+    }
 
     const { data: whitelistRows, error: whitelistError } = await service
       .from("pre_release_emails")
@@ -88,7 +140,7 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const [matchingSubjectResult, matchingCollectionResult] = await Promise.all([
+    const [matchingSubjectResult, collectionAccessResult] = await Promise.all([
       service
         .from("subjects")
         .select("id")
@@ -98,22 +150,48 @@ export async function POST(request: NextRequest) {
         .maybeSingle(),
       service
         .from("collections")
-        .select("id")
-        .eq("project_id", selectedEventId)
-        .eq("slug", pinValue)
-        .limit(1)
-        .maybeSingle(),
+        .select("id,slug,access_mode,access_pin")
+        .eq("project_id", selectedEventId),
     ]);
 
     if (matchingSubjectResult.error) throw matchingSubjectResult.error;
-    if (matchingCollectionResult.error) throw matchingCollectionResult.error;
+    if (collectionAccessResult.error) throw collectionAccessResult.error;
 
-    if (!matchingSubjectResult.data && !matchingCollectionResult.data) {
+    const matchingCollection = ((collectionAccessResult.data ?? []) as EventCollectionAccessRow[]).find((row) =>
+      matchesCollectionPin(row, pinValue),
+    );
+    const projectPinMatch = matchesProjectPin(selectedEvent, pinValue);
+
+    if (!projectPinMatch && !matchingSubjectResult.data && !matchingCollection) {
       return NextResponse.json(
         { ok: false, message: "No event gallery was found for that email and PIN." },
         { status: 404 },
       );
     }
+
+    const { error: visitorError } = await service
+      .from("event_gallery_visitors")
+      .upsert(
+        {
+          project_id: selectedEventId,
+          viewer_email: normalizedEmail,
+          last_opened_at: new Date().toISOString(),
+        },
+        {
+          onConflict: "project_id,viewer_email",
+        },
+      );
+
+    if (visitorError && !isMissingVisitorsTable(visitorError)) {
+      throw visitorError;
+    }
+
+    // Capture email for marketing — non-fatal, ignore duplicates
+    await service
+      .from("portal_email_captures")
+      .insert({ email: normalizedEmail, project_id: selectedEventId, source: "event_login" })
+      .then(() => null)
+      .catch(() => null);
 
     return NextResponse.json({
       ok: true,
