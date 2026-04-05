@@ -56,7 +56,7 @@ export default function ForgotPasswordPage() {
                   We sent a password reset link to <strong className="text-neutral-700">{email}</strong>. Click the link in the email to set a new password.
                 </p>
                 <p className="mt-4 text-sm text-neutral-400">
-                  Didn't receive it? Check your spam folder or try again.
+                  Didn&apos;t receive it? Check your spam folder or try again.
                 </p>
                 <div className="mt-6 flex flex-col gap-3">
                   <button
@@ -79,7 +79,7 @@ export default function ForgotPasswordPage() {
                   Reset your password
                 </h2>
                 <p className="mt-2 text-sm text-neutral-500">
-                  Enter the email you used to sign up and we'll send you a link to reset your password.
+                  Enter the email you used to sign up and we&apos;ll send you a link to reset your password.
                 </p>
 
                 <form onSubmit={handleSubmit} className="mt-8 space-y-5">

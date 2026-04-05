@@ -29,7 +29,7 @@ function addSecurityHeaders(response: NextResponse) {
   return response;
 }
 
-export function middleware(request: NextRequest) {
+export function proxy(request: NextRequest) {
   const ip = getClientIp(request);
   const pathname = request.nextUrl.pathname;
 

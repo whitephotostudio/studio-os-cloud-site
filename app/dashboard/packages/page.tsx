@@ -651,7 +651,7 @@ export default function PackagesPage() {
                   </div>
                   {newSheetDupFrom && (
                     <p style={{ margin: "6px 0 0", fontSize: 12, color: "#888" }}>
-                      All items from "{profiles.find(p => p.id === newSheetDupFrom)?.name}" will be copied.
+                      All items from &ldquo;{profiles.find(p => p.id === newSheetDupFrom)?.name}&rdquo; will be copied.
                     </p>
                   )}
                 </div>
@@ -714,7 +714,7 @@ export default function PackagesPage() {
               </div>
 
               <p style={{ color: "#555", fontSize: 14, margin: "0 0 12px", lineHeight: 1.5 }}>
-                <strong>"{deletingProfile.name}"</strong> and all <strong>{deletingProfile.count} items</strong> inside it will be permanently deleted.
+                <strong>&ldquo;{deletingProfile.name}&rdquo;</strong> and all <strong>{deletingProfile.count} items</strong> inside it will be permanently deleted.
               </p>
 
               {deleteUsageInfo === null ? (
@@ -968,7 +968,7 @@ export default function PackagesPage() {
               {catMeta && <catMeta.icon size={36} color="#ddd" style={{ marginBottom: 12 }} />}
               <p style={{ color: "#999", margin: 0, fontSize: 14, fontWeight: 600 }}>No {catMeta?.label.toLowerCase()} yet</p>
               <p style={{ color: "#bbb", fontSize: 13, marginTop: 6 }}>
-                Click "Add Item" above or sync from the Studio OS app.
+                Click &ldquo;Add Item&rdquo; above or sync from the Studio OS app.
               </p>
             </div>
           ) : (
