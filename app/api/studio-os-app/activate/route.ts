@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createDashboardServiceClient } from "@/lib/dashboard-auth";
 import { activatePhotographyKey } from "@/lib/studio-os-app";
+import { rateLimit, getClientIp } from "@/lib/rate-limit";
 
 export const dynamic = "force-dynamic";
 
@@ -14,6 +15,16 @@ type ActivateBody = {
 
 export async function POST(request: NextRequest) {
   try {
+    // Extra rate limiting: 5 activation attempts per 10 minutes per IP
+    const ip = getClientIp(request);
+    const rl = rateLimit(ip, { namespace: "key-activate", limit: 5, windowSeconds: 600 });
+    if (!rl.allowed) {
+      return NextResponse.json(
+        { ok: false, message: "Too many activation attempts. Please wait 10 minutes." },
+        { status: 429 },
+      );
+    }
+
     const body = (await request.json().catch(() => ({}))) as ActivateBody;
     const service = createDashboardServiceClient();
     const result = await activatePhotographyKey(service, {

@@ -77,9 +77,17 @@ export default function SignInPage() {
                 </div>
 
                 <div>
-                  <label className="mb-2 block text-sm font-medium text-neutral-700">
-                    Password
-                  </label>
+                  <div className="mb-2 flex items-center justify-between">
+                    <label className="block text-sm font-medium text-neutral-700">
+                      Password
+                    </label>
+                    <Link
+                      href="/forgot-password"
+                      className="text-sm font-medium text-neutral-500 transition hover:text-black"
+                    >
+                      Forgot password?
+                    </Link>
+                  </div>
                   <input
                     type="password"
                     value={password}
