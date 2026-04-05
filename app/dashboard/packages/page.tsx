@@ -377,6 +377,35 @@ export default function PackagesPage() {
     if (data) openEdit(data as Pkg);
   }
 
+  async function addAllSizes() {
+    if (!selectedProfile || !pgId) return;
+    const cat = selectedCategory || "prints";
+    const existingNames = new Set(
+      selectedProfile.packages
+        .filter(p => getCategoryKey(p) === cat)
+        .map(p => p.name.trim().toLowerCase().replace(/×/g, "x"))
+    );
+    const toAdd = PRINT_SIZES.filter(
+      s => s.value !== "custom" && !existingNames.has(s.label.toLowerCase().replace(/×/g, "x"))
+    );
+    if (toAdd.length === 0) {
+      alert("All standard sizes already exist in this category.");
+      return;
+    }
+    const rows = toAdd.map(s => ({
+      name:            s.label,
+      price_cents:     0,
+      items:           [{ name: `${s.label} Print`, qty: 1 }],
+      active:          true,
+      photographer_id: pgId,
+      profile_id:      selectedProfile.id,
+      profile_name:    selectedProfile.name,
+      category:        cat,
+    }));
+    await supabase.from("packages").insert(rows);
+    await loadData();
+  }
+
   async function signOut() {
     await supabase.auth.signOut();
     window.location.href = "/sign-in";
@@ -829,12 +858,20 @@ export default function PackagesPage() {
         {/* Header */}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
           <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0, color: "#111" }}>{catMeta?.label}</h1>
-          <button
-            onClick={addPackage}
-            style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 18px", background: "#000", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer", fontWeight: 600, fontSize: 14 }}
-          >
-            <Plus size={16} /> Add Item
-          </button>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button
+              onClick={addAllSizes}
+              style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 18px", background: "#fff", color: "#000", border: "1px solid #e5e5e5", borderRadius: 8, cursor: "pointer", fontWeight: 600, fontSize: 14 }}
+            >
+              <Plus size={16} /> Add All Sizes
+            </button>
+            <button
+              onClick={addPackage}
+              style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 18px", background: "#000", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer", fontWeight: 600, fontSize: 14 }}
+            >
+              <Plus size={16} /> Add Item
+            </button>
+          </div>
         </div>
 
         {/* Edit modal */}
@@ -882,7 +919,7 @@ export default function PackagesPage() {
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>
                 <div>
                   <label style={{ display: "block", fontSize: 13, fontWeight: 600, marginBottom: 6, color: "#333" }}>Price ($)</label>
-                  <input value={editPrice} onChange={e => setEditPrice(e.target.value)} type="number" step="0.01" style={inputStyle} />
+                  <input value={editPrice} onChange={e => { const v = e.target.value; if (v === "" || /^\d*\.?\d{0,2}$/.test(v)) setEditPrice(v); }} type="text" inputMode="decimal" placeholder="0.00" style={inputStyle} />
                 </div>
                 <div>
                   <label style={{ display: "block", fontSize: 13, fontWeight: 600, marginBottom: 6, color: "#333" }}>Category</label>
