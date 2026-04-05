@@ -1,0 +1,16 @@
+{
+  "crons": [
+    {
+      "path": "/api/cron/abandoned-cart-reminders",
+      "schedule": "0 14 * * *"
+    },
+    {
+      "path": "/api/cron/archive-expired-galleries",
+      "schedule": "15 15 * * *"
+    },
+    {
+      "path": "/api/cron/stripe-billing-sync",
+      "schedule": "0 4 * * *"
+    }
+  ]
+}

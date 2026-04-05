@@ -2,16 +2,33 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
+import { createClient } from "@/lib/supabase/client";
 import {
   ArrowLeft,
   Check,
+  ChevronDown,
+  ChevronUp,
+  Copy,
+  Download,
+  ExternalLink,
   FolderOpen,
+  Heart,
+  Mail,
   Menu,
+  Send,
   X,
   Search,
   Lock,
+  UserPlus,
+  ImagePlus,
 } from "lucide-react";
+import {
+  defaultEventGalleryShareSettings,
+  normalizeEventGallerySettings,
+  type EventGalleryLinkedContact,
+  type EventGalleryShareSettings,
+} from "@/lib/event-gallery-settings";
 
 type ProjectRow = {
   id: string;
@@ -35,6 +52,8 @@ type ProjectRow = {
   cover_photo_url?: string | null;
   access_mode?: string | null;
   access_pin?: string | null;
+  email_required?: boolean | null;
+  gallery_settings?: unknown;
 };
 
 type CollectionRow = {
@@ -57,6 +76,57 @@ type MediaRow = {
   filename?: string | null;
   created_at?: string | null;
   sort_order?: number | null;
+};
+
+type FavoritesAlbumRow = {
+  collectionId: string;
+  title: string;
+  favoritesCount: number;
+  lastFavoritedAt?: string | null;
+  previewUrl?: string | null;
+};
+
+type FavoritesViewerRow = {
+  viewerEmail: string;
+  favoritesCount: number;
+  lastActivityAt?: string | null;
+  albums: string[];
+  preRegistered?: boolean;
+  openedGallery?: boolean;
+};
+
+type RecentFavoriteRow = {
+  mediaId: string;
+  collectionId?: string | null;
+  collectionTitle: string;
+  viewerEmail: string;
+  createdAt?: string | null;
+  previewUrl?: string | null;
+  filename: string;
+};
+
+type FavoriteMediaRow = {
+  mediaId: string;
+  collectionId?: string | null;
+  collectionTitle: string;
+  favoritesCount: number;
+  latestFavoritedAt?: string | null;
+  previewUrl?: string | null;
+  filename: string;
+  storagePath?: string | null;
+};
+
+type FavoritesSummary = {
+  ordersCount: number;
+  totalFavorites: number;
+  uniqueViewers: number;
+  albumsWithFavorites: number;
+  preRegisteredCount: number;
+  viewers: FavoritesViewerRow[];
+  albums: FavoritesAlbumRow[];
+  recentFavorites: RecentFavoriteRow[];
+  favoriteMedia: FavoriteMediaRow[];
+  warning?: string | null;
 };
 
 function clean(value: string | null | undefined) {
@@ -86,6 +156,18 @@ function formatDisplayDate(value: string | null | undefined) {
   });
 }
 
+function formatActivityDate(value: string | null | undefined) {
+  if (!value) return "No activity yet";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return "Recently";
+  return d.toLocaleString("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
 function projectNameOf(project: ProjectRow | null) {
   return project?.project_name || project?.name || project?.title || "Untitled Project";
 }
@@ -102,8 +184,34 @@ function sortCollections(rows: CollectionRow[]) {
   });
 }
 
+function emptyFavoritesSummary(): FavoritesSummary {
+  return {
+    ordersCount: 0,
+    totalFavorites: 0,
+    uniqueViewers: 0,
+    albumsWithFavorites: 0,
+    preRegisteredCount: 0,
+    viewers: [],
+    albums: [],
+    recentFavorites: [],
+    favoriteMedia: [],
+    warning: null,
+  };
+}
+
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
+const MEDIA_BUCKET = "thumbs";
+
+function publicStorageUrl(path: string | null | undefined) {
+  const safePath = clean(path);
+  if (!SUPABASE_URL || !safePath) return "";
+  return `${SUPABASE_URL}/storage/v1/object/public/${MEDIA_BUCKET}/${safePath}`;
+}
+
 export default function ProjectDetailPage() {
   const params = useParams();
+  const router = useRouter();
+  const supabase = createClient();
   const projectId = String(params.id ?? "");
 
   const [loading, setLoading] = useState(true);
@@ -118,6 +226,9 @@ export default function ProjectDetailPage() {
   const [peopleCount, setPeopleCount] = useState(0);
   const [galleriesCount, setGalleriesCount] = useState(0);
   const [albumsCount, setAlbumsCount] = useState(0);
+  const [favoritesSummary, setFavoritesSummary] = useState<FavoritesSummary>(() => emptyFavoritesSummary());
+  const [favoritesLoading, setFavoritesLoading] = useState(true);
+  const [favoritesError, setFavoritesError] = useState("");
 
   const [menuAlbumId, setMenuAlbumId] = useState<string | null>(null);
   const [selectedAlbumId, setSelectedAlbumId] = useState<string | null>(null);
@@ -131,6 +242,30 @@ export default function ProjectDetailPage() {
   const [newAlbumTitle, setNewAlbumTitle] = useState("");
   const [creatingAlbum, setCreatingAlbum] = useState(false);
   const [shareNotice, setShareNotice] = useState("");
+  const [shareModalOpen, setShareModalOpen] = useState(false);
+  const [shareView, setShareView] = useState<"menu" | "compose" | "report" | "favorites">("menu");
+  const [photoSidebarOpen, setPhotoSidebarOpen] = useState(true);
+  const [favoritesLibraryMode, setFavoritesLibraryMode] = useState<"photos" | "albums">("photos");
+  const [hoveredActivityMetric, setHoveredActivityMetric] = useState<string | null>(null);
+  const [downloadingFavoriteMedia, setDownloadingFavoriteMedia] = useState(false);
+  const [favoriteLibraryNotice, setFavoriteLibraryNotice] = useState("");
+  const [shareRecipientMode, setShareRecipientMode] = useState<"visitors" | "others">("visitors");
+  const [shareRecipientInput, setShareRecipientInput] = useState("");
+  const [shareSubject, setShareSubject] = useState(defaultEventGalleryShareSettings.emailSubject);
+  const [shareHeadline, setShareHeadline] = useState(defaultEventGalleryShareSettings.emailHeadline);
+  const [shareButtonLabel, setShareButtonLabel] = useState(defaultEventGalleryShareSettings.emailButtonLabel);
+  const [shareMessage, setShareMessage] = useState(defaultEventGalleryShareSettings.emailMessage);
+  const [shareSaving, setShareSaving] = useState(false);
+  const [shareSending, setShareSending] = useState(false);
+  const [contactModalOpen, setContactModalOpen] = useState(false);
+  const [contactName, setContactName] = useState("");
+  const [contactEmail, setContactEmail] = useState("");
+  const [contactRole, setContactRole] = useState("Linked Contact");
+  const [contactNote, setContactNote] = useState("");
+  const [contactVip, setContactVip] = useState(false);
+  const [contactLabelPhotos, setContactLabelPhotos] = useState(false);
+  const [contactHidePhotos, setContactHidePhotos] = useState(false);
+  const [contactSaving, setContactSaving] = useState(false);
   const [albumSearch, setAlbumSearch] = useState("");
   const [renameAlbumId, setRenameAlbumId] = useState<string | null>(null);
   const [renameAlbumTitle, setRenameAlbumTitle] = useState("");
@@ -200,10 +335,66 @@ export default function ProjectDetailPage() {
     };
   }, [projectId]);
 
+  useEffect(() => {
+    let mounted = true;
+
+    async function loadFavorites() {
+      try {
+        setFavoritesLoading(true);
+        setFavoritesError("");
+
+        const response = await fetch(`/api/dashboard/events/${projectId}/favorites`, {
+          method: "GET",
+          cache: "no-store",
+        });
+
+        const payload = (await response.json()) as {
+          ok?: boolean;
+          message?: string;
+          summary?: FavoritesSummary;
+        };
+
+        if (response.status === 401) {
+          window.location.href = "/sign-in";
+          return;
+        }
+
+        if (!response.ok || payload.ok === false) {
+          throw new Error(payload.message || "Failed to load favorite activity.");
+        }
+
+        if (!mounted) return;
+        setFavoritesSummary(payload.summary ?? emptyFavoritesSummary());
+        setFavoritesLoading(false);
+      } catch (err) {
+        if (!mounted) return;
+        setFavoritesSummary(emptyFavoritesSummary());
+        setFavoritesError(
+          err instanceof Error ? err.message : "Failed to load favorite activity.",
+        );
+        setFavoritesLoading(false);
+      }
+    }
+
+    if (projectId) void loadFavorites();
+
+    return () => {
+      mounted = false;
+    };
+  }, [projectId]);
+
   async function requestDashboard<T>(input: string, init?: RequestInit) {
     const headers = new Headers(init?.headers);
     if (init?.body !== undefined && !headers.has("Content-Type")) {
       headers.set("Content-Type", "application/json");
+    }
+
+    // Attach auth token so server-side resolveDashboardAuth succeeds
+    if (!headers.has("Authorization")) {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session?.access_token) {
+        headers.set("Authorization", `Bearer ${session.access_token}`);
+      }
     }
 
     const response = await fetch(input, {
@@ -229,11 +420,41 @@ export default function ProjectDetailPage() {
     return payload;
   }
 
+  const gallerySettings = useMemo(
+    () => normalizeEventGallerySettings(project?.gallery_settings),
+    [project?.gallery_settings],
+  );
   const projectName = projectNameOf(project);
   const projectDate = project?.shoot_date || project?.event_date || null;
   const projectCover = clean(project?.cover_photo_url);
   const projectLocked = hasPinProtection(project?.access_mode, project?.access_pin);
   const albumHasLock = (album: CollectionRow) => hasPinProtection(album.access_mode, album.access_pin) || (normalizedAccessMode(album.access_mode) === "inherit_project" && projectLocked);
+  const linkedContacts = gallerySettings.linkedContacts;
+  const visitorEmails = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          favoritesSummary.viewers
+            .map((viewer) => clean(viewer.viewerEmail))
+            .filter(Boolean),
+        ),
+      ),
+    [favoritesSummary.viewers],
+  );
+  const galleryEntryUrl = useMemo(() => {
+    const origin = typeof window !== "undefined" ? window.location.origin : "";
+    const params = new URLSearchParams({
+      mode: "event",
+      project: projectId,
+    });
+    return `${origin}/parents?${params.toString()}`;
+  }, [projectId]);
+  const accessSummary = projectLocked
+    ? `Access PIN: ${clean(project?.access_pin)}`
+    : "Access PIN: Use the PIN provided by your photographer.";
+  const emailRequirementSummary = project?.email_required
+    ? "Email required: Enter the invited email address when opening the gallery."
+    : "Email required: Optional unless the photographer asks for it.";
 
   const collectionCover = useCallback((row: CollectionRow) => {
     const direct = clean(row.cover_photo_url);
@@ -241,6 +462,36 @@ export default function ProjectDetailPage() {
     const firstMedia = media.find((m) => clean(m.collection_id) === row.id);
     return mediaUrl(firstMedia);
   }, [media]);
+
+  useEffect(() => {
+    setShareSubject(gallerySettings.share.emailSubject);
+    setShareHeadline(gallerySettings.share.emailHeadline || projectName);
+    setShareButtonLabel(gallerySettings.share.emailButtonLabel);
+    setShareMessage(gallerySettings.share.emailMessage);
+  }, [gallerySettings.share, projectName]);
+
+  async function persistGallerySettings(update: {
+    linkedContacts?: EventGalleryLinkedContact[];
+    share?: EventGalleryShareSettings;
+  }) {
+    const nextSettings = normalizeEventGallerySettings({
+      ...gallerySettings,
+      linkedContacts: update.linkedContacts ?? gallerySettings.linkedContacts,
+      share: update.share ?? gallerySettings.share,
+    });
+    const payload = await requestDashboard<{ project?: ProjectRow | null }>(
+      `/api/dashboard/events/${projectId}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({ gallery_settings: nextSettings }),
+      },
+    );
+    if (payload.project) {
+      setProject(payload.project);
+    } else {
+      setProject((prev) => (prev ? { ...prev, gallery_settings: nextSettings } : prev));
+    }
+  }
 
   function openAlbumCoverPicker(albumId: string, albumTitle?: string | null) {
     setCoverTarget({ type: "album", albumId });
@@ -302,15 +553,233 @@ export default function ProjectDetailPage() {
   }
 
   async function copyEventLink() {
-    const url = typeof window !== "undefined" ? window.location.href : "";
-    if (!url) return;
+    if (!galleryEntryUrl) return;
     try {
-      await navigator.clipboard.writeText(url);
+      await navigator.clipboard.writeText(galleryEntryUrl);
       setShareNotice("Event link copied");
       window.setTimeout(() => setShareNotice(""), 2200);
     } catch {
       setShareNotice("Could not copy link");
       window.setTimeout(() => setShareNotice(""), 2200);
+    }
+  }
+
+  function openShareComposer(mode: "visitors" | "others") {
+    setShareRecipientMode(mode);
+    setShareRecipientInput(mode === "visitors" ? visitorEmails.join(", ") : "");
+    setShareView("compose");
+    setShareModalOpen(true);
+  }
+
+  function shareEmailBody() {
+    const intro = clean(shareHeadline) || projectName;
+    const buttonLabel = clean(shareButtonLabel) || "View Gallery";
+    return [
+      intro,
+      "",
+      shareMessage,
+      "",
+      `Gallery link: ${galleryEntryUrl}`,
+      accessSummary,
+      emailRequirementSummary,
+      "",
+      `${buttonLabel}: ${galleryEntryUrl}`,
+    ]
+      .join("\n")
+      .trim();
+  }
+
+  async function copyShareMessage() {
+    try {
+      await navigator.clipboard.writeText(shareEmailBody());
+      setShareNotice("Email content copied");
+      window.setTimeout(() => setShareNotice(""), 2200);
+    } catch {
+      setShareNotice("Could not copy email content");
+      window.setTimeout(() => setShareNotice(""), 2200);
+    }
+  }
+
+  async function sendShareEmails() {
+    setShareSending(true);
+    try {
+      const payload = await requestDashboard<{
+        sent?: number;
+        failed?: number;
+        recipients?: number;
+      }>(`/api/dashboard/events/${projectId}/emails`, {
+        method: "POST",
+        body: JSON.stringify({
+          recipientMode: shareRecipientMode,
+          recipients:
+            shareRecipientMode === "visitors"
+              ? visitorEmails
+              : shareRecipientInput
+                  .split(",")
+                  .map((value) => clean(value))
+                  .filter(Boolean),
+          subject: clean(shareSubject) || defaultEventGalleryShareSettings.emailSubject,
+          headline: clean(shareHeadline) || projectName,
+          buttonLabel:
+            clean(shareButtonLabel) ||
+            defaultEventGalleryShareSettings.emailButtonLabel,
+          message: clean(shareMessage) || defaultEventGalleryShareSettings.emailMessage,
+        }),
+      });
+
+      const sent = payload.sent ?? 0;
+      const failed = payload.failed ?? 0;
+      const recipients = payload.recipients ?? sent + failed;
+
+      // Close the modal after successful send
+      setShareModalOpen(false);
+      setShareView("menu");
+
+      if (failed > 0) {
+        setShareNotice(`Done — sent ${sent} of ${recipients} emails. ${failed} failed.`);
+      } else {
+        setShareNotice(`Done — ${sent} email${sent === 1 ? "" : "s"} sent successfully!`);
+      }
+      window.setTimeout(() => setShareNotice(""), 4000);
+    } catch (err) {
+      setShareNotice(err instanceof Error ? err.message : "Failed to send emails.");
+      window.setTimeout(() => setShareNotice(""), 3200);
+    } finally {
+      setShareSending(false);
+    }
+  }
+
+  async function saveShareTemplate() {
+    setShareSaving(true);
+    try {
+      await persistGallerySettings({
+        share: {
+          emailSubject:
+            clean(shareSubject) || defaultEventGalleryShareSettings.emailSubject,
+          emailHeadline: clean(shareHeadline),
+          emailButtonLabel:
+            clean(shareButtonLabel) ||
+            defaultEventGalleryShareSettings.emailButtonLabel,
+          emailMessage:
+            clean(shareMessage) || defaultEventGalleryShareSettings.emailMessage,
+        },
+      });
+      setShareNotice("Share template saved");
+      window.setTimeout(() => setShareNotice(""), 2200);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Failed to save share template.");
+    } finally {
+      setShareSaving(false);
+    }
+  }
+
+  function downloadVisitorCsv() {
+    const header = ["Visitor", "Status", "Last Activity", "Favorites", "Albums", "Orders"];
+    const rows = favoritesSummary.viewers.map((viewer) => [
+      viewer.viewerEmail,
+      viewerStatusLabel(viewer),
+      viewer.lastActivityAt || "",
+      String(viewer.favoritesCount),
+      viewer.albums.join(" | "),
+      "0",
+    ]);
+    const csv = [header, ...rows]
+      .map((row) =>
+        row.map((cell) => `"${String(cell).replaceAll('"', '""')}"`).join(","),
+      )
+      .join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const href = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = href;
+    anchor.download = `${projectName.replace(/\s+/g, "-").toLowerCase()}-visitors.csv`;
+    anchor.click();
+    URL.revokeObjectURL(href);
+  }
+
+  function viewerStatusLabel(viewer: FavoritesViewerRow) {
+    if (viewer.favoritesCount > 0) return "Viewed and favorited";
+    if (viewer.openedGallery) return "Opened gallery";
+    if (viewer.preRegistered) return "Pre-registered";
+    return "Visitor";
+  }
+
+  function openFavoritesLibrary(mode: "photos" | "albums" = "photos") {
+    setFavoritesLibraryMode(mode);
+    setShareView("favorites");
+    setShareModalOpen(true);
+  }
+
+  async function downloadFavoriteMediaRows(rows: FavoriteMediaRow[]) {
+    const items = rows.filter((item) => clean(item.storagePath) || clean(item.previewUrl));
+    if (!items.length) {
+      setFavoriteLibraryNotice("No favorited photos are ready to download yet.");
+      window.setTimeout(() => setFavoriteLibraryNotice(""), 2600);
+      return;
+    }
+
+    setDownloadingFavoriteMedia(true);
+    setFavoriteLibraryNotice("");
+
+    try {
+      for (const item of items) {
+        const sourceUrl = publicStorageUrl(item.storagePath) || clean(item.previewUrl);
+        if (!sourceUrl) continue;
+        const response = await fetch(sourceUrl);
+        if (!response.ok) throw new Error(`Download failed for ${item.filename}.`);
+        const blob = await response.blob();
+        const blobUrl = window.URL.createObjectURL(blob);
+        const anchor = document.createElement("a");
+        anchor.href = blobUrl;
+        anchor.download = clean(item.filename) || `favorite-${item.mediaId}.jpg`;
+        document.body.appendChild(anchor);
+        anchor.click();
+        document.body.removeChild(anchor);
+        window.URL.revokeObjectURL(blobUrl);
+      }
+      setFavoriteLibraryNotice(`Downloading ${items.length} favorite photo${items.length === 1 ? "" : "s"}.`);
+      window.setTimeout(() => setFavoriteLibraryNotice(""), 2600);
+    } catch (err) {
+      setFavoriteLibraryNotice(err instanceof Error ? err.message : "Could not download favorites.");
+      window.setTimeout(() => setFavoriteLibraryNotice(""), 2600);
+    } finally {
+      setDownloadingFavoriteMedia(false);
+    }
+  }
+
+  async function saveLinkedContact() {
+    const email = clean(contactEmail).toLowerCase();
+    if (!email) return;
+    setContactSaving(true);
+    try {
+      const nextContacts = [
+        ...linkedContacts,
+        {
+          id: crypto.randomUUID(),
+          name: clean(contactName),
+          email,
+          role: clean(contactRole) || "Linked Contact",
+          labelPhotos: contactLabelPhotos,
+          hidePhotos: contactHidePhotos,
+          isVip: contactVip,
+          note: clean(contactNote),
+        },
+      ];
+      await persistGallerySettings({ linkedContacts: nextContacts });
+      setContactModalOpen(false);
+      setContactName("");
+      setContactEmail("");
+      setContactRole("Linked Contact");
+      setContactNote("");
+      setContactVip(false);
+      setContactLabelPhotos(false);
+      setContactHidePhotos(false);
+      setShareNotice("Linked contact saved");
+      window.setTimeout(() => setShareNotice(""), 2200);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Failed to save linked contact.");
+    } finally {
+      setContactSaving(false);
     }
   }
 
@@ -483,9 +952,19 @@ export default function ProjectDetailPage() {
     return stats;
   }, [collectionCover, media, orderedCollections]);
 
-  const totalVisitorOrders = Math.max(0, Math.round(mediaCount * 0.11));
-  const totalFavorites = Math.max(0, Math.round(mediaCount * 0.04));
-  const totalVisitorReports = Math.max(1, albumsCount);
+  const favoriteAlbumCounts = useMemo(() => {
+    const next: Record<string, number> = {};
+    for (const album of favoritesSummary.albums) {
+      next[album.collectionId] = album.favoritesCount;
+    }
+    return next;
+  }, [favoritesSummary.albums]);
+
+  const latestFavoriteAt = favoritesSummary.recentFavorites[0]?.createdAt || null;
+  const recentFavoriteItems = favoritesSummary.recentFavorites.slice(0, 3);
+  const topViewerItems = favoritesSummary.viewers.slice(0, 3);
+  const favoriteMediaItems = favoritesSummary.favoriteMedia;
+  const favoriteAlbumItems = favoritesSummary.albums;
 
   if (loading) {
     return <div style={{ minHeight: "100vh", background: "#faf7f7", display: "grid", placeItems: "center", color: "#4b5563" }}>Loading project...</div>;
@@ -518,7 +997,7 @@ export default function ProjectDetailPage() {
             <div style={{ color: "#b91c1c", fontWeight: 800, marginTop: 2 }}>{clean(project.portal_status) || clean(project.status) || "Active"}</div>
           </div>
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "flex-end" }}>
-            <button onClick={copyEventLink} style={{ borderRadius: 10, border: "1px solid #111111", background: "#111111", color: "#fff", padding: "12px 16px", fontWeight: 800, cursor: "pointer" }}>Share Gallery</button>
+            <button onClick={() => { setShareView("menu"); setShareModalOpen(true); }} style={{ borderRadius: 10, border: "1px solid #111111", background: "#111111", color: "#fff", padding: "12px 16px", fontWeight: 800, cursor: "pointer" }}>Share Gallery</button>
             <Link href={`/dashboard/projects/${projectId}/settings`} style={{ borderRadius: 10, border: "1px solid #111111", background: "#fff", color: "#111111", padding: "12px 16px", fontWeight: 800, textDecoration: "none" }}>Preview Gallery</Link>
           </div>
         </div>
@@ -527,7 +1006,21 @@ export default function ProjectDetailPage() {
 
         <div style={{ display: "grid", gridTemplateColumns: "320px minmax(0,1fr)", gap: 18, alignItems: "start" }}>
           <aside style={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 20, padding: 16, position: "sticky", top: 24 }}>
-            <div style={{ borderRadius: 16, overflow: "hidden", background: projectCover ? `url(${projectCover}) center/cover no-repeat` : "linear-gradient(135deg,#111111,#4b5563)", aspectRatio: "1.35 / 1", border: "1px solid #e5e7eb" }} />
+            <div
+              onClick={() => {
+                setCoverTarget({ type: "project" });
+                setCoverPickerTitle("Choose Event Cover Photo");
+                setSelectedMediaId(null);
+                setCoverPickerOpen(true);
+              }}
+              style={{ borderRadius: 16, overflow: "hidden", background: projectCover ? `url(${projectCover}) center/cover no-repeat` : "linear-gradient(135deg,#111111,#4b5563)", aspectRatio: "1.35 / 1", border: "1px solid #e5e7eb", cursor: "pointer", position: "relative", display: "flex", alignItems: "center", justifyContent: "center" }}
+            >
+              <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.3)", opacity: 0, transition: "opacity 0.2s", borderRadius: 16 }} className="hover-overlay" />
+              <div style={{ color: "#fff", fontSize: 13, fontWeight: 700, background: "rgba(0,0,0,0.5)", borderRadius: 10, padding: "8px 14px", zIndex: 1 }}>
+                <ImagePlus size={16} style={{ display: "inline", verticalAlign: "middle", marginRight: 6 }} />
+                {projectCover ? "Change Cover" : "Set Cover Photo"}
+              </div>
+            </div>
             <div style={{ color: "#4b5563", fontSize: 14, marginTop: 10 }}>Shoot Date: {formatDisplayDate(projectDate)}</div>
 
             <Link href={`/dashboard/projects/${projectId}/settings`} style={{ width: "100%", marginTop: 10, borderRadius: 10, border: "1px solid #111111", background: "#fff", color: "#b91c1c", padding: "12px 14px", fontWeight: 800, cursor: "pointer", textDecoration: "none", display: "inline-flex", alignItems: "center", justifyContent: "center", boxSizing: "border-box" }}>
@@ -536,58 +1029,180 @@ export default function ProjectDetailPage() {
 
             <div style={{ marginTop: 18 }}>
               <div style={{ fontSize: 13, fontWeight: 800, color: "#111111", marginBottom: 8 }}>Contact</div>
-              <button style={{ width: "100%", borderRadius: 10, border: "1px solid #d0d5dd", background: "#fff", color: "#111111", padding: "12px 14px", fontWeight: 700, textAlign: "left", cursor: "pointer" }}>
-                + Add Contact
+              <button onClick={() => setContactModalOpen(true)} style={{ width: "100%", borderRadius: 10, border: "1px solid #d0d5dd", background: "#fff", color: "#111111", padding: "12px 14px", fontWeight: 700, textAlign: "left", cursor: "pointer" }}>
+                + Add Linked Contact
               </button>
+              {linkedContacts.length ? (
+                <div style={{ marginTop: 10, border: "1px solid #e5e7eb", borderRadius: 12, overflow: "hidden", background: "#fff" }}>
+                  {linkedContacts.slice(0, 4).map((contact) => (
+                    <div key={contact.id} style={{ padding: "11px 14px", borderTop: "1px solid #eef2f7" }}>
+                      <div style={{ color: "#111111", fontSize: 13, fontWeight: 800 }}>{contact.name || contact.email}</div>
+                      <div style={{ color: "#4b5563", fontSize: 12, marginTop: 3 }}>{contact.role || "Linked Contact"} • {contact.email}</div>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
             </div>
 
             <div style={{ marginTop: 18, border: "1px solid #e5e7eb", borderRadius: 12, overflow: "hidden" }}>
               <div style={{ padding: "12px 14px", borderBottom: "1px solid #e5e7eb", background: "#fff5f5" }}>
                 <div style={{ fontSize: 13, fontWeight: 800, color: "#111111" }}>Visitor Activity</div>
-                <div style={{ fontSize: 12, color: "#4b5563", marginTop: 4 }}>Last Visit: {new Date().toLocaleDateString("en-US", { month: "2-digit", year: "numeric" })}</div>
+                <div style={{ fontSize: 12, color: "#4b5563", marginTop: 4 }}>
+                  {favoritesLoading ? "Loading client activity..." : `Latest favorite: ${formatActivityDate(latestFavoriteAt)}`}
+                </div>
               </div>
               {[
-                ["Orders", totalVisitorOrders],
-                ["Favorites", totalFavorites],
-                ["Gallery Visitor Report", totalVisitorReports],
-              ].map(([label, value]) => (
-                <div key={String(label)} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 14px", borderTop: "1px solid #eef2f7", color: "#111111", fontSize: 13 }}>
-                  <span>{label}</span>
-                  <span style={{ fontWeight: 800 }}>{String(value)}</span>
+                {
+                  key: "orders",
+                  label: "Orders",
+                  value: favoritesSummary.ordersCount,
+                  onClick: () => {
+                    window.location.href = "/dashboard/orders";
+                  },
+                },
+                {
+                  key: "favorites",
+                  label: "Favorites",
+                  value: favoritesSummary.totalFavorites,
+                  onClick: () => openFavoritesLibrary("photos"),
+                },
+                {
+                  key: "favorite-viewers",
+                  label: "Favorite Viewers",
+                  value: favoritesSummary.uniqueViewers,
+                  onClick: () => {
+                    setShareView("report");
+                    setShareModalOpen(true);
+                  },
+                },
+                {
+                  key: "favorite-albums",
+                  label: "Albums with Favorites",
+                  value: favoritesSummary.albumsWithFavorites,
+                  onClick: () => openFavoritesLibrary("albums"),
+                },
+              ].map((item) => {
+                const hovered = hoveredActivityMetric === item.key;
+                return (
+                  <button
+                    key={item.key}
+                    type="button"
+                    onClick={item.onClick}
+                    onMouseEnter={() => setHoveredActivityMetric(item.key)}
+                    onMouseLeave={() => setHoveredActivityMetric((prev) => (prev === item.key ? null : prev))}
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      width: "100%",
+                      padding: "10px 14px",
+                      border: 0,
+                      borderTop: "1px solid #eef2f7",
+                      background: hovered ? "#fff5f5" : "#fff",
+                      color: hovered ? "#b91c1c" : "#111111",
+                      fontSize: 13,
+                      cursor: "pointer",
+                      transition: "background 0.16s ease, color 0.16s ease",
+                    }}
+                  >
+                    <span>{item.label}</span>
+                    <span style={{ fontWeight: 800 }}>{String(item.value)}</span>
+                  </button>
+                );
+              })}
+              {favoritesError ? (
+                <div style={{ padding: "10px 14px", borderTop: "1px solid #eef2f7", color: "#b42318", fontSize: 12, fontWeight: 700 }}>
+                  {favoritesError}
                 </div>
-              ))}
+              ) : null}
+              {!favoritesError && favoritesSummary.warning ? (
+                <div style={{ padding: "10px 14px", borderTop: "1px solid #eef2f7", color: "#4b5563", fontSize: 12 }}>
+                  {favoritesSummary.warning}
+                </div>
+              ) : null}
+              <button
+                type="button"
+                onClick={() => { setShareView("report"); setShareModalOpen(true); }}
+                style={{ width: "100%", textAlign: "left", padding: "11px 14px", border: 0, borderTop: "1px solid #eef2f7", background: "#fff", color: "#111111", fontWeight: 800, cursor: "pointer" }}
+              >
+                Gallery Visitor Report
+              </button>
             </div>
 
             <div style={{ marginTop: 18 }}>
-              <div style={{ fontSize: 13, fontWeight: 800, color: "#111111", marginBottom: 8 }}>Photos</div>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 8 }}>
+                <div style={{ fontSize: 13, fontWeight: 800, color: "#111111" }}>Photos</div>
+                <button
+                  type="button"
+                  onClick={() => setPhotoSidebarOpen((prev) => !prev)}
+                  style={{
+                    borderRadius: 999,
+                    border: "1px solid #d0d5dd",
+                    background: "#fff",
+                    color: "#111111",
+                    padding: "6px 10px",
+                    fontSize: 12,
+                    fontWeight: 800,
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 6,
+                    cursor: "pointer",
+                  }}
+                >
+                  {photoSidebarOpen ? (
+                    <>
+                      <ChevronUp size={14} />
+                      Hide list
+                    </>
+                  ) : (
+                    <>
+                      <ChevronDown size={14} />
+                      Show list
+                    </>
+                  )}
+                </button>
+              </div>
               <button onClick={() => setNewAlbumOpen(true)} style={{ width: "100%", display: "flex", justifyContent: "space-between", alignItems: "center", borderRadius: 10, border: "1px solid #d0d5dd", background: "#fff", color: "#111111", padding: "12px 14px", fontWeight: 800, cursor: "pointer" }}>
-                <span>Manage Albums</span>
+                <span>Add New Album</span>
                 <FolderOpen size={16} />
               </button>
 
-              <div style={{ marginTop: 10, border: "1px solid #e5e7eb", borderRadius: 12, overflow: "hidden" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "11px 14px", background: "#fff5f5", borderBottom: "1px solid #eef2f7", color: "#111111", fontWeight: 800, fontSize: 13 }}>
-                  <span>All Photos</span>
-                  <span>{mediaCount}</span>
+              {photoSidebarOpen ? (
+                <div style={{ marginTop: 10, border: "1px solid #e5e7eb", borderRadius: 12, overflow: "hidden" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "11px 14px", background: "#fff5f5", borderBottom: "1px solid #eef2f7", color: "#111111", fontWeight: 800, fontSize: 13 }}>
+                    <span>All Photos</span>
+                    <span>{mediaCount}</span>
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "11px 14px", borderBottom: orderedCollections.length ? "1px solid #eef2f7" : "0", color: "#111111", fontSize: 13 }}>
+                    <span>All Photos Not in Albums</span>
+                    <span>0</span>
+                  </div>
+                  <div style={{ maxHeight: 360, overflow: "auto" }}>
+                    {filteredCollections.map((album) => {
+                      const active = selectedAlbumId === album.id || selectedAlbumIds.includes(album.id);
+                      const count = albumStats[album.id]?.count ?? 0;
+                      const href = `/dashboard/projects/${projectId}/albums/${album.id}`;
+                      return (
+                        <Link key={album.id} href={href} onMouseEnter={() => setSelectedAlbumId(album.id)} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, padding: "10px 12px", borderTop: "1px solid #eef2f7", background: active ? "#fff5f5" : "#fff", textDecoration: "none", color: "#111111", fontSize: 13, fontWeight: 700 }}>
+                          <span style={{ display: "inline-flex", alignItems: "center", gap: 6, overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis", maxWidth: "100%" }}>{albumHasLock(album) ? <Lock size={12} style={{ flex: "0 0 auto", color: "#b91c1c" }} /> : null}<span style={{ overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis" }}>{clean(album.title) || "Album"}</span></span>
+                          <span style={{ display: "inline-flex", alignItems: "center", gap: 8, color: active ? "#b91c1c" : "#4b5563", whiteSpace: "nowrap" }}>
+                            <span>{count}</span>
+                            <span style={{ display: "inline-flex", alignItems: "center", gap: 4, color: favoriteAlbumCounts[album.id] ? "#b91c1c" : "#98a2b3" }}>
+                              <Heart size={11} fill={favoriteAlbumCounts[album.id] ? "currentColor" : "none"} />
+                              {favoriteAlbumCounts[album.id] ?? 0}
+                            </span>
+                          </span>
+                        </Link>
+                      );
+                    })}
+                  </div>
                 </div>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "11px 14px", borderBottom: orderedCollections.length ? "1px solid #eef2f7" : "0", color: "#111111", fontSize: 13 }}>
-                  <span>All Photos Not in Albums</span>
-                  <span>0</span>
+              ) : (
+                <div style={{ marginTop: 10, border: "1px solid #e5e7eb", borderRadius: 12, background: "#fff", padding: "11px 14px", display: "flex", justifyContent: "space-between", alignItems: "center", color: "#4b5563", fontSize: 13 }}>
+                  <span>{albumsCount} album{albumsCount === 1 ? "" : "s"} hidden</span>
+                  <span>{mediaCount} photos</span>
                 </div>
-                <div style={{ maxHeight: 360, overflow: "auto" }}>
-                  {filteredCollections.map((album) => {
-                    const active = selectedAlbumId === album.id || selectedAlbumIds.includes(album.id);
-                    const count = albumStats[album.id]?.count ?? 0;
-                    const href = `/dashboard/projects/${projectId}/albums/${album.id}`;
-                    return (
-                      <Link key={album.id} href={href} onMouseEnter={() => setSelectedAlbumId(album.id)} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, padding: "10px 12px", borderTop: "1px solid #eef2f7", background: active ? "#fff5f5" : "#fff", textDecoration: "none", color: "#111111", fontSize: 13, fontWeight: 700 }}>
-                        <span style={{ display: "inline-flex", alignItems: "center", gap: 6, overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis", maxWidth: "100%" }}>{albumHasLock(album) ? <Lock size={12} style={{ flex: "0 0 auto", color: "#b91c1c" }} /> : null}<span style={{ overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis" }}>{clean(album.title) || "Album"}</span></span>
-                        <span style={{ color: active ? "#b91c1c" : "#4b5563" }}>{count}</span>
-                      </Link>
-                    );
-                  })}
-                </div>
-              </div>
+              )}
             </div>
           </aside>
 
@@ -619,6 +1234,128 @@ export default function ProjectDetailPage() {
               {classesCount} classes • {rolesCount} roles • {peopleCount} people • {galleriesCount} galleries • {albumsCount} albums
             </div>
 
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(300px,1fr))", gap: 16, marginBottom: 18 }}>
+              <div style={{ border: "1px solid #e5e7eb", borderRadius: 18, padding: 16, background: "#fffaf9" }}>
+                <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, marginBottom: 12 }}>
+                  <div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, color: "#111111", fontSize: 15, fontWeight: 900 }}>
+                      <Heart size={16} style={{ color: "#b91c1c" }} />
+                      Recent Client Favorites
+                    </div>
+                    <div style={{ color: "#4b5563", fontSize: 12, marginTop: 4 }}>
+                      {favoritesSummary.totalFavorites
+                        ? `${favoritesSummary.totalFavorites} total favorite${favoritesSummary.totalFavorites === 1 ? "" : "s"} across ${favoritesSummary.uniqueViewers} viewer${favoritesSummary.uniqueViewers === 1 ? "" : "s"}`
+                        : "Latest hearts from the gallery appear here."}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => openFavoritesLibrary("photos")}
+                    style={{
+                      borderRadius: 999,
+                      border: "1px solid #e5e7eb",
+                      background: "#fff",
+                      color: "#111111",
+                      padding: "8px 12px",
+                      fontSize: 12,
+                      fontWeight: 800,
+                      cursor: "pointer",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    View all favorites
+                  </button>
+                </div>
+                {favoritesLoading ? (
+                  <div style={{ color: "#4b5563", fontSize: 14 }}>Loading favorite activity...</div>
+                ) : recentFavoriteItems.length === 0 ? (
+                  <div style={{ color: "#4b5563", fontSize: 14 }}>No client favorites yet. Hearts from the event gallery will appear here.</div>
+                ) : (
+                  <div style={{ display: "grid", gap: 10 }}>
+                    {recentFavoriteItems.map((item) => (
+                      <div key={`${item.mediaId}-${item.viewerEmail}-${item.createdAt || "recent"}`} style={{ display: "grid", gridTemplateColumns: "56px minmax(0,1fr)", gap: 10, alignItems: "center" }}>
+                        <div style={{ width: 56, height: 56, borderRadius: 12, border: "1px solid #ead7d7", background: item.previewUrl ? `url(${item.previewUrl}) center/cover no-repeat` : "linear-gradient(135deg,#f3f4f6,#e5e7eb)" }} />
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{ color: "#111111", fontWeight: 800, fontSize: 13, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{item.filename}</div>
+                          <div style={{ color: "#4b5563", fontSize: 12, marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{item.collectionTitle} • {item.viewerEmail}</div>
+                          <div style={{ color: "#b91c1c", fontSize: 12, marginTop: 2 }}>{formatActivityDate(item.createdAt)}</div>
+                        </div>
+                      </div>
+                    ))}
+                    {favoritesSummary.totalFavorites > recentFavoriteItems.length ? (
+                      <button
+                        type="button"
+                        onClick={() => openFavoritesLibrary("photos")}
+                        style={{
+                          border: 0,
+                          background: "transparent",
+                          color: "#b91c1c",
+                          padding: 0,
+                          fontSize: 12,
+                          fontWeight: 800,
+                          cursor: "pointer",
+                          textAlign: "left",
+                        }}
+                      >
+                        Show all {favoritesSummary.totalFavorites} favorites
+                      </button>
+                    ) : null}
+                  </div>
+                )}
+              </div>
+
+              <div style={{ border: "1px solid #e5e7eb", borderRadius: 18, padding: 16, background: "#fff" }}>
+                <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, marginBottom: 12 }}>
+                  <div>
+                    <div style={{ color: "#111111", fontSize: 15, fontWeight: 900 }}>Top Favorite Viewers</div>
+                    <div style={{ color: "#4b5563", fontSize: 12, marginTop: 4 }}>
+                      Quick summary of the most active client emails.
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShareView("report");
+                      setShareModalOpen(true);
+                    }}
+                    style={{
+                      borderRadius: 999,
+                      border: "1px solid #e5e7eb",
+                      background: "#fff",
+                      color: "#111111",
+                      padding: "8px 12px",
+                      fontSize: 12,
+                      fontWeight: 800,
+                      cursor: "pointer",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    Open report
+                  </button>
+                </div>
+                {favoritesLoading ? (
+                  <div style={{ color: "#4b5563", fontSize: 14 }}>Loading viewer activity...</div>
+                ) : topViewerItems.length === 0 ? (
+                  <div style={{ color: "#4b5563", fontSize: 14 }}>When clients favorite images, their email and album activity will show here.</div>
+                ) : (
+                  <div style={{ display: "grid", gap: 10 }}>
+                    {topViewerItems.map((viewer) => (
+                      <div key={viewer.viewerEmail} style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 10, alignItems: "start", paddingBottom: 10, borderBottom: "1px solid #f1f5f9" }}>
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{ color: "#111111", fontWeight: 800, fontSize: 13, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{viewer.viewerEmail}</div>
+                          <div style={{ color: "#4b5563", fontSize: 12, marginTop: 3, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{viewer.albums.join(", ") || "Album activity pending"}</div>
+                        </div>
+                        <div style={{ textAlign: "right" }}>
+                          <div style={{ color: "#b91c1c", fontWeight: 900, fontSize: 13 }}>{viewer.favoritesCount} fav</div>
+                          <div style={{ color: "#4b5563", fontSize: 12, marginTop: 3 }}>{formatActivityDate(viewer.lastActivityAt)}</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+
             {filteredCollections.length === 0 ? (
               <div style={{ border: "1px dashed #d0d5dd", borderRadius: 18, padding: 24, color: "#4b5563" }}>{albumSearch ? "No albums found." : "No albums yet."}</div>
             ) : (
@@ -627,6 +1364,7 @@ export default function ProjectDetailPage() {
                   const albumHref = `/dashboard/projects/${projectId}/albums/${album.id}`;
                   const cover = albumStats[album.id]?.preview || collectionCover(album);
                   const photoCount = albumStats[album.id]?.count ?? 0;
+                  const favoriteCount = favoriteAlbumCounts[album.id] ?? 0;
                   const active = selectedAlbumId === album.id || selectedAlbumIds.includes(album.id);
                   return (
                     <div key={album.id} style={{ position: "relative" }}>
@@ -650,7 +1388,13 @@ export default function ProjectDetailPage() {
                               {clean(album.title) || "Album"}
                             </button>
                           </div>
-                          <div style={{ color: "#4b5563", fontSize: 12, marginTop: 3 }}>{photoCount} Photos</div>
+                          <div style={{ color: "#4b5563", fontSize: 12, marginTop: 3, display: "inline-flex", alignItems: "center", gap: 8 }}>
+                            <span>{photoCount} Photos</span>
+                            <span style={{ display: "inline-flex", alignItems: "center", gap: 4, color: favoriteCount ? "#b91c1c" : "#98a2b3" }}>
+                              <Heart size={12} fill={favoriteCount ? "currentColor" : "none"} />
+                              {favoriteCount}
+                            </span>
+                          </div>
                         </div>
                         <div style={{ display: "inline-flex", alignItems: "center", gap: 6, color: "#4b5563", fontSize: 12 }}>
                           <span style={{ width: 6, height: 6, borderRadius: 999, background: "#d0d5dd", display: "inline-block" }} />
@@ -697,6 +1441,395 @@ export default function ProjectDetailPage() {
           </main>
         </div>
       </div>
+
+      {shareModalOpen ? (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.55)", display: "grid", placeItems: "center", zIndex: 78, padding: 24 }}>
+          <div style={{ width: "100%", maxWidth: shareView === "compose" ? 1280 : shareView === "favorites" ? 1160 : 980, maxHeight: "88vh", overflow: "hidden", background: "#fff", borderRadius: 24, border: "1px solid #e5e7eb", boxShadow: "0 30px 60px rgba(15,23,42,0.25)", display: "flex", flexDirection: "column" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "18px 22px", borderBottom: "1px solid #eef2f7" }}>
+              <div>
+                <div style={{ fontSize: 16, fontWeight: 900, color: "#111111" }}>
+                  {shareView === "menu"
+                    ? "Share Gallery"
+                    : shareView === "report"
+                      ? "Gallery Visitors"
+                      : shareView === "favorites"
+                        ? favoritesLibraryMode === "albums"
+                          ? "Albums with Favorites"
+                          : "Favorite Photos"
+                        : "Share Gallery with Visitors"}
+                </div>
+                <div style={{ color: "#4b5563", fontSize: 13, marginTop: 4 }}>
+                  {shareView === "menu"
+                    ? `Share the ${projectName} gallery`
+                    : shareView === "report"
+                      ? "View who has opened and favorited this event gallery."
+                      : shareView === "favorites"
+                        ? "Review the photos clients loved most and download them in one step."
+                      : "Compose a gallery email and launch it in your mail app."}
+                </div>
+              </div>
+              <button onClick={() => { setShareModalOpen(false); setShareView("menu"); }} style={{ border: 0, background: "transparent", cursor: "pointer", color: "#6b7280" }}>
+                <X size={22} />
+              </button>
+            </div>
+
+            {shareView === "menu" ? (
+              <div style={{ padding: 24, display: "grid", gap: 16 }}>
+                <button onClick={() => openShareComposer("visitors")} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, borderRadius: 18, border: "1px solid #e5e7eb", background: "#fff", padding: "18px 20px", cursor: "pointer", textAlign: "left" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+                    <div style={{ width: 44, height: 44, borderRadius: 999, background: "#fff3e8", color: "#f97316", display: "grid", placeItems: "center" }}><Mail size={20} /></div>
+                    <div>
+                      <div style={{ color: "#111111", fontWeight: 800 }}>Email Gallery Visitors</div>
+                      <div style={{ color: "#4b5563", fontSize: 13, marginTop: 4 }}>
+                        {visitorEmails.length} registered email{visitorEmails.length === 1 ? "" : "s"} available
+                        {favoritesSummary.preRegisteredCount
+                          ? ` • ${favoritesSummary.preRegisteredCount} prerelease`
+                          : ""}
+                      </div>
+                    </div>
+                  </div>
+                  <ExternalLink size={18} color="#6b7280" />
+                </button>
+
+                <button onClick={() => openShareComposer("others")} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, borderRadius: 18, border: "1px solid #e5e7eb", background: "#fff", padding: "18px 20px", cursor: "pointer", textAlign: "left" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+                    <div style={{ width: 44, height: 44, borderRadius: 999, background: "#eef2ff", color: "#4f46e5", display: "grid", placeItems: "center" }}><Send size={20} /></div>
+                    <div>
+                      <div style={{ color: "#111111", fontWeight: 800 }}>Email Others</div>
+                      <div style={{ color: "#4b5563", fontSize: 13, marginTop: 4 }}>Compose a gallery email for custom recipients.</div>
+                    </div>
+                  </div>
+                  <ExternalLink size={18} color="#6b7280" />
+                </button>
+
+                <button onClick={copyEventLink} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, borderRadius: 18, border: "1px solid #e5e7eb", background: "#fff", padding: "18px 20px", cursor: "pointer", textAlign: "left" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+                    <div style={{ width: 44, height: 44, borderRadius: 999, background: "#fff1f2", color: "#dc2626", display: "grid", placeItems: "center" }}><Copy size={20} /></div>
+                    <div>
+                      <div style={{ color: "#111111", fontWeight: 800 }}>Copy Gallery Link</div>
+                      <div style={{ color: "#4b5563", fontSize: 13, marginTop: 4 }}>Copies a project-aware event access link.</div>
+                    </div>
+                  </div>
+                  <ExternalLink size={18} color="#6b7280" />
+                </button>
+
+                <button onClick={() => setShareView("report")} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, borderRadius: 18, border: "1px solid #e5e7eb", background: "#fff", padding: "18px 20px", cursor: "pointer", textAlign: "left" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+                    <div style={{ width: 44, height: 44, borderRadius: 999, background: "#eff6ff", color: "#0284c7", display: "grid", placeItems: "center" }}><Heart size={20} /></div>
+                    <div>
+                      <div style={{ color: "#111111", fontWeight: 800 }}>Gallery Visitors</div>
+                      <div style={{ color: "#4b5563", fontSize: 13, marginTop: 4 }}>See visitor activity, favorites, and export a quick report.</div>
+                    </div>
+                  </div>
+                  <ExternalLink size={18} color="#6b7280" />
+                </button>
+              </div>
+            ) : shareView === "report" ? (
+              <div style={{ padding: 24, overflow: "auto" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: 18, flexWrap: "wrap" }}>
+                  <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                    <button onClick={downloadVisitorCsv} style={{ borderRadius: 12, border: "1px solid #d0d5dd", background: "#fff", color: "#111111", padding: "10px 14px", fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 8 }}><Download size={16} />Download as CSV</button>
+                    <button onClick={() => openShareComposer("visitors")} style={{ borderRadius: 12, border: "1px solid #d0d5dd", background: "#fff", color: "#111111", padding: "10px 14px", fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 8 }}><Mail size={16} />Email</button>
+                  </div>
+                  <button onClick={() => setContactModalOpen(true)} style={{ borderRadius: 12, border: "1px solid #d0d5dd", background: "#fff", color: "#111111", padding: "10px 14px", fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 8 }}><UserPlus size={16} />Add Email Address</button>
+                </div>
+                <div style={{ border: "1px solid #e5e7eb", borderRadius: 16, overflow: "hidden" }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "1.3fr 1.1fr 1fr 1fr 0.7fr 0.7fr", gap: 12, padding: "14px 18px", background: "#f8fafc", color: "#344054", fontSize: 12, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.08em" }}>
+                    <div>Gallery Name</div>
+                    <div>Visitor</div>
+                    <div>Status</div>
+                    <div>Last Activity</div>
+                    <div>Favorites</div>
+                    <div>Orders</div>
+                  </div>
+                  {(favoritesSummary.viewers.length ? favoritesSummary.viewers : []).map((viewer) => (
+                    <div key={viewer.viewerEmail} style={{ display: "grid", gridTemplateColumns: "1.3fr 1.1fr 1fr 1fr 0.7fr 0.7fr", gap: 12, padding: "16px 18px", borderTop: "1px solid #eef2f7", alignItems: "center", fontSize: 14, color: "#111111" }}>
+                      <div>{projectName}</div>
+                      <div style={{ minWidth: 0, overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis" }}>{viewer.viewerEmail}</div>
+                      <div style={{ color: viewer.preRegistered && !viewer.openedGallery && !viewer.favoritesCount ? "#1d4ed8" : "#4b5563", fontWeight: viewer.preRegistered || viewer.openedGallery ? 700 : 500 }}>
+                        {viewerStatusLabel(viewer)}
+                      </div>
+                      <div style={{ color: "#4b5563" }}>
+                        {viewer.lastActivityAt ? formatActivityDate(viewer.lastActivityAt) : viewer.preRegistered ? "Waiting for release" : "No activity yet"}
+                      </div>
+                      <div>{viewer.favoritesCount}</div>
+                      <div>-</div>
+                    </div>
+                  ))}
+                  {!favoritesSummary.viewers.length ? (
+                    <div style={{ padding: "22px 18px", color: "#4b5563", fontSize: 14 }}>
+                      No gallery visitors yet. Once clients register or open the gallery, they will appear here.
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            ) : shareView === "favorites" ? (
+              <div style={{ padding: 24, overflow: "auto", display: "grid", gap: 18 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                  <div style={{ display: "inline-flex", gap: 8, padding: 4, borderRadius: 999, border: "1px solid #e5e7eb", background: "#f8fafc" }}>
+                    {[
+                      { key: "photos" as const, label: `Favorited Photos (${favoriteMediaItems.length})` },
+                      { key: "albums" as const, label: `Albums (${favoriteAlbumItems.length})` },
+                    ].map((option) => {
+                      const active = favoritesLibraryMode === option.key;
+                      return (
+                        <button
+                          key={option.key}
+                          type="button"
+                          onClick={() => setFavoritesLibraryMode(option.key)}
+                          style={{
+                            borderRadius: 999,
+                            border: 0,
+                            background: active ? "#111111" : "transparent",
+                            color: active ? "#ffffff" : "#4b5563",
+                            padding: "10px 14px",
+                            fontWeight: 800,
+                            cursor: "pointer",
+                          }}
+                        >
+                          {option.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                    {favoritesLibraryMode === "photos" ? (
+                      <button
+                        type="button"
+                        onClick={() => void downloadFavoriteMediaRows(favoriteMediaItems)}
+                        disabled={!favoriteMediaItems.length || downloadingFavoriteMedia}
+                        style={{
+                          borderRadius: 12,
+                          border: "1px solid #d0d5dd",
+                          background: !favoriteMediaItems.length || downloadingFavoriteMedia ? "#f8fafc" : "#111111",
+                          color: !favoriteMediaItems.length || downloadingFavoriteMedia ? "#98a2b3" : "#ffffff",
+                          padding: "10px 14px",
+                          fontWeight: 800,
+                          cursor: !favoriteMediaItems.length || downloadingFavoriteMedia ? "not-allowed" : "pointer",
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: 8,
+                        }}
+                      >
+                        <Download size={16} />
+                        {downloadingFavoriteMedia ? "Preparing downloads..." : "Download All"}
+                      </button>
+                    ) : null}
+                    <button
+                      type="button"
+                      onClick={() => setShareView("report")}
+                      style={{ borderRadius: 12, border: "1px solid #d0d5dd", background: "#fff", color: "#111111", padding: "10px 14px", fontWeight: 700, cursor: "pointer" }}
+                    >
+                      Open Visitor Report
+                    </button>
+                  </div>
+                </div>
+
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(180px,1fr))", gap: 12 }}>
+                  <div style={{ border: "1px solid #e5e7eb", borderRadius: 18, padding: 16, background: "#fffaf9" }}>
+                    <div style={{ color: "#4b5563", fontSize: 12, textTransform: "uppercase", letterSpacing: "0.12em", fontWeight: 800 }}>Favorite Actions</div>
+                    <div style={{ color: "#111111", fontSize: 28, fontWeight: 900, marginTop: 8 }}>{favoritesSummary.totalFavorites}</div>
+                  </div>
+                  <div style={{ border: "1px solid #e5e7eb", borderRadius: 18, padding: 16, background: "#fff" }}>
+                    <div style={{ color: "#4b5563", fontSize: 12, textTransform: "uppercase", letterSpacing: "0.12em", fontWeight: 800 }}>Unique Photos</div>
+                    <div style={{ color: "#111111", fontSize: 28, fontWeight: 900, marginTop: 8 }}>{favoriteMediaItems.length}</div>
+                  </div>
+                  <div style={{ border: "1px solid #e5e7eb", borderRadius: 18, padding: 16, background: "#fff" }}>
+                    <div style={{ color: "#4b5563", fontSize: 12, textTransform: "uppercase", letterSpacing: "0.12em", fontWeight: 800 }}>Favorite Viewers</div>
+                    <div style={{ color: "#111111", fontSize: 28, fontWeight: 900, marginTop: 8 }}>{favoritesSummary.uniqueViewers}</div>
+                  </div>
+                  <div style={{ border: "1px solid #e5e7eb", borderRadius: 18, padding: 16, background: "#fff" }}>
+                    <div style={{ color: "#4b5563", fontSize: 12, textTransform: "uppercase", letterSpacing: "0.12em", fontWeight: 800 }}>Albums with Favorites</div>
+                    <div style={{ color: "#111111", fontSize: 28, fontWeight: 900, marginTop: 8 }}>{favoritesSummary.albumsWithFavorites}</div>
+                  </div>
+                </div>
+
+                {favoriteLibraryNotice ? (
+                  <div style={{ borderRadius: 14, border: "1px solid #ead7d7", background: "#fff5f5", color: "#b91c1c", fontSize: 13, fontWeight: 700, padding: "12px 14px" }}>
+                    {favoriteLibraryNotice}
+                  </div>
+                ) : null}
+
+                {favoritesLibraryMode === "photos" ? (
+                  favoriteMediaItems.length ? (
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(220px,1fr))", gap: 16 }}>
+                      {favoriteMediaItems.map((item) => {
+                        const downloadUrl = publicStorageUrl(item.storagePath) || clean(item.previewUrl);
+                        return (
+                          <div key={item.mediaId} style={{ borderRadius: 20, overflow: "hidden", border: "1px solid #e5e7eb", background: "#fff" }}>
+                            <div style={{ aspectRatio: "4 / 5", background: item.previewUrl ? `url(${item.previewUrl}) center/cover no-repeat` : "linear-gradient(135deg,#f3f4f6,#e5e7eb)" }} />
+                            <div style={{ padding: 14, display: "grid", gap: 8 }}>
+                              <div>
+                                <div style={{ color: "#111111", fontSize: 14, fontWeight: 900, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{item.filename}</div>
+                                <div style={{ color: "#4b5563", fontSize: 12, marginTop: 3 }}>{item.collectionTitle}</div>
+                              </div>
+                              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, color: "#4b5563", fontSize: 12 }}>
+                                <span style={{ display: "inline-flex", alignItems: "center", gap: 5, color: "#b91c1c", fontWeight: 800 }}>
+                                  <Heart size={12} fill="currentColor" />
+                                  {item.favoritesCount}
+                                </span>
+                                <span>{formatActivityDate(item.latestFavoritedAt)}</span>
+                              </div>
+                              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                                {item.collectionId ? (
+                                  <Link
+                                    href={`/dashboard/projects/${projectId}/albums/${item.collectionId}`}
+                                    style={{ borderRadius: 10, border: "1px solid #d0d5dd", background: "#fff", color: "#111111", padding: "8px 10px", fontSize: 12, fontWeight: 800, textDecoration: "none" }}
+                                  >
+                                    Open Album
+                                  </Link>
+                                ) : null}
+                                <button
+                                  type="button"
+                                  onClick={() => void downloadFavoriteMediaRows([item])}
+                                  disabled={!downloadUrl || downloadingFavoriteMedia}
+                                  style={{
+                                    borderRadius: 10,
+                                    border: "1px solid #111111",
+                                    background: "#111111",
+                                    color: "#ffffff",
+                                    padding: "8px 10px",
+                                    fontSize: 12,
+                                    fontWeight: 800,
+                                    cursor: !downloadUrl || downloadingFavoriteMedia ? "not-allowed" : "pointer",
+                                    opacity: !downloadUrl || downloadingFavoriteMedia ? 0.55 : 1,
+                                  }}
+                                >
+                                  Download
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div style={{ border: "1px dashed #d0d5dd", borderRadius: 18, padding: 24, color: "#4b5563" }}>
+                      No favorited photos yet. Once clients heart images, they will appear here and can be downloaded in one step.
+                    </div>
+                  )
+                ) : favoriteAlbumItems.length ? (
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(240px,1fr))", gap: 16 }}>
+                    {favoriteAlbumItems.map((album) => (
+                      <Link
+                        key={album.collectionId}
+                        href={`/dashboard/projects/${projectId}/albums/${album.collectionId}`}
+                        style={{ textDecoration: "none", color: "inherit", borderRadius: 20, overflow: "hidden", border: "1px solid #e5e7eb", background: "#fff" }}
+                      >
+                        <div style={{ aspectRatio: "16 / 11", background: album.previewUrl ? `url(${album.previewUrl}) center/cover no-repeat` : "linear-gradient(135deg,#f3f4f6,#e5e7eb)" }} />
+                        <div style={{ padding: 14, display: "grid", gap: 8 }}>
+                          <div style={{ color: "#111111", fontSize: 16, fontWeight: 900 }}>{album.title}</div>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, color: "#4b5563", fontSize: 12 }}>
+                            <span style={{ display: "inline-flex", alignItems: "center", gap: 5, color: "#b91c1c", fontWeight: 800 }}>
+                              <Heart size={12} fill="currentColor" />
+                              {album.favoritesCount}
+                            </span>
+                            <span>{formatActivityDate(album.lastFavoritedAt)}</span>
+                          </div>
+                        </div>
+                      </Link>
+                    ))}
+                  </div>
+                ) : (
+                  <div style={{ border: "1px dashed #d0d5dd", borderRadius: 18, padding: 24, color: "#4b5563" }}>
+                    No albums have favorites yet.
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div style={{ display: "grid", gridTemplateColumns: "340px minmax(0,1fr)", minHeight: 0, flex: 1 }}>
+                <div style={{ padding: 20, borderRight: "1px solid #eef2f7", overflow: "auto" }}>
+                  <div style={{ display: "grid", gap: 14 }}>
+                    <label style={{ display: "grid", gap: 6 }}>
+                      <span style={{ fontSize: 12, fontWeight: 800, color: "#344054", textTransform: "uppercase", letterSpacing: "0.08em" }}>To</span>
+                      {shareRecipientMode === "visitors" ? (
+                        <div style={{ borderRadius: 12, border: "1px solid #d0d5dd", background: "#f8fafc", padding: "12px 14px", color: "#111111", fontSize: 14 }}>
+                          {visitorEmails.length ? `${visitorEmails.length} gallery visitors` : "No visitor emails yet"}
+                        </div>
+                      ) : (
+                        <textarea value={shareRecipientInput} onChange={(e) => setShareRecipientInput(e.target.value)} placeholder="harout@me.com, client@example.com" style={{ minHeight: 80, width: "100%", boxSizing: "border-box", borderRadius: 12, border: "1px solid #d0d5dd", padding: "12px 14px", fontSize: 14, color: "#111111", outline: "none" }} />
+                      )}
+                    </label>
+
+                    <label style={{ display: "grid", gap: 6 }}>
+                      <span style={{ fontSize: 12, fontWeight: 800, color: "#344054", textTransform: "uppercase", letterSpacing: "0.08em" }}>Subject</span>
+                      <input value={shareSubject} onChange={(e) => setShareSubject(e.target.value)} style={{ width: "100%", boxSizing: "border-box", borderRadius: 12, border: "1px solid #d0d5dd", padding: "12px 14px", fontSize: 14, color: "#111111", outline: "none" }} />
+                    </label>
+
+                    <label style={{ display: "grid", gap: 6 }}>
+                      <span style={{ fontSize: 12, fontWeight: 800, color: "#344054", textTransform: "uppercase", letterSpacing: "0.08em" }}>Headline</span>
+                      <input value={shareHeadline} onChange={(e) => setShareHeadline(e.target.value)} style={{ width: "100%", boxSizing: "border-box", borderRadius: 12, border: "1px solid #d0d5dd", padding: "12px 14px", fontSize: 14, color: "#111111", outline: "none" }} />
+                    </label>
+
+                    <label style={{ display: "grid", gap: 6 }}>
+                      <span style={{ fontSize: 12, fontWeight: 800, color: "#344054", textTransform: "uppercase", letterSpacing: "0.08em" }}>Button Text</span>
+                      <input value={shareButtonLabel} onChange={(e) => setShareButtonLabel(e.target.value)} style={{ width: "100%", boxSizing: "border-box", borderRadius: 12, border: "1px solid #d0d5dd", padding: "12px 14px", fontSize: 14, color: "#111111", outline: "none" }} />
+                    </label>
+
+                    <label style={{ display: "grid", gap: 6 }}>
+                      <span style={{ fontSize: 12, fontWeight: 800, color: "#344054", textTransform: "uppercase", letterSpacing: "0.08em" }}>Message</span>
+                      <textarea value={shareMessage} onChange={(e) => setShareMessage(e.target.value)} style={{ minHeight: 220, width: "100%", boxSizing: "border-box", borderRadius: 12, border: "1px solid #d0d5dd", padding: "12px 14px", fontSize: 14, color: "#111111", outline: "none" }} />
+                    </label>
+
+                    <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                      <button onClick={saveShareTemplate} disabled={shareSaving} style={{ borderRadius: 12, border: "1px solid #d0d5dd", background: "#fff", color: "#111111", padding: "10px 14px", fontWeight: 700, cursor: "pointer" }}>{shareSaving ? "Saving..." : "Save Template"}</button>
+                      <button onClick={copyShareMessage} style={{ borderRadius: 12, border: "1px solid #d0d5dd", background: "#fff", color: "#111111", padding: "10px 14px", fontWeight: 700, cursor: "pointer" }}>Copy Email</button>
+                      <button onClick={sendShareEmails} disabled={shareSending} style={{ borderRadius: 12, border: 0, background: "#0f172a", color: "#fff", padding: "10px 14px", fontWeight: 800, cursor: shareSending ? "wait" : "pointer", opacity: shareSending ? 0.7 : 1 }}>
+                        {shareSending ? "Sending..." : "Send Emails"}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+                <div style={{ background: "#f3f4f6", overflow: "auto", padding: 20 }}>
+                  <div style={{ maxWidth: 420, margin: "0 auto", background: "#fff", borderRadius: 18, overflow: "hidden", boxShadow: "0 18px 40px rgba(15,23,42,0.12)" }}>
+                    <div style={{ aspectRatio: "1.3 / 1", background: projectCover ? `url(${projectCover}) center/cover no-repeat` : "linear-gradient(135deg,#111111,#4b5563)" }} />
+                    <div style={{ padding: 24 }}>
+                      <div style={{ color: "#98a2b3", fontSize: 12, fontWeight: 800, letterSpacing: "0.18em", textTransform: "uppercase", textAlign: "center" }}>Studio OS</div>
+                      <div style={{ marginTop: 18, color: "#111111", fontSize: 28, fontWeight: 900, textAlign: "center" }}>{clean(shareHeadline) || projectName}</div>
+                      <div style={{ marginTop: 18, display: "flex", justifyContent: "center" }}>
+                        <div style={{ borderRadius: 999, background: "#111111", color: "#fff", padding: "12px 22px", fontSize: 12, fontWeight: 800 }}>{clean(shareButtonLabel) || "View Gallery"}</div>
+                      </div>
+                      <div style={{ marginTop: 22, borderRadius: 16, background: "#f8fafc", padding: 18, color: "#344054", fontSize: 14, lineHeight: 1.7, whiteSpace: "pre-line" }}>
+                        {shareMessage}
+                        {"\n\n"}
+                        {accessSummary}
+                        {"\n"}
+                        {emailRequirementSummary}
+                        {"\n"}
+                        {galleryEntryUrl}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      ) : null}
+
+      {contactModalOpen ? (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.55)", display: "grid", placeItems: "center", zIndex: 76, padding: 24 }}>
+          <div style={{ width: "100%", maxWidth: 560, background: "#fff", borderRadius: 24, border: "1px solid #e5e7eb", boxShadow: "0 30px 60px rgba(15,23,42,0.25)", overflow: "hidden" }}>
+            <div style={{ padding: "20px 22px", borderBottom: "1px solid #eef2f7" }}>
+              <div style={{ fontSize: 24, fontWeight: 900, color: "#111111" }}>Add Linked Contact</div>
+              <div style={{ color: "#4b5563", marginTop: 4 }}>Keep a VIP, client rep, or proofing helper attached to this event.</div>
+            </div>
+            <div style={{ padding: 22, display: "grid", gap: 14 }}>
+              <input value={contactName} onChange={(e) => setContactName(e.target.value)} placeholder="Contact name" style={{ width: "100%", boxSizing: "border-box", borderRadius: 14, border: "1px solid #d0d5dd", padding: "14px 16px", fontSize: 15, color: "#111111", outline: "none" }} />
+              <input value={contactEmail} onChange={(e) => setContactEmail(e.target.value)} placeholder="Email address" style={{ width: "100%", boxSizing: "border-box", borderRadius: 14, border: "1px solid #d0d5dd", padding: "14px 16px", fontSize: 15, color: "#111111", outline: "none" }} />
+              <input value={contactRole} onChange={(e) => setContactRole(e.target.value)} placeholder="Role" style={{ width: "100%", boxSizing: "border-box", borderRadius: 14, border: "1px solid #d0d5dd", padding: "14px 16px", fontSize: 15, color: "#111111", outline: "none" }} />
+              <textarea value={contactNote} onChange={(e) => setContactNote(e.target.value)} placeholder="Internal notes" style={{ minHeight: 90, width: "100%", boxSizing: "border-box", borderRadius: 14, border: "1px solid #d0d5dd", padding: "14px 16px", fontSize: 15, color: "#111111", outline: "none" }} />
+              <label style={{ display: "flex", alignItems: "center", gap: 10, color: "#111111", fontWeight: 700 }}><input type="checkbox" checked={contactVip} onChange={(e) => setContactVip(e.target.checked)} /> VIP / Admin contact</label>
+              <label style={{ display: "flex", alignItems: "center", gap: 10, color: "#111111", fontWeight: 700 }}><input type="checkbox" checked={contactLabelPhotos} onChange={(e) => setContactLabelPhotos(e.target.checked)} /> Can help label or shortlist photos</label>
+              <label style={{ display: "flex", alignItems: "center", gap: 10, color: "#111111", fontWeight: 700 }}><input type="checkbox" checked={contactHidePhotos} onChange={(e) => setContactHidePhotos(e.target.checked)} /> Can request hidden photos</label>
+            </div>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 12, padding: "18px 22px", borderTop: "1px solid #eef2f7" }}>
+              <button onClick={() => setContactModalOpen(false)} style={{ borderRadius: 14, border: "1px solid #d0d5dd", background: "#fff", color: "#111111", padding: "12px 16px", fontWeight: 800, cursor: "pointer" }}>Cancel</button>
+              <button onClick={saveLinkedContact} disabled={!clean(contactEmail) || contactSaving} style={{ borderRadius: 14, border: 0, background: !clean(contactEmail) || contactSaving ? "#cbd5e1" : "#0f172a", color: "#fff", padding: "12px 16px", fontWeight: 800, cursor: !clean(contactEmail) || contactSaving ? "not-allowed" : "pointer" }}>{contactSaving ? "Saving..." : "Save contact"}</button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {newAlbumOpen ? (
         <div style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.55)", display: "grid", placeItems: "center", zIndex: 70, padding: 24 }}>

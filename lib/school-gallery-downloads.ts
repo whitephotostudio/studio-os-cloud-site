@@ -14,6 +14,8 @@ type SchoolDownloadAccess = {
   audience: EventGallerySettings["extras"]["freeDigitalAudience"];
   resolution: EventGallerySettings["extras"]["freeDigitalResolution"];
   downloadLimit: EventGallerySettings["extras"]["freeDigitalDownloadLimit"];
+  requiresPin: boolean;
+  hasPinConfigured: boolean;
   downloadsUsed: number;
   downloadsRemaining: number | null;
   canDownload: boolean;
@@ -44,10 +46,14 @@ export function defaultSchoolGalleryDownloadAccess(
     settings.extras.freeDigitalDownloadLimit === "unlimited"
       ? null
       : Math.max(0, Number.parseInt(settings.extras.freeDigitalDownloadLimit, 10) || 0);
+  const requiresPin = settings.extras.downloadPinEnabled;
+  const hasPinConfigured = clean(settings.extras.downloadPin).length > 0;
 
   let message: string | null = null;
   if (!enabled) {
     message = "Gallery downloads are turned off for this gallery.";
+  } else if (requiresPin && !hasPinConfigured) {
+    message = 'A "Download All" PIN needs to be set in School Settings first.';
   } else if (settings.extras.freeDigitalAudience === "person") {
     message =
       "Free downloads are reserved for a specific approved parent email.";
@@ -61,10 +67,13 @@ export function defaultSchoolGalleryDownloadAccess(
     audience: settings.extras.freeDigitalAudience,
     resolution: settings.extras.freeDigitalResolution,
     downloadLimit: settings.extras.freeDigitalDownloadLimit,
+    requiresPin,
+    hasPinConfigured,
     downloadsUsed: 0,
     downloadsRemaining: numericLimit,
     canDownload:
       enabled &&
+      (!requiresPin || hasPinConfigured) &&
       settings.extras.freeDigitalAudience !== "person" &&
       settings.extras.freeDigitalAudience !== "album",
     message,

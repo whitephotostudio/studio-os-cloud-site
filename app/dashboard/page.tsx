@@ -65,7 +65,7 @@ type EventsPayload = {
   projects?: ProjectRow[];
 };
 
-const pageBg = "#f3f5f8";
+const pageBg = "#ffffff";
 const cardBg = "#ffffff";
 const textPrimary = "#111827";
 const textMuted = "#667085";
@@ -460,8 +460,18 @@ export default function DashboardPage() {
   return (
     <div style={{ display: "flex", minHeight: "100vh", background: pageBg }}>
       <aside style={sidebar}>
-        <div style={{ padding: 24, borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
-          <Logo />
+        <div style={{ padding: 18, background: "#ffffff", borderBottom: "1px solid #e5e7eb" }}>
+          <div
+            style={{
+              background: "#ffffff",
+              borderRadius: 16,
+              padding: "14px 16px",
+            }}
+          >
+            <Link href="/" style={{ display: "inline-flex" }}>
+              <Logo small />
+            </Link>
+          </div>
         </div>
 
         <nav style={{ paddingTop: 18 }}>

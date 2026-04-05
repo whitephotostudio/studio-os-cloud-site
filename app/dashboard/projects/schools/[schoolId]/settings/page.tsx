@@ -663,6 +663,29 @@ export default function SchoolSettingsPage() {
                       </div>
                     ) : null}
                     <ToggleRow title='Show "Download All" button in gallery' checked={extras.showDownloadAllButton} onChange={(next) => setExtra("showDownloadAllButton", next)} />
+                    {extras.showDownloadAllButton ? (
+                      <>
+                        <ToggleRow
+                          title='Require a separate PIN for "Download All"'
+                          description="Add an extra PIN gate just for full-gallery downloads."
+                          checked={extras.downloadPinEnabled}
+                          onChange={(next) => setExtra("downloadPinEnabled", next)}
+                        />
+                        {extras.downloadPinEnabled ? (
+                          <Field
+                            label='Download All PIN'
+                            hint="Parents will need this extra PIN when they click Download All."
+                          >
+                            <input
+                              value={extras.downloadPin}
+                              onChange={(e) => setExtra("downloadPin", e.target.value)}
+                              className={cx("max-w-md", fieldClass)}
+                              placeholder="Set a download PIN"
+                            />
+                          </Field>
+                        ) : null}
+                      </>
+                    ) : null}
                     <ToggleRow title="Apply a watermark to the downloaded files" checked={extras.watermarkDownloads} onChange={(next) => setExtra("watermarkDownloads", next)} />
                     <ToggleRow title="Include a Print Release" checked={extras.includePrintRelease} onChange={(next) => setExtra("includePrintRelease", next)} />
                   </Card>

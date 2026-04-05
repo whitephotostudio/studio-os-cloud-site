@@ -1,13 +1,20 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import Link from "next/link";
 import { SiteHeader } from "@/components/site-header";
 import { SiteFooter } from "@/components/site-footer";
 import { createClient } from "@/lib/supabase/client";
+import {
+  getPlanPriceCents,
+  normalizeBillingInterval,
+  normalizePlanCode,
+} from "@/lib/studio-pricing";
 
 export default function SignUpPage() {
   const supabase = createClient();
+  const [selectedPlan, setSelectedPlan] = useState<ReturnType<typeof normalizePlanCode>>(null);
+  const [selectedInterval, setSelectedInterval] = useState<"month" | "year">("month");
 
   const [fullName, setFullName] = useState("");
   const [businessName, setBusinessName] = useState("");
@@ -15,6 +22,12 @@ export default function SignUpPage() {
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    setSelectedPlan(normalizePlanCode(params.get("plan")));
+    setSelectedInterval(normalizeBillingInterval(params.get("interval")) ?? "month");
+  }, []);
 
   async function handleSignUp(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -59,6 +72,35 @@ export default function SignUpPage() {
               Start building your photographer portal, school galleries, and connected
               online workflow.
             </p>
+
+            {selectedPlan ? (
+              <div className="mt-8 max-w-xl rounded-[28px] border border-neutral-200 bg-neutral-50 p-6 shadow-sm">
+                <div className="text-xs font-semibold uppercase tracking-[0.22em] text-neutral-500">
+                  Selected package
+                </div>
+                <div className="mt-3 text-2xl font-semibold text-neutral-950">
+                  {selectedPlan.charAt(0).toUpperCase() + selectedPlan.slice(1)} ·{" "}
+                  {selectedInterval === "year" ? "Annual prepaid" : "Monthly"}
+                </div>
+                <div className="mt-3 text-base text-neutral-600">
+                  {new Intl.NumberFormat("en-CA", {
+                    style: "currency",
+                    currency: "CAD",
+                  }).format(getPlanPriceCents(selectedPlan, selectedInterval) / 100)}
+                </div>
+                <div className="mt-3 text-sm leading-7 text-neutral-500">
+                  Create your account first, then finish Stripe Connect and plan activation in
+                  billing settings.
+                </div>
+              </div>
+            ) : null}
+
+            <div className="mt-8 text-sm text-neutral-500">
+              Need to compare packages first?{" "}
+              <Link href="/pricing" className="font-medium text-neutral-950 underline underline-offset-4">
+                View pricing
+              </Link>
+            </div>
           </div>
 
           <div className="flex items-center justify-center">

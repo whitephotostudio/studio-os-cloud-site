@@ -20,6 +20,10 @@ export async function ensurePackageProfile({
 
   if (!profileId || !ownerId) return null;
 
+  // If profileId isn't a valid UUID, skip DB lookups that would fail with 22P02
+  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (!UUID_RE.test(profileId)) return null;
+
   const { data: existingProfile, error: existingProfileError } = await service
     .from("package_profiles")
     .select("id")

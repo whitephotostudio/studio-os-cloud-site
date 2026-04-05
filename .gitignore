@@ -23,6 +23,13 @@
 # misc
 .DS_Store
 *.pem
+*.zip
+.next-build-backup-*
+.next_buildbak_*
+.studio_os_flutter/
+app/parents/[pin]/page1.tsx
+app/dashboard/orders/page2.tsx
+app/dashboard/orders/page3.tsx
 
 # debug
 npm-debug.log*

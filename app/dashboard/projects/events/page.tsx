@@ -3,7 +3,9 @@
 import { KeyboardEvent, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, CalendarDays, ImagePlus, Settings, ChevronRight, Search } from "lucide-react";
+import { createClient } from "@/lib/supabase/client";
+import { Logo } from "@/components/logo";
+import { ArrowLeft, CalendarDays, ImagePlus, Settings, ChevronRight, Search, LogOut } from "lucide-react";
 
 type ProjectRow = {
   id: string;
@@ -26,6 +28,28 @@ type CollectionRow = {
 type MediaRow = {
   id: string;
   project_id?: string | null;
+};
+
+const sidebar: React.CSSProperties = {
+  width: 220,
+  minHeight: "100vh",
+  background: "#000",
+  display: "flex",
+  flexDirection: "column",
+};
+
+const navItem: React.CSSProperties = {
+  padding: "12px 24px",
+  fontSize: 14,
+  color: "#ccc",
+  textDecoration: "none",
+  display: "block",
+};
+
+const navActive: React.CSSProperties = {
+  ...navItem,
+  color: "#fff",
+  background: "#1a1a1a",
 };
 
 function clean(value: string | null | undefined) {
@@ -89,6 +113,7 @@ function bgStyle(project: ProjectRow) {
 }
 
 export default function EventsPage() {
+  const supabase = createClient();
   const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -97,6 +122,7 @@ export default function EventsPage() {
   const [imageCounts, setImageCounts] = useState<Record<string, number>>({});
   const [searchQuery, setSearchQuery] = useState("");
   const [hoveredProjectId, setHoveredProjectId] = useState<string | null>(null);
+  const [userEmail, setUserEmail] = useState("");
 
   useEffect(() => {
     let mounted = true;
@@ -105,6 +131,11 @@ export default function EventsPage() {
       try {
         setLoading(true);
         setError("");
+        const {
+          data: { user },
+        } = await supabase.auth.getUser();
+        setUserEmail(user?.email ?? "");
+
         const response = await fetch("/api/dashboard/events", {
           method: "GET",
           cache: "no-store",
@@ -143,7 +174,12 @@ export default function EventsPage() {
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [supabase.auth]);
+
+  async function signOut() {
+    await supabase.auth.signOut();
+    window.location.href = "/sign-in";
+  }
 
   const filteredProjects = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -165,8 +201,46 @@ export default function EventsPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[#f3f5f9] px-6 py-6 text-[#13234a] lg:px-10">
-      <div className="mx-auto max-w-[1480px]">
+    <div style={{ display: "flex", minHeight: "100vh", background: "#ffffff" }}>
+      <div style={sidebar}>
+        <div style={{ background: "#fff", padding: "18px", borderBottom: "1px solid #e5e7eb" }}>
+          <div style={{ background: "#fff", borderRadius: 16, padding: "14px 16px" }}>
+            <Link href="/" style={{ display: "inline-flex" }}>
+              <Logo small />
+            </Link>
+          </div>
+        </div>
+        <nav style={{ flex: 1, paddingTop: 16 }}>
+          <Link href="/dashboard" style={navItem}>Dashboard</Link>
+          <Link href="/dashboard/schools" style={navItem}>Schools</Link>
+          <Link href="/dashboard/projects/events" style={navActive}>Events</Link>
+          <Link href="/dashboard/orders" style={navItem}>Orders</Link>
+          <Link href="/dashboard/packages" style={navItem}>Packages</Link>
+          <Link href="/dashboard/settings" style={navItem}>Settings</Link>
+        </nav>
+        <div style={{ padding: "0 16px 8px", color: "#8f8f8f", fontSize: 12 }}>{userEmail}</div>
+        <button
+          onClick={signOut}
+          style={{
+            margin: 16,
+            padding: "10px",
+            background: "transparent",
+            border: "1px solid #333",
+            borderRadius: 8,
+            color: "#ccc",
+            cursor: "pointer",
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            fontSize: 13,
+          }}
+        >
+          <LogOut size={14} /> Sign Out
+        </button>
+      </div>
+
+      <div className="flex-1 px-6 py-6 text-[#13234a] lg:px-10">
+        <div className="mx-auto max-w-[1480px]">
         <div className="mb-8 flex items-start justify-between gap-4">
           <div>
             <Link href="/dashboard" className="mb-4 inline-flex items-center gap-2 text-sm font-semibold text-[#667085] transition hover:text-[#13234a]">
@@ -206,7 +280,10 @@ export default function EventsPage() {
         ) : filteredProjects.length === 0 ? (
           <div className="rounded-[28px] border border-[#d9dfeb] bg-white p-10 text-lg text-[#667085]">No events found.</div>
         ) : (
-          <div className="grid gap-7 md:grid-cols-2 xl:grid-cols-3">
+          <div
+            className="grid gap-5"
+            style={{ gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))" }}
+          >
             {filteredProjects.map((project) => {
               const href = `/dashboard/projects/${project.id}`;
               const hovered = hoveredProjectId === project.id;
@@ -219,73 +296,75 @@ export default function EventsPage() {
                   onKeyDown={(event) => handleCardKeyDown(event, href)}
                   onMouseEnter={() => setHoveredProjectId(project.id)}
                   onMouseLeave={() => setHoveredProjectId((prev) => (prev === project.id ? null : prev))}
-                  className="cursor-pointer overflow-hidden rounded-[34px] bg-white shadow-[0_12px_40px_rgba(16,24,40,0.06)] transition"
+                  className="cursor-pointer overflow-hidden bg-white transition"
                   style={{
                     border: hovered ? "2px solid #b91c1c" : "1px solid #d8dfeb",
+                    borderRadius: 20,
+                    boxShadow: "0 8px 28px rgba(15,23,42,0.06)",
                     transform: hovered ? "translateY(-1px)" : "translateY(0)",
                   }}
                 >
-                  <div className="relative min-h-[250px]" style={bgStyle(project)}>
+                  <div className="relative" style={{ ...bgStyle(project), minHeight: 160 }}>
                     <div className="absolute inset-0 bg-gradient-to-t from-black/10 to-transparent" />
-                    <div className="relative z-20 flex h-full flex-col justify-between px-7 py-7 text-white">
+                    <div className="relative z-20 flex h-full flex-col justify-between px-5 py-5 text-white">
                       <div className="flex items-start justify-between gap-4">
-                        <span className="inline-flex items-center gap-2 rounded-full border border-white/25 bg-white/16 px-4 py-2 text-sm font-semibold backdrop-blur-sm">
-                          <ImagePlus size={15} />
+                        <span className="inline-flex items-center gap-2 rounded-full border border-white/25 bg-white/16 px-3 py-1.5 text-xs font-semibold backdrop-blur-sm">
+                          <ImagePlus size={14} />
                           EVENT
                         </span>
                         <div className="flex gap-2">
                           <Link
                             href={href}
                             onClick={(e) => e.stopPropagation()}
-                            className="relative z-30 inline-flex items-center gap-2 rounded-full border border-white/25 bg-white/14 px-4 py-2 text-sm font-semibold backdrop-blur-sm hover:bg-white/22"
+                            className="relative z-30 inline-flex items-center gap-2 rounded-full border border-white/25 bg-white/14 px-3 py-1.5 text-xs font-semibold backdrop-blur-sm hover:bg-white/22"
                           >
-                            <ImagePlus size={15} />
+                            <ImagePlus size={14} />
                             Cover
                           </Link>
                           <Link
                             href={`${href}/settings`}
                             onClick={(e) => e.stopPropagation()}
-                            className="relative z-30 inline-flex items-center gap-2 rounded-full border border-white/25 bg-white/14 px-4 py-2 text-sm font-semibold backdrop-blur-sm hover:bg-white/22"
+                            className="relative z-30 inline-flex items-center gap-2 rounded-full border border-white/25 bg-white/14 px-3 py-1.5 text-xs font-semibold backdrop-blur-sm hover:bg-white/22"
                           >
-                            <Settings size={15} />
+                            <Settings size={14} />
                             Settings
                           </Link>
                         </div>
                       </div>
 
                       <div
-                        className="relative z-10 mt-6 block rounded-[24px] p-1 text-white transition hover:opacity-95"
+                        className="relative z-10 mt-4 block rounded-[20px] p-1 text-white transition hover:opacity-95"
                         aria-label={`Open event ${projectNameOf(project)}`}
                       >
-                        <h2 className="text-[3rem] font-bold leading-none tracking-[-0.04em]">{projectNameOf(project)}</h2>
-                        <p className="mt-4 text-2xl text-white/92">{projectSubtitleOf(project)}</p>
+                        <h2 className="text-[18px] font-extrabold leading-[1.2] tracking-[-0.03em]">{projectNameOf(project)}</h2>
+                        <p className="mt-2 text-sm text-white/82">{projectSubtitleOf(project)}</p>
                       </div>
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-3 gap-4 px-6 pt-6">
-                    <div className="rounded-[22px] border border-[#d9dfeb] bg-[#fbfcfe] p-4">
-                      <div className="text-sm font-medium text-[#667085]">Albums</div>
-                      <div className="mt-3 text-4xl font-bold tracking-[-0.03em] text-[#13234a]">{albumCounts[project.id] ?? 0}</div>
+                  <div className="grid grid-cols-3 gap-3 px-5 pt-5">
+                    <div className="rounded-[14px] border border-[#e5e7eb] bg-[#fbfcfe] p-3">
+                      <div className="text-xs font-medium text-[#667085]">Albums</div>
+                      <div className="mt-2 text-[17px] font-extrabold tracking-[-0.02em] text-[#13234a]">{albumCounts[project.id] ?? 0}</div>
                     </div>
-                    <div className="rounded-[22px] border border-[#d9dfeb] bg-[#fbfcfe] p-4">
-                      <div className="text-sm font-medium text-[#667085]">Images</div>
-                      <div className="mt-3 text-4xl font-bold tracking-[-0.03em] text-[#13234a]">{imageCounts[project.id] ?? 0}</div>
+                    <div className="rounded-[14px] border border-[#e5e7eb] bg-[#fbfcfe] p-3">
+                      <div className="text-xs font-medium text-[#667085]">Images</div>
+                      <div className="mt-2 text-[17px] font-extrabold tracking-[-0.02em] text-[#13234a]">{imageCounts[project.id] ?? 0}</div>
                     </div>
-                    <div className="rounded-[22px] border border-[#d9dfeb] bg-[#fbfcfe] p-4">
-                      <div className="text-sm font-medium text-[#667085]">Status</div>
-                      <div className="mt-3 text-2xl font-bold capitalize tracking-[-0.02em] text-[#13234a]">{statusLabel(project)}</div>
+                    <div className="rounded-[14px] border border-[#e5e7eb] bg-[#fbfcfe] p-3">
+                      <div className="text-xs font-medium text-[#667085]">Status</div>
+                      <div className="mt-2 text-[17px] font-extrabold capitalize tracking-[-0.02em] text-[#13234a]">{statusLabel(project)}</div>
                     </div>
                   </div>
 
-                  <div className="flex items-center justify-between px-6 py-6">
-                    <div className="inline-flex items-center gap-2 text-lg font-medium text-[#667085]">
-                      <CalendarDays size={18} />
+                  <div className="flex items-center justify-between px-5 py-4">
+                    <div className="inline-flex items-center gap-2 text-sm font-medium text-[#667085]">
+                      <CalendarDays size={14} />
                       {formatDisplayDate(project.event_date || project.shoot_date)}
                     </div>
-                    <div className={`inline-flex items-center gap-2 text-lg font-semibold transition ${hovered ? "text-[#b91c1c]" : "text-[#13234a]"}`}>
+                    <div className={`inline-flex items-center gap-2 text-sm font-semibold transition ${hovered ? "text-[#b91c1c]" : "text-[#13234a]"}`}>
                       Open event
-                      <ChevronRight size={18} />
+                      <ChevronRight size={14} />
                     </div>
                   </div>
                 </div>
@@ -293,6 +372,7 @@ export default function EventsPage() {
             })}
           </div>
         )}
+        </div>
       </div>
     </div>
   );

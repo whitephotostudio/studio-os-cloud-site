@@ -1,0 +1,2 @@
+-- Placeholder to align local migration history with the linked remote project.
+-- This change was applied remotely before the current repo captured migrations.

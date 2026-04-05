@@ -20,7 +20,13 @@ export default function StudioOSPage() {
     <div className="min-h-screen bg-white text-neutral-900">
       <SiteHeader />
 
-      <main className="min-h-[calc(100vh-72px)] px-4 py-10 bg-[radial-gradient(circle_at_top,rgba(239,68,68,0.08),transparent_24%)]">
+      <main
+        className="min-h-[calc(100vh-72px)] px-4 py-10"
+        style={{
+          background:
+            "radial-gradient(circle at top, rgba(239,68,68,0.08), transparent 24%)",
+        }}
+      >
         <div className="max-w-6xl mx-auto">
           <div className="mb-8">
             <div className="text-sm text-neutral-500">Desktop app overview</div>

@@ -1,5 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createDashboardServiceClient, resolveDashboardAuth } from "@/lib/dashboard-auth";
+import { normalizeEventGallerySettings } from "@/lib/event-gallery-settings";
+import {
+  buildGalleryShareEmail,
+  eventFromName,
+  eventReplyTo,
+} from "@/lib/event-gallery-email";
+import {
+  hasProjectEmailDelivery,
+  recordProjectEmailDelivery,
+} from "@/lib/project-email-deliveries";
+import { resendConfigured, sendResendEmail } from "@/lib/resend";
+import { ensurePackageProfile } from "@/lib/ensure-package-profile";
 
 export const dynamic = "force-dynamic";
 
@@ -9,8 +21,33 @@ type StudentRow = {
   role: string | null;
 };
 
+type ProjectUpdateBody = {
+  cover_photo_url?: string | null;
+  project_name?: string | null;
+  name?: string | null;
+  title?: string | null;
+  portal_status?: string | null;
+  shoot_date?: string | null;
+  order_due_date?: string | null;
+  expiration_date?: string | null;
+  package_profile_id?: string | null;
+  email_required?: boolean;
+  checkout_contact_required?: boolean;
+  internal_notes?: string | null;
+  access_mode?: string | null;
+  access_pin?: string | null;
+  access_updated_at?: string | null;
+  access_updated_source?: string | null;
+  gallery_settings?: unknown;
+};
+
 function clean(value: string | null | undefined) {
   return (value ?? "").trim();
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function isUuid(value: unknown): boolean {
+  return typeof value === "string" && UUID_RE.test(value);
 }
 
 function normalizeRole(rawRole: string | null | undefined): string {
@@ -23,6 +60,328 @@ function normalizeRole(rawRole: string | null | undefined): string {
   if (["office", "office staff", "admin", "administrator", "administration", "front office"].includes(role)) return "Office Staff";
   if (["staff", "faculty", "employee", "employees", "support staff", "school staff"].includes(role)) return "Staff";
   return clean(rawRole) || "Unassigned";
+}
+
+function hasOwn<T extends object>(value: T, key: keyof ProjectUpdateBody) {
+  return Object.prototype.hasOwnProperty.call(value, key);
+}
+
+function isLivePortalStatus(value: string | null | undefined) {
+  const normalized = clean(value).toLowerCase();
+  return normalized === "active" || normalized === "public" || normalized === "live" || normalized === "open";
+}
+
+function looksLikeEmail(value: string | null | undefined) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(clean(value));
+}
+
+function isMissingTable(error: unknown) {
+  return (
+    !!error &&
+    typeof error === "object" &&
+    "code" in error &&
+    (error as { code?: string }).code === "42P01"
+  );
+}
+
+async function collectEventRecipientEmails(
+  service: ReturnType<typeof createDashboardServiceClient>,
+  projectId: string,
+) {
+  const [visitorsResult, preReleaseResult, favoritesResult] = await Promise.all([
+    service
+      .from("event_gallery_visitors")
+      .select("viewer_email")
+      .eq("project_id", projectId),
+    service
+      .from("pre_release_emails")
+      .select("email")
+      .eq("project_id", projectId),
+    service
+      .from("event_gallery_favorites")
+      .select("viewer_email")
+      .eq("project_id", projectId),
+  ]);
+
+  if (visitorsResult.error && !isMissingTable(visitorsResult.error)) {
+    throw visitorsResult.error;
+  }
+  if (preReleaseResult.error) throw preReleaseResult.error;
+  if (favoritesResult.error && !isMissingTable(favoritesResult.error)) {
+    throw favoritesResult.error;
+  }
+
+  return Array.from(
+    new Set(
+      [
+        ...(visitorsResult.data ?? []).map((row) =>
+          clean((row as { viewer_email?: string | null }).viewer_email).toLowerCase(),
+        ),
+        ...(preReleaseResult.data ?? []).map((row) =>
+          clean((row as { email?: string | null }).email).toLowerCase(),
+        ),
+        ...(favoritesResult.data ?? []).map((row) =>
+          clean((row as { viewer_email?: string | null }).viewer_email).toLowerCase(),
+        ),
+      ].filter(looksLikeEmail),
+    ),
+  );
+}
+
+async function sendReleaseEmails(params: {
+  service: ReturnType<typeof createDashboardServiceClient>;
+  projectId: string;
+  project: Record<string, unknown>;
+  photographer: { id: string; business_name?: string | null; studio_email?: string | null };
+  origin: string;
+}) {
+  const gallerySettings = normalizeEventGallerySettings(params.project.gallery_settings);
+  const { data: preReleaseRows, error: preReleaseError } = await params.service
+    .from("pre_release_emails")
+    .select("email")
+    .eq("project_id", params.projectId);
+
+  if (preReleaseError) throw preReleaseError;
+
+  const recipients = Array.from(
+    new Set(
+      (preReleaseRows ?? [])
+        .map((row) => clean((row as { email?: string | null }).email).toLowerCase())
+        .filter(Boolean),
+    ),
+  );
+
+  if (!recipients.length) {
+    return {
+      attempted: 0,
+      sent: 0,
+      skipped: 0,
+      failed: 0,
+      warning: null as string | null,
+    };
+  }
+
+  if (!resendConfigured()) {
+    return {
+      attempted: recipients.length,
+      sent: 0,
+      skipped: 0,
+      failed: 0,
+      warning: "RESEND_API_KEY is not configured on the server.",
+    };
+  }
+
+  const baseProject = {
+    id: params.projectId,
+    title: typeof params.project.title === "string" ? params.project.title : null,
+    client_name:
+      typeof params.project.client_name === "string" ? params.project.client_name : null,
+    access_mode:
+      typeof params.project.access_mode === "string" ? params.project.access_mode : null,
+    access_pin:
+      typeof params.project.access_pin === "string" ? params.project.access_pin : null,
+    email_required:
+      typeof params.project.email_required === "boolean" ? params.project.email_required : null,
+    cover_photo_url:
+      typeof params.project.cover_photo_url === "string" ? params.project.cover_photo_url : null,
+  };
+
+  let sent = 0;
+  let skipped = 0;
+  let failed = 0;
+
+  for (const recipientEmail of recipients) {
+    const dedupeKey = `release:${params.projectId}:${recipientEmail}`;
+    if (await hasProjectEmailDelivery(params.service, dedupeKey)) {
+      skipped += 1;
+      continue;
+    }
+
+    const email = buildGalleryShareEmail({
+      project: baseProject,
+      photographer: params.photographer,
+      share: gallerySettings.share,
+      origin: params.origin,
+      previewText: `Your gallery for ${baseProject.title || baseProject.client_name || "this event"} is now live.`,
+      overrideSubject:
+        clean(gallerySettings.share.emailSubject) ||
+        `${baseProject.title || baseProject.client_name || "Your gallery"} is ready`,
+    });
+
+    try {
+      const sendResult = await sendResendEmail({
+        to: recipientEmail,
+        subject: email.subject,
+        html: email.html,
+        text: email.text,
+        fromName: eventFromName(params.photographer),
+        replyTo: eventReplyTo(params.photographer),
+        idempotencyKey: dedupeKey,
+        tags: [
+          { name: "type", value: "gallery_release" },
+          { name: "project_id", value: params.projectId },
+        ],
+      });
+
+      await recordProjectEmailDelivery(params.service, {
+        projectId: params.projectId,
+        photographerId: params.photographer.id,
+        recipientEmail,
+        emailType: "gallery_release",
+        dedupeKey,
+        resendEmailId: sendResult.id,
+        subject: email.subject,
+        status: "sent",
+        payload: {
+          source: "project_status_release",
+        },
+      });
+      sent += 1;
+    } catch (error) {
+      failed += 1;
+      await recordProjectEmailDelivery(params.service, {
+        projectId: params.projectId,
+        photographerId: params.photographer.id,
+        recipientEmail,
+        emailType: "gallery_release",
+        dedupeKey,
+        subject: email.subject,
+        status: "failed",
+        payload: {
+          source: "project_status_release",
+        },
+        errorMessage:
+          error instanceof Error ? error.message : "Failed to send gallery release email.",
+      });
+    }
+  }
+
+  return {
+    attempted: recipients.length,
+    sent,
+    skipped,
+    failed,
+    warning: null as string | null,
+  };
+}
+
+async function sendCampaignEmails(params: {
+  service: ReturnType<typeof createDashboardServiceClient>;
+  projectId: string;
+  project: Record<string, unknown>;
+  photographer: { id: string; business_name?: string | null; studio_email?: string | null };
+  origin: string;
+}) {
+  const gallerySettings = normalizeEventGallerySettings(params.project.gallery_settings);
+  const recipients = await collectEventRecipientEmails(params.service, params.projectId);
+
+  if (!recipients.length) {
+    return {
+      attempted: 0,
+      sent: 0,
+      skipped: 0,
+      failed: 0,
+      warning: null as string | null,
+    };
+  }
+
+  if (!resendConfigured()) {
+    return {
+      attempted: recipients.length,
+      sent: 0,
+      skipped: 0,
+      failed: 0,
+      warning: "RESEND_API_KEY is not configured on the server.",
+    };
+  }
+
+  const email = buildGalleryShareEmail({
+    project: {
+      id: params.projectId,
+      title: typeof params.project.title === "string" ? params.project.title : null,
+      client_name:
+        typeof params.project.client_name === "string" ? params.project.client_name : null,
+      access_mode:
+        typeof params.project.access_mode === "string" ? params.project.access_mode : null,
+      access_pin:
+        typeof params.project.access_pin === "string" ? params.project.access_pin : null,
+      email_required:
+        typeof params.project.email_required === "boolean" ? params.project.email_required : null,
+      cover_photo_url:
+        typeof params.project.cover_photo_url === "string" ? params.project.cover_photo_url : null,
+    },
+    photographer: params.photographer,
+    share: gallerySettings.share,
+    origin: params.origin,
+    previewText: `A gallery update from ${eventFromName(params.photographer)}.`,
+  });
+
+  let sent = 0;
+  let skipped = 0;
+  let failed = 0;
+
+  for (const recipientEmail of recipients) {
+    const dedupeKey = `campaign:${params.projectId}:${recipientEmail}`;
+    if (await hasProjectEmailDelivery(params.service, dedupeKey)) {
+      skipped += 1;
+      continue;
+    }
+
+    try {
+      const sendResult = await sendResendEmail({
+        to: recipientEmail,
+        subject: email.subject,
+        html: email.html,
+        text: email.text,
+        fromName: eventFromName(params.photographer),
+        replyTo: eventReplyTo(params.photographer),
+        idempotencyKey: dedupeKey,
+        tags: [
+          { name: "type", value: "campaign" },
+          { name: "project_id", value: params.projectId },
+        ],
+      });
+
+      await recordProjectEmailDelivery(params.service, {
+        projectId: params.projectId,
+        photographerId: params.photographer.id,
+        recipientEmail,
+        emailType: "campaign",
+        dedupeKey,
+        resendEmailId: sendResult.id,
+        subject: email.subject,
+        status: "sent",
+        payload: {
+          source: "project_settings_save",
+        },
+      });
+      sent += 1;
+    } catch (error) {
+      failed += 1;
+      await recordProjectEmailDelivery(params.service, {
+        projectId: params.projectId,
+        photographerId: params.photographer.id,
+        recipientEmail,
+        emailType: "campaign",
+        dedupeKey,
+        subject: email.subject,
+        status: "failed",
+        payload: {
+          source: "project_settings_save",
+        },
+        errorMessage:
+          error instanceof Error ? error.message : "Failed to send event campaign email.",
+      });
+    }
+  }
+
+  return {
+    attempted: recipients.length,
+    sent,
+    skipped,
+    failed,
+    warning: null as string | null,
+  };
 }
 
 export async function GET(
@@ -40,10 +399,11 @@ export async function GET(
 
     const { id: projectId } = await context.params;
     const service = createDashboardServiceClient();
+    const origin = new URL(request.url).origin;
 
     const { data: photographerRow, error: photographerError } = await service
       .from("photographers")
-      .select("id")
+      .select("id,business_name,studio_email")
       .eq("user_id", user.id)
       .maybeSingle();
 
@@ -170,22 +530,14 @@ export async function PATCH(
     }
 
     const { id: projectId } = await context.params;
-    const body = (await request.json().catch(() => ({}))) as {
-      cover_photo_url?: string | null;
-    };
-
-    if (!Object.prototype.hasOwnProperty.call(body, "cover_photo_url")) {
-      return NextResponse.json(
-        { ok: false, message: "A cover photo URL is required." },
-        { status: 400 },
-      );
-    }
+    const body = (await request.json().catch(() => ({}))) as ProjectUpdateBody;
 
     const service = createDashboardServiceClient();
+    const origin = new URL(request.url).origin;
 
     const { data: photographerRow, error: photographerError } = await service
       .from("photographers")
-      .select("id")
+      .select("id,business_name,studio_email")
       .eq("user_id", user.id)
       .maybeSingle();
 
@@ -197,20 +549,109 @@ export async function PATCH(
       );
     }
 
-    const { data: projectData, error: projectError } = await service
+    const { data: currentProject, error: currentProjectError } = await service
       .from("projects")
-      .update({
-        cover_photo_url: clean(body.cover_photo_url) || null,
-        updated_at: new Date().toISOString(),
-      })
+      .select("*")
       .eq("id", projectId)
       .eq("photographer_id", photographerRow.id)
-      .select(
-        "id,title,client_name,workflow_type,status,portal_status,shoot_date,event_date,cover_photo_url",
-      )
       .maybeSingle();
 
-    if (projectError) throw projectError;
+    if (currentProjectError) throw currentProjectError;
+    if (!currentProject) {
+      return NextResponse.json(
+        { ok: false, message: "Project not found." },
+        { status: 404 },
+      );
+    }
+
+    const updatePayload: Record<string, unknown> = {
+      updated_at: new Date().toISOString(),
+    };
+    const previousPortalStatus = clean(currentProject.portal_status);
+    const previousSettings = normalizeEventGallerySettings(currentProject.gallery_settings);
+
+    if (hasOwn(body, "cover_photo_url")) {
+      updatePayload.cover_photo_url = clean(body.cover_photo_url) || null;
+    }
+
+    if (hasOwn(body, "portal_status")) {
+      const nextStatus = clean(body.portal_status) || null;
+      updatePayload.portal_status = nextStatus;
+      updatePayload.status = nextStatus;
+    }
+
+    if (hasOwn(body, "shoot_date")) {
+      updatePayload.shoot_date = clean(body.shoot_date) || null;
+    }
+    if (hasOwn(body, "order_due_date")) {
+      updatePayload.order_due_date = clean(body.order_due_date) || null;
+    }
+    if (hasOwn(body, "expiration_date")) {
+      updatePayload.expiration_date = clean(body.expiration_date) || null;
+    }
+    if (hasOwn(body, "package_profile_id")) {
+      const resolvedProfileId = await ensurePackageProfile({
+        service,
+        photographerId: photographerRow.id,
+        packageProfileId: body.package_profile_id,
+      });
+      updatePayload.package_profile_id = isUuid(resolvedProfileId) ? resolvedProfileId : null;
+    }
+    if (hasOwn(body, "email_required")) {
+      updatePayload.email_required = body.email_required === true;
+    }
+    if (hasOwn(body, "checkout_contact_required")) {
+      updatePayload.checkout_contact_required =
+        body.checkout_contact_required === true;
+    }
+    if (hasOwn(body, "internal_notes")) {
+      updatePayload.internal_notes = clean(body.internal_notes) || null;
+    }
+    if (hasOwn(body, "access_mode")) {
+      const nextAccessMode = clean(body.access_mode).toLowerCase() === "pin" ? "pin" : "public";
+      updatePayload.access_mode = nextAccessMode;
+      updatePayload.access_pin =
+        nextAccessMode === "pin" ? clean(body.access_pin) || null : null;
+      updatePayload.access_updated_at =
+        clean(body.access_updated_at) || new Date().toISOString();
+      updatePayload.access_updated_source =
+        clean(body.access_updated_source) || "cloud";
+    }
+
+    if (hasOwn(body, "gallery_settings")) {
+      updatePayload.gallery_settings = normalizeEventGallerySettings(body.gallery_settings);
+    }
+
+    if (hasOwn(body, "project_name") && "project_name" in currentProject) {
+      updatePayload.project_name = clean(body.project_name) || null;
+    } else if (hasOwn(body, "name") && "name" in currentProject) {
+      updatePayload.name = clean(body.name) || null;
+    } else if (hasOwn(body, "title")) {
+      updatePayload.title = clean(body.title) || null;
+    }
+
+    if (Object.keys(updatePayload).length === 1) {
+      return NextResponse.json(
+        { ok: false, message: "No project changes were provided." },
+        { status: 400 },
+      );
+    }
+
+    console.log("[PATCH /api/dashboard/events/[id]] updatePayload keys:", Object.keys(updatePayload));
+    console.log("[PATCH /api/dashboard/events/[id]] updatePayload:", JSON.stringify(updatePayload, null, 2));
+
+    const { data: projectData, error: projectError } = await service
+      .from("projects")
+      .update(updatePayload)
+      .eq("id", projectId)
+      .eq("photographer_id", photographerRow.id)
+      .select("*")
+      .maybeSingle();
+
+    if (projectError) {
+      console.error("[PATCH /api/dashboard/events/[id]] projectError:", projectError);
+      throw projectError;
+    }
     if (!projectData) {
       return NextResponse.json(
         { ok: false, message: "Project not found." },
@@ -218,16 +659,74 @@ export async function PATCH(
       );
     }
 
+    let releaseEmailResult: {
+      attempted: number;
+      sent: number;
+      skipped: number;
+      failed: number;
+      warning: string | null;
+    } | null = null;
+    let campaignEmailResult: {
+      attempted: number;
+      sent: number;
+      skipped: number;
+      failed: number;
+      warning: string | null;
+    } | null = null;
+
+    const nextPortalStatus = clean(projectData.portal_status);
+    const nextSettings = normalizeEventGallerySettings(projectData.gallery_settings);
+    if (
+      previousPortalStatus.toLowerCase() === "pre_release" &&
+      isLivePortalStatus(nextPortalStatus)
+    ) {
+      releaseEmailResult = await sendReleaseEmails({
+        service,
+        projectId,
+        project: projectData as Record<string, unknown>,
+        photographer: photographerRow,
+        origin,
+      });
+    }
+
+    if (
+      !previousSettings.extras.sendEmailCampaign &&
+      nextSettings.extras.sendEmailCampaign &&
+      isLivePortalStatus(nextPortalStatus)
+    ) {
+      campaignEmailResult = await sendCampaignEmails({
+        service,
+        projectId,
+        project: projectData as Record<string, unknown>,
+        photographer: photographerRow,
+        origin,
+      });
+    }
+
     return NextResponse.json({
       ok: true,
       project: projectData,
+      releaseEmailResult,
+      campaignEmailResult,
     });
   } catch (error) {
+    const errMsg =
+      error instanceof Error ? error.message : "Failed to update project.";
+    const errDetails =
+      error && typeof error === "object" && "details" in error
+        ? (error as Record<string, unknown>).details
+        : undefined;
+    const errCode =
+      error && typeof error === "object" && "code" in error
+        ? (error as Record<string, unknown>).code
+        : undefined;
+    console.error("[PATCH /api/dashboard/events/[id]]", { errMsg, errDetails, errCode, error });
     return NextResponse.json(
       {
         ok: false,
-        message:
-          error instanceof Error ? error.message : "Failed to update project.",
+        message: errMsg,
+        details: errDetails || null,
+        code: errCode || null,
       },
       { status: 500 },
     );

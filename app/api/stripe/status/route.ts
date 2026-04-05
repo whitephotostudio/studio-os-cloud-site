@@ -1,60 +1,32 @@
 import { NextRequest, NextResponse } from "next/server";
-import { cookies } from "next/headers";
-import { createServerClient } from "@supabase/ssr";
-import { createClient as createSupabaseClient } from "@supabase/supabase-js";
+import {
+  createDashboardServiceClient,
+  resolveDashboardAuth,
+} from "@/lib/dashboard-auth";
+import {
+  ANNUAL_DISCOUNT_PERCENT,
+  CREDIT_PACK_DEFS,
+  DEFAULT_BILLING_CURRENCY,
+  EXTRA_DESKTOP_KEY_ANNUAL_CENTS,
+  EXTRA_DESKTOP_KEY_MONTHLY_CENTS,
+  ORDER_USAGE_RATE_CENTS,
+  PLAN_DEFS,
+  describeConnectStatus,
+  ensureCreditPackageCatalog,
+  getConnectedAccountId,
+  getCreditBalance,
+  getDefaultPaymentMethod,
+  getOrCreatePhotographerByUser,
+  getUsageSummaryForCurrentPeriod,
+  isStripeBillingActive,
+  listRecentStripeInvoices,
+  retrieveStripeAccount,
+  retrieveStripeSubscription,
+  syncConnectState,
+  syncSubscriptionStateFromStripe,
+} from "@/lib/payments";
 
 export const dynamic = "force-dynamic";
-
-function env(name: string) {
-  const value = process.env[name];
-  if (!value) throw new Error(`Missing ${name}`);
-  return value;
-}
-
-async function resolveUser(request: NextRequest) {
-  const supabaseUrl = env("NEXT_PUBLIC_SUPABASE_URL");
-  const anonKey = env("NEXT_PUBLIC_SUPABASE_ANON_KEY");
-  const authHeader = request.headers.get("authorization") || "";
-  const bearer = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
-
-  const anonClient = createSupabaseClient(supabaseUrl, anonKey);
-
-  if (bearer) {
-    const { data } = await anonClient.auth.getUser(bearer);
-    if (data.user) return data.user;
-  }
-
-  const cookieStore = await cookies();
-  const serverClient = createServerClient(supabaseUrl, anonKey, {
-    cookies: {
-      getAll() {
-        return cookieStore.getAll();
-      },
-      setAll() {},
-    },
-  });
-
-  const {
-    data: { user },
-  } = await serverClient.auth.getUser();
-
-  return user;
-}
-
-async function stripeGetAccount(accountId: string) {
-  const res = await fetch(`https://api.stripe.com/v1/accounts/${accountId}`, {
-    headers: { Authorization: `Bearer ${env("STRIPE_SECRET_KEY")}` },
-    cache: "no-store",
-  });
-
-  const text = await res.text();
-  const json = text ? JSON.parse(text) : {};
-  if (!res.ok) {
-    const msg = json?.error?.message || "Unable to read Stripe account.";
-    throw new Error(msg);
-  }
-  return json;
-}
 
 const EMPTY_PROFILE = {
   ok: false,
@@ -68,6 +40,9 @@ const EMPTY_PROFILE = {
   chargesEnabled: false,
   payoutsEnabled: false,
   onboardingComplete: false,
+  connectStatusLabel: "Not connected",
+  connectStatusMessage: "Connect Stripe before parents can complete checkout.",
+  connectReadyForPayments: false,
   photographerId: null,
   studioId: null,
   watermarkEnabled: true,
@@ -75,89 +50,196 @@ const EMPTY_PROFILE = {
   studioAddress: "",
   studioPhone: "",
   studioEmail: "",
+  billingEmail: "",
+  billingCurrency: DEFAULT_BILLING_CURRENCY,
+  isPlatformAdmin: false,
+  subscriptionPlanCode: null,
+  subscriptionBillingInterval: "month",
+  subscriptionStatus: "inactive",
+  subscriptionCurrentPeriodStart: null,
+  subscriptionCurrentPeriodEnd: null,
+  extraDesktopKeys: 0,
+  orderUsageRateCents: ORDER_USAGE_RATE_CENTS,
+  creditBalance: 0,
+  studioUsage: {
+    countedOrders: 0,
+    billableOrders: 0,
+    unreportedOrders: 0,
+    estimatedChargeCents: 0,
+    billingPeriodKey: null,
+  },
+  recentInvoices: [],
+  defaultPaymentMethod: null,
+  billingCatalog: {
+    annualDiscountPercent: ANNUAL_DISCOUNT_PERCENT,
+    plans: Object.values(PLAN_DEFS),
+    extraDesktopKeyMonthlyCents: EXTRA_DESKTOP_KEY_MONTHLY_CENTS,
+    extraDesktopKeyAnnualCents: EXTRA_DESKTOP_KEY_ANNUAL_CENTS,
+    orderUsageRateCents: ORDER_USAGE_RATE_CENTS,
+    creditPacks: Object.values(CREDIT_PACK_DEFS),
+  },
 };
 
 export async function GET(request: NextRequest) {
   try {
-    const user = await resolveUser(request);
+    const { user } = await resolveDashboardAuth(request);
     if (!user) {
       return NextResponse.json(
         {
           ...EMPTY_PROFILE,
-          message: "Please sign in again before connecting Stripe.",
+          message: "Please sign in again before opening billing settings.",
         },
         { status: 401 },
       );
     }
 
-    const service = createSupabaseClient(
-      env("NEXT_PUBLIC_SUPABASE_URL"),
-      env("SUPABASE_SERVICE_ROLE_KEY"),
-      { auth: { persistSession: false, autoRefreshToken: false } },
-    );
-
-    const { data: photographer, error } = await service
-      .from("photographers")
-      .select("id, business_name, brand_color, stripe_account_id, studio_id, watermark_enabled, watermark_logo_url, studio_address, studio_phone, studio_email")
-      .eq("user_id", user.id)
-      .maybeSingle();
-
-    if (error) throw error;
+    const service = createDashboardServiceClient();
+    let photographer = await getOrCreatePhotographerByUser(service, user);
+    const warnings: string[] = [];
 
     let studioName = "Studio OS Cloud";
-    let logoUrl = "";
-
-    if (photographer?.studio_id) {
-      const { data: studio } = await service
+    if (photographer.studio_id) {
+      const { data: studio, error: studioError } = await service
         .from("studios")
-        .select("id, name")
+        .select("id,name")
         .eq("id", photographer.studio_id)
         .maybeSingle();
 
+      if (studioError) throw studioError;
       if (studio?.name) studioName = studio.name;
     }
 
-    let detailsSubmitted = false;
-    let chargesEnabled = false;
-    let payoutsEnabled = false;
-    let onboardingComplete = false;
-    const stripeAccountId = photographer?.stripe_account_id || null;
+    const stripeAccountId = getConnectedAccountId(photographer);
+    let detailsSubmitted = Boolean(photographer.stripe_connect_onboarding_complete);
+    let chargesEnabled = Boolean(photographer.stripe_connect_charges_enabled);
+    let payoutsEnabled = Boolean(photographer.stripe_connect_payouts_enabled);
+    let connectDisabledReason: string | null = null;
 
     if (stripeAccountId) {
-      const account = await stripeGetAccount(stripeAccountId);
-      detailsSubmitted = Boolean(account.details_submitted);
-      chargesEnabled = Boolean(account.charges_enabled);
-      payoutsEnabled = Boolean(account.payouts_enabled);
-      onboardingComplete = detailsSubmitted && chargesEnabled && payoutsEnabled;
+      try {
+        const account = await retrieveStripeAccount(stripeAccountId);
+        await syncConnectState(service, photographer.id, account);
+        photographer = {
+          ...photographer,
+          stripe_account_id: account.id,
+          stripe_connected_account_id: account.id,
+          stripe_connect_onboarding_complete:
+            account.details_submitted && account.charges_enabled && account.payouts_enabled,
+          stripe_connect_charges_enabled: account.charges_enabled,
+          stripe_connect_payouts_enabled: account.payouts_enabled,
+          billing_currency: account.default_currency || photographer.billing_currency,
+        };
+        detailsSubmitted = Boolean(account.details_submitted);
+        chargesEnabled = Boolean(account.charges_enabled);
+        payoutsEnabled = Boolean(account.payouts_enabled);
+        connectDisabledReason = account.requirements?.disabled_reason ?? null;
+      } catch (error) {
+        warnings.push(
+          error instanceof Error
+            ? error.message
+            : "Unable to refresh Stripe Connect account status.",
+        );
+      }
+    }
+
+    if (photographer.stripe_subscription_id) {
+      try {
+        const subscription = await retrieveStripeSubscription(photographer.stripe_subscription_id);
+        const synced = await syncSubscriptionStateFromStripe(service, photographer, subscription);
+        photographer = synced.photographer;
+      } catch (error) {
+        warnings.push(
+          error instanceof Error
+            ? error.message
+            : "Unable to refresh Stripe Billing subscription status.",
+        );
+      }
+    }
+
+    const creditBalance = await getCreditBalance(service, user.id, photographer.id);
+    const creditPacks = await ensureCreditPackageCatalog(service);
+    const usageSummary = await getUsageSummaryForCurrentPeriod(service, photographer);
+    const connectStatus = describeConnectStatus({
+      accountId: stripeAccountId,
+      detailsSubmitted,
+      chargesEnabled,
+      payoutsEnabled,
+      disabledReason: connectDisabledReason,
+    });
+
+    let recentInvoices: Awaited<ReturnType<typeof listRecentStripeInvoices>> = [];
+    let defaultPaymentMethod: { brand: string; last4: string; expMonth: number; expYear: number } | null = null;
+    if (photographer.stripe_platform_customer_id) {
+      try {
+        defaultPaymentMethod = await getDefaultPaymentMethod(photographer.stripe_platform_customer_id);
+      } catch { /* ignore */ }
+      try {
+        recentInvoices = await listRecentStripeInvoices(photographer.stripe_platform_customer_id);
+      } catch (error) {
+        warnings.push(
+          error instanceof Error ? error.message : "Unable to load recent Stripe invoices.",
+        );
+      }
     }
 
     return NextResponse.json({
       ok: true,
       signedIn: true,
-      businessName: photographer?.business_name || "WhitePhoto",
+      businessName: photographer.business_name || "WhitePhoto",
       studioName,
-      brandColor: photographer?.brand_color || "#0f172a",
-      logoUrl,
+      brandColor: photographer.brand_color || "#0f172a",
+      logoUrl: photographer.logo_url || "",
       stripeAccountId,
       detailsSubmitted,
       chargesEnabled,
       payoutsEnabled,
-      onboardingComplete,
-      photographerId: photographer?.id || null,
-      studioId: photographer?.studio_id || null,
-      watermarkEnabled: photographer?.watermark_enabled !== false,
-      watermarkLogoUrl: photographer?.watermark_logo_url || "",
-      studioAddress: photographer?.studio_address || "",
-      studioPhone: photographer?.studio_phone || "",
-      studioEmail: photographer?.studio_email || "",
+      onboardingComplete: detailsSubmitted && chargesEnabled && payoutsEnabled,
+      connectStatusLabel: connectStatus.label,
+      connectStatusMessage: connectStatus.message,
+      connectReadyForPayments: connectStatus.readyForPayments,
+      connectDisabledReason,
+      photographerId: photographer.id,
+      studioId: photographer.studio_id,
+      watermarkEnabled: photographer.watermark_enabled !== false,
+      watermarkLogoUrl: photographer.watermark_logo_url || "",
+      studioAddress: photographer.studio_address || "",
+      studioPhone: photographer.studio_phone || "",
+      studioEmail: photographer.studio_email || "",
+      billingEmail:
+        photographer.billing_email || photographer.studio_email || user.email || "",
+      billingCurrency: photographer.billing_currency || DEFAULT_BILLING_CURRENCY,
+      isPlatformAdmin: Boolean(photographer.is_platform_admin),
+      stripePlatformCustomerId: photographer.stripe_platform_customer_id,
+      stripeSubscriptionId: photographer.stripe_subscription_id,
+      subscriptionPlanCode: photographer.subscription_plan_code,
+      subscriptionBillingInterval: photographer.subscription_billing_interval || "month",
+      subscriptionStatus: photographer.subscription_status || "inactive",
+      subscriptionIsActive: isStripeBillingActive(photographer.subscription_status),
+      subscriptionCurrentPeriodStart: photographer.subscription_current_period_start,
+      subscriptionCurrentPeriodEnd: photographer.subscription_current_period_end,
+      extraDesktopKeys: photographer.extra_desktop_keys ?? 0,
+      orderUsageRateCents: photographer.order_usage_rate_cents ?? ORDER_USAGE_RATE_CENTS,
+      creditBalance,
+      studioUsage: usageSummary,
+      recentInvoices,
+      billingCatalog: {
+        annualDiscountPercent: ANNUAL_DISCOUNT_PERCENT,
+        plans: Object.values(PLAN_DEFS),
+        extraDesktopKeyMonthlyCents: EXTRA_DESKTOP_KEY_MONTHLY_CENTS,
+        extraDesktopKeyAnnualCents: EXTRA_DESKTOP_KEY_ANNUAL_CENTS,
+        orderUsageRateCents: ORDER_USAGE_RATE_CENTS,
+        creditPacks,
+      },
+      defaultPaymentMethod,
+      warnings,
     });
-  } catch (e) {
+  } catch (error) {
     return NextResponse.json(
       {
         ...EMPTY_PROFILE,
-        ok: false,
         signedIn: true,
-        message: e instanceof Error ? e.message : "Unable to load Stripe status.",
+        message:
+          error instanceof Error ? error.message : "Unable to load Stripe billing status.",
       },
       { status: 500 },
     );

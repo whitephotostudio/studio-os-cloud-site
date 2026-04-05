@@ -2,8 +2,30 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { AlertCircle, ArrowUpRight, Building2, CreditCard, RefreshCw, Settings2, Upload, Image as ImageIcon, MapPin, Phone, Mail, ShieldCheck } from "lucide-react";
+import {
+  AlertCircle,
+  ArrowUpRight,
+  BookOpenText,
+  Building2,
+  CheckCircle2,
+  Copy,
+  CreditCard,
+  Download,
+  Image as ImageIcon,
+  KeyRound,
+  Mail,
+  MapPin,
+  MonitorSmartphone,
+  Phone,
+  Receipt,
+  RefreshCw,
+  ShieldCheck,
+  Sparkles,
+  Upload,
+  WalletCards,
+} from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import type { BillingInterval } from "@/lib/studio-pricing";
 
 type StripeStatus = {
   ok: boolean;
@@ -17,6 +39,10 @@ type StripeStatus = {
   chargesEnabled: boolean;
   payoutsEnabled: boolean;
   onboardingComplete: boolean;
+  connectStatusLabel: string;
+  connectStatusMessage: string;
+  connectReadyForPayments: boolean;
+  connectDisabledReason?: string | null;
   photographerId: string | null;
   studioId: string | null;
   watermarkEnabled: boolean;
@@ -24,8 +50,191 @@ type StripeStatus = {
   studioAddress: string;
   studioPhone: string;
   studioEmail: string;
+  billingEmail: string;
+  billingCurrency: string;
+  isPlatformAdmin: boolean;
+  stripePlatformCustomerId?: string | null;
+  stripeSubscriptionId?: string | null;
+  subscriptionPlanCode: string | null;
+  subscriptionBillingInterval: BillingInterval | null;
+  subscriptionStatus: string;
+  subscriptionIsActive: boolean;
+  subscriptionCurrentPeriodStart: string | null;
+  subscriptionCurrentPeriodEnd: string | null;
+  extraDesktopKeys: number;
+  orderUsageRateCents: number;
+  creditBalance: number;
+  studioUsage: {
+    countedOrders: number;
+    billableOrders: number;
+    unreportedOrders: number;
+    estimatedChargeCents: number;
+    billingPeriodKey: string | null;
+  };
+  recentInvoices: Array<{
+    id: string;
+    status: string | null;
+    amountDue: number;
+    amountPaid: number;
+    currency: string;
+    created: string;
+    hostedInvoiceUrl: string | null;
+    invoicePdf: string | null;
+  }>;
+  billingCatalog: {
+    plans: Array<{
+      code: string;
+      label: string;
+      priceCents: number;
+      annualPriceCents: number;
+      description: string;
+      usageFeeApplies: boolean;
+      usageRateCents: number;
+      includedDesktopKeys: number;
+      includedCredits: number;
+      websiteLogoIncluded: boolean;
+    }>;
+    annualDiscountPercent: number;
+    extraDesktopKeyMonthlyCents: number;
+    extraDesktopKeyAnnualCents: number;
+    orderUsageRateCents: number;
+    creditPacks: Array<{
+      id?: string;
+      code: string;
+      label?: string;
+      name?: string;
+      credits: number;
+      priceCents: number;
+    }>;
+  };
+  defaultPaymentMethod: {
+    brand: string;
+    last4: string;
+    expMonth: number;
+    expYear: number;
+  } | null;
+  warnings?: string[];
   message?: string;
 };
+
+type BillingCatalog = StripeStatus["billingCatalog"];
+type RecentInvoice = StripeStatus["recentInvoices"][number];
+type StudioAppReleaseState = "hidden" | "beta" | "public";
+
+type StudioAppStatus = {
+  ok: boolean;
+  signedIn: boolean;
+  release: {
+    slug: string;
+    state: StudioAppReleaseState;
+    stateLabel: string;
+    version: string;
+    releaseNotes: string;
+    betaWarning: string;
+    macDownloadUrl: string | null;
+    windowsDownloadUrl: string | null;
+    publishedAt: string | null;
+    updatedAt: string;
+  };
+  entitlement: {
+    planCode: string | null;
+    releaseState: StudioAppReleaseState;
+    releaseStateLabel: string;
+    subscriptionActive: boolean;
+    appEligibleByPlan: boolean;
+    appAccessEnabled: boolean;
+    canDownload: boolean;
+    betaAccess: boolean;
+    isPlatformAdmin: boolean;
+    includedKeys: number;
+    extraKeys: number;
+    totalAllowedKeys: number;
+    requiresStudioUpgradeForSecondKey: boolean;
+    requiresStudioForExtraKeys: boolean;
+    showBetaWarning: boolean;
+    message: string;
+  };
+  keys: Array<{
+    id: string;
+    label: string;
+    keyCode: string;
+    status: "active" | "suspended" | "revoked";
+    slotIndex: number;
+    isExtraKey: boolean;
+    activationStatus: "active" | "inactive";
+    deviceId: string | null;
+    deviceName: string | null;
+    platform: string | null;
+    activatedAt: string | null;
+    lastValidatedAt: string | null;
+  }>;
+  admin: {
+    isPlatformAdmin: boolean;
+  };
+  message?: string;
+};
+
+const emptyBillingCatalog: BillingCatalog = {
+  plans: [],
+  annualDiscountPercent: 10,
+  extraDesktopKeyMonthlyCents: 0,
+  extraDesktopKeyAnnualCents: 0,
+  orderUsageRateCents: 25,
+  creditPacks: [],
+};
+
+const emptyStudioAppStatus: StudioAppStatus = {
+  ok: false,
+  signedIn: false,
+  release: {
+    slug: "studio-os-flutter",
+    state: "hidden",
+    stateLabel: "Hidden rollout",
+    version: "Beta 0.1.0",
+    releaseNotes:
+      "Upload the latest Mac and Windows installers when the Studio OS Flutter build is ready for photographers.",
+    betaWarning:
+      "Beta builds are intended for approved photographers only. Download links, activations, and workflows may change during rollout.",
+    macDownloadUrl: null,
+    windowsDownloadUrl: null,
+    publishedAt: null,
+    updatedAt: "",
+  },
+  entitlement: {
+    planCode: null,
+    releaseState: "hidden",
+    releaseStateLabel: "Hidden rollout",
+    subscriptionActive: false,
+    appEligibleByPlan: false,
+    appAccessEnabled: false,
+    canDownload: false,
+    betaAccess: false,
+    isPlatformAdmin: false,
+    includedKeys: 0,
+    extraKeys: 0,
+    totalAllowedKeys: 0,
+    requiresStudioUpgradeForSecondKey: false,
+    requiresStudioForExtraKeys: true,
+    showBetaWarning: true,
+    message:
+      "Upgrade to App Plan or Studio to unlock Studio OS App beta access and Photography Keys.",
+  },
+  keys: [],
+  admin: {
+    isPlatformAdmin: false,
+  },
+};
+
+const SUPPORTED_CURRENCIES = [
+  { code: "usd", symbol: "$", name: "US Dollar" },
+  { code: "cad", symbol: "C$", name: "Canadian Dollar" },
+  { code: "eur", symbol: "€", name: "Euro" },
+  { code: "gbp", symbol: "£", name: "British Pound" },
+  { code: "aud", symbol: "A$", name: "Australian Dollar" },
+  { code: "aed", symbol: "د.إ", name: "UAE Dirham" },
+  { code: "sar", symbol: "﷼", name: "Saudi Riyal" },
+  { code: "amd", symbol: "֏", name: "Armenian Dram" },
+] as const;
 
 const cardStyle: React.CSSProperties = {
   background: "#ffffff",
@@ -34,6 +243,51 @@ const cardStyle: React.CSSProperties = {
   padding: 24,
   boxShadow: "0 8px 30px rgba(15, 23, 42, 0.05)",
 };
+
+function formatMoney(cents: number, currency = "cad") {
+  return new Intl.NumberFormat("en-CA", {
+    style: "currency",
+    currency: (currency || "cad").toUpperCase(),
+  }).format((cents || 0) / 100);
+}
+
+function formatDateLabel(value: string | null | undefined) {
+  if (!value) return "Pending";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return parsed.toLocaleDateString("en-CA", {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  });
+}
+
+function humanizeStatus(value: string | null | undefined) {
+  const normalized = (value ?? "").trim().toLowerCase();
+  if (!normalized) return "Inactive";
+  return normalized
+    .split("_")
+    .map((chunk) => chunk.charAt(0).toUpperCase() + chunk.slice(1))
+    .join(" ");
+}
+
+function intervalLabel(interval: BillingInterval) {
+  return interval === "year" ? "Annual" : "Monthly";
+}
+
+function isTrialStatus(value: string | null | undefined) {
+  const normalized = (value ?? "").trim().toLowerCase();
+  return normalized === "trial" || normalized === "trialing";
+}
+
+function planDisplayLabel(value: string | null | undefined) {
+  const normalized = (value ?? "").trim().toLowerCase();
+  if (!normalized) return "";
+  if (normalized === "core") return "App Plan";
+  if (normalized === "starter") return "Starter";
+  if (normalized === "studio") return "Studio";
+  return humanizeStatus(value);
+}
 
 export default function SettingsPage() {
   const supabase = useMemo(() => createClient(), []);
@@ -66,13 +320,100 @@ export default function SettingsPage() {
   const [chargesEnabled, setChargesEnabled] = useState(false);
   const [payoutsEnabled, setPayoutsEnabled] = useState(false);
   const [onboardingComplete, setOnboardingComplete] = useState(false);
+  const [connectStatusLabel, setConnectStatusLabel] = useState("Not connected");
+  const [connectStatusMessage, setConnectStatusMessage] = useState(
+    "Connect Stripe before parents can complete checkout.",
+  );
+  const [connectReadyForPayments, setConnectReadyForPayments] = useState(false);
+  const [connectDisabledReason, setConnectDisabledReason] = useState<string | null>(null);
   const [photographerId, setPhotographerId] = useState<string | null>(null);
   const [studioId, setStudioId] = useState<string | null>(null);
+  const [billingEmail, setBillingEmail] = useState("");
+  const [billingCurrency, setBillingCurrency] = useState("cad");
+  const [defaultPaymentMethod, setDefaultPaymentMethod] = useState<StripeStatus["defaultPaymentMethod"]>(null);
+  const [isPlatformAdmin, setIsPlatformAdmin] = useState(false);
+  const [stripeSubscriptionId, setStripeSubscriptionId] = useState<string | null>(null);
+  const [subscriptionPlanCode, setSubscriptionPlanCode] = useState<string | null>(null);
+  const [subscriptionBillingInterval, setSubscriptionBillingInterval] =
+    useState<BillingInterval>("month");
+  const [subscriptionStatus, setSubscriptionStatus] = useState("inactive");
+  const [subscriptionIsActive, setSubscriptionIsActive] = useState(false);
+  const [subscriptionCurrentPeriodStart, setSubscriptionCurrentPeriodStart] = useState<string | null>(null);
+  const [subscriptionCurrentPeriodEnd, setSubscriptionCurrentPeriodEnd] = useState<string | null>(null);
+  const [extraDesktopKeys, setExtraDesktopKeys] = useState(0);
+  const [creditBalance, setCreditBalance] = useState(0);
+  const [orderUsageRateCents, setOrderUsageRateCents] = useState(25);
+  const [studioUsage, setStudioUsage] = useState<StripeStatus["studioUsage"]>({
+    countedOrders: 0,
+    billableOrders: 0,
+    unreportedOrders: 0,
+    estimatedChargeCents: 0,
+    billingPeriodKey: null,
+  });
+  const [recentInvoices, setRecentInvoices] = useState<RecentInvoice[]>([]);
+  const [billingCatalog, setBillingCatalog] = useState<BillingCatalog>(emptyBillingCatalog);
+  const [warnings, setWarnings] = useState<string[]>([]);
+  const [desiredPlanCode, setDesiredPlanCode] = useState("starter");
+  const [desiredBillingInterval, setDesiredBillingInterval] =
+    useState<BillingInterval>("month");
+  const [desiredExtraDesktopKeys, setDesiredExtraDesktopKeys] = useState(0);
+  const [billingBusyAction, setBillingBusyAction] = useState<string | null>(null);
+  const [studioApp, setStudioApp] = useState<StudioAppStatus>(emptyStudioAppStatus);
+  const [studioAppError, setStudioAppError] = useState<string | null>(null);
+  const [studioAppBusyAction, setStudioAppBusyAction] = useState<string | null>(null);
+  const [releaseStateDraft, setReleaseStateDraft] = useState<StudioAppReleaseState>("hidden");
+  const [releaseVersionDraft, setReleaseVersionDraft] = useState("Beta 0.1.0");
+  const [releaseNotesDraft, setReleaseNotesDraft] = useState("");
+  const [betaWarningDraft, setBetaWarningDraft] = useState("");
+  const [macDownloadUrlDraft, setMacDownloadUrlDraft] = useState("");
+  const [windowsDownloadUrlDraft, setWindowsDownloadUrlDraft] = useState("");
+  const [betaTargetEmail, setBetaTargetEmail] = useState("");
+  const [betaTargetEnabled, setBetaTargetEnabled] = useState(true);
+
+  const applyStudioAppStatus = useCallback((status: StudioAppStatus) => {
+    setStudioApp(status);
+    setReleaseStateDraft(status.release.state);
+    setReleaseVersionDraft(status.release.version || "Beta 0.1.0");
+    setReleaseNotesDraft(status.release.releaseNotes || "");
+    setBetaWarningDraft(status.release.betaWarning || "");
+    setMacDownloadUrlDraft(status.release.macDownloadUrl || "");
+    setWindowsDownloadUrlDraft(status.release.windowsDownloadUrl || "");
+  }, []);
+
+  const loadStudioAppStatus = useCallback(
+    async (token: string | null) => {
+      try {
+        const res = await fetch("/api/studio-os-app/status", {
+          method: "GET",
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+          credentials: "include",
+          cache: "no-store",
+        });
+
+        const json = (await res.json().catch(() => ({}))) as StudioAppStatus;
+        if (!res.ok || !json.ok) {
+          throw new Error(json.message || "Unable to load Studio OS App beta access.");
+        }
+
+        applyStudioAppStatus(json);
+        setStudioAppError(null);
+      } catch (error) {
+        setStudioApp(emptyStudioAppStatus);
+        setStudioAppError(
+          error instanceof Error
+            ? error.message
+            : "Unable to load Studio OS App beta access.",
+        );
+      }
+    },
+    [applyStudioAppStatus],
+  );
 
   const loadStatus = useCallback(async () => {
     setLoading(true);
     setError(null);
     setNotice(null);
+    setStudioAppError(null);
 
     try {
       const {
@@ -96,6 +437,7 @@ export default function SettingsPage() {
       if (!res.ok || !json.ok) {
         setError(json.message ?? "Unable to load Stripe status.");
         setSignedIn(Boolean(json.signedIn || session?.user));
+        setStudioApp(emptyStudioAppStatus);
         setLoading(false);
         return;
       }
@@ -110,8 +452,12 @@ export default function SettingsPage() {
       setChargesEnabled(Boolean(json.chargesEnabled));
       setPayoutsEnabled(Boolean(json.payoutsEnabled));
       setOnboardingComplete(Boolean(json.onboardingComplete));
-      setPhotographerId(json.photographerId);
-      setStudioId(json.studioId);
+      setConnectStatusLabel(json.connectStatusLabel || "Not connected");
+      setConnectStatusMessage(
+        json.connectStatusMessage || "Connect Stripe before parents can complete checkout.",
+      );
+      setConnectReadyForPayments(Boolean(json.connectReadyForPayments));
+      setConnectDisabledReason(json.connectDisabledReason || null);
 
       // New profile fields
       setWatermarkEnabled(json.watermarkEnabled !== false);
@@ -119,17 +465,67 @@ export default function SettingsPage() {
       setStudioAddress(json.studioAddress || "");
       setStudioPhone(json.studioPhone || "");
       setStudioEmail(json.studioEmail || "");
+      setBillingEmail(json.billingEmail || "");
+      setBillingCurrency((json.billingCurrency || "cad").toLowerCase());
+      setDefaultPaymentMethod(json.defaultPaymentMethod || null);
+      setIsPlatformAdmin(Boolean(json.isPlatformAdmin));
+      setStripeSubscriptionId(json.stripeSubscriptionId || null);
+      setSubscriptionPlanCode(json.subscriptionPlanCode || null);
+      setSubscriptionBillingInterval(
+        (json.subscriptionBillingInterval || "month") as BillingInterval,
+      );
+      setSubscriptionStatus(json.subscriptionStatus || "inactive");
+      setSubscriptionIsActive(Boolean(json.subscriptionIsActive));
+      setSubscriptionCurrentPeriodStart(json.subscriptionCurrentPeriodStart || null);
+      setSubscriptionCurrentPeriodEnd(json.subscriptionCurrentPeriodEnd || null);
+      setExtraDesktopKeys(json.extraDesktopKeys ?? 0);
+      setCreditBalance(json.creditBalance ?? 0);
+      setOrderUsageRateCents(json.orderUsageRateCents ?? 25);
+      setStudioUsage(
+        json.studioUsage || {
+          countedOrders: 0,
+          billableOrders: 0,
+          unreportedOrders: 0,
+          estimatedChargeCents: 0,
+          billingPeriodKey: null,
+        },
+      );
+      setRecentInvoices(json.recentInvoices || []);
+      setBillingCatalog(json.billingCatalog || emptyBillingCatalog);
+      setWarnings(json.warnings || []);
+      setDesiredPlanCode(
+        json.subscriptionPlanCode || json.billingCatalog?.plans?.[0]?.code || "starter",
+      );
+      setDesiredBillingInterval(
+        (json.subscriptionBillingInterval || "month") as BillingInterval,
+      );
+      setDesiredExtraDesktopKeys(json.extraDesktopKeys ?? 0);
+      await loadStudioAppStatus(token);
 
       const params = new URLSearchParams(window.location.search);
       if (params.get("stripe") === "returned") {
         setNotice("Stripe returned to Studio OS. Status refreshed.");
+      } else {
+        const billingState = params.get("billing");
+        if (billingState === "subscription_success") {
+          setNotice("Studio OS subscription checkout returned. Billing status refreshed.");
+        } else if (billingState === "credits_success") {
+          setNotice("Background credit purchase returned. Billing status refreshed.");
+        } else if (billingState === "portal") {
+          setNotice("Stripe billing portal returned. Billing status refreshed.");
+        } else if (billingState === "subscription_cancel") {
+          setNotice("Subscription checkout was cancelled.");
+        } else if (billingState === "credits_cancel") {
+          setNotice("Credit pack checkout was cancelled.");
+        }
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Unable to load settings.");
+      setStudioApp(emptyStudioAppStatus);
     } finally {
       setLoading(false);
     }
-  }, [supabase]);
+  }, [loadStudioAppStatus, supabase]);
 
   useEffect(() => {
     loadStatus();
@@ -217,11 +613,14 @@ export default function SettingsPage() {
             business_name: businessName,
             brand_color: brandColor,
             stripe_account_id: stripeAccountId,
+            stripe_connected_account_id: stripeAccountId,
             watermark_enabled: watermarkEnabled,
             watermark_logo_url: watermarkLogoUrl,
             studio_address: studioAddress,
             studio_phone: studioPhone,
             studio_email: studioEmail,
+            billing_email: billingEmail || studioEmail || user.email || null,
+            billing_currency: billingCurrency || "cad",
           })
           .select("id, studio_id")
           .single();
@@ -236,11 +635,14 @@ export default function SettingsPage() {
             business_name: businessName,
             brand_color: brandColor,
             stripe_account_id: stripeAccountId,
+            stripe_connected_account_id: stripeAccountId,
             watermark_enabled: watermarkEnabled,
             watermark_logo_url: watermarkLogoUrl,
             studio_address: studioAddress,
             studio_phone: studioPhone,
             studio_email: studioEmail,
+            billing_email: billingEmail || studioEmail || user.email || null,
+            billing_currency: billingCurrency || "cad",
           })
           .eq("id", nextPhotographerId);
 
@@ -299,6 +701,8 @@ export default function SettingsPage() {
           studioName,
           brandColor,
           logoUrl,
+          billingEmail: billingEmail || studioEmail,
+          studioEmail,
         }),
       });
 
@@ -319,6 +723,257 @@ export default function SettingsPage() {
     }
   }
 
+  async function getAuthorizedHeaders() {
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+
+    const token = session?.access_token ?? accessToken;
+    if (!token) {
+      throw new Error("Please sign in again before updating billing.");
+    }
+
+    return {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    };
+  }
+
+  async function copyPhotographyKey(keyCode: string) {
+    try {
+      await navigator.clipboard.writeText(keyCode);
+      setNotice("Photography Key copied.");
+    } catch {
+      setError("Could not copy that Photography Key.");
+    }
+  }
+
+  async function runStudioAppAdminAction(
+    actionKey: string,
+    payload: Record<string, unknown>,
+    fallbackNotice: string,
+  ) {
+    setStudioAppBusyAction(actionKey);
+    setStudioAppError(null);
+    setError(null);
+    setNotice(null);
+
+    try {
+      const headers = await getAuthorizedHeaders();
+      const res = await fetch("/api/studio-os-app/admin", {
+        method: "POST",
+        headers,
+        credentials: "include",
+        body: JSON.stringify(payload),
+      });
+
+      const json = (await res.json().catch(() => ({}))) as {
+        ok?: boolean;
+        message?: string;
+        studioApp?: StudioAppStatus;
+        updatedTarget?: {
+          billingEmail?: string | null;
+          studioEmail?: string | null;
+          betaAccess?: boolean;
+        };
+      };
+
+      if (!res.ok || !json.ok) {
+        throw new Error(json.message || "Unable to update Studio OS App rollout.");
+      }
+
+      if (json.studioApp?.ok) {
+        applyStudioAppStatus(json.studioApp);
+      } else {
+        await loadStudioAppStatus(accessToken);
+      }
+
+      if (json.updatedTarget) {
+        const targetEmail =
+          json.updatedTarget.billingEmail || json.updatedTarget.studioEmail || betaTargetEmail;
+        setNotice(
+          `${targetEmail} beta access ${json.updatedTarget.betaAccess ? "enabled" : "disabled"}.`,
+        );
+      } else {
+        setNotice(fallbackNotice);
+      }
+    } catch (error) {
+      setStudioAppError(
+        error instanceof Error
+          ? error.message
+          : "Unable to update Studio OS App rollout.",
+      );
+    } finally {
+      setStudioAppBusyAction(null);
+    }
+  }
+
+  async function handleSaveStudioAppRelease() {
+    await runStudioAppAdminAction(
+      "release",
+      {
+        action: "update_release",
+        releaseState: releaseStateDraft,
+        version: releaseVersionDraft,
+        releaseNotes: releaseNotesDraft,
+        betaWarning: betaWarningDraft,
+        macDownloadUrl: macDownloadUrlDraft,
+        windowsDownloadUrl: windowsDownloadUrlDraft,
+      },
+      "Studio OS App release settings updated.",
+    );
+  }
+
+  async function handleUpdateBetaAccess() {
+    await runStudioAppAdminAction(
+      "beta-access",
+      {
+        action: "set_beta_access",
+        targetEmail: betaTargetEmail,
+        betaAccess: betaTargetEnabled,
+      },
+      "Studio OS App beta access updated.",
+    );
+  }
+
+  async function runBillingAction(
+    actionKey: string,
+    payload: Record<string, unknown>,
+    fallbackNotice: string,
+  ) {
+    setBillingBusyAction(actionKey);
+    setError(null);
+    setNotice(null);
+
+    try {
+      const headers = await getAuthorizedHeaders();
+      const res = await fetch("/api/stripe/billing", {
+        method: "POST",
+        headers,
+        credentials: "include",
+        body: JSON.stringify(payload),
+      });
+
+      const json = await res.json();
+      if (!res.ok || !json.ok) {
+        throw new Error(json.message || "Unable to update billing.");
+      }
+
+      if (json.url) {
+        window.location.href = json.url;
+        return;
+      }
+
+      await loadStatus();
+      setNotice(fallbackNotice);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Unable to update billing.");
+    } finally {
+      setBillingBusyAction(null);
+    }
+  }
+
+  async function handlePlanSave() {
+    const hasSubscription = Boolean(stripeSubscriptionId);
+    const nextExtraDesktopKeys =
+      desiredPlanCode === "studio" ? desiredExtraDesktopKeys : 0;
+    await runBillingAction(
+      "plan",
+      {
+        action: hasSubscription ? "update_plan" : "subscribe",
+        planCode: desiredPlanCode,
+        billingInterval: desiredBillingInterval,
+        extraDesktopKeys: nextExtraDesktopKeys,
+      },
+      "Billing configuration updated.",
+    );
+  }
+
+  async function handleOpenPortal() {
+    await runBillingAction(
+      "portal",
+      { action: "portal" },
+      "Billing portal refreshed.",
+    );
+  }
+
+  async function handleBuyCredits(packCode: string) {
+    await runBillingAction(
+      `credits:${packCode}`,
+      { action: "buy_credits", packCode },
+      "Background credit purchase started.",
+    );
+  }
+
+  const activePlan =
+    billingCatalog.plans.find((plan) => plan.code === (subscriptionPlanCode || desiredPlanCode)) ||
+    billingCatalog.plans[0];
+  const selectedExtraKeyPrice =
+    desiredBillingInterval === "year"
+      ? billingCatalog.extraDesktopKeyAnnualCents
+      : billingCatalog.extraDesktopKeyMonthlyCents;
+  const extraKeysAllowed = desiredPlanCode === "studio";
+  const subscriptionInTrial = isTrialStatus(subscriptionStatus);
+  const hasManagedSubscription = Boolean(stripeSubscriptionId || subscriptionPlanCode);
+  const displayPlanLabel = isPlatformAdmin
+    ? "Owner access"
+    : subscriptionPlanCode
+    ? planDisplayLabel(subscriptionPlanCode)
+    : subscriptionInTrial
+      ? "Trial access"
+      : "Not subscribed";
+  const displayBillingInterval = isPlatformAdmin
+    ? "Included"
+    : hasManagedSubscription
+    ? intervalLabel(subscriptionBillingInterval)
+    : subscriptionInTrial
+      ? "Trial"
+      : "Not started";
+  const displayStatusLabel = isPlatformAdmin
+    ? "Internal owner account"
+    : subscriptionInTrial
+    ? "Trial active"
+    : humanizeStatus(subscriptionStatus);
+  const displayNextBillingDate = isPlatformAdmin
+    ? "No owner charge scheduled"
+    : subscriptionCurrentPeriodEnd
+    ? formatDateLabel(subscriptionCurrentPeriodEnd)
+    : subscriptionInTrial
+      ? "No charge scheduled yet"
+      : "Pending";
+  const displayIncludedCredits = isPlatformAdmin
+    ? "Owner access included"
+    : subscriptionPlanCode
+    ? `${activePlan?.includedCredits ?? 0} / month`
+    : subscriptionInTrial
+      ? "Trial access only"
+      : "0 / month";
+  const showSubscriptionLockedWarning =
+    !isPlatformAdmin && !subscriptionIsActive && !subscriptionInTrial;
+  const showTrialInfo = !isPlatformAdmin && subscriptionInTrial;
+  const connectButtonLabel = connectReadyForPayments ? "Manage Stripe" : "Connect Stripe";
+  const planActionLabel =
+    billingBusyAction === "plan"
+      ? "Opening billing..."
+      : isPlatformAdmin
+        ? "Owner account included"
+      : stripeSubscriptionId
+        ? "Update plan + keys"
+        : subscriptionInTrial
+          ? "Activate paid subscription"
+          : "Start subscription";
+  const studioAppReleaseIsBeta = studioApp.release.state !== "public";
+  const studioAppDownloadsReady =
+    Boolean(studioApp.release.macDownloadUrl || studioApp.release.windowsDownloadUrl);
+  const studioAppPlanLabel =
+    studioApp.entitlement.planCode === "studio"
+      ? "Studio"
+      : studioApp.entitlement.planCode === "core"
+        ? "App Plan"
+        : studioApp.entitlement.planCode === "starter"
+          ? "Web Gallery"
+          : "No plan";
+
   return (
     <div style={{ background: "#eef3fa", minHeight: "100vh", padding: "32px 28px 60px" }}>
       <div style={{ maxWidth: 1180, margin: "0 auto" }}>
@@ -327,11 +982,11 @@ export default function SettingsPage() {
             Dashboard settings
           </div>
           <h1 style={{ marginTop: 10, fontSize: 48, lineHeight: 1.04, fontWeight: 900, color: "#0f172a" }}>
-            Branding + Stripe Connect
+            Branding + Billing + Stripe Connect
           </h1>
           <p style={{ marginTop: 12, maxWidth: 840, fontSize: 18, lineHeight: 1.7, color: "#64748b" }}>
-            Connect each photographer to their own Stripe account with the professional onboarding flow:
-            Connect Stripe → Stripe onboarding → return to Studio OS → account saved automatically.
+            Photographer sales route through the photographer’s own connected Stripe account, while Studio OS bills plans,
+            extra desktop keys, background credits, monthly included credits, and aggregated order usage separately through platform billing.
           </p>
         </div>
 
@@ -372,7 +1027,7 @@ export default function SettingsPage() {
               opacity: connecting || !sessionReady ? 0.65 : 1,
             }}
           >
-            <CreditCard size={18} /> {connecting ? "Opening Stripe..." : "Connect Stripe"}
+            <CreditCard size={18} /> {connecting ? "Opening Stripe..." : connectButtonLabel}
           </button>
 
           {!signedIn ? (
@@ -405,6 +1060,12 @@ export default function SettingsPage() {
         {notice ? (
           <div style={{ marginBottom: 20, borderRadius: 20, border: "1px solid #bfdbfe", background: "#eff6ff", color: "#1d4ed8", padding: "16px 18px", fontWeight: 700 }}>
             {notice}
+          </div>
+        ) : null}
+
+        {warnings.length ? (
+          <div style={{ marginBottom: 20, borderRadius: 20, border: "1px solid #fde68a", background: "#fffbeb", color: "#92400e", padding: "16px 18px", fontWeight: 700 }}>
+            {warnings.join(" ")}
           </div>
         ) : null}
 
@@ -443,6 +1104,10 @@ export default function SettingsPage() {
               <Field label="Logo URL" value={logoUrl} onChange={setLogoUrl} placeholder="https://..." />
             </div>
 
+            <div style={{ marginTop: 12, color: "#64748b", lineHeight: 1.6, fontSize: 13 }}>
+              Custom website logo presentation is positioned as a Core and Studio perk. Starter stays on the WhitePhoto branding foundation for public website identity.
+            </div>
+
             <button
               onClick={saveBranding}
               disabled={saving}
@@ -466,6 +1131,14 @@ export default function SettingsPage() {
               Stripe status
             </div>
             <div style={{ fontSize: 20, fontWeight: 900, color: "#0f172a", marginBottom: 18 }}>Connected account</div>
+            <div style={{ marginBottom: 14, borderRadius: 16, border: "1px solid #dbeafe", background: "#ffffff", padding: "14px 16px" }}>
+              <div style={{ fontWeight: 900, color: connectReadyForPayments ? "#15803d" : "#b45309" }}>
+                {connectStatusLabel}
+              </div>
+              <div style={{ marginTop: 6, color: "#64748b", lineHeight: 1.6, fontSize: 14 }}>
+                {connectDisabledReason || connectStatusMessage}
+              </div>
+            </div>
             <StatusRow label="Stripe account ID" value={stripeAccountId || "Not connected yet"} />
             <StatusRow label="Details submitted" value={detailsSubmitted ? "Yes" : "No"} ok={detailsSubmitted} />
             <StatusRow label="Charges enabled" value={chargesEnabled ? "Yes" : "No"} ok={chargesEnabled} />
@@ -486,7 +1159,7 @@ export default function SettingsPage() {
                 opacity: connecting || !sessionReady ? 0.65 : 1,
               }}
             >
-              {connecting ? "Opening Stripe..." : "Connect Stripe"}
+              {connecting ? "Opening Stripe..." : connectButtonLabel}
             </button>
           </div>
         </div>
@@ -617,55 +1290,985 @@ export default function SettingsPage() {
               <Field label="Studio address" value={studioAddress} onChange={setStudioAddress} placeholder="123 Main St, City, State ZIP" icon={<MapPin size={14} color="#94a3b8" />} />
               <Field label="Studio phone" value={studioPhone} onChange={setStudioPhone} placeholder="+1 (555) 000-0000" icon={<Phone size={14} color="#94a3b8" />} />
               <Field label="Studio email" value={studioEmail} onChange={setStudioEmail} placeholder="hello@yourstudio.com" icon={<Mail size={14} color="#94a3b8" />} />
+              <Field label="Billing email" value={billingEmail} onChange={setBillingEmail} placeholder="billing@yourstudio.com" icon={<Receipt size={14} color="#94a3b8" />} />
+
+              {/* Currency selector */}
+              <label style={{ display: "block" }}>
+                <div style={{ marginBottom: 8, fontSize: 13, fontWeight: 700, color: "#475569" }}>Currency</div>
+                <div style={{ position: "relative" }}>
+                  <select
+                    value={billingCurrency}
+                    onChange={(e) => setBillingCurrency(e.target.value)}
+                    style={{
+                      width: "100%",
+                      borderRadius: 18,
+                      border: "1px solid #d6dfef",
+                      background: "#fff",
+                      padding: "14px 16px",
+                      fontSize: 16,
+                      color: "#0f172a",
+                      outline: "none",
+                      appearance: "none",
+                      WebkitAppearance: "none",
+                      backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E")`,
+                      backgroundRepeat: "no-repeat",
+                      backgroundPosition: "right 16px center",
+                      cursor: "pointer",
+                    }}
+                  >
+                    {SUPPORTED_CURRENCIES.map((c) => (
+                      <option key={c.code} value={c.code}>
+                        {c.symbol}  {c.code.toUpperCase()} — {c.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </label>
             </div>
 
             <div style={{ fontSize: 13, color: "#64748b", lineHeight: 1.7, marginTop: 14, padding: "12px 14px", background: "#f0fdf4", borderRadius: 14, border: "1px solid #d1fae5" }}>
-              Contact info will appear on invoices, contracts, and the parent-facing gallery footer when those features are activated.
+              Contact info and currency will appear on invoices, order forms, and the parent-facing gallery. Currency also applies to the desktop app price lists.
             </div>
           </div>
         </div>
 
-        {/* ── Row 3: Stripe flow info + what gets saved ───────────────── */}
-        <div style={{ display: "grid", gap: 20, gridTemplateColumns: "1.4fr 1fr", marginTop: 20 }}>
-          <div style={{ ...cardStyle, background: "linear-gradient(135deg,#091532 0%,#0b1d49 100%)", color: "#fff" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 12, fontSize: 18, fontWeight: 900 }}>
-              <Settings2 size={22} /> Stripe Connect onboarding flow
+        {/* ── Payment method card ─────────────────────────────────────── */}
+        <div style={{ marginTop: 20 }}>
+          <div style={cardStyle}>
+            <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 20 }}>
+              <div style={{ width: 54, height: 54, borderRadius: 16, background: "#fdf4ff", display: "grid", placeItems: "center" }}>
+                <CreditCard size={24} color="#a855f7" />
+              </div>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 800, letterSpacing: "0.14em", textTransform: "uppercase", color: "#64748b" }}>
+                  Payments
+                </div>
+                <div style={{ fontSize: 20, fontWeight: 900, color: "#0f172a", marginTop: 2 }}>Payment method</div>
+              </div>
             </div>
-            <p style={{ marginTop: 16, color: "rgba(255,255,255,0.82)", lineHeight: 1.8, fontSize: 17 }}>
-              Connect Stripe button → Stripe onboarding → Stripe returns to Studio OS → account status refreshes automatically.
-            </p>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginTop: 16, color: "rgba(255,255,255,0.9)", lineHeight: 1.8 }}>
-              <div>
-                • professional Stripe-hosted onboarding<br />
-                • automatic account reuse on reconnect<br />
-                • safe return_url / refresh_url handling
+
+            {defaultPaymentMethod ? (
+              <div style={{ display: "flex", alignItems: "center", gap: 16, padding: "18px 20px", background: "#f8fafc", borderRadius: 18, border: "1px solid #d6dfef" }}>
+                <div style={{ width: 48, height: 32, borderRadius: 8, background: "#0f172a", display: "grid", placeItems: "center" }}>
+                  <span style={{ color: "#fff", fontSize: 11, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                    {defaultPaymentMethod.brand}
+                  </span>
+                </div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontWeight: 800, color: "#0f172a", fontSize: 15 }}>
+                    •••• •••• •••• {defaultPaymentMethod.last4}
+                  </div>
+                  <div style={{ fontSize: 13, color: "#64748b", marginTop: 2 }}>
+                    Expires {String(defaultPaymentMethod.expMonth).padStart(2, "0")}/{defaultPaymentMethod.expYear}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleOpenPortal}
+                  disabled={billingBusyAction === "portal" || !sessionReady}
+                  style={{
+                    border: "1px solid #d6dfef",
+                    borderRadius: 14,
+                    background: "#fff",
+                    padding: "10px 18px",
+                    fontWeight: 800,
+                    color: "#0f172a",
+                    cursor: billingBusyAction === "portal" || !sessionReady ? "not-allowed" : "pointer",
+                    opacity: billingBusyAction === "portal" || !sessionReady ? 0.65 : 1,
+                    fontSize: 13,
+                  }}
+                >
+                  {billingBusyAction === "portal" ? "Opening..." : "Manage"}
+                </button>
+              </div>
+            ) : (
+              <div style={{ padding: "18px 20px", background: "#fffbeb", borderRadius: 18, border: "1px solid #fde68a", display: "flex", alignItems: "center", gap: 14 }}>
+                <AlertCircle size={18} color="#d97706" />
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontWeight: 800, color: "#92400e", fontSize: 14 }}>No payment method on file</div>
+                  <div style={{ fontSize: 13, color: "#a16207", marginTop: 2 }}>Add a credit card through the billing portal to enable subscriptions and purchases.</div>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleOpenPortal}
+                  disabled={billingBusyAction === "portal" || !sessionReady}
+                  style={{
+                    border: "1px solid #f59e0b",
+                    borderRadius: 14,
+                    background: "#fef3c7",
+                    padding: "10px 18px",
+                    fontWeight: 800,
+                    color: "#92400e",
+                    cursor: billingBusyAction === "portal" || !sessionReady ? "not-allowed" : "pointer",
+                    opacity: billingBusyAction === "portal" || !sessionReady ? 0.65 : 1,
+                    fontSize: 13,
+                  }}
+                >
+                  {billingBusyAction === "portal" ? "Opening..." : "Add card"}
+                </button>
+              </div>
+            )}
+
+            <div style={{ fontSize: 13, color: "#64748b", lineHeight: 1.7, marginTop: 14, padding: "12px 14px", background: "#fdf4ff", borderRadius: 14, border: "1px solid #f3e8ff" }}>
+              Your payment method is stored securely by Stripe. It will be used for subscriptions, credit pack purchases, and per-order usage fees.
+            </div>
+          </div>
+        </div>
+
+        {/* ── Row 3: Billing controls + status ────────────────────────── */}
+        <div style={{ display: "grid", gap: 20, gridTemplateColumns: "1.25fr 0.95fr", marginTop: 20 }}>
+          <div style={cardStyle}>
+            <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 20 }}>
+              <div style={{ width: 54, height: 54, borderRadius: 16, background: "#eff6ff", display: "grid", placeItems: "center" }}>
+                <WalletCards size={24} color="#2563eb" />
               </div>
               <div>
-                • photographer-specific connected account<br />
-                • live charges / payouts status<br />
-                • saved into your real photographer record
+                <div style={{ fontSize: 13, fontWeight: 800, letterSpacing: "0.14em", textTransform: "uppercase", color: "#64748b" }}>
+                  Platform billing
+                </div>
+                <div style={{ fontSize: 20, fontWeight: 900, color: "#0f172a", marginTop: 2 }}>Studio OS subscription</div>
               </div>
+            </div>
+
+            <div style={{ display: "inline-flex", gap: 8, padding: 6, borderRadius: 18, background: "#f1f5f9", border: "1px solid #d6dfef", marginBottom: 18 }}>
+              {(["month", "year"] as BillingInterval[]).map((interval) => {
+                const active = desiredBillingInterval === interval;
+                return (
+                  <button
+                    key={interval}
+                    type="button"
+                    onClick={() => setDesiredBillingInterval(interval)}
+                    style={{
+                      border: "none",
+                      borderRadius: 14,
+                      background: active ? "#0f172a" : "transparent",
+                      color: active ? "#fff" : "#475569",
+                      padding: "10px 16px",
+                      fontWeight: 800,
+                      cursor: "pointer",
+                    }}
+                  >
+                    {intervalLabel(interval)}
+                    {interval === "year"
+                      ? ` · Save ${billingCatalog.annualDiscountPercent}%`
+                      : ""}
+                  </button>
+                );
+              })}
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 14 }}>
+              {billingCatalog.plans.map((plan) => {
+                const selected = desiredPlanCode === plan.code;
+                const current =
+                  subscriptionPlanCode === plan.code &&
+                  subscriptionBillingInterval === desiredBillingInterval;
+                const activePrice =
+                  desiredBillingInterval === "year" ? plan.annualPriceCents : plan.priceCents;
+                return (
+                  <button
+                    key={plan.code}
+                    type="button"
+                    onClick={() => setDesiredPlanCode(plan.code)}
+                    style={{
+                      border: selected ? "2px solid #0f172a" : current ? "1px solid #93c5fd" : "1px solid #d6dfef",
+                      borderRadius: 20,
+                      background: selected ? "#f8fafc" : "#fff",
+                      padding: 18,
+                      textAlign: "left",
+                      cursor: "pointer",
+                    }}
+                  >
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+                      <div style={{ fontSize: 18, fontWeight: 900, color: "#0f172a" }}>
+                        {planDisplayLabel(plan.code) || plan.label}
+                      </div>
+                      {current ? <CheckCircle2 size={18} color="#2563eb" /> : null}
+                    </div>
+                    <div style={{ marginTop: 8, fontSize: 22, fontWeight: 900, color: "#0f172a" }}>
+                      {formatMoney(activePrice, billingCurrency)}
+                    </div>
+                    <div style={{ marginTop: 4, fontSize: 12, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: "#64748b" }}>
+                      {desiredBillingInterval === "year" ? "Annual prepaid" : "Monthly"}
+                    </div>
+                    <div style={{ marginTop: 10, color: "#64748b", lineHeight: 1.6, fontSize: 14 }}>
+                      {plan.description}
+                    </div>
+                    <div style={{ marginTop: 10, color: "#334155", lineHeight: 1.7, fontSize: 13 }}>
+                      {plan.code === "starter"
+                        ? `${formatMoney(plan.usageRateCents, billingCurrency)} per paid order · web-only plan`
+                        : `${formatMoney(plan.usageRateCents, billingCurrency)} per paid order · ${plan.includedCredits} credits included each month`}
+                    </div>
+                    <div style={{ marginTop: 10, color: "#475569", lineHeight: 1.7, fontSize: 13 }}>
+                      {plan.code === "starter"
+                        ? "Online gallery only. Upgrade to Core or Studio to unlock the Studio OS App."
+                        : plan.websiteLogoIncluded
+                          ? "Full Studio OS App access + custom website logo included."
+                          : "Custom website logo + studio branding included."}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 16, marginTop: 18, alignItems: "end" }}>
+              <label style={{ display: "block" }}>
+                <div style={{ marginBottom: 8, fontSize: 13, fontWeight: 700, color: "#475569" }}>
+                  Extra desktop keys
+                </div>
+                <div style={{ position: "relative" }}>
+                  <div style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }}>
+                    <KeyRound size={14} color="#94a3b8" />
+                  </div>
+                  <input
+                    type="number"
+                    min={0}
+                    value={extraKeysAllowed ? desiredExtraDesktopKeys : 0}
+                    onChange={(e) =>
+                      setDesiredExtraDesktopKeys(Math.max(0, Number(e.target.value || 0)))
+                    }
+                    disabled={!extraKeysAllowed}
+                    style={{
+                      width: "100%",
+                      borderRadius: 18,
+                      border: "1px solid #d6dfef",
+                      background: extraKeysAllowed ? "#fff" : "#f8fafc",
+                      padding: "14px 16px 14px 36px",
+                      fontSize: 16,
+                      color: "#0f172a",
+                      outline: "none",
+                      opacity: extraKeysAllowed ? 1 : 0.65,
+                    }}
+                  />
+                </div>
+                <div style={{ marginTop: 8, color: "#64748b", fontSize: 13 }}>
+                  {!extraKeysAllowed
+                    ? desiredPlanCode === "core"
+                      ? "App Plan includes 1 photography key. Upgrade to Studio for a second key or any extra keys."
+                      : "Web Gallery stays web-only. Upgrade to App Plan or Studio to unlock the Studio OS App."
+                    : `${formatMoney(selectedExtraKeyPrice, billingCurrency)} per extra key ${
+                        desiredBillingInterval === "year"
+                          ? "per year, billed in advance."
+                          : "per month."
+                      }`}
+                </div>
+              </label>
+
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                {isPlatformAdmin ? (
+                  <div
+                    style={{
+                      maxWidth: 360,
+                      borderRadius: 18,
+                      border: "1px solid #bfdbfe",
+                      background: "#eff6ff",
+                      padding: "14px 16px",
+                      color: "#1d4ed8",
+                      fontWeight: 700,
+                      lineHeight: 1.6,
+                    }}
+                  >
+                    This owner account stays free for internal platform use. Create a non-owner photographer account to test paid subscriptions and checkout billing.
+                  </div>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      onClick={handlePlanSave}
+                      disabled={billingBusyAction === "plan" || !sessionReady}
+                      style={{
+                        border: "1px solid #0f172a",
+                        borderRadius: 18,
+                        background: "#0f172a",
+                        padding: "14px 20px",
+                        fontWeight: 800,
+                        color: "#fff",
+                        cursor: billingBusyAction === "plan" || !sessionReady ? "not-allowed" : "pointer",
+                        opacity: billingBusyAction === "plan" || !sessionReady ? 0.65 : 1,
+                      }}
+                    >
+                      {planActionLabel}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={handleOpenPortal}
+                      disabled={billingBusyAction === "portal" || !sessionReady}
+                      style={{
+                        border: "1px solid #d6dfef",
+                        borderRadius: 18,
+                        background: "#fff",
+                        padding: "14px 20px",
+                        fontWeight: 800,
+                        color: "#0f172a",
+                        cursor: billingBusyAction === "portal" || !sessionReady ? "not-allowed" : "pointer",
+                        opacity: billingBusyAction === "portal" || !sessionReady ? 0.65 : 1,
+                      }}
+                    >
+                      {billingBusyAction === "portal" ? "Opening portal..." : "Open billing portal"}
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+
+            <div style={{ marginTop: 16, fontSize: 13, color: "#64748b", lineHeight: 1.7, padding: "12px 14px", background: "#f8fafc", borderRadius: 14, border: "1px solid #e2e8f0" }}>
+              Customer checkout payments go straight to the photographer’s connected Stripe account. Studio OS billing stays separate on the platform account for plans, extra keys, monthly included credits, cloud credit packs, and aggregated order usage.
+            </div>
+          </div>
+
+          <div style={{ ...cardStyle, background: "#f8fbff" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 18 }}>
+              <div style={{ width: 54, height: 54, borderRadius: 16, background: "#e0f2fe", display: "grid", placeItems: "center" }}>
+                <Sparkles size={24} color="#0284c7" />
+              </div>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 800, letterSpacing: "0.14em", textTransform: "uppercase", color: "#64748b" }}>
+                  Billing health
+                </div>
+                <div style={{ fontSize: 20, fontWeight: 900, color: "#0f172a", marginTop: 2 }}>Current status</div>
+              </div>
+            </div>
+
+            <StatusRow label="Current plan" value={displayPlanLabel} ok={subscriptionIsActive || subscriptionInTrial} />
+            <StatusRow label="Billing interval" value={displayBillingInterval} ok={subscriptionIsActive || subscriptionInTrial} />
+            <StatusRow label="Subscription status" value={displayStatusLabel} ok={subscriptionIsActive || subscriptionInTrial} />
+            <StatusRow label="Next billing date" value={displayNextBillingDate} ok={subscriptionIsActive || subscriptionInTrial} />
+            <StatusRow label="Billing email" value={billingEmail || studioEmail || "Not set"} />
+            <StatusRow label="Connected checkout" value={connectStatusLabel} ok={connectReadyForPayments} />
+            <StatusRow label="Extra desktop keys" value={String(extraDesktopKeys)} ok />
+            <StatusRow label="Credit balance" value={`${creditBalance} credits`} ok />
+            <StatusRow
+              label="Included credits"
+              value={displayIncludedCredits}
+              ok={subscriptionIsActive || subscriptionInTrial}
+            />
+
+            {subscriptionPlanCode ? (
+              <div style={{ marginTop: 14, borderRadius: 18, border: "1px solid #cbd5e1", background: "#fff", padding: "16px 18px" }}>
+                <div style={{ fontWeight: 900, color: "#0f172a" }}>Order usage this cycle</div>
+                <div style={{ marginTop: 10, display: "grid", gap: 8, color: "#334155" }}>
+                  <div>Usage rate: <strong>{formatMoney(orderUsageRateCents, billingCurrency)} per paid order</strong></div>
+                  <div>Billable paid orders: <strong>{studioUsage.billableOrders}</strong></div>
+                  <div>Already reported to Stripe: <strong>{studioUsage.countedOrders}</strong></div>
+                  <div>Pending report sync: <strong>{studioUsage.unreportedOrders}</strong></div>
+                  <div>Estimated usage charge: <strong>{formatMoney(studioUsage.estimatedChargeCents, billingCurrency)}</strong></div>
+                </div>
+              </div>
+            ) : null}
+
+            {isPlatformAdmin ? (
+              <div style={{ marginTop: 14, borderRadius: 14, border: "1px solid #bfdbfe", background: "#eff6ff", color: "#1d4ed8", padding: "12px 14px", lineHeight: 1.6, fontWeight: 700 }}>
+                This is the platform owner account, so billing stays free here. Use a separate non-owner photographer account when you want to test the paid Studio OS subscription flow.
+              </div>
+            ) : showTrialInfo ? (
+              <div style={{ marginTop: 14, borderRadius: 14, border: "1px solid #bfdbfe", background: "#eff6ff", color: "#1d4ed8", padding: "12px 14px", lineHeight: 1.6, fontWeight: 700 }}>
+                Trial access is active. Connected checkout already works, but you should start a paid subscription before the trial ends to keep Studio OS features and monthly included credits running without interruption.
+              </div>
+            ) : null}
+
+            {showSubscriptionLockedWarning ? (
+              <div style={{ marginTop: 14, borderRadius: 14, border: "1px solid #fecaca", background: "#fef2f2", color: "#b91c1c", padding: "12px 14px", lineHeight: 1.6, fontWeight: 700 }}>
+                Paid Studio OS features stay locked until the subscription is active again.
+              </div>
+            ) : null}
+
+            {!connectReadyForPayments ? (
+              <div style={{ marginTop: 14, borderRadius: 14, border: "1px solid #fde68a", background: "#fffbeb", color: "#92400e", padding: "12px 14px", lineHeight: 1.6, fontWeight: 700 }}>
+                Parent checkout is blocked until the connected Stripe account is ready for charges and payouts.
+              </div>
+            ) : null}
+          </div>
+        </div>
+
+        {/* ── Row 4: Credits + invoices ──────────────────────────────── */}
+        <div style={{ display: "grid", gap: 20, gridTemplateColumns: "1fr 1fr", marginTop: 20 }}>
+          <div style={cardStyle}>
+            <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 20 }}>
+              <div style={{ width: 54, height: 54, borderRadius: 16, background: "#ecfeff", display: "grid", placeItems: "center" }}>
+                <CreditCard size={24} color="#0891b2" />
+              </div>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 800, letterSpacing: "0.14em", textTransform: "uppercase", color: "#64748b" }}>
+                  Background credits
+                </div>
+                <div style={{ fontSize: 20, fontWeight: 900, color: "#0f172a", marginTop: 2 }}>Buy credit packs</div>
+              </div>
+            </div>
+
+            <div style={{ marginBottom: 16, fontSize: 13, color: "#64748b", lineHeight: 1.7, padding: "12px 14px", background: "#f8fafc", borderRadius: 14, border: "1px solid #e2e8f0" }}>
+              Every active package also grants monthly included credits automatically: Starter 35, Core 55, Studio 100.
+            </div>
+
+            <div style={{ display: "grid", gap: 14 }}>
+              {billingCatalog.creditPacks.map((pack) => {
+                const actionKey = `credits:${pack.code}`;
+                return (
+                  <div
+                    key={pack.code}
+                    style={{
+                      border: "1px solid #d6dfef",
+                      borderRadius: 18,
+                      padding: "16px 18px",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      gap: 16,
+                    }}
+                  >
+                    <div>
+                      <div style={{ fontSize: 18, fontWeight: 900, color: "#0f172a" }}>
+                        {pack.label || pack.name}
+                      </div>
+                      <div style={{ marginTop: 4, color: "#64748b" }}>
+                        {pack.credits} credits for {formatMoney(pack.priceCents, billingCurrency)}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleBuyCredits(pack.code)}
+                      disabled={billingBusyAction === actionKey || !sessionReady}
+                      style={{
+                        border: "1px solid #0f172a",
+                        borderRadius: 16,
+                        background: "#0f172a",
+                        padding: "12px 16px",
+                        fontWeight: 800,
+                        color: "#fff",
+                        cursor: billingBusyAction === actionKey || !sessionReady ? "not-allowed" : "pointer",
+                        opacity: billingBusyAction === actionKey || !sessionReady ? 0.65 : 1,
+                      }}
+                    >
+                      {billingBusyAction === actionKey ? "Opening..." : "Buy credits"}
+                    </button>
+                  </div>
+                );
+              })}
             </div>
           </div>
 
           <div style={cardStyle}>
-            <div style={{ fontSize: 13, fontWeight: 800, letterSpacing: "0.14em", textTransform: "uppercase", color: "#64748b", marginBottom: 10 }}>
-              What gets saved
+            <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 20 }}>
+              <div style={{ width: 54, height: 54, borderRadius: 16, background: "#eef2ff", display: "grid", placeItems: "center" }}>
+                <Receipt size={24} color="#4f46e5" />
+              </div>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 800, letterSpacing: "0.14em", textTransform: "uppercase", color: "#64748b" }}>
+                  Invoices
+                </div>
+                <div style={{ fontSize: 20, fontWeight: 900, color: "#0f172a", marginTop: 2 }}>Recent Stripe invoices</div>
+              </div>
             </div>
-            <ul style={{ margin: 0, paddingLeft: 20, lineHeight: 2, color: "#334155", fontSize: 17 }}>
-              <li>photographer business name</li>
-              <li>studio name</li>
-              <li>logo URL</li>
-              <li>brand color</li>
-              <li>watermark on/off + logo</li>
-              <li>studio address, phone, email</li>
-              <li>connected Stripe account ID</li>
-              <li>live onboarding / payout state</li>
-              <li>photographer id: {photographerId || "pending"}</li>
-              <li>studio id: {studioId || "pending"}</li>
-            </ul>
+
+            <div style={{ display: "grid", gap: 12 }}>
+              {recentInvoices.length ? recentInvoices.map((invoice) => (
+                <div key={invoice.id} style={{ border: "1px solid #d6dfef", borderRadius: 18, padding: "14px 16px", background: "#fff" }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+                    <div>
+                      <div style={{ fontWeight: 900, color: "#0f172a" }}>{invoice.id}</div>
+                      <div style={{ marginTop: 4, color: "#64748b", fontSize: 14 }}>
+                        {formatDateLabel(invoice.created)} • {humanizeStatus(invoice.status)}
+                      </div>
+                    </div>
+                    <div style={{ textAlign: "right" }}>
+                      <div style={{ fontWeight: 900, color: "#0f172a" }}>
+                        {formatMoney(invoice.amountPaid || invoice.amountDue, invoice.currency)}
+                      </div>
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 12 }}>
+                    {invoice.hostedInvoiceUrl ? (
+                      <a
+                        href={invoice.hostedInvoiceUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        style={{ color: "#2563eb", fontWeight: 800, textDecoration: "none" }}
+                      >
+                        View invoice
+                      </a>
+                    ) : null}
+                    {invoice.invoicePdf ? (
+                      <a
+                        href={invoice.invoicePdf}
+                        target="_blank"
+                        rel="noreferrer"
+                        style={{ color: "#2563eb", fontWeight: 800, textDecoration: "none" }}
+                      >
+                        Download PDF
+                      </a>
+                    ) : null}
+                  </div>
+                </div>
+              )) : (
+                <div style={{ borderRadius: 18, border: "1px dashed #cbd5e1", background: "#f8fafc", padding: "18px 20px", color: "#64748b", lineHeight: 1.7 }}>
+                  Recent Studio OS invoices will appear here after the first successful billing cycle.
+                </div>
+              )}
+            </div>
           </div>
         </div>
+
+        {/* ── Row 5: Studio OS App beta rollout ─────────────────────── */}
+        <div style={{ display: "grid", gap: 20, gridTemplateColumns: "1.2fr 0.8fr", marginTop: 20 }}>
+          <div style={cardStyle}>
+            <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 20 }}>
+              <div style={{ width: 54, height: 54, borderRadius: 16, background: "#eef2ff", display: "grid", placeItems: "center" }}>
+                <MonitorSmartphone size={24} color="#4338ca" />
+              </div>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 800, letterSpacing: "0.14em", textTransform: "uppercase", color: "#64748b" }}>
+                  Studio OS App
+                </div>
+                <div style={{ fontSize: 20, fontWeight: 900, color: "#0f172a", marginTop: 2 }}>
+                  Studio OS App Beta Access
+                </div>
+              </div>
+            </div>
+
+            {studioAppError ? (
+              <div style={{ marginBottom: 16, borderRadius: 16, border: "1px solid #fecaca", background: "#fef2f2", color: "#b91c1c", padding: "12px 14px", fontWeight: 700 }}>
+                {studioAppError}
+              </div>
+            ) : null}
+
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 16 }}>
+              <div style={{ borderRadius: 999, border: "1px solid #c7d2fe", background: "#eef2ff", color: "#4338ca", padding: "8px 12px", fontSize: 12, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase" }}>
+                {studioApp.release.stateLabel}
+              </div>
+              <div style={{ borderRadius: 999, border: "1px solid #d6dfef", background: "#fff", color: "#0f172a", padding: "8px 12px", fontSize: 12, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase" }}>
+                {studioApp.release.version}
+              </div>
+              <div style={{ borderRadius: 999, border: "1px solid #d6dfef", background: "#fff", color: "#0f172a", padding: "8px 12px", fontSize: 12, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase" }}>
+                {studioAppPlanLabel}
+              </div>
+            </div>
+
+            <div style={{ borderRadius: 18, border: "1px solid #d6dfef", background: "#f8fafc", padding: "16px 18px", color: "#334155", lineHeight: 1.8, marginBottom: 18 }}>
+              {studioApp.entitlement.message}
+            </div>
+
+            {studioApp.entitlement.showBetaWarning ? (
+              <div style={{ marginBottom: 18, borderRadius: 18, border: "1px solid #fde68a", background: "#fffbeb", color: "#92400e", padding: "14px 16px", lineHeight: 1.7, fontWeight: 700 }}>
+                {studioApp.release.betaWarning}
+              </div>
+            ) : null}
+
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 18 }}>
+              {studioApp.release.macDownloadUrl && studioApp.entitlement.canDownload ? (
+                <a
+                  href={studioApp.release.macDownloadUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  style={{
+                    border: "1px solid #0f172a",
+                    borderRadius: 18,
+                    background: "#0f172a",
+                    padding: "14px 18px",
+                    fontWeight: 800,
+                    color: "#fff",
+                    textDecoration: "none",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: 10,
+                  }}
+                >
+                  <Download size={16} /> Download Mac App
+                </a>
+              ) : (
+                <button
+                  type="button"
+                  disabled
+                  style={{
+                    border: "1px solid #d6dfef",
+                    borderRadius: 18,
+                    background: "#f8fafc",
+                    padding: "14px 18px",
+                    fontWeight: 800,
+                    color: "#94a3b8",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: 10,
+                  }}
+                >
+                  <Download size={16} /> Mac Download
+                </button>
+              )}
+
+              {studioApp.release.windowsDownloadUrl && studioApp.entitlement.canDownload ? (
+                <a
+                  href={studioApp.release.windowsDownloadUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  style={{
+                    border: "1px solid #2563eb",
+                    borderRadius: 18,
+                    background: "#eff6ff",
+                    padding: "14px 18px",
+                    fontWeight: 800,
+                    color: "#1d4ed8",
+                    textDecoration: "none",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: 10,
+                  }}
+                >
+                  <Download size={16} /> Download Windows App
+                </a>
+              ) : (
+                <button
+                  type="button"
+                  disabled
+                  style={{
+                    border: "1px solid #d6dfef",
+                    borderRadius: 18,
+                    background: "#f8fafc",
+                    padding: "14px 18px",
+                    fontWeight: 800,
+                    color: "#94a3b8",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: 10,
+                  }}
+                >
+                  <Download size={16} /> Windows Download
+                </button>
+              )}
+            </div>
+
+            <div style={{ borderRadius: 18, border: "1px solid #d6dfef", background: "#fff", padding: "16px 18px", marginBottom: 18 }}>
+              <div style={{ fontWeight: 900, color: "#0f172a", marginBottom: 8 }}>Release notes</div>
+              <div style={{ color: "#64748b", lineHeight: 1.8, whiteSpace: "pre-wrap" }}>
+                {studioApp.release.releaseNotes}
+              </div>
+              <div style={{ marginTop: 10, color: "#94a3b8", fontSize: 13 }}>
+                Updated {formatDateLabel(studioApp.release.updatedAt)}
+              </div>
+            </div>
+
+            <div style={{ fontSize: 16, fontWeight: 900, color: "#0f172a", marginBottom: 12 }}>
+              Photography Keys
+            </div>
+            <div style={{ display: "grid", gap: 12 }}>
+              {studioApp.keys.length ? (
+                studioApp.keys.map((key) => (
+                  <div
+                    key={key.id}
+                    style={{
+                      border: "1px solid #d6dfef",
+                      borderRadius: 18,
+                      background: "#fff",
+                      padding: "16px 18px",
+                      display: "grid",
+                      gap: 10,
+                    }}
+                  >
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14 }}>
+                      <div>
+                        <div style={{ fontWeight: 900, color: "#0f172a" }}>
+                          {key.label}
+                          {key.isExtraKey ? " · Extra Key" : ""}
+                        </div>
+                        <div style={{ marginTop: 4, color: "#64748b", fontSize: 14 }}>
+                          {key.activationStatus === "active"
+                            ? `Activated on ${key.deviceName || key.platform || "a device"}`
+                            : "Not activated on a device yet"}
+                        </div>
+                      </div>
+                      <div style={{ fontWeight: 800, color: key.status === "active" ? "#15803d" : "#92400e" }}>
+                        {key.status === "active" ? "Active" : "Suspended"}
+                      </div>
+                    </div>
+
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                      <div style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", fontSize: 14, fontWeight: 700, color: "#0f172a", background: "#f8fafc", border: "1px solid #d6dfef", borderRadius: 12, padding: "10px 12px" }}>
+                        {key.keyCode}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => copyPhotographyKey(key.keyCode)}
+                        style={{
+                          border: "1px solid #d6dfef",
+                          borderRadius: 14,
+                          background: "#fff",
+                          padding: "10px 14px",
+                          fontWeight: 800,
+                          color: "#0f172a",
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: 8,
+                          cursor: "pointer",
+                        }}
+                      >
+                        <Copy size={14} /> Copy
+                      </button>
+                    </div>
+
+                    <div style={{ color: "#64748b", fontSize: 13, lineHeight: 1.7 }}>
+                      Last validation: {formatDateLabel(key.lastValidatedAt)} · Slot {key.slotIndex}
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <div style={{ borderRadius: 18, border: "1px dashed #cbd5e1", background: "#f8fafc", padding: "18px 20px", color: "#64748b", lineHeight: 1.7 }}>
+                  No Photography Keys are active on this account yet. Web Gallery does not include app access. App Plan includes 1 key. Studio includes 2 keys, and only Studio can add extra keys for $55 each.
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div style={{ ...cardStyle, background: "#f8fbff" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 18 }}>
+              <div style={{ width: 54, height: 54, borderRadius: 16, background: "#ecfeff", display: "grid", placeItems: "center" }}>
+                <ShieldCheck size={24} color="#0891b2" />
+              </div>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 800, letterSpacing: "0.14em", textTransform: "uppercase", color: "#64748b" }}>
+                  App entitlement
+                </div>
+                <div style={{ fontSize: 20, fontWeight: 900, color: "#0f172a", marginTop: 2 }}>
+                  Plan and rollout summary
+                </div>
+              </div>
+            </div>
+
+            <StatusRow label="Release state" value={studioApp.release.stateLabel} ok={studioApp.release.state === "public"} />
+            <StatusRow label="App eligible by plan" value={studioApp.entitlement.appEligibleByPlan ? "Yes" : "No"} ok={studioApp.entitlement.appEligibleByPlan} />
+            <StatusRow label="Beta access flag" value={studioApp.entitlement.betaAccess ? "Approved" : "Off"} ok={studioApp.entitlement.betaAccess || studioApp.release.state === "public"} />
+            <StatusRow label="Studio OS App enabled" value={studioApp.entitlement.appAccessEnabled ? "Enabled" : "Locked"} ok={studioApp.entitlement.appAccessEnabled} />
+            <StatusRow label="Included keys" value={String(studioApp.entitlement.includedKeys)} ok={studioApp.entitlement.includedKeys > 0} />
+            <StatusRow label="Extra keys" value={String(studioApp.entitlement.extraKeys)} ok={studioApp.entitlement.extraKeys > 0} />
+            <StatusRow label="Total allowed keys" value={String(studioApp.entitlement.totalAllowedKeys)} ok={studioApp.entitlement.totalAllowedKeys > 0} />
+            <StatusRow label="Downloads ready" value={studioAppDownloadsReady ? "Yes" : "Pending"} ok={studioAppDownloadsReady} />
+
+            <div style={{ marginTop: 14, borderRadius: 18, border: "1px solid #d6dfef", background: "#fff", padding: "16px 18px" }}>
+              <div style={{ fontWeight: 900, color: "#0f172a" }}>Plan rules</div>
+              <div style={{ marginTop: 10, color: "#334155", lineHeight: 1.8 }}>
+                <div>$49 Web Gallery: no app access</div>
+                <div>$99 App Plan: app eligible, 1 key</div>
+                <div>$199 Studio: app eligible, 2 keys</div>
+                <div>Extra keys: $55 each, Studio only</div>
+                <div>$99 must upgrade to Studio for a second key</div>
+              </div>
+            </div>
+
+            {studioAppReleaseIsBeta ? (
+              <div style={{ marginTop: 14, borderRadius: 16, border: "1px solid #fde68a", background: "#fffbeb", color: "#92400e", padding: "12px 14px", lineHeight: 1.7, fontWeight: 700 }}>
+                Beta rollout is active. Approved photographers can download the app and use Photography Keys while release links, notes, and builds are still evolving.
+              </div>
+            ) : null}
+
+            <Link
+              href="/dashboard/settings/studio-os-app-rollout"
+              style={{
+                marginTop: 16,
+                border: "1px solid #d6dfef",
+                borderRadius: 18,
+                background: "#fff",
+                padding: "14px 18px",
+                fontWeight: 800,
+                color: "#0f172a",
+                textDecoration: "none",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 10,
+              }}
+            >
+              <BookOpenText size={18} /> Read beta rollout guide
+            </Link>
+          </div>
+        </div>
+
+        {studioApp.admin.isPlatformAdmin ? (
+          <div style={{ display: "grid", gap: 20, gridTemplateColumns: "1.15fr 0.85fr", marginTop: 20 }}>
+            <div style={cardStyle}>
+              <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 20 }}>
+                <div style={{ width: 54, height: 54, borderRadius: 16, background: "#eef2ff", display: "grid", placeItems: "center" }}>
+                  <Sparkles size={24} color="#4f46e5" />
+                </div>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 800, letterSpacing: "0.14em", textTransform: "uppercase", color: "#64748b" }}>
+                    Admin rollout config
+                  </div>
+                  <div style={{ fontSize: 20, fontWeight: 900, color: "#0f172a", marginTop: 2 }}>
+                    Studio OS App release settings
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+                <label style={{ display: "block" }}>
+                  <div style={{ marginBottom: 8, fontSize: 13, fontWeight: 700, color: "#475569" }}>
+                    Release state
+                  </div>
+                  <select
+                    value={releaseStateDraft}
+                    onChange={(e) => setReleaseStateDraft(e.target.value as StudioAppReleaseState)}
+                    style={{
+                      width: "100%",
+                      borderRadius: 18,
+                      border: "1px solid #d6dfef",
+                      background: "#fff",
+                      padding: "14px 16px",
+                      fontSize: 16,
+                      color: "#0f172a",
+                      outline: "none",
+                    }}
+                  >
+                    <option value="hidden">Hidden</option>
+                    <option value="beta">Beta</option>
+                    <option value="public">Public</option>
+                  </select>
+                </label>
+
+                <Field
+                  label="Version"
+                  value={releaseVersionDraft}
+                  onChange={setReleaseVersionDraft}
+                  placeholder="Beta 0.1.0"
+                />
+                <Field
+                  label="Mac download URL"
+                  value={macDownloadUrlDraft}
+                  onChange={setMacDownloadUrlDraft}
+                  placeholder="https://..."
+                />
+                <Field
+                  label="Windows download URL"
+                  value={windowsDownloadUrlDraft}
+                  onChange={setWindowsDownloadUrlDraft}
+                  placeholder="https://..."
+                />
+              </div>
+
+              <label style={{ display: "block", marginTop: 14 }}>
+                <div style={{ marginBottom: 8, fontSize: 13, fontWeight: 700, color: "#475569" }}>
+                  Release notes
+                </div>
+                <textarea
+                  value={releaseNotesDraft}
+                  onChange={(e) => setReleaseNotesDraft(e.target.value)}
+                  rows={6}
+                  style={{
+                    width: "100%",
+                    borderRadius: 18,
+                    border: "1px solid #d6dfef",
+                    background: "#fff",
+                    padding: "14px 16px",
+                    fontSize: 15,
+                    color: "#0f172a",
+                    outline: "none",
+                    resize: "vertical",
+                    lineHeight: 1.7,
+                  }}
+                />
+              </label>
+
+              <label style={{ display: "block", marginTop: 14 }}>
+                <div style={{ marginBottom: 8, fontSize: 13, fontWeight: 700, color: "#475569" }}>
+                  Beta warning
+                </div>
+                <textarea
+                  value={betaWarningDraft}
+                  onChange={(e) => setBetaWarningDraft(e.target.value)}
+                  rows={4}
+                  style={{
+                    width: "100%",
+                    borderRadius: 18,
+                    border: "1px solid #d6dfef",
+                    background: "#fff",
+                    padding: "14px 16px",
+                    fontSize: 15,
+                    color: "#0f172a",
+                    outline: "none",
+                    resize: "vertical",
+                    lineHeight: 1.7,
+                  }}
+                />
+              </label>
+
+              <div style={{ marginTop: 16, display: "flex", gap: 10, flexWrap: "wrap" }}>
+                <button
+                  type="button"
+                  onClick={handleSaveStudioAppRelease}
+                  disabled={studioAppBusyAction === "release" || !sessionReady}
+                  style={{
+                    border: "1px solid #0f172a",
+                    borderRadius: 18,
+                    background: "#0f172a",
+                    padding: "14px 20px",
+                    fontWeight: 800,
+                    color: "#fff",
+                    cursor: studioAppBusyAction === "release" || !sessionReady ? "not-allowed" : "pointer",
+                    opacity: studioAppBusyAction === "release" || !sessionReady ? 0.65 : 1,
+                  }}
+                >
+                  {studioAppBusyAction === "release" ? "Saving..." : "Save release settings"}
+                </button>
+              </div>
+            </div>
+
+            <div style={cardStyle}>
+              <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 20 }}>
+                <div style={{ width: 54, height: 54, borderRadius: 16, background: "#ecfdf5", display: "grid", placeItems: "center" }}>
+                  <KeyRound size={24} color="#059669" />
+                </div>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 800, letterSpacing: "0.14em", textTransform: "uppercase", color: "#64748b" }}>
+                    Beta allow list
+                  </div>
+                  <div style={{ fontSize: 20, fontWeight: 900, color: "#0f172a", marginTop: 2 }}>
+                    Grant beta access
+                  </div>
+                </div>
+              </div>
+
+              <Field
+                label="Billing or studio email"
+                value={betaTargetEmail}
+                onChange={setBetaTargetEmail}
+                placeholder="photographer@example.com"
+                icon={<Mail size={14} color="#94a3b8" />}
+              />
+
+              <label style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 14, color: "#0f172a", fontWeight: 700 }}>
+                <input
+                  type="checkbox"
+                  checked={betaTargetEnabled}
+                  onChange={(e) => setBetaTargetEnabled(e.target.checked)}
+                />
+                Enable Studio OS App beta access for this account
+              </label>
+
+              <div style={{ marginTop: 12, color: "#64748b", lineHeight: 1.7 }}>
+                Beta access only matters when the release state is <strong>hidden</strong> or <strong>beta</strong>. Plan rules still apply: $49 never gets app access, $99 gets 1 key, and $199 gets 2 keys plus optional $55 extras.
+              </div>
+
+              <button
+                type="button"
+                onClick={handleUpdateBetaAccess}
+                disabled={studioAppBusyAction === "beta-access" || !sessionReady}
+                style={{
+                  marginTop: 16,
+                  border: "1px solid #0f172a",
+                  borderRadius: 18,
+                  background: "#0f172a",
+                  padding: "14px 20px",
+                  fontWeight: 800,
+                  color: "#fff",
+                  cursor: studioAppBusyAction === "beta-access" || !sessionReady ? "not-allowed" : "pointer",
+                  opacity: studioAppBusyAction === "beta-access" || !sessionReady ? 0.65 : 1,
+                }}
+              >
+                {studioAppBusyAction === "beta-access" ? "Saving..." : "Update beta access"}
+              </button>
+            </div>
+          </div>
+        ) : null}
+
       </div>
     </div>
   );

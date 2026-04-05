@@ -44,12 +44,33 @@ function projectLabel(project: EventProjectRow) {
   return clean(project.title) || clean(project.client_name) || "Untitled Event";
 }
 
-async function getPortalChoices(): Promise<{
+async function getPortalChoices(prefilledProjectId?: string): Promise<{
   schools: SchoolRow[];
   eventProjects: EventProjectRow[];
 }> {
   try {
     const service = createDashboardServiceClient();
+
+    // If a project ID is provided, scope events to that photographer only
+    let photographerIdFilter: string | null = null;
+    if (prefilledProjectId) {
+      const { data: proj } = await service
+        .from("projects")
+        .select("photographer_id")
+        .eq("id", prefilledProjectId)
+        .maybeSingle();
+      photographerIdFilter = (proj as { photographer_id?: string } | null)?.photographer_id ?? null;
+    }
+
+    let eventsQuery = service
+      .from("projects")
+      .select("id,title,client_name,workflow_type,status,portal_status,event_date,email_required")
+      .eq("workflow_type", "event")
+      .order("event_date", { ascending: false });
+
+    if (photographerIdFilter) {
+      eventsQuery = eventsQuery.eq("photographer_id", photographerIdFilter);
+    }
 
     const [schoolsResult, studentsResult, eventsResult] = await Promise.all([
       service
@@ -58,11 +79,7 @@ async function getPortalChoices(): Promise<{
         .order("school_name"),
       // ✅ PERF: Only fetch school_id column (minimal payload)
       service.from("students").select("school_id").not("school_id", "is", null),
-      service
-        .from("projects")
-        .select("id,title,client_name,workflow_type,status,portal_status,event_date,email_required")
-        .eq("workflow_type", "event")
-        .order("event_date", { ascending: false }),
+      eventsQuery,
     ]);
 
     if (schoolsResult.error) throw schoolsResult.error;
@@ -115,8 +132,8 @@ export default async function ClientPortalPage({
     email?: string;
   }>;
 }) {
-  const { schools, eventProjects } = await getPortalChoices();
   const resolvedSearchParams = (await searchParams) ?? {};
+  const { schools, eventProjects } = await getPortalChoices(clean(resolvedSearchParams.project) || undefined);
 
   return (
     <LoginForm

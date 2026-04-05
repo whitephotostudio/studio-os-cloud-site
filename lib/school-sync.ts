@@ -1,6 +1,7 @@
-import { createClient } from "@/lib/supabase/client";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import { normalizeEventGallerySettings } from "@/lib/event-gallery-settings";
 
-type SupabaseClientLike = ReturnType<typeof createClient>;
+type SupabaseClientLike = SupabaseClient;
 
 type SchoolSyncTarget = {
   school_name?: string | null;
@@ -10,13 +11,22 @@ type SchoolSyncTarget = {
   status?: string | null;
 };
 
-type CollectionKind = "class" | "gallery";
+type CollectionKind = "class" | "gallery" | "composite";
 
 type UploadedSchoolAsset = {
   storagePath: string;
   publicUrl: string;
   filename: string;
   mimeType: string | null;
+};
+
+type ProjectCoverContext = {
+  cover_photo_url?: string | null;
+  gallery_settings?: unknown;
+};
+
+type CollectionCoverContext = {
+  cover_photo_url?: string | null;
 };
 
 function clean(value: string | null | undefined) {
@@ -28,6 +38,76 @@ function slugify(value: string, fallback = "collection") {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "") || fallback;
+}
+
+function chooseSchoolCoverCandidate(
+  assets: UploadedSchoolAsset[],
+  source: "first_valid" | "newest" | "oldest" | "manual",
+) {
+  if (!assets.length || source === "manual") return null;
+  const ordered = source === "newest" ? [...assets].reverse() : assets;
+  return ordered.find((asset) => clean(asset.publicUrl)) ?? null;
+}
+
+async function applySchoolAutoCovers(
+  supabase: SupabaseClientLike,
+  params: {
+    projectId: string;
+    collectionId: string;
+    assets: UploadedSchoolAsset[];
+  },
+) {
+  if (!params.assets.length) return;
+
+  const [{ data: projectRow, error: projectError }, { data: collectionRow, error: collectionError }] =
+    await Promise.all([
+      supabase
+        .from("projects")
+        .select("cover_photo_url,gallery_settings")
+        .eq("id", params.projectId)
+        .maybeSingle<ProjectCoverContext>(),
+      supabase
+        .from("collections")
+        .select("cover_photo_url")
+        .eq("id", params.collectionId)
+        .maybeSingle<CollectionCoverContext>(),
+    ]);
+
+  if (projectError) throw projectError;
+  if (collectionError) throw collectionError;
+
+  const settings = normalizeEventGallerySettings(projectRow?.gallery_settings);
+  const coverSource = settings.extras.coverSource;
+  if (coverSource === "manual") return;
+
+  const candidate = chooseSchoolCoverCandidate(params.assets, coverSource);
+  const candidateUrl = clean(candidate?.publicUrl);
+  if (!candidateUrl) return;
+
+  if (settings.extras.autoChooseAlbumCover && !clean(collectionRow?.cover_photo_url)) {
+    const { error } = await supabase
+      .from("collections")
+      .update({
+        cover_photo_url: candidateUrl,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", params.collectionId)
+      .eq("project_id", params.projectId);
+
+    if (error) throw error;
+  }
+
+  if (settings.extras.autoChooseProjectCover && !clean(projectRow?.cover_photo_url)) {
+    const { error } = await supabase
+      .from("projects")
+      .update({
+        cover_photo_url: candidateUrl,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", params.projectId);
+
+    if (error) throw error;
+  }
 }
 
 export async function findSyncedSchoolProjectId(
@@ -215,4 +295,6 @@ export async function appendSchoolMediaRows(
 
   const { error } = await supabase.from("media").insert(payload);
   if (error) throw error;
+
+  await applySchoolAutoCovers(supabase, params);
 }

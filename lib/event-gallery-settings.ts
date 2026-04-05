@@ -12,6 +12,8 @@ export type EventGalleryExtraSettings = {
   freeDigitalResolution: "original" | "large" | "web";
   freeDigitalDownloadLimit: "unlimited" | "10" | "5" | "1";
   showDownloadAllButton: boolean;
+  downloadPinEnabled: boolean;
+  downloadPin: string;
   allowClientFavoriteDownloads: boolean;
   favoriteDownloadsRequireAllDigitalsPurchase: boolean;
   watermarkDownloads: boolean;
@@ -31,12 +33,18 @@ export type EventGalleryExtraSettings = {
   autoChooseAlbumCover: boolean;
   autoChooseProjectCover: boolean;
   coverSource: "first_valid" | "newest" | "oldest" | "manual";
+  emailCaptureMode: "off" | "optional" | "required";
+  liveGalleryMode: boolean;
+  guestIdentificationMode: "none" | "qr" | "barcode";
+  instantPhotoDelivery: boolean;
+  orderNotificationHooks: boolean;
 };
 
 export type EventGalleryBrandingSettings = {
   themePreset: "signature" | "editorial" | "cinema";
   backgroundMode: "dark" | "light";
   tone: "ink" | "graphite" | "smoke";
+  accentColor: "studio-red" | "champagne" | "ivory";
   photoLayout: "subway" | "cascade" | "editorial";
   fontPreset:
     | "brandon"
@@ -62,6 +70,8 @@ export type EventGalleryBrandingSettings = {
   showStudioMark: boolean;
   useCoverAsIntro: boolean;
   showHeroHeader: boolean;
+  heroTextAlign: "left" | "center";
+  heroOverlayStrength: "soft" | "balanced" | "dramatic";
   gridDensity: "airy" | "balanced" | "tight";
   imageSpacing: "airy" | "balanced" | "tight";
   marketingBannerEnabled: boolean;
@@ -111,6 +121,8 @@ export const defaultEventGalleryExtras: EventGalleryExtraSettings = {
   freeDigitalResolution: "original",
   freeDigitalDownloadLimit: "unlimited",
   showDownloadAllButton: false,
+  downloadPinEnabled: false,
+  downloadPin: "",
   allowClientFavoriteDownloads: false,
   favoriteDownloadsRequireAllDigitalsPurchase: false,
   watermarkDownloads: false,
@@ -130,12 +142,18 @@ export const defaultEventGalleryExtras: EventGalleryExtraSettings = {
   autoChooseAlbumCover: true,
   autoChooseProjectCover: true,
   coverSource: "first_valid",
+  emailCaptureMode: "off",
+  liveGalleryMode: false,
+  guestIdentificationMode: "none",
+  instantPhotoDelivery: false,
+  orderNotificationHooks: false,
 };
 
 export const defaultEventGalleryBranding: EventGalleryBrandingSettings = {
   themePreset: "signature",
   backgroundMode: "dark",
   tone: "ink",
+  accentColor: "studio-red",
   photoLayout: "subway",
   fontPreset: "studio-sans",
   introEnabled: true,
@@ -146,6 +164,8 @@ export const defaultEventGalleryBranding: EventGalleryBrandingSettings = {
   showStudioMark: true,
   useCoverAsIntro: true,
   showHeroHeader: true,
+  heroTextAlign: "left",
+  heroOverlayStrength: "balanced",
   gridDensity: "balanced",
   imageSpacing: "balanced",
   marketingBannerEnabled: false,
@@ -260,6 +280,14 @@ export function normalizeEventGallerySettings(value: unknown): EventGallerySetti
         extrasSource?.showDownloadAllButton,
         defaultEventGalleryExtras.showDownloadAllButton,
       ),
+      downloadPinEnabled: asBoolean(
+        extrasSource?.downloadPinEnabled,
+        defaultEventGalleryExtras.downloadPinEnabled,
+      ),
+      downloadPin: asString(
+        extrasSource?.downloadPin,
+        defaultEventGalleryExtras.downloadPin,
+      ),
       allowClientFavoriteDownloads: asBoolean(
         extrasSource?.allowClientFavoriteDownloads,
         defaultEventGalleryExtras.allowClientFavoriteDownloads,
@@ -337,6 +365,28 @@ export function normalizeEventGallerySettings(value: unknown): EventGallerySetti
         ["first_valid", "newest", "oldest", "manual"] as const,
         defaultEventGalleryExtras.coverSource,
       ),
+      emailCaptureMode: asEnum(
+        extrasSource?.emailCaptureMode,
+        ["off", "optional", "required"] as const,
+        defaultEventGalleryExtras.emailCaptureMode,
+      ),
+      liveGalleryMode: asBoolean(
+        extrasSource?.liveGalleryMode,
+        defaultEventGalleryExtras.liveGalleryMode,
+      ),
+      guestIdentificationMode: asEnum(
+        extrasSource?.guestIdentificationMode,
+        ["none", "qr", "barcode"] as const,
+        defaultEventGalleryExtras.guestIdentificationMode,
+      ),
+      instantPhotoDelivery: asBoolean(
+        extrasSource?.instantPhotoDelivery,
+        defaultEventGalleryExtras.instantPhotoDelivery,
+      ),
+      orderNotificationHooks: asBoolean(
+        extrasSource?.orderNotificationHooks,
+        defaultEventGalleryExtras.orderNotificationHooks,
+      ),
     },
     branding: {
       themePreset: asEnum(
@@ -353,6 +403,11 @@ export function normalizeEventGallerySettings(value: unknown): EventGallerySetti
         brandingSource?.tone,
         ["ink", "graphite", "smoke"] as const,
         defaultEventGalleryBranding.tone,
+      ),
+      accentColor: asEnum(
+        brandingSource?.accentColor,
+        ["studio-red", "champagne", "ivory"] as const,
+        defaultEventGalleryBranding.accentColor,
       ),
       photoLayout: asEnum(
         brandingSource?.photoLayout,
@@ -412,6 +467,16 @@ export function normalizeEventGallerySettings(value: unknown): EventGallerySetti
       showHeroHeader: asBoolean(
         brandingSource?.showHeroHeader,
         defaultEventGalleryBranding.showHeroHeader,
+      ),
+      heroTextAlign: asEnum(
+        brandingSource?.heroTextAlign,
+        ["left", "center"] as const,
+        defaultEventGalleryBranding.heroTextAlign,
+      ),
+      heroOverlayStrength: asEnum(
+        brandingSource?.heroOverlayStrength,
+        ["soft", "balanced", "dramatic"] as const,
+        defaultEventGalleryBranding.heroOverlayStrength,
       ),
       gridDensity: asEnum(
         brandingSource?.gridDensity,
@@ -479,5 +544,19 @@ export function normalizeEventGallerySettings(value: unknown): EventGallerySetti
         ),
       } satisfies EventGalleryShareSettings;
     })(),
+  };
+}
+
+export function sanitizeEventGallerySettingsForClient(
+  value: unknown,
+): EventGallerySettings {
+  const normalized = normalizeEventGallerySettings(value);
+  return {
+    ...normalized,
+    extras: {
+      ...normalized.extras,
+      password: "",
+      downloadPin: "",
+    },
   };
 }

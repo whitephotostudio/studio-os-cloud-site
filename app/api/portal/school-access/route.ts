@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createDashboardServiceClient } from "@/lib/dashboard-auth";
-import { normalizeEventGallerySettings } from "@/lib/event-gallery-settings";
+import {
+  sanitizeEventGallerySettingsForClient,
+} from "@/lib/event-gallery-settings";
 import { buildSchoolGalleryDownloadAccess } from "@/lib/school-gallery-downloads";
 
 export const dynamic = "force-dynamic";
@@ -10,6 +12,10 @@ type SchoolRow = {
   school_name: string;
   status: string | null;
   expiration_date: string | null;
+  photographer_id?: string | null;
+  package_profile_id?: string | null;
+  local_school_id?: string | null;
+  order_due_date?: string | null;
   access_mode?: string | null;
   access_pin?: string | null;
   email_required?: boolean | null;
@@ -27,20 +33,39 @@ type PackageRow = {
   category?: string | null;
 };
 
-type BackdropRow = {
+type StudentRow = {
   id: string;
-  name: string;
-  image_url: string;
+  first_name: string;
+  last_name: string | null;
+  photo_url: string | null;
+  class_id: string | null;
+  school_id: string;
+  class_name?: string | null;
+  folder_name?: string | null;
+  pin?: string | null;
+};
+
+type CompositeMediaRow = {
+  id: string;
+  collection_id: string | null;
+  storage_path: string | null;
+  preview_url: string | null;
   thumbnail_url: string | null;
-  tier: "free" | "premium";
-  price_cents: number;
-  category: string | null;
-  tags: string[] | null;
-  sort_order: number;
+  filename: string | null;
+  created_at: string | null;
+  sort_order: number | null;
+  collection_title?: string | null;
 };
 
 function clean(value: string | null | undefined) {
   return (value ?? "").trim();
+}
+
+function slugify(value: string, fallback = "collection") {
+  return clean(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "") || fallback;
 }
 
 function normalizedSchoolStatus(value: string | null | undefined) {
@@ -49,6 +74,104 @@ function normalizedSchoolStatus(value: string | null | undefined) {
 
 function looksLikeEmail(value: string | null | undefined) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(clean(value));
+}
+
+function looksLikeImageAssetUrl(value: string | null | undefined) {
+  const candidate = clean(value);
+  if (!candidate) return false;
+  return (
+    /^https?:\/\//i.test(candidate) &&
+    (
+      /(png|jpe?g|webp|gif|svg|avif)(\?|#|$)/i.test(candidate) ||
+      candidate.includes("/storage/v1/object/") ||
+      candidate.includes("/studio-logos/")
+    )
+  );
+}
+
+async function loadSchoolCompositeMedia(
+  service: ReturnType<typeof createDashboardServiceClient>,
+  school: SchoolRow | null,
+  className: string | null | undefined,
+) {
+  const normalizedClass = clean(className);
+  if (!school?.id || !normalizedClass) return [] as CompositeMediaRow[];
+
+  const projectBySchoolId = await service
+    .from("projects")
+    .select("id")
+    .eq("workflow_type", "school")
+    .eq("linked_school_id", school.id)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (projectBySchoolId.error) throw projectBySchoolId.error;
+
+  let projectId = clean(projectBySchoolId.data?.id);
+  if (!projectId && school.local_school_id) {
+    const localProject = await service
+      .from("projects")
+      .select("id")
+      .eq("workflow_type", "school")
+      .eq("linked_local_school_id", school.local_school_id)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (localProject.error) throw localProject.error;
+    projectId = clean(localProject.data?.id);
+  }
+
+  if (!projectId) return [] as CompositeMediaRow[];
+
+  const { data: collectionRows, error: collectionError } = await service
+    .from("collections")
+    .select("id,title,slug")
+    .eq("project_id", projectId)
+    .eq("kind", "composite")
+    .order("sort_order", { ascending: true })
+    .order("created_at", { ascending: true });
+
+  if (collectionError) throw collectionError;
+
+  const targetSlug = slugify(normalizedClass, "composite");
+  const normalizedLower = normalizedClass.toLowerCase();
+  const matchingCollections = (collectionRows ?? []).filter((row) => {
+    const rowTitle = clean(row.title).toLowerCase();
+    const rowSlug = clean(row.slug);
+    return rowTitle === normalizedLower || rowSlug === targetSlug;
+  });
+  if (!matchingCollections.length) return [] as CompositeMediaRow[];
+
+  const collectionIds = matchingCollections.map((row) => clean(row.id)).filter(Boolean);
+  const collectionTitleById = new Map(
+    matchingCollections.map((row) => [clean(row.id), clean(row.title) || normalizedClass]),
+  );
+
+  const { data: mediaRows, error: mediaError } = await service
+    .from("media")
+    .select("id,collection_id,storage_path,preview_url,thumbnail_url,filename,created_at,sort_order")
+    .eq("project_id", projectId)
+    .in("collection_id", collectionIds)
+    .order("sort_order", { ascending: true })
+    .order("created_at", { ascending: true });
+
+  if (mediaError) throw mediaError;
+
+  const uniqueRows = new Map<string, CompositeMediaRow>();
+  for (const row of (mediaRows ?? []) as CompositeMediaRow[]) {
+    const collectionId = clean(row.collection_id);
+    const storagePath = clean(row.storage_path);
+    if (!collectionId) continue;
+    const key = `${collectionId}::${storagePath || clean(row.id)}`;
+    if (!uniqueRows.has(key)) {
+      uniqueRows.set(key, row);
+    }
+  }
+
+  return Array.from(uniqueRows.values()).map((row) => ({
+    ...row,
+    collection_title: collectionTitleById.get(clean(row.collection_id)) || normalizedClass,
+  }));
 }
 
 export async function POST(request: NextRequest) {
@@ -212,18 +335,23 @@ export async function POST(request: NextRequest) {
               .order("sort_order", { ascending: true }),
             service
               .from("photographers")
-              .select("id,watermark_enabled,watermark_logo_url,business_name,studio_address,studio_phone,studio_email")
+              .select("id,watermark_enabled,watermark_logo_url,logo_url,business_name,studio_address,studio_phone,studio_email")
               .eq("id", selectedSchool.photographer_id)
               .maybeSingle(),
           ]);
 
-        const studentCandidates = studentsResult.data ?? [];
+        const studentCandidates = (studentsResult.data ?? []) as StudentRow[];
         const primaryStudent =
           studentCandidates.find((s) => s.school_id === resolvedSchoolId && !!s.photo_url) ??
           studentCandidates.find((s) => !!s.photo_url) ??
           studentCandidates.find((s) => s.school_id === resolvedSchoolId) ??
           studentCandidates[0] ??
           null;
+        const compositeRows = await loadSchoolCompositeMedia(
+          service,
+          selectedSchool,
+          primaryStudent?.class_name,
+        );
 
         const availablePackages = (packagesResult.data ?? []) as PackageRow[];
         const normalizedProfile = clean(selectedSchool.package_profile_id).toLowerCase();
@@ -235,10 +363,15 @@ export async function POST(request: NextRequest) {
 
         const photographer = photographerResult.data;
         const watermarkEnabled = photographer?.watermark_enabled !== false;
-        const watermarkLogoUrl = photographer?.watermark_logo_url || "";
+        const resolvedLogoUrl = looksLikeImageAssetUrl(photographer?.watermark_logo_url)
+          ? photographer?.watermark_logo_url
+          : looksLikeImageAssetUrl(photographer?.logo_url)
+            ? photographer?.logo_url
+            : "";
+        const watermarkLogoUrl = resolvedLogoUrl || "";
         const studioInfo = {
           businessName: photographer?.business_name || "",
-          logoUrl: photographer?.watermark_logo_url || "",
+          logoUrl: resolvedLogoUrl || "",
           address: photographer?.studio_address || "",
           phone: photographer?.studio_phone || "",
           email: photographer?.studio_email || "",
@@ -250,7 +383,7 @@ export async function POST(request: NextRequest) {
           order_due_date: selectedSchool.order_due_date ?? null,
           expiration_date: selectedSchool.expiration_date ?? null,
         };
-        const gallerySettings = normalizeEventGallerySettings(
+        const publicGallerySettings = sanitizeEventGallerySettingsForClient(
           selectedSchool.gallery_settings,
         );
         const downloadAccess = await buildSchoolGalleryDownloadAccess({
@@ -275,8 +408,9 @@ export async function POST(request: NextRequest) {
           primaryStudent,
           activeSchool: selectedSchool,
           activeProject,
-          gallerySettings,
+          gallerySettings: publicGallerySettings,
           downloadAccess,
+          composites: compositeRows,
           packages: packageRows,
           backdrops: backdropsResult.data ?? [],
           photographerId: photographer?.id ?? selectedSchool.photographer_id,

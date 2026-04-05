@@ -30,6 +30,97 @@ function clean(value: string | null | undefined) {
   return (value ?? "").trim();
 }
 
+export async function POST(request: NextRequest) {
+  try {
+    const { user } = await resolveDashboardAuth(request);
+    if (!user) {
+      return NextResponse.json(
+        { ok: false, message: "Please sign in again." },
+        { status: 401 },
+      );
+    }
+
+    const body = (await request.json().catch(() => ({}))) as {
+      title?: string | null;
+      clientName?: string | null;
+      eventDate?: string | null;
+      accessMode?: string | null;
+      accessPin?: string | null;
+    };
+
+    const title = clean(body.title);
+    if (!title) {
+      return NextResponse.json(
+        { ok: false, message: "Event name is required." },
+        { status: 400 },
+      );
+    }
+
+    const service = createDashboardServiceClient();
+
+    const { data: photographerRow, error: photographerError } = await service
+      .from("photographers")
+      .select("id")
+      .eq("user_id", user.id)
+      .maybeSingle();
+
+    if (photographerError) throw photographerError;
+    if (!photographerRow?.id) {
+      return NextResponse.json(
+        { ok: false, message: "Photographer profile not found." },
+        { status: 404 },
+      );
+    }
+
+    const photographerId = photographerRow.id as string;
+    const accessMode = (clean(body.accessMode) || "public").toLowerCase() === "pin" ? "pin" : "public";
+    const accessPin = accessMode === "pin" ? clean(body.accessPin) || null : null;
+    const eventDate = clean(body.eventDate).slice(0, 10) || new Date().toISOString().slice(0, 10);
+    const nowIso = new Date().toISOString();
+
+    // Generate a unique local id for web-created projects
+    const localId = `web_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+    const { data, error } = await service
+      .from("projects")
+      .insert({
+        photographer_id: photographerId,
+        workflow_type: "event",
+        source_type: "cloud_only",
+        status: "active",
+        linked_local_school_id: localId,
+        title,
+        client_name: clean(body.clientName) || null,
+        event_date: eventDate,
+        access_mode: accessMode,
+        access_pin: accessPin,
+        access_updated_at: nowIso,
+        access_updated_source: "cloud",
+        updated_at: nowIso,
+      })
+      .select("id,title,client_name,event_date,access_mode,status")
+      .maybeSingle();
+
+    if (error) throw error;
+    if (!data) {
+      return NextResponse.json(
+        { ok: false, message: "Unable to create event." },
+        { status: 500 },
+      );
+    }
+
+    return NextResponse.json({ ok: true, project: data });
+  } catch (error) {
+    return NextResponse.json(
+      {
+        ok: false,
+        message: error instanceof Error ? error.message : "Failed to create event.",
+      },
+      { status: 500 },
+    );
+  }
+}
+
 export async function GET(request: NextRequest) {
   try {
     const { user } = await resolveDashboardAuth(request);

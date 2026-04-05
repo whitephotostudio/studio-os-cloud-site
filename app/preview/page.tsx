@@ -1,3 +1,4 @@
+import Link from "next/link";
 import {
   Cloud,
   CreditCard,
@@ -56,7 +57,9 @@ export default function PreviewPage() {
         <div className="grid lg:grid-cols-[260px_1fr] gap-6">
           <aside className="rounded-[28px] border border-neutral-200 bg-white p-4 shadow-sm h-fit">
             <div className="pb-4 border-b border-neutral-200">
-              <Logo small />
+              <Link href="/" className="inline-flex">
+                <Logo small />
+              </Link>
             </div>
 
             <div className="mt-4 space-y-2">

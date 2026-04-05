@@ -3,7 +3,13 @@ import Link from "next/link";
 export function Hero() {
   return (
     <section className="relative overflow-hidden">
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(239,68,68,0.08),transparent_28%),radial-gradient(circle_at_80%_20%,rgba(0,0,0,0.05),transparent_22%)]" />
+      <div
+        className="absolute inset-0"
+        style={{
+          background:
+            "radial-gradient(circle at 50% 0%, rgba(98,46,59,0.05), transparent 26%), radial-gradient(circle at 78% 18%, rgba(41,37,36,0.045), transparent 20%), linear-gradient(180deg, rgba(247,243,239,0.7) 0%, rgba(255,255,255,0.14) 34%, rgba(255,255,255,0) 52%)",
+        }}
+      />
 
       <div className="relative mx-auto max-w-7xl px-4 pt-14 pb-10 sm:px-6 lg:px-8 lg:pt-24 lg:pb-14">
         <div className="grid items-start gap-10 lg:grid-cols-2">
@@ -19,15 +25,27 @@ export function Hero() {
 
             <div className="mt-8 flex flex-col gap-3 sm:flex-row">
               <Link
+                href="/pricing"
+                className="inline-flex items-center justify-center gap-2 rounded-2xl border border-[#d7d3cc] bg-[linear-gradient(180deg,#ffffff_0%,#faf8f4_52%,#f1ede5_100%)] px-5 py-3 font-medium text-neutral-950 shadow-[0_12px_24px_rgba(24,24,24,0.08)] transition hover:brightness-[0.99]"
+              >
+                See Pricing
+              </Link>
+              <Link
                 href="/preview"
-                className="inline-flex items-center justify-center gap-2 rounded-2xl bg-black px-5 py-3 font-medium text-white shadow-md transition hover:opacity-90"
+                className="inline-flex items-center justify-center gap-2 rounded-2xl border border-[#050505] bg-[linear-gradient(180deg,#181818_0%,#080808_52%,#000000_100%)] px-5 py-3 font-medium text-white shadow-[0_16px_30px_rgba(0,0,0,0.22)] transition hover:brightness-[1.03]"
               >
                 Platform Demo
+              </Link>
+              <Link
+                href="/sign-up"
+                className="inline-flex items-center justify-center gap-2 rounded-2xl border border-[#a9191d] bg-[linear-gradient(180deg,#f03a3e_0%,#da262b_46%,#b81c21_100%)] px-5 py-3 font-medium text-white shadow-[0_14px_28px_rgba(146,15,23,0.18)] transition hover:brightness-[0.98]"
+              >
+                Create Account
               </Link>
             </div>
 
             <div className="mt-8 text-sm text-neutral-500">
-              Studio OS App + Studio OS Cloud in one connected platform.
+              Studio OS App + Studio OS Cloud in one connected platform, with direct Stripe Connect checkout and no sales percentage fee.
             </div>
           </div>
 
@@ -96,7 +114,7 @@ export function Hero() {
                       "Account and workflow management",
                     ].map((line) => (
                       <div key={line} className="flex items-center gap-3">
-                        <div className="h-2 w-2 rounded-full bg-red-500" />
+                        <div className="h-2 w-2 rounded-full bg-[#df2b2f]" />
                         {line}
                       </div>
                     ))}

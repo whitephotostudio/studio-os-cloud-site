@@ -134,7 +134,7 @@ const STATUS_COLORS: Record<string, { bg: string; color: string; label: string }
 };
 
 const STATUS_FLOW = ["new", "reviewed", "sent_to_print", "completed"];
-const pageBg = "#f3f4f6";
+const pageBg = "#ffffff";
 const cardBg = "#ffffff";
 const borderColor = "#e5e7eb";
 const textPrimary = "#111827";
@@ -857,9 +857,9 @@ export default function OrdersPage() {
 
       <aside
         style={{
-          width: 280,
+          width: 220,
           flexShrink: 0,
-          background: "#111111",
+          background: "#000000",
           color: "#fff",
           display: "flex",
           flexDirection: "column",
@@ -867,103 +867,110 @@ export default function OrdersPage() {
           top: 0,
           height: "100vh",
           overflowY: "auto",
-          borderRight: "1px solid #262626",
         }}
       >
-        <div style={{ padding: "18px 18px 8px" }}>
-          <div
-            style={{
-              background: "#ffffff",
-              border: "1px solid #e5e7eb",
-              borderRadius: 16,
-              padding: "14px 16px",
-            }}
-          >
-            <div style={{ display: "flex", justifyContent: "flex-start" }}><Logo /></div>
+        <div style={{ padding: "18px", background: "#ffffff", borderBottom: "1px solid #e5e7eb" }}>
+          <div style={{ background: "#ffffff", borderRadius: 16, padding: "14px 16px" }}>
+            <div style={{ display: "flex", justifyContent: "flex-start" }}><Link href="/" style={{ display: "inline-flex" }}><Logo small /></Link></div>
           </div>
         </div>
 
-        <div style={{ padding: "8px 14px 4px" }}>
+        <nav style={{ flex: 1, paddingTop: 16 }}>
           <Link
-            href="/dashboard/projects"
+            href="/dashboard"
             style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: 10,
-              background: "#ffffff",
-              color: "#111111",
-              borderRadius: 12,
-              padding: "12px 14px",
-              fontWeight: 800,
+              padding: "12px 24px",
               fontSize: 14,
+              color: "#ccc",
               textDecoration: "none",
+              display: "block",
             }}
           >
-            <FolderOpen size={16} /> Create Gallery
+            Dashboard
           </Link>
-        </div>
-
-        <nav style={{ flex: 1, paddingTop: 8, paddingBottom: 12 }}>
-          <Link href="/dashboard" style={navLinkStyle(false)}>
-            <BarChart3 size={18} />
-            <span>Dashboard</span>
+          <Link
+            href="/dashboard/schools"
+            style={{
+              padding: "12px 24px",
+              fontSize: 14,
+              color: "#ccc",
+              textDecoration: "none",
+              display: "block",
+            }}
+          >
+            Schools
           </Link>
-
-          {sidebarGroup("galleries", "Galleries", [
-            { label: "All Galleries", href: "/dashboard/projects", icon: <Images size={18} /> },
-            { label: "Gallery Visitors", href: "#", icon: <Users size={18} />, soon: true },
-            { label: "Music for Galleries", href: "#", icon: <Monitor size={18} />, soon: true },
-            { label: "Watermarks", href: "#", icon: <ImageIcon size={18} />, soon: true },
-            { label: "Mobile Apps", href: "#", icon: <Monitor size={18} />, soon: true },
-            { label: "Gallery Tools", href: "#", icon: <Wrench size={18} />, soon: true },
-          ])}
-
-          {sidebarGroup("store", "Store", [
-            { label: "Orders", href: "/dashboard/orders", icon: <ClipboardList size={18} />, active: true },
-            { label: "Price Sheets", href: "/dashboard/packages", icon: <WalletCards size={18} /> },
-          ])}
-
-          {sidebarGroup("studio", "Studio", [
-            { label: "Clients", href: "#", icon: <Users size={18} />, soon: true },
-            { label: "Contracts", href: "#", icon: <FileSpreadsheet size={18} />, soon: true },
-            { label: "Invoices", href: "#", icon: <Receipt size={18} />, soon: true },
-            { label: "Booking", href: "#", icon: <School2 size={18} />, soon: true },
-            { label: "Themes", href: "#", icon: <Palette size={18} />, soon: true },
-            { label: "Email", href: "#", icon: <Mail size={18} />, soon: true },
-            { label: "Portfolio Website", href: "#", icon: <Monitor size={18} />, soon: true },
-          ])}
-
-          {sidebarGroup("reports", "Reports", [
-            { label: "Sales Report", href: "#", icon: <BarChart3 size={18} />, soon: true },
-            { label: "Orders Report", href: "#", icon: <ShoppingBag size={18} />, soon: true },
-            { label: "Order Files Report", href: "#", icon: <FileDown size={18} />, soon: true },
-            { label: "Products Report", href: "#", icon: <Package2 size={18} />, soon: true },
-            { label: "Invoices Report", href: "#", icon: <Receipt size={18} />, soon: true },
-          ])}
+          <Link
+            href="/dashboard/projects/events"
+            style={{
+              padding: "12px 24px",
+              fontSize: 14,
+              color: "#ccc",
+              textDecoration: "none",
+              display: "block",
+            }}
+          >
+            Events
+          </Link>
+          <Link
+            href="/dashboard/orders"
+            style={{
+              padding: "12px 24px",
+              fontSize: 14,
+              color: "#fff",
+              background: "#1a1a1a",
+              textDecoration: "none",
+              display: "block",
+            }}
+          >
+            Orders
+          </Link>
+          <Link
+            href="/dashboard/packages"
+            style={{
+              padding: "12px 24px",
+              fontSize: 14,
+              color: "#ccc",
+              textDecoration: "none",
+              display: "block",
+            }}
+          >
+            Packages
+          </Link>
+          <Link
+            href="/dashboard/settings"
+            style={{
+              padding: "12px 24px",
+              fontSize: 14,
+              color: "#ccc",
+              textDecoration: "none",
+              display: "block",
+            }}
+          >
+            Settings
+          </Link>
         </nav>
 
-        <div style={{ borderTop: "1px solid #262626", padding: 12 }}>
-          <Link href="/dashboard/settings" style={navLinkStyle(false)}>
-            <Settings size={18} />
-            <span>Settings</span>
-          </Link>
-          <button
-            type="button"
-            onClick={handleSignOut}
-            style={{
-              ...navLinkStyle(false),
-              width: "100%",
-              border: "none",
-              background: "transparent",
-              cursor: "pointer",
-              textAlign: "left",
-            }}
-          >
-            <LogOut size={18} />
-            <span>Sign Out</span>
-          </button>
-        </div>
+        <div style={{ padding: "0 16px 8px", color: "#8f8f8f", fontSize: 12 }}>{userEmail}</div>
+        <button
+          type="button"
+          onClick={handleSignOut}
+          style={{
+            margin: 16,
+            padding: "10px",
+            background: "transparent",
+            border: "1px solid #333",
+            borderRadius: 8,
+            color: "#ccc",
+            cursor: "pointer",
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            fontSize: 13,
+          }}
+        >
+          <LogOut size={14} /> Sign Out
+        </button>
       </aside>
 
       <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
@@ -991,7 +998,7 @@ export default function OrdersPage() {
               <span style={{ color: textPrimary, fontWeight: 700 }}>Orders</span>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <h1 style={{ margin: 0, fontSize: 28, fontWeight: 900, color: textPrimary }}>Orders Lab Center</h1>
+              <h1 style={{ margin: 0, fontSize: 28, fontWeight: 900, color: textPrimary }}>Orders</h1>
               {newCount > 0 ? (
                 <span
                   style={{

@@ -274,9 +274,13 @@ export default function SchoolsPage() {
     setCreating(true);
     setCreateError("");
     try {
+      const { data: { session } } = await supabase.auth.getSession();
       const res = await fetch("/api/dashboard/schools", {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session?.access_token ?? ""}`,
+        },
         body: JSON.stringify({ school_name: name }),
       });
       const data = (await res.json()) as { ok?: boolean; message?: string; school?: { id: string } };
@@ -313,7 +317,7 @@ export default function SchoolsPage() {
   return (
     <div style={{ display: "flex", minHeight: "100vh", background: "#ffffff" }}>
       <div style={sidebar}>
-        <div style={{ background: "#fff", padding: "18px", borderBottom: "1px solid #e5e7eb" }}><div style={{ background: "#fff", borderRadius: 16, padding: "14px 16px" }}><Logo small /></div></div>
+        <div style={{ background: "#fff", padding: "18px", borderBottom: "1px solid #e5e7eb" }}><div style={{ background: "#fff", borderRadius: 16, padding: "14px 16px" }}><Link href="/" style={{ display: "inline-flex" }}><Logo small /></Link></div></div>
         <nav style={{ flex: 1, paddingTop: 16 }}>
           <Link href="/dashboard" style={navItem}>Dashboard</Link>
           <Link href="/dashboard/schools" style={navActive}>Schools</Link>

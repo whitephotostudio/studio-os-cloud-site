@@ -1,114 +1,131 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
+import { createDashboardServiceClient } from "@/lib/dashboard-auth";
+import {
+  finalizePaidOrder,
+  getConnectedAccountId,
+  retrieveCheckoutSession,
+} from "@/lib/payments";
 
-type StripeCheckoutSession = {
-  id: string;
-  payment_status?: string;
-  client_reference_id?: string | null;
-  customer_details?: { email?: string | null } | null;
-  amount_total?: number | null;
-  metadata?: Record<string, string> | null;
+export const dynamic = "force-dynamic";
+
+type ConfirmBody = {
+  sessionId?: string;
+  orderId?: string;
 };
 
 type OrderRow = {
   id: string;
-  package_name: string | null;
+  photographer_id: string | null;
   status: string | null;
-  notes: string | null;
+  payment_status: string | null;
+  paid_at: string | null;
+  stripe_checkout_session_id: string | null;
 };
 
-function env(name: string) {
-  const value = process.env[name];
-  if (!value) throw new Error(`Missing ${name}`);
-  return value;
-}
+type PhotographerRow = {
+  id: string;
+  stripe_account_id: string | null;
+  stripe_connected_account_id: string | null;
+};
 
-function supabaseAdmin() {
-  return createClient(env("NEXT_PUBLIC_SUPABASE_URL"), env("SUPABASE_SERVICE_ROLE_KEY"));
-}
-
-async function stripeGet<T>(path: string) {
-  const res = await fetch(`https://api.stripe.com/v1/${path}`, {
-    headers: { Authorization: `Bearer ${env("STRIPE_SECRET_KEY")}` },
-    cache: "no-store",
-  });
-  const json = await res.json();
-  if (!res.ok) throw new Error(json?.error?.message || `Stripe error calling ${path}`);
-  return json as T;
+function service() {
+  return createDashboardServiceClient();
 }
 
 export async function POST(req: NextRequest) {
   try {
-    const body = (await req.json()) as { sessionId?: string };
-    if (!body.sessionId) {
-      return NextResponse.json({ ok: false, message: "Missing sessionId." }, { status: 400 });
+    const body = (await req.json()) as ConfirmBody;
+    const sessionId = (body.sessionId ?? "").trim();
+    const orderId = (body.orderId ?? "").trim();
+
+    if (!sessionId && !orderId) {
+      return NextResponse.json(
+        { ok: false, message: "Missing sessionId or orderId." },
+        { status: 400 },
+      );
     }
 
-    const session = await stripeGet<StripeCheckoutSession>(`checkout/sessions/${body.sessionId}`);
-    if (session.payment_status !== "paid" && session.payment_status !== "no_payment_required") {
-      return NextResponse.json({ ok: false, message: "Payment is not completed yet." }, { status: 400 });
-    }
-
-    const orderId = session.client_reference_id || session.metadata?.order_id || "";
-    if (!orderId) {
-      return NextResponse.json({ ok: false, message: "No order was linked to this checkout." }, { status: 400 });
-    }
-
-    const sb = supabaseAdmin();
-    const { data: order, error: orderError } = await sb
+    const sb = service();
+    let orderQuery = sb
       .from("orders")
-      .select("id,package_name,status,notes")
-      .eq("id", orderId)
-      .maybeSingle<OrderRow>();
+      .select("id,photographer_id,status,payment_status,paid_at,stripe_checkout_session_id")
+      .limit(1);
 
+    if (sessionId) {
+      orderQuery = orderQuery.eq("stripe_checkout_session_id", sessionId);
+    } else {
+      orderQuery = orderQuery.eq("id", orderId);
+    }
+
+    const { data: order, error: orderError } = await orderQuery.maybeSingle<OrderRow>();
     if (orderError) throw orderError;
     if (!order) {
       return NextResponse.json({ ok: false, message: "Order not found." }, { status: 404 });
     }
 
-    // ✅ FIX: Idempotency guard — if the order is already marked paid (e.g.
-    // the user refreshed the success page), return success immediately without
-    // re-writing the record or duplicating any downstream logic.
-    if (order.status === "paid" || order.status === "digital_paid") {
+    const currentStatus = (order.status ?? "").toLowerCase();
+    const currentPaymentStatus = (order.payment_status ?? "").toLowerCase();
+    if (
+      (currentStatus === "paid" || currentStatus === "digital_paid") &&
+      (currentPaymentStatus === "paid" || currentPaymentStatus === "succeeded" || currentPaymentStatus === "no_payment_required")
+    ) {
       return NextResponse.json({
         ok: true,
-        orderId,
-        customerEmail: session.customer_details?.email || null,
-        paymentStatus: session.payment_status,
-        amountTotal: session.amount_total ?? null,
-        status: order.status,
+        orderId: order.id,
+        paymentStatus: currentPaymentStatus,
+        status: currentStatus,
       });
     }
 
-    const isDigital = (order.package_name || "").toLowerCase().includes("digital");
-    const nextStatus = isDigital ? "digital_paid" : "paid";
-    const paymentNote = `[Stripe checkout ${session.id}] payment confirmed`;
-    const mergedNotes = order.notes?.includes(paymentNote)
-      ? order.notes
-      : [order.notes || "", paymentNote].filter(Boolean).join("\n\n");
+    const { data: photographer, error: photographerError } = await sb
+      .from("photographers")
+      .select("id,stripe_account_id,stripe_connected_account_id")
+      .eq("id", order.photographer_id)
+      .maybeSingle<PhotographerRow>();
 
-    const { error: updateError } = await sb
-      .from("orders")
-      .update({
-        status: nextStatus,
-        notes: mergedNotes,
-        seen_by_photographer: false,
-      })
-      .eq("id", orderId);
+    if (photographerError) throw photographerError;
 
-    if (updateError) throw updateError;
+    const stripeAccountId = photographer ? getConnectedAccountId(photographer) : null;
+    if (!stripeAccountId) {
+      return NextResponse.json(
+        { ok: false, message: "Stripe account not available for this order." },
+        { status: 400 },
+      );
+    }
+
+    const resolvedSessionId = sessionId || order.stripe_checkout_session_id || "";
+    const session = await retrieveCheckoutSession(resolvedSessionId, stripeAccountId);
+
+    if (session.payment_status !== "paid" && session.payment_status !== "no_payment_required") {
+      return NextResponse.json(
+        { ok: false, message: "Payment is not completed yet." },
+        { status: 400 },
+      );
+    }
+
+    await finalizePaidOrder(sb, {
+      orderId: order.id,
+      checkoutSessionId: session.id,
+      paymentIntentId: session.payment_intent ?? null,
+      paymentStatus: session.payment_status ?? "paid",
+      note: `[Stripe checkout ${session.id}] payment confirmed`,
+      paidAt: new Date().toISOString(),
+    });
 
     return NextResponse.json({
       ok: true,
-      orderId,
+      orderId: order.id,
       customerEmail: session.customer_details?.email || null,
       paymentStatus: session.payment_status,
-      amountTotal: session.amount_total ?? null,
-      status: nextStatus,
+      status: "paid",
     });
   } catch (error) {
     return NextResponse.json(
-      { ok: false, message: error instanceof Error ? error.message : "Failed to confirm Stripe checkout." },
+      {
+        ok: false,
+        message:
+          error instanceof Error ? error.message : "Failed to confirm Stripe checkout.",
+      },
       { status: 500 },
     );
   }

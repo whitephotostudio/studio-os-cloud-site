@@ -99,34 +99,33 @@ function slugify(value: string) {
     .replace(/^-+|-+$/g, "") || "class";
 }
 
-function splitDisplayName(value: string) {
-  const parts = clean(value).split(/\s+/).filter(Boolean);
-  return {
-    firstName: parts[0] ?? "",
-    lastName: parts.slice(1).join(" ") || null,
-  };
-}
-
 function safeStorageSegment(value: string, fallback: string) {
-  return clean(value).replace(/[\\/:*?"<>|]+/g, " ").replace(/\s+/g, " ").trim() || fallback;
-}
-
-function imageFilesOnly(files: File[]) {
-  return files.filter(
-    (file) => !!file && (file.type.startsWith("image/") || /\.(png|jpg|jpeg|webp)$/i.test(file.name))
+  return (
+    clean(value)
+      .replace(/[\\/:*?"<>|]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim() || fallback
   );
 }
 
 function assetFromPublicUrl(url: string): UploadedStudentAsset | null {
   const storagePath = extractObjectPathFromPublicUrl(url);
   if (!storagePath) return null;
-  const filename = decodeURIComponent(storagePath.split("/").filter(Boolean).at(-1) || "photo.jpg");
+  const filename = decodeURIComponent(
+    storagePath.split("/").filter(Boolean).at(-1) || "photo.jpg",
+  );
   return {
     storagePath,
     publicUrl: url,
     filename,
     mimeType: null,
   };
+}
+
+function imageFilesOnly(files: File[]) {
+  return files.filter(
+    (file) => !!file && (file.type.startsWith("image/") || /\.(png|jpg|jpeg|webp)$/i.test(file.name))
+  );
 }
 
 export default function SchoolsSchoolClassPage() {
@@ -151,7 +150,8 @@ export default function SchoolsSchoolClassPage() {
   const [hoveredStudentId, setHoveredStudentId] = useState<string | null>(null);
   const [openStudentMenuId, setOpenStudentMenuId] = useState<string | null>(null);
   const [createStudentOpen, setCreateStudentOpen] = useState(false);
-  const [newStudentName, setNewStudentName] = useState("");
+  const [newStudentFirstName, setNewStudentFirstName] = useState("");
+  const [newStudentLastName, setNewStudentLastName] = useState("");
   const [newStudentPin, setNewStudentPin] = useState("");
   const [queuedStudentFiles, setQueuedStudentFiles] = useState<File[]>([]);
   const [creatingStudent, setCreatingStudent] = useState(false);
@@ -292,25 +292,6 @@ export default function SchoolsSchoolClassPage() {
           });
 
           if (syncTarget.projectId && syncTarget.collectionId) {
-            const missingClassIdIds = loaded
-              .filter((student) => clean(student.class_id) !== clean(syncTarget.collectionId))
-              .map((student) => student.id);
-
-            if (missingClassIdIds.length) {
-              const { error: classIdUpdateError } = await supabase
-                .from("students")
-                .update({ class_id: syncTarget.collectionId })
-                .in("id", missingClassIdIds);
-
-              if (classIdUpdateError) throw classIdUpdateError;
-
-              loaded = loaded.map((student) =>
-                missingClassIdIds.includes(student.id)
-                  ? { ...student, class_id: syncTarget.collectionId }
-                  : student
-              );
-            }
-
             const { data: mediaRows, error: mediaError } = await supabase
               .from("media")
               .select("storage_path")
@@ -414,9 +395,18 @@ export default function SchoolsSchoolClassPage() {
   function resetCreateStudentForm() {
     uploadTargetStudentRef.current = null;
     setCreateStudentOpen(false);
-    setNewStudentName("");
+    setNewStudentFirstName("");
+    setNewStudentLastName("");
     setNewStudentPin("");
     setQueuedStudentFiles([]);
+  }
+
+  function classStudentsApiPath() {
+    return `/api/dashboard/schools/${schoolId}/classes/${encodeURIComponent(className)}/students`;
+  }
+
+  function studentPhotosApiPath(studentId: string) {
+    return `${classStudentsApiPath()}/${studentId}/photos`;
   }
 
   async function uploadFilesToStudent(student: Student, files: File[]) {
@@ -424,14 +414,22 @@ export default function SchoolsSchoolClassPage() {
     if (!filesToUpload.length) return;
 
     const currentPhotoUrl = clean(student.photo_url);
-    const currentFolderPath = currentPhotoUrl ? extractFolderPathFromPublicUrl(currentPhotoUrl) : null;
-    const basePath = safeStorageSegment(clean(school?.local_school_id) || schoolId, schoolId);
-    const classPath = safeStorageSegment(className, "Class");
+    const currentFolderPath = currentPhotoUrl
+      ? extractFolderPathFromPublicUrl(currentPhotoUrl)
+      : null;
+    const basePath = safeStorageSegment(
+      clean(school?.local_school_id) || schoolId,
+      schoolId,
+    );
+    const classPath = safeStorageSegment(classDisplayName || className, "Class");
     const derivedFolderName =
       clean(student.folder_name) ||
-      (currentFolderPath ? currentFolderPath.split("/").filter(Boolean).at(-1) ?? "" : "") ||
+      (currentFolderPath
+        ? currentFolderPath.split("/").filter(Boolean).at(-1) ?? ""
+        : "") ||
       `${safeStorageSegment(fullNameOf(student), "Student")}-${Date.now()}`;
-    const storageFolderPath = currentFolderPath || `${basePath}/${classPath}/${derivedFolderName}`;
+    const storageFolderPath =
+      currentFolderPath || `${basePath}/${classPath}/${derivedFolderName}`;
     const existingUrls = getPhotoUrls(student);
 
     setUploadingStudentId(student.id);
@@ -448,21 +446,29 @@ export default function SchoolsSchoolClassPage() {
       });
 
       for (const [index, file] of filesToUpload.entries()) {
-        const originalExt = file.name.includes(".") ? file.name.split(".").pop() : "jpg";
+        const originalExt = file.name.includes(".")
+          ? file.name.split(".").pop()
+          : "jpg";
         const ext = clean(originalExt).toLowerCase() || "jpg";
-        const storagePath = `${storageFolderPath}/${Date.now()}-${index}-${Math.random().toString(36).slice(2)}.${ext}`;
+        const storagePath = `${storageFolderPath}/${Date.now()}-${index}-${Math.random()
+          .toString(36)
+          .slice(2)}.${ext}`;
 
-        const { error: uploadError } = await supabase.storage.from("thumbs").upload(storagePath, file, {
-          cacheControl: "3600",
-          upsert: false,
-          contentType: file.type || undefined,
-        });
+        const { error: uploadError } = await supabase.storage
+          .from("thumbs")
+          .upload(storagePath, file, {
+            cacheControl: "3600",
+            upsert: false,
+            contentType: file.type || undefined,
+          });
 
         if (uploadError) {
           throw new Error(uploadError.message || "Photo upload failed.");
         }
 
-        const publicUrl = supabase.storage.from("thumbs").getPublicUrl(storagePath).data.publicUrl;
+        const publicUrl = supabase.storage
+          .from("thumbs")
+          .getPublicUrl(storagePath).data.publicUrl;
         if (clean(publicUrl)) {
           uploadedAssets.push({
             storagePath,
@@ -473,14 +479,15 @@ export default function SchoolsSchoolClassPage() {
         }
       }
 
-      const uploadedUrls = uploadedAssets.map((asset) => asset.publicUrl).filter(Boolean);
+      const uploadedUrls = uploadedAssets
+        .map((asset) => asset.publicUrl)
+        .filter(Boolean);
       if (!uploadedUrls.length) return;
 
-      let nextStudent = student;
+      let updatedStudent = student;
       const needsStudentUpdate =
         !clean(student.photo_url) ||
-        clean(student.folder_name) !== derivedFolderName ||
-        (!!syncTarget.collectionId && clean(student.class_id) !== clean(syncTarget.collectionId));
+        clean(student.folder_name) !== derivedFolderName;
 
       if (needsStudentUpdate) {
         const { data: updatedRow, error: updateError } = await supabase
@@ -488,34 +495,54 @@ export default function SchoolsSchoolClassPage() {
           .update({
             photo_url: clean(student.photo_url) || uploadedUrls[0],
             folder_name: derivedFolderName,
-            class_id: syncTarget.collectionId || student.class_id || null,
           })
           .eq("id", student.id)
-          .select("id,first_name,last_name,pin,photo_url,class_id,class_name,folder_name,external_student_id")
+          .select(
+            "id,first_name,last_name,pin,photo_url,class_id,class_name,folder_name,external_student_id",
+          )
           .single();
 
         if (updateError) {
-          throw new Error(updateError.message || "Photos uploaded, but student could not be updated.");
+          throw new Error(
+            updateError.message || "Photos uploaded, but student could not be updated.",
+          );
         }
 
-        nextStudent = updatedRow as Student;
-        setStudents((prev) => prev.map((row) => (row.id === nextStudent.id ? nextStudent : row)));
+        updatedStudent = updatedRow as Student;
+        setStudents((prev) =>
+          prev.map((row) => (row.id === updatedStudent.id ? updatedStudent : row)),
+        );
       }
 
-      if (syncTarget.projectId && syncTarget.collectionId) {
-        await appendSchoolMediaRows(supabase, {
-          projectId: syncTarget.projectId,
-          collectionId: syncTarget.collectionId,
-          assets: uploadedAssets,
-        });
+      try {
+        if (syncTarget.projectId && syncTarget.collectionId) {
+          await appendSchoolMediaRows(supabase, {
+            projectId: syncTarget.projectId,
+            collectionId: syncTarget.collectionId,
+            assets: uploadedAssets,
+          });
+        }
+      } catch (syncError) {
+        console.error("CLASS STUDENT CLIENT SYNC ERROR:", syncError);
       }
 
       setPhotoUrlsMap((prev) => ({
         ...prev,
-        [student.id]: Array.from(new Set([...(existingUrls.length ? existingUrls : clean(student.photo_url) ? [clean(student.photo_url)] : []), ...uploadedUrls])),
+        [student.id]: Array.from(
+          new Set([
+            ...(existingUrls.length
+              ? existingUrls
+              : clean(student.photo_url)
+                ? [clean(student.photo_url)]
+                : []),
+            ...uploadedUrls,
+          ]),
+        ),
       }));
       setShareNotice(
-        uploadedUrls.length === 1 ? "1 photo added to student" : `${uploadedUrls.length} photos added to student`
+        uploadedUrls.length === 1
+          ? "1 photo added to student"
+          : `${uploadedUrls.length} photos added to student`,
       );
       window.setTimeout(() => setShareNotice(""), 2200);
     } catch (err: unknown) {
@@ -554,117 +581,56 @@ export default function SchoolsSchoolClassPage() {
   }
 
   async function createStudent() {
-    const fullName = clean(newStudentName);
-    if (!fullName) return;
-
-    const { firstName, lastName } = splitDisplayName(fullName);
+    const firstName = clean(newStudentFirstName);
+    const lastName = clean(newStudentLastName);
+    const fullName = [firstName, lastName].filter(Boolean).join(" ");
     if (!firstName) return;
 
     const filesToUpload = [...queuedStudentFiles];
-    const folderName = filesToUpload.length
-      ? `${safeStorageSegment(fullName, "Student")}-${Date.now()}`
-      : null;
 
     setCreatingStudent(true);
     setError("");
 
     try {
-      const syncTarget = await ensureSchoolCollectionId(supabase, {
-        schoolId,
-        school,
-        kind: "class",
-        title: classDisplayName || className,
-        slugFallback: "class",
+      const formData = new FormData();
+      formData.append("studentName", fullName);
+      formData.append("studentFirstName", firstName);
+      formData.append("studentLastName", lastName);
+      formData.append("studentPin", clean(newStudentPin));
+
+      const response = await fetch(classStudentsApiPath(), {
+        method: "POST",
+        body: formData,
       });
 
-      const { data: insertedRow, error: insertError } = await supabase
-        .from("students")
-        .insert({
-          school_id: schoolId,
-          class_id: syncTarget.collectionId || null,
-          class_name: className,
-          role: "Student",
-          first_name: firstName,
-          last_name: lastName,
-          pin: clean(newStudentPin),
-          folder_name: folderName,
-          photo_url: null,
-          external_student_id: null,
-        })
-        .select("id,first_name,last_name,pin,photo_url,class_id,class_name,folder_name,external_student_id")
-        .single();
+      const payload = (await response.json().catch(() => ({}))) as {
+        ok?: boolean;
+        message?: string;
+        student?: Student;
+        uploadedUrls?: string[];
+        photoUrls?: string[];
+      };
 
-      if (insertError) throw insertError;
+      if (!response.ok || payload.ok === false || !payload.student) {
+        throw new Error(payload.message || "Failed to add student.");
+      }
 
-      let nextStudent = insertedRow as Student;
+      const nextStudent = payload.student;
       setStudents((prev) => [...prev, nextStudent]);
-      setPhotoUrlsMap((prev) => ({ ...prev, [nextStudent.id]: [] }));
+      setPhotoUrlsMap((prev) => ({
+        ...prev,
+        [nextStudent.id]: nextStudent.photo_url ? [nextStudent.photo_url] : [],
+      }));
       resetCreateStudentForm();
 
       if (filesToUpload.length) {
-        const basePath = safeStorageSegment(clean(school?.local_school_id) || schoolId, schoolId);
-        const classPath = safeStorageSegment(className, "Class");
-        const uploadedAssets: UploadedStudentAsset[] = [];
-
-        for (const [index, file] of filesToUpload.entries()) {
-          const originalExt = file.name.includes(".") ? file.name.split(".").pop() : "jpg";
-          const ext = clean(originalExt).toLowerCase() || "jpg";
-          const storagePath = `${basePath}/${classPath}/${folderName}/${Date.now()}-${index}-${Math.random().toString(36).slice(2)}.${ext}`;
-
-          const { error: uploadError } = await supabase.storage.from("thumbs").upload(storagePath, file, {
-            cacheControl: "3600",
-            upsert: false,
-            contentType: file.type || undefined,
-          });
-
-          if (uploadError) {
-            throw new Error(uploadError.message || "Student added, but photo upload failed.");
-          }
-
-          const publicUrl = supabase.storage.from("thumbs").getPublicUrl(storagePath).data.publicUrl;
-          if (clean(publicUrl)) {
-            uploadedAssets.push({
-              storagePath,
-              publicUrl,
-              filename: file.name,
-              mimeType: file.type || null,
-            });
-          }
-        }
-
-        const uploadedUrls = uploadedAssets.map((asset) => asset.publicUrl).filter(Boolean);
-        if (uploadedUrls.length) {
-          const { data: updatedRow, error: updateError } = await supabase
-            .from("students")
-            .update({
-              photo_url: uploadedUrls[0],
-              folder_name: folderName,
-              class_id: syncTarget.collectionId || nextStudent.class_id || null,
-            })
-            .eq("id", nextStudent.id)
-            .select("id,first_name,last_name,pin,photo_url,class_id,class_name,folder_name,external_student_id")
-            .single();
-
-          if (updateError) {
-            throw new Error(updateError.message || "Student added, but photo link could not be saved.");
-          }
-
-          nextStudent = updatedRow as Student;
-          setStudents((prev) => prev.map((student) => (student.id === nextStudent.id ? nextStudent : student)));
-          setPhotoUrlsMap((prev) => ({ ...prev, [nextStudent.id]: uploadedUrls }));
-        }
-
-        if (syncTarget.projectId && syncTarget.collectionId) {
-          await appendSchoolMediaRows(supabase, {
-            projectId: syncTarget.projectId,
-            collectionId: syncTarget.collectionId,
-            assets: uploadedAssets,
-          });
-        }
+        setShareNotice("Student added. Uploading photos...");
+        window.setTimeout(() => setShareNotice(""), 2200);
+        await uploadFilesToStudent(nextStudent, filesToUpload);
+      } else {
+        setShareNotice("Student added");
+        window.setTimeout(() => setShareNotice(""), 2200);
       }
-
-      setShareNotice(filesToUpload.length ? "Student added with photos" : "Student added");
-      window.setTimeout(() => setShareNotice(""), 2200);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to add student.");
     } finally {
@@ -677,39 +643,48 @@ export default function SchoolsSchoolClassPage() {
 
     setSettingsSaving(true);
     setSettingsMsg("");
+    try {
+      const response = await fetch(
+        `${classStudentsApiPath()}/${settingsStudent.id}`,
+        {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            studentName: settingsName.trim(),
+            studentPin: settingsPin.trim(),
+          }),
+        },
+      );
 
-    const parts = settingsName.trim().split(" ").filter(Boolean);
+      const payload = (await response.json().catch(() => ({}))) as {
+        ok?: boolean;
+        message?: string;
+        student?: Student;
+      };
 
-    const { error: err } = await supabase
-      .from("students")
-      .update({
-        first_name: parts[0] ?? settingsStudent.first_name,
-        last_name: parts.slice(1).join(" ") || settingsStudent.last_name,
-        pin: settingsPin.trim(),
-      })
-      .eq("id", settingsStudent.id);
+      if (!response.ok || payload.ok === false || !payload.student) {
+        throw new Error(payload.message || "Failed to save student settings.");
+      }
 
-    if (err) {
-      setSettingsMsg(err.message);
+      const updatedStudent = payload.student;
+      setShareNotice("Student updated");
+      window.setTimeout(() => setShareNotice(""), 2200);
+      setStudents((prev) =>
+        prev.map((student) =>
+          student.id === updatedStudent.id ? updatedStudent : student,
+        ),
+      );
+      if (lightbox?.id === updatedStudent.id) {
+        setLightbox(updatedStudent);
+      }
+      setSettingsStudent(null);
+    } catch (err: unknown) {
+      setSettingsMsg(
+        err instanceof Error ? err.message : "Failed to save student settings.",
+      );
+    } finally {
       setSettingsSaving(false);
-      return;
     }
-
-    const updatedStudent: Student = {
-      ...settingsStudent,
-      first_name: parts[0] ?? settingsStudent.first_name,
-      last_name: parts.slice(1).join(" ") || settingsStudent.last_name,
-      pin: settingsPin.trim(),
-    };
-
-    setShareNotice("Student updated");
-    window.setTimeout(() => setShareNotice(""), 2200);
-    setStudents((prev) => prev.map((student) => (student.id === updatedStudent.id ? updatedStudent : student)));
-    if (lightbox?.id === updatedStudent.id) {
-      setLightbox(updatedStudent);
-    }
-    setSettingsStudent(null);
-    setSettingsSaving(false);
   }
 
   async function deleteStudents(ids: string[]) {
@@ -726,8 +701,19 @@ export default function SchoolsSchoolClassPage() {
     if (!confirmed) return;
 
     try {
-      const { error: deleteError } = await supabase.from("students").delete().in("id", uniqueIds);
-      if (deleteError) throw deleteError;
+      for (const studentId of uniqueIds) {
+        const response = await fetch(
+          `${classStudentsApiPath()}/${studentId}`,
+          { method: "DELETE" },
+        );
+        const payload = (await response.json().catch(() => ({}))) as {
+          ok?: boolean;
+          message?: string;
+        };
+        if (!response.ok || payload.ok === false) {
+          throw new Error(payload.message || "Failed to delete student.");
+        }
+      }
 
       setStudents((prev) => prev.filter((student) => !uniqueIds.includes(student.id)));
       setSelectedStudentIds((prev) => prev.filter((id) => !uniqueIds.includes(id)));
@@ -1331,15 +1317,26 @@ export default function SchoolsSchoolClassPage() {
             </div>
 
             <div style={{ padding: 22, display: "grid", gap: 14 }}>
-              <div>
-                <label style={{ display: "block", fontWeight: 700, color: "#111111", marginBottom: 8 }}>Student Name</label>
-                <input
-                  value={newStudentName}
-                  onChange={(e) => setNewStudentName(e.target.value)}
-                  placeholder="Anabel Mazakian"
-                  autoFocus
-                  style={{ width: "100%", boxSizing: "border-box", borderRadius: 14, border: "1px solid #d0d5dd", padding: "13px 14px", fontSize: 15, color: "#111111", outline: "none" }}
-                />
+              <div style={{ display: "grid", gap: 14, gridTemplateColumns: "repeat(2, minmax(0, 1fr))" }}>
+                <div>
+                  <label style={{ display: "block", fontWeight: 700, color: "#111111", marginBottom: 8 }}>First Name</label>
+                  <input
+                    value={newStudentFirstName}
+                    onChange={(e) => setNewStudentFirstName(e.target.value)}
+                    placeholder="Anabel"
+                    autoFocus
+                    style={{ width: "100%", boxSizing: "border-box", borderRadius: 14, border: "1px solid #d0d5dd", padding: "13px 14px", fontSize: 15, color: "#111111", outline: "none" }}
+                  />
+                </div>
+                <div>
+                  <label style={{ display: "block", fontWeight: 700, color: "#111111", marginBottom: 8 }}>Last Name</label>
+                  <input
+                    value={newStudentLastName}
+                    onChange={(e) => setNewStudentLastName(e.target.value)}
+                    placeholder="Mazakian"
+                    style={{ width: "100%", boxSizing: "border-box", borderRadius: 14, border: "1px solid #d0d5dd", padding: "13px 14px", fontSize: 15, color: "#111111", outline: "none" }}
+                  />
+                </div>
               </div>
 
               <div>
@@ -1377,7 +1374,7 @@ export default function SchoolsSchoolClassPage() {
               <button type="button" onClick={resetCreateStudentForm} style={{ borderRadius: 14, border: "1px solid #d0d5dd", background: "#fff", color: "#111111", padding: "12px 16px", fontWeight: 800, cursor: "pointer" }}>
                 Cancel
               </button>
-              <button type="button" onClick={() => void createStudent()} disabled={!clean(newStudentName) || creatingStudent} style={{ borderRadius: 14, border: 0, background: !clean(newStudentName) || creatingStudent ? "#d1d5db" : "#111111", color: "#fff", padding: "12px 16px", fontWeight: 800, cursor: !clean(newStudentName) || creatingStudent ? "not-allowed" : "pointer" }}>
+              <button type="button" onClick={() => void createStudent()} disabled={!clean(newStudentFirstName) || creatingStudent} style={{ borderRadius: 14, border: 0, background: !clean(newStudentFirstName) || creatingStudent ? "#d1d5db" : "#111111", color: "#fff", padding: "12px 16px", fontWeight: 800, cursor: !clean(newStudentFirstName) || creatingStudent ? "not-allowed" : "pointer" }}>
                 {creatingStudent ? "Saving..." : "Add Student"}
               </button>
             </div>

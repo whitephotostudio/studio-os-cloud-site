@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createDashboardServiceClient } from "@/lib/dashboard-auth";
+import {
+  sanitizeEventGallerySettingsForClient,
+} from "@/lib/event-gallery-settings";
+import { buildSchoolGalleryDownloadAccess } from "@/lib/school-gallery-downloads";
 
 export const dynamic = "force-dynamic";
 
@@ -24,6 +28,10 @@ type SchoolRow = {
   status?: string | null;
   order_due_date?: string | null;
   expiration_date?: string | null;
+  access_mode?: string | null;
+  access_pin?: string | null;
+  email_required?: boolean | null;
+  gallery_settings?: unknown;
 };
 
 type ProjectRow = {
@@ -68,19 +76,137 @@ type BackdropRow = {
   sort_order: number;
 };
 
+type CompositeMediaRow = {
+  id: string;
+  collection_id: string | null;
+  storage_path: string | null;
+  preview_url: string | null;
+  thumbnail_url: string | null;
+  filename: string | null;
+  created_at: string | null;
+  sort_order: number | null;
+  collection_title?: string | null;
+};
+
 function clean(value: string | null | undefined) {
   return (value ?? "").trim();
 }
 
+function looksLikeImageAssetUrl(value: string | null | undefined) {
+  const candidate = clean(value);
+  if (!candidate) return false;
+  return (
+    /^https?:\/\//i.test(candidate) &&
+    (
+      /(png|jpe?g|webp|gif|svg|avif)(\?|#|$)/i.test(candidate) ||
+      candidate.includes("/storage/v1/object/") ||
+      candidate.includes("/studio-logos/")
+    )
+  );
+}
+
+function slugify(value: string, fallback = "collection") {
+  return clean(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "") || fallback;
+}
+
+async function loadSchoolCompositeMedia(
+  service: ReturnType<typeof createDashboardServiceClient>,
+  school: SchoolRow | null,
+  className: string | null | undefined,
+) {
+  const normalizedClass = clean(className);
+  if (!school?.id || !normalizedClass) return [] as CompositeMediaRow[];
+
+  const projectBySchoolId = await service
+    .from("projects")
+    .select("id")
+    .eq("workflow_type", "school")
+    .eq("linked_school_id", school.id)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (projectBySchoolId.error) throw projectBySchoolId.error;
+
+  let projectId = clean(projectBySchoolId.data?.id);
+  if (!projectId && school.local_school_id) {
+    const localProject = await service
+      .from("projects")
+      .select("id")
+      .eq("workflow_type", "school")
+      .eq("linked_local_school_id", school.local_school_id)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (localProject.error) throw localProject.error;
+    projectId = clean(localProject.data?.id);
+  }
+
+  if (!projectId) return [] as CompositeMediaRow[];
+
+  const { data: collectionRows, error: collectionError } = await service
+    .from("collections")
+    .select("id,title,slug")
+    .eq("project_id", projectId)
+    .eq("kind", "composite")
+    .order("sort_order", { ascending: true })
+    .order("created_at", { ascending: true });
+
+  if (collectionError) throw collectionError;
+
+  const targetSlug = slugify(normalizedClass, "composite");
+  const matchingCollections = (collectionRows ?? []).filter((row) => {
+    const rowTitle = clean(row.title).toLowerCase();
+    const rowSlug = clean(row.slug);
+    return rowTitle === normalizedClass.toLowerCase() || rowSlug === targetSlug;
+  });
+  if (!matchingCollections.length) return [] as CompositeMediaRow[];
+
+  const collectionIds = matchingCollections.map((row) => clean(row.id)).filter(Boolean);
+  const collectionTitleById = new Map(
+    matchingCollections.map((row) => [clean(row.id), clean(row.title) || normalizedClass]),
+  );
+
+  const { data: mediaRows, error: mediaError } = await service
+    .from("media")
+    .select("id,collection_id,storage_path,preview_url,thumbnail_url,filename,created_at,sort_order")
+    .eq("project_id", projectId)
+    .in("collection_id", collectionIds)
+    .order("sort_order", { ascending: true })
+    .order("created_at", { ascending: true });
+
+  if (mediaError) throw mediaError;
+
+  const uniqueRows = new Map<string, CompositeMediaRow>();
+  for (const row of (mediaRows ?? []) as CompositeMediaRow[]) {
+    const collectionId = clean(row.collection_id);
+    const storagePath = clean(row.storage_path);
+    if (!collectionId) continue;
+    const key = `${collectionId}::${storagePath || clean(row.id)}`;
+    if (!uniqueRows.has(key)) {
+      uniqueRows.set(key, row);
+    }
+  }
+
+  return Array.from(uniqueRows.values()).map((row) => ({
+    ...row,
+    collection_title: collectionTitleById.get(clean(row.collection_id)) || normalizedClass,
+  }));
+}
+
 export async function POST(request: NextRequest) {
   try {
-    const { pin, schoolId } = (await request.json()) as {
+    const { pin, schoolId, email } = (await request.json()) as {
       pin?: string;
       schoolId?: string;
+      email?: string;
     };
 
     const selectedPin = clean(pin);
     const selectedSchoolId = clean(schoolId);
+    const selectedEmail = clean(email).toLowerCase();
 
     if (!selectedPin) {
       return NextResponse.json({ ok: false, message: "Missing PIN." }, { status: 400 });
@@ -91,7 +217,7 @@ export async function POST(request: NextRequest) {
     const { data: currentSchool, error: currentSchoolError } = selectedSchoolId
       ? await service
           .from("schools")
-          .select("id,school_name,photographer_id,package_profile_id,local_school_id,status,order_due_date,expiration_date")
+          .select("id,school_name,photographer_id,package_profile_id,local_school_id,status,order_due_date,expiration_date,access_mode,access_pin,email_required,gallery_settings")
           .eq("id", selectedSchoolId)
           .maybeSingle<SchoolRow>()
       : { data: null as SchoolRow | null, error: null };
@@ -105,7 +231,7 @@ export async function POST(request: NextRequest) {
     if (schoolNameForMatch) {
       const { data: sameNameSchools, error: sameNameError } = await service
         .from("schools")
-        .select("id,school_name,photographer_id,package_profile_id,local_school_id,status,order_due_date,expiration_date")
+        .select("id,school_name,photographer_id,package_profile_id,local_school_id,status,order_due_date,expiration_date,access_mode,access_pin,email_required,gallery_settings")
         .ilike("school_name", schoolNameForMatch)
         .order("created_at", { ascending: false });
 
@@ -160,7 +286,7 @@ export async function POST(request: NextRequest) {
     if (!activeSchool && primaryStudent.school_id) {
       const { data: fetchedSchool, error: fetchedSchoolError } = await service
         .from("schools")
-        .select("id,school_name,photographer_id,package_profile_id,local_school_id,status,order_due_date,expiration_date")
+        .select("id,school_name,photographer_id,package_profile_id,local_school_id,status,order_due_date,expiration_date,access_mode,access_pin,email_required,gallery_settings")
         .eq("id", primaryStudent.school_id)
         .maybeSingle<SchoolRow>();
 
@@ -176,9 +302,21 @@ export async function POST(request: NextRequest) {
           expiration_date: activeSchool.expiration_date ?? null,
         }
       : null;
+    const publicGallerySettings = sanitizeEventGallerySettingsForClient(
+      activeSchool?.gallery_settings,
+    );
+    const downloadAccess = activeSchool
+      ? await buildSchoolGalleryDownloadAccess({
+          service,
+          schoolId: activeSchool.id,
+          viewerEmail: selectedEmail,
+          gallerySettings: activeSchool.gallery_settings,
+        })
+      : undefined;
 
     let packageRows: PackageRow[] = [];
     let backdropRows: BackdropRow[] = [];
+    let compositeRows: CompositeMediaRow[] = [];
     let photographerId: string | null = activeSchool?.photographer_id ?? null;
     let watermarkEnabled = true;
     let watermarkLogoUrl = "";
@@ -206,7 +344,7 @@ export async function POST(request: NextRequest) {
           .order("sort_order", { ascending: true }),
         service
           .from("photographers")
-          .select("id,watermark_enabled,watermark_logo_url,business_name,studio_address,studio_phone,studio_email")
+          .select("id,watermark_enabled,watermark_logo_url,logo_url,business_name,studio_address,studio_phone,studio_email")
           .eq("id", activeSchool.photographer_id)
           .maybeSingle(),
       ]);
@@ -231,16 +369,27 @@ export async function POST(request: NextRequest) {
       if (photographer) {
         photographerId = photographer.id ?? photographerId;
         watermarkEnabled = photographer.watermark_enabled !== false;
-        watermarkLogoUrl = photographer.watermark_logo_url || "";
+        const resolvedLogoUrl = looksLikeImageAssetUrl(photographer.watermark_logo_url)
+          ? photographer.watermark_logo_url
+          : looksLikeImageAssetUrl(photographer.logo_url)
+            ? photographer.logo_url
+            : "";
+        watermarkLogoUrl = resolvedLogoUrl || "";
         studioInfo = {
           businessName: photographer.business_name || "",
-          logoUrl: photographer.watermark_logo_url || "",
+          logoUrl: resolvedLogoUrl || "",
           address: photographer.studio_address || "",
           phone: photographer.studio_phone || "",
           email: photographer.studio_email || "",
         };
       }
     }
+
+    compositeRows = await loadSchoolCompositeMedia(
+      service,
+      activeSchool,
+      primaryStudent.class_name,
+    );
 
     return NextResponse.json({
       ok: true,
@@ -250,6 +399,9 @@ export async function POST(request: NextRequest) {
       primaryStudent,
       activeSchool,
       activeProject,
+      gallerySettings: publicGallerySettings,
+      downloadAccess,
+      composites: compositeRows,
       packages: packageRows,
       backdrops: backdropRows,
       photographerId,

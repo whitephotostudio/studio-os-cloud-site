@@ -4,9 +4,10 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
+import { getPackageCategory, type PackageCategory } from "@/lib/package-categories";
 import {
   LogOut, Plus, ArrowLeft, Pencil, Trash2, Package, Printer,
-  Download, Sparkles, SquareStack, Copy, MoreVertical, Check, X,
+  Download, Sparkles, SquareStack, Copy, MoreVertical, Check, X, Square,
   AlertTriangle, ChevronDown,
 } from "lucide-react";
 
@@ -40,26 +41,44 @@ type Profile = {
 
 // ── Categories ────────────────────────────────────────────────────────────────
 
-const CATEGORIES = [
-  { key: "package",   label: "Packages",       icon: Package,  subtitle: "Print bundles",             color: "#f0f9ff", keywords: ["package"] },
-  { key: "print",     label: "Prints",          icon: Printer,  subtitle: "Individual prints",         color: "#fefce8", keywords: ["print"] },
-  { key: "digital",   label: "Digitals",        icon: Download, subtitle: "Downloads + digital files", color: "#f0fdf4", keywords: ["digital", "download", "usb"] },
-  { key: "specialty", label: "Specialty Items", icon: Sparkles, subtitle: "Magnets, mugs, canvas",     color: "#fdf4ff", keywords: ["specialty", "canvas", "magnet", "mug", "metal"] },
+const CATEGORIES: Array<{
+  key: PackageCategory;
+  label: string;
+  icon: typeof Package;
+  subtitle: string;
+  color: string;
+}> = [
+  { key: "package", label: "Packages", icon: Package, subtitle: "Bundles (prints + wallets)", color: "#eef7ff" },
+  { key: "print", label: "Prints", icon: Printer, subtitle: "Individual print items", color: "#fff7d9" },
+  { key: "digital", label: "Digitals", icon: Download, subtitle: "Downloads + digital files", color: "#edf9f1" },
+  { key: "specialty", label: "Specialty Items", icon: Sparkles, subtitle: "Magnets, mugs, ornaments...", color: "#fbf0fb" },
+  { key: "metal", label: "Metal Prints", icon: SquareStack, subtitle: "Metal products", color: "#f2f4f7" },
+  { key: "canvas", label: "Canvases", icon: Square, subtitle: "Canvas products", color: "#f7f3ea" },
 ];
 
-function getCategoryKey(pkg: Pkg): string {
-  const cat = (pkg.category ?? "").toLowerCase().trim();
-  if (cat) {
-    for (const c of CATEGORIES) {
-      if (c.keywords.some(k => cat.includes(k))) return c.key;
-    }
+const PRINT_SIZES = [
+  { value: "4x6",       label: "4×6" },
+  { value: "5x7",       label: "5×7" },
+  { value: "8x10",      label: "8×10" },
+  { value: "8_wallets", label: "8 Wallets" },
+  { value: "11x14",     label: "11×14" },
+  { value: "16x20",     label: "16×20" },
+  { value: "20x24",     label: "20×24" },
+  { value: "24x30",     label: "24×30" },
+  { value: "custom",    label: "Custom Size" },
+];
+
+function matchSizePreset(name: string): string {
+  const n = name.trim().toLowerCase().replace(/×/g, "x");
+  for (const s of PRINT_SIZES) {
+    if (s.value === "custom") continue;
+    if (n === s.label.toLowerCase().replace(/×/g, "x") || n === s.value) return s.value;
   }
-  const name = pkg.name.toLowerCase();
-  if (name.includes("digital") || name.includes("download") || name.includes("usb")) return "digital";
-  if (name.includes("canvas") || name.includes("magnet") || name.includes("mug") ||
-      name.includes("ornament") || name.includes("metal") || name.includes("acrylic")) return "specialty";
-  if (name.includes("print") || /\d+x\d+/i.test(name)) return "print";
-  return "package";
+  return "custom";
+}
+
+function getCategoryKey(pkg: Pkg): PackageCategory {
+  return getPackageCategory(pkg);
 }
 
 function formatItem(item: PackageItem): string {
@@ -114,6 +133,7 @@ export default function PackagesPage() {
   const [editCategory, setEditCategory] = useState("");
   const [editItems, setEditItems]     = useState<{ name: string; qty: number }[]>([]);
   const [editActive, setEditActive]   = useState(true);
+  const [editSizePreset, setEditSizePreset] = useState("custom");
   const [saving, setSaving]           = useState(false);
 
   // New price sheet modal
@@ -306,6 +326,7 @@ export default function PackagesPage() {
   function openEdit(pkg: Pkg) {
     setEditingPkg(pkg);
     setEditName(pkg.name);
+    setEditSizePreset(matchSizePreset(pkg.name));
     setEditPrice((pkg.price_cents / 100).toFixed(2));
     setEditDesc(pkg.description || "");
     setEditCategory(getCategoryKey(pkg));
@@ -363,10 +384,10 @@ export default function PackagesPage() {
 
   // ── Helpers ────────────────────────────────────────────────────────────────
 
-  function categoryCount(profile: Profile, catKey: string) {
+  function categoryCount(profile: Profile, catKey: PackageCategory) {
     return profile.packages.filter(p => getCategoryKey(p) === catKey).length;
   }
-  function categoryMinPrice(profile: Profile, catKey: string) {
+  function categoryMinPrice(profile: Profile, catKey: PackageCategory) {
     const pkgs = profile.packages.filter(p => getCategoryKey(p) === catKey);
     if (!pkgs.length) return null;
     return Math.min(...pkgs.map(p => p.price_cents)) / 100;
@@ -828,8 +849,34 @@ export default function PackagesPage() {
               </div>
 
               <div style={{ marginBottom: 16 }}>
-                <label style={{ display: "block", fontSize: 13, fontWeight: 600, marginBottom: 6, color: "#333" }}>Name</label>
-                <input value={editName} onChange={e => setEditName(e.target.value)} style={inputStyle} />
+                <label style={{ display: "block", fontSize: 13, fontWeight: 600, marginBottom: 6, color: "#333" }}>Size / Name</label>
+                <div style={{ position: "relative", marginBottom: editSizePreset === "custom" ? 8 : 0 }}>
+                  <select
+                    value={editSizePreset}
+                    onChange={e => {
+                      const v = e.target.value;
+                      setEditSizePreset(v);
+                      if (v !== "custom") {
+                        const match = PRINT_SIZES.find(s => s.value === v);
+                        if (match) setEditName(match.label);
+                      }
+                    }}
+                    style={{ ...inputStyle, appearance: "none", paddingRight: 36 }}
+                  >
+                    {PRINT_SIZES.map(s => (
+                      <option key={s.value} value={s.value}>{s.label}</option>
+                    ))}
+                  </select>
+                  <ChevronDown size={15} color="#999" style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }} />
+                </div>
+                {editSizePreset === "custom" && (
+                  <input
+                    value={editName}
+                    onChange={e => setEditName(e.target.value)}
+                    placeholder="e.g. 3.5×5, Photo Keychain, etc."
+                    style={inputStyle}
+                  />
+                )}
               </div>
 
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>

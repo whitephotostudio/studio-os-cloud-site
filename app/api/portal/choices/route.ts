@@ -11,6 +11,7 @@ type SchoolRow = {
   school_name: string;
   status: string | null;
   expiration_date: string | null;
+  email_required: boolean | null;
 };
 
 type EventProjectRow = {
@@ -50,7 +51,7 @@ export async function GET() {
     const [schoolsResult, studentsResult, eventsResult] = await Promise.all([
       service
         .from("schools")
-        .select("id,school_name,status,expiration_date")
+        .select("id,school_name,status,expiration_date,email_required")
         .order("school_name"),
       service.from("students").select("school_id"),
       service
