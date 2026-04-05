@@ -31,7 +31,7 @@ ALTER TABLE IF EXISTS photography_key_activations ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "Photographers can view own key activations"
   ON photography_key_activations FOR SELECT
-  USING (key_id IN (
+  USING (photography_key_id IN (
     SELECT id FROM photography_keys WHERE photographer_id IN (
       SELECT id FROM photographers WHERE user_id = auth.uid()
     )
