@@ -1,6 +1,8 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { createDashboardServiceClient } from "@/lib/dashboard-auth";
 import { syncPhotographyKeysByPhotographerId } from "@/lib/studio-os-app";
+import { buildOrderNotificationEmail } from "@/lib/order-notification-email";
+import { resendConfigured, sendResendEmail, resolveReplyTo } from "@/lib/resend";
 import {
   ANNUAL_DISCOUNT_PERCENT,
   CREDIT_PACK_DEFS,
@@ -35,6 +37,10 @@ export type {
   PlanCode,
   PlanDefinition,
 };
+
+function clean(v: string | null | undefined) {
+  return (v ?? "").trim();
+}
 
 type ServiceClient = ReturnType<typeof createDashboardServiceClient>;
 
@@ -1749,6 +1755,94 @@ export async function finalizePaidOrder(
   if (photographerError) throw photographerError;
   if (photographer) {
     await syncOutstandingStudioUsage(service, photographer as PhotographerBillingRow);
+  }
+
+  // --- Send order notification email to photographer ---
+  try {
+    if (photographer && resendConfigured()) {
+      const recipientEmail = clean(
+        (photographer as Record<string, unknown>).billing_email as string
+      ) || clean(
+        (photographer as Record<string, unknown>).studio_email as string
+      );
+
+      if (recipientEmail) {
+        // Fetch order items
+        const { data: itemRows } = await service
+          .from("order_items")
+          .select("product_name,quantity,unit_price_cents,line_total_cents,sku")
+          .eq("order_id", input.orderId);
+
+        // Fetch context (project title, school name, student name)
+        const fullOrder = await service
+          .from("orders")
+          .select(`
+            id,package_name,total_cents,total_amount,subtotal_cents,tax_cents,currency,
+            parent_email,customer_email,special_notes,created_at,paid_at,status,
+            project:projects(title),
+            school:schools(school_name),
+            student:students(first_name,last_name)
+          `)
+          .eq("id", input.orderId)
+          .maybeSingle();
+
+        const project = Array.isArray(fullOrder.data?.project)
+          ? fullOrder.data.project[0]
+          : fullOrder.data?.project;
+        const school = Array.isArray(fullOrder.data?.school)
+          ? fullOrder.data.school[0]
+          : fullOrder.data?.school;
+        const student = Array.isArray(fullOrder.data?.student)
+          ? fullOrder.data.student[0]
+          : fullOrder.data?.student;
+
+        const studentName = [
+          clean((student as Record<string, unknown>)?.first_name as string),
+          clean((student as Record<string, unknown>)?.last_name as string),
+        ].filter(Boolean).join(" ") || null;
+
+        const email = buildOrderNotificationEmail({
+          order: fullOrder.data ?? {
+            ...order,
+            paid_at: paidAt,
+            status: nextStatus,
+          },
+          items: (itemRows ?? []) as Array<{
+            product_name?: string | null;
+            quantity?: number | null;
+            unit_price_cents?: number | null;
+            line_total_cents?: number | null;
+            sku?: string | null;
+          }>,
+          photographer: {
+            business_name: (photographer as Record<string, unknown>).business_name as string,
+            studio_email: (photographer as Record<string, unknown>).studio_email as string,
+            billing_email: (photographer as Record<string, unknown>).billing_email as string,
+            logo_url: (photographer as Record<string, unknown>).logo_url as string,
+          },
+          context: {
+            project_title: (project as Record<string, unknown>)?.title as string ?? null,
+            school_name: (school as Record<string, unknown>)?.school_name as string ?? null,
+            student_name: studentName,
+          },
+          dashboardUrl: `https://studiooscloud.com/dashboard/orders`,
+        });
+
+        await sendResendEmail({
+          to: recipientEmail,
+          subject: email.subject,
+          html: email.html,
+          text: email.text,
+          fromName: "Studio OS Cloud",
+          replyTo: resolveReplyTo(recipientEmail),
+          tags: [{ name: "type", value: "order-notification" }],
+          idempotencyKey: `order-notify-${input.orderId}`,
+        });
+      }
+    }
+  } catch (emailError) {
+    // Never let email failure break the payment flow
+    console.error("[order-notification] Failed to send email:", emailError);
   }
 
   return {
