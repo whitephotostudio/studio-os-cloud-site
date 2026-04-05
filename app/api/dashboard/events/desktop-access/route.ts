@@ -85,16 +85,10 @@ export async function GET(request: NextRequest) {
     }
 
     const searchParams = request.nextUrl.searchParams;
+    const mode = clean(searchParams.get("mode"));
     const localProjectId = clean(searchParams.get("localProjectId"));
     const cloudProjectId = clean(searchParams.get("cloudProjectId"));
     const title = clean(searchParams.get("title"));
-
-    if (!localProjectId && !cloudProjectId && !title) {
-      return NextResponse.json(
-        { ok: false, message: "A project lookup value is required." },
-        { status: 400 },
-      );
-    }
 
     const service = createDashboardServiceClient();
 
@@ -113,6 +107,63 @@ export async function GET(request: NextRequest) {
     }
 
     const photographerId = photographerRow.id as string;
+
+    /* ── mode=all: return every project with its collections ── */
+    if (mode === "all") {
+      const { data: allProjects, error: allProjectsError } = await service
+        .from("projects")
+        .select(
+          "id,title,client_name,linked_local_school_id,access_mode,access_pin,access_updated_at,access_updated_source,updated_at,event_date,shoot_date,order_due_date,expiration_date",
+        )
+        .eq("photographer_id", photographerId)
+        .eq("workflow_type", "event")
+        .order("created_at", { ascending: false });
+
+      if (allProjectsError) throw allProjectsError;
+
+      const projects = (allProjects ?? []) as ProjectRow[];
+      const projectIds = projects.map((p) => p.id);
+
+      let allCollections: CollectionRow[] = [];
+      if (projectIds.length > 0) {
+        const { data: collRows, error: collError } = await service
+          .from("collections")
+          .select(
+            "id,title,local_id,kind,access_mode,access_pin,access_updated_at,access_updated_source,updated_at,project_id",
+          )
+          .in("project_id", projectIds)
+          .order("sort_order", { ascending: true })
+          .order("created_at", { ascending: true });
+
+        if (collError) throw collError;
+        allCollections = (collRows ?? []) as (CollectionRow & { project_id?: string })[];
+      }
+
+      // Group collections by project_id
+      const collectionsByProject: Record<string, CollectionRow[]> = {};
+      for (const c of allCollections as Array<CollectionRow & { project_id?: string }>) {
+        const pid = c.project_id ?? "";
+        if (!collectionsByProject[pid]) collectionsByProject[pid] = [];
+        collectionsByProject[pid].push(c);
+      }
+
+      return NextResponse.json({
+        ok: true,
+        projects: projects.map((p) => ({
+          project: p,
+          collections: collectionsByProject[p.id] ?? [],
+        })),
+      });
+    }
+
+    /* ── Single-project lookup (original behavior) ── */
+    if (!localProjectId && !cloudProjectId && !title) {
+      return NextResponse.json(
+        { ok: false, message: "A project lookup value is required." },
+        { status: 400 },
+      );
+    }
+
     let projectRow: ProjectRow | null = null;
 
     if (cloudProjectId) {
