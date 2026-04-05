@@ -436,11 +436,19 @@ export async function POST(request: NextRequest) {
       if (data) syncedCollections.push(data as CollectionRow);
     }
 
+    // Include cloud-only collections (created on web) that weren't in the
+    // Flutter app's album list so the app can discover and display them.
+    const syncedIds = new Set(syncedCollections.map((c) => c.id));
+    const cloudOnlyCollections = existingCollections.filter(
+      (c) => !syncedIds.has(c.id),
+    );
+    const allCollections = [...syncedCollections, ...cloudOnlyCollections];
+
     return NextResponse.json({
       ok: true,
-      message: `Project synced to cloud. Albums: ${syncedCollections.length}`,
+      message: `Project synced to cloud. Albums: ${allCollections.length}`,
       project: projectRow,
-      collections: syncedCollections,
+      collections: allCollections,
     });
   } catch (error) {
     return NextResponse.json(
