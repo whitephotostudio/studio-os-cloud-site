@@ -39,6 +39,7 @@ type ProjectRow = {
   title: string | null;
   workflow_type: string | null;
   linked_local_school_id: string | null;
+  linked_school_id?: string | null;
   cover_photo_url?: string | null;
 };
 
@@ -176,7 +177,7 @@ export default function SchoolsPage() {
 
       const { data: projectRows } = await supabase
         .from("projects")
-        .select("id,title,workflow_type,linked_local_school_id,cover_photo_url")
+        .select("id,title,workflow_type,linked_local_school_id,linked_school_id,cover_photo_url")
         .eq("photographer_id", photographerRow.id)
         .in("workflow_type", ["event", "school"]);
 
@@ -201,13 +202,17 @@ export default function SchoolsPage() {
         if (!deduped.has(key)) deduped.set(key, school);
       }
 
-      // Build map of local_school_id → synced project cover_photo_url
+      // Build maps of school ID → synced project cover_photo_url
       const schoolProjects = allProjects.filter((p) => clean(p.workflow_type) === "school");
       const schoolCoverByLocalId = new Map<string, string>();
+      const schoolCoverBySchoolId = new Map<string, string>();
       for (const sp of schoolProjects) {
-        const lid = clean(sp.linked_local_school_id);
         const cover = clean(sp.cover_photo_url);
-        if (lid && cover) schoolCoverByLocalId.set(lid, cover);
+        if (!cover) continue;
+        const lid = clean(sp.linked_local_school_id);
+        const sid = clean(sp.linked_school_id);
+        if (lid) schoolCoverByLocalId.set(lid, cover);
+        if (sid) schoolCoverBySchoolId.set(sid, cover);
       }
 
       const uniqueSchools = Array.from(deduped.values());
@@ -258,7 +263,7 @@ export default function SchoolsPage() {
           peopleCount: stat?.peopleCount ?? 0,
           classesCount: stat?.classNames.size ?? 0,
           imagesCount: stat?.imagesCount ?? 0,
-          coverUrl: schoolCoverByLocalId.get(clean(school.local_school_id)) || stat?.firstPhotoUrl || null,
+          coverUrl: schoolCoverBySchoolId.get(school.id) || schoolCoverByLocalId.get(clean(school.local_school_id)) || stat?.firstPhotoUrl || null,
         };
       });
 
