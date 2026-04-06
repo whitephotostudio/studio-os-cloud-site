@@ -154,21 +154,13 @@ function parseNotesItems(notes: string): { productName: string; photoUrl: string
     // First line is the product name (e.g. "5x7 Lustre" or "Composite • 8x10 Lustre")
     const productName = lines[0].replace(/^:\s*/, "").trim();
     if (productName.toLowerCase().startsWith("delivery")) continue; // skip delivery line
-    // Find photo URL — look for https:// lines
+    // Find photo URL — URLs may contain spaces in folder names (e.g. "Abrahamyan Nicole 92996")
+    // so we match from https:// to the file extension (.png, .jpg, .jpeg, .webp)
     let photoUrl = "";
-    for (const line of lines) {
-      // URL may be split across lines, or on a line after "→"
-      const urlMatch = line.match(/(https?:\/\/[^\s]+)/);
-      if (urlMatch) {
-        photoUrl = urlMatch[1];
-        break;
-      }
-    }
-    // If the URL was split across lines (e.g. line ends with /object/p... and next line continues)
-    if (!photoUrl) {
-      const joined = lines.join(" ");
-      const urlMatch = joined.match(/(https?:\/\/[^\s]+)/);
-      if (urlMatch) photoUrl = urlMatch[1];
+    const joined = lines.join(" ");
+    const urlMatch = joined.match(/(https?:\/\/[^\n]*?\.(?:png|jpg|jpeg|webp|gif))/i);
+    if (urlMatch) {
+      photoUrl = urlMatch[1].trim();
     }
     parsed.push({ productName, photoUrl, quantity: 1 });
   }
@@ -195,6 +187,19 @@ type StudioBranding = {
 
 function esc(s: string) {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+/** Encode a URL for use in HTML src attributes — handles spaces in paths */
+function encodePhotoUrl(url: string): string {
+  try {
+    const u = new URL(url);
+    // Re-encode the pathname to handle spaces, keep the rest
+    u.pathname = u.pathname.split("/").map(seg => encodeURIComponent(decodeURIComponent(seg))).join("/");
+    return u.toString();
+  } catch {
+    // Fallback: just encode spaces
+    return url.replace(/ /g, "%20");
+  }
 }
 
 function formatDate(d: string) {
@@ -242,7 +247,7 @@ function buildOrderSummaryHtml(order: any, branding: StudioBranding): string {
   // Build photo cards
   let photoCardsHtml = "";
   displayItems.forEach((item: { productName: string; photoUrl: string; quantity: number }, i: number) => {
-    const photoSrc = item.photoUrl;
+    const photoSrc = item.photoUrl ? encodePhotoUrl(item.photoUrl) : "";
     photoCardsHtml += `
       <div style="display:inline-block;vertical-align:top;margin:0 28px 28px 0;text-align:center;width:200px;">
         ${photoSrc ? `<img src="${esc(photoSrc)}" style="width:190px;height:230px;object-fit:cover;border-radius:6px;border:3px solid #e2e8f0;background:#f7fafc;" />` : `<div style="width:190px;height:230px;background:#f7fafc;border-radius:6px;border:3px solid #e2e8f0;display:flex;align-items:center;justify-content:center;color:#a0aec0;font-size:13px;">No photo</div>`}
@@ -421,7 +426,7 @@ export async function GET(request: NextRequest) {
       for (const url of photoUrls) {
         photoIndex++;
         try {
-          const resp = await fetch(url);
+          const resp = await fetch(encodePhotoUrl(url));
           if (!resp.ok) {
             console.error(`Failed to download photo ${url}: ${resp.status}`);
             continue;
