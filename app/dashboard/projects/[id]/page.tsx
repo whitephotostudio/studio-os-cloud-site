@@ -1023,9 +1023,15 @@ export default function ProjectDetailPage() {
             </div>
             <div style={{ color: "#4b5563", fontSize: 14, marginTop: 10 }}>Shoot Date: {formatDisplayDate(projectDate)}</div>
 
-            <Link href={`/dashboard/projects/${projectId}/settings`} style={{ width: "100%", marginTop: 10, borderRadius: 10, border: "1px solid #111111", background: "#fff", color: "#b91c1c", padding: "12px 14px", fontWeight: 800, cursor: "pointer", textDecoration: "none", display: "inline-flex", alignItems: "center", justifyContent: "center", boxSizing: "border-box" }}>
-              Gallery Settings
-            </Link>
+            <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
+              <Link href={`/dashboard/projects/${projectId}/settings`} style={{ flex: 1, borderRadius: 10, border: "1px solid #111111", background: "#fff", color: "#b91c1c", padding: "12px 14px", fontWeight: 800, cursor: "pointer", textDecoration: "none", display: "inline-flex", alignItems: "center", justifyContent: "center", boxSizing: "border-box" }}>
+                Gallery Settings
+              </Link>
+              <Link href={`/dashboard/projects/${projectId}/visitors`} style={{ flex: 1, borderRadius: 10, border: "1px solid #111111", background: "#111", color: "#fff", padding: "12px 14px", fontWeight: 800, cursor: "pointer", textDecoration: "none", display: "inline-flex", alignItems: "center", justifyContent: "center", boxSizing: "border-box", gap: 6 }}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                Visitors
+              </Link>
+            </div>
 
             <div style={{ marginTop: 18 }}>
               <div style={{ fontSize: 13, fontWeight: 800, color: "#111111", marginBottom: 8 }}>Contact</div>

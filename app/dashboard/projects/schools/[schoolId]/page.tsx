@@ -1358,6 +1358,13 @@ export default function SchoolsSchoolDetailPage() {
                 >
                   School Settings
                 </a>
+                <a
+                  href={`/dashboard/projects/schools/${schoolId}/visitors`}
+                  style={{ flex: 1, borderRadius: 10, border: "1px solid #111111", background: "#111", color: "#fff", padding: "12px 14px", fontWeight: 800, cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", boxSizing: "border-box", textDecoration: "none", position: "relative", zIndex: 7, gap: 6 }}
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                  Visitors
+                </a>
                 <div style={{ position: "relative", flexShrink: 0 }}>
                   <button
                     type="button"
