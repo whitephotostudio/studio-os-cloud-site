@@ -176,6 +176,7 @@ export default function SchoolSettingsPage() {
   const [fullGallerySettings, setFullGallerySettings] = useState<EventGallerySettings>(
     defaultEventGallerySettings,
   );
+  const [photographerPlan, setPhotographerPlan] = useState<string>("");
 
   const storageKey = `studioos_school_settings_${schoolId}`;
 
@@ -220,6 +221,14 @@ export default function SchoolSettingsPage() {
           created_at: null,
         });
       }
+
+      // Fetch photographer plan
+      const { data: pgRow } = await supabase
+        .from("photographers")
+        .select("subscription_plan_code")
+        .eq("id", schoolData.photographer_id)
+        .maybeSingle();
+      setPhotographerPlan((pgRow as Record<string, unknown> | null)?.subscription_plan_code as string || "");
     }
 
     if (schoolData) {
@@ -574,6 +583,20 @@ export default function SchoolSettingsPage() {
                             If you need to change a student PIN, update the student record in the synced app workflow. School-wide public access and a separate school PIN are not used in this flow.
                           </div>
                         </div>
+                        {photographerPlan === "starter" && (
+                          <div className="rounded-2xl border border-amber-300 bg-amber-50 px-4 py-4">
+                            <div className="text-[15px] font-semibold text-amber-900">Upgrade for Full Student Access Control</div>
+                            <div className="mt-1 text-sm leading-6 text-amber-800">
+                              Your current Starter plan ($49/mo) does not include individual student password/PIN management. Upgrade to the <b>Core plan ($99/mo)</b> to set unique PINs per student and get full control over school gallery access through the Studio OS App.
+                            </div>
+                            <Link
+                              href="/dashboard/billing"
+                              className="mt-3 inline-block rounded-lg bg-neutral-900 px-5 py-2 text-sm font-bold text-white hover:bg-neutral-700 transition"
+                            >
+                              Upgrade Now
+                            </Link>
+                          </div>
+                        )}
                         <div className="rounded-2xl border border-neutral-200 bg-white px-4 py-4">
                           <div className="text-[15px] font-semibold text-neutral-900">Prerelease email capture</div>
                           <div className="mt-1 text-sm leading-6 text-neutral-600">
