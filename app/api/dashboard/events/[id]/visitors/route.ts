@@ -12,14 +12,14 @@ export const dynamic = "force-dynamic";
  */
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ projectId: string }> },
+  { params }: { params: Promise<{ id: string }> },
 ) {
   const { user } = await resolveDashboardAuth(request);
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const { projectId } = await params;
+  const { id: projectId } = await params;
   const service = createDashboardServiceClient();
 
   // Verify photographer owns this project
@@ -131,14 +131,14 @@ export async function GET(
  */
 export async function PATCH(
   request: NextRequest,
-  { params }: { params: Promise<{ projectId: string }> },
+  { params }: { params: Promise<{ id: string }> },
 ) {
   const { user } = await resolveDashboardAuth(request);
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const { projectId } = await params;
+  const { id: projectId } = await params;
   const service = createDashboardServiceClient();
 
   const { data: pgRow } = await service
