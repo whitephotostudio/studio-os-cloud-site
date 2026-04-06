@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { Logo } from "@/components/logo";
-import { GraduationCap, Images, LogOut, Plus, School, Search, X } from "lucide-react";
+import { GraduationCap, Images, LogOut, Plus, School, Search, Settings, Users, X } from "lucide-react";
 
 type SchoolRow = {
   id: string;
@@ -399,7 +399,7 @@ export default function SchoolsPage() {
             <p style={{ color: "#666", margin: 0 }}>No schools match that search.</p>
           </div>
         ) : (
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(320px,1fr))", gap: 20 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(240px,1fr))", gap: 20 }}>
             {filteredSchools.map((school) => {
               const href = `/dashboard/projects/schools/${school.id}`;
               const hovered = hoveredSchoolId === school.id;
@@ -411,57 +411,60 @@ export default function SchoolsPage() {
                 onMouseLeave={() => setHoveredSchoolId((prev) => (prev === school.id ? null : prev))}
                 style={{
                   background: "#fff",
-                  borderRadius: 20,
+                  borderRadius: 12,
                   overflow: "hidden",
-                  border: hovered ? "2px solid #b91c1c" : "1px solid #e5e7eb",
-                  boxShadow: "0 8px 28px rgba(15,23,42,0.06)",
+                  border: hovered ? "2px solid #111" : "1px solid #e5e7eb",
+                  boxShadow: hovered ? "0 8px 24px rgba(0,0,0,0.1)" : "0 1px 4px rgba(0,0,0,0.04)",
                   display: "block",
                   textDecoration: "none",
                   color: "inherit",
-                  transform: hovered ? "translateY(-1px)" : "translateY(0)",
+                  transform: hovered ? "translateY(-2px)" : "translateY(0)",
                   transition: "border-color 120ms ease, transform 120ms ease, box-shadow 120ms ease",
                 }}
               >
-                <div style={{ background: gradientForSchool(school.school_name), color: "#fff", padding: "20px 20px 18px" }}>
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 14 }}>
-                    <div style={{ display: "inline-flex", alignItems: "center", gap: 8, background: "rgba(255,255,255,0.14)", border: "1px solid rgba(255,255,255,0.2)", borderRadius: 999, padding: "7px 12px", fontSize: 12, fontWeight: 600 }}>
-                      <School size={14} /> School
-                    </div>
-                    <div style={{ display: "inline-flex", alignItems: "center", background: "rgba(255,255,255,0.14)", border: "1px solid rgba(255,255,255,0.2)", borderRadius: 999, padding: "7px 12px", fontSize: 12, fontWeight: 700 }}>
-                      local_school_sync
-                    </div>
+                {/* Gradient header as thumbnail area */}
+                <div style={{ position: "relative", paddingBottom: "55%", background: gradientForSchool(school.school_name), overflow: "hidden" }}>
+                  <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                    <School size={40} color="rgba(255,255,255,0.3)" />
                   </div>
-                  <div style={{ fontSize: 18, fontWeight: 800, lineHeight: 1.2 }}>{school.school_name}</div>
-                  <div style={{ marginTop: 6, color: "rgba(255,255,255,0.82)", fontSize: 14 }}>Synced from Studio OS app</div>
+                  {/* Hover overlay */}
+                  {hovered && (
+                    <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.35)", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+                      <span
+                        onClick={(e) => { e.preventDefault(); e.stopPropagation(); window.location.href = `${href}/settings`; }}
+                        style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "8px 14px", background: "rgba(255,255,255,0.95)", color: "#111", borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: "pointer" }}
+                      >
+                        <Settings size={13} /> Settings
+                      </span>
+                      <span
+                        onClick={(e) => { e.preventDefault(); e.stopPropagation(); window.location.href = `${href}/visitors`; }}
+                        style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "8px 14px", background: "rgba(255,255,255,0.95)", color: "#111", borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: "pointer" }}
+                      >
+                        <Users size={13} /> Visitors
+                      </span>
+                    </div>
+                  )}
                 </div>
 
-                <div style={{ padding: 18 }}>
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(3,minmax(0,1fr))", gap: 12 }}>
-                    <div style={{ border: "1px solid #e5e7eb", borderRadius: 14, padding: 12 }}>
-                      <div style={{ color: "#6b7280", fontSize: 12, marginBottom: 8 }}>Classes</div>
-                      <div style={{ color: "#111827", fontSize: 17, fontWeight: 800 }}>{school.classesCount}</div>
-                    </div>
-                    <div style={{ border: "1px solid #e5e7eb", borderRadius: 14, padding: 12 }}>
-                      <div style={{ color: "#6b7280", fontSize: 12, marginBottom: 8 }}>People</div>
-                      <div style={{ color: "#111827", fontSize: 17, fontWeight: 800 }}>{school.peopleCount}</div>
-                    </div>
-                    <div style={{ border: "1px solid #e5e7eb", borderRadius: 14, padding: 12 }}>
-                      <div style={{ color: "#6b7280", fontSize: 12, marginBottom: 8 }}>Images</div>
-                      <div style={{ color: "#111827", fontSize: 17, fontWeight: 800 }}>{school.imagesCount}</div>
-                    </div>
+                {/* Info below */}
+                <div style={{ padding: "14px 16px 16px" }}>
+                  <div style={{ fontSize: 15, fontWeight: 800, color: "#111", lineHeight: 1.3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {school.school_name}
                   </div>
-
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 16, color: "#6b7280", fontSize: 13 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      <GraduationCap size={14} /> {formatDate(school.created_at)}
-                    </div>
-                    <span style={{ color: hovered ? "#b91c1c" : "#111827", fontWeight: 700 }}>
-                      Open school ›
+                  <div style={{ fontSize: 12, color: "#9ca3af", marginTop: 4 }}>
+                    {formatDate(school.created_at)}
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 10 }}>
+                    <span style={{ fontSize: 12, color: "#6b7280" }}>{school.classesCount} classes</span>
+                    <span style={{ fontSize: 12, color: "#d1d5db" }}>&middot;</span>
+                    <span style={{ fontSize: 12, color: "#6b7280" }}>{school.peopleCount} students</span>
+                    <span style={{ fontSize: 12, color: "#d1d5db" }}>&middot;</span>
+                    <span style={{ fontSize: 12, color: "#6b7280" }}>{school.imagesCount} photos</span>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10 }}>
+                    <span style={{ display: "inline-block", padding: "3px 10px", borderRadius: 6, fontSize: 11, fontWeight: 700, background: "#dbeafe", color: "#1e40af" }}>
+                      Synced
                     </span>
-                  </div>
-
-                  <div style={{ display: "inline-flex", alignItems: "center", gap: 6, marginTop: 14, background: "#eff6ff", border: "1px solid #bfdbfe", color: "#2563eb", borderRadius: 999, padding: "7px 12px", fontSize: 12, fontWeight: 700 }}>
-                    <Images size={13} /> Synced school from app
                   </div>
                 </div>
               </Link>

@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { Logo } from "@/components/logo";
-import { ArrowLeft, CalendarDays, ImagePlus, Settings, ChevronRight, Search, LogOut } from "lucide-react";
+import { ArrowLeft, CalendarDays, ImagePlus, Settings, ChevronRight, Search, LogOut, Users } from "lucide-react";
 
 type ProjectRow = {
   id: string;
@@ -282,11 +282,20 @@ export default function EventsPage() {
         ) : (
           <div
             className="grid gap-5"
-            style={{ gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))" }}
+            style={{ gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))" }}
           >
             {filteredProjects.map((project) => {
               const href = `/dashboard/projects/${project.id}`;
               const hovered = hoveredProjectId === project.id;
+              const cover = clean(project.cover_photo_url);
+              const status = statusLabel(project);
+              const statusColors: Record<string, { bg: string; fg: string }> = {
+                active: { bg: "#dcfce7", fg: "#166534" },
+                inactive: { bg: "#f3f4f6", fg: "#6b7280" },
+                pre_release: { bg: "#fef9c3", fg: "#854d0e" },
+                closed: { bg: "#fee2e2", fg: "#991b1b" },
+              };
+              const sc = statusColors[status] ?? { bg: "#f3f4f6", fg: "#6b7280" };
               return (
                 <div
                   key={project.id}
@@ -298,73 +307,66 @@ export default function EventsPage() {
                   onMouseLeave={() => setHoveredProjectId((prev) => (prev === project.id ? null : prev))}
                   className="cursor-pointer overflow-hidden bg-white transition"
                   style={{
-                    border: hovered ? "2px solid #b91c1c" : "1px solid #d8dfeb",
-                    borderRadius: 20,
-                    boxShadow: "0 8px 28px rgba(15,23,42,0.06)",
-                    transform: hovered ? "translateY(-1px)" : "translateY(0)",
+                    border: hovered ? "2px solid #111" : "1px solid #e5e7eb",
+                    borderRadius: 12,
+                    boxShadow: hovered ? "0 8px 24px rgba(0,0,0,0.1)" : "0 1px 4px rgba(0,0,0,0.04)",
+                    transform: hovered ? "translateY(-2px)" : "translateY(0)",
                   }}
                 >
-                  <div className="relative" style={{ ...bgStyle(project), minHeight: 160 }}>
-                    <div className="absolute inset-0 bg-gradient-to-t from-black/10 to-transparent" />
-                    <div className="relative z-20 flex h-full flex-col justify-between px-5 py-5 text-white">
-                      <div className="flex items-start justify-between gap-4">
-                        <span className="inline-flex items-center gap-2 rounded-full border border-white/25 bg-white/16 px-3 py-1.5 text-xs font-semibold backdrop-blur-sm">
-                          <ImagePlus size={14} />
-                          EVENT
-                        </span>
-                        <div className="flex gap-2">
-                          <Link
-                            href={href}
-                            onClick={(e) => e.stopPropagation()}
-                            className="relative z-30 inline-flex items-center gap-2 rounded-full border border-white/25 bg-white/14 px-3 py-1.5 text-xs font-semibold backdrop-blur-sm hover:bg-white/22"
-                          >
-                            <ImagePlus size={14} />
-                            Cover
-                          </Link>
-                          <Link
-                            href={`${href}/settings`}
-                            onClick={(e) => e.stopPropagation()}
-                            className="relative z-30 inline-flex items-center gap-2 rounded-full border border-white/25 bg-white/14 px-3 py-1.5 text-xs font-semibold backdrop-blur-sm hover:bg-white/22"
-                          >
-                            <Settings size={14} />
-                            Settings
-                          </Link>
-                        </div>
+                  {/* Thumbnail */}
+                  <div style={{ position: "relative", paddingBottom: "75%", background: "#f3f4f6", overflow: "hidden" }}>
+                    {cover ? (
+                      <img
+                        src={cover}
+                        alt={projectNameOf(project)}
+                        style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }}
+                      />
+                    ) : (
+                      <div style={{ position: "absolute", inset: 0, ...bgStyle(project), display: "flex", alignItems: "center", justifyContent: "center" }}>
+                        <ImagePlus size={32} color="rgba(255,255,255,0.5)" />
                       </div>
-
-                      <div
-                        className="relative z-10 mt-4 block rounded-[20px] p-1 text-white transition hover:opacity-95"
-                        aria-label={`Open event ${projectNameOf(project)}`}
-                      >
-                        <h2 className="text-[18px] font-extrabold leading-[1.2] tracking-[-0.03em]">{projectNameOf(project)}</h2>
-                        <p className="mt-2 text-sm text-white/82">{projectSubtitleOf(project)}</p>
+                    )}
+                    {/* Hover overlay with quick links */}
+                    {hovered && (
+                      <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.35)", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+                        <Link
+                          href={`${href}/settings`}
+                          onClick={(e) => e.stopPropagation()}
+                          style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "8px 14px", background: "rgba(255,255,255,0.95)", color: "#111", borderRadius: 8, fontSize: 12, fontWeight: 700, textDecoration: "none" }}
+                        >
+                          <Settings size={13} /> Settings
+                        </Link>
+                        <Link
+                          href={`${href}/visitors`}
+                          onClick={(e) => e.stopPropagation()}
+                          style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "8px 14px", background: "rgba(255,255,255,0.95)", color: "#111", borderRadius: 8, fontSize: 12, fontWeight: 700, textDecoration: "none" }}
+                        >
+                          <Users size={13} /> Visitors
+                        </Link>
                       </div>
-                    </div>
+                    )}
                   </div>
 
-                  <div className="grid grid-cols-3 gap-3 px-5 pt-5">
-                    <div className="rounded-[14px] border border-[#e5e7eb] bg-[#fbfcfe] p-3">
-                      <div className="text-xs font-medium text-[#667085]">Albums</div>
-                      <div className="mt-2 text-[17px] font-extrabold tracking-[-0.02em] text-[#13234a]">{albumCounts[project.id] ?? 0}</div>
-                    </div>
-                    <div className="rounded-[14px] border border-[#e5e7eb] bg-[#fbfcfe] p-3">
-                      <div className="text-xs font-medium text-[#667085]">Images</div>
-                      <div className="mt-2 text-[17px] font-extrabold tracking-[-0.02em] text-[#13234a]">{imageCounts[project.id] ?? 0}</div>
-                    </div>
-                    <div className="rounded-[14px] border border-[#e5e7eb] bg-[#fbfcfe] p-3">
-                      <div className="text-xs font-medium text-[#667085]">Status</div>
-                      <div className="mt-2 text-[17px] font-extrabold capitalize tracking-[-0.02em] text-[#13234a]">{statusLabel(project)}</div>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center justify-between px-5 py-4">
-                    <div className="inline-flex items-center gap-2 text-sm font-medium text-[#667085]">
-                      <CalendarDays size={14} />
+                  {/* Info below thumbnail */}
+                  <div style={{ padding: "14px 16px 16px" }}>
+                    <h2 style={{ fontSize: 15, fontWeight: 800, color: "#111", margin: 0, lineHeight: 1.3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {projectNameOf(project)}
+                    </h2>
+                    {projectSubtitleOf(project) && (
+                      <div style={{ fontSize: 13, color: "#6b7280", marginTop: 2 }}>{projectSubtitleOf(project)}</div>
+                    )}
+                    <div style={{ fontSize: 12, color: "#9ca3af", marginTop: 4 }}>
                       {formatDisplayDate(project.event_date || project.shoot_date)}
                     </div>
-                    <div className={`inline-flex items-center gap-2 text-sm font-semibold transition ${hovered ? "text-[#b91c1c]" : "text-[#13234a]"}`}>
-                      Open event
-                      <ChevronRight size={14} />
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 10 }}>
+                      <span style={{ fontSize: 12, color: "#6b7280" }}>{imageCounts[project.id] ?? 0} photos</span>
+                      <span style={{ fontSize: 12, color: "#d1d5db" }}>&middot;</span>
+                      <span style={{ fontSize: 12, color: "#6b7280" }}>{albumCounts[project.id] ?? 0} albums</span>
+                    </div>
+                    <div style={{ marginTop: 10 }}>
+                      <span style={{ display: "inline-block", padding: "3px 10px", borderRadius: 6, fontSize: 11, fontWeight: 700, background: sc.bg, color: sc.fg, textTransform: "capitalize" }}>
+                        {status.replace(/_/g, " ")}
+                      </span>
                     </div>
                   </div>
                 </div>
