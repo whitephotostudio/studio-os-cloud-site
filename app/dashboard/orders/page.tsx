@@ -410,6 +410,7 @@ export default function OrdersPage() {
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [downloadingBulk, setDownloadingBulk] = useState(false);
+  const [bulkDownloadProgress, setBulkDownloadProgress] = useState("");
   const [saving, setSaving] = useState(false);
   const [editForm, setEditForm] = useState<{
     parentName: string;
@@ -594,31 +595,59 @@ export default function OrdersPage() {
     const rows = filtered;
     if (!rows.length) return;
     setDownloadingBulk(true);
+    setBulkDownloadProgress(`Preparing 0 / ${rows.length}…`);
     try {
-      const ids = rows.map((o) => o.id).join(",");
       const { data: { session } } = await supabase.auth.getSession();
-      const res = await fetch(`/api/dashboard/orders/download?ids=${ids}`, {
-        headers: { Authorization: `Bearer ${session?.access_token ?? ""}` },
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ message: "Download failed" }));
-        alert(err.message || "Bulk download failed");
-        return;
+      const token = session?.access_token ?? "";
+      const BATCH = 10;
+      const allIds = rows.map((o) => o.id);
+      const blobs: Blob[] = [];
+      let done = 0;
+
+      for (let i = 0; i < allIds.length; i += BATCH) {
+        const batchIds = allIds.slice(i, i + BATCH);
+        setBulkDownloadProgress(`Downloading ${done} / ${allIds.length}…`);
+        const res = await fetch(`/api/dashboard/orders/download?ids=${batchIds.join(",")}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({ message: "Download failed" }));
+          alert(err.message || `Batch download failed at ${done}/${allIds.length}`);
+          continue;
+        }
+        const blob = await res.blob();
+        blobs.push(blob);
+        done += batchIds.length;
+        setBulkDownloadProgress(`Downloaded ${done} / ${allIds.length}…`);
       }
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const disposition = res.headers.get("content-disposition") ?? "";
-      const match = disposition.match(/filename="(.+?)"/);
-      const filename = match?.[1] ?? `studio-os-orders.zip`;
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = filename;
-      document.body.appendChild(anchor);
-      anchor.click();
-      document.body.removeChild(anchor);
-      URL.revokeObjectURL(url);
+
+      // If only one batch, download directly; otherwise download each batch
+      if (blobs.length === 1) {
+        const url = URL.createObjectURL(blobs[0]);
+        const anchor = document.createElement("a");
+        anchor.href = url;
+        anchor.download = `studio-os-orders-${allIds.length}.zip`;
+        document.body.appendChild(anchor);
+        anchor.click();
+        document.body.removeChild(anchor);
+        URL.revokeObjectURL(url);
+      } else {
+        // Download each batch as a separate ZIP
+        for (let b = 0; b < blobs.length; b++) {
+          const url = URL.createObjectURL(blobs[b]);
+          const anchor = document.createElement("a");
+          anchor.href = url;
+          anchor.download = `studio-os-orders-part${b + 1}-of-${blobs.length}.zip`;
+          document.body.appendChild(anchor);
+          anchor.click();
+          document.body.removeChild(anchor);
+          URL.revokeObjectURL(url);
+        }
+      }
+      setBulkDownloadProgress("");
     } finally {
       setDownloadingBulk(false);
+      setBulkDownloadProgress("");
     }
   }
 
@@ -1129,7 +1158,7 @@ export default function OrdersPage() {
                 cursor: "pointer",
               }}
             >
-              <Download size={16} /> {downloadingBulk ? "Downloading…" : "Download All Orders"}
+              <Download size={16} /> {downloadingBulk ? (bulkDownloadProgress || "Downloading…") : "Download All Orders"}
             </button>
             <button
               type="button"
