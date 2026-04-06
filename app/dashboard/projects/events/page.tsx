@@ -17,6 +17,8 @@ type ProjectRow = {
   shoot_date?: string | null;
   event_date?: string | null;
   cover_photo_url?: string | null;
+  cover_focal_x?: number | null;
+  cover_focal_y?: number | null;
 };
 
 type CollectionRow = {
@@ -100,10 +102,12 @@ function fallbackEventGradient(title: string) {
 function bgStyle(project: ProjectRow) {
   const cover = clean(project.cover_photo_url);
   if (cover) {
+    const fx = Math.round((Number(project.cover_focal_x) || 0.5) * 100);
+    const fy = Math.round((Number(project.cover_focal_y) || 0.5) * 100);
     return {
       backgroundImage: `linear-gradient(180deg, rgba(10,18,42,0.18) 0%, rgba(10,18,42,0.48) 100%), url(${cover})`,
       backgroundSize: "cover",
-      backgroundPosition: "center",
+      backgroundPosition: `${fx}% ${fy}%`,
     } as const;
   }
 

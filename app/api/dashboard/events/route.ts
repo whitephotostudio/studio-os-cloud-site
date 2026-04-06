@@ -13,6 +13,8 @@ type ProjectRow = {
   shoot_date?: string | null;
   event_date?: string | null;
   cover_photo_url?: string | null;
+  cover_focal_x?: number | null;
+  cover_focal_y?: number | null;
 };
 
 type CollectionRow = {
@@ -152,7 +154,7 @@ export async function GET(request: NextRequest) {
     const { data: projectRows, error: projectsError } = await service
       .from("projects")
       .select(
-        "id,title,client_name,workflow_type,status,portal_status,shoot_date,event_date,cover_photo_url",
+        "id,title,client_name,workflow_type,status,portal_status,shoot_date,event_date,cover_photo_url,cover_focal_x,cover_focal_y",
       )
       .eq("photographer_id", photographerRow.id)
       .eq("workflow_type", "event")

@@ -32,6 +32,8 @@ type SchoolCard = {
   classesCount: number;
   imagesCount: number;
   coverUrl: string | null;
+  coverFocalX: number;
+  coverFocalY: number;
 };
 
 type ProjectRow = {
@@ -41,6 +43,8 @@ type ProjectRow = {
   linked_local_school_id: string | null;
   linked_school_id?: string | null;
   cover_photo_url?: string | null;
+  cover_focal_x?: number | null;
+  cover_focal_y?: number | null;
 };
 
 const sidebar: React.CSSProperties = {
@@ -177,7 +181,7 @@ export default function SchoolsPage() {
 
       const { data: projectRows } = await supabase
         .from("projects")
-        .select("id,title,workflow_type,linked_local_school_id,linked_school_id,cover_photo_url")
+        .select("id,title,workflow_type,linked_local_school_id,linked_school_id,cover_photo_url,cover_focal_x,cover_focal_y")
         .eq("photographer_id", photographerRow.id)
         .in("workflow_type", ["event", "school"]);
 
@@ -202,17 +206,19 @@ export default function SchoolsPage() {
         if (!deduped.has(key)) deduped.set(key, school);
       }
 
-      // Build maps of school ID → synced project cover_photo_url
+      // Build maps of school ID → synced project cover info
       const schoolProjects = allProjects.filter((p) => clean(p.workflow_type) === "school");
-      const schoolCoverByLocalId = new Map<string, string>();
-      const schoolCoverBySchoolId = new Map<string, string>();
+      type CoverInfo = { url: string; fx: number; fy: number };
+      const schoolCoverByLocalId = new Map<string, CoverInfo>();
+      const schoolCoverBySchoolId = new Map<string, CoverInfo>();
       for (const sp of schoolProjects) {
         const cover = clean(sp.cover_photo_url);
         if (!cover) continue;
+        const info: CoverInfo = { url: cover, fx: Number(sp.cover_focal_x) || 0.5, fy: Number(sp.cover_focal_y) || 0.5 };
         const lid = clean(sp.linked_local_school_id);
         const sid = clean(sp.linked_school_id);
-        if (lid) schoolCoverByLocalId.set(lid, cover);
-        if (sid) schoolCoverBySchoolId.set(sid, cover);
+        if (lid) schoolCoverByLocalId.set(lid, info);
+        if (sid) schoolCoverBySchoolId.set(sid, info);
       }
 
       const uniqueSchools = Array.from(deduped.values());
@@ -263,7 +269,9 @@ export default function SchoolsPage() {
           peopleCount: stat?.peopleCount ?? 0,
           classesCount: stat?.classNames.size ?? 0,
           imagesCount: stat?.imagesCount ?? 0,
-          coverUrl: schoolCoverBySchoolId.get(school.id) || schoolCoverByLocalId.get(clean(school.local_school_id)) || stat?.firstPhotoUrl || null,
+          coverUrl: schoolCoverBySchoolId.get(school.id)?.url || schoolCoverByLocalId.get(clean(school.local_school_id))?.url || stat?.firstPhotoUrl || null,
+          coverFocalX: schoolCoverBySchoolId.get(school.id)?.fx ?? schoolCoverByLocalId.get(clean(school.local_school_id))?.fx ?? 0.5,
+          coverFocalY: schoolCoverBySchoolId.get(school.id)?.fy ?? schoolCoverByLocalId.get(clean(school.local_school_id))?.fy ?? 0.5,
         };
       });
 
@@ -449,7 +457,7 @@ export default function SchoolsPage() {
                     <img
                       src={school.coverUrl}
                       alt={school.school_name}
-                      style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }}
+                      style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", objectPosition: `${Math.round(school.coverFocalX * 100)}% ${Math.round(school.coverFocalY * 100)}%` }}
                     />
                   ) : (
                     <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
