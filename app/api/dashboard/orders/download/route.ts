@@ -194,75 +194,40 @@ function buildOrderSummaryHtml(order: any, branding: StudioBranding): string {
   }
   const photos = Array.from(photoUrls);
 
-  // Build photo cards HTML — each photo with its matching item info
+  // Build photo cards — each with product name, number, quantity
   let photoCardsHtml = "";
   let photoIndex = 0;
   for (const item of items) {
     photoIndex++;
-    const photoFile = item.sku ? fileNameFromUrl(item.sku, "") : "";
     const qty = item.quantity ?? 1;
     const productName = item.product_name ?? "Item";
     const photoSrc = item.sku || "";
 
     photoCardsHtml += `
-      <div style="display:inline-block;vertical-align:top;margin:0 24px 24px 0;text-align:center;width:180px;">
-        ${photoSrc ? `<img src="${esc(photoSrc)}" style="width:170px;height:200px;object-fit:cover;border-radius:8px;border:2px solid #e5e5e5;background:#f3f3f3;" />` : `<div style="width:170px;height:200px;background:#f3f3f3;border-radius:8px;border:2px solid #e5e5e5;display:flex;align-items:center;justify-content:center;color:#999;">No photo</div>`}
-        <div style="margin-top:8px;font-size:13px;font-weight:600;color:#333;">${esc(productName)}</div>
-        <div style="font-size:12px;color:#e53e3e;font-weight:700;">#${String(photoIndex).padStart(4, "0")}</div>
-        <div style="font-size:13px;color:#555;">&times; ${qty}</div>
+      <div style="display:inline-block;vertical-align:top;margin:0 28px 28px 0;text-align:center;width:200px;">
+        ${photoSrc ? `<img src="${esc(photoSrc)}" style="width:190px;height:230px;object-fit:cover;border-radius:6px;border:3px solid #e2e8f0;background:#f7fafc;" />` : `<div style="width:190px;height:230px;background:#f7fafc;border-radius:6px;border:3px solid #e2e8f0;display:flex;align-items:center;justify-content:center;color:#a0aec0;font-size:13px;">No photo</div>`}
+        <div style="margin-top:10px;font-size:14px;font-weight:600;color:#2d3748;">${esc(productName)}</div>
+        <div style="font-size:13px;color:#e53e3e;font-weight:800;">#${String(photoIndex).padStart(4, "0")}</div>
+        <div style="font-size:14px;color:#4a5568;">&times; ${qty}</div>
       </div>`;
   }
 
-  // If no items but photos exist, show photos without item info
+  // If no items but photos exist
   if (items.length === 0 && photos.length > 0) {
     photos.forEach((url, i) => {
       photoCardsHtml += `
-        <div style="display:inline-block;vertical-align:top;margin:0 24px 24px 0;text-align:center;width:180px;">
-          <img src="${esc(url)}" style="width:170px;height:200px;object-fit:cover;border-radius:8px;border:2px solid #e5e5e5;background:#f3f3f3;" />
-          <div style="margin-top:8px;font-size:13px;font-weight:600;color:#333;">${esc(order.package_name ?? "Package")}</div>
-          <div style="font-size:12px;color:#e53e3e;font-weight:700;">#${String(i + 1).padStart(4, "0")}</div>
+        <div style="display:inline-block;vertical-align:top;margin:0 28px 28px 0;text-align:center;width:200px;">
+          <img src="${esc(url)}" style="width:190px;height:230px;object-fit:cover;border-radius:6px;border:3px solid #e2e8f0;background:#f7fafc;" />
+          <div style="margin-top:10px;font-size:14px;font-weight:600;color:#2d3748;">${esc(order.package_name ?? "Package")}</div>
+          <div style="font-size:13px;color:#e53e3e;font-weight:800;">#${String(i + 1).padStart(4, "0")}</div>
         </div>`;
     });
   }
 
-  // Items table
-  let itemsTableHtml = "";
-  if (items.length > 0) {
-    const rows = items.map((item: { product_name?: string; quantity?: number; line_total_cents?: number; price?: number; sku?: string }, i: number) => {
-      const qty = item.quantity ?? 1;
-      const lineTotal = money(item.line_total_cents, item.price);
-      const fileName = item.sku ? fileNameFromUrl(item.sku, "") : "—";
-      return `<tr style="border-bottom:1px solid #eee;">
-        <td style="padding:10px 12px;font-size:13px;color:#333;">${i + 1}</td>
-        <td style="padding:10px 12px;font-size:13px;font-weight:600;color:#111;">${esc(item.product_name ?? "Item")}</td>
-        <td style="padding:10px 12px;font-size:13px;color:#555;text-align:center;">${qty}</td>
-        <td style="padding:10px 12px;font-size:13px;color:#111;text-align:right;font-weight:600;">${lineTotal}</td>
-        <td style="padding:10px 12px;font-size:11px;color:#888;">${esc(fileName)}</td>
-      </tr>`;
-    }).join("");
-
-    itemsTableHtml = `
-      <table style="width:100%;border-collapse:collapse;margin-top:16px;">
-        <thead>
-          <tr style="background:#f7f7f7;border-bottom:2px solid #ddd;">
-            <th style="padding:10px 12px;font-size:11px;text-transform:uppercase;letter-spacing:0.05em;color:#888;text-align:left;width:30px;">#</th>
-            <th style="padding:10px 12px;font-size:11px;text-transform:uppercase;letter-spacing:0.05em;color:#888;text-align:left;">Product</th>
-            <th style="padding:10px 12px;font-size:11px;text-transform:uppercase;letter-spacing:0.05em;color:#888;text-align:center;">Qty</th>
-            <th style="padding:10px 12px;font-size:11px;text-transform:uppercase;letter-spacing:0.05em;color:#888;text-align:right;">Total</th>
-            <th style="padding:10px 12px;font-size:11px;text-transform:uppercase;letter-spacing:0.05em;color:#888;text-align:left;">File</th>
-          </tr>
-        </thead>
-        <tbody>${rows}</tbody>
-      </table>`;
-  }
-
-  // Notes section
-  const notesHtml = (clean(order.special_notes) || clean(order.notes))
-    ? `<div style="margin-top:20px;padding:14px 18px;background:#fffbeb;border:1px solid #fde68a;border-radius:10px;">
-        <div style="font-size:11px;text-transform:uppercase;letter-spacing:0.05em;color:#92400e;font-weight:700;margin-bottom:6px;">Special Notes</div>
-        <div style="font-size:13px;color:#78350f;white-space:pre-wrap;line-height:1.5;">${esc(order.special_notes || order.notes)}</div>
-      </div>`
-    : "";
+  // Delivery note (extract from special_notes if present)
+  const notes = clean(order.special_notes) || clean(order.notes);
+  const deliveryMatch = notes.match(/Delivery:\s*(\w+)/i);
+  const delivery = deliveryMatch ? deliveryMatch[1] : "";
 
   return `<!DOCTYPE html>
 <html>
@@ -270,23 +235,23 @@ function buildOrderSummaryHtml(order: any, branding: StudioBranding): string {
 <meta charset="utf-8" />
 <title>Order #${orderId} — ${esc(studentName)}</title>
 <style>
-  @media print { body { margin: 0; } .page-break { page-break-after: always; } }
-  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 0; padding: 0; background: #fff; color: #111; }
+  @media print { body { margin: 0; } }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 0; padding: 0; background: #fff; color: #111; max-width: 900px; }
 </style>
 </head>
 <body>
   <!-- Header -->
-  <div style="background:#2d3748;color:#fff;padding:24px 32px;display:flex;justify-content:space-between;align-items:flex-start;">
+  <div style="background:#2d3748;color:#fff;padding:28px 36px;display:flex;justify-content:space-between;align-items:flex-start;">
     <div>
-      <div style="font-size:14px;color:#a0aec0;">
-        <span style="font-weight:700;color:#fff;">${esc(schoolName)}</span>
+      <div style="font-size:15px;color:#a0aec0;">
+        <span style="font-weight:800;color:#fff;">${esc(schoolName)}</span>
         ${className ? `&nbsp;&nbsp;<span style="color:#cbd5e0;">${esc(className)}</span>` : ""}
       </div>
-      <div style="font-size:32px;font-weight:800;margin-top:6px;letter-spacing:-0.01em;">${esc(studentName)}</div>
+      <div style="font-size:36px;font-weight:800;margin-top:8px;letter-spacing:-0.01em;">${esc(studentName)}</div>
     </div>
     <div style="text-align:right;">
-      <div style="font-size:22px;font-weight:900;color:#fff;letter-spacing:0.02em;">${esc(branding.businessName)}</div>
-      <div style="font-size:12px;color:#a0aec0;margin-top:6px;line-height:1.6;">
+      <div style="font-size:24px;font-weight:900;color:#fff;letter-spacing:0.02em;">${esc(branding.businessName)}</div>
+      <div style="font-size:13px;color:#a0aec0;margin-top:8px;line-height:1.7;">
         ${branding.phone ? `${esc(branding.phone)}<br/>` : ""}
         ${branding.email ? `${esc(branding.email)}<br/>` : ""}
         ${branding.website ? esc(branding.website) : ""}
@@ -294,58 +259,29 @@ function buildOrderSummaryHtml(order: any, branding: StudioBranding): string {
     </div>
   </div>
 
-  <!-- Order meta bar -->
-  <div style="display:flex;justify-content:flex-end;align-items:center;gap:16px;padding:12px 32px;background:#f7fafc;border-bottom:1px solid #e2e8f0;">
-    <span style="font-size:13px;color:#555;">Order: ${orderDate}</span>
-    <span style="display:inline-block;padding:4px 16px;background:#38a169;color:#fff;border-radius:20px;font-size:12px;font-weight:700;letter-spacing:0.03em;">${esc(status)}</span>
+  <!-- Order date + status bar -->
+  <div style="display:flex;justify-content:flex-end;align-items:center;gap:16px;padding:12px 36px;background:#edf2f7;border-bottom:1px solid #e2e8f0;">
+    <span style="font-size:13px;color:#4a5568;">Order: ${orderDate}</span>
+    <span style="display:inline-block;padding:5px 18px;background:#38a169;color:#fff;border-radius:20px;font-size:12px;font-weight:700;letter-spacing:0.04em;">${esc(status)}</span>
   </div>
 
-  <!-- Photo cards -->
-  <div style="padding:28px 32px;border-bottom:1px solid #e2e8f0;">
-    ${photoCardsHtml || '<div style="color:#999;font-size:14px;">No photos in this order.</div>'}
-    <!-- Order number -->
-    <div style="float:right;margin-top:-60px;text-align:center;">
-      <div style="font-size:13px;color:#888;font-weight:600;">#${orderId}</div>
-    </div>
-    <div style="clear:both;"></div>
-  </div>
-
-  <!-- Customer info -->
-  <div style="padding:20px 32px;background:#fff;border-bottom:1px solid #e2e8f0;">
-    <div style="display:flex;gap:48px;flex-wrap:wrap;">
-      <div>
-        <div style="font-size:11px;text-transform:uppercase;letter-spacing:0.05em;color:#888;font-weight:700;margin-bottom:4px;">Parent / Customer</div>
-        <div style="font-size:15px;font-weight:600;color:#111;">${esc(parentName)}</div>
-        ${parentEmail !== "—" ? `<div style="font-size:13px;color:#555;">${esc(parentEmail)}</div>` : ""}
-        ${parentPhone ? `<div style="font-size:13px;color:#555;">${esc(parentPhone)}</div>` : ""}
-      </div>
-      <div>
-        <div style="font-size:11px;text-transform:uppercase;letter-spacing:0.05em;color:#888;font-weight:700;margin-bottom:4px;">Package</div>
-        <div style="font-size:15px;font-weight:600;color:#111;">${esc(order.package_name ?? "Package")}</div>
-      </div>
-      <div>
-        <div style="font-size:11px;text-transform:uppercase;letter-spacing:0.05em;color:#888;font-weight:700;margin-bottom:4px;">Total</div>
-        <div style="font-size:22px;font-weight:800;color:#111;">${total} <span style="font-size:13px;color:#888;font-weight:400;">${currency}</span></div>
-      </div>
+  <!-- Photo cards + order number -->
+  <div style="padding:32px 36px;position:relative;">
+    ${photoCardsHtml || '<div style="color:#a0aec0;font-size:14px;">No photos in this order.</div>'}
+    <div style="position:absolute;top:32px;right:36px;text-align:center;">
+      <div style="font-size:14px;color:#718096;font-weight:700;">#${orderId}</div>
     </div>
   </div>
 
-  <!-- Items table -->
-  ${items.length > 0 ? `<div style="padding:20px 32px;">${itemsTableHtml}</div>` : ""}
-
-  <!-- Totals -->
-  <div style="padding:0 32px 20px;text-align:right;">
-    ${order.subtotal_cents != null ? `<div style="font-size:13px;color:#555;">Subtotal: ${money(order.subtotal_cents)}</div>` : ""}
-    ${order.tax_cents != null && order.tax_cents > 0 ? `<div style="font-size:13px;color:#555;">Tax: ${money(order.tax_cents)}</div>` : ""}
-    <div style="font-size:18px;font-weight:800;color:#111;margin-top:4px;">Total: ${total}</div>
-  </div>
-
-  <!-- Notes -->
-  ${notesHtml ? `<div style="padding:0 32px 24px;">${notesHtml}</div>` : ""}
-
-  <!-- Footer -->
-  <div style="padding:16px 32px;background:#f7fafc;border-top:1px solid #e2e8f0;text-align:center;">
-    <span style="font-size:11px;color:#a0aec0;">Generated by Studio OS Cloud &middot; Order #${orderId}</span>
+  <!-- Compact info footer -->
+  <div style="padding:14px 36px;background:#f7fafc;border-top:1px solid #e2e8f0;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">
+    <div style="font-size:13px;color:#4a5568;">
+      <span style="font-weight:600;">Parent:</span> ${esc(parentName)}${parentEmail !== "—" ? ` &middot; ${esc(parentEmail)}` : ""}${parentPhone ? ` &middot; ${esc(parentPhone)}` : ""}
+      ${delivery ? `&nbsp;&nbsp;<span style="display:inline-block;padding:2px 10px;background:#ebf8ff;color:#2b6cb0;border-radius:10px;font-size:11px;font-weight:700;text-transform:uppercase;">${esc(delivery)}</span>` : ""}
+    </div>
+    <div style="font-size:13px;color:#718096;">
+      Studio OS Cloud
+    </div>
   </div>
 </body>
 </html>`;
