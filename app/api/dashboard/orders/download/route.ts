@@ -248,14 +248,22 @@ function buildOrderSummaryHtml(order: any, branding: StudioBranding, photoFileMa
   const orderId = shortOrderId(order.id);
   const status = (order.status ?? "new").toUpperCase().replace(/_/g, " ");
   const rawNotes = clean(order.special_notes) || clean(order.notes);
-  // Strip ORDER ITEM blocks and URLs — keep only human-readable notes (delivery, custom messages)
+  // Strip structured ORDER ITEM data, URLs, and technical lines — keep only human notes
   const cleanedNotes = rawNotes
-    .replace(/ORDER ITEM\s*\d+:.*?(?=ORDER ITEM\s*\d+:|Delivery:|$)/gis, "")
-    .replace(/https?:\/\/[^\s]*/gi, "")
-    .replace(/PHOTO SELECTIONS:/gi, "")
-    .replace(/CLASS COMPOSITE:\s*\w+/gi, "")
-    .replace(/Item\s*\d+:.*?→\s*/gi, "")
-    .replace(/\n{3,}/g, "\n\n")
+    .split("\n")
+    .filter((line: string) => {
+      const t = line.trim();
+      if (!t) return false;
+      if (/^ORDER ITEM\s*\d+/i.test(t)) return false;
+      if (/^PHOTO SELECTIONS/i.test(t)) return false;
+      if (/^CLASS COMPOSITE/i.test(t)) return false;
+      if (/^Item\s*\d+:/i.test(t)) return false;
+      if (/https?:\/\//i.test(t)) return false;
+      if (/^[a-f0-9-]{20,}/i.test(t)) return false; // UUID-like fragments
+      if (/^\d+\/[A-Za-z_]+\.(png|jpg|jpeg)/i.test(t)) return false; // partial file paths
+      return true;
+    })
+    .join("\n")
     .trim();
 
   const displayItems = resolveOrderDisplayItems(order);
@@ -298,11 +306,9 @@ function buildOrderSummaryHtml(order: any, branding: StudioBranding, photoFileMa
   <!-- Header -->
   <div style="background:#111;color:#fff;padding:28px 36px;display:flex;justify-content:space-between;align-items:flex-start;">
     <div>
-      <div style="font-size:14px;color:#999;">
-        <span style="font-weight:700;color:#fff;">${esc(schoolName)}</span>
-        ${className ? `&nbsp;&nbsp;<span style="color:#777;">${esc(className)}</span>` : ""}
-      </div>
-      <div style="font-size:34px;font-weight:800;margin-top:6px;letter-spacing:-0.01em;">${esc(studentName)}</div>
+      <div style="font-size:14px;color:#999;font-weight:700;">${esc(schoolName)}</div>
+      <div style="font-size:34px;font-weight:800;margin-top:4px;letter-spacing:-0.01em;">${esc(studentName)}</div>
+      ${className ? `<div style="font-size:16px;font-weight:600;color:#ccc;margin-top:4px;">Class: ${esc(className)}</div>` : ""}
     </div>
     <div style="text-align:right;">
       <div style="font-size:22px;font-weight:900;color:#fff;letter-spacing:0.02em;">${esc(branding.businessName)}</div>
@@ -333,10 +339,6 @@ function buildOrderSummaryHtml(order: any, branding: StudioBranding, photoFileMa
       ${parentEmail !== "—" ? `<div style="font-size:12px;color:#555;">${esc(parentEmail)}</div>` : ""}
       ${parentPhone ? `<div style="font-size:12px;color:#555;">${esc(parentPhone)}</div>` : ""}
     </div>
-    ${className ? `<div>
-      <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.06em;color:#999;font-weight:700;margin-bottom:3px;">Class</div>
-      <div style="font-size:14px;font-weight:600;color:#111;">${esc(className)}</div>
-    </div>` : ""}
     ${delivery ? `<div>
       <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.06em;color:#999;font-weight:700;margin-bottom:3px;">Delivery</div>
       <div style="font-size:14px;font-weight:600;color:#111;">${esc(delivery)}</div>
