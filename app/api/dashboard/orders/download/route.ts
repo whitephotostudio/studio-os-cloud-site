@@ -274,9 +274,9 @@ function buildOrderSummaryHtml(order: any, branding: StudioBranding): string {
   </div>
 
   <!-- Parent notes -->
-  ${notes ? `<div style="margin:0 36px 0;padding:14px 18px;background:#fffbeb;border:1px solid #fde68a;border-radius:8px;">
-    <span style="font-size:11px;text-transform:uppercase;letter-spacing:0.05em;color:#92400e;font-weight:700;">Parent Notes:&nbsp;</span>
-    <span style="font-size:13px;color:#78350f;white-space:pre-wrap;">${esc(notes)}</span>
+  ${notes ? `<div style="margin:0 36px;padding:12px 16px;background:#f7fafc;border-left:3px solid #a0aec0;border-radius:4px;">
+    <span style="font-size:11px;text-transform:uppercase;letter-spacing:0.06em;color:#718096;font-weight:700;">Notes:&nbsp;</span>
+    <span style="font-size:13px;color:#2d3748;white-space:pre-wrap;">${esc(notes)}</span>
   </div>` : ""}
 
   <!-- Compact info footer -->
