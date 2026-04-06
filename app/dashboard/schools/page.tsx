@@ -31,6 +31,7 @@ type SchoolCard = {
   peopleCount: number;
   classesCount: number;
   imagesCount: number;
+  coverUrl: string | null;
 };
 
 type ProjectRow = {
@@ -214,17 +215,20 @@ export default function SchoolsPage() {
       if (peopleErr) throw peopleErr;
 
       const people = (peopleRows ?? []) as StudentRow[];
-      const stats = new Map<string, { peopleCount: number; imagesCount: number; classNames: Set<string> }>();
+      const stats = new Map<string, { peopleCount: number; imagesCount: number; classNames: Set<string>; firstPhotoUrl: string | null }>();
 
       for (const school of uniqueSchools) {
-        stats.set(school.id, { peopleCount: 0, imagesCount: 0, classNames: new Set<string>() });
+        stats.set(school.id, { peopleCount: 0, imagesCount: 0, classNames: new Set<string>(), firstPhotoUrl: null });
       }
 
       for (const row of people) {
         const stat = stats.get(row.school_id);
         if (!stat) continue;
         stat.peopleCount += 1;
-        if (clean(row.photo_url)) stat.imagesCount += 1;
+        if (clean(row.photo_url)) {
+          stat.imagesCount += 1;
+          if (!stat.firstPhotoUrl) stat.firstPhotoUrl = row.photo_url;
+        }
 
         const className = clean(row.class_name);
         const role = normalizeRole(row.role);
@@ -243,6 +247,7 @@ export default function SchoolsPage() {
           peopleCount: stat?.peopleCount ?? 0,
           classesCount: stat?.classNames.size ?? 0,
           imagesCount: stat?.imagesCount ?? 0,
+          coverUrl: stat?.firstPhotoUrl ?? null,
         };
       });
 
@@ -422,11 +427,19 @@ export default function SchoolsPage() {
                   transition: "border-color 120ms ease, transform 120ms ease, box-shadow 120ms ease",
                 }}
               >
-                {/* Gradient header as thumbnail area */}
-                <div style={{ position: "relative", paddingBottom: "55%", background: gradientForSchool(school.school_name), overflow: "hidden" }}>
-                  <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                    <School size={40} color="rgba(255,255,255,0.3)" />
-                  </div>
+                {/* Thumbnail area */}
+                <div style={{ position: "relative", paddingBottom: "65%", background: school.coverUrl ? "#f3f4f6" : gradientForSchool(school.school_name), overflow: "hidden" }}>
+                  {school.coverUrl ? (
+                    <img
+                      src={school.coverUrl}
+                      alt={school.school_name}
+                      style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }}
+                    />
+                  ) : (
+                    <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                      <School size={40} color="rgba(255,255,255,0.3)" />
+                    </div>
+                  )}
                   {/* Hover overlay */}
                   {hovered && (
                     <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.35)", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
