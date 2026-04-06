@@ -142,6 +142,39 @@ function slug(v: string | null | undefined, fallback: string) {
   return s ? s.replace(/[^a-zA-Z0-9]+/g, "_").replace(/^_|_$/g, "") : fallback;
 }
 
+/** Parse structured order info from special_notes text when order_items table is empty */
+function parseNotesItems(notes: string): { productName: string; photoUrl: string; quantity: number }[] {
+  if (!notes) return [];
+  const parsed: { productName: string; photoUrl: string; quantity: number }[] = [];
+  // Split on "ORDER ITEM N:" blocks
+  const blocks = notes.split(/ORDER ITEM\s*\d+:\s*/i).filter(Boolean);
+  for (const block of blocks) {
+    const lines = block.split("\n").map(l => l.trim()).filter(Boolean);
+    if (lines.length === 0) continue;
+    // First line is the product name (e.g. "5x7 Lustre" or "Composite • 8x10 Lustre")
+    const productName = lines[0].replace(/^:\s*/, "").trim();
+    if (productName.toLowerCase().startsWith("delivery")) continue; // skip delivery line
+    // Find photo URL — look for https:// lines
+    let photoUrl = "";
+    for (const line of lines) {
+      // URL may be split across lines, or on a line after "→"
+      const urlMatch = line.match(/(https?:\/\/[^\s]+)/);
+      if (urlMatch) {
+        photoUrl = urlMatch[1];
+        break;
+      }
+    }
+    // If the URL was split across lines (e.g. line ends with /object/p... and next line continues)
+    if (!photoUrl) {
+      const joined = lines.join(" ");
+      const urlMatch = joined.match(/(https?:\/\/[^\s]+)/);
+      if (urlMatch) photoUrl = urlMatch[1];
+    }
+    parsed.push({ productName, photoUrl, quantity: 1 });
+  }
+  return parsed;
+}
+
 function fileNameFromUrl(url: string, fallback: string) {
   try {
     const pathname = new URL(url).pathname;
@@ -186,47 +219,41 @@ function buildOrderSummaryHtml(order: any, branding: StudioBranding): string {
   const orderId = shortOrderId(order.id);
   const status = (order.status ?? "new").toUpperCase().replace(/_/g, " ");
 
-  const items = order.items ?? [];
-  const photoUrls = new Set<string>();
-  if (clean(order.student?.photo_url)) photoUrls.add(order.student.photo_url);
-  for (const item of items) {
-    if (clean(item.sku)) photoUrls.add(item.sku);
-  }
-  const photos = Array.from(photoUrls);
+  const dbItems = order.items ?? [];
+  const notesText = clean(order.special_notes) || clean(order.notes);
 
-  // Build photo cards — each with product name, number, quantity
+  // When order_items table is empty, parse structured info from notes
+  const parsedFromNotes = dbItems.length === 0 ? parseNotesItems(notesText) : [];
+
+  // Unified item list: prefer DB items, fall back to parsed notes
+  const displayItems = dbItems.length > 0
+    ? dbItems.map((item: { product_name?: string; quantity?: number; sku?: string }) => ({
+        productName: item.product_name ?? "Item",
+        photoUrl: item.sku ?? "",
+        quantity: item.quantity ?? 1,
+      }))
+    : parsedFromNotes.length > 0
+    ? parsedFromNotes
+    : // Last resort: student photo with package name
+      (clean(order.student?.photo_url)
+        ? [{ productName: order.package_name ?? "Package", photoUrl: order.student.photo_url, quantity: 1 }]
+        : []);
+
+  // Build photo cards
   let photoCardsHtml = "";
-  let photoIndex = 0;
-  for (const item of items) {
-    photoIndex++;
-    const qty = item.quantity ?? 1;
-    const productName = item.product_name ?? "Item";
-    const photoSrc = item.sku || "";
-
+  displayItems.forEach((item: { productName: string; photoUrl: string; quantity: number }, i: number) => {
+    const photoSrc = item.photoUrl;
     photoCardsHtml += `
       <div style="display:inline-block;vertical-align:top;margin:0 28px 28px 0;text-align:center;width:200px;">
         ${photoSrc ? `<img src="${esc(photoSrc)}" style="width:190px;height:230px;object-fit:cover;border-radius:6px;border:3px solid #e2e8f0;background:#f7fafc;" />` : `<div style="width:190px;height:230px;background:#f7fafc;border-radius:6px;border:3px solid #e2e8f0;display:flex;align-items:center;justify-content:center;color:#a0aec0;font-size:13px;">No photo</div>`}
-        <div style="margin-top:10px;font-size:14px;font-weight:600;color:#2d3748;">${esc(productName)}</div>
-        <div style="font-size:13px;color:#e53e3e;font-weight:800;">#${String(photoIndex).padStart(4, "0")}</div>
-        <div style="font-size:14px;color:#4a5568;">&times; ${qty}</div>
+        <div style="margin-top:10px;font-size:14px;font-weight:600;color:#2d3748;">${esc(item.productName)}</div>
+        <div style="font-size:13px;color:#e53e3e;font-weight:800;">#${String(i + 1).padStart(4, "0")}</div>
+        <div style="font-size:14px;color:#4a5568;">&times; ${item.quantity}</div>
       </div>`;
-  }
-
-  // If no items but photos exist
-  if (items.length === 0 && photos.length > 0) {
-    photos.forEach((url, i) => {
-      photoCardsHtml += `
-        <div style="display:inline-block;vertical-align:top;margin:0 28px 28px 0;text-align:center;width:200px;">
-          <img src="${esc(url)}" style="width:190px;height:230px;object-fit:cover;border-radius:6px;border:3px solid #e2e8f0;background:#f7fafc;" />
-          <div style="margin-top:10px;font-size:14px;font-weight:600;color:#2d3748;">${esc(order.package_name ?? "Package")}</div>
-          <div style="font-size:13px;color:#e53e3e;font-weight:800;">#${String(i + 1).padStart(4, "0")}</div>
-        </div>`;
-    });
-  }
+  });
 
   // Delivery note (extract from special_notes if present)
-  const notes = clean(order.special_notes) || clean(order.notes);
-  const deliveryMatch = notes.match(/Delivery:\s*(\w+)/i);
+  const deliveryMatch = notesText.match(/Delivery:\s*(\w+)/i);
   const delivery = deliveryMatch ? deliveryMatch[1] : "";
 
   return `<!DOCTYPE html>
@@ -274,9 +301,9 @@ function buildOrderSummaryHtml(order: any, branding: StudioBranding): string {
   </div>
 
   <!-- Parent notes -->
-  ${notes ? `<div style="margin:0 36px;padding:12px 16px;background:#f7fafc;border-left:3px solid #a0aec0;border-radius:4px;">
+  ${notesText ? `<div style="margin:0 36px;padding:12px 16px;background:#f7fafc;border-left:3px solid #a0aec0;border-radius:4px;">
     <span style="font-size:11px;text-transform:uppercase;letter-spacing:0.06em;color:#718096;font-weight:700;">Notes:&nbsp;</span>
-    <span style="font-size:13px;color:#2d3748;white-space:pre-wrap;">${esc(notes)}</span>
+    <span style="font-size:13px;color:#2d3748;white-space:pre-wrap;">${esc(notesText)}</span>
   </div>` : ""}
 
   <!-- Compact info footer -->
@@ -375,11 +402,18 @@ export async function GET(request: NextRequest) {
         data: enc.encode(summaryHtml),
       });
 
-      // Collect photo URLs
+      // Collect photo URLs — from order_items, parsed notes, or student photo
       const photoUrls = new Set<string>();
       if (clean(order.student?.photo_url)) photoUrls.add(order.student.photo_url);
       for (const item of order.items ?? []) {
         if (clean(item.sku)) photoUrls.add(item.sku);
+      }
+      // Also grab photo URLs parsed from notes (when order_items is empty)
+      if ((order.items ?? []).length === 0) {
+        const notesParsed = parseNotesItems(clean(order.special_notes) || clean(order.notes));
+        for (const ni of notesParsed) {
+          if (ni.photoUrl) photoUrls.add(ni.photoUrl);
+        }
       }
 
       // Download each photo and add to ZIP
