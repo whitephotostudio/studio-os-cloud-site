@@ -449,6 +449,13 @@ export default function OrdersPage() {
     message: "",
   });
   const [sendingStatusEmail, setSendingStatusEmail] = useState(false);
+  const [photographerBranding, setPhotographerBranding] = useState<{
+    businessName: string;
+    logoUrl: string;
+    studioPhone: string;
+    studioEmail: string;
+    studioAddress: string;
+  }>({ businessName: "", logoUrl: "", studioPhone: "", studioEmail: "", studioAddress: "" });
   const [editForm, setEditForm] = useState<{
     parentName: string;
     parentEmail: string;
@@ -492,13 +499,20 @@ export default function OrdersPage() {
 
     setUserEmail(user.email ?? "");
 
-    const { data: photographer } = await supabase.from("photographers").select("id").eq("user_id", user.id).maybeSingle();
+    const { data: photographer } = await supabase.from("photographers").select("id, business_name, studio_email, billing_email, logo_url, studio_phone, studio_address").eq("user_id", user.id).maybeSingle();
     if (!photographer?.id) {
       setLoading(false);
       return;
     }
 
     setPgId(photographer.id);
+    setPhotographerBranding({
+      businessName: (photographer as Record<string, unknown>).business_name as string || "",
+      logoUrl: (photographer as Record<string, unknown>).logo_url as string || "",
+      studioPhone: (photographer as Record<string, unknown>).studio_phone as string || "",
+      studioEmail: (photographer as Record<string, unknown>).studio_email as string || (photographer as Record<string, unknown>).billing_email as string || "",
+      studioAddress: (photographer as Record<string, unknown>).studio_address as string || "",
+    });
 
     // Fetch event projects for this photographer
     const { data: projectRows } = await supabase
@@ -2306,7 +2320,11 @@ export default function OrdersPage() {
                       <div style={{ background: "#fff", borderRadius: 4, overflow: "hidden", maxWidth: 400, margin: "0 auto" }}>
                         {/* Email header */}
                         <div style={{ background: "#111", padding: "20px 24px", textAlign: "center" }}>
-                          <div style={{ fontSize: 18, fontWeight: 900, color: "#fff" }}>WHITEPHOTO</div>
+                          {photographerBranding.logoUrl ? (
+                            <img src={photographerBranding.logoUrl} alt={photographerBranding.businessName || "Studio"} style={{ maxHeight: 44, maxWidth: 180 }} />
+                          ) : (
+                            <div style={{ fontSize: 18, fontWeight: 900, color: "#fff" }}>{photographerBranding.businessName || "Studio OS"}</div>
+                          )}
                         </div>
                         {/* Icon */}
                         <div style={{ textAlign: "center", padding: "24px 20px 12px" }}>
@@ -2330,7 +2348,12 @@ export default function OrdersPage() {
                         </div>
                         {/* Footer */}
                         <div style={{ padding: "12px 20px", background: "#f5f5f5", textAlign: "center" }}>
-                          <div style={{ fontSize: 10, color: "#999" }}>&copy; {new Date().getFullYear()} WHITEPHOTO</div>
+                          <div style={{ fontSize: 10, color: "#999" }}>&copy; {new Date().getFullYear()} {photographerBranding.businessName || "Studio OS"}</div>
+                          {(photographerBranding.studioAddress || photographerBranding.studioPhone || photographerBranding.studioEmail) && (
+                            <div style={{ fontSize: 10, color: "#aaa", marginTop: 4, lineHeight: 1.5 }}>
+                              {[photographerBranding.studioAddress, photographerBranding.studioPhone, photographerBranding.studioEmail].filter(Boolean).join(" · ")}
+                            </div>
+                          )}
                         </div>
                       </div>
                     </div>
