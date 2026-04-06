@@ -1856,97 +1856,101 @@ export default function OrdersPage() {
                 boxShadow: "0 14px 40px rgba(15,23,42,0.08)",
               }}
             >
-              <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", marginBottom: 16 }}>
+              {/* ── Order Header ── */}
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 20 }}>
                 <div>
-                  <div style={{ fontSize: 12, textTransform: "uppercase", letterSpacing: "0.08em", fontWeight: 900, color: textMuted }}>Order Details</div>
-                  <div style={{ fontSize: 24, fontWeight: 900, color: textPrimary, marginTop: 4 }}>#{selected.id.slice(0, 8)}</div>
+                  <div style={{ fontSize: 28, fontWeight: 900, color: textPrimary }}>Order {selected.id.slice(0, 8)}</div>
+                  <div style={{ fontSize: 13, color: textMuted, marginTop: 4 }}>Placed {formatDate(selected.created_at)}</div>
                 </div>
-                <button type="button" onClick={() => setSelected(null)} style={{ background: "#f3f4f6", border: "none", width: 36, height: 36, borderRadius: 12, cursor: "pointer", color: textMuted }}>
-                  <X size={16} />
-                </button>
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <span style={{
+                    display: "inline-block", padding: "5px 14px", borderRadius: 4, fontSize: 12, fontWeight: 700, letterSpacing: "0.04em",
+                    background: STATUS_COLORS[selected.status]?.color ?? "#666", color: "#fff",
+                  }}>{STATUS_COLORS[selected.status]?.label ?? selected.status}</span>
+                  <button type="button" onClick={() => setSelected(null)} style={{ background: "#f3f4f6", border: "none", width: 32, height: 32, borderRadius: 8, cursor: "pointer", color: textMuted, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                    <X size={16} />
+                  </button>
+                </div>
               </div>
 
-              {clean(selected.student?.photo_url) ? (
-                <img src={selected.student?.photo_url ?? ""} alt="" style={{ width: "100%", height: 260, objectFit: "cover", borderRadius: 22, border: `1px solid ${borderColor}`, marginBottom: 16 }} />
-              ) : null}
+              {/* ── Client + Order Info ── */}
+              <div style={{ display: "flex", gap: 20, marginBottom: 20, flexWrap: "wrap" }}>
+                <div style={{ flex: "1 1 180px" }}>
+                  <div style={{ fontSize: 11, color: textMuted, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>Client</div>
+                  <div style={{ fontSize: 16, fontWeight: 800, color: textPrimary }}>{selected.parent_name ?? selected.customer_name ?? "—"}</div>
+                  <div style={{ fontSize: 13, color: textMuted, marginTop: 3 }}>{selected.parent_email ?? selected.customer_email ?? ""}</div>
+                  {selected.parent_phone ? <div style={{ fontSize: 13, color: textMuted, marginTop: 2 }}>{selected.parent_phone}</div> : null}
+                </div>
+                <div style={{ flex: "1 1 120px" }}>
+                  <div style={{ fontSize: 11, color: textMuted, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>Student</div>
+                  <div style={{ fontSize: 16, fontWeight: 800, color: textPrimary }}>{`${selected.student?.first_name ?? ""} ${selected.student?.last_name ?? ""}`.trim() || "—"}</div>
+                  <div style={{ fontSize: 13, color: textMuted, marginTop: 3 }}>{selected.school?.school_name ?? "—"}</div>
+                  <div style={{ fontSize: 13, color: textMuted, marginTop: 2 }}>Class: {selected.class?.class_name || selected.student?.class_name || "—"}</div>
+                </div>
+                <div style={{ flex: "0 0 auto", textAlign: "right" }}>
+                  <div style={{ fontSize: 11, color: textMuted, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>Order Total</div>
+                  <div style={{ fontSize: 28, fontWeight: 900, color: textPrimary }}>{moneyFromCents(selected.total_cents ?? Math.round((selected.total_amount ?? 0) * 100), selected.currency?.toUpperCase() || "CAD")}</div>
+                </div>
+              </div>
 
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0,1fr))", gap: 12, marginBottom: 16 }}>
-                {[
-                  { label: "Student", value: `${selected.student?.first_name ?? ""} ${selected.student?.last_name ?? ""}`.trim() || "—", icon: <GraduationCap size={16} /> },
-                  { label: "School", value: selected.school?.school_name ?? "—", icon: <School2 size={16} /> },
-                  { label: "Class", value: selected.class?.class_name ?? "—", icon: <Users size={16} /> },
-                  { label: "Total", value: moneyFromCents(selected.total_cents ?? Math.round((selected.total_amount ?? 0) * 100), selected.currency?.toUpperCase() || "CAD"), icon: <WalletCards size={16} /> },
-                ].map((block) => (
-                  <div key={block.label} style={{ background: "#f9fafb", border: `1px solid ${borderColor}`, borderRadius: 18, padding: 14 }}>
-                    <div style={{ display: "inline-flex", width: 30, height: 30, borderRadius: 10, background: "#f5f5f5", color: "#cc0000", alignItems: "center", justifyContent: "center", marginBottom: 10 }}>{block.icon}</div>
-                    <div style={{ fontSize: 11, color: textMuted, fontWeight: 900, letterSpacing: "0.08em", textTransform: "uppercase" }}>{block.label}</div>
-                    <div style={{ fontSize: 15, fontWeight: 800, color: textPrimary, marginTop: 6, lineHeight: 1.45 }}>{block.value}</div>
+              <div style={{ borderTop: `1px solid ${borderColor}`, marginBottom: 16 }} />
+
+              {/* ── Package info ── */}
+              <div style={{ fontSize: 18, fontWeight: 800, color: textPrimary, marginBottom: 4 }}>{selected.package_name || "Package"}</div>
+              <div style={{ fontSize: 13, color: textMuted, marginBottom: 16 }}>
+                {selectedOrderedPhotoGroups.reduce((sum, g) => sum + g.items.length, 0)} item{selectedOrderedPhotoGroups.reduce((sum, g) => sum + g.items.length, 0) === 1 ? "" : "s"}
+                {" · "}{selectedOrderedPhotoGroups.length} photo{selectedOrderedPhotoGroups.length === 1 ? "" : "s"}
+              </div>
+
+              {/* ── Order Items with Photos ── */}
+              <div style={{ display: "flex", flexDirection: "column", gap: 16, marginBottom: 20 }}>
+                {selectedOrderedPhotoGroups.map((photoGroup, groupIndex) => (
+                  <div key={`${photoGroup.fileName}-${groupIndex}`} style={{ borderBottom: `1px solid ${borderColor}`, paddingBottom: 16 }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: textMuted, marginBottom: 8 }}>{photoGroup.fileName}</div>
+                    <div style={{ display: "flex", gap: 16, alignItems: "flex-start" }}>
+                      {/* Photo */}
+                      <div style={{ width: 140, flexShrink: 0 }}>
+                        <div style={{ width: 140, height: 180, borderRadius: 4, overflow: "hidden", border: `1px solid ${borderColor}`, background: "#f5f5f5" }}>
+                          {photoGroup.url ? (
+                            <img src={photoGroup.url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                          ) : (
+                            <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "#ccc" }}>
+                              <ImageIcon size={28} />
+                            </div>
+                          )}
+                        </div>
+                        {photoGroup.url ? (
+                          <a href={photoGroup.url} target="_blank" rel="noopener noreferrer" style={{ color: "#0ea5e9", fontSize: 12, fontWeight: 600, textDecoration: "none", display: "block", marginTop: 6 }}>
+                            Download Original
+                          </a>
+                        ) : null}
+                      </div>
+
+                      {/* Item details */}
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        {photoGroup.items.map((item, itemIndex) => (
+                          <div key={`${photoGroup.fileName}-${item.product_name}-${itemIndex}`} style={{ padding: "10px 14px", background: "#f9fafb", borderRadius: 4, marginBottom: 8, border: `1px solid ${borderColor}` }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                              <div>
+                                <div style={{ fontSize: 14, fontWeight: 700, color: textPrimary }}>{item.product_name ?? "Item"}</div>
+                                <div style={{ fontSize: 12, color: textMuted, marginTop: 2 }}>Qty: {item.quantity ?? 1}</div>
+                              </div>
+                              <div style={{ fontSize: 14, fontWeight: 700, color: textPrimary }}>
+                                {item.line_total_cents != null ? moneyFromCents(item.line_total_cents, selected.currency?.toUpperCase() || "CAD") : moneyFromAmount(item.price, selected.currency?.toUpperCase() || "CAD")}
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                        {photoGroup.items.length === 0 && (
+                          <div style={{ fontSize: 13, color: textMuted, fontStyle: "italic" }}>No item details</div>
+                        )}
+                      </div>
+                    </div>
                   </div>
                 ))}
               </div>
 
-              <div style={{ background: "#f9fafb", border: `1px solid ${borderColor}`, borderRadius: 18, padding: 16, marginBottom: 16 }}>
-                <div style={{ fontSize: 11, color: textMuted, fontWeight: 900, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 8 }}>Parent</div>
-                <div style={{ fontSize: 15, fontWeight: 800, color: textPrimary }}>{selected.parent_name ?? selected.customer_name ?? "—"}</div>
-                <div style={{ fontSize: 13, color: textMuted, marginTop: 4 }}>{selected.parent_email ?? selected.customer_email ?? "—"}</div>
-                <div style={{ fontSize: 13, color: textMuted, marginTop: 4 }}>{selected.parent_phone ?? "—"}</div>
-              </div>
-
-              <div style={{ background: "#f9fafb", border: `1px solid ${borderColor}`, borderRadius: 18, padding: 16, marginBottom: 16 }}>
-                <div style={{ fontSize: 11, color: textMuted, fontWeight: 900, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 8 }}>Package</div>
-                <div style={{ fontSize: 16, fontWeight: 800, color: textPrimary }}>{selected.package_name}</div>
-                <div style={{ fontSize: 14, color: textMuted, marginTop: 6 }}>Created {formatDate(selected.created_at)}</div>
-              </div>
-
-              <div style={{ background: "#f9fafb", border: `1px solid ${borderColor}`, borderRadius: 18, padding: 16, marginBottom: 16 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-                  <div style={{ fontSize: 11, color: textMuted, fontWeight: 900, letterSpacing: "0.08em", textTransform: "uppercase" }}>Ordered Photos</div>
-                  <div style={{ fontSize: 12, color: textMuted }}>{selectedOrderedPhotoGroups.length} photo{selectedOrderedPhotoGroups.length === 1 ? "" : "s"}</div>
-                </div>
-                <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                  {selectedOrderedPhotoGroups.map((photoGroup, groupIndex) => (
-                    <div key={`${photoGroup.fileName}-${groupIndex}`} style={{ border: `1px solid ${borderColor}`, borderRadius: 16, padding: 12, background: "#fff" }}>
-                      <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
-                        <div style={{ width: 72, flexShrink: 0 }}>
-                          <div style={{ width: 72, height: 92, borderRadius: 12, overflow: "hidden", border: `1px solid ${borderColor}`, background: "#f3f4f6" }}>
-                            {photoGroup.url ? (
-                              <img src={photoGroup.url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                            ) : (
-                              <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "#9ca3af" }}>
-                                <ImageIcon size={20} />
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ fontSize: 14, fontWeight: 800, color: textPrimary, wordBreak: "break-word" }}>{photoGroup.fileName}</div>
-                          <div style={{ fontSize: 12, color: textMuted, marginTop: 4 }}>
-                            {photoGroup.items.length} ordered item{photoGroup.items.length === 1 ? "" : "s"}
-                          </div>
-                          <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 10 }}>
-                            {photoGroup.items.map((item, itemIndex) => (
-                              <div key={`${photoGroup.fileName}-${item.product_name}-${itemIndex}`} style={{ borderRadius: 12, border: `1px solid ${borderColor}`, padding: 10, background: "#f9fafb" }}>
-                                <div style={{ fontSize: 13, fontWeight: 800, color: textPrimary }}>{item.product_name ?? "Item"}</div>
-                                <div style={{ fontSize: 12, color: textMuted, marginTop: 4 }}>
-                                  Qty: {item.quantity ?? 0} · Total: {item.line_total_cents != null ? moneyFromCents(item.line_total_cents, selected.currency?.toUpperCase() || "CAD") : moneyFromAmount(item.price, selected.currency?.toUpperCase() || "CAD")}
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                          {photoGroup.url ? (
-                            <div style={{ marginTop: 8 }}>
-                              <a href={photoGroup.url} target="_blank" rel="noopener noreferrer" style={{ color: "#cc0000", fontSize: 12, fontWeight: 700, textDecoration: "none" }}>
-                                Open original file
-                              </a>
-                            </div>
-                          ) : null}
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
+              {/* ── Notes ── */}
               {clean(selected.special_notes || selected.notes) ? (
                 <div style={{ background: "#fafafa", borderLeft: "3px solid #333", borderRadius: 2, padding: "12px 16px", marginBottom: 16 }}>
                   <div style={{ fontSize: 11, color: "#888", fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", marginBottom: 6 }}>Notes</div>
@@ -1954,68 +1958,32 @@ export default function OrdersPage() {
                 </div>
               ) : null}
 
+              {/* ── Actions ── */}
               <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 18 }}>
                 <button
                   type="button"
                   onClick={() => downloadOriginals(selected)}
-                  style={{
-                    background: "#111827",
-                    color: "#fff",
-                    border: "none",
-                    borderRadius: 12,
-                    padding: "10px 14px",
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: 8,
-                    fontWeight: 800,
-                    cursor: "pointer",
-                  }}
+                  style={{ background: "#111", color: "#fff", border: "none", borderRadius: 6, padding: "10px 16px", display: "inline-flex", alignItems: "center", gap: 8, fontWeight: 700, cursor: "pointer", fontSize: 13 }}
                 >
-                  <Download size={16} /> {downloadingId === selected.id ? "Downloading…" : "Download Summary & Photos"}
+                  <Download size={15} /> {downloadingId === selected.id ? "Downloading…" : "Download Summary & Photos"}
                 </button>
               </div>
 
-              {/* Edit & Delete */}
+              {/* ── Edit & Delete ── */}
               <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 16 }}>
                 <button
                   type="button"
                   onClick={() => openEdit(selected)}
-                  style={{
-                    flex: 1,
-                    background: "#cc0000",
-                    color: "#fff",
-                    border: "none",
-                    borderRadius: 12,
-                    padding: "10px 14px",
-                    display: "inline-flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    gap: 8,
-                    fontWeight: 800,
-                    cursor: "pointer",
-                  }}
+                  style={{ flex: 1, background: "#111", color: "#fff", border: "none", borderRadius: 6, padding: "10px 14px", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8, fontWeight: 700, cursor: "pointer", fontSize: 13 }}
                 >
-                  <Pencil size={15} /> Edit Order
+                  <Pencil size={14} /> Edit Order
                 </button>
                 <button
                   type="button"
                   onClick={() => setDeleteConfirmId(selected.id)}
-                  style={{
-                    flex: 1,
-                    background: "#fff",
-                    color: "#cc0000",
-                    border: "1px solid #cc0000",
-                    borderRadius: 12,
-                    padding: "10px 14px",
-                    display: "inline-flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    gap: 8,
-                    fontWeight: 800,
-                    cursor: "pointer",
-                  }}
+                  style={{ flex: 1, background: "#fff", color: "#c0392b", border: "1px solid #c0392b", borderRadius: 6, padding: "10px 14px", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8, fontWeight: 700, cursor: "pointer", fontSize: 13 }}
                 >
-                  <Trash2 size={15} /> Delete
+                  <Trash2 size={14} /> Delete
                 </button>
               </div>
 
