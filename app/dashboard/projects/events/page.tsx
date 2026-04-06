@@ -323,7 +323,7 @@ export default function EventsPage() {
                       <img
                         src={cover}
                         alt={projectNameOf(project)}
-                        style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }}
+                        style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", objectPosition: `${Math.round((Number(project.cover_focal_x) || 0.5) * 100)}% ${Math.round((Number(project.cover_focal_y) || 0.5) * 100)}%` }}
                       />
                     ) : (
                       <div style={{ position: "absolute", inset: 0, ...bgStyle(project), display: "flex", alignItems: "center", justifyContent: "center" }}>
