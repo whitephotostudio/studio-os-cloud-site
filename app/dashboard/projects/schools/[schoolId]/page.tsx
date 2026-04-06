@@ -15,6 +15,11 @@ import {
   Menu,
   Search,
   X,
+  Mail,
+  Send,
+  Copy,
+  ExternalLink,
+  Heart,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { ensureSchoolCollectionId } from "@/lib/school-sync";
@@ -358,6 +363,7 @@ export default function SchoolsSchoolDetailPage() {
   const [focalX, setFocalX] = useState(0.5);
   const [focalY, setFocalY] = useState(0.5);
   const [savingFocal, setSavingFocal] = useState(false);
+  const [shareModalOpen, setShareModalOpen] = useState(false);
 
   useEffect(() => {
     if (!schoolId || typeof window === "undefined") return;
@@ -1298,7 +1304,7 @@ export default function SchoolsSchoolDetailPage() {
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "flex-end" }}>
             <button onClick={() => { setError(""); setCreateGalleryKind("class"); setCreateGalleryName(""); }} style={{ borderRadius: 10, border: "1px solid #111111", background: "#fff", color: "#111111", padding: "12px 16px", fontWeight: 800, cursor: "pointer" }}>Add Class</button>
             <button onClick={() => { setError(""); setCreateGalleryKind("role"); setCreateGalleryName(""); }} style={{ borderRadius: 10, border: "1px solid #111111", background: "#fff", color: "#111111", padding: "12px 16px", fontWeight: 800, cursor: "pointer" }}>Add Role Gallery</button>
-            <button onClick={copySchoolLink} style={{ borderRadius: 10, border: "1px solid #111111", background: "#111111", color: "#fff", padding: "12px 16px", fontWeight: 800, cursor: "pointer" }}>Share Gallery</button>
+            <button onClick={() => setShareModalOpen(true)} style={{ borderRadius: 10, border: "1px solid #111111", background: "#111111", color: "#fff", padding: "12px 16px", fontWeight: 800, cursor: "pointer" }}>Share Gallery</button>
             <a
               href={`/dashboard/projects/schools/${schoolId}/settings`}
               onClick={(event) => {
@@ -2144,6 +2150,68 @@ export default function SchoolsSchoolDetailPage() {
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 12, padding: "18px 22px", borderTop: "1px solid #eef2f7", background: "#ffffff" }}>
               <button onClick={() => setContactModalOpen(false)} style={{ borderRadius: 14, border: "1px solid #d0d5dd", background: "#fff", color: "#111111", padding: "12px 16px", fontWeight: 800, cursor: "pointer" }}>Cancel</button>
               <button onClick={addContact} disabled={!clean(contactName)} style={{ borderRadius: 14, border: 0, background: !clean(contactName) ? "#d1d5db" : "#111111", color: "#fff", padding: "12px 16px", fontWeight: 800, cursor: !clean(contactName) ? "not-allowed" : "pointer" }}>Save Contact</button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {/* ── Share Gallery Modal ── */}
+      {shareModalOpen ? (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.55)", display: "grid", placeItems: "center", zIndex: 78, padding: 24 }}>
+          <div style={{ width: "100%", maxWidth: 580, background: "#fff", borderRadius: 24, border: "1px solid #e5e7eb", boxShadow: "0 30px 60px rgba(15,23,42,0.25)", display: "flex", flexDirection: "column", overflow: "hidden" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "18px 22px", borderBottom: "1px solid #eef2f7" }}>
+              <div>
+                <div style={{ fontSize: 16, fontWeight: 900, color: "#111111" }}>Share Gallery</div>
+                <div style={{ color: "#4b5563", fontSize: 13, marginTop: 4 }}>Share the {school?.school_name || "school"} gallery</div>
+              </div>
+              <button onClick={() => setShareModalOpen(false)} style={{ border: 0, background: "transparent", cursor: "pointer", color: "#6b7280" }}>
+                <X size={22} />
+              </button>
+            </div>
+            <div style={{ padding: 24, display: "grid", gap: 16 }}>
+              <a href={`/dashboard/projects/schools/${schoolId}/visitors`} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, borderRadius: 18, border: "1px solid #e5e7eb", background: "#fff", padding: "18px 20px", cursor: "pointer", textAlign: "left", textDecoration: "none" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+                  <div style={{ width: 44, height: 44, borderRadius: 999, background: "#fff3e8", color: "#f97316", display: "grid", placeItems: "center" }}><Mail size={20} /></div>
+                  <div>
+                    <div style={{ color: "#111111", fontWeight: 800 }}>Email Gallery Visitors</div>
+                    <div style={{ color: "#4b5563", fontSize: 13, marginTop: 4 }}>Send mass emails to registered school visitors.</div>
+                  </div>
+                </div>
+                <ExternalLink size={18} color="#6b7280" />
+              </a>
+
+              <a href={`/dashboard/projects/schools/${schoolId}/visitors`} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, borderRadius: 18, border: "1px solid #e5e7eb", background: "#fff", padding: "18px 20px", cursor: "pointer", textAlign: "left", textDecoration: "none" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+                  <div style={{ width: 44, height: 44, borderRadius: 999, background: "#eef2ff", color: "#4f46e5", display: "grid", placeItems: "center" }}><Send size={20} /></div>
+                  <div>
+                    <div style={{ color: "#111111", fontWeight: 800 }}>Email Others</div>
+                    <div style={{ color: "#4b5563", fontSize: 13, marginTop: 4 }}>Compose a gallery email for custom recipients.</div>
+                  </div>
+                </div>
+                <ExternalLink size={18} color="#6b7280" />
+              </a>
+
+              <button onClick={() => { void copySchoolLink(); setShareModalOpen(false); }} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, borderRadius: 18, border: "1px solid #e5e7eb", background: "#fff", padding: "18px 20px", cursor: "pointer", textAlign: "left" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+                  <div style={{ width: 44, height: 44, borderRadius: 999, background: "#fff1f2", color: "#dc2626", display: "grid", placeItems: "center" }}><Copy size={20} /></div>
+                  <div>
+                    <div style={{ color: "#111111", fontWeight: 800 }}>Copy Gallery Link</div>
+                    <div style={{ color: "#4b5563", fontSize: 13, marginTop: 4 }}>Copies the school gallery access link.</div>
+                  </div>
+                </div>
+                <ExternalLink size={18} color="#6b7280" />
+              </button>
+
+              <a href={`/dashboard/projects/schools/${schoolId}/visitors`} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, borderRadius: 18, border: "1px solid #e5e7eb", background: "#fff", padding: "18px 20px", cursor: "pointer", textAlign: "left", textDecoration: "none" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+                  <div style={{ width: 44, height: 44, borderRadius: 999, background: "#eff6ff", color: "#0284c7", display: "grid", placeItems: "center" }}><Heart size={20} /></div>
+                  <div>
+                    <div style={{ color: "#111111", fontWeight: 800 }}>Gallery Visitors</div>
+                    <div style={{ color: "#4b5563", fontSize: 13, marginTop: 4 }}>See visitor activity, favorites, and export a quick report.</div>
+                  </div>
+                </div>
+                <ExternalLink size={18} color="#6b7280" />
+              </a>
             </div>
           </div>
         </div>
