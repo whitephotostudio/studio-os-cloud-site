@@ -158,6 +158,28 @@ function clean(value: string | null | undefined) {
   return (value ?? "").trim();
 }
 
+/** Strip ORDER ITEM blocks, URLs, and technical lines — keep only human notes */
+function cleanNotes(value: string | null | undefined): string {
+  const raw = clean(value);
+  if (!raw) return "";
+  return raw
+    .split("\n")
+    .filter((line) => {
+      const t = line.trim();
+      if (!t) return false;
+      if (/^ORDER ITEM\s*\d+/i.test(t)) return false;
+      if (/^PHOTO SELECTIONS/i.test(t)) return false;
+      if (/^CLASS COMPOSITE/i.test(t)) return false;
+      if (/^Item\s*\d+:/i.test(t)) return false;
+      if (/https?:\/\//i.test(t)) return false;
+      if (/^[a-f0-9-]{20,}/i.test(t)) return false;
+      if (/^\d+\/[A-Za-z_]+\.(png|jpg|jpeg)/i.test(t)) return false;
+      return true;
+    })
+    .join("\n")
+    .trim();
+}
+
 function singleRelation<T>(value: RelatedRow<T>): T | null {
   if (Array.isArray(value)) {
     return value[0] ?? null;
@@ -1951,10 +1973,10 @@ export default function OrdersPage() {
               </div>
 
               {/* ── Notes ── */}
-              {clean(selected.special_notes || selected.notes) ? (
+              {cleanNotes(selected.special_notes || selected.notes) ? (
                 <div style={{ background: "#fafafa", borderLeft: "3px solid #333", borderRadius: 2, padding: "12px 16px", marginBottom: 16 }}>
                   <div style={{ fontSize: 11, color: "#888", fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", marginBottom: 6 }}>Notes</div>
-                  <div style={{ fontSize: 13, color: "#333", whiteSpace: "pre-wrap", lineHeight: 1.6 }}>{selected.special_notes || selected.notes}</div>
+                  <div style={{ fontSize: 13, color: "#333", whiteSpace: "pre-wrap", lineHeight: 1.6 }}>{cleanNotes(selected.special_notes || selected.notes)}</div>
                 </div>
               ) : null}
 
