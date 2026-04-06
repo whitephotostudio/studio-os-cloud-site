@@ -44,11 +44,14 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const localSchoolId = `web_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
     const { data: newSchool, error: insertError } = await service
       .from("schools")
       .insert({
         school_name: schoolName,
         photographer_id: photographerRow.id,
+        local_school_id: localSchoolId,
         status: "inactive",
         email_required: true,
       })
