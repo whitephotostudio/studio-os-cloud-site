@@ -765,3 +765,67 @@ export async function PATCH(
     );
   }
 }
+
+/* ------------------------------------------------------------------ */
+/*  DELETE /api/dashboard/events/[id]                                  */
+/* ------------------------------------------------------------------ */
+export async function DELETE(
+  request: NextRequest,
+  context: { params: Promise<{ id: string }> },
+) {
+  try {
+    const { user } = await resolveDashboardAuth(request);
+    if (!user) {
+      return NextResponse.json({ ok: false, message: "Please sign in again." }, { status: 401 });
+    }
+
+    const { id: projectId } = await context.params;
+    const service = createDashboardServiceClient();
+
+    const { data: photographerRow, error: photographerError } = await service
+      .from("photographers")
+      .select("id")
+      .eq("user_id", user.id)
+      .maybeSingle();
+
+    if (photographerError) throw photographerError;
+    if (!photographerRow?.id) {
+      return NextResponse.json({ ok: false, message: "Photographer profile not found." }, { status: 404 });
+    }
+
+    // Verify the project belongs to the photographer before deleting
+    const { data: projectRow, error: projectError } = await service
+      .from("projects")
+      .select("id")
+      .eq("id", projectId)
+      .eq("photographer_id", photographerRow.id)
+      .maybeSingle();
+
+    if (projectError) throw projectError;
+    if (!projectRow) {
+      return NextResponse.json({ ok: false, message: "Project not found." }, { status: 404 });
+    }
+
+    // Delete related data first, then the project
+    await Promise.all([
+      service.from("media").delete().eq("project_id", projectId),
+      service.from("collections").delete().eq("project_id", projectId),
+    ]);
+
+    const { error: deleteError } = await service
+      .from("projects")
+      .delete()
+      .eq("id", projectId)
+      .eq("photographer_id", photographerRow.id);
+
+    if (deleteError) throw deleteError;
+
+    return NextResponse.json({ ok: true });
+  } catch (error) {
+    console.error("[DELETE /api/dashboard/events/[id]]", error);
+    return NextResponse.json(
+      { ok: false, message: error instanceof Error ? error.message : "Failed to delete project." },
+      { status: 500 },
+    );
+  }
+}

@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { Logo } from "@/components/logo";
-import { ArrowLeft, CalendarDays, ImagePlus, Settings, ChevronRight, Search, LogOut, Users } from "lucide-react";
+import { ArrowLeft, CalendarDays, Check, ImagePlus, LogOut, MoreHorizontal, Search, Settings, Trash2, Users, X } from "lucide-react";
 
 type ProjectRow = {
   id: string;
@@ -128,6 +128,15 @@ export default function EventsPage() {
   const [hoveredProjectId, setHoveredProjectId] = useState<string | null>(null);
   const [userEmail, setUserEmail] = useState("");
 
+  // Selection state
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  // Context menu for individual cards
+  const [contextMenuId, setContextMenuId] = useState<string | null>(null);
+  const [contextMenuPos, setContextMenuPos] = useState<{ x: number; y: number } | null>(null);
+
   useEffect(() => {
     let mounted = true;
 
@@ -180,9 +189,61 @@ export default function EventsPage() {
     };
   }, [supabase.auth]);
 
+  // Close context menu on click elsewhere
+  useEffect(() => {
+    function handleClick() { setContextMenuId(null); setContextMenuPos(null); }
+    if (contextMenuId) {
+      window.addEventListener("click", handleClick);
+      return () => window.removeEventListener("click", handleClick);
+    }
+  }, [contextMenuId]);
+
   async function signOut() {
     await supabase.auth.signOut();
     window.location.href = "/sign-in";
+  }
+
+  function toggleSelect(id: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function selectAll() {
+    setSelectedIds(new Set(filteredProjects.map((p) => p.id)));
+  }
+
+  function deselectAll() {
+    setSelectedIds(new Set());
+  }
+
+  function exitSelectMode() {
+    setSelectMode(false);
+    setSelectedIds(new Set());
+  }
+
+  async function handleDelete(ids: string[]) {
+    if (!ids.length) return;
+    setDeleting(true);
+    try {
+      await Promise.all(
+        ids.map((id) =>
+          fetch(`/api/dashboard/events/${id}`, { method: "DELETE" }).then((r) => r.json())
+        )
+      );
+      setProjects((prev) => prev.filter((p) => !ids.includes(p.id)));
+      setSelectedIds(new Set());
+      setShowDeleteConfirm(false);
+      setContextMenuId(null);
+      setContextMenuPos(null);
+    } catch (err) {
+      console.error("Delete failed:", err);
+    } finally {
+      setDeleting(false);
+    }
   }
 
   const filteredProjects = useMemo(() => {
@@ -202,6 +263,28 @@ export default function EventsPage() {
       event.preventDefault();
       router.push(href);
     }
+  }
+
+  function handleCardClick(project: ProjectRow) {
+    if (selectMode) {
+      toggleSelect(project.id);
+    } else {
+      router.push(`/dashboard/projects/${project.id}`);
+    }
+  }
+
+  function handleContextMenu(e: React.MouseEvent, projectId: string) {
+    e.preventDefault();
+    e.stopPropagation();
+    setContextMenuId(projectId);
+    setContextMenuPos({ x: e.clientX, y: e.clientY });
+  }
+
+  function handleThreeDotClick(e: React.MouseEvent, projectId: string) {
+    e.stopPropagation();
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    setContextMenuId(projectId);
+    setContextMenuPos({ x: rect.right, y: rect.bottom + 4 });
   }
 
   return (
@@ -275,6 +358,31 @@ export default function EventsPage() {
               className="h-14 w-full rounded-[18px] border border-[#d9dfeb] bg-white pl-12 pr-4 text-[16px] text-[#13234a] outline-none transition focus:border-[#13234a] focus:ring-2 focus:ring-[#13234a]/10"
             />
           </div>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            {!selectMode ? (
+              <button
+                onClick={() => setSelectMode(true)}
+                style={{ padding: "10px 16px", borderRadius: 10, border: "1px solid #d1d5db", background: "#fff", color: "#374151", fontSize: 13, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}
+              >
+                <Check size={14} /> Select
+              </button>
+            ) : (
+              <>
+                <button
+                  onClick={selectedIds.size === filteredProjects.length ? deselectAll : selectAll}
+                  style={{ padding: "10px 16px", borderRadius: 10, border: "1px solid #d1d5db", background: "#fff", color: "#374151", fontSize: 13, fontWeight: 600, cursor: "pointer" }}
+                >
+                  {selectedIds.size === filteredProjects.length ? "Deselect All" : "Select All"}
+                </button>
+                <button
+                  onClick={exitSelectMode}
+                  style={{ padding: "10px 16px", borderRadius: 10, border: "1px solid #d1d5db", background: "#fff", color: "#374151", fontSize: 13, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}
+                >
+                  <X size={14} /> Cancel
+                </button>
+              </>
+            )}
+          </div>
         </div>
 
         {loading ? (
@@ -293,6 +401,7 @@ export default function EventsPage() {
               const hovered = hoveredProjectId === project.id;
               const cover = clean(project.cover_photo_url);
               const status = statusLabel(project);
+              const selected = selectedIds.has(project.id);
               const statusColors: Record<string, { bg: string; fg: string }> = {
                 active: { bg: "#dcfce7", fg: "#166534" },
                 inactive: { bg: "#f3f4f6", fg: "#6b7280" },
@@ -305,16 +414,18 @@ export default function EventsPage() {
                   key={project.id}
                   role="link"
                   tabIndex={0}
-                  onClick={() => router.push(href)}
-                  onKeyDown={(event) => handleCardKeyDown(event, href)}
+                  onClick={() => handleCardClick(project)}
+                  onKeyDown={(event) => !selectMode && handleCardKeyDown(event, href)}
+                  onContextMenu={(e) => handleContextMenu(e, project.id)}
                   onMouseEnter={() => setHoveredProjectId(project.id)}
                   onMouseLeave={() => setHoveredProjectId((prev) => (prev === project.id ? null : prev))}
                   className="cursor-pointer overflow-hidden bg-white transition"
                   style={{
-                    border: hovered ? "2px solid #111" : "1px solid #e5e7eb",
+                    border: selected ? "2px solid #2563eb" : hovered ? "2px solid #111" : "1px solid #e5e7eb",
                     borderRadius: 12,
-                    boxShadow: hovered ? "0 8px 24px rgba(0,0,0,0.1)" : "0 1px 4px rgba(0,0,0,0.04)",
+                    boxShadow: selected ? "0 0 0 3px rgba(37,99,235,0.15)" : hovered ? "0 8px 24px rgba(0,0,0,0.1)" : "0 1px 4px rgba(0,0,0,0.04)",
                     transform: hovered ? "translateY(-2px)" : "translateY(0)",
+                    position: "relative",
                   }}
                 >
                   {/* Thumbnail */}
@@ -330,8 +441,57 @@ export default function EventsPage() {
                         <ImagePlus size={32} color="rgba(255,255,255,0.5)" />
                       </div>
                     )}
+
+                    {/* Selection checkbox (top-left) */}
+                    {(selectMode || selected) && (
+                      <div
+                        onClick={(e) => { e.stopPropagation(); toggleSelect(project.id); }}
+                        style={{
+                          position: "absolute",
+                          top: 10,
+                          left: 10,
+                          width: 26,
+                          height: 26,
+                          borderRadius: 8,
+                          background: selected ? "#2563eb" : "rgba(255,255,255,0.85)",
+                          border: selected ? "2px solid #2563eb" : "2px solid rgba(0,0,0,0.25)",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          cursor: "pointer",
+                          zIndex: 5,
+                          transition: "all 150ms ease",
+                        }}
+                      >
+                        {selected && <Check size={14} color="#fff" strokeWidth={3} />}
+                      </div>
+                    )}
+
+                    {/* Three-dot menu (top-right) */}
+                    {(hovered || selectMode) && !selected && (
+                      <div
+                        onClick={(e) => handleThreeDotClick(e, project.id)}
+                        style={{
+                          position: "absolute",
+                          top: 10,
+                          right: 10,
+                          width: 30,
+                          height: 30,
+                          borderRadius: 8,
+                          background: "rgba(0,0,0,0.45)",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          cursor: "pointer",
+                          zIndex: 5,
+                        }}
+                      >
+                        <MoreHorizontal size={16} color="#fff" />
+                      </div>
+                    )}
+
                     {/* Hover overlay with quick links */}
-                    {hovered && (
+                    {hovered && !selectMode && (
                       <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.35)", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
                         <Link
                           href={`${href}/settings`}
@@ -378,6 +538,139 @@ export default function EventsPage() {
             })}
           </div>
         )}
+
+        {/* Context menu */}
+        {contextMenuId && contextMenuPos && (
+          <div
+            style={{
+              position: "fixed",
+              top: contextMenuPos.y,
+              left: contextMenuPos.x,
+              background: "#fff",
+              borderRadius: 10,
+              boxShadow: "0 8px 30px rgba(0,0,0,0.18)",
+              border: "1px solid #e5e7eb",
+              zIndex: 999,
+              padding: "6px 0",
+              minWidth: 160,
+            }}
+          >
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                router.push(`/dashboard/projects/${contextMenuId}`);
+                setContextMenuId(null);
+              }}
+              style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "10px 16px", border: "none", background: "none", cursor: "pointer", fontSize: 13, color: "#374151", fontWeight: 500 }}
+              onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "#f3f4f6"; }}
+              onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "none"; }}
+            >
+              <Settings size={14} /> Open
+            </button>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                if (!selectMode) setSelectMode(true);
+                toggleSelect(contextMenuId);
+                setContextMenuId(null);
+              }}
+              style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "10px 16px", border: "none", background: "none", cursor: "pointer", fontSize: 13, color: "#374151", fontWeight: 500 }}
+              onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "#f3f4f6"; }}
+              onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "none"; }}
+            >
+              <Check size={14} /> Select
+            </button>
+            <div style={{ height: 1, background: "#e5e7eb", margin: "4px 0" }} />
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setSelectedIds(new Set([contextMenuId]));
+                setShowDeleteConfirm(true);
+                setContextMenuId(null);
+              }}
+              style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "10px 16px", border: "none", background: "none", cursor: "pointer", fontSize: 13, color: "#dc2626", fontWeight: 500 }}
+              onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "#fef2f2"; }}
+              onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "none"; }}
+            >
+              <Trash2 size={14} /> Delete
+            </button>
+          </div>
+        )}
+
+        {/* Bottom action bar when items are selected */}
+        {selectMode && selectedIds.size > 0 && (
+          <div
+            style={{
+              position: "fixed",
+              bottom: 28,
+              left: "50%",
+              transform: "translateX(-50%)",
+              background: "#111827",
+              borderRadius: 16,
+              padding: "12px 24px",
+              display: "flex",
+              alignItems: "center",
+              gap: 20,
+              boxShadow: "0 12px 40px rgba(0,0,0,0.3)",
+              zIndex: 900,
+              color: "#fff",
+            }}
+          >
+            <span style={{ fontSize: 14, fontWeight: 700 }}>
+              {selectedIds.size} {selectedIds.size === 1 ? "event" : "events"} selected
+            </span>
+            <div style={{ width: 1, height: 24, background: "rgba(255,255,255,0.2)" }} />
+            <button
+              onClick={() => setShowDeleteConfirm(true)}
+              style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 16px", borderRadius: 10, border: "none", background: "#dc2626", color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer" }}
+            >
+              <Trash2 size={14} /> Delete
+            </button>
+            <button
+              onClick={exitSelectMode}
+              style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 16px", borderRadius: 10, border: "1px solid rgba(255,255,255,0.2)", background: "transparent", color: "#fff", fontSize: 13, fontWeight: 600, cursor: "pointer" }}
+            >
+              Cancel
+            </button>
+          </div>
+        )}
+
+        {/* Delete confirmation modal */}
+        {showDeleteConfirm && (
+          <div
+            style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}
+            onClick={(e) => { if (e.target === e.currentTarget && !deleting) { setShowDeleteConfirm(false); } }}
+          >
+            <div style={{ background: "#fff", borderRadius: 20, padding: 32, width: "100%", maxWidth: 420, boxShadow: "0 24px 60px rgba(0,0,0,0.18)" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
+                <div style={{ width: 42, height: 42, borderRadius: 12, background: "#fef2f2", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <Trash2 size={20} color="#dc2626" />
+                </div>
+                <h2 style={{ margin: 0, fontSize: 18, fontWeight: 700, color: "#111" }}>Delete {selectedIds.size === 1 ? "Event" : "Events"}</h2>
+              </div>
+              <p style={{ margin: "0 0 24px", color: "#6b7280", fontSize: 14, lineHeight: 1.5 }}>
+                Are you sure you want to delete {selectedIds.size === 1 ? "this event" : `these ${selectedIds.size} events`}? This will also remove all photos and albums associated with {selectedIds.size === 1 ? "it" : "them"}. This action cannot be undone.
+              </p>
+              <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+                <button
+                  onClick={() => setShowDeleteConfirm(false)}
+                  disabled={deleting}
+                  style={{ padding: "10px 18px", borderRadius: 10, border: "1px solid #d1d5db", background: "#fff", color: "#374151", fontSize: 14, fontWeight: 600, cursor: "pointer" }}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => void handleDelete(Array.from(selectedIds))}
+                  disabled={deleting}
+                  style={{ padding: "10px 20px", borderRadius: 10, border: "none", background: "#dc2626", color: "#fff", fontSize: 14, fontWeight: 700, cursor: deleting ? "not-allowed" : "pointer", opacity: deleting ? 0.6 : 1 }}
+                >
+                  {deleting ? "Deleting…" : `Delete ${selectedIds.size === 1 ? "Event" : `${selectedIds.size} Events`}`}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         </div>
       </div>
     </div>

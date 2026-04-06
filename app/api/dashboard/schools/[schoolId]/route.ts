@@ -362,3 +362,64 @@ export async function PATCH(
     );
   }
 }
+
+/* ------------------------------------------------------------------ */
+/*  DELETE /api/dashboard/schools/[schoolId]                            */
+/* ------------------------------------------------------------------ */
+export async function DELETE(
+  request: NextRequest,
+  context: { params: Promise<{ schoolId: string }> },
+) {
+  try {
+    const { user } = await resolveDashboardAuth(request);
+    if (!user) {
+      return NextResponse.json({ ok: false, message: "Please sign in again." }, { status: 401 });
+    }
+
+    const { schoolId } = await context.params;
+    const service = createDashboardServiceClient();
+
+    const { data: photographerRow, error: photographerError } = await service
+      .from("photographers")
+      .select("id")
+      .eq("user_id", user.id)
+      .maybeSingle();
+
+    if (photographerError) throw photographerError;
+    if (!photographerRow?.id) {
+      return NextResponse.json({ ok: false, message: "Photographer profile not found." }, { status: 404 });
+    }
+
+    // Verify the school belongs to the photographer
+    const { data: schoolRow, error: schoolError } = await service
+      .from("schools")
+      .select("id")
+      .eq("id", schoolId)
+      .eq("photographer_id", photographerRow.id)
+      .maybeSingle();
+
+    if (schoolError) throw schoolError;
+    if (!schoolRow) {
+      return NextResponse.json({ ok: false, message: "School not found." }, { status: 404 });
+    }
+
+    // Delete students first, then the school
+    await service.from("students").delete().eq("school_id", schoolId);
+
+    const { error: deleteError } = await service
+      .from("schools")
+      .delete()
+      .eq("id", schoolId)
+      .eq("photographer_id", photographerRow.id);
+
+    if (deleteError) throw deleteError;
+
+    return NextResponse.json({ ok: true });
+  } catch (error) {
+    console.error("[DELETE /api/dashboard/schools/[schoolId]]", error);
+    return NextResponse.json(
+      { ok: false, message: error instanceof Error ? error.message : "Failed to delete school." },
+      { status: 500 },
+    );
+  }
+}

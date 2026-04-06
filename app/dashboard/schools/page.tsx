@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { Logo } from "@/components/logo";
-import { GraduationCap, Images, LogOut, Plus, School, Search, Settings, Users, X } from "lucide-react";
+import { Check, GraduationCap, Images, LogOut, MoreHorizontal, Plus, School, Search, Settings, Trash2, Users, X } from "lucide-react";
 
 type SchoolRow = {
   id: string;
@@ -133,10 +133,27 @@ export default function SchoolsPage() {
   const [createError, setCreateError] = useState("");
   const createInputRef = useRef<HTMLInputElement>(null);
 
+  // Selection state
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [contextMenuId, setContextMenuId] = useState<string | null>(null);
+  const [contextMenuPos, setContextMenuPos] = useState<{ x: number; y: number } | null>(null);
+
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Close context menu on click elsewhere
+  useEffect(() => {
+    function handleClick() { setContextMenuId(null); setContextMenuPos(null); }
+    if (contextMenuId) {
+      window.addEventListener("click", handleClick);
+      return () => window.removeEventListener("click", handleClick);
+    }
+  }, [contextMenuId]);
 
   async function load() {
     setLoading(true);
@@ -327,6 +344,72 @@ export default function SchoolsPage() {
     }
   }
 
+  function toggleSelect(id: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function selectAll() {
+    setSelectedIds(new Set(filteredSchools.map((s) => s.id)));
+  }
+
+  function deselectAll() {
+    setSelectedIds(new Set());
+  }
+
+  function exitSelectMode() {
+    setSelectMode(false);
+    setSelectedIds(new Set());
+  }
+
+  async function handleDelete(ids: string[]) {
+    if (!ids.length) return;
+    setDeleting(true);
+    try {
+      await Promise.all(
+        ids.map((id) =>
+          fetch(`/api/dashboard/schools/${id}`, { method: "DELETE" }).then((r) => r.json())
+        )
+      );
+      setSchools((prev) => prev.filter((s) => !ids.includes(s.id)));
+      setSelectedIds(new Set());
+      setShowDeleteConfirm(false);
+      setContextMenuId(null);
+      setContextMenuPos(null);
+    } catch (err) {
+      console.error("Delete failed:", err);
+    } finally {
+      setDeleting(false);
+    }
+  }
+
+  function handleCardClick(school: SchoolCard) {
+    if (selectMode) {
+      toggleSelect(school.id);
+    } else {
+      router.push(`/dashboard/projects/schools/${school.id}`);
+    }
+  }
+
+  function handleContextMenu(e: React.MouseEvent, schoolId: string) {
+    e.preventDefault();
+    e.stopPropagation();
+    setContextMenuId(schoolId);
+    setContextMenuPos({ x: e.clientX, y: e.clientY });
+  }
+
+  function handleThreeDotClick(e: React.MouseEvent, schoolId: string) {
+    e.stopPropagation();
+    e.preventDefault();
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    setContextMenuId(schoolId);
+    setContextMenuPos({ x: rect.right, y: rect.bottom + 4 });
+  }
+
   const sortedSchools = useMemo(
     () => [...schools].sort((a, b) => a.school_name.localeCompare(b.school_name)),
     [schools]
@@ -377,36 +460,63 @@ export default function SchoolsPage() {
           </button>
         </div>
 
-        <div style={{ marginBottom: 24, position: "relative", maxWidth: 460 }}>
-          <Search
-            size={16}
-            style={{
-              position: "absolute",
-              left: 14,
-              top: "50%",
-              transform: "translateY(-50%)",
-              color: "#6b7280",
-              pointerEvents: "none",
-            }}
-          />
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(event) => setSearchQuery(event.target.value)}
-            placeholder="Search schools or local ID..."
-            style={{
-              width: "100%",
-              height: 44,
-              borderRadius: 14,
-              border: "1px solid #d1d5db",
-              background: "#fff",
-              padding: "0 14px 0 40px",
-              fontSize: 14,
-              color: "#111827",
-              outline: "none",
-              boxSizing: "border-box",
-            }}
-          />
+        <div style={{ marginBottom: 24, display: "flex", alignItems: "center", gap: 12 }}>
+          <div style={{ position: "relative", maxWidth: 460, flex: 1 }}>
+            <Search
+              size={16}
+              style={{
+                position: "absolute",
+                left: 14,
+                top: "50%",
+                transform: "translateY(-50%)",
+                color: "#6b7280",
+                pointerEvents: "none",
+              }}
+            />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              placeholder="Search schools or local ID..."
+              style={{
+                width: "100%",
+                height: 44,
+                borderRadius: 14,
+                border: "1px solid #d1d5db",
+                background: "#fff",
+                padding: "0 14px 0 40px",
+                fontSize: 14,
+                color: "#111827",
+                outline: "none",
+                boxSizing: "border-box",
+              }}
+            />
+          </div>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            {!selectMode ? (
+              <button
+                onClick={() => setSelectMode(true)}
+                style={{ padding: "10px 16px", borderRadius: 10, border: "1px solid #d1d5db", background: "#fff", color: "#374151", fontSize: 13, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}
+              >
+                <Check size={14} /> Select
+              </button>
+            ) : (
+              <>
+                <button
+                  onClick={selectedIds.size === filteredSchools.length ? deselectAll : selectAll}
+                  style={{ padding: "10px 16px", borderRadius: 10, border: "1px solid #d1d5db", background: "#fff", color: "#374151", fontSize: 13, fontWeight: 600, cursor: "pointer" }}
+                >
+                  {selectedIds.size === filteredSchools.length ? "Deselect All" : "Select All"}
+                </button>
+                <button
+                  onClick={exitSelectMode}
+                  style={{ padding: "10px 16px", borderRadius: 10, border: "1px solid #d1d5db", background: "#fff", color: "#374151", fontSize: 13, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}
+                >
+                  <X size={14} /> Cancel
+                </button>
+              </>
+            )}
+          </div>
         </div>
 
         {error && (
@@ -432,23 +542,26 @@ export default function SchoolsPage() {
             {filteredSchools.map((school) => {
               const href = `/dashboard/projects/schools/${school.id}`;
               const hovered = hoveredSchoolId === school.id;
+              const selected = selectedIds.has(school.id);
               return (
-              <Link
+              <div
                 key={school.id}
-                href={href}
+                onClick={() => handleCardClick(school)}
+                onContextMenu={(e) => handleContextMenu(e, school.id)}
                 onMouseEnter={() => setHoveredSchoolId(school.id)}
                 onMouseLeave={() => setHoveredSchoolId((prev) => (prev === school.id ? null : prev))}
                 style={{
                   background: "#fff",
                   borderRadius: 12,
                   overflow: "hidden",
-                  border: hovered ? "2px solid #111" : "1px solid #e5e7eb",
-                  boxShadow: hovered ? "0 8px 24px rgba(0,0,0,0.1)" : "0 1px 4px rgba(0,0,0,0.04)",
-                  display: "block",
+                  border: selected ? "2px solid #2563eb" : hovered ? "2px solid #111" : "1px solid #e5e7eb",
+                  boxShadow: selected ? "0 0 0 3px rgba(37,99,235,0.15)" : hovered ? "0 8px 24px rgba(0,0,0,0.1)" : "0 1px 4px rgba(0,0,0,0.04)",
+                  cursor: "pointer",
                   textDecoration: "none",
                   color: "inherit",
                   transform: hovered ? "translateY(-2px)" : "translateY(0)",
                   transition: "border-color 120ms ease, transform 120ms ease, box-shadow 120ms ease",
+                  position: "relative",
                 }}
               >
                 {/* Thumbnail area */}
@@ -464,17 +577,66 @@ export default function SchoolsPage() {
                       <School size={40} color="rgba(255,255,255,0.3)" />
                     </div>
                   )}
+
+                  {/* Selection checkbox (top-left) */}
+                  {(selectMode || selected) && (
+                    <div
+                      onClick={(e) => { e.stopPropagation(); toggleSelect(school.id); }}
+                      style={{
+                        position: "absolute",
+                        top: 10,
+                        left: 10,
+                        width: 26,
+                        height: 26,
+                        borderRadius: 8,
+                        background: selected ? "#2563eb" : "rgba(255,255,255,0.85)",
+                        border: selected ? "2px solid #2563eb" : "2px solid rgba(0,0,0,0.25)",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        cursor: "pointer",
+                        zIndex: 5,
+                        transition: "all 150ms ease",
+                      }}
+                    >
+                      {selected && <Check size={14} color="#fff" strokeWidth={3} />}
+                    </div>
+                  )}
+
+                  {/* Three-dot menu (top-right) */}
+                  {(hovered || selectMode) && !selected && (
+                    <div
+                      onClick={(e) => handleThreeDotClick(e, school.id)}
+                      style={{
+                        position: "absolute",
+                        top: 10,
+                        right: 10,
+                        width: 30,
+                        height: 30,
+                        borderRadius: 8,
+                        background: "rgba(0,0,0,0.45)",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        cursor: "pointer",
+                        zIndex: 5,
+                      }}
+                    >
+                      <MoreHorizontal size={16} color="#fff" />
+                    </div>
+                  )}
+
                   {/* Hover overlay */}
-                  {hovered && (
+                  {hovered && !selectMode && (
                     <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.35)", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
                       <span
-                        onClick={(e) => { e.preventDefault(); e.stopPropagation(); window.location.href = `${href}/settings`; }}
+                        onClick={(e) => { e.stopPropagation(); router.push(`${href}/settings`); }}
                         style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "8px 14px", background: "rgba(255,255,255,0.95)", color: "#111", borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: "pointer" }}
                       >
                         <Settings size={13} /> Settings
                       </span>
                       <span
-                        onClick={(e) => { e.preventDefault(); e.stopPropagation(); window.location.href = `${href}/visitors`; }}
+                        onClick={(e) => { e.stopPropagation(); router.push(`${href}/visitors`); }}
                         style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "8px 14px", background: "rgba(255,255,255,0.95)", color: "#111", borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: "pointer" }}
                       >
                         <Users size={13} /> Visitors
@@ -504,11 +666,143 @@ export default function SchoolsPage() {
                     </span>
                   </div>
                 </div>
-              </Link>
+              </div>
             )})}
           </div>
         )}
       </div>
+
+      {/* Context menu */}
+      {contextMenuId && contextMenuPos && (
+        <div
+          style={{
+            position: "fixed",
+            top: contextMenuPos.y,
+            left: contextMenuPos.x,
+            background: "#fff",
+            borderRadius: 10,
+            boxShadow: "0 8px 30px rgba(0,0,0,0.18)",
+            border: "1px solid #e5e7eb",
+            zIndex: 999,
+            padding: "6px 0",
+            minWidth: 160,
+          }}
+        >
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              router.push(`/dashboard/projects/schools/${contextMenuId}`);
+              setContextMenuId(null);
+            }}
+            style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "10px 16px", border: "none", background: "none", cursor: "pointer", fontSize: 13, color: "#374151", fontWeight: 500 }}
+            onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "#f3f4f6"; }}
+            onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "none"; }}
+          >
+            <Settings size={14} /> Open
+          </button>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              if (!selectMode) setSelectMode(true);
+              toggleSelect(contextMenuId);
+              setContextMenuId(null);
+            }}
+            style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "10px 16px", border: "none", background: "none", cursor: "pointer", fontSize: 13, color: "#374151", fontWeight: 500 }}
+            onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "#f3f4f6"; }}
+            onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "none"; }}
+          >
+            <Check size={14} /> Select
+          </button>
+          <div style={{ height: 1, background: "#e5e7eb", margin: "4px 0" }} />
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              setSelectedIds(new Set([contextMenuId]));
+              setShowDeleteConfirm(true);
+              setContextMenuId(null);
+            }}
+            style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "10px 16px", border: "none", background: "none", cursor: "pointer", fontSize: 13, color: "#dc2626", fontWeight: 500 }}
+            onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "#fef2f2"; }}
+            onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "none"; }}
+          >
+            <Trash2 size={14} /> Delete
+          </button>
+        </div>
+      )}
+
+      {/* Bottom action bar when items are selected */}
+      {selectMode && selectedIds.size > 0 && (
+        <div
+          style={{
+            position: "fixed",
+            bottom: 28,
+            left: "50%",
+            transform: "translateX(-50%)",
+            background: "#111827",
+            borderRadius: 16,
+            padding: "12px 24px",
+            display: "flex",
+            alignItems: "center",
+            gap: 20,
+            boxShadow: "0 12px 40px rgba(0,0,0,0.3)",
+            zIndex: 900,
+            color: "#fff",
+          }}
+        >
+          <span style={{ fontSize: 14, fontWeight: 700 }}>
+            {selectedIds.size} {selectedIds.size === 1 ? "school" : "schools"} selected
+          </span>
+          <div style={{ width: 1, height: 24, background: "rgba(255,255,255,0.2)" }} />
+          <button
+            onClick={() => setShowDeleteConfirm(true)}
+            style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 16px", borderRadius: 10, border: "none", background: "#dc2626", color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer" }}
+          >
+            <Trash2 size={14} /> Delete
+          </button>
+          <button
+            onClick={exitSelectMode}
+            style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 16px", borderRadius: 10, border: "1px solid rgba(255,255,255,0.2)", background: "transparent", color: "#fff", fontSize: 13, fontWeight: 600, cursor: "pointer" }}
+          >
+            Cancel
+          </button>
+        </div>
+      )}
+
+      {/* Delete confirmation modal */}
+      {showDeleteConfirm && (
+        <div
+          style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}
+          onClick={(e) => { if (e.target === e.currentTarget && !deleting) { setShowDeleteConfirm(false); } }}
+        >
+          <div style={{ background: "#fff", borderRadius: 20, padding: 32, width: "100%", maxWidth: 420, boxShadow: "0 24px 60px rgba(0,0,0,0.18)" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
+              <div style={{ width: 42, height: 42, borderRadius: 12, background: "#fef2f2", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <Trash2 size={20} color="#dc2626" />
+              </div>
+              <h2 style={{ margin: 0, fontSize: 18, fontWeight: 700, color: "#111" }}>Delete {selectedIds.size === 1 ? "School" : "Schools"}</h2>
+            </div>
+            <p style={{ margin: "0 0 24px", color: "#6b7280", fontSize: 14, lineHeight: 1.5 }}>
+              Are you sure you want to delete {selectedIds.size === 1 ? "this school" : `these ${selectedIds.size} schools`}? This will also remove all students and data associated with {selectedIds.size === 1 ? "it" : "them"}. This action cannot be undone.
+            </p>
+            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+              <button
+                onClick={() => setShowDeleteConfirm(false)}
+                disabled={deleting}
+                style={{ padding: "10px 18px", borderRadius: 10, border: "1px solid #d1d5db", background: "#fff", color: "#374151", fontSize: 14, fontWeight: 600, cursor: "pointer" }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => void handleDelete(Array.from(selectedIds))}
+                disabled={deleting}
+                style={{ padding: "10px 20px", borderRadius: 10, border: "none", background: "#dc2626", color: "#fff", fontSize: 14, fontWeight: 700, cursor: deleting ? "not-allowed" : "pointer", opacity: deleting ? 0.6 : 1 }}
+              >
+                {deleting ? "Deleting…" : `Delete ${selectedIds.size === 1 ? "School" : `${selectedIds.size} Schools`}`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Create School Modal */}
       {showCreateModal && (
