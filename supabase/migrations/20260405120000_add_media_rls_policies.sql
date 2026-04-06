@@ -1,4 +1,5 @@
 -- Allow authenticated users to INSERT media for projects they own
+drop policy if exists "Photographers can insert media for own projects" on public.media;
 create policy "Photographers can insert media for own projects"
   on public.media for insert
   to authenticated
@@ -12,6 +13,7 @@ create policy "Photographers can insert media for own projects"
   );
 
 -- Allow authenticated users to SELECT media for projects they own
+drop policy if exists "Photographers can view media for own projects" on public.media;
 create policy "Photographers can view media for own projects"
   on public.media for select
   to authenticated
@@ -25,6 +27,7 @@ create policy "Photographers can view media for own projects"
   );
 
 -- Allow authenticated users to UPDATE media for projects they own
+drop policy if exists "Photographers can update media for own projects" on public.media;
 create policy "Photographers can update media for own projects"
   on public.media for update
   to authenticated
@@ -38,6 +41,7 @@ create policy "Photographers can update media for own projects"
   );
 
 -- Allow authenticated users to DELETE media for projects they own
+drop policy if exists "Photographers can delete media for own projects" on public.media;
 create policy "Photographers can delete media for own projects"
   on public.media for delete
   to authenticated

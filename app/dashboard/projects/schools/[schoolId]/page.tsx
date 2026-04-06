@@ -14,6 +14,7 @@ import {
   Lock,
   Menu,
   Search,
+  X,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { ensureSchoolCollectionId } from "@/lib/school-sync";
@@ -352,6 +353,11 @@ export default function SchoolsSchoolDetailPage() {
   const [contactName, setContactName] = useState("");
   const [contactEmail, setContactEmail] = useState("");
   const [contactPhone, setContactPhone] = useState("");
+  const [schoolSyncedProjectId, setSchoolSyncedProjectId] = useState<string | null>(null);
+  const [focalEditorOpen, setFocalEditorOpen] = useState(false);
+  const [focalX, setFocalX] = useState(0.5);
+  const [focalY, setFocalY] = useState(0.5);
+  const [savingFocal, setSavingFocal] = useState(false);
 
   useEffect(() => {
     if (!schoolId || typeof window === "undefined") return;
@@ -397,6 +403,7 @@ export default function SchoolsSchoolDetailPage() {
         const syncedProjectId = await findSyncedProjectId(supabase, schoolId, {
           localSchoolId: (schoolRow as School).local_school_id,
         });
+        if (!cancelled) setSchoolSyncedProjectId(syncedProjectId);
         const nextClassCollectionsBySlug: Record<string, ClassCollectionRow> = {};
         const nextRoleCollectionsBySlug: Record<string, ClassCollectionRow> = {};
         let nextSchoolProjectCoverUrl = "";
@@ -404,15 +411,18 @@ export default function SchoolsSchoolDetailPage() {
         if (syncedProjectId) {
           const { data: syncedProjectRow, error: projectError } = await supabase
             .from("projects")
-            .select("cover_photo_url")
+            .select("cover_photo_url,cover_focal_x,cover_focal_y")
             .eq("id", syncedProjectId)
             .maybeSingle();
 
           if (projectError) throw projectError;
 
-          nextSchoolProjectCoverUrl = clean(
-            (syncedProjectRow as { cover_photo_url?: string | null } | null)?.cover_photo_url
-          );
+          const spRow = syncedProjectRow as { cover_photo_url?: string | null; cover_focal_x?: number | null; cover_focal_y?: number | null } | null;
+          nextSchoolProjectCoverUrl = clean(spRow?.cover_photo_url);
+          if (!cancelled) {
+            setFocalX(Number(spRow?.cover_focal_x) || 0.5);
+            setFocalY(Number(spRow?.cover_focal_y) || 0.5);
+          }
 
           const { data: collectionRows, error: collectionError } = await supabase
             .from("collections")
@@ -1334,7 +1344,7 @@ export default function SchoolsSchoolDetailPage() {
                   border: 0,
                   borderRadius: 16,
                   overflow: "hidden",
-                  background: grouped.schoolCover ? `url(${grouped.schoolCover}) center/cover no-repeat` : "linear-gradient(135deg,#111111,#b91c1c)",
+                  background: grouped.schoolCover ? `url(${grouped.schoolCover}) ${Math.round(focalX * 100)}% ${Math.round(focalY * 100)}%/cover no-repeat` : "linear-gradient(135deg,#111111,#b91c1c)",
                   aspectRatio: "1.35 / 1",
                   boxSizing: "border-box",
                   cursor: "pointer",
@@ -1344,6 +1354,16 @@ export default function SchoolsSchoolDetailPage() {
                 aria-label="Choose school cover photo"
                 title="Choose school cover photo"
               />
+              {grouped.schoolCover && (
+                <button
+                  type="button"
+                  onClick={() => setFocalEditorOpen(true)}
+                  style={{ width: "100%", marginTop: 8, padding: "10px 14px", background: "#f3f4f6", border: "1px solid #e5e7eb", borderRadius: 10, fontSize: 13, fontWeight: 700, color: "#111", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3"/><path d="M12 2v4m0 12v4M2 12h4m12 0h4"/></svg>
+                  Edit Cover Photo
+                </button>
+              )}
               <div style={{ color: "#4b5563", fontSize: 14, marginTop: 10 }}>Shoot Date: {formatDisplayDate(schoolDate)}</div>
               <div style={{ color: "#6b7280", fontSize: 12, marginTop: 4 }}>Click the cover to change it, or use the menu to upload one.</div>
 
@@ -2124,6 +2144,104 @@ export default function SchoolsSchoolDetailPage() {
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 12, padding: "18px 22px", borderTop: "1px solid #eef2f7", background: "#ffffff" }}>
               <button onClick={() => setContactModalOpen(false)} style={{ borderRadius: 14, border: "1px solid #d0d5dd", background: "#fff", color: "#111111", padding: "12px 16px", fontWeight: 800, cursor: "pointer" }}>Cancel</button>
               <button onClick={addContact} disabled={!clean(contactName)} style={{ borderRadius: 14, border: 0, background: !clean(contactName) ? "#d1d5db" : "#111111", color: "#fff", padding: "12px 16px", fontWeight: 800, cursor: !clean(contactName) ? "not-allowed" : "pointer" }}>Save Contact</button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {/* ── Focal Point Editor Modal ── */}
+      {focalEditorOpen && grouped.schoolCover ? (
+        <div style={{ position: "fixed", inset: 0, zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.6)", backdropFilter: "blur(4px)" }}>
+          <div style={{ background: "#fff", borderRadius: 20, width: "90%", maxWidth: 680, maxHeight: "90vh", overflow: "hidden", boxShadow: "0 24px 64px rgba(0,0,0,0.25)" }}>
+            {/* Header */}
+            <div style={{ padding: "20px 24px", borderBottom: "1px solid #e5e7eb", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <div>
+                <h2 style={{ margin: 0, fontSize: 20, fontWeight: 800, color: "#111" }}>Edit Cover Photo</h2>
+                <p style={{ margin: "4px 0 0", fontSize: 13, color: "#6b7280" }}>Adjust the focal point to control how the cover photo is cropped.</p>
+              </div>
+              <button onClick={() => setFocalEditorOpen(false)} style={{ background: "none", border: "none", cursor: "pointer", padding: 4, color: "#6b7280" }}>
+                <X size={20} />
+              </button>
+            </div>
+
+            {/* Image with focal point */}
+            <div style={{ padding: "24px 24px 16px", display: "flex", justifyContent: "center" }}>
+              <div
+                style={{ position: "relative", width: "100%", maxWidth: 600, cursor: "crosshair", borderRadius: 12, overflow: "hidden", border: "1px solid #e5e7eb" }}
+                onClick={(e) => {
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  const x = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+                  const y = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
+                  setFocalX(x);
+                  setFocalY(y);
+                }}
+              >
+                <img
+                  src={grouped.schoolCover}
+                  alt="Cover"
+                  draggable={false}
+                  style={{ width: "100%", display: "block", userSelect: "none" }}
+                />
+                {/* Focal point indicator */}
+                <div
+                  style={{
+                    position: "absolute",
+                    left: `${focalX * 100}%`,
+                    top: `${focalY * 100}%`,
+                    transform: "translate(-50%, -50%)",
+                    width: 40,
+                    height: 40,
+                    borderRadius: "50%",
+                    border: "3px solid #fff",
+                    boxShadow: "0 0 0 2px rgba(0,0,0,0.4), 0 2px 8px rgba(0,0,0,0.3), inset 0 0 0 1px rgba(0,0,0,0.2)",
+                    pointerEvents: "none",
+                    transition: "left 0.1s, top 0.1s",
+                  }}
+                >
+                  <div style={{ position: "absolute", inset: 0, borderRadius: "50%", background: "rgba(255,255,255,0.25)" }} />
+                  <div style={{ position: "absolute", left: "50%", top: 0, bottom: 0, width: 1, background: "rgba(255,255,255,0.8)", transform: "translateX(-50%)" }} />
+                  <div style={{ position: "absolute", top: "50%", left: 0, right: 0, height: 1, background: "rgba(255,255,255,0.8)", transform: "translateY(-50%)" }} />
+                </div>
+              </div>
+            </div>
+
+            {/* Preview strip */}
+            <div style={{ padding: "0 24px 16px" }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: "#6b7280", marginBottom: 6 }}>Crop preview</div>
+              <div style={{ width: "100%", height: 80, borderRadius: 10, overflow: "hidden", border: "1px solid #e5e7eb", backgroundImage: `url(${grouped.schoolCover})`, backgroundSize: "cover", backgroundPosition: `${Math.round(focalX * 100)}% ${Math.round(focalY * 100)}%` }} />
+            </div>
+
+            {/* Footer */}
+            <div style={{ padding: "16px 24px 20px", borderTop: "1px solid #e5e7eb", display: "flex", justifyContent: "flex-end", gap: 12 }}>
+              <button
+                onClick={() => setFocalEditorOpen(false)}
+                style={{ borderRadius: 12, border: "1px solid #d0d5dd", background: "#fff", color: "#344054", padding: "12px 20px", fontWeight: 700, cursor: "pointer", fontSize: 14 }}
+              >
+                Cancel
+              </button>
+              <button
+                disabled={savingFocal || !schoolSyncedProjectId}
+                onClick={async () => {
+                  if (!schoolSyncedProjectId) return;
+                  setSavingFocal(true);
+                  try {
+                    const res = await fetch(`/api/dashboard/events/${schoolSyncedProjectId}`, {
+                      method: "PATCH",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ cover_focal_x: focalX, cover_focal_y: focalY }),
+                    });
+                    if (!res.ok) throw new Error("Failed to save focal point");
+                    setFocalEditorOpen(false);
+                  } catch (err) {
+                    alert(err instanceof Error ? err.message : "Failed to save");
+                  } finally {
+                    setSavingFocal(false);
+                  }
+                }}
+                style={{ borderRadius: 12, border: 0, background: savingFocal ? "#94a3b8" : "#0f172a", color: "#fff", padding: "12px 24px", fontWeight: 700, cursor: savingFocal ? "not-allowed" : "pointer", fontSize: 14 }}
+              >
+                {savingFocal ? "Saving\u2026" : "Save"}
+              </button>
             </div>
           </div>
         </div>

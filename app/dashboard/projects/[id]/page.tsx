@@ -50,6 +50,8 @@ type ProjectRow = {
   client_name?: string | null;
   source_type?: string | null;
   cover_photo_url?: string | null;
+  cover_focal_x?: number | null;
+  cover_focal_y?: number | null;
   access_mode?: string | null;
   access_pin?: string | null;
   email_required?: boolean | null;
@@ -238,6 +240,10 @@ export default function ProjectDetailPage() {
   const [coverTarget, setCoverTarget] = useState<{ type: "project" | "album"; albumId?: string } | null>(null);
   const [selectedMediaId, setSelectedMediaId] = useState<string | null>(null);
   const [savingCover, setSavingCover] = useState(false);
+  const [focalEditorOpen, setFocalEditorOpen] = useState(false);
+  const [focalX, setFocalX] = useState(0.5);
+  const [focalY, setFocalY] = useState(0.5);
+  const [savingFocal, setSavingFocal] = useState(false);
   const [newAlbumOpen, setNewAlbumOpen] = useState(false);
   const [newAlbumTitle, setNewAlbumTitle] = useState("");
   const [creatingAlbum, setCreatingAlbum] = useState(false);
@@ -312,6 +318,8 @@ export default function ProjectDetailPage() {
 
         if (!mounted) return;
         setProject(payload.project);
+        setFocalX(Number((payload.project as Record<string, unknown>)?.cover_focal_x) || 0.5);
+        setFocalY(Number((payload.project as Record<string, unknown>)?.cover_focal_y) || 0.5);
         setCollections(payload.collections ?? []);
         setMedia(payload.media ?? []);
         setMediaCount(payload.mediaCount ?? 0);
@@ -1013,7 +1021,7 @@ export default function ProjectDetailPage() {
                 setSelectedMediaId(null);
                 setCoverPickerOpen(true);
               }}
-              style={{ borderRadius: 16, overflow: "hidden", background: projectCover ? `url(${projectCover}) center/cover no-repeat` : "linear-gradient(135deg,#111111,#4b5563)", aspectRatio: "1.35 / 1", border: "1px solid #e5e7eb", cursor: "pointer", position: "relative", display: "flex", alignItems: "center", justifyContent: "center" }}
+              style={{ borderRadius: 16, overflow: "hidden", background: projectCover ? `url(${projectCover}) ${Math.round(focalX * 100)}% ${Math.round(focalY * 100)}%/cover no-repeat` : "linear-gradient(135deg,#111111,#4b5563)", aspectRatio: "1.35 / 1", border: "1px solid #e5e7eb", cursor: "pointer", position: "relative", display: "flex", alignItems: "center", justifyContent: "center" }}
             >
               <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.3)", opacity: 0, transition: "opacity 0.2s", borderRadius: 16 }} className="hover-overlay" />
               <div style={{ color: "#fff", fontSize: 13, fontWeight: 700, background: "rgba(0,0,0,0.5)", borderRadius: 10, padding: "8px 14px", zIndex: 1 }}>
@@ -1021,6 +1029,16 @@ export default function ProjectDetailPage() {
                 {projectCover ? "Change Cover" : "Set Cover Photo"}
               </div>
             </div>
+            {projectCover && (
+              <button
+                type="button"
+                onClick={() => setFocalEditorOpen(true)}
+                style={{ width: "100%", marginTop: 8, padding: "10px 14px", background: "#f3f4f6", border: "1px solid #e5e7eb", borderRadius: 10, fontSize: 13, fontWeight: 700, color: "#111", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3"/><path d="M12 2v4m0 12v4M2 12h4m12 0h4"/></svg>
+                Edit Cover Photo
+              </button>
+            )}
             <div style={{ color: "#4b5563", fontSize: 14, marginTop: 10 }}>Shoot Date: {formatDisplayDate(projectDate)}</div>
 
             <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
@@ -1949,6 +1967,104 @@ export default function ProjectDetailPage() {
               <button onClick={() => setCoverPickerOpen(false)} style={{ borderRadius: 14, border: "1px solid #d0d5dd", background: "#fff", color: "#344054", padding: "12px 16px", fontWeight: 800, cursor: "pointer" }}>Cancel</button>
               <button onClick={saveSelectedCover} disabled={!selectedMediaId || savingCover} style={{ borderRadius: 14, border: 0, background: !selectedMediaId || savingCover ? "#cbd5e1" : "#0f172a", color: "#fff", padding: "12px 16px", fontWeight: 800, cursor: !selectedMediaId || savingCover ? "not-allowed" : "pointer" }}>{savingCover ? "Saving..." : "Confirm cover"}</button>
               </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {/* ── Focal Point Editor Modal ── */}
+      {focalEditorOpen && projectCover ? (
+        <div style={{ position: "fixed", inset: 0, zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.6)", backdropFilter: "blur(4px)" }}>
+          <div style={{ background: "#fff", borderRadius: 20, width: "90%", maxWidth: 680, maxHeight: "90vh", overflow: "hidden", boxShadow: "0 24px 64px rgba(0,0,0,0.25)" }}>
+            {/* Header */}
+            <div style={{ padding: "20px 24px", borderBottom: "1px solid #e5e7eb", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <div>
+                <h2 style={{ margin: 0, fontSize: 20, fontWeight: 800, color: "#111" }}>Edit Cover Photo</h2>
+                <p style={{ margin: "4px 0 0", fontSize: 13, color: "#6b7280" }}>Adjust the focal point to control how the cover photo is cropped.</p>
+              </div>
+              <button onClick={() => setFocalEditorOpen(false)} style={{ background: "none", border: "none", cursor: "pointer", padding: 4, color: "#6b7280" }}>
+                <X size={20} />
+              </button>
+            </div>
+
+            {/* Image with focal point */}
+            <div style={{ padding: "24px 24px 16px", display: "flex", justifyContent: "center" }}>
+              <div
+                style={{ position: "relative", width: "100%", maxWidth: 600, cursor: "crosshair", borderRadius: 12, overflow: "hidden", border: "1px solid #e5e7eb" }}
+                onClick={(e) => {
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  const x = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+                  const y = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
+                  setFocalX(x);
+                  setFocalY(y);
+                }}
+              >
+                <img
+                  src={projectCover}
+                  alt="Cover"
+                  draggable={false}
+                  style={{ width: "100%", display: "block", userSelect: "none" }}
+                />
+                {/* Focal point indicator */}
+                <div
+                  style={{
+                    position: "absolute",
+                    left: `${focalX * 100}%`,
+                    top: `${focalY * 100}%`,
+                    transform: "translate(-50%, -50%)",
+                    width: 40,
+                    height: 40,
+                    borderRadius: "50%",
+                    border: "3px solid #fff",
+                    boxShadow: "0 0 0 2px rgba(0,0,0,0.4), 0 2px 8px rgba(0,0,0,0.3), inset 0 0 0 1px rgba(0,0,0,0.2)",
+                    pointerEvents: "none",
+                    transition: "left 0.1s, top 0.1s",
+                  }}
+                >
+                  <div style={{ position: "absolute", inset: 0, borderRadius: "50%", background: "rgba(255,255,255,0.25)" }} />
+                  {/* Crosshair lines */}
+                  <div style={{ position: "absolute", left: "50%", top: 0, bottom: 0, width: 1, background: "rgba(255,255,255,0.8)", transform: "translateX(-50%)" }} />
+                  <div style={{ position: "absolute", top: "50%", left: 0, right: 0, height: 1, background: "rgba(255,255,255,0.8)", transform: "translateY(-50%)" }} />
+                </div>
+              </div>
+            </div>
+
+            {/* Preview strip */}
+            <div style={{ padding: "0 24px 16px" }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: "#6b7280", marginBottom: 6 }}>Crop preview</div>
+              <div style={{ width: "100%", height: 80, borderRadius: 10, overflow: "hidden", border: "1px solid #e5e7eb", backgroundImage: `url(${projectCover})`, backgroundSize: "cover", backgroundPosition: `${Math.round(focalX * 100)}% ${Math.round(focalY * 100)}%` }} />
+            </div>
+
+            {/* Footer */}
+            <div style={{ padding: "16px 24px 20px", borderTop: "1px solid #e5e7eb", display: "flex", justifyContent: "flex-end", gap: 12 }}>
+              <button
+                onClick={() => setFocalEditorOpen(false)}
+                style={{ borderRadius: 12, border: "1px solid #d0d5dd", background: "#fff", color: "#344054", padding: "12px 20px", fontWeight: 700, cursor: "pointer", fontSize: 14 }}
+              >
+                Cancel
+              </button>
+              <button
+                disabled={savingFocal}
+                onClick={async () => {
+                  setSavingFocal(true);
+                  try {
+                    const res = await fetch(`/api/dashboard/events/${projectId}`, {
+                      method: "PATCH",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ cover_focal_x: focalX, cover_focal_y: focalY }),
+                    });
+                    if (!res.ok) throw new Error("Failed to save focal point");
+                    setFocalEditorOpen(false);
+                  } catch (err) {
+                    alert(err instanceof Error ? err.message : "Failed to save");
+                  } finally {
+                    setSavingFocal(false);
+                  }
+                }}
+                style={{ borderRadius: 12, border: 0, background: savingFocal ? "#94a3b8" : "#0f172a", color: "#fff", padding: "12px 24px", fontWeight: 700, cursor: savingFocal ? "not-allowed" : "pointer", fontSize: 14 }}
+              >
+                {savingFocal ? "Saving…" : "Save"}
+              </button>
             </div>
           </div>
         </div>

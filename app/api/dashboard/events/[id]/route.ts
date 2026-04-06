@@ -23,6 +23,8 @@ type StudentRow = {
 
 type ProjectUpdateBody = {
   cover_photo_url?: string | null;
+  cover_focal_x?: number;
+  cover_focal_y?: number;
   project_name?: string | null;
   name?: string | null;
   title?: string | null;
@@ -572,6 +574,12 @@ export async function PATCH(
 
     if (hasOwn(body, "cover_photo_url")) {
       updatePayload.cover_photo_url = clean(body.cover_photo_url) || null;
+    }
+    if (hasOwn(body, "cover_focal_x")) {
+      updatePayload.cover_focal_x = Math.max(0, Math.min(1, Number(body.cover_focal_x) || 0.5));
+    }
+    if (hasOwn(body, "cover_focal_y")) {
+      updatePayload.cover_focal_y = Math.max(0, Math.min(1, Number(body.cover_focal_y) || 0.5));
     }
 
     if (hasOwn(body, "portal_status")) {
