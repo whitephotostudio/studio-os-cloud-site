@@ -869,17 +869,20 @@ export default function SchoolsSchoolDetailPage() {
 
     try {
       setError("");
-      const syncProjectId = await ensureSyncedProjectId(supabase, schoolId, school);
+      const syncProjectId = schoolSyncedProjectId || await ensureSyncedProjectId(supabase, schoolId, school);
       if (!syncProjectId) {
         throw new Error("No synced school project found for school cover selection.");
       }
 
-      const { error: updateError } = await supabase
-        .from("projects")
-        .update({ cover_photo_url: selectedSchoolCoverUrl })
-        .eq("id", syncProjectId);
-
-      if (updateError) throw updateError;
+      const res = await fetch(`/api/dashboard/events/${syncProjectId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cover_photo_url: selectedSchoolCoverUrl }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error((data as { message?: string }).message || "Failed to save school cover.");
+      }
 
       setSchoolProjectCoverUrl(selectedSchoolCoverUrl);
       setSchoolCoverPickerOpen(false);
@@ -934,12 +937,15 @@ export default function SchoolsSchoolDetailPage() {
         throw new Error("School cover uploaded, but no public URL was returned.");
       }
 
-      const { error: updateError } = await supabase
-        .from("projects")
-        .update({ cover_photo_url: publicUrl })
-        .eq("id", syncProjectId);
-
-      if (updateError) throw updateError;
+      const updateRes = await fetch(`/api/dashboard/events/${syncProjectId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cover_photo_url: publicUrl }),
+      });
+      if (!updateRes.ok) {
+        const updateData = await updateRes.json().catch(() => ({}));
+        throw new Error((updateData as { message?: string }).message || "Failed to save uploaded cover.");
+      }
 
       setSchoolProjectCoverUrl(publicUrl);
       setShareNotice("School cover uploaded");
