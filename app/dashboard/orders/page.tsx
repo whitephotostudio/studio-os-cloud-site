@@ -1941,9 +1941,9 @@ export default function OrdersPage() {
               </div>
 
               {clean(selected.special_notes || selected.notes) ? (
-                <div style={{ background: "#f7fafc", borderLeft: "3px solid #a0aec0", borderRadius: 4, padding: "12px 16px", marginBottom: 16 }}>
-                  <div style={{ fontSize: 11, color: "#718096", fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", marginBottom: 6 }}>Notes</div>
-                  <div style={{ fontSize: 13, color: "#2d3748", whiteSpace: "pre-wrap", lineHeight: 1.6 }}>{selected.special_notes || selected.notes}</div>
+                <div style={{ background: "#fafafa", borderLeft: "3px solid #333", borderRadius: 2, padding: "12px 16px", marginBottom: 16 }}>
+                  <div style={{ fontSize: 11, color: "#888", fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", marginBottom: 6 }}>Notes</div>
+                  <div style={{ fontSize: 13, color: "#333", whiteSpace: "pre-wrap", lineHeight: 1.6 }}>{selected.special_notes || selected.notes}</div>
                 </div>
               ) : null}
 

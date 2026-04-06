@@ -210,56 +210,70 @@ function shortOrderId(id: string) {
   return id.replace(/-/g, "").slice(0, 6).toUpperCase();
 }
 
+/** Resolve display items for an order (from DB items, parsed notes, or student photo) */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function buildOrderSummaryHtml(order: any, branding: StudioBranding): string {
+function resolveOrderDisplayItems(order: any): { productName: string; photoUrl: string; quantity: number }[] {
+  const dbItems = order.items ?? [];
+  const notesText = clean(order.special_notes) || clean(order.notes);
+  const parsedFromNotes = dbItems.length === 0 ? parseNotesItems(notesText) : [];
+
+  if (dbItems.length > 0) {
+    return dbItems.map((item: { product_name?: string; quantity?: number; sku?: string }) => ({
+      productName: item.product_name ?? "Item",
+      photoUrl: item.sku ?? "",
+      quantity: item.quantity ?? 1,
+    }));
+  }
+  if (parsedFromNotes.length > 0) return parsedFromNotes;
+  if (clean(order.student?.photo_url)) {
+    return [{ productName: order.package_name ?? "Package", photoUrl: order.student.photo_url, quantity: 1 }];
+  }
+  return [];
+}
+
+/**
+ * Build the order summary HTML.
+ * photoFileMap maps original photo URLs → local filenames in the ZIP
+ * so the HTML references local files that work when extracted.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function buildOrderSummaryHtml(order: any, branding: StudioBranding, photoFileMap: Map<string, string>): string {
   const studentName = `${clean(order.student?.first_name)} ${clean(order.student?.last_name)}`.trim() || "Student";
   const schoolName = order.school?.school_name ?? "—";
   const className = order.class?.class_name ?? "";
   const parentName = order.parent_name ?? order.customer_name ?? "—";
   const parentEmail = order.parent_email ?? order.customer_email ?? "—";
   const parentPhone = order.parent_phone ?? "";
-  const currency = (order.currency ?? "CAD").toUpperCase();
-  const total = money(order.total_cents, order.total_amount);
   const orderDate = formatDate(order.created_at);
   const orderId = shortOrderId(order.id);
   const status = (order.status ?? "new").toUpperCase().replace(/_/g, " ");
-
-  const dbItems = order.items ?? [];
   const notesText = clean(order.special_notes) || clean(order.notes);
 
-  // When order_items table is empty, parse structured info from notes
-  const parsedFromNotes = dbItems.length === 0 ? parseNotesItems(notesText) : [];
+  const displayItems = resolveOrderDisplayItems(order);
 
-  // Unified item list: prefer DB items, fall back to parsed notes
-  const displayItems = dbItems.length > 0
-    ? dbItems.map((item: { product_name?: string; quantity?: number; sku?: string }) => ({
-        productName: item.product_name ?? "Item",
-        photoUrl: item.sku ?? "",
-        quantity: item.quantity ?? 1,
-      }))
-    : parsedFromNotes.length > 0
-    ? parsedFromNotes
-    : // Last resort: student photo with package name
-      (clean(order.student?.photo_url)
-        ? [{ productName: order.package_name ?? "Package", photoUrl: order.student.photo_url, quantity: 1 }]
-        : []);
-
-  // Build photo cards
+  // Build photo cards — reference local files from the ZIP
   let photoCardsHtml = "";
   displayItems.forEach((item: { productName: string; photoUrl: string; quantity: number }, i: number) => {
-    const photoSrc = item.photoUrl ? encodePhotoUrl(item.photoUrl) : "";
+    // Look up local filename; fall back to encoded remote URL
+    const localFile = photoFileMap.get(item.photoUrl) ?? "";
+    const imgSrc = localFile || (item.photoUrl ? encodePhotoUrl(item.photoUrl) : "");
     photoCardsHtml += `
-      <div style="display:inline-block;vertical-align:top;margin:0 28px 28px 0;text-align:center;width:200px;">
-        ${photoSrc ? `<img src="${esc(photoSrc)}" style="width:190px;height:230px;object-fit:cover;border-radius:6px;border:3px solid #e2e8f0;background:#f7fafc;" />` : `<div style="width:190px;height:230px;background:#f7fafc;border-radius:6px;border:3px solid #e2e8f0;display:flex;align-items:center;justify-content:center;color:#a0aec0;font-size:13px;">No photo</div>`}
-        <div style="margin-top:10px;font-size:14px;font-weight:600;color:#2d3748;">${esc(item.productName)}</div>
-        <div style="font-size:13px;color:#e53e3e;font-weight:800;">#${String(i + 1).padStart(4, "0")}</div>
-        <div style="font-size:14px;color:#4a5568;">&times; ${item.quantity}</div>
+      <div style="display:inline-block;vertical-align:top;margin:0 24px 24px 0;text-align:center;width:200px;">
+        ${imgSrc ? `<img src="${esc(imgSrc)}" style="width:190px;height:230px;object-fit:cover;border-radius:4px;border:1px solid #ddd;background:#f5f5f5;" />` : `<div style="width:190px;height:230px;background:#f5f5f5;border-radius:4px;border:1px solid #ddd;display:flex;align-items:center;justify-content:center;color:#999;font-size:13px;">No photo</div>`}
+        <div style="margin-top:8px;font-size:14px;font-weight:600;color:#111;">${esc(item.productName)}</div>
+        <div style="font-size:12px;color:#c0392b;font-weight:700;">#${String(i + 1).padStart(4, "0")}</div>
+        <div style="font-size:13px;color:#555;">&times; ${item.quantity}</div>
       </div>`;
   });
 
-  // Delivery note (extract from special_notes if present)
+  // Delivery note
   const deliveryMatch = notesText.match(/Delivery:\s*(\w+)/i);
   const delivery = deliveryMatch ? deliveryMatch[1] : "";
+
+  // Status badge color
+  const statusColor = status.includes("PAID") || status === "COMPLETED" ? "#111"
+    : status.includes("PENDING") ? "#c0392b"
+    : "#555";
 
   return `<!DOCTYPE html>
 <html>
@@ -273,17 +287,17 @@ function buildOrderSummaryHtml(order: any, branding: StudioBranding): string {
 </head>
 <body>
   <!-- Header -->
-  <div style="background:#2d3748;color:#fff;padding:28px 36px;display:flex;justify-content:space-between;align-items:flex-start;">
+  <div style="background:#111;color:#fff;padding:28px 36px;display:flex;justify-content:space-between;align-items:flex-start;">
     <div>
-      <div style="font-size:15px;color:#a0aec0;">
-        <span style="font-weight:800;color:#fff;">${esc(schoolName)}</span>
-        ${className ? `&nbsp;&nbsp;<span style="color:#cbd5e0;">${esc(className)}</span>` : ""}
+      <div style="font-size:14px;color:#999;">
+        <span style="font-weight:700;color:#fff;">${esc(schoolName)}</span>
+        ${className ? `&nbsp;&nbsp;<span style="color:#777;">${esc(className)}</span>` : ""}
       </div>
-      <div style="font-size:36px;font-weight:800;margin-top:8px;letter-spacing:-0.01em;">${esc(studentName)}</div>
+      <div style="font-size:34px;font-weight:800;margin-top:6px;letter-spacing:-0.01em;">${esc(studentName)}</div>
     </div>
     <div style="text-align:right;">
-      <div style="font-size:24px;font-weight:900;color:#fff;letter-spacing:0.02em;">${esc(branding.businessName)}</div>
-      <div style="font-size:13px;color:#a0aec0;margin-top:8px;line-height:1.7;">
+      <div style="font-size:22px;font-weight:900;color:#fff;letter-spacing:0.02em;">${esc(branding.businessName)}</div>
+      <div style="font-size:12px;color:#888;margin-top:8px;line-height:1.7;">
         ${branding.phone ? `${esc(branding.phone)}<br/>` : ""}
         ${branding.email ? `${esc(branding.email)}<br/>` : ""}
         ${branding.website ? esc(branding.website) : ""}
@@ -291,35 +305,30 @@ function buildOrderSummaryHtml(order: any, branding: StudioBranding): string {
     </div>
   </div>
 
-  <!-- Order date + status bar -->
-  <div style="display:flex;justify-content:flex-end;align-items:center;gap:16px;padding:12px 36px;background:#edf2f7;border-bottom:1px solid #e2e8f0;">
-    <span style="font-size:13px;color:#4a5568;">Order: ${orderDate}</span>
-    <span style="display:inline-block;padding:5px 18px;background:#38a169;color:#fff;border-radius:20px;font-size:12px;font-weight:700;letter-spacing:0.04em;">${esc(status)}</span>
+  <!-- Order info bar -->
+  <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 36px;background:#f5f5f5;border-bottom:1px solid #e0e0e0;">
+    <span style="font-size:13px;color:#555;">Order #${orderId} &middot; ${orderDate}</span>
+    <span style="display:inline-block;padding:4px 16px;background:${statusColor};color:#fff;border-radius:3px;font-size:11px;font-weight:700;letter-spacing:0.05em;">${esc(status)}</span>
   </div>
 
-  <!-- Photo cards + order number -->
-  <div style="padding:32px 36px;position:relative;">
-    ${photoCardsHtml || '<div style="color:#a0aec0;font-size:14px;">No photos in this order.</div>'}
-    <div style="position:absolute;top:32px;right:36px;text-align:center;">
-      <div style="font-size:14px;color:#718096;font-weight:700;">#${orderId}</div>
-    </div>
+  <!-- Photo cards -->
+  <div style="padding:28px 36px;">
+    ${photoCardsHtml || '<div style="color:#999;font-size:14px;">No photos in this order.</div>'}
   </div>
 
   <!-- Parent notes -->
-  ${notesText ? `<div style="margin:0 36px;padding:12px 16px;background:#f7fafc;border-left:3px solid #a0aec0;border-radius:4px;">
-    <span style="font-size:11px;text-transform:uppercase;letter-spacing:0.06em;color:#718096;font-weight:700;">Notes:&nbsp;</span>
-    <span style="font-size:13px;color:#2d3748;white-space:pre-wrap;">${esc(notesText)}</span>
+  ${notesText ? `<div style="margin:0 36px 16px;padding:12px 16px;background:#fafafa;border-left:3px solid #333;border-radius:2px;">
+    <div style="font-size:11px;text-transform:uppercase;letter-spacing:0.06em;color:#888;font-weight:700;margin-bottom:6px;">Notes</div>
+    <div style="font-size:13px;color:#333;white-space:pre-wrap;line-height:1.5;">${esc(notesText)}</div>
   </div>` : ""}
 
-  <!-- Compact info footer -->
-  <div style="padding:14px 36px;background:#f7fafc;border-top:1px solid #e2e8f0;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">
-    <div style="font-size:13px;color:#4a5568;">
+  <!-- Footer -->
+  <div style="padding:12px 36px;background:#f5f5f5;border-top:1px solid #e0e0e0;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
+    <div style="font-size:12px;color:#555;">
       <span style="font-weight:600;">Parent:</span> ${esc(parentName)}${parentEmail !== "—" ? ` &middot; ${esc(parentEmail)}` : ""}${parentPhone ? ` &middot; ${esc(parentPhone)}` : ""}
-      ${delivery ? `&nbsp;&nbsp;<span style="display:inline-block;padding:2px 10px;background:#ebf8ff;color:#2b6cb0;border-radius:10px;font-size:11px;font-weight:700;text-transform:uppercase;">${esc(delivery)}</span>` : ""}
+      ${delivery ? `&nbsp;&nbsp;<span style="display:inline-block;padding:2px 8px;background:#111;color:#fff;border-radius:2px;font-size:10px;font-weight:700;text-transform:uppercase;">${esc(delivery)}</span>` : ""}
     </div>
-    <div style="font-size:13px;color:#718096;">
-      Studio OS Cloud
-    </div>
+    <div style="font-size:11px;color:#999;">Studio OS Cloud</div>
   </div>
 </body>
 </html>`;
@@ -399,29 +408,17 @@ export async function GET(request: NextRequest) {
       const schoolName = slug(order.school?.school_name, "School");
       const prefix = multiOrder ? `${schoolName}_${studentName}_${order.id.slice(0, 8)}/` : "";
 
-      // Add order summary HTML
-      const summaryHtml = buildOrderSummaryHtml(order, branding);
-      const enc = new TextEncoder();
-      zipEntries.push({
-        name: `${prefix}order-summary.html`,
-        data: enc.encode(summaryHtml),
-      });
-
-      // Collect photo URLs — from order_items, parsed notes, or student photo
+      // Collect ALL photo URLs for this order
       const photoUrls = new Set<string>();
+      const displayItems = resolveOrderDisplayItems(order);
+      for (const item of displayItems) {
+        if (item.photoUrl) photoUrls.add(item.photoUrl);
+      }
+      // Also include student photo if not already covered
       if (clean(order.student?.photo_url)) photoUrls.add(order.student.photo_url);
-      for (const item of order.items ?? []) {
-        if (clean(item.sku)) photoUrls.add(item.sku);
-      }
-      // Also grab photo URLs parsed from notes (when order_items is empty)
-      if ((order.items ?? []).length === 0) {
-        const notesParsed = parseNotesItems(clean(order.special_notes) || clean(order.notes));
-        for (const ni of notesParsed) {
-          if (ni.photoUrl) photoUrls.add(ni.photoUrl);
-        }
-      }
 
-      // Download each photo and add to ZIP
+      // Download photos FIRST, track URL → local filename mapping
+      const photoFileMap = new Map<string, string>();
       let photoIndex = 0;
       for (const url of photoUrls) {
         photoIndex++;
@@ -437,10 +434,20 @@ export async function GET(request: NextRequest) {
             name: `${prefix}${fileName}`,
             data: new Uint8Array(arrayBuf),
           });
+          // Map original URL → local filename (relative to HTML in same folder)
+          photoFileMap.set(url, multiOrder ? fileName : fileName);
         } catch (err) {
           console.error(`Error downloading photo ${url}:`, err);
         }
       }
+
+      // Now build HTML with local file references
+      const summaryHtml = buildOrderSummaryHtml(order, branding, photoFileMap);
+      const enc = new TextEncoder();
+      zipEntries.push({
+        name: `${prefix}order-summary.html`,
+        data: enc.encode(summaryHtml),
+      });
     }
 
     if (zipEntries.length === 0) {
