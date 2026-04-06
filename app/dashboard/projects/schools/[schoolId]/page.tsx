@@ -37,6 +37,7 @@ type School = {
   access_pin?: string | null;
   access?: string | null;
   password_protected?: boolean | null;
+  gallery_slug?: string | null;
 };
 
 type PersonRow = {
@@ -456,6 +457,22 @@ export default function SchoolsSchoolDetailPage() {
           setClassCollectionsBySlug(nextClassCollectionsBySlug);
           setRoleCollectionsBySlug(nextRoleCollectionsBySlug);
           setSchoolProjectCoverUrl(nextSchoolProjectCoverUrl);
+
+          // Auto-generate gallery slug if missing
+          const s = schoolRow as School;
+          if (!s.gallery_slug && s.school_name) {
+            const autoSlug = clean(s.school_name).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+            if (autoSlug) {
+              fetch(`/api/dashboard/schools/${schoolId}`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ gallery_slug: autoSlug }),
+              }).then((r) => r.json()).then((res) => {
+                const updated = (res as { school?: School }).school;
+                if (!cancelled && updated) setSchool(updated);
+              }).catch(() => {/* ignore */});
+            }
+          }
         }
       } catch (err: unknown) {
         if (!cancelled) {
@@ -817,8 +834,15 @@ export default function SchoolsSchoolDetailPage() {
   }
 
   async function copySchoolLink() {
-    const url = typeof window !== "undefined" ? window.location.href : "";
-    if (!url) return;
+    const origin = typeof window !== "undefined" ? window.location.origin : "";
+    const slug = clean(school?.gallery_slug);
+    let url: string;
+    if (slug) {
+      url = `${origin}/g/${slug}`;
+    } else {
+      const params = new URLSearchParams({ mode: "school", school: schoolId });
+      url = `${origin}/parents?${params.toString()}`;
+    }
     try {
       await navigator.clipboard.writeText(url);
       setShareNotice("School link copied");

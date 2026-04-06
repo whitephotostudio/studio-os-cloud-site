@@ -34,6 +34,7 @@ type SchoolUpdateBody = {
   access_mode?: string | null;
   access_pin?: string | null;
   gallery_settings?: unknown;
+  gallery_slug?: string | null;
 };
 
 type SchoolRow = {
@@ -53,6 +54,7 @@ type SchoolRow = {
   access_pin?: string | null;
   cover_photo_url?: string | null;
   gallery_settings?: unknown;
+  gallery_slug?: string | null;
 };
 
 function clean(value: string | null | undefined) {
@@ -224,7 +226,7 @@ export async function PATCH(
 
     const { data: schoolRow, error: schoolError } = await service
       .from("schools")
-      .select("id,school_name,photographer_id,local_school_id,status,shoot_date,order_due_date,expiration_date,package_profile_id,email_required,checkout_contact_required,internal_notes,access_mode,access_pin,cover_photo_url,gallery_settings")
+      .select("id,school_name,photographer_id,local_school_id,status,shoot_date,order_due_date,expiration_date,package_profile_id,email_required,checkout_contact_required,internal_notes,access_mode,access_pin,cover_photo_url,gallery_settings,gallery_slug")
       .eq("id", schoolId)
       .eq("photographer_id", photographerRow.id)
       .maybeSingle<SchoolRow>();
@@ -264,6 +266,29 @@ export async function PATCH(
     if (hasOwn(body, "gallery_settings")) {
       updates.gallery_settings = normalizeEventGallerySettings(body.gallery_settings);
     }
+    if (hasOwn(body, "gallery_slug")) {
+      let rawSlug = clean(body.gallery_slug)
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "");
+      if (rawSlug) {
+        // Check uniqueness across projects and schools (excluding this school)
+        let candidate = rawSlug;
+        let suffix = 1;
+        for (let attempts = 0; attempts < 10; attempts++) {
+          const [{ data: pMatch }, { data: sMatch }] = await Promise.all([
+            service.from("projects").select("id").eq("gallery_slug", candidate).maybeSingle(),
+            service.from("schools").select("id").eq("gallery_slug", candidate).neq("id", schoolId).maybeSingle(),
+          ]);
+          if (!pMatch && !sMatch) break;
+          suffix += 1;
+          candidate = `${rawSlug}-${suffix}`;
+        }
+        updates.gallery_slug = candidate;
+      } else {
+        updates.gallery_slug = null;
+      }
+    }
 
     if (!Object.keys(updates).length) {
       return NextResponse.json({ ok: true, school: schoolRow });
@@ -277,7 +302,7 @@ export async function PATCH(
       .update(updates)
       .eq("id", schoolId)
       .eq("photographer_id", photographerRow.id)
-      .select("id,school_name,photographer_id,local_school_id,status,shoot_date,order_due_date,expiration_date,package_profile_id,email_required,checkout_contact_required,internal_notes,access_mode,access_pin,cover_photo_url,gallery_settings")
+      .select("id,school_name,photographer_id,local_school_id,status,shoot_date,order_due_date,expiration_date,package_profile_id,email_required,checkout_contact_required,internal_notes,access_mode,access_pin,cover_photo_url,gallery_settings,gallery_slug")
       .maybeSingle<SchoolRow>();
 
     if (updateError) throw updateError;

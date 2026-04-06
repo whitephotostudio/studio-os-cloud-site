@@ -52,6 +52,7 @@ type ProjectRow = {
   cover_photo_url?: string | null;
   cover_focal_x?: number | null;
   cover_focal_y?: number | null;
+  gallery_slug?: string | null;
   access_mode?: string | null;
   access_pin?: string | null;
   email_required?: boolean | null;
@@ -320,6 +321,27 @@ export default function ProjectDetailPage() {
         setProject(payload.project);
         setFocalX(Number((payload.project as Record<string, unknown>)?.cover_focal_x) || 0.5);
         setFocalY(Number((payload.project as Record<string, unknown>)?.cover_focal_y) || 0.5);
+
+        // Auto-generate gallery slug if missing
+        const proj = payload.project as Record<string, unknown>;
+        if (!proj.gallery_slug) {
+          const name = String(proj.title || proj.project_name || proj.name || "").trim();
+          if (name) {
+            const autoSlug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+            if (autoSlug) {
+              fetch(`/api/dashboard/events/${projectId}`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ gallery_slug: autoSlug }),
+              }).then((r) => r.json()).then((res) => {
+                if (mounted && (res as { project?: ProjectRow }).project) {
+                  setProject((res as { project: ProjectRow }).project);
+                }
+              }).catch(() => {/* ignore slug generation errors */});
+            }
+          }
+        }
+
         setCollections(payload.collections ?? []);
         setMedia(payload.media ?? []);
         setMediaCount(payload.mediaCount ?? 0);
@@ -451,12 +473,16 @@ export default function ProjectDetailPage() {
   );
   const galleryEntryUrl = useMemo(() => {
     const origin = typeof window !== "undefined" ? window.location.origin : "";
+    const slug = clean(project?.gallery_slug);
+    if (slug) {
+      return `${origin}/g/${slug}`;
+    }
     const params = new URLSearchParams({
       mode: "event",
       project: projectId,
     });
     return `${origin}/parents?${params.toString()}`;
-  }, [projectId]);
+  }, [projectId, project?.gallery_slug]);
   const accessSummary = projectLocked
     ? `Access PIN: ${clean(project?.access_pin)}`
     : "Access PIN: Use the PIN provided by your photographer.";

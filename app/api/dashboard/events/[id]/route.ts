@@ -41,6 +41,7 @@ type ProjectUpdateBody = {
   access_updated_at?: string | null;
   access_updated_source?: string | null;
   gallery_settings?: unknown;
+  gallery_slug?: string | null;
 };
 
 function clean(value: string | null | undefined) {
@@ -580,6 +581,30 @@ export async function PATCH(
     }
     if (hasOwn(body, "cover_focal_y")) {
       updatePayload.cover_focal_y = Math.max(0, Math.min(1, Number(body.cover_focal_y) || 0.5));
+    }
+
+    if (hasOwn(body, "gallery_slug")) {
+      let rawSlug = clean(body.gallery_slug)
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "");
+      if (rawSlug) {
+        // Check uniqueness across projects and schools (excluding this project)
+        let candidate = rawSlug;
+        let suffix = 1;
+        for (let attempts = 0; attempts < 10; attempts++) {
+          const [{ data: pMatch }, { data: sMatch }] = await Promise.all([
+            service.from("projects").select("id").eq("gallery_slug", candidate).neq("id", projectId).maybeSingle(),
+            service.from("schools").select("id").eq("gallery_slug", candidate).maybeSingle(),
+          ]);
+          if (!pMatch && !sMatch) break;
+          suffix += 1;
+          candidate = `${rawSlug}-${suffix}`;
+        }
+        updatePayload.gallery_slug = candidate;
+      } else {
+        updatePayload.gallery_slug = null;
+      }
     }
 
     if (hasOwn(body, "portal_status")) {

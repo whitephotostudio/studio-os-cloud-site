@@ -154,7 +154,7 @@ export async function GET(request: NextRequest) {
     const { data: projectRows, error: projectsError } = await service
       .from("projects")
       .select(
-        "id,title,client_name,workflow_type,status,portal_status,shoot_date,event_date,cover_photo_url,cover_focal_x,cover_focal_y",
+        "id,title,client_name,workflow_type,status,portal_status,shoot_date,event_date,cover_photo_url,cover_focal_x,cover_focal_y,gallery_slug",
       )
       .eq("photographer_id", photographerRow.id)
       .eq("workflow_type", "event")
