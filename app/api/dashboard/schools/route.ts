@@ -55,10 +55,22 @@ export async function POST(request: NextRequest) {
       .select("id,school_name,status,created_at")
       .single();
 
-    if (insertError) throw insertError;
+    if (insertError) {
+      console.error("School insert error:", insertError);
+      return NextResponse.json(
+        {
+          ok: false,
+          message: insertError.message || "Database error creating school.",
+          code: insertError.code ?? null,
+          details: insertError.details ?? null,
+        },
+        { status: 500 },
+      );
+    }
 
     return NextResponse.json({ ok: true, school: newSchool });
   } catch (error) {
+    console.error("School creation error:", error);
     return NextResponse.json(
       {
         ok: false,
