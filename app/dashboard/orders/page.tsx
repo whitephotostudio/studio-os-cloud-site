@@ -434,6 +434,21 @@ export default function OrdersPage() {
   const [downloadingBulk, setDownloadingBulk] = useState(false);
   const [bulkDownloadProgress, setBulkDownloadProgress] = useState("");
   const [saving, setSaving] = useState(false);
+  // Status change modal
+  const [statusModal, setStatusModal] = useState<{
+    orderId: string;
+    fromStatus: string;
+    toStatus: string;
+    parentEmail: string;
+    studentName: string;
+  } | null>(null);
+  const [statusEmailForm, setStatusEmailForm] = useState({
+    sendEmail: true,
+    subject: "",
+    headline: "Your order's status has changed!",
+    message: "",
+  });
+  const [sendingStatusEmail, setSendingStatusEmail] = useState(false);
   const [editForm, setEditForm] = useState<{
     parentName: string;
     parentEmail: string;
@@ -533,11 +548,56 @@ export default function OrdersPage() {
     await supabase.from("orders").update({ seen_by_photographer: true }).eq("id", orderId);
   }
 
-  async function updateStatus(orderId: string, newStatus: string) {
-    setUpdatingId(orderId);
-    await supabase.from("orders").update({ status: newStatus, seen_by_photographer: true }).eq("id", orderId);
-    await load();
-    setUpdatingId(null);
+  function openStatusModal(orderId: string, newStatus: string) {
+    const order = orders.find((o) => o.id === orderId);
+    if (!order) return;
+    const fromLabel = STATUS_COLORS[order.status]?.label ?? order.status;
+    const toLabel = STATUS_COLORS[newStatus]?.label ?? newStatus;
+    const studentName = `${order.student?.first_name ?? ""} ${order.student?.last_name ?? ""}`.trim() || "Student";
+    const parentEmail = order.parent_email ?? order.customer_email ?? "";
+    setStatusModal({ orderId, fromStatus: order.status, toStatus: newStatus, parentEmail, studentName });
+    setStatusEmailForm({
+      sendEmail: !!parentEmail,
+      subject: `Order Update — ${studentName}`,
+      headline: "Your order's status has changed!",
+      message: `The status of your order for ${studentName} has been updated from ${fromLabel} to ${toLabel}.\n\nThank you!`,
+    });
+  }
+
+  async function confirmStatusChange() {
+    if (!statusModal) return;
+    const { orderId, toStatus, parentEmail } = statusModal;
+    setSendingStatusEmail(true);
+    try {
+      // Update status in DB
+      await supabase.from("orders").update({ status: toStatus, seen_by_photographer: true }).eq("id", orderId);
+      // Send email if checked and email exists
+      if (statusEmailForm.sendEmail && parentEmail) {
+        const { data: { session } } = await supabase.auth.getSession();
+        await fetch("/api/dashboard/orders/notify", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${session?.access_token ?? ""}`,
+          },
+          body: JSON.stringify({
+            orderId,
+            recipientEmail: parentEmail,
+            subject: statusEmailForm.subject,
+            headline: statusEmailForm.headline,
+            message: statusEmailForm.message,
+            newStatus: toStatus,
+          }),
+        });
+      }
+      await load();
+      setStatusModal(null);
+    } catch (err) {
+      console.error("Status change error:", err);
+      alert("Failed to update status.");
+    } finally {
+      setSendingStatusEmail(false);
+    }
   }
 
   function openOrder(order: Order) {
@@ -2022,7 +2082,7 @@ export default function OrdersPage() {
                         key={statusKey}
                         type="button"
                         disabled={isCurrent || updatingId === selected.id}
-                        onClick={() => updateStatus(selected.id, statusKey)}
+                        onClick={() => openStatusModal(selected.id, statusKey)}
                         style={{
                           width: "100%",
                           display: "flex",
@@ -2151,6 +2211,137 @@ export default function OrdersPage() {
       ) : null}
 
       {/* ── Delete Confirm Modal ──────────────────────────────────────────── */}
+      {/* ── Status Change Modal with Email ── */}
+      {statusModal ? (() => {
+        const fromLabel = STATUS_COLORS[statusModal.fromStatus]?.label ?? statusModal.fromStatus;
+        const toLabel = STATUS_COLORS[statusModal.toStatus]?.label ?? statusModal.toStatus;
+        return (
+          <div style={{ position: "fixed", inset: 0, zIndex: 100, background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
+            <div style={{ background: "#fff", borderRadius: 8, width: "100%", maxWidth: 860, maxHeight: "90vh", overflow: "auto", boxShadow: "0 24px 60px rgba(0,0,0,0.25)" }}>
+              {/* Header */}
+              <div style={{ padding: "24px 32px", borderBottom: `1px solid ${borderColor}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div style={{ fontSize: 22, fontWeight: 800, color: textPrimary }}>Order Status Change</div>
+                <button type="button" onClick={() => setStatusModal(null)} style={{ background: "none", border: "none", cursor: "pointer", color: textMuted, fontSize: 20 }}><X size={20} /></button>
+              </div>
+
+              <div style={{ display: "flex", gap: 0, flexWrap: "wrap" }}>
+                {/* Left: Form */}
+                <div style={{ flex: "1 1 340px", padding: "24px 32px", borderRight: `1px solid ${borderColor}` }}>
+                  {/* Confirmation */}
+                  <div style={{ background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 4, padding: "12px 16px", marginBottom: 20 }}>
+                    <span style={{ fontSize: 13, color: "#166534" }}>
+                      Update status from <b>{fromLabel}</b> to <b>{toLabel}</b>?
+                    </span>
+                  </div>
+
+                  {/* Send email checkbox */}
+                  <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: textPrimary, marginBottom: 20, cursor: "pointer" }}>
+                    <input
+                      type="checkbox"
+                      checked={statusEmailForm.sendEmail}
+                      onChange={(e) => setStatusEmailForm((f) => ({ ...f, sendEmail: e.target.checked }))}
+                      style={{ width: 16, height: 16 }}
+                    />
+                    Send notification email to buyer
+                    {!statusModal.parentEmail && <span style={{ color: "#999", fontSize: 12 }}>(no email on file)</span>}
+                  </label>
+
+                  {statusEmailForm.sendEmail && statusModal.parentEmail ? (
+                    <>
+                      <div style={{ marginBottom: 16 }}>
+                        <div style={{ fontSize: 12, fontWeight: 700, color: textMuted, marginBottom: 4 }}>To</div>
+                        <div style={{ fontSize: 13, color: textPrimary, padding: "8px 12px", background: "#f9fafb", border: `1px solid ${borderColor}`, borderRadius: 4 }}>{statusModal.parentEmail}</div>
+                      </div>
+                      <div style={{ marginBottom: 16 }}>
+                        <div style={{ fontSize: 12, fontWeight: 700, color: textMuted, marginBottom: 4 }}>Subject</div>
+                        <input
+                          type="text"
+                          value={statusEmailForm.subject}
+                          onChange={(e) => setStatusEmailForm((f) => ({ ...f, subject: e.target.value }))}
+                          style={{ width: "100%", padding: "8px 12px", border: `1px solid ${borderColor}`, borderRadius: 4, fontSize: 13, boxSizing: "border-box" }}
+                        />
+                      </div>
+                      <div style={{ marginBottom: 16 }}>
+                        <div style={{ fontSize: 12, fontWeight: 700, color: textMuted, marginBottom: 4 }}>Headline</div>
+                        <input
+                          type="text"
+                          value={statusEmailForm.headline}
+                          onChange={(e) => setStatusEmailForm((f) => ({ ...f, headline: e.target.value }))}
+                          style={{ width: "100%", padding: "8px 12px", border: `1px solid ${borderColor}`, borderRadius: 4, fontSize: 13, boxSizing: "border-box" }}
+                        />
+                      </div>
+                      <div style={{ marginBottom: 16 }}>
+                        <div style={{ fontSize: 12, fontWeight: 700, color: textMuted, marginBottom: 4 }}>Message</div>
+                        <textarea
+                          value={statusEmailForm.message}
+                          onChange={(e) => setStatusEmailForm((f) => ({ ...f, message: e.target.value }))}
+                          rows={5}
+                          style={{ width: "100%", padding: "8px 12px", border: `1px solid ${borderColor}`, borderRadius: 4, fontSize: 13, resize: "vertical", boxSizing: "border-box", fontFamily: "inherit" }}
+                        />
+                      </div>
+                    </>
+                  ) : null}
+
+                  {/* Buttons */}
+                  <div style={{ display: "flex", gap: 10, marginTop: 8 }}>
+                    <button type="button" onClick={() => setStatusModal(null)} style={{ padding: "10px 20px", background: "#fff", color: textPrimary, border: `1px solid ${borderColor}`, borderRadius: 4, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={confirmStatusChange}
+                      disabled={sendingStatusEmail}
+                      style={{ padding: "10px 20px", background: "#111", color: "#fff", border: "none", borderRadius: 4, fontWeight: 700, fontSize: 13, cursor: "pointer", opacity: sendingStatusEmail ? 0.6 : 1 }}
+                    >
+                      {sendingStatusEmail ? "Updating…" : "Update Status"}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Right: Email Preview */}
+                {statusEmailForm.sendEmail && statusModal.parentEmail ? (
+                  <div style={{ flex: "1 1 340px", padding: "24px 32px", background: "#fafafa" }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: textMuted, marginBottom: 12 }}>Email Preview</div>
+                    <div style={{ background: "#e5e5e5", borderRadius: 4, padding: 20 }}>
+                      <div style={{ background: "#fff", borderRadius: 4, overflow: "hidden", maxWidth: 400, margin: "0 auto" }}>
+                        {/* Email header */}
+                        <div style={{ background: "#111", padding: "20px 24px", textAlign: "center" }}>
+                          <div style={{ fontSize: 18, fontWeight: 900, color: "#fff" }}>WHITEPHOTO</div>
+                        </div>
+                        {/* Icon */}
+                        <div style={{ textAlign: "center", padding: "24px 20px 12px" }}>
+                          <div style={{ display: "inline-block", width: 36, height: 36, border: "2px solid #ddd", borderRadius: 6, lineHeight: "36px", fontSize: 16, color: "#999" }}>&#9993;</div>
+                        </div>
+                        {/* Headline */}
+                        <div style={{ textAlign: "center", padding: "0 20px 16px", fontSize: 16, fontWeight: 800, color: "#111" }}>
+                          {statusEmailForm.headline}
+                        </div>
+                        {/* Message */}
+                        <div style={{ margin: "0 20px 20px", padding: "14px 16px", background: "#f9fafb", borderLeft: "3px solid #111", borderRadius: 2 }}>
+                          <div style={{ fontSize: 12, color: "#333", whiteSpace: "pre-wrap", lineHeight: 1.5 }}>
+                            {statusEmailForm.message}
+                          </div>
+                        </div>
+                        {/* Status badge */}
+                        <div style={{ textAlign: "center", paddingBottom: 20 }}>
+                          <span style={{ display: "inline-block", padding: "4px 14px", background: "#111", color: "#fff", borderRadius: 3, fontSize: 11, fontWeight: 700 }}>
+                            {toLabel.toUpperCase()}
+                          </span>
+                        </div>
+                        {/* Footer */}
+                        <div style={{ padding: "12px 20px", background: "#f5f5f5", textAlign: "center" }}>
+                          <div style={{ fontSize: 10, color: "#999" }}>&copy; {new Date().getFullYear()} WHITEPHOTO</div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          </div>
+        );
+      })() : null}
+
       {deleteConfirmId ? (
         <div style={{ position: "fixed", inset: 0, zIndex: 100, background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
           <div style={{ background: "#fff", borderRadius: 24, width: "100%", maxWidth: 420, padding: 28, boxShadow: "0 24px 60px rgba(0,0,0,0.25)" }}>
