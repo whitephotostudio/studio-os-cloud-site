@@ -461,7 +461,8 @@ export default function SchoolsSchoolDetailPage() {
           // Auto-generate gallery slug if missing
           const s = schoolRow as School;
           if (!s.gallery_slug && s.school_name) {
-            const autoSlug = clean(s.school_name).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+            const rand = Math.random().toString(36).substring(2, 6);
+            const autoSlug = clean(s.school_name).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") + "-" + rand;
             if (autoSlug) {
               fetch(`/api/dashboard/schools/${schoolId}`, {
                 method: "PATCH",

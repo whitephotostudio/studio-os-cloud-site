@@ -327,7 +327,8 @@ export default function ProjectDetailPage() {
         if (!proj.gallery_slug) {
           const name = String(proj.title || proj.project_name || proj.name || "").trim();
           if (name) {
-            const autoSlug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+            const rand = Math.random().toString(36).substring(2, 6);
+            const autoSlug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") + "-" + rand;
             if (autoSlug) {
               fetch(`/api/dashboard/events/${projectId}`, {
                 method: "PATCH",
