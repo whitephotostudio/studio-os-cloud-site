@@ -1975,9 +1975,9 @@ export default function ProjectDetailPage() {
       {/* ── Focal Point Editor Modal ── */}
       {focalEditorOpen && projectCover ? (
         <div style={{ position: "fixed", inset: 0, zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.6)", backdropFilter: "blur(4px)" }}>
-          <div style={{ background: "#fff", borderRadius: 20, width: "90%", maxWidth: 680, maxHeight: "90vh", overflow: "hidden", boxShadow: "0 24px 64px rgba(0,0,0,0.25)" }}>
+          <div style={{ background: "#fff", borderRadius: 20, width: "90%", maxWidth: 680, maxHeight: "90vh", display: "flex", flexDirection: "column", overflow: "hidden", boxShadow: "0 24px 64px rgba(0,0,0,0.25)" }}>
             {/* Header */}
-            <div style={{ padding: "20px 24px", borderBottom: "1px solid #e5e7eb", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <div style={{ padding: "20px 24px", borderBottom: "1px solid #e5e7eb", display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0 }}>
               <div>
                 <h2 style={{ margin: 0, fontSize: 20, fontWeight: 800, color: "#111" }}>Edit Cover Photo</h2>
                 <p style={{ margin: "4px 0 0", fontSize: 13, color: "#6b7280" }}>Adjust the focal point to control how the cover photo is cropped.</p>
@@ -1987,6 +1987,8 @@ export default function ProjectDetailPage() {
               </button>
             </div>
 
+            {/* Scrollable body */}
+            <div style={{ flex: 1, overflowY: "auto", minHeight: 0 }}>
             {/* Image with focal point */}
             <div style={{ padding: "24px 24px 16px", display: "flex", justifyContent: "center" }}>
               <div
@@ -2003,7 +2005,7 @@ export default function ProjectDetailPage() {
                   src={projectCover}
                   alt="Cover"
                   draggable={false}
-                  style={{ width: "100%", display: "block", userSelect: "none" }}
+                  style={{ width: "100%", maxHeight: "50vh", objectFit: "contain", display: "block", userSelect: "none" }}
                 />
                 {/* Focal point indicator */}
                 <div
@@ -2034,9 +2036,10 @@ export default function ProjectDetailPage() {
               <div style={{ fontSize: 12, fontWeight: 700, color: "#6b7280", marginBottom: 6 }}>Crop preview</div>
               <div style={{ width: "100%", height: 80, borderRadius: 10, overflow: "hidden", border: "1px solid #e5e7eb", backgroundImage: `url(${projectCover})`, backgroundSize: "cover", backgroundPosition: `${Math.round(focalX * 100)}% ${Math.round(focalY * 100)}%` }} />
             </div>
+            </div>{/* end scrollable body */}
 
             {/* Footer */}
-            <div style={{ padding: "16px 24px 20px", borderTop: "1px solid #e5e7eb", display: "flex", justifyContent: "flex-end", gap: 12 }}>
+            <div style={{ padding: "16px 24px 20px", borderTop: "1px solid #e5e7eb", display: "flex", justifyContent: "flex-end", gap: 12, flexShrink: 0 }}>
               <button
                 onClick={() => setFocalEditorOpen(false)}
                 style={{ borderRadius: 12, border: "1px solid #d0d5dd", background: "#fff", color: "#344054", padding: "12px 20px", fontWeight: 700, cursor: "pointer", fontSize: 14 }}
