@@ -273,6 +273,12 @@ function buildOrderSummaryHtml(order: any, branding: StudioBranding): string {
     </div>
   </div>
 
+  <!-- Parent notes -->
+  ${notes ? `<div style="margin:0 36px 0;padding:14px 18px;background:#fffbeb;border:1px solid #fde68a;border-radius:8px;">
+    <span style="font-size:11px;text-transform:uppercase;letter-spacing:0.05em;color:#92400e;font-weight:700;">Parent Notes:&nbsp;</span>
+    <span style="font-size:13px;color:#78350f;white-space:pre-wrap;">${esc(notes)}</span>
+  </div>` : ""}
+
   <!-- Compact info footer -->
   <div style="padding:14px 36px;background:#f7fafc;border-top:1px solid #e2e8f0;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">
     <div style="font-size:13px;color:#4a5568;">
