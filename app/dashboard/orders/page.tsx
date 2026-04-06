@@ -405,6 +405,7 @@ export default function OrdersPage() {
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
   const [bulkDeleteConfirm, setBulkDeleteConfirm] = useState(false);
   const [bulkDeleting, setBulkDeleting] = useState(false);
+  const [bulkDeleteProgress, setBulkDeleteProgress] = useState({ done: 0, total: 0 });
   const [editingOrder, setEditingOrder] = useState<Order | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
@@ -690,16 +691,28 @@ export default function OrdersPage() {
       const orderIds = rows
         .filter((g) => selectedKeys.has(g.key))
         .flatMap((g) => g.orders.map((o) => o.id));
-      for (const id of orderIds) {
-        await supabase.from("order_items").delete().eq("order_id", id);
-        await supabase.from("orders").delete().eq("id", id);
+      setBulkDeleteProgress({ done: 0, total: orderIds.length });
+
+      // Delete in batches of 10 for speed
+      const batchSize = 10;
+      for (let i = 0; i < orderIds.length; i += batchSize) {
+        const batch = orderIds.slice(i, i + batchSize);
+        await Promise.all(
+          batch.map(async (id) => {
+            await supabase.from("order_items").delete().eq("order_id", id);
+            await supabase.from("orders").delete().eq("id", id);
+          })
+        );
+        setBulkDeleteProgress({ done: Math.min(i + batchSize, orderIds.length), total: orderIds.length });
       }
+
       setSelectedKeys(new Set());
       setBulkDeleteConfirm(false);
       if (selected && orderIds.includes(selected.id)) setSelected(null);
       await load();
     } finally {
       setBulkDeleting(false);
+      setBulkDeleteProgress({ done: 0, total: 0 });
     }
   }
 
@@ -2231,7 +2244,9 @@ export default function OrdersPage() {
                 disabled={bulkDeleting}
                 style={{ flex: 1, background: "#cc0000", color: "#fff", border: "none", borderRadius: 12, padding: "12px 16px", fontWeight: 800, fontSize: 14, cursor: bulkDeleting ? "default" : "pointer", opacity: bulkDeleting ? 0.7 : 1 }}
               >
-                {bulkDeleting ? "Deleting…" : `Delete ${selectedKeys.size} permanently`}
+                {bulkDeleting
+                  ? `Deleting ${bulkDeleteProgress.done} / ${bulkDeleteProgress.total}…`
+                  : `Delete ${selectedKeys.size} permanently`}
               </button>
               <button
                 type="button"
