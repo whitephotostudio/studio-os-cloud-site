@@ -351,7 +351,7 @@ export async function GET(request: NextRequest) {
           "Student"
         )}.zip`;
 
-    return new NextResponse(zipData, {
+    return new NextResponse(zipData as unknown as BodyInit, {
       status: 200,
       headers: {
         "Content-Type": "application/zip",
