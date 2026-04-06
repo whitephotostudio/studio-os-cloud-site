@@ -2272,7 +2272,7 @@ export default function OrdersPage() {
                           type="text"
                           value={statusEmailForm.subject}
                           onChange={(e) => setStatusEmailForm((f) => ({ ...f, subject: e.target.value }))}
-                          style={{ width: "100%", padding: "8px 12px", border: `1px solid ${borderColor}`, borderRadius: 4, fontSize: 13, boxSizing: "border-box" }}
+                          style={{ width: "100%", padding: "8px 12px", border: `1px solid ${borderColor}`, borderRadius: 4, fontSize: 13, boxSizing: "border-box", color: "#111", background: "#fff" }}
                         />
                       </div>
                       <div style={{ marginBottom: 16 }}>
@@ -2281,7 +2281,7 @@ export default function OrdersPage() {
                           type="text"
                           value={statusEmailForm.headline}
                           onChange={(e) => setStatusEmailForm((f) => ({ ...f, headline: e.target.value }))}
-                          style={{ width: "100%", padding: "8px 12px", border: `1px solid ${borderColor}`, borderRadius: 4, fontSize: 13, boxSizing: "border-box" }}
+                          style={{ width: "100%", padding: "8px 12px", border: `1px solid ${borderColor}`, borderRadius: 4, fontSize: 13, boxSizing: "border-box", color: "#111", background: "#fff" }}
                         />
                       </div>
                       <div style={{ marginBottom: 16 }}>
@@ -2290,7 +2290,7 @@ export default function OrdersPage() {
                           value={statusEmailForm.message}
                           onChange={(e) => setStatusEmailForm((f) => ({ ...f, message: e.target.value }))}
                           rows={5}
-                          style={{ width: "100%", padding: "8px 12px", border: `1px solid ${borderColor}`, borderRadius: 4, fontSize: 13, resize: "vertical", boxSizing: "border-box", fontFamily: "inherit" }}
+                          style={{ width: "100%", padding: "8px 12px", border: `1px solid ${borderColor}`, borderRadius: 4, fontSize: 13, resize: "vertical", boxSizing: "border-box", fontFamily: "inherit", color: "#111", background: "#fff" }}
                         />
                       </div>
                     </>
