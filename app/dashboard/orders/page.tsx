@@ -407,6 +407,8 @@ export default function OrdersPage() {
   const [bulkDeleting, setBulkDeleting] = useState(false);
   const [editingOrder, setEditingOrder] = useState<Order | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+  const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  const [downloadingBulk, setDownloadingBulk] = useState(false);
   const [saving, setSaving] = useState(false);
   const [editForm, setEditForm] = useState<{
     parentName: string;
@@ -554,24 +556,69 @@ export default function OrdersPage() {
     }
   }
 
-  async function downloadOriginals(order: Order) {
-    const urls = extractImageUrls(order);
-    if (!urls.length) return;
-    for (let i = 0; i < urls.length; i += 1) {
-      const url = urls[i];
-      const filename = fileNameFromUrl(url, `image-${i + 1}.jpg`);
-      await triggerDownload(url, filename);
-      await new Promise((resolve) => window.setTimeout(resolve, 220));
+  async function downloadOrderZip(order: Order) {
+    setDownloadingId(order.id);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const res = await fetch(`/api/dashboard/orders/download?ids=${order.id}`, {
+        headers: { Authorization: `Bearer ${session?.access_token ?? ""}` },
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ message: "Download failed" }));
+        alert(err.message || "Download failed");
+        return;
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const disposition = res.headers.get("content-disposition") ?? "";
+      const match = disposition.match(/filename="(.+?)"/);
+      const filename = match?.[1] ?? `order-${order.id.slice(0, 8)}.zip`;
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = filename;
+      document.body.appendChild(anchor);
+      anchor.click();
+      document.body.removeChild(anchor);
+      URL.revokeObjectURL(url);
+    } finally {
+      setDownloadingId(null);
     }
+  }
+
+  async function downloadOriginals(order: Order) {
+    await downloadOrderZip(order);
   }
 
   async function exportAllVisible() {
     const rows = filtered;
     if (!rows.length) return;
-    const manifest = rows
-      .map((order) => buildManifest(order).content)
-      .join("\n\n----------------------------------------\n\n");
-    downloadBlob(`studio-os-orders-${filter}-manifest.txt`, "text/plain;charset=utf-8", manifest);
+    setDownloadingBulk(true);
+    try {
+      const ids = rows.map((o) => o.id).join(",");
+      const { data: { session } } = await supabase.auth.getSession();
+      const res = await fetch(`/api/dashboard/orders/download?ids=${ids}`, {
+        headers: { Authorization: `Bearer ${session?.access_token ?? ""}` },
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ message: "Download failed" }));
+        alert(err.message || "Bulk download failed");
+        return;
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const disposition = res.headers.get("content-disposition") ?? "";
+      const match = disposition.match(/filename="(.+?)"/);
+      const filename = match?.[1] ?? `studio-os-orders.zip`;
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = filename;
+      document.body.appendChild(anchor);
+      anchor.click();
+      document.body.removeChild(anchor);
+      URL.revokeObjectURL(url);
+    } finally {
+      setDownloadingBulk(false);
+    }
   }
 
   async function deleteOrder(orderId: string) {
@@ -763,12 +810,32 @@ export default function OrdersPage() {
   }
 
   async function downloadCombinedOriginals(group: CombinedOrderGroup) {
-    if (!group.imageUrls.length) return;
-    for (let i = 0; i < group.imageUrls.length; i += 1) {
-      const url = group.imageUrls[i];
-      const filename = fileNameFromUrl(url, `image-${i + 1}.jpg`);
-      await triggerDownload(url, filename);
-      await new Promise((resolve) => window.setTimeout(resolve, 220));
+    const ids = group.orders.map((o) => o.id).join(",");
+    setDownloadingId(group.key);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const res = await fetch(`/api/dashboard/orders/download?ids=${ids}`, {
+        headers: { Authorization: `Bearer ${session?.access_token ?? ""}` },
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ message: "Download failed" }));
+        alert(err.message || "Download failed");
+        return;
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const disposition = res.headers.get("content-disposition") ?? "";
+      const match = disposition.match(/filename="(.+?)"/);
+      const filename = match?.[1] ?? `order-${group.key.slice(0, 8)}.zip`;
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = filename;
+      document.body.appendChild(anchor);
+      anchor.click();
+      document.body.removeChild(anchor);
+      URL.revokeObjectURL(url);
+    } finally {
+      setDownloadingId(null);
     }
   }
 
@@ -1049,7 +1116,7 @@ export default function OrdersPage() {
                 cursor: "pointer",
               }}
             >
-              <Download size={16} /> Export visible manifest
+              <Download size={16} /> {downloadingBulk ? "Downloading…" : "Download All Orders"}
             </button>
             <button
               type="button"
@@ -1719,7 +1786,7 @@ export default function OrdersPage() {
                                 cursor: "pointer",
                               }}
                             >
-                              <FolderOpen size={16} /> Download originals
+                              <FolderOpen size={16} /> {downloadingId === group.key ? "Downloading…" : "Download ZIP"}
                             </button>
 
                             <button
@@ -1902,7 +1969,7 @@ export default function OrdersPage() {
                     cursor: "pointer",
                   }}
                 >
-                  <FolderOpen size={16} /> Download originals
+                  <FolderOpen size={16} /> {downloadingId === selected.id ? "Downloading…" : "Download ZIP"}
                 </button>
               </div>
 
