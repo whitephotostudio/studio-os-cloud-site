@@ -240,14 +240,23 @@ function resolveOrderDisplayItems(order: any): { productName: string; photoUrl: 
 function buildOrderSummaryHtml(order: any, branding: StudioBranding, photoFileMap: Map<string, string>): string {
   const studentName = `${clean(order.student?.first_name)} ${clean(order.student?.last_name)}`.trim() || "Student";
   const schoolName = order.school?.school_name ?? "—";
-  const className = order.class?.class_name ?? "";
+  const className = order.class?.class_name || order.student?.class_name || "";
   const parentName = order.parent_name ?? order.customer_name ?? "—";
   const parentEmail = order.parent_email ?? order.customer_email ?? "—";
   const parentPhone = order.parent_phone ?? "";
   const orderDate = formatDate(order.created_at);
   const orderId = shortOrderId(order.id);
   const status = (order.status ?? "new").toUpperCase().replace(/_/g, " ");
-  const notesText = clean(order.special_notes) || clean(order.notes);
+  const rawNotes = clean(order.special_notes) || clean(order.notes);
+  // Strip ORDER ITEM blocks and URLs — keep only human-readable notes (delivery, custom messages)
+  const cleanedNotes = rawNotes
+    .replace(/ORDER ITEM\s*\d+:.*?(?=ORDER ITEM\s*\d+:|Delivery:|$)/gis, "")
+    .replace(/https?:\/\/[^\s]*/gi, "")
+    .replace(/PHOTO SELECTIONS:/gi, "")
+    .replace(/CLASS COMPOSITE:\s*\w+/gi, "")
+    .replace(/Item\s*\d+:.*?→\s*/gi, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 
   const displayItems = resolveOrderDisplayItems(order);
 
@@ -267,7 +276,7 @@ function buildOrderSummaryHtml(order: any, branding: StudioBranding, photoFileMa
   });
 
   // Delivery note
-  const deliveryMatch = notesText.match(/Delivery:\s*(\w+)/i);
+  const deliveryMatch = rawNotes.match(/Delivery:\s*(\w+)/i);
   const delivery = deliveryMatch ? deliveryMatch[1] : "";
 
   // Status badge color
@@ -316,19 +325,33 @@ function buildOrderSummaryHtml(order: any, branding: StudioBranding, photoFileMa
     ${photoCardsHtml || '<div style="color:#999;font-size:14px;">No photos in this order.</div>'}
   </div>
 
-  <!-- Parent notes -->
-  ${notesText ? `<div style="margin:0 36px 16px;padding:12px 16px;background:#fafafa;border-left:3px solid #333;border-radius:2px;">
+  <!-- Customer / Parent info -->
+  <div style="padding:16px 36px;border-top:1px solid #e0e0e0;display:flex;gap:48px;flex-wrap:wrap;">
+    <div>
+      <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.06em;color:#999;font-weight:700;margin-bottom:3px;">Parent / Customer</div>
+      <div style="font-size:14px;font-weight:600;color:#111;">${esc(parentName)}</div>
+      ${parentEmail !== "—" ? `<div style="font-size:12px;color:#555;">${esc(parentEmail)}</div>` : ""}
+      ${parentPhone ? `<div style="font-size:12px;color:#555;">${esc(parentPhone)}</div>` : ""}
+    </div>
+    ${className ? `<div>
+      <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.06em;color:#999;font-weight:700;margin-bottom:3px;">Class</div>
+      <div style="font-size:14px;font-weight:600;color:#111;">${esc(className)}</div>
+    </div>` : ""}
+    ${delivery ? `<div>
+      <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.06em;color:#999;font-weight:700;margin-bottom:3px;">Delivery</div>
+      <div style="font-size:14px;font-weight:600;color:#111;">${esc(delivery)}</div>
+    </div>` : ""}
+  </div>
+
+  <!-- Notes (only if there are human-written notes beyond the structured order data) -->
+  ${cleanedNotes ? `<div style="margin:0 36px 16px;padding:12px 16px;background:#fafafa;border-left:3px solid #333;border-radius:2px;">
     <div style="font-size:11px;text-transform:uppercase;letter-spacing:0.06em;color:#888;font-weight:700;margin-bottom:6px;">Notes</div>
-    <div style="font-size:13px;color:#333;white-space:pre-wrap;line-height:1.5;">${esc(notesText)}</div>
+    <div style="font-size:13px;color:#333;white-space:pre-wrap;line-height:1.5;">${esc(cleanedNotes)}</div>
   </div>` : ""}
 
   <!-- Footer -->
-  <div style="padding:12px 36px;background:#f5f5f5;border-top:1px solid #e0e0e0;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
-    <div style="font-size:12px;color:#555;">
-      <span style="font-weight:600;">Parent:</span> ${esc(parentName)}${parentEmail !== "—" ? ` &middot; ${esc(parentEmail)}` : ""}${parentPhone ? ` &middot; ${esc(parentPhone)}` : ""}
-      ${delivery ? `&nbsp;&nbsp;<span style="display:inline-block;padding:2px 8px;background:#111;color:#fff;border-radius:2px;font-size:10px;font-weight:700;text-transform:uppercase;">${esc(delivery)}</span>` : ""}
-    </div>
-    <div style="font-size:11px;color:#999;">Studio OS Cloud</div>
+  <div style="padding:10px 36px;background:#f5f5f5;border-top:1px solid #e0e0e0;text-align:right;">
+    <span style="font-size:11px;color:#999;">Studio OS Cloud</span>
   </div>
 </body>
 </html>`;
