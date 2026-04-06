@@ -1762,7 +1762,7 @@ export default function OrdersPage() {
                               type="button"
                               onClick={(e) => {
                                 e.stopPropagation();
-                                exportCombinedSummary(group);
+                                downloadCombinedOriginals(group);
                               }}
                               style={{
                                 background: "#111827",
@@ -1777,29 +1777,7 @@ export default function OrdersPage() {
                                 cursor: "pointer",
                               }}
                             >
-                              <Download size={16} /> {exportingId === group.key ? "Exporting..." : group.orderCount > 1 ? "Export all summaries" : "Export summary"}
-                            </button>
-
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                downloadCombinedOriginals(group);
-                              }}
-                              style={{
-                                background: "#fff",
-                                color: textPrimary,
-                                border: `1px solid ${borderColor}`,
-                                borderRadius: 12,
-                                padding: "10px 14px",
-                                display: "inline-flex",
-                                alignItems: "center",
-                                gap: 8,
-                                fontWeight: 800,
-                                cursor: "pointer",
-                              }}
-                            >
-                              <FolderOpen size={16} /> {downloadingId === group.key ? "Downloading…" : "Download ZIP"}
+                              <Download size={16} /> {downloadingId === group.key ? "Downloading…" : "Download Summary & Photos"}
                             </button>
 
                             <button
@@ -1950,7 +1928,7 @@ export default function OrdersPage() {
               <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 18 }}>
                 <button
                   type="button"
-                  onClick={() => exportOrderSummary(selected)}
+                  onClick={() => downloadOriginals(selected)}
                   style={{
                     background: "#111827",
                     color: "#fff",
@@ -1964,25 +1942,7 @@ export default function OrdersPage() {
                     cursor: "pointer",
                   }}
                 >
-                  <Download size={16} /> Export summary
-                </button>
-                <button
-                  type="button"
-                  onClick={() => downloadOriginals(selected)}
-                  style={{
-                    background: "#fff",
-                    color: textPrimary,
-                    border: `1px solid ${borderColor}`,
-                    borderRadius: 12,
-                    padding: "10px 14px",
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: 8,
-                    fontWeight: 800,
-                    cursor: "pointer",
-                  }}
-                >
-                  <FolderOpen size={16} /> {downloadingId === selected.id ? "Downloading…" : "Download ZIP"}
+                  <Download size={16} /> {downloadingId === selected.id ? "Downloading…" : "Download Summary & Photos"}
                 </button>
               </div>
 
