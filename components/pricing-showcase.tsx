@@ -224,6 +224,14 @@ const comparisonRows: ComparisonRow[] = [
       studio: true,
     },
   },
+  {
+    label: "Background Removal Credits",
+    values: {
+      starter: { label: "Sold separately", note: "Purchase monthly credit packs as needed" },
+      core: { label: "Sold separately", note: "Purchase monthly credit packs as needed" },
+      studio: { label: "Sold separately", note: "Purchase monthly credit packs as needed" },
+    },
+  },
 ];
 
 function formatMoney(cents: number) {

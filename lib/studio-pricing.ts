@@ -60,7 +60,7 @@ export const PLAN_DEFS: Record<PlanCode, PlanDefinition> = {
     usageFeeApplies: true,
     usageRateCents: envInt("STRIPE_STARTER_ORDER_USAGE_RATE_CENTS", 55),
     includedDesktopKeys: 0,
-    includedCredits: envInt("STRIPE_STARTER_INCLUDED_CREDITS", 35),
+    includedCredits: 0,
     websiteLogoIncluded: false,
   },
   core: {
@@ -76,7 +76,7 @@ export const PLAN_DEFS: Record<PlanCode, PlanDefinition> = {
     usageFeeApplies: true,
     usageRateCents: envInt("STRIPE_CORE_ORDER_USAGE_RATE_CENTS", 35),
     includedDesktopKeys: 1,
-    includedCredits: envInt("STRIPE_CORE_INCLUDED_CREDITS", 55),
+    includedCredits: 0,
     websiteLogoIncluded: true,
     featured: true,
   },
@@ -93,7 +93,7 @@ export const PLAN_DEFS: Record<PlanCode, PlanDefinition> = {
     usageFeeApplies: true,
     usageRateCents: envInt("STRIPE_STUDIO_ORDER_USAGE_RATE_CENTS", 25),
     includedDesktopKeys: 2,
-    includedCredits: envInt("STRIPE_STUDIO_INCLUDED_CREDITS", 100),
+    includedCredits: 0,
     websiteLogoIncluded: true,
   },
 };
@@ -109,34 +109,34 @@ export const EXTRA_DESKTOP_KEY_ANNUAL_CENTS = envInt(
 export const CREDIT_PACK_DEFS: Record<CreditPackCode, CreditPackDefinition> = {
   background_credits_250: {
     code: "background_credits_250",
-    label: "Background Credits 250",
+    label: "250 Credits",
     credits: 250,
-    priceCents: envInt("STRIPE_BACKGROUND_CREDITS_250_CENTS", 1250),
+    priceCents: envInt("STRIPE_BACKGROUND_CREDITS_250_CENTS", 1500),
   },
   background_credits_1000: {
     code: "background_credits_1000",
-    label: "Background Credits 1000",
+    label: "1000 Credits",
     credits: 1000,
-    priceCents: envInt("STRIPE_BACKGROUND_CREDITS_1000_CENTS", 4500),
+    priceCents: envInt("STRIPE_BACKGROUND_CREDITS_1000_CENTS", 5500),
   },
   background_credits_2500: {
     code: "background_credits_2500",
-    label: "Background Credits 2500",
+    label: "2500 Credits",
     credits: 2500,
-    priceCents: envInt("STRIPE_BACKGROUND_CREDITS_2500_CENTS", 10000),
+    priceCents: envInt("STRIPE_BACKGROUND_CREDITS_2500_CENTS", 12900),
   },
   background_credits_5000: {
     code: "background_credits_5000",
-    label: "Background Credits 5000",
+    label: "5000 Credits",
     credits: 5000,
-    priceCents: envInt("STRIPE_BACKGROUND_CREDITS_5000_CENTS", 17500),
+    priceCents: envInt("STRIPE_BACKGROUND_CREDITS_5000_CENTS", 23900),
     featured: true,
   },
   background_credits_10000: {
     code: "background_credits_10000",
-    label: "Background Credits 10000",
+    label: "10000 Credits",
     credits: 10000,
-    priceCents: envInt("STRIPE_BACKGROUND_CREDITS_10000_CENTS", 30000),
+    priceCents: envInt("STRIPE_BACKGROUND_CREDITS_10000_CENTS", 44900),
   },
 };
 

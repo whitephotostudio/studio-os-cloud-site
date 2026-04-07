@@ -943,11 +943,7 @@ export default function SettingsPage() {
       : "Pending";
   const displayIncludedCredits = isPlatformAdmin
     ? "Owner access included"
-    : subscriptionPlanCode
-    ? `${activePlan?.includedCredits ?? 0} / month`
-    : subscriptionInTrial
-      ? "Trial access only"
-      : "0 / month";
+    : "Sold separately — purchase credit packs below";
   const showSubscriptionLockedWarning =
     !isPlatformAdmin && !subscriptionIsActive && !subscriptionInTrial;
   const showTrialInfo = !isPlatformAdmin && subscriptionInTrial;
@@ -986,7 +982,7 @@ export default function SettingsPage() {
           </h1>
           <p style={{ marginTop: 12, maxWidth: 840, fontSize: 18, lineHeight: 1.7, color: "#64748b" }}>
             Photographer sales route through the photographer’s own connected Stripe account, while Studio OS bills plans,
-            extra desktop keys, background credits, monthly included credits, and aggregated order usage separately through platform billing.
+            extra desktop keys, background credits, and aggregated order usage separately through platform billing.
           </p>
         </div>
 
@@ -1497,7 +1493,7 @@ export default function SettingsPage() {
                     <div style={{ marginTop: 10, color: "#334155", lineHeight: 1.7, fontSize: 13 }}>
                       {plan.code === "starter"
                         ? `${formatMoney(plan.usageRateCents, billingCurrency)} per paid order · web-only plan`
-                        : `${formatMoney(plan.usageRateCents, billingCurrency)} per paid order · ${plan.includedCredits} credits included each month`}
+                        : `${formatMoney(plan.usageRateCents, billingCurrency)} per paid order · background credits sold separately`}
                     </div>
                     <div style={{ marginTop: 10, color: "#475569", lineHeight: 1.7, fontSize: 13 }}>
                       {plan.code === "starter"
@@ -1613,7 +1609,7 @@ export default function SettingsPage() {
             </div>
 
             <div style={{ marginTop: 16, fontSize: 13, color: "#64748b", lineHeight: 1.7, padding: "12px 14px", background: "#f8fafc", borderRadius: 14, border: "1px solid #e2e8f0" }}>
-              Customer checkout payments go straight to the photographer’s connected Stripe account. Studio OS billing stays separate on the platform account for plans, extra keys, monthly included credits, cloud credit packs, and aggregated order usage.
+              Customer checkout payments go straight to the photographer’s connected Stripe account. Studio OS billing stays separate on the platform account for plans, extra keys, cloud credit packs, and aggregated order usage.
             </div>
           </div>
 
@@ -1639,9 +1635,9 @@ export default function SettingsPage() {
             <StatusRow label="Extra desktop keys" value={String(extraDesktopKeys)} ok />
             <StatusRow label="Credit balance" value={`${creditBalance} credits`} ok />
             <StatusRow
-              label="Included credits"
+              label="Background credits"
               value={displayIncludedCredits}
-              ok={subscriptionIsActive || subscriptionInTrial}
+              ok={creditBalance > 0}
             />
 
             {subscriptionPlanCode ? (
@@ -1663,7 +1659,7 @@ export default function SettingsPage() {
               </div>
             ) : showTrialInfo ? (
               <div style={{ marginTop: 14, borderRadius: 14, border: "1px solid #bfdbfe", background: "#eff6ff", color: "#1d4ed8", padding: "12px 14px", lineHeight: 1.6, fontWeight: 700 }}>
-                Trial access is active. Connected checkout already works, but you should start a paid subscription before the trial ends to keep Studio OS features and monthly included credits running without interruption.
+                Trial access is active. Connected checkout already works, but you should start a paid subscription before the trial ends to keep Studio OS features running without interruption.
               </div>
             ) : null}
 
@@ -1690,14 +1686,21 @@ export default function SettingsPage() {
               </div>
               <div>
                 <div style={{ fontSize: 13, fontWeight: 800, letterSpacing: "0.14em", textTransform: "uppercase", color: "#64748b" }}>
-                  Background credits
+                  Monthly Background Credits
                 </div>
                 <div style={{ fontSize: 20, fontWeight: 900, color: "#0f172a", marginTop: 2 }}>Buy credit packs</div>
               </div>
             </div>
 
             <div style={{ marginBottom: 16, fontSize: 13, color: "#64748b", lineHeight: 1.7, padding: "12px 14px", background: "#f8fafc", borderRadius: 14, border: "1px solid #e2e8f0" }}>
-              Every active package also grants monthly included credits automatically: Starter 35, Core 55, Studio 100.
+              Credits reset every billing cycle. Unused credits do not roll over.
+            </div>
+
+            <div style={{ marginBottom: 16, fontSize: 13, color: "#475569", lineHeight: 1.7, padding: "12px 14px", background: "#f1f5f9", borderRadius: 14, border: "1px solid #e2e8f0" }}>
+              <div style={{ fontWeight: 800, marginBottom: 6, color: "#0f172a" }}>Background Removal Credit Usage</div>
+              <div>Background Removal (Local) — 1 credit</div>
+              <div>Background Removal (Premium Cloud) — 4 credits</div>
+              <div style={{ marginTop: 6, fontSize: 12, color: "#64748b" }}>Premium Cloud uses Studio OS premium cloud processing for cleaner, faster results.</div>
             </div>
 
             <div style={{ display: "grid", gap: 14 }}>
@@ -1721,7 +1724,10 @@ export default function SettingsPage() {
                         {pack.label || pack.name}
                       </div>
                       <div style={{ marginTop: 4, color: "#64748b" }}>
-                        {pack.credits} credits for {formatMoney(pack.priceCents, billingCurrency)}
+                        {pack.credits} monthly credits for {formatMoney(pack.priceCents, billingCurrency)}
+                      </div>
+                      <div style={{ marginTop: 2, color: "#94a3b8", fontSize: 12 }}>
+                        Approx. {Math.floor(pack.credits / 4)} Premium Cloud removals
                       </div>
                     </div>
                     <button
