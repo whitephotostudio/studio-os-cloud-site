@@ -591,6 +591,7 @@ export default function ProjectDetailPage() {
     if (!galleryEntryUrl) return;
     try {
       await navigator.clipboard.writeText(galleryEntryUrl);
+      setShareModalOpen(false);
       setShareNotice("Event link copied");
       window.setTimeout(() => setShareNotice(""), 2200);
     } catch {
@@ -1033,7 +1034,7 @@ export default function ProjectDetailPage() {
           </div>
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "flex-end" }}>
             <button onClick={() => { setShareView("menu"); setShareModalOpen(true); }} style={{ borderRadius: 10, border: "1px solid #111111", background: "#111111", color: "#fff", padding: "12px 16px", fontWeight: 800, cursor: "pointer" }}>Share Gallery</button>
-            <Link href={`/dashboard/projects/${projectId}/settings`} style={{ borderRadius: 10, border: "1px solid #111111", background: "#fff", color: "#111111", padding: "12px 16px", fontWeight: 800, textDecoration: "none" }}>Preview Gallery</Link>
+            <a href={galleryEntryUrl} target="_blank" rel="noopener noreferrer" style={{ borderRadius: 10, border: "1px solid #111111", background: "#fff", color: "#111111", padding: "12px 16px", fontWeight: 800, textDecoration: "none", display: "inline-block" }}>Preview Gallery</a>
           </div>
         </div>
 

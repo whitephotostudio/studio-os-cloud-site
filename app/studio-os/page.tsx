@@ -1,5 +1,15 @@
 import { SiteHeader } from "../../components/site-header";
 import Link from "next/link";
+import {
+  ShieldCheck,
+  ScanQrCode,
+  ReceiptText,
+  FolderKanban,
+  Image as ImageIcon,
+  LayoutGrid,
+  ShoppingBag,
+  Cloud,
+} from "lucide-react";
 
 // ── QR Code Visual (CSS art) ─────────────────────────────────────────────────
 function QRVisual({ light = false }: { light?: boolean }) {
@@ -48,14 +58,16 @@ function CollageGrid() {
   );
 }
 
-// ── Workflow Step Strip ───────────────────────────────────────────────────────
-const workflowSteps = [
-  { icon:"📋", label:"Set Up Job",    sub:"School roster or event client" },
-  { icon:"📷", label:"Capture",       sub:"QR scan · zero mix-ups" },
-  { icon:"🗂️", label:"Sort & Review", sub:"Batch, crop, select" },
-  { icon:"✨", label:"AI Edit",       sub:"BG removal + retouch" },
-  { icon:"🖼️", label:"Composites",    sub:"Noritsu-ready PDF" },
-  { icon:"☁️", label:"Deliver",       sub:"Cloud → clients & parents" },
+// ── App Panel Strip ───────────────────────────────────────────────────────────
+const appPanels = [
+  { Icon: ShieldCheck,  label: "Admin",       sub: "Schools · events · client info" },
+  { Icon: ScanQrCode,   label: "Photographer", sub: "QR scan · capture · zero mix-ups" },
+  { Icon: ReceiptText,  label: "Order Forms",  sub: "Per-student order management" },
+  { Icon: FolderKanban, label: "Sorter",       sub: "Batch sort · crop · select" },
+  { Icon: ImageIcon,    label: "Backdrops",    sub: "AI removal · live swap" },
+  { Icon: LayoutGrid,   label: "Composites",   sub: "Class composites · Noritsu PDF" },
+  { Icon: ShoppingBag,  label: "Orders",       sub: "Auto-matched · print-ready" },
+  { Icon: Cloud,        label: "Cloud",        sub: "Sync · galleries · parents" },
 ];
 
 // ── Page ─────────────────────────────────────────────────────────────────────
@@ -94,22 +106,36 @@ export default function StudioOSPage() {
             </div>
           </div>
 
-          {/* ── Workflow Strip ─────────────────────────────────────────────── */}
+          {/* ── App Panel Strip ────────────────────────────────────────────── */}
           <div className="rounded-[24px] border border-neutral-200 bg-neutral-50 px-6 py-5 overflow-x-auto">
-            <div className="flex items-center justify-between gap-2 min-w-[600px]">
-              {workflowSteps.map((step, i) => (
-                <div key={step.label} className="flex items-center gap-2 flex-1">
-                  <div className="flex flex-col items-center text-center flex-shrink-0">
-                    <div className="text-2xl mb-1">{step.icon}</div>
-                    <div className="text-xs font-bold text-neutral-800">{step.label}</div>
-                    <div className="text-[10px] text-neutral-400 mt-0.5">{step.sub}</div>
+            <div className="text-[10px] font-bold text-neutral-400 uppercase tracking-widest mb-4 text-center">
+              8 panels. One connected app.
+            </div>
+            <div className="flex items-start justify-between gap-1 min-w-[640px]">
+              {appPanels.map(({ Icon, label, sub }, i) => (
+                <div key={label} className="flex items-center gap-1 flex-1">
+                  <div className="flex flex-col items-center text-center flex-shrink-0 group">
+                    {/* Icon chip — mirrors Flutter nav tab style */}
+                    <div
+                      className="w-12 h-12 rounded-2xl flex items-center justify-center mb-2 transition-colors"
+                      style={{
+                        background: i === 0 ? "#fef2f2" : i === 7 ? "#eff6ff" : "#f5f5f5",
+                        border: `1px solid ${i === 0 ? "#fecaca" : i === 7 ? "#bfdbfe" : "#e5e5e5"}`,
+                      }}
+                    >
+                      <Icon
+                        size={22}
+                        strokeWidth={1.5}
+                        color={i === 0 ? "#ef4444" : i === 7 ? "#3b82f6" : "#404040"}
+                      />
+                    </div>
+                    <div className="text-xs font-bold text-neutral-800 leading-tight">{label}</div>
+                    <div className="text-[9px] text-neutral-400 mt-0.5 max-w-[72px] leading-tight">{sub}</div>
                   </div>
-                  {i < workflowSteps.length - 1 && (
-                    <div className="flex-1 flex items-center gap-0.5 mt-[-18px] mx-1">
-                      {Array.from({length:4}).map((_,j) => (
-                        <div key={j} className="flex-1 h-px bg-neutral-300" />
-                      ))}
-                      <div className="text-neutral-300 text-xs flex-shrink-0">›</div>
+                  {i < appPanels.length - 1 && (
+                    <div className="flex-1 flex items-center mt-[-28px] mx-0.5">
+                      <div className="flex-1 h-px" style={{ borderTop: "1.5px dashed #d4d4d4" }} />
+                      <div className="text-neutral-300 text-[10px] flex-shrink-0">›</div>
                     </div>
                   )}
                 </div>
