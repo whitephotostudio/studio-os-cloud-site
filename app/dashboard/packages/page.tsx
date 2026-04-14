@@ -68,6 +68,76 @@ const PRINT_SIZES = [
   { value: "custom",    label: "Custom Size" },
 ];
 
+// ── Package Pack Presets ──────────────────────────────────────────────────────
+
+type PackagePreset = {
+  name: string;
+  description: string;
+  priceCents: number;
+  items: { name: string; qty: number }[];
+};
+
+type PackagePack = {
+  id: string;
+  label: string;
+  description: string;
+  presets: PackagePreset[];
+};
+
+const PACKAGE_PACKS: PackagePack[] = [
+  {
+    id: "basic_bundle",
+    label: "Basic Print Bundles",
+    description: "Simple combos of popular print sizes — great as a starting point.",
+    presets: [
+      { name: "Package A — 1 5×7 + 1 8×10", description: "One 5×7 and one 8×10 print", priceCents: 3500, items: [{ name: "5×7 Print", qty: 1 }, { name: "8×10 Print", qty: 1 }] },
+      { name: "Package B — 2 5×7 + 1 8×10", description: "Two 5×7s and one 8×10 print", priceCents: 5000, items: [{ name: "5×7 Print", qty: 2 }, { name: "8×10 Print", qty: 1 }] },
+      { name: "Package C — 2 5×7 + 2 8×10", description: "Two 5×7s and two 8×10 prints", priceCents: 7500, items: [{ name: "5×7 Print", qty: 2 }, { name: "8×10 Print", qty: 2 }] },
+    ],
+  },
+  {
+    id: "school_essentials",
+    label: "School Photo Essentials",
+    description: "Classic school photography packages parents expect.",
+    presets: [
+      { name: "Economy Pack", description: "Two wallet-size and one 5×7", priceCents: 2500, items: [{ name: "Wallet Sheet (8 wallets)", qty: 1 }, { name: "5×7 Print", qty: 1 }] },
+      { name: "Standard Pack", description: "Two 5×7s, one 8×10, and wallets", priceCents: 4500, items: [{ name: "Wallet Sheet (8 wallets)", qty: 1 }, { name: "5×7 Print", qty: 2 }, { name: "8×10 Print", qty: 1 }] },
+      { name: "Deluxe Pack", description: "The full set — large print, medium prints, wallets", priceCents: 6500, items: [{ name: "Wallet Sheet (8 wallets)", qty: 1 }, { name: "5×7 Print", qty: 2 }, { name: "8×10 Print", qty: 2 }, { name: "11×14 Print", qty: 1 }] },
+      { name: "Ultimate Pack", description: "Everything plus a wall portrait", priceCents: 9500, items: [{ name: "Wallet Sheet (8 wallets)", qty: 2 }, { name: "5×7 Print", qty: 3 }, { name: "8×10 Print", qty: 2 }, { name: "11×14 Print", qty: 1 }, { name: "16×20 Print", qty: 1 }] },
+    ],
+  },
+  {
+    id: "family_portrait",
+    label: "Family / Portrait Sessions",
+    description: "Packages for portrait sessions, family shoots, and senior photos.",
+    presets: [
+      { name: "Mini Session", description: "One 8×10 and four wallets", priceCents: 3500, items: [{ name: "8×10 Print", qty: 1 }, { name: "Wallet Sheet (8 wallets)", qty: 1 }] },
+      { name: "Portrait Collection", description: "One 11×14, two 8×10, and two 5×7", priceCents: 8500, items: [{ name: "5×7 Print", qty: 2 }, { name: "8×10 Print", qty: 2 }, { name: "11×14 Print", qty: 1 }] },
+      { name: "Premium Portrait", description: "Wall art plus prints and wallets", priceCents: 15000, items: [{ name: "Wallet Sheet (8 wallets)", qty: 2 }, { name: "5×7 Print", qty: 4 }, { name: "8×10 Print", qty: 3 }, { name: "11×14 Print", qty: 1 }, { name: "16×20 Print", qty: 1 }] },
+    ],
+  },
+  {
+    id: "event_coverage",
+    label: "Event / Sports Packages",
+    description: "Quick-sell packages for sports, dance, and event photography.",
+    presets: [
+      { name: "Single Pose", description: "One 8×10 and one 5×7", priceCents: 3000, items: [{ name: "5×7 Print", qty: 1 }, { name: "8×10 Print", qty: 1 }] },
+      { name: "Team + Individual", description: "Group print and individual prints", priceCents: 5000, items: [{ name: "5×7 Team Photo", qty: 1 }, { name: "5×7 Print", qty: 2 }, { name: "8×10 Print", qty: 1 }] },
+      { name: "Sports Memory Mate", description: "Memory mate composite with extras", priceCents: 4000, items: [{ name: "8×10 Memory Mate", qty: 1 }, { name: "Wallet Sheet (8 wallets)", qty: 1 }, { name: "5×7 Print", qty: 1 }] },
+    ],
+  },
+  {
+    id: "digital_bundles",
+    label: "Digital Download Bundles",
+    description: "Digital-only packages for clients who want files, not prints.",
+    presets: [
+      { name: "Single Digital", description: "One high-resolution digital download", priceCents: 1500, items: [{ name: "High-Res Digital Download", qty: 1 }] },
+      { name: "5 Digitals Bundle", description: "Five retouched digital files", priceCents: 5000, items: [{ name: "High-Res Digital Download", qty: 5 }] },
+      { name: "Full Gallery Digital", description: "All images from the session as digital downloads", priceCents: 12000, items: [{ name: "Full Gallery Digital Download", qty: 1 }] },
+    ],
+  },
+];
+
 function matchSizePreset(name: string): string {
   const n = name.trim().toLowerCase().replace(/×/g, "x");
   for (const s of PRINT_SIZES) {
@@ -135,6 +205,12 @@ export default function PackagesPage() {
   const [editActive, setEditActive]   = useState(true);
   const [editSizePreset, setEditSizePreset] = useState("custom");
   const [saving, setSaving]           = useState(false);
+
+  // Package pack modal
+  const [showPackPicker, setShowPackPicker]   = useState(false);
+  const [selectedPack, setSelectedPack]       = useState<PackagePack | null>(null);
+  const [packSelections, setPackSelections]   = useState<Set<number>>(new Set());
+  const [insertingPack, setInsertingPack]     = useState(false);
 
   // New price sheet modal
   const [showNewSheet, setShowNewSheet]       = useState(false);
@@ -404,6 +480,53 @@ export default function PackagesPage() {
     }));
     await supabase.from("packages").insert(rows);
     await loadData();
+  }
+
+  function openPackPicker() {
+    setSelectedPack(null);
+    setPackSelections(new Set());
+    setShowPackPicker(true);
+  }
+
+  function selectPack(pack: PackagePack) {
+    setSelectedPack(pack);
+    // Select all by default
+    setPackSelections(new Set(pack.presets.map((_, i) => i)));
+  }
+
+  function togglePackPreset(index: number) {
+    setPackSelections(prev => {
+      const next = new Set(prev);
+      if (next.has(index)) next.delete(index);
+      else next.add(index);
+      return next;
+    });
+  }
+
+  async function insertSelectedPacks() {
+    if (!selectedProfile || !pgId || !selectedPack) return;
+    const presets = selectedPack.presets.filter((_, i) => packSelections.has(i));
+    if (presets.length === 0) return;
+    setInsertingPack(true);
+    try {
+      const rows = presets.map(p => ({
+        name: p.name,
+        description: p.description,
+        price_cents: p.priceCents,
+        items: p.items,
+        active: true,
+        photographer_id: pgId,
+        profile_id: selectedProfile.id,
+        profile_name: selectedProfile.name,
+        category: "package",
+      }));
+      await supabase.from("packages").insert(rows);
+      await loadData();
+      setShowPackPicker(false);
+      setSelectedPack(null);
+    } finally {
+      setInsertingPack(false);
+    }
   }
 
   async function signOut() {
@@ -861,6 +984,12 @@ export default function PackagesPage() {
           <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0, color: "#111" }}>{catMeta?.label}</h1>
           <div style={{ display: "flex", gap: 8 }}>
             <button
+              onClick={openPackPicker}
+              style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 18px", background: "#fff", color: "#000", border: "1px solid #e5e5e5", borderRadius: 8, cursor: "pointer", fontWeight: 600, fontSize: 14 }}
+            >
+              <Package size={16} /> Add Package Pack
+            </button>
+            <button
               onClick={addAllSizes}
               style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 18px", background: "#fff", color: "#000", border: "1px solid #e5e5e5", borderRadius: 8, cursor: "pointer", fontWeight: 600, fontSize: 14 }}
             >
@@ -995,6 +1124,147 @@ export default function PackagesPage() {
                   Cancel
                 </button>
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* Package Pack picker modal */}
+        {showPackPicker && (
+          <div style={overlayStyle}>
+            <div style={{ background: "#fff", borderRadius: 16, padding: 32, width: 640, maxWidth: "100%", maxHeight: "90vh", overflowY: "auto" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+                <div>
+                  <h2 style={{ margin: 0, fontSize: 18, fontWeight: 700 }}>
+                    {selectedPack ? selectedPack.label : "Choose a Package Pack"}
+                  </h2>
+                  <p style={{ margin: "4px 0 0", fontSize: 13, color: "#666" }}>
+                    {selectedPack
+                      ? "Select which packages to add, then customize prices and contents after."
+                      : "Pre-built bundles to get you started — fully customizable after adding."}
+                  </p>
+                </div>
+                <button onClick={() => { setShowPackPicker(false); setSelectedPack(null); }} style={{ background: "none", border: "none", cursor: "pointer", color: "#999" }}>
+                  <X size={20} />
+                </button>
+              </div>
+
+              {!selectedPack ? (
+                <div style={{ display: "grid", gap: 10 }}>
+                  {PACKAGE_PACKS.map(pack => (
+                    <button
+                      key={pack.id}
+                      onClick={() => selectPack(pack)}
+                      style={{
+                        display: "block",
+                        width: "100%",
+                        textAlign: "left",
+                        border: "1px solid #e5e5e5",
+                        borderRadius: 12,
+                        padding: "16px 18px",
+                        background: "#fafafa",
+                        cursor: "pointer",
+                        transition: "border-color 0.15s",
+                      }}
+                      onMouseEnter={e => (e.currentTarget.style.borderColor = "#000")}
+                      onMouseLeave={e => (e.currentTarget.style.borderColor = "#e5e5e5")}
+                    >
+                      <div style={{ fontWeight: 700, fontSize: 15, color: "#111" }}>{pack.label}</div>
+                      <div style={{ fontSize: 13, color: "#666", marginTop: 4 }}>{pack.description}</div>
+                      <div style={{ fontSize: 12, color: "#999", marginTop: 6 }}>{pack.presets.length} packages</div>
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <>
+                  <button
+                    onClick={() => setSelectedPack(null)}
+                    style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", cursor: "pointer", color: "#2563eb", fontSize: 13, fontWeight: 600, marginBottom: 16, padding: 0 }}
+                  >
+                    <ArrowLeft size={14} /> Back to packs
+                  </button>
+
+                  {/* Select all / none */}
+                  <div style={{ display: "flex", gap: 12, marginBottom: 14, fontSize: 13 }}>
+                    <button
+                      onClick={() => setPackSelections(new Set(selectedPack.presets.map((_, i) => i)))}
+                      style={{ background: "none", border: "none", cursor: "pointer", color: "#2563eb", fontWeight: 600, padding: 0 }}
+                    >
+                      Select all
+                    </button>
+                    <button
+                      onClick={() => setPackSelections(new Set())}
+                      style={{ background: "none", border: "none", cursor: "pointer", color: "#666", fontWeight: 500, padding: 0 }}
+                    >
+                      Clear
+                    </button>
+                  </div>
+
+                  <div style={{ display: "grid", gap: 10, marginBottom: 20 }}>
+                    {selectedPack.presets.map((preset, i) => {
+                      const selected = packSelections.has(i);
+                      return (
+                        <button
+                          key={i}
+                          onClick={() => togglePackPreset(i)}
+                          style={{
+                            display: "block",
+                            width: "100%",
+                            textAlign: "left",
+                            border: selected ? "2px solid #000" : "1px solid #e5e5e5",
+                            borderRadius: 12,
+                            padding: "14px 16px",
+                            background: selected ? "#f8f9fb" : "#fff",
+                            cursor: "pointer",
+                          }}
+                        >
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                            <div style={{ flex: 1 }}>
+                              <div style={{ fontWeight: 700, fontSize: 14, color: "#111", display: "flex", alignItems: "center", gap: 8 }}>
+                                <span style={{
+                                  width: 18, height: 18, borderRadius: 4,
+                                  border: selected ? "none" : "2px solid #ccc",
+                                  background: selected ? "#000" : "#fff",
+                                  display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
+                                }}>
+                                  {selected && <Check size={12} color="#fff" strokeWidth={3} />}
+                                </span>
+                                {preset.name}
+                              </div>
+                              <div style={{ fontSize: 13, color: "#666", marginTop: 4, marginLeft: 26 }}>{preset.description}</div>
+                              <div style={{ fontSize: 12, color: "#999", marginTop: 6, marginLeft: 26 }}>
+                                {preset.items.map(it => `${it.qty}× ${it.name}`).join(", ")}
+                              </div>
+                            </div>
+                            <div style={{ fontWeight: 700, fontSize: 14, color: "#059669", whiteSpace: "nowrap", marginLeft: 12 }}>
+                              ${(preset.priceCents / 100).toFixed(2)}
+                            </div>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  <div style={{ display: "flex", gap: 12 }}>
+                    <button
+                      onClick={insertSelectedPacks}
+                      disabled={insertingPack || packSelections.size === 0}
+                      style={{
+                        flex: 1, padding: "12px", background: "#000", color: "#fff",
+                        border: "none", borderRadius: 8, cursor: packSelections.size === 0 ? "not-allowed" : "pointer",
+                        fontWeight: 600, fontSize: 14, opacity: insertingPack || packSelections.size === 0 ? 0.5 : 1,
+                      }}
+                    >
+                      {insertingPack ? "Adding..." : `Add ${packSelections.size} package${packSelections.size !== 1 ? "s" : ""}`}
+                    </button>
+                    <button
+                      onClick={() => { setShowPackPicker(false); setSelectedPack(null); }}
+                      style={{ flex: 1, padding: "12px", background: "#f5f5f5", color: "#333", border: "none", borderRadius: 8, cursor: "pointer", fontSize: 14 }}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </>
+              )}
             </div>
           </div>
         )}
