@@ -9,7 +9,7 @@ import { Logo } from "@/components/logo";
 import {
   LogOut, Plus, ArrowLeft, Pencil, Trash2, Package, Printer,
   Download, Sparkles, SquareStack, Copy, MoreVertical, Check, X, Square,
-  AlertTriangle, ChevronDown, GripVertical, FileDown,
+  AlertTriangle, ChevronDown, GripVertical, FileDown, ChevronUp,
 } from "lucide-react";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -474,8 +474,8 @@ export default function PackagesPage() {
     await loadData();
   }
 
-  async function handleDrop(categoryPkgs: Pkg[], fromIndex: number, toIndex: number) {
-    if (fromIndex === toIndex) { setDragIdx(null); setDragOverIdx(null); return; }
+  async function moveItem(categoryPkgs: Pkg[], fromIndex: number, toIndex: number) {
+    if (fromIndex === toIndex || toIndex < 0 || toIndex >= categoryPkgs.length) return;
     const reordered = [...categoryPkgs];
     const [moved] = reordered.splice(fromIndex, 1);
     reordered.splice(toIndex, 0, moved);
@@ -1711,21 +1711,43 @@ export default function PackagesPage() {
               <div
                 key={pkg.id}
                 draggable
-                onDragStart={() => { setDragIdx(i); }}
-                onDragOver={e => { e.preventDefault(); setDragOverIdx(i); }}
-                onDragEnd={() => { setDragIdx(null); setDragOverIdx(null); }}
-                onDrop={e => { e.preventDefault(); if (dragIdx !== null) handleDrop(pkgsInCategory, dragIdx, i); }}
+                onDragStart={(e) => { e.dataTransfer.effectAllowed = "move"; setDragIdx(i); }}
+                onDragOver={e => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; setDragOverIdx(i); }}
+                onDragEnd={() => { if (dragIdx !== null && dragOverIdx !== null && dragIdx !== dragOverIdx) { moveItem(pkgsInCategory, dragIdx, dragOverIdx); } else { setDragIdx(null); setDragOverIdx(null); } }}
+                onDrop={e => { e.preventDefault(); }}
                 style={{
                   display: "flex", alignItems: "center", padding: "16px 20px",
                   borderBottom: i < pkgsInCategory.length - 1 ? "1px solid #f0f0f0" : "none",
                   opacity: pkg.active ? (dragIdx === i ? 0.4 : 1) : 0.5,
-                  background: dragOverIdx === i && dragIdx !== i ? "#f0f7ff" : "transparent",
+                  background: dragOverIdx === i && dragIdx !== null && dragIdx !== i ? "#f0f7ff" : "transparent",
                   transition: "background 0.15s ease",
                   cursor: "grab",
                 }}
               >
-                <div style={{ marginRight: 12, color: "#ccc", cursor: "grab", flexShrink: 0, display: "flex", alignItems: "center" }}>
-                  <GripVertical size={18} />
+                <div style={{ marginRight: 8, flexShrink: 0, display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); moveItem(pkgsInCategory, i, i - 1); }}
+                    disabled={i === 0}
+                    style={{
+                      background: "none", border: "none", cursor: i === 0 ? "default" : "pointer",
+                      padding: 0, color: i === 0 ? "#e5e5e5" : "#999", display: "flex",
+                    }}
+                    title="Move up"
+                  >
+                    <ChevronUp size={14} />
+                  </button>
+                  <GripVertical size={14} color="#ccc" style={{ cursor: "grab" }} />
+                  <button
+                    onClick={(e) => { e.stopPropagation(); moveItem(pkgsInCategory, i, i + 1); }}
+                    disabled={i === pkgsInCategory.length - 1}
+                    style={{
+                      background: "none", border: "none", cursor: i === pkgsInCategory.length - 1 ? "default" : "pointer",
+                      padding: 0, color: i === pkgsInCategory.length - 1 ? "#e5e5e5" : "#999", display: "flex",
+                    }}
+                    title="Move down"
+                  >
+                    <ChevronDown size={14} />
+                  </button>
                 </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 3 }}>
