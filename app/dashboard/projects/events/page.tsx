@@ -288,45 +288,7 @@ export default function EventsPage() {
   }
 
   return (
-    <div style={{ display: "flex", minHeight: "100vh", background: "#ffffff" }}>
-      <div style={sidebar}>
-        <div style={{ background: "#fff", padding: "18px", borderBottom: "1px solid #e5e7eb" }}>
-          <div style={{ background: "#fff", borderRadius: 16, padding: "14px 16px" }}>
-            <Link href="/" style={{ display: "inline-flex" }}>
-              <Logo small />
-            </Link>
-          </div>
-        </div>
-        <nav style={{ flex: 1, paddingTop: 16 }}>
-          <Link href="/dashboard" style={navItem}>Dashboard</Link>
-          <Link href="/dashboard/schools" style={navItem}>Schools</Link>
-          <Link href="/dashboard/projects/events" style={navActive}>Events</Link>
-          <Link href="/dashboard/orders" style={navItem}>Orders</Link>
-          <Link href="/dashboard/packages" style={navItem}>Packages</Link>
-          <Link href="/dashboard/settings" style={navItem}>Settings</Link>
-          <Link href="/dashboard/membership" style={navItem}>Membership</Link>
-        </nav>
-        <div style={{ padding: "0 16px 8px", color: "#8f8f8f", fontSize: 12 }}>{userEmail}</div>
-        <button
-          onClick={signOut}
-          style={{
-            margin: 16,
-            padding: "10px",
-            background: "transparent",
-            border: "1px solid #333",
-            borderRadius: 8,
-            color: "#ccc",
-            cursor: "pointer",
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-            fontSize: 13,
-          }}
-        >
-          <LogOut size={14} /> Sign Out
-        </button>
-      </div>
-
+    <div style={{ minHeight: "100vh", background: "#ffffff" }}>
       <div className="flex-1 px-6 py-6 text-[#13234a] lg:px-10">
         <div className="mx-auto max-w-[1480px]">
         <div className="mb-8 flex items-start justify-between gap-4">

@@ -427,25 +427,8 @@ export default function SchoolsPage() {
   const [hoveredSchoolId, setHoveredSchoolId] = useState<string | null>(null);
 
   return (
-    <div style={{ display: "flex", minHeight: "100vh", background: "#ffffff" }}>
-      <div style={sidebar}>
-        <div style={{ background: "#fff", padding: "18px", borderBottom: "1px solid #e5e7eb" }}><div style={{ background: "#fff", borderRadius: 16, padding: "14px 16px" }}><Link href="/" style={{ display: "inline-flex" }}><Logo small /></Link></div></div>
-        <nav style={{ flex: 1, paddingTop: 16 }}>
-          <Link href="/dashboard" style={navItem}>Dashboard</Link>
-          <Link href="/dashboard/schools" style={navActive}>Schools</Link>
-          <Link href="/dashboard/projects/events" style={navItem}>Events</Link>
-          <Link href="/dashboard/orders" style={navItem}>Orders</Link>
-          <Link href="/dashboard/packages" style={navItem}>Packages</Link>
-          <Link href="/dashboard/settings" style={navItem}>Settings</Link>
-          <Link href="/dashboard/membership" style={navItem}>Membership</Link>
-        </nav>
-        <div style={{ padding: "0 16px 8px", color: "#8f8f8f", fontSize: 12 }}>{userEmail}</div>
-        <button onClick={signOut} style={{ margin: 16, padding: "10px", background: "transparent", border: "1px solid #333", borderRadius: 8, color: "#ccc", cursor: "pointer", display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
-          <LogOut size={14} /> Sign Out
-        </button>
-      </div>
-
-      <div style={{ flex: 1, padding: "40px" }}>
+    <div style={{ minHeight: "100vh", background: "#ffffff" }}>
+      <div style={{ padding: "40px" }}>
         <div style={{ marginBottom: 24, display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16 }}>
           <div>
             <h1 style={{ fontSize: 26, fontWeight: 700, margin: 0, color: "#111" }}>Schools</h1>

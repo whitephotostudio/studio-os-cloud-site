@@ -829,10 +829,8 @@ export default function PackagesPage() {
 
   if (!selectedProfile) {
     return (
-      <div style={{ display: "flex", minHeight: "100vh", background: "#f0f0f0" }}>
-        <Sidebar />
-
-        <div style={{ flex: 1, padding: "40px" }}>
+      <div style={{ minHeight: "100vh", background: "#f0f0f0" }}>
+        <div style={{ padding: "40px" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 32 }}>
             <div>
               <h1 style={{ fontSize: 26, fontWeight: 700, margin: 0, color: "#111" }}>Price Sheets</h1>
@@ -1171,10 +1169,8 @@ export default function PackagesPage() {
 
   if (!selectedCategory) {
     return (
-      <div style={{ display: "flex", minHeight: "100vh", background: "#f0f0f0" }}>
-        <Sidebar />
-
-        <div style={{ flex: 1, padding: "40px" }}>
+      <div style={{ minHeight: "100vh", background: "#f0f0f0" }}>
+        <div style={{ padding: "40px" }}>
           {/* Breadcrumb */}
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 32, fontSize: 14 }}>
             <button onClick={() => setSelectedProfile(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "#666", display: "flex", alignItems: "center", gap: 4 }}>
@@ -1275,10 +1271,8 @@ export default function PackagesPage() {
   // ── Item list view ─────────────────────────────────────────────────────────
 
   return (
-    <div style={{ display: "flex", minHeight: "100vh", background: "#f0f0f0" }}>
-      <Sidebar />
-
-      <div style={{ flex: 1, padding: "40px" }}>
+    <div style={{ minHeight: "100vh", background: "#f0f0f0" }}>
+      <div style={{ padding: "40px" }}>
         {/* Breadcrumb */}
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 24, fontSize: 14, color: "#666" }}>
           <button onClick={() => setSelectedProfile(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "#666" }}>

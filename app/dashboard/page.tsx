@@ -611,7 +611,7 @@ function DashboardPageContent() {
   ].slice(0, 5);
 
   return (
-    <div style={{ display: "flex", minHeight: "100vh", background: pageBg }}>
+    <div style={{ minHeight: "100vh", background: pageBg }}>
       {showStudioWelcome && studioWelcome ? (
         <div
           style={{
@@ -758,55 +758,6 @@ function DashboardPageContent() {
           </div>
         </div>
       ) : null}
-
-      <aside style={sidebar}>
-        <div style={{ padding: 18, background: "#ffffff", borderBottom: "1px solid #e5e7eb" }}>
-          <div
-            style={{
-              background: "#ffffff",
-              borderRadius: 16,
-              padding: "14px 16px",
-            }}
-          >
-            <Link href="/" style={{ display: "inline-flex" }}>
-              <Logo small />
-            </Link>
-          </div>
-        </div>
-
-        <nav style={{ paddingTop: 18 }}>
-          <Link href="/dashboard" style={navActive}>Dashboard</Link>
-          <Link href="/dashboard/schools" style={navItem}>Schools</Link>
-          <Link href="/dashboard/projects/events" style={navItem}>Projects</Link>
-          <Link href="/dashboard/orders" style={navItem}>Orders</Link>
-          <Link href="/dashboard/packages" style={navItem}>Packages</Link>
-          <Link href="/dashboard/settings" style={navItem}>Settings</Link>
-          <Link href="/dashboard/membership" style={navItem}>Membership</Link>
-          {userEmail?.toLowerCase() === "harout@me.com" || photographer?.is_platform_admin ? (
-            <Link href="/dashboard/admin/users" style={navItem}>Admin</Link>
-          ) : null}
-        </nav>
-
-        <div style={{ marginTop: 24, padding: "0 16px", color: "#888", fontSize: 13 }}>{userEmail}</div>
-        <button
-          onClick={handleSignOut}
-          style={{
-            margin: "12px 16px 16px",
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-            justifyContent: "center",
-            background: "transparent",
-            color: "#ccc",
-            border: "1px solid #333",
-            borderRadius: 10,
-            padding: "10px 12px",
-            cursor: "pointer",
-          }}
-        >
-          <LogOut size={16} /> Sign Out
-        </button>
-      </aside>
 
       <main style={{ flex: 1, padding: 32 }}>
         <div style={{ maxWidth: 1320, margin: "0 auto" }}>
