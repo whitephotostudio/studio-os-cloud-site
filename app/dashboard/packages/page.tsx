@@ -1112,34 +1112,61 @@ export default function PackagesPage() {
 
               {/* Contents */}
               <div style={{ marginBottom: 24 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
                   <label style={{ fontSize: 13, fontWeight: 600, color: "#333" }}>Package Contents</label>
-                  <button type="button" onClick={() => setEditItems([...editItems, { name: "", qty: 1 }])}
-                    style={{ fontSize: 13, color: "#2563eb", background: "none", border: "none", cursor: "pointer", fontWeight: 500 }}>
-                    + Add line
-                  </button>
                 </div>
                 {editItems.map((item, i) => (
                   <div key={i} style={{ display: "flex", gap: 8, marginBottom: 8, alignItems: "center" }}>
-                    <input
-                      value={item.name}
-                      onChange={e => { const n = [...editItems]; n[i] = { ...n[i], name: e.target.value }; setEditItems(n); }}
-                      placeholder={`Item ${i + 1} (e.g. 8×10 Lustre Print)`}
-                      style={{ flex: 1, padding: "8px 12px", border: "1px solid #e5e5e5", borderRadius: 8, fontSize: 14, color: "#111" }}
-                    />
-                    <input
-                      type="number" min="1" value={item.qty}
-                      onChange={e => { const n = [...editItems]; n[i] = { ...n[i], qty: parseInt(e.target.value) || 1 }; setEditItems(n); }}
-                      style={{ width: 60, padding: "8px 10px", border: "1px solid #e5e5e5", borderRadius: 8, fontSize: 14, color: "#111", textAlign: "center" }}
-                    />
+                    <div style={{ flex: 1, display: "flex", gap: 8 }}>
+                      <select
+                        value={PRINT_SIZES.some(s => s.label === item.name || s.value === item.name) ? (PRINT_SIZES.find(s => s.label === item.name || s.value === item.name)?.value ?? "custom") : "custom"}
+                        onChange={e => {
+                          const n = [...editItems];
+                          const match = PRINT_SIZES.find(s => s.value === e.target.value);
+                          if (match && match.value !== "custom") {
+                            n[i] = { ...n[i], name: match.label };
+                          }
+                          setEditItems(n);
+                        }}
+                        style={{ flex: 1, padding: "8px 12px", border: "1px solid #e5e5e5", borderRadius: 8, fontSize: 14, color: "#111", background: "#fff", appearance: "auto" }}
+                      >
+                        {PRINT_SIZES.map(s => (
+                          <option key={s.value} value={s.value}>{s.label}</option>
+                        ))}
+                      </select>
+                      {(!PRINT_SIZES.some(s => s.label === item.name && s.value !== "custom")) && (
+                        <input
+                          value={item.name}
+                          onChange={e => { const n = [...editItems]; n[i] = { ...n[i], name: e.target.value }; setEditItems(n); }}
+                          placeholder="Custom name"
+                          style={{ flex: 1, padding: "8px 12px", border: "1px solid #e5e5e5", borderRadius: 8, fontSize: 14, color: "#111" }}
+                        />
+                      )}
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                      <span style={{ fontSize: 12, color: "#888", fontWeight: 500 }}>Qty</span>
+                      <select
+                        value={item.qty}
+                        onChange={e => { const n = [...editItems]; n[i] = { ...n[i], qty: parseInt(e.target.value) || 1 }; setEditItems(n); }}
+                        style={{ width: 60, padding: "8px 6px", border: "1px solid #e5e5e5", borderRadius: 8, fontSize: 14, color: "#111", background: "#fff", textAlign: "center", appearance: "auto" }}
+                      >
+                        {[1,2,3,4,5,6,7,8,10,12,16,20,24].map(q => (
+                          <option key={q} value={q}>{q}</option>
+                        ))}
+                      </select>
+                    </div>
                     <button type="button" onClick={() => setEditItems(editItems.filter((_, j) => j !== i))}
                       style={{ background: "none", border: "none", cursor: "pointer", color: "#ccc", padding: 4 }}>
                       <Trash2 size={15} />
                     </button>
                   </div>
                 ))}
+                <button type="button" onClick={() => setEditItems([...editItems, { name: "", qty: 1 }])}
+                  style={{ width: "100%", padding: "10px", border: "1px dashed #d4d4d4", borderRadius: 8, background: "#fafafa", cursor: "pointer", fontSize: 13, color: "#666", fontWeight: 500, marginTop: 4 }}>
+                  + Add Item
+                </button>
                 {editItems.length === 0 && (
-                  <p style={{ fontSize: 13, color: "#bbb", margin: 0, fontStyle: "italic" }}>No contents listed — add lines above.</p>
+                  <p style={{ fontSize: 13, color: "#bbb", margin: "8px 0 0", fontStyle: "italic" }}>No contents listed — add an item above.</p>
                 )}
               </div>
 
