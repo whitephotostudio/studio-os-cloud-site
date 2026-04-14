@@ -441,28 +441,30 @@ export default function PackagesPage() {
   }
 
   async function handleDrop(categoryPkgs: Pkg[], fromIndex: number, toIndex: number) {
-    if (fromIndex === toIndex) return;
+    if (fromIndex === toIndex) { setDragIdx(null); setDragOverIdx(null); return; }
     const reordered = [...categoryPkgs];
     const [moved] = reordered.splice(fromIndex, 1);
     reordered.splice(toIndex, 0, moved);
 
-    // Optimistic UI update
+    // Optimistic UI: update sort_order in profiles so the sorted list re-renders immediately
     setProfiles(prev => prev.map(profile => {
       if (profile.id !== selectedProfile?.id) return profile;
-      const updated = profile.packages.map(pkg => {
-        const idx = reordered.findIndex(r => r.id === pkg.id);
-        return idx >= 0 ? { ...pkg, sort_order: idx } : pkg;
-      });
-      return { ...profile, packages: updated };
+      const newPackages = [...profile.packages];
+      for (let idx = 0; idx < reordered.length; idx++) {
+        const pkgIndex = newPackages.findIndex(p => p.id === reordered[idx].id);
+        if (pkgIndex >= 0) newPackages[pkgIndex] = { ...newPackages[pkgIndex], sort_order: idx };
+      }
+      return { ...profile, packages: newPackages };
     }));
-
-    // Persist to DB
-    const updates = reordered.map((pkg, idx) =>
-      supabase.from("packages").update({ sort_order: idx }).eq("id", pkg.id)
-    );
-    await Promise.all(updates);
     setDragIdx(null);
     setDragOverIdx(null);
+
+    // Persist to DB
+    await Promise.all(
+      reordered.map((pkg, idx) =>
+        supabase.from("packages").update({ sort_order: idx }).eq("id", pkg.id)
+      )
+    );
   }
 
   async function deletePkg(id: string) {
@@ -591,9 +593,14 @@ export default function PackagesPage() {
     return Math.min(...pkgs.map(p => p.price_cents)) / 100;
   }
 
-  const pkgsInCategory = selectedProfile?.packages.filter(pkg =>
+  const pkgsInCategory = (selectedProfile?.packages.filter(pkg =>
     !selectedCategory || getCategoryKey(pkg) === selectedCategory
-  ) || [];
+  ) || []).sort((a, b) => {
+    const aOrder = a.sort_order ?? 999999;
+    const bOrder = b.sort_order ?? 999999;
+    if (aOrder !== bOrder) return aOrder - bOrder;
+    return a.price_cents - b.price_cents;
+  });
 
   const catMeta = CATEGORIES.find(c => c.key === selectedCategory);
 
