@@ -786,11 +786,11 @@ function DashboardPageContent() {
           ) : null}
         </nav>
 
-        <div style={{ marginTop: "auto", padding: 16, color: "#888", fontSize: 13 }}>{userEmail}</div>
+        <div style={{ marginTop: 24, padding: "0 16px", color: "#888", fontSize: 13 }}>{userEmail}</div>
         <button
           onClick={handleSignOut}
           style={{
-            margin: 16,
+            margin: "12px 16px 16px",
             display: "flex",
             alignItems: "center",
             gap: 8,
