@@ -8,7 +8,7 @@ import { getPackageCategory, type PackageCategory } from "@/lib/package-categori
 import {
   LogOut, Plus, ArrowLeft, Pencil, Trash2, Package, Printer,
   Download, Sparkles, SquareStack, Copy, MoreVertical, Check, X, Square,
-  AlertTriangle, ChevronDown,
+  AlertTriangle, ChevronDown, GripVertical,
 } from "lucide-react";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -28,6 +28,7 @@ type Pkg = {
   items: PackageItem[];
   active: boolean;
   category: string | null;
+  sort_order: number | null;
 };
 
 type Profile = {
@@ -206,6 +207,10 @@ export default function PackagesPage() {
   const [editSizePreset, setEditSizePreset] = useState("custom");
   const [saving, setSaving]           = useState(false);
 
+  // Drag-to-reorder
+  const [dragIdx, setDragIdx]     = useState<number | null>(null);
+  const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
+
   // Package pack modal
   const [showPackPicker, setShowPackPicker]   = useState(false);
   const [selectedPack, setSelectedPack]       = useState<PackagePack | null>(null);
@@ -270,6 +275,7 @@ export default function PackagesPage() {
         .select("*")
         .eq("photographer_id", pid)
         .order("profile_name")
+        .order("sort_order", { ascending: true, nullsFirst: false })
         .order("price_cents"),
     ]);
 
@@ -432,6 +438,31 @@ export default function PackagesPage() {
     setSaving(false);
     setEditingPkg(null);
     await loadData();
+  }
+
+  async function handleDrop(categoryPkgs: Pkg[], fromIndex: number, toIndex: number) {
+    if (fromIndex === toIndex) return;
+    const reordered = [...categoryPkgs];
+    const [moved] = reordered.splice(fromIndex, 1);
+    reordered.splice(toIndex, 0, moved);
+
+    // Optimistic UI update
+    setProfiles(prev => prev.map(profile => {
+      if (profile.id !== selectedProfile?.id) return profile;
+      const updated = profile.packages.map(pkg => {
+        const idx = reordered.findIndex(r => r.id === pkg.id);
+        return idx >= 0 ? { ...pkg, sort_order: idx } : pkg;
+      });
+      return { ...profile, packages: updated };
+    }));
+
+    // Persist to DB
+    const updates = reordered.map((pkg, idx) =>
+      supabase.from("packages").update({ sort_order: idx }).eq("id", pkg.id)
+    );
+    await Promise.all(updates);
+    setDragIdx(null);
+    setDragOverIdx(null);
   }
 
   async function deletePkg(id: string) {
@@ -1335,12 +1366,23 @@ export default function PackagesPage() {
             pkgsInCategory.map((pkg, i) => (
               <div
                 key={pkg.id}
+                draggable
+                onDragStart={() => { setDragIdx(i); }}
+                onDragOver={e => { e.preventDefault(); setDragOverIdx(i); }}
+                onDragEnd={() => { setDragIdx(null); setDragOverIdx(null); }}
+                onDrop={e => { e.preventDefault(); if (dragIdx !== null) handleDrop(pkgsInCategory, dragIdx, i); }}
                 style={{
                   display: "flex", alignItems: "center", padding: "16px 20px",
                   borderBottom: i < pkgsInCategory.length - 1 ? "1px solid #f0f0f0" : "none",
-                  opacity: pkg.active ? 1 : 0.5,
+                  opacity: pkg.active ? (dragIdx === i ? 0.4 : 1) : 0.5,
+                  background: dragOverIdx === i && dragIdx !== i ? "#f0f7ff" : "transparent",
+                  transition: "background 0.15s ease",
+                  cursor: "grab",
                 }}
               >
+                <div style={{ marginRight: 12, color: "#ccc", cursor: "grab", flexShrink: 0, display: "flex", alignItems: "center" }}>
+                  <GripVertical size={18} />
+                </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 3 }}>
                     <span style={{ fontWeight: 600, fontSize: 15, color: "#111" }}>{pkg.name}</span>
