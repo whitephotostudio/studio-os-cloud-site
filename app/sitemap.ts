@@ -37,5 +37,23 @@ export default function sitemap(): MetadataRoute.Sitemap {
     },
   ];
 
-  return staticPages;
+  // Competitor comparison pages
+  const competitors = [
+    "gotphoto",
+    "pixieset",
+    "photoday",
+    "shootproof",
+    "smugmug",
+    "zenfolio",
+    "zno",
+  ];
+
+  const comparisonPages: MetadataRoute.Sitemap = competitors.map((name) => ({
+    url: `${baseUrl}/compare/studio-os-vs-${name}`,
+    lastModified: new Date(),
+    changeFrequency: "monthly" as const,
+    priority: 0.8,
+  }));
+
+  return [...staticPages, ...comparisonPages];
 }
