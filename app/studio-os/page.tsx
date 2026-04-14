@@ -1,9 +1,25 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 
 import { SiteHeader } from "../../components/site-header";
 import { StudioPanelShowcase } from "@/components/studio-panel-showcase";
 import { VisualSlot } from "@/components/visual-slot";
 import { studioFeatureAssets } from "@/lib/studio-os-content";
+
+export const metadata: Metadata = {
+  title: "Studio OS App — Desktop Photography Workflow Software",
+  description:
+    "The Studio OS desktop app connects directly to your camera for live tethering, roster-based sorting, AI background replacement, collage creation, and seamless cloud sync. Available for Mac and Windows.",
+  alternates: {
+    canonical: "https://studiooscloud.com/studio-os",
+  },
+  openGraph: {
+    title: "Studio OS App — Desktop Photography Workflow Software",
+    description:
+      "Direct camera tethering, roster management, AI backgrounds, and cloud sync. The desktop app that connects to Studio OS Cloud.",
+    url: "https://studiooscloud.com/studio-os",
+  },
+};
 
 function QrGrid() {
   const pattern = [

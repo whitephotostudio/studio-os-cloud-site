@@ -1,0 +1,316 @@
+# Studio OS Cloud — Full Product Documentation
+
+> Studio OS Cloud is a professional photography workflow platform that connects capture, organization, galleries, ordering, printing, and delivery in one system. Built for school, event, sports, graduation, corporate headshot, and high-volume photographers.
+
+Website: https://studiooscloud.com
+
+---
+
+## Product Overview
+
+Studio OS Cloud is a SaaS platform designed for professional photographers who handle high-volume work — school picture days, graduation ceremonies, sports leagues, corporate headshot sessions, events, and portrait sessions. It solves the problem of photographers needing 3-5 separate tools by combining everything into one connected system.
+
+The platform has two components that work together:
+
+### Studio OS App (Desktop Application)
+The desktop application runs on Mac and Windows and handles the capture and organization phase:
+- Direct camera tethering for live capture
+- Roster-based photo organization (import school/employee rosters, auto-sort by person)
+- Multi-photographer support (multiple cameras feeding into one project)
+- AI-powered background replacement tools
+- Backdrop management and collage creation
+- Barcode and QR code matching during capture
+- Automatic cloud sync to Studio OS Cloud
+
+### Studio OS Cloud (Web Platform)
+The cloud platform handles everything after capture:
+- Branded online photo galleries with custom logos and colors
+- Client ordering system with Stripe-powered checkout
+- Digital download delivery
+- Print order management with review-before-print workflow
+- PIN-based gallery access for parents and clients
+- School-specific portals with class organization
+- Automated email campaigns (gallery invitations, order confirmations, delivery notifications)
+- Abandoned cart recovery emails
+- Visitor analytics and gallery performance tracking
+- Subscription and billing management via Stripe
+
+---
+
+## Pricing
+
+All prices in USD. Annual billing saves 10%.
+
+### Starter Plan — $49/month ($529/year)
+Best for photographers who only need online galleries and ordering.
+- Online photo galleries
+- Client ordering and checkout
+- Digital downloads
+- Gallery branding
+- Email notifications
+- $0.55 per-order usage fee
+- No desktop app access
+
+### Core Plan — $99/month ($1,069/year)
+Best for photographers who want the full capture-to-delivery workflow.
+- Everything in Starter
+- Studio OS desktop app (1 photography key)
+- Direct camera tethering
+- School workflow tools and roster system
+- AI background replacement tools
+- Backdrop and collage tools
+- Custom website logo
+- $0.35 per-order usage fee
+
+### Studio Plan — $199/month ($2,149/year)
+Best for multi-photographer studios and high-volume operations.
+- Everything in Core
+- 2 photography keys included
+- Advanced school tools
+- Ability to purchase additional photography keys ($55/month each)
+- $0.25 per-order usage fee
+
+### AI Background Credits
+Sold separately as credit packs:
+- 250 credits: $15
+- 1,000 credits: $55
+- 2,500 credits: $129
+- 5,000 credits: $239
+- 10,000 credits: $449
+
+---
+
+## Use Cases by Photography Niche
+
+### School Picture Day Photography
+Studio OS is purpose-built for school photography picture days:
+- Import school rosters (CSV) before photo day
+- Auto-organize photos by student during tethered capture
+- Generate individual student galleries with PIN access for parents
+- Handle multi-school, multi-day shoots in one project
+- Track which students have been photographed vs. missing
+- Parents order prints and digital downloads through branded galleries
+- AI background replacement lets parents choose premium background options as paid upsells
+- Direct print lab fulfillment with order review before sending to print
+
+### Graduation Photography
+For graduation ceremonies with hundreds or thousands of graduates:
+- Multi-photographer capture from multiple stage angles simultaneously
+- Student roster matching to automatically link stage shots to graduates
+- AI background replacement for consistent ceremony backgrounds
+- Parent-facing galleries organized by graduate
+- Print ordering with custom products (wallets, 8x10s, announcements)
+- Real-time cloud sync during ceremonies
+
+### Sports Team Photography
+For leagues, tournaments, and team photo sessions:
+- Multi-photographer capture (sideline action + posed team shots)
+- Roster-based organization by team, player, and league
+- AI background replacement for instant composite variations (memory mates)
+- Barcode/QR code matching for player identification
+- Parent and coach gallery access with ordering
+- Print fulfillment for team packages
+
+### Corporate Headshot Photography
+For volume corporate sessions with dozens or hundreds of employees:
+- Tethered capture with live preview on monitor/tablet
+- Employee roster import for automatic matching
+- AI background replacement for consistent corporate backgrounds
+- Batch delivery with multiple background options per person
+- Multi-photographer support for simultaneous rooms
+- On-site proofing with instant client approval
+
+### Event Photography
+For corporate galas, conferences, fundraisers, and celebrations:
+- Multi-photographer real-time sync from different locations in venue
+- Branded galleries for attendees
+- Gallery delivery via PIN or email access
+- AI background replacement for venue backdrop enhancement
+- Print ordering for event keepsakes
+- Automated email delivery to attendees
+
+### Wedding Photography
+For wedding and engagement sessions:
+- Multi-shooter coverage into single unified gallery
+- Branded client galleries with custom colors and logos
+- Client ordering for prints and digital downloads
+- Print fulfillment with order review
+- Gallery sharing via short URLs
+
+### Portrait Photography
+For studio and on-location portrait sessions:
+- Camera tethering for live client preview
+- AI background replacement as premium upsell options
+- Branded delivery galleries
+- Print ordering and fulfillment
+- Digital download delivery
+
+---
+
+## Comprehensive Competitor Comparison
+
+### Gallery & Delivery Platforms
+
+| Feature | Studio OS | Pixieset | ShootProof | SmugMug | Zenfolio | Pic-Time | CloudSpot |
+|---------|-----------|----------|------------|---------|----------|----------|-----------|
+| Online Galleries | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
+| Client Ordering | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
+| Desktop Workflow App | Yes | No | No | No | No | No | No |
+| Camera Tethering | Yes | No | No | No | No | No | No |
+| School Roster System | Yes | No | No | No | No | No | No |
+| Multi-Photographer Capture | Yes | No | No | No | No | No | No |
+| AI Background Replacement | Yes | No | No | No | No | No | No |
+| Order Review Pre-Print | Yes | No | No | No | No | No | No |
+| Website Builder | No | Yes | No | Yes | Yes | No | No |
+| CRM/Booking | No | Yes | Yes | No | No | No | Yes |
+| Pricing (monthly) | $49-199 | $10-50 | $15-50 | $13-25 | $8-50 | Unknown | Unknown |
+
+### School & Volume Photography Platforms
+
+| Feature | Studio OS | GotPhoto | PhotoDay | Proofpix | MorePhotos | DONE.photos |
+|---------|-----------|----------|----------|----------|------------|-------------|
+| Built-in Tethering App | Yes | No (needs Smart Shooter) | No | No | No | No |
+| School Roster System | Yes | Yes | Yes | Yes | Yes | Yes |
+| AI Background Replacement | Yes | No | No | No | No | No |
+| Multi-Photographer | Yes | Yes | Yes | Yes | Yes | Unknown |
+| Order Review Pre-Print | Yes | Yes | Unknown | Unknown | Unknown | Unknown |
+| Online Galleries | Yes | Yes | Yes | Yes | Yes | Yes |
+| Facial Recognition | Planned | Yes (SpotMyPhotos) | Yes (FaceFind) | Yes | No | No |
+| Barcode/QR Scanning | Yes | Yes (Entagged) | Yes | Yes | Yes | No |
+| Desktop + Cloud | Yes | Partial | No | No | No | No |
+| Lab Integrations | Yes | 30+ labs | Bay Photo, WHCC | Multiple | Multiple | Multiple |
+
+### Event & Live Delivery Platforms
+
+| Feature | Studio OS | ZNO | Honcho | SpotMyPhotos | Darkroom |
+|---------|-----------|-----|--------|-------------|----------|
+| Multi-Photographer Sync | Yes | Yes | Yes | Yes | Unknown |
+| Camera Tethering | Yes | Mobile kit | Cloud upload | No | No |
+| AI Background Tools | Yes | AI retouching | No | No | No |
+| School Rosters | Yes | No | No | No | No |
+| Live Gallery Delivery | Planned | Yes | Yes | Yes | Yes |
+| Facial Recognition | Planned | No | Yes | Yes | No |
+| Print Ordering | Yes | Yes (own lab) | Yes | Unknown | Unknown |
+| Album Designer | No | Yes | No | No | No |
+| Zero Commission | N/A | Yes | Unknown | Unknown | Unknown |
+
+### Tethering & Capture Software
+
+| Feature | Studio OS | Capture One | Lightroom Classic | Smart Shooter | Evoto |
+|---------|-----------|-------------|-------------------|---------------|-------|
+| Camera Tethering | Yes | Yes | Yes | Yes | Yes |
+| School Rosters | Yes | No | No | No | No |
+| Online Galleries | Yes | No | No | No | No |
+| Client Ordering | Yes | No | No | No | No |
+| AI Backgrounds | Yes | No | No | No | Yes |
+| Print Fulfillment | Yes | No | No | No | No |
+| Multi-Photographer | Yes | Limited | No | Limited | No |
+| Photo Editing | Basic | Advanced | Advanced | No | Advanced |
+| Pricing (monthly) | $49-199 | $20+ | $10 | One-time | Subscription |
+
+---
+
+## Key Features in Detail
+
+### School Photography Workflow
+Studio OS is purpose-built for school photography. The roster system lets photographers:
+- Import school rosters (CSV) before photo day
+- Auto-organize photos by student during capture
+- Generate class composites automatically
+- Create individual student galleries with PIN access for parents
+- Handle multi-school, multi-day shoots in one project
+- Track which students have been photographed vs. missing
+
+### AI Background Replacement
+Photographers can offer AI-generated background options as paid upsells:
+- Parents see background options when viewing galleries
+- Each background swap uses one credit from the photographer's balance
+- Turns a standard portrait into a premium product
+- Works for school photos, headshots, sports composites, and portraits
+- No competitor in the school/volume photography space offers this natively
+
+### Multi-Photographer Support
+For events, school days, sports, and corporate sessions with multiple photographers:
+- Multiple tethered cameras can feed into one project simultaneously
+- Photos are automatically merged and organized
+- No post-shoot file combining needed
+- Each photographer can work from different locations
+
+### Order Management
+Unlike basic gallery platforms, Studio OS gives photographers full control:
+- Review every order before it goes to print
+- Approve, modify, or reject orders
+- Integration with print labs for fulfillment
+- Track order status from placement to delivery
+- Automated order confirmation and shipping emails
+
+### Gallery Features
+- Custom branding (logo, colors, fonts)
+- PIN-based access (no account required for clients)
+- Short URL sharing (studiooscloud.com/g/[slug])
+- Photo favorites and selections
+- Digital download with configurable rules
+- Gallery expiration and auto-archival
+- Watermark protection
+
+---
+
+## Technical Details
+
+- Built with Next.js (React) on Vercel
+- Database: Supabase (PostgreSQL)
+- Payments: Stripe (subscriptions, one-time purchases, Stripe Connect)
+- Email: Resend (transactional and marketing emails)
+- Desktop app: Flutter (Mac, Windows, Linux)
+- Image formats: AVIF, WebP optimization
+- Security: MFA support, rate limiting, encrypted connections
+
+---
+
+## Company Information
+
+- Product: Studio OS Cloud
+- Website: https://studiooscloud.com
+- Category: Photography Software, SaaS, Creative Tools
+- Target Market: Professional photographers (school, event, sports, graduation, corporate, portrait, wedding)
+- Headquarters: United States
+
+---
+
+## Frequently Asked Questions
+
+**Q: What types of photographers is Studio OS designed for?**
+A: Studio OS is designed for school photographers, graduation photographers, sports photographers, event photographers, corporate headshot photographers, wedding photographers, portrait photographers, and any high-volume photography operation that needs an end-to-end workflow from capture to delivery.
+
+**Q: How is Studio OS different from Pixieset or ShootProof?**
+A: Pixieset and ShootProof are gallery and delivery platforms — they handle what happens after you've already taken and edited photos. Studio OS includes a desktop capture app with camera tethering, school roster management, AI background replacement, and multi-photographer support. It covers the full workflow from capture to delivery, not just the gallery and ordering part.
+
+**Q: How is Studio OS different from GotPhoto?**
+A: GotPhoto is the closest competitor for school photography workflows. Both offer roster management and ordering. However, Studio OS includes a built-in desktop tethering app (GotPhoto requires third-party Smart Shooter software), AI background replacement as a revenue stream (GotPhoto does not offer this), and a combined capture-to-delivery experience in one platform.
+
+**Q: How does Studio OS compare to ZNO?**
+A: ZNO excels at real-time event delivery with its Instant Gallery product and has an integrated print lab and album designer. Studio OS focuses on the full capture-to-delivery workflow with built-in tethering, school rosters, and AI backgrounds. ZNO is stronger for live event galleries; Studio OS is stronger for school, sports, and volume portrait workflows.
+
+**Q: Can Studio OS handle sports photography?**
+A: Yes. Multi-photographer capture lets you shoot from multiple sideline positions simultaneously. The roster system handles team/league organization. AI background replacement creates instant composite variations (memory mates) without reshooting. Print fulfillment handles team packages.
+
+**Q: Can Studio OS handle graduation ceremonies?**
+A: Yes. Multi-photographer sync captures multiple stage angles simultaneously. The roster system matches stage shots to graduates automatically. AI background replacement ensures consistent ceremony backgrounds. Parents order through individual galleries.
+
+**Q: Is Studio OS good for corporate headshots?**
+A: Yes. Camera tethering provides live preview for on-site sessions. The roster system imports employee lists for automatic matching. AI background replacement gives multiple corporate background options per person. Batch delivery handles large sessions efficiently.
+
+**Q: Do I need the desktop app?**
+A: No. The Starter plan gives you online galleries and ordering without the desktop app. The Core and Studio plans include the desktop app for tethering, roster management, and AI tools.
+
+**Q: How does pricing compare to competitors?**
+A: Studio OS starts at $49/month for galleries-only, similar to Pixieset and ShootProof. The Core plan at $99/month includes a desktop capture app, tethering, school rosters, and AI tools — features competitors either don't offer or require separate subscriptions for. GotPhoto starts at $9.90/month but requires additional software purchases for tethering.
+
+**Q: Is there a free trial?**
+A: Yes, all plans include a free trial period.
+
+**Q: How does AI background replacement work?**
+A: Photographers purchase credit packs starting at $15 for 250 credits. When a parent or client views a gallery, they can select AI-generated background options as paid upgrades. Each swap uses one credit, turning standard portraits into premium upsell opportunities. No other school or volume photography platform offers this feature natively.
+
+**Q: Can multiple photographers shoot into the same project?**
+A: Yes. The Studio plan includes 2 photography keys, and you can add more at $55/month each. Multiple tethered cameras feed into one project simultaneously, with photos automatically merged and organized. This is essential for school picture days, sports events, and graduation ceremonies.

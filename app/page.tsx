@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import type { Metadata } from "next";
 import { SiteHeader } from "../components/site-header";
 import { Hero } from "../components/hero";
 import { GalleryBrandingShowcase } from "../components/gallery-branding-showcase";
@@ -7,6 +8,22 @@ import { PlatformComparisonSection } from "../components/platform-comparison-sec
 import { UseCaseVisualStrip } from "../components/use-case-visual-strip";
 import { PricingShowcase } from "../components/pricing-showcase";
 import { SiteFooter } from "../components/site-footer";
+import { SoftwareApplicationJsonLd, FaqJsonLd } from "@/components/json-ld";
+
+export const metadata: Metadata = {
+  title: "Studio OS Cloud — Run Your Photography Business From One Connected System",
+  description:
+    "The only photography platform that connects camera tethering, roster management, online galleries, client ordering, AI backgrounds, and print fulfillment. Built for school, event, and high-volume photographers. Plans from $49/mo.",
+  alternates: {
+    canonical: "https://studiooscloud.com",
+  },
+  openGraph: {
+    title: "Studio OS Cloud — Run Your Photography Business From One Connected System",
+    description:
+      "Stop juggling multiple tools. Studio OS connects your entire photography workflow from capture to delivery.",
+    url: "https://studiooscloud.com",
+  },
+};
 
 function SectionTransition({ children }: { children: ReactNode }) {
   return (
@@ -23,6 +40,8 @@ function SectionTransition({ children }: { children: ReactNode }) {
 export default function HomePage() {
   return (
     <div className="min-h-screen bg-white text-neutral-900 flex flex-col">
+      <SoftwareApplicationJsonLd />
+      <FaqJsonLd />
       <SiteHeader />
       <main className="flex-1">
         <Hero />

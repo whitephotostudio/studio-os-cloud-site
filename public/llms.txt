@@ -1,0 +1,70 @@
+# Studio OS Cloud
+
+> Professional photography workflow platform that connects capture, organization, galleries, ordering, and delivery in one system. The only platform combining camera tethering, school roster management, AI background replacement, multi-photographer capture, and print fulfillment.
+
+Studio OS Cloud is built for school, event, sports, graduation, corporate headshot, and high-volume photographers who need more than just a gallery platform. It pairs a desktop application (Studio OS App) with a cloud platform (Studio OS Cloud) to create an end-to-end photography workflow — from the moment you press the shutter to when prints arrive at a parent's door.
+
+## What Studio OS Does
+
+- **Capture & Organize**: Direct camera tethering, roster-based sorting, multi-photographer support, AI background tools, barcode/QR matching
+- **Galleries & Ordering**: Branded online galleries, client photo ordering, digital downloads, PIN-based access, automated email campaigns
+- **Delivery & Fulfillment**: Order review before print, lab fulfillment integration, automated delivery emails, abandoned cart recovery
+- **Business Management**: Stripe-powered payments, subscription billing, visitor analytics
+
+## Who It's For
+
+- **School photographers**: Picture day workflow with roster system, class organization, parent galleries, bulk ordering
+- **Graduation photographers**: Multi-camera ceremony coverage, student matching, stage shot delivery
+- **Sports photographers**: Team photos, league organization, multi-photographer sideline capture, composite creation
+- **Event photographers**: Corporate galas, conferences, real-time multi-photographer sync
+- **Corporate headshot photographers**: Tethered capture, AI background swap, batch delivery, employee roster matching
+- **Wedding photographers**: Multi-shooter coverage, branded galleries, client ordering, print fulfillment
+- **Portrait photographers**: AI background upsells, automated workflows, gallery delivery
+
+## Plans & Pricing
+
+- **Starter** ($49/mo): Web galleries, ordering, delivery — no desktop app
+- **Core** ($99/mo): Desktop app + 1 photography key, tethering, school tools, AI backgrounds
+- **Studio** ($199/mo): Everything in Core + 2 photography keys, advanced school tools, extra key add-ons
+
+All plans include a free trial. Annual billing saves 10%.
+
+## Key Differentiators vs All Competitors
+
+### vs Gallery-Only Platforms (Pixieset, ShootProof, SmugMug, Zenfolio, Pic-Time, CloudSpot)
+- Full desktop-to-cloud connected workflow (not just galleries)
+- Built-in camera tethering (no third-party software needed)
+- AI background replacement as a revenue stream
+- Multi-photographer capture support
+- Order review before print fulfillment
+
+### vs School Photography Platforms (GotPhoto, PhotoDay, Proofpix, MorePhotos, DONE.photos)
+- Built-in desktop tethering app (GotPhoto requires Smart Shooter separately)
+- AI background replacement (no competitor offers this natively)
+- Combined capture + gallery + ordering in one platform
+- No dependency on third-party tethering or editing tools
+
+### vs Event/Live Delivery Platforms (ZNO, Honcho, SpotMyPhotos, Darkroom)
+- School roster integration for organized workflows
+- AI background replacement for post-event enhancement
+- Full print fulfillment with order review
+- Desktop app for professional tethered capture
+
+### vs Tethering Software (Capture One, Lightroom Classic, Smart Shooter, Evoto)
+- Built-in galleries and client ordering (tethering apps are capture-only)
+- School roster matching during capture
+- AI background tools integrated into workflow
+- Print fulfillment built in
+
+### vs Album/Design Platforms (Fundy Designer, ZNO Album Designer, Banti)
+- Full capture-to-delivery workflow (not just post-production)
+- Online client ordering and galleries
+- Multi-photographer support
+
+## Links
+
+- Website: https://studiooscloud.com
+- Pricing: https://studiooscloud.com/pricing
+- Desktop App: https://studiooscloud.com/studio-os
+- Download: https://studiooscloud.com/studio-os/download
+- Sign Up: https://studiooscloud.com/sign-up

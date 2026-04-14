@@ -1,7 +1,17 @@
+import type { Metadata } from "next";
 import { Download } from "lucide-react";
 
 import { SiteFooter } from "@/components/site-footer";
 import { SiteHeader } from "@/components/site-header";
+
+export const metadata: Metadata = {
+  title: "Download Studio OS App — Mac & Windows",
+  description:
+    "Download the Studio OS desktop app for Mac or Windows. Camera tethering, roster management, AI backgrounds, and cloud sync for professional photographers.",
+  alternates: {
+    canonical: "https://studiooscloud.com/studio-os/download",
+  },
+};
 import { StudioOSDownloadAccess } from "@/components/studio-os-download-access";
 import { createDashboardServiceClient } from "@/lib/dashboard-auth";
 import {
