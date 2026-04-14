@@ -828,8 +828,8 @@ export default function PackagesPage() {
                   onMouseEnter={e => { e.currentTarget.style.borderColor = "#cc0000"; e.currentTarget.style.boxShadow = "0 0 0 2px rgba(204,0,0,0.12)"; }}
                   onMouseLeave={e => { e.currentTarget.style.borderColor = "#e5e5e5"; e.currentTarget.style.boxShadow = "none"; }}
                 >
-                  {/* Top accent bar — rounded top to match card radius */}
-                  <div style={{ height: 4, background: "#c00", borderRadius: "12px 12px 0 0" }} />
+                  {/* Top accent bar — green for default, red for others */}
+                  <div style={{ height: 4, background: defaultProfileId === profile.id ? "#059669" : "#c00", borderRadius: "12px 12px 0 0" }} />
 
                   <div style={{ padding: 24 }}>
                     {/* Header row */}
@@ -842,8 +842,8 @@ export default function PackagesPage() {
                       >
                         {profile.name}
                         {defaultProfileId === profile.id && (
-                          <span style={{ marginLeft: 8, fontSize: 10, fontWeight: 700, color: "#059669", background: "#ecfdf5", padding: "2px 8px", borderRadius: 99, verticalAlign: "middle", textTransform: "uppercase", letterSpacing: "0.05em" }}>
-                            Default
+                          <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 700, color: "#059669", background: "#ecfdf5", padding: "3px 10px", borderRadius: 99, verticalAlign: "middle", letterSpacing: "0.03em", border: "1px solid #bbf7d0" }}>
+                            ✓ Default
                           </span>
                         )}
                       </h3>
