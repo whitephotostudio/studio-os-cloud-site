@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { getPackageCategory, type PackageCategory } from "@/lib/package-categories";
+import { Logo } from "@/components/logo";
 import {
   LogOut, Plus, ArrowLeft, Pencil, Trash2, Package, Printer,
   Download, Sparkles, SquareStack, Copy, MoreVertical, Check, X, Square,
@@ -794,19 +795,25 @@ export default function PackagesPage() {
 
   const Sidebar = () => (
     <div style={sidebar}>
-      <div style={{ background: "#fff", padding: "20px 24px" }}>
-        <span style={{ fontWeight: 800, fontSize: 16, color: "#000" }}>Studio OS</span>
+      <div style={{ padding: 18, background: "#ffffff", borderBottom: "1px solid #e5e7eb" }}>
+        <div style={{ background: "#ffffff", borderRadius: 16, padding: "14px 16px" }}>
+          <Link href="/" style={{ display: "inline-flex" }}>
+            <Logo small />
+          </Link>
+        </div>
       </div>
-      <nav style={{ flex: 1, paddingTop: 16 }}>
+      <nav style={{ flex: 1, paddingTop: 18 }}>
         <Link href="/dashboard" style={navItem}>Dashboard</Link>
         <Link href="/dashboard/schools" style={navItem}>Schools</Link>
+        <Link href="/dashboard/projects/events" style={navItem}>Projects</Link>
         <Link href="/dashboard/orders" style={navItem}>Orders</Link>
         <Link href="/dashboard/packages" style={navActive}>Packages</Link>
         <Link href="/dashboard/settings" style={navItem}>Settings</Link>
         <Link href="/dashboard/membership" style={navItem}>Membership</Link>
       </nav>
-      <button onClick={signOut} style={{ margin: 16, padding: "10px", background: "transparent", border: "1px solid #333", borderRadius: 8, color: "#ccc", cursor: "pointer", display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
-        <LogOut size={14} /> Sign Out
+      <div style={{ padding: "0 16px", color: "#888", fontSize: 13 }}>{userEmail}</div>
+      <button onClick={signOut} style={{ margin: "12px 16px 16px", display: "flex", alignItems: "center", gap: 8, justifyContent: "center", background: "transparent", color: "#ccc", border: "1px solid #333", borderRadius: 10, padding: "10px 12px", cursor: "pointer" }}>
+        <LogOut size={16} /> Sign Out
       </button>
     </div>
   );
