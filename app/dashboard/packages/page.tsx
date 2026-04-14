@@ -8,7 +8,7 @@ import { getPackageCategory, type PackageCategory } from "@/lib/package-categori
 import {
   LogOut, Plus, ArrowLeft, Pencil, Trash2, Package, Printer,
   Download, Sparkles, SquareStack, Copy, MoreVertical, Check, X, Square,
-  AlertTriangle, ChevronDown, GripVertical,
+  AlertTriangle, ChevronDown, GripVertical, FileDown,
 } from "lucide-react";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -210,6 +210,11 @@ export default function PackagesPage() {
   // Drag-to-reorder
   const [dragIdx, setDragIdx]     = useState<number | null>(null);
   const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
+
+  // Search & bulk tools
+  const [searchQuery, setSearchQuery]     = useState("");
+  const [showBulkAdjust, setShowBulkAdjust] = useState(false);
+  const [bulkPercent, setBulkPercent]       = useState("");
 
   // Package pack modal
   const [showPackPicker, setShowPackPicker]   = useState(false);
@@ -473,6 +478,99 @@ export default function PackagesPage() {
     await loadData();
   }
 
+  function exportPriceListPDF() {
+    if (!selectedProfile) return;
+    const allPkgs = selectedProfile.packages.filter(p => p.active);
+    const grouped = new Map<string, Pkg[]>();
+    for (const pkg of allPkgs) {
+      const cat = getCategoryKey(pkg);
+      if (!grouped.has(cat)) grouped.set(cat, []);
+      grouped.get(cat)!.push(pkg);
+    }
+
+    const catSections = CATEGORIES
+      .filter(cat => grouped.has(cat.key) && grouped.get(cat.key)!.length > 0)
+      .map(cat => {
+        const pkgs = grouped.get(cat.key)!.sort((a, b) => a.price_cents - b.price_cents);
+        const rows = pkgs.map(pkg => {
+          const itemDesc = (pkg.items || []).map(item => {
+            if (typeof item === "string") return item;
+            const qty = item.qty ? `${item.qty}× ` : "";
+            return `${qty}${item.name || item.size || ""}`.trim();
+          }).filter(Boolean).join(", ");
+          return `<tr>
+            <td style="padding:8px 12px;border-bottom:1px solid #eee;font-weight:500">${pkg.name}</td>
+            <td style="padding:8px 12px;border-bottom:1px solid #eee;color:#666;font-size:13px">${itemDesc || pkg.description || ""}</td>
+            <td style="padding:8px 12px;border-bottom:1px solid #eee;text-align:right;font-weight:600">$${(pkg.price_cents / 100).toFixed(2)}</td>
+          </tr>`;
+        }).join("");
+        return `<h2 style="margin:28px 0 10px;font-size:17px;color:#111;border-bottom:2px solid #111;padding-bottom:6px">${cat.label}</h2>
+          <table style="width:100%;border-collapse:collapse;margin-bottom:8px">
+            <thead><tr style="background:#f8f8f8">
+              <th style="padding:8px 12px;text-align:left;font-size:13px;color:#555;font-weight:600">Item</th>
+              <th style="padding:8px 12px;text-align:left;font-size:13px;color:#555;font-weight:600">Details</th>
+              <th style="padding:8px 12px;text-align:right;font-size:13px;color:#555;font-weight:600">Price</th>
+            </tr></thead>
+            <tbody>${rows}</tbody>
+          </table>`;
+      }).join("");
+
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8">
+      <title>${selectedProfile.name} — Price List</title>
+      <style>@media print { body { -webkit-print-color-adjust: exact; } } body { font-family: -apple-system, system-ui, sans-serif; max-width: 800px; margin: 0 auto; padding: 40px; color: #111; }</style>
+    </head><body>
+      <div style="text-align:center;margin-bottom:32px">
+        <h1 style="margin:0 0 6px;font-size:26px">${selectedProfile.name}</h1>
+        <p style="margin:0;color:#888;font-size:14px">Price List · ${allPkgs.length} items · Generated ${new Date().toLocaleDateString()}</p>
+      </div>
+      ${catSections}
+      <div style="margin-top:40px;text-align:center;color:#bbb;font-size:12px">Generated from Studio OS Cloud</div>
+    </body></html>`;
+
+    const w = window.open("", "_blank");
+    if (w) { w.document.write(html); w.document.close(); w.print(); }
+  }
+
+  async function bulkAdjustPrices() {
+    const pct = parseFloat(bulkPercent);
+    if (!pct || !selectedProfile) return;
+    const pkgs = selectedProfile.packages.filter(p =>
+      (!selectedCategory || getCategoryKey(p) === selectedCategory) && p.price_cents > 0
+    );
+    if (!pkgs.length) return;
+    const direction = pct > 0 ? "increase" : "decrease";
+    if (!confirm(`This will ${direction} prices on ${pkgs.length} item${pkgs.length !== 1 ? "s" : ""} by ${Math.abs(pct)}%. Continue?`)) return;
+
+    const multiplier = 1 + pct / 100;
+    await Promise.all(
+      pkgs.map(pkg => {
+        const newPrice = Math.round(pkg.price_cents * multiplier);
+        return supabase.from("packages").update({ price_cents: newPrice }).eq("id", pkg.id);
+      })
+    );
+    setShowBulkAdjust(false);
+    setBulkPercent("");
+    await loadData();
+  }
+
+  async function duplicatePkg(pkg: Pkg) {
+    if (!pgId) return;
+    const copy = {
+      name:            `${pkg.name} (Copy)`,
+      price_cents:     pkg.price_cents,
+      items:           pkg.items,
+      active:          pkg.active,
+      photographer_id: pgId,
+      profile_id:      pkg.profile_id,
+      profile_name:    pkg.profile_name,
+      category:        pkg.category,
+      description:     pkg.description,
+    };
+    const { data } = await supabase.from("packages").insert(copy).select().single();
+    await loadData();
+    if (data) openEdit(data as Pkg);
+  }
+
   async function addPackage() {
     if (!selectedProfile || !pgId) return;
     const newPkg = {
@@ -619,9 +717,17 @@ export default function PackagesPage() {
     );
   }
 
-  const pkgsInCategory = (selectedProfile?.packages.filter(pkg =>
-    !selectedCategory || getCategoryKey(pkg) === selectedCategory
-  ) || []).sort((a, b) => {
+  const pkgsInCategory = (selectedProfile?.packages.filter(pkg => {
+    if (selectedCategory && getCategoryKey(pkg) !== selectedCategory) return false;
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase();
+      const nameMatch = pkg.name.toLowerCase().includes(q);
+      const descMatch = (pkg.description ?? "").toLowerCase().includes(q);
+      const priceMatch = (pkg.price_cents / 100).toFixed(2).includes(q);
+      if (!nameMatch && !descMatch && !priceMatch) return false;
+    }
+    return true;
+  }) || []).sort((a, b) => {
     const aOrder = a.sort_order ?? 999999;
     const bOrder = b.sort_order ?? 999999;
     if (aOrder !== bOrder) return aOrder - bOrder;
@@ -1126,6 +1232,56 @@ export default function PackagesPage() {
           </div>
         </div>
 
+        {/* Search & bulk tools */}
+        <div style={{ display: "flex", gap: 10, marginBottom: 16, alignItems: "center" }}>
+          <div style={{ flex: 1, position: "relative" }}>
+            <input
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              placeholder="Search items..."
+              style={{ width: "100%", padding: "9px 14px 9px 36px", border: "1px solid #e5e5e5", borderRadius: 8, fontSize: 14, color: "#111", background: "#fff" }}
+            />
+            <svg style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }} width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#aaa" strokeWidth="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          </div>
+          <button
+            onClick={() => setShowBulkAdjust(!showBulkAdjust)}
+            style={{ padding: "9px 16px", background: showBulkAdjust ? "#111" : "#fff", color: showBulkAdjust ? "#fff" : "#555", border: "1px solid #e5e5e5", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 500, whiteSpace: "nowrap" }}
+          >
+            Adjust Prices
+          </button>
+          <button
+            onClick={exportPriceListPDF}
+            style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 16px", background: "#fff", color: "#555", border: "1px solid #e5e5e5", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 500, whiteSpace: "nowrap" }}
+          >
+            <FileDown size={15} /> Export PDF
+          </button>
+        </div>
+
+        {showBulkAdjust && (
+          <div style={{ display: "flex", gap: 10, marginBottom: 16, alignItems: "center", padding: "14px 16px", background: "#fafafa", borderRadius: 10, border: "1px solid #e5e5e5" }}>
+            <span style={{ fontSize: 13, color: "#555", fontWeight: 500 }}>Adjust all prices by</span>
+            <input
+              value={bulkPercent}
+              onChange={e => setBulkPercent(e.target.value)}
+              placeholder="e.g. 10 or -5"
+              style={{ width: 90, padding: "7px 10px", border: "1px solid #e5e5e5", borderRadius: 6, fontSize: 14, textAlign: "center" }}
+            />
+            <span style={{ fontSize: 13, color: "#555" }}>%</span>
+            <button
+              onClick={bulkAdjustPrices}
+              disabled={!bulkPercent || isNaN(parseFloat(bulkPercent))}
+              style={{ padding: "7px 16px", background: "#000", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 600, opacity: !bulkPercent ? 0.4 : 1 }}
+            >
+              Apply
+            </button>
+            <span style={{ fontSize: 12, color: "#aaa", marginLeft: 4 }}>
+              {bulkPercent && !isNaN(parseFloat(bulkPercent))
+                ? `${parseFloat(bulkPercent) > 0 ? "+" : ""}${bulkPercent}% on ${pkgsInCategory.filter(p => p.price_cents > 0).length} items`
+                : "Enter + to increase, - to decrease"}
+            </span>
+          </div>
+        )}
+
         {/* Edit modal */}
         {editingPkg && (
           <div style={overlayStyle}>
@@ -1472,6 +1628,13 @@ export default function PackagesPage() {
                     style={{ display: "flex", alignItems: "center", gap: 4, padding: "7px 14px", background: "#f5f5f5", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13, color: "#333" }}
                   >
                     <Pencil size={13} /> Edit
+                  </button>
+                  <button
+                    onClick={() => duplicatePkg(pkg)}
+                    title="Duplicate"
+                    style={{ padding: "7px 10px", background: "none", border: "1px solid #e5e5e5", borderRadius: 6, cursor: "pointer", color: "#aaa" }}
+                  >
+                    <Copy size={14} />
                   </button>
                   <button
                     onClick={() => deletePkg(pkg.id)}
