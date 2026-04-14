@@ -167,6 +167,10 @@ function normalizeReleaseState(value: string | null | undefined): StudioAppRelea
   return "hidden";
 }
 
+export function isPublicStudioAppRelease(state: string | null | undefined) {
+  return normalizeReleaseState(state) === "public";
+}
+
 function releaseStateLabel(state: StudioAppReleaseState) {
   if (state === "public") return "Public release";
   if (state === "beta") return "Beta release";
