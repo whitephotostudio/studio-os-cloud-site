@@ -456,9 +456,13 @@ export default function PackagesPage() {
   async function saveEdit() {
     if (!editingPkg) return;
     setSaving(true);
+    const validItems = editItems.filter(i => i.name.trim());
+    const autoDesc = validItems.length > 0
+      ? validItems.map(i => `${i.qty > 1 ? i.qty + "× " : ""}${i.name.trim()}`).join(", ")
+      : null;
     await supabase.from("packages").update({
       name:        editName.trim(),
-      description: editDesc.trim() || null,
+      description: editDesc.trim() || autoDesc || null,
       price_cents: Math.round(parseFloat(editPrice) * 100),
       category:    editCategory,
       active:      editActive,
@@ -1412,7 +1416,24 @@ export default function PackagesPage() {
               </div>
 
               <div style={{ marginBottom: 16 }}>
-                <label style={{ display: "block", fontSize: 13, fontWeight: 600, marginBottom: 6, color: "#333" }}>Description</label>
+                <label style={{ display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: 13, fontWeight: 600, marginBottom: 6, color: "#333" }}>
+                  Description
+                  {editItems.filter(i => i.name.trim()).length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const auto = editItems
+                          .filter(i => i.name.trim())
+                          .map(i => `${i.qty > 1 ? i.qty + "× " : ""}${i.name.trim()}`)
+                          .join(", ");
+                        setEditDesc(auto);
+                      }}
+                      style={{ background: "none", border: "none", cursor: "pointer", color: "#2563eb", fontSize: 12, fontWeight: 500, padding: 0 }}
+                    >
+                      Auto-fill from contents
+                    </button>
+                  )}
+                </label>
                 <input value={editDesc} onChange={e => setEditDesc(e.target.value)} placeholder="Optional description" style={inputStyle} />
               </div>
 
