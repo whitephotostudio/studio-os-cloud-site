@@ -195,9 +195,12 @@ export function getExtraPhotographyKeyCount(photographer: Pick<StudioAppPhotogra
 export function getAllowedPhotographyKeyCount(
   photographer: Pick<
     StudioAppPhotographerRow,
-    "subscription_plan_code" | "subscription_status" | "extra_desktop_keys"
+    "subscription_plan_code" | "subscription_status" | "extra_desktop_keys" | "is_platform_admin"
   >,
 ) {
+  // Platform owners get a fixed 4-key bundle regardless of stored plan.
+  if (photographer.is_platform_admin) return 4;
+
   const planCode = normalizePlanCode(photographer.subscription_plan_code);
   if (!planCode || !isSubscriptionActive(photographer.subscription_status)) {
     return 0;
@@ -338,12 +341,23 @@ export function resolveStudioAppEntitlement(
   const betaAccess = Boolean(photographer.studio_app_beta_access);
   const rolloutEnabled =
     releaseState === "public" || betaAccess || isPlatformAdmin;
-  const includedKeys = getIncludedPhotographyKeyCount(planCode);
-  const extraKeys = subscriptionActive && planCode === "studio"
+  // Owners get a fixed bundle of 4 Photography Keys (Studio's 2 + 2 extra),
+  // regardless of what's stored in extra_desktop_keys.
+  const OWNER_INCLUDED_KEYS = 2;
+  const OWNER_EXTRA_KEYS = 2;
+  const includedKeys = isPlatformAdmin
+    ? OWNER_INCLUDED_KEYS
+    : getIncludedPhotographyKeyCount(planCode);
+  const extraKeys = isPlatformAdmin
+    ? OWNER_EXTRA_KEYS
+    : subscriptionActive && planCode === "studio"
     ? Math.max(0, Number(photographer.extra_desktop_keys ?? 0))
     : 0;
-  const totalAllowedKeys =
-    subscriptionActive && appEligibleByPlan ? includedKeys + extraKeys : 0;
+  const totalAllowedKeys = isPlatformAdmin
+    ? OWNER_INCLUDED_KEYS + OWNER_EXTRA_KEYS
+    : subscriptionActive && appEligibleByPlan
+    ? includedKeys + extraKeys
+    : 0;
   const appAccessEnabled = subscriptionActive && appEligibleByPlan && rolloutEnabled;
   const canDownload =
     appAccessEnabled &&

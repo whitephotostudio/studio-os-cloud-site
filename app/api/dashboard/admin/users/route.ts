@@ -36,11 +36,77 @@ export async function GET(request: NextRequest) {
     const { data: users, error } = await service
       .from("photographers")
       .select(
-        "id,user_id,business_name,billing_email,studio_email,studio_phone,studio_address,subscription_plan_code,subscription_status,subscription_billing_interval,subscription_current_period_start,subscription_current_period_end,stripe_subscription_id,trial_starts_at,trial_ends_at,is_platform_admin,created_at",
+        "id,user_id,business_name,billing_email,studio_email,studio_phone,studio_address,subscription_plan_code,subscription_status,subscription_billing_interval,subscription_current_period_start,subscription_current_period_end,stripe_subscription_id,extra_desktop_keys,trial_starts_at,trial_ends_at,is_platform_admin,created_at",
       )
       .order("created_at", { ascending: false });
 
     if (error) throw error;
+
+    const photographerIds = (users ?? []).map((u) => u.id as string);
+
+    // Photography keys per photographer (active = activated/usable, total = ever provisioned).
+    const keysByPhotographer = new Map<string, { active: number; total: number }>();
+    if (photographerIds.length > 0) {
+      const { data: keyRows } = await service
+        .from("photography_keys")
+        .select("photographer_id,status")
+        .in("photographer_id", photographerIds);
+      for (const row of keyRows ?? []) {
+        const pid = row.photographer_id as string;
+        const entry = keysByPhotographer.get(pid) ?? { active: 0, total: 0 };
+        entry.total += 1;
+        if ((row.status as string) === "active") entry.active += 1;
+        keysByPhotographer.set(pid, entry);
+      }
+    }
+
+    // Studio credits (current balance, lifetime purchased credits, lifetime used credits).
+    const creditsByPhotographer = new Map<
+      string,
+      { balance: number; totalPurchased: number; totalUsed: number }
+    >();
+    if (photographerIds.length > 0) {
+      const { data: creditRows } = await service
+        .from("studio_credits")
+        .select("photographer_id,balance,total_purchased,total_used")
+        .in("photographer_id", photographerIds);
+      for (const row of creditRows ?? []) {
+        const pid = row.photographer_id as string;
+        if (!pid) continue;
+        creditsByPhotographer.set(pid, {
+          balance: Number(row.balance ?? 0),
+          totalPurchased: Number(row.total_purchased ?? 0),
+          totalUsed: Number(row.total_used ?? 0),
+        });
+      }
+    }
+
+    // Total $ spent per photographer = sum of credit_packages.price_cents for every
+    // credit_transactions row marked as a 'purchase'. We pull the price catalog once
+    // and then aggregate transactions client-side.
+    const spentByPhotographer = new Map<string, number>();
+    if (photographerIds.length > 0) {
+      const { data: pkgRows } = await service
+        .from("credit_packages")
+        .select("id,price_cents");
+      const pkgPriceMap = new Map<string, number>();
+      for (const row of pkgRows ?? []) {
+        pkgPriceMap.set(row.id as string, Number(row.price_cents ?? 0));
+      }
+
+      const { data: txnRows } = await service
+        .from("credit_transactions")
+        .select("photographer_id,package_id,source")
+        .in("photographer_id", photographerIds)
+        .eq("source", "purchase");
+
+      for (const row of txnRows ?? []) {
+        const pid = row.photographer_id as string;
+        if (!pid) continue;
+        const price = pkgPriceMap.get(row.package_id as string) ?? 0;
+        spentByPhotographer.set(pid, (spentByPhotographer.get(pid) ?? 0) + price);
+      }
+    }
 
     // Pull auth metadata (full_name, phone) for each user via the admin auth API.
     // We batch with service.auth.admin.listUsers() to be efficient.
@@ -101,6 +167,13 @@ export async function GET(request: NextRequest) {
           : 0;
 
       const authMeta = authMetaMap.get(u.user_id as string);
+      const keysEntry = keysByPhotographer.get(u.id as string) ?? { active: 0, total: 0 };
+      const creditsEntry = creditsByPhotographer.get(u.id as string) ?? {
+        balance: 0,
+        totalPurchased: 0,
+        totalUsed: 0,
+      };
+      const totalSpentCents = spentByPhotographer.get(u.id as string) ?? 0;
 
       return {
         id: u.id,
@@ -115,6 +188,13 @@ export async function GET(request: NextRequest) {
         subscriptionStatus: u.subscription_status || "inactive",
         subscriptionCurrentPeriodEnd: u.subscription_current_period_end,
         hasStripeSubscription,
+        extraDesktopKeysPurchased: Number(u.extra_desktop_keys ?? 0),
+        photographyKeysActive: keysEntry.active,
+        photographyKeysTotal: keysEntry.total,
+        creditBalance: isOwner ? null : creditsEntry.balance,
+        creditTotalPurchased: creditsEntry.totalPurchased,
+        creditTotalUsed: creditsEntry.totalUsed,
+        totalSpentCents,
         trialStartsAt: u.trial_starts_at,
         trialEndsAt: u.trial_ends_at,
         trialStatus,

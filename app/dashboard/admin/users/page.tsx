@@ -39,7 +39,23 @@ type UserRow = {
   isPlatformAdmin: boolean;
   lastSignIn: string | null;
   createdAt: string | null;
+  extraDesktopKeysPurchased?: number;
+  photographyKeysActive?: number;
+  photographyKeysTotal?: number;
+  creditBalance?: number | null;
+  creditTotalPurchased?: number;
+  creditTotalUsed?: number;
+  totalSpentCents?: number;
 };
+
+function formatMoney(cents: number | undefined | null) {
+  const c = Number(cents ?? 0);
+  return `$${(c / 100).toFixed(2)}`;
+}
+
+function formatNumber(value: number | undefined | null) {
+  return Number(value ?? 0).toLocaleString("en-US");
+}
 
 const textPrimary = "#111827";
 const textMuted = "#667085";
@@ -532,9 +548,9 @@ export default function AdminUsersPage() {
 
                     {/* Expanded detail */}
                     {isExpanded ? (
+                      <div style={{ padding: "0 18px 18px" }}>
                       <div
                         style={{
-                          padding: "0 18px 18px",
                           display: "grid",
                           gridTemplateColumns: "1fr 1fr",
                           gap: 16,
@@ -724,6 +740,69 @@ export default function AdminUsersPage() {
                             </div>
                           )}
                         </div>
+                      </div>
+                      {/* Keys, Credits & Spending — full-width strip below the 2-col grid */}
+                      <div
+                        style={{
+                          marginTop: 16,
+                          background: "#f9fafb",
+                          borderRadius: 14,
+                          padding: "16px 18px",
+                          fontSize: 13,
+                          display: "grid",
+                          gridTemplateColumns: "1fr 1fr 1fr",
+                          gap: 18,
+                        }}
+                      >
+                        <div>
+                          <div style={{ fontWeight: 700, marginBottom: 10, fontSize: 13 }}>Photography Keys</div>
+                          <div style={detailRow}>
+                            <span style={detailLabel}>Active keys</span>
+                            <span>{formatNumber(u.photographyKeysActive)}</span>
+                          </div>
+                          <div style={detailRow}>
+                            <span style={detailLabel}>Total provisioned</span>
+                            <span>{formatNumber(u.photographyKeysTotal)}</span>
+                          </div>
+                          <div style={detailRow}>
+                            <span style={detailLabel}>Extra keys purchased</span>
+                            <span>{formatNumber(u.extraDesktopKeysPurchased)}</span>
+                          </div>
+                        </div>
+
+                        <div>
+                          <div style={{ fontWeight: 700, marginBottom: 10, fontSize: 13 }}>Background Credits</div>
+                          <div style={detailRow}>
+                            <span style={detailLabel}>Current balance</span>
+                            <span>
+                              {u.isPlatformAdmin
+                                ? "Unlimited"
+                                : formatNumber(u.creditBalance ?? 0)}
+                            </span>
+                          </div>
+                          <div style={detailRow}>
+                            <span style={detailLabel}>Total purchased</span>
+                            <span>{formatNumber(u.creditTotalPurchased)}</span>
+                          </div>
+                          <div style={detailRow}>
+                            <span style={detailLabel}>Total used</span>
+                            <span>{formatNumber(u.creditTotalUsed)}</span>
+                          </div>
+                        </div>
+
+                        <div>
+                          <div style={{ fontWeight: 700, marginBottom: 10, fontSize: 13 }}>Lifetime Spending</div>
+                          <div style={detailRow}>
+                            <span style={detailLabel}>Credit packs</span>
+                            <span style={{ fontWeight: 700, color: "#059669" }}>
+                              {formatMoney(u.totalSpentCents)}
+                            </span>
+                          </div>
+                          <div style={{ marginTop: 8, fontSize: 11, color: textMuted, lineHeight: 1.4 }}>
+                            Subscription charges (monthly/yearly plan fees) are billed by Stripe and not summarized here.
+                          </div>
+                        </div>
+                      </div>
                       </div>
                     ) : null}
                   </div>
