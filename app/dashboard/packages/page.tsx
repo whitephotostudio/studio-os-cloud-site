@@ -592,6 +592,32 @@ export default function PackagesPage() {
     if (!pkgs.length) return null;
     return Math.min(...pkgs.map(p => p.price_cents)) / 100;
   }
+  function categoryHasActive(profile: Profile, catKey: PackageCategory) {
+    const pkgs = profile.packages.filter(p => getCategoryKey(p) === catKey);
+    return pkgs.length > 0 && pkgs.some(p => p.active);
+  }
+  async function toggleCategory(profile: Profile, catKey: PackageCategory) {
+    const pkgs = profile.packages.filter(p => getCategoryKey(p) === catKey);
+    if (!pkgs.length) return;
+    const hasActive = pkgs.some(p => p.active);
+    const newActive = !hasActive;
+
+    // Optimistic UI
+    setProfiles(prev => prev.map(pr => {
+      if (pr.id !== profile.id) return pr;
+      return {
+        ...pr,
+        packages: pr.packages.map(pkg =>
+          getCategoryKey(pkg) === catKey ? { ...pkg, active: newActive } : pkg
+        ),
+      };
+    }));
+
+    // Persist
+    await Promise.all(
+      pkgs.map(pkg => supabase.from("packages").update({ active: newActive }).eq("id", pkg.id))
+    );
+  }
 
   const pkgsInCategory = (selectedProfile?.packages.filter(pkg =>
     !selectedCategory || getCategoryKey(pkg) === selectedCategory
@@ -997,20 +1023,49 @@ export default function PackagesPage() {
               const Icon = cat.icon;
               const count = categoryCount(selectedProfile, cat.key);
               const minP = categoryMinPrice(selectedProfile, cat.key);
+              const isActive = categoryHasActive(selectedProfile, cat.key);
               return (
                 <div
                   key={cat.key}
-                  onClick={() => setSelectedCategory(cat.key)}
-                  style={{ background: "#fff", borderRadius: 12, border: "1px solid #e5e5e5", overflow: "hidden", cursor: "pointer" }}
+                  style={{ background: "#fff", borderRadius: 12, border: "1px solid #e5e5e5", overflow: "hidden", opacity: count > 0 && !isActive ? 0.5 : 1, transition: "opacity 0.2s" }}
                   onMouseEnter={e => (e.currentTarget.style.boxShadow = "0 4px 16px rgba(0,0,0,0.1)")}
                   onMouseLeave={e => (e.currentTarget.style.boxShadow = "none")}
                 >
-                  <div style={{ height: 100, background: cat.color, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <div
+                    onClick={() => setSelectedCategory(cat.key)}
+                    style={{ height: 100, background: cat.color, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}
+                  >
                     <Icon size={36} color="#aaa" />
                   </div>
                   <div style={{ padding: "14px 16px" }}>
-                    <div style={{ fontWeight: 700, fontSize: 15, color: "#111", marginBottom: 4 }}>{cat.label}</div>
-                    <div style={{ fontSize: 13, color: "#888" }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+                      <div
+                        onClick={() => setSelectedCategory(cat.key)}
+                        style={{ fontWeight: 700, fontSize: 15, color: "#111", cursor: "pointer" }}
+                      >
+                        {cat.label}
+                      </div>
+                      {count > 0 && (
+                        <button
+                          onClick={e => { e.stopPropagation(); toggleCategory(selectedProfile, cat.key); }}
+                          style={{
+                            width: 38, height: 22, borderRadius: 11, border: "none", cursor: "pointer", padding: 0,
+                            background: isActive ? "#22c55e" : "#d4d4d4",
+                            position: "relative", transition: "background 0.2s",
+                          }}
+                          title={isActive ? "Disable this category" : "Enable this category"}
+                        >
+                          <div style={{
+                            width: 18, height: 18, borderRadius: 9, background: "#fff",
+                            position: "absolute", top: 2,
+                            left: isActive ? 18 : 2,
+                            transition: "left 0.2s",
+                            boxShadow: "0 1px 3px rgba(0,0,0,0.2)",
+                          }} />
+                        </button>
+                      )}
+                    </div>
+                    <div onClick={() => setSelectedCategory(cat.key)} style={{ fontSize: 13, color: "#888", cursor: "pointer" }}>
                       {count > 0
                         ? <>{count} item{count !== 1 ? "s" : ""}{minP !== null ? ` · from $${minP.toFixed(2)}` : ""}</>
                         : <span style={{ color: "#ccc" }}>No items yet</span>
