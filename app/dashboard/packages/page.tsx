@@ -962,22 +962,6 @@ export default function PackagesPage() {
                       </div>
                     </div>
 
-                    {/* Composites toggle */}
-                    <div
-                      style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14, padding: "8px 10px", background: profile.composites_enabled ? "#faf5ff" : "#f9f9f9", borderRadius: 8, border: profile.composites_enabled ? "1px solid #e9d5ff" : "1px solid #f0f0f0" }}
-                      onClick={e => e.stopPropagation()}
-                    >
-                      <button
-                        onClick={() => toggleCompositesEnabled(profile.id, profile.composites_enabled)}
-                        style={{ width: 36, height: 20, borderRadius: 10, background: profile.composites_enabled ? "#7c3aed" : "#d1d5db", border: "none", cursor: "pointer", position: "relative", transition: "background 0.2s", flexShrink: 0 }}
-                      >
-                        <span style={{ position: "absolute", top: 2, left: profile.composites_enabled ? 18 : 2, width: 16, height: 16, borderRadius: "50%", background: "#fff", transition: "left 0.2s", boxShadow: "0 1px 2px rgba(0,0,0,0.15)" }} />
-                      </button>
-                      <span style={{ fontSize: 12, color: profile.composites_enabled ? "#7c3aed" : "#888", fontWeight: 500 }}>
-                        {profile.composites_enabled ? "Composites ON" : "Composites OFF"}
-                      </span>
-                    </div>
-
                     {/* Category breakdown */}
                     <div
                       onClick={() => { setSelectedProfile(profile); setSelectedCategory(null); }}
@@ -1190,6 +1174,28 @@ export default function PackagesPage() {
             <span style={{ fontSize: 12, background: "#f0f0f0", color: "#666", padding: "3px 8px", borderRadius: 20 }}>
               {selectedProfile.count} items
             </span>
+          </div>
+
+          {/* Composites toggle */}
+          <div
+            style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 20, padding: "10px 14px", background: selectedProfile.composites_enabled ? "#faf5ff" : "#f9f9f9", borderRadius: 10, border: selectedProfile.composites_enabled ? "1px solid #e9d5ff" : "1px solid #ebebeb" }}
+          >
+            <button
+              onClick={() => toggleCompositesEnabled(selectedProfile.id, selectedProfile.composites_enabled)}
+              style={{ width: 40, height: 22, borderRadius: 11, background: selectedProfile.composites_enabled ? "#7c3aed" : "#d1d5db", border: "none", cursor: "pointer", position: "relative", transition: "background 0.2s", flexShrink: 0 }}
+            >
+              <span style={{ position: "absolute", top: 2, left: selectedProfile.composites_enabled ? 20 : 2, width: 18, height: 18, borderRadius: "50%", background: "#fff", transition: "left 0.2s", boxShadow: "0 1px 2px rgba(0,0,0,0.15)" }} />
+            </button>
+            <div>
+              <span style={{ fontSize: 13, color: selectedProfile.composites_enabled ? "#7c3aed" : "#555", fontWeight: 600 }}>
+                {selectedProfile.composites_enabled ? "Composites Enabled" : "Composites Disabled"}
+              </span>
+              <span style={{ fontSize: 12, color: "#999", marginLeft: 8 }}>
+                {selectedProfile.composites_enabled
+                  ? "Packages can include auto-filled class/group photos"
+                  : "Turn on to add composite items to packages"}
+              </span>
+            </div>
           </div>
 
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 16 }}>
