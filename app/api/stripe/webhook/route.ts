@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createDashboardServiceClient } from "@/lib/dashboard-auth";
 import { syncPhotographyKeysByPhotographerId } from "@/lib/studio-os-app";
+import { resendConfigured, sendResendEmail } from "@/lib/resend";
 import {
   asIsoTimestamp,
   finalizePaidOrder,
@@ -75,16 +76,41 @@ type StripeSubscriptionObject = {
   metadata?: Record<string, string> | null;
 };
 
+type StripeInvoiceLine = {
+  description?: string | null;
+  amount?: number | null;
+  quantity?: number | null;
+  period?: { start?: number | null; end?: number | null } | null;
+  price?: { recurring?: { interval?: string | null } | null } | null;
+};
+
 type StripeInvoice = {
   id: string;
+  number?: string | null;
   customer?: string | null;
+  customer_email?: string | null;
+  customer_name?: string | null;
   subscription?: string | null;
+  status?: string | null;
+  amount_paid?: number | null;
+  amount_due?: number | null;
+  total?: number | null;
+  subtotal?: number | null;
+  tax?: number | null;
+  currency?: string | null;
+  hosted_invoice_url?: string | null;
+  invoice_pdf?: string | null;
+  period_start?: number | null;
+  period_end?: number | null;
+  created?: number | null;
+  billing_reason?: string | null;
+  lines?: { data?: StripeInvoiceLine[] } | null;
 };
 
 type PhotographerRow = PhotographerBillingRow;
 
 const PHOTOGRAPHER_SELECT =
-  "id,user_id,business_name,brand_color,watermark_enabled,watermark_logo_url,studio_address,studio_phone,stripe_account_id,stripe_connected_account_id,stripe_connect_onboarding_complete,stripe_connect_charges_enabled,stripe_connect_payouts_enabled,stripe_platform_customer_id,stripe_subscription_id,stripe_subscription_item_base_id,stripe_subscription_item_extra_keys_id,stripe_subscription_item_usage_id,subscription_plan_code,subscription_billing_interval,subscription_status,subscription_current_period_start,subscription_current_period_end,billing_email,billing_currency,order_usage_rate_cents,extra_desktop_keys,studio_id,studio_email,logo_url,is_platform_admin";
+  "id,user_id,business_name,brand_color,watermark_enabled,watermark_logo_url,studio_address,studio_phone,stripe_account_id,stripe_connected_account_id,stripe_connect_onboarding_complete,stripe_connect_charges_enabled,stripe_connect_payouts_enabled,stripe_platform_customer_id,stripe_subscription_id,stripe_subscription_item_base_id,stripe_subscription_item_extra_keys_id,stripe_subscription_item_usage_id,subscription_plan_code,subscription_billing_interval,subscription_status,subscription_current_period_start,subscription_current_period_end,billing_email,billing_currency,order_usage_rate_cents,extra_desktop_keys,studio_id,studio_email,logo_url,is_platform_admin,trial_starts_at,trial_ends_at";
 
 function webhookSecrets() {
   return [
@@ -125,6 +151,168 @@ async function findPhotographerForSubscription(
   if (fromCustomerId) return fromCustomerId;
 
   return findPhotographer(service, "id", subscription.metadata?.photographer_id ?? null);
+}
+
+/* ---------- Auto-invoice email on payment ---------- */
+
+function formatInvoiceCurrency(amountCents: number, currency: string | null | undefined) {
+  const code = (currency ?? "usd").toUpperCase();
+  const dollars = (amountCents / 100).toFixed(2);
+  if (code === "USD") return `$${dollars}`;
+  return `${dollars} ${code}`;
+}
+
+function formatInvoiceDate(unix: number | null | undefined) {
+  if (!unix) return "—";
+  return new Date(unix * 1000).toLocaleDateString("en-US", {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  });
+}
+
+async function sendInvoicePaidEmail(
+  invoice: StripeInvoice,
+  photographer: PhotographerRow,
+) {
+  if (!resendConfigured()) return;
+
+  const recipientEmail =
+    (photographer.billing_email ?? "").trim() ||
+    (photographer.studio_email ?? "").trim() ||
+    (invoice.customer_email ?? "").trim();
+
+  if (!recipientEmail) return;
+
+  const invoiceNumber = invoice.number ?? invoice.id;
+  const amountPaid = formatInvoiceCurrency(
+    invoice.amount_paid ?? invoice.total ?? 0,
+    invoice.currency,
+  );
+  const businessName = (photographer.business_name ?? "").trim() || "there";
+
+  const lines = (invoice.lines?.data ?? []).map((line) => {
+    const desc = (line.description ?? "Subscription").trim();
+    const lineAmount = formatInvoiceCurrency(line.amount ?? 0, invoice.currency);
+    return { description: desc, amount: lineAmount };
+  });
+
+  const linesHtml = lines.length > 0
+    ? lines
+        .map(
+          (l) =>
+            `<tr>
+              <td style="padding:10px 12px;border-bottom:1px solid #f0f0f0;font-size:14px;color:#374151;">${l.description}</td>
+              <td style="padding:10px 12px;border-bottom:1px solid #f0f0f0;font-size:14px;color:#111827;text-align:right;font-weight:600;">${l.amount}</td>
+            </tr>`,
+        )
+        .join("")
+    : `<tr>
+        <td style="padding:10px 12px;border-bottom:1px solid #f0f0f0;font-size:14px;color:#374151;">Subscription payment</td>
+        <td style="padding:10px 12px;border-bottom:1px solid #f0f0f0;font-size:14px;color:#111827;text-align:right;font-weight:600;">${amountPaid}</td>
+      </tr>`;
+
+  const viewInvoiceLink = invoice.hosted_invoice_url
+    ? `<a href="${invoice.hosted_invoice_url}" style="display:inline-block;margin-top:12px;padding:10px 24px;background:#2563eb;color:#fff;border-radius:8px;font-size:14px;font-weight:600;text-decoration:none;">View Invoice</a>`
+    : "";
+
+  const downloadPdfLink = invoice.invoice_pdf
+    ? `<a href="${invoice.invoice_pdf}" style="display:inline-block;margin-top:8px;padding:8px 20px;background:#f3f4f6;color:#374151;border-radius:8px;font-size:13px;font-weight:500;text-decoration:none;border:1px solid #e5e7eb;">Download PDF</a>`
+    : "";
+
+  const html = `
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8" /></head>
+<body style="margin:0;padding:0;background:#f9fafb;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
+  <div style="max-width:560px;margin:0 auto;padding:32px 16px;">
+    <div style="background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.08);">
+      <!-- Header -->
+      <div style="background:#0f172a;padding:28px 24px;text-align:center;">
+        <h1 style="margin:0;font-size:20px;font-weight:700;color:#fff;">Studio OS Cloud</h1>
+      </div>
+
+      <!-- Body -->
+      <div style="padding:28px 24px;">
+        <p style="margin:0 0 4px;font-size:15px;color:#374151;">Hi ${businessName},</p>
+        <p style="margin:0 0 20px;font-size:15px;color:#374151;">Your payment has been received. Here's your invoice summary.</p>
+
+        <div style="background:#f9fafb;border-radius:12px;overflow:hidden;border:1px solid #e5e7eb;">
+          <table style="width:100%;border-collapse:collapse;">
+            <thead>
+              <tr style="background:#f3f4f6;">
+                <th style="padding:10px 12px;text-align:left;font-size:12px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:0.05em;">Description</th>
+                <th style="padding:10px 12px;text-align:right;font-size:12px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:0.05em;">Amount</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${linesHtml}
+              <tr>
+                <td style="padding:12px;font-size:14px;font-weight:700;color:#111827;">Total Paid</td>
+                <td style="padding:12px;font-size:16px;font-weight:700;color:#059669;text-align:right;">${amountPaid}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <table style="margin-top:20px;font-size:13px;color:#6b7280;width:100%;">
+          <tr><td style="padding:3px 0;">Invoice #</td><td style="text-align:right;font-weight:500;color:#374151;">${invoiceNumber}</td></tr>
+          <tr><td style="padding:3px 0;">Date</td><td style="text-align:right;font-weight:500;color:#374151;">${formatInvoiceDate(invoice.created ?? invoice.period_start)}</td></tr>
+          <tr><td style="padding:3px 0;">Period</td><td style="text-align:right;font-weight:500;color:#374151;">${formatInvoiceDate(invoice.period_start)} — ${formatInvoiceDate(invoice.period_end)}</td></tr>
+        </table>
+
+        <div style="text-align:center;margin-top:24px;">
+          ${viewInvoiceLink}
+          ${downloadPdfLink ? `<br/>${downloadPdfLink}` : ""}
+        </div>
+      </div>
+
+      <!-- Footer -->
+      <div style="padding:20px 24px;border-top:1px solid #f0f0f0;text-align:center;">
+        <p style="margin:0;font-size:12px;color:#9ca3af;">This is an automated payment receipt from Studio OS Cloud.</p>
+        <p style="margin:4px 0 0;font-size:12px;color:#9ca3af;">If you have questions, reply to this email or visit <a href="https://studiooscloud.com" style="color:#2563eb;text-decoration:none;">studiooscloud.com</a></p>
+      </div>
+    </div>
+  </div>
+</body>
+</html>`.trim();
+
+  const text = [
+    `Hi ${businessName},`,
+    "",
+    "Your payment has been received.",
+    "",
+    ...lines.map((l) => `${l.description}: ${l.amount}`),
+    `Total paid: ${amountPaid}`,
+    "",
+    `Invoice #: ${invoiceNumber}`,
+    `Date: ${formatInvoiceDate(invoice.created ?? invoice.period_start)}`,
+    `Period: ${formatInvoiceDate(invoice.period_start)} — ${formatInvoiceDate(invoice.period_end)}`,
+    "",
+    invoice.hosted_invoice_url ? `View invoice: ${invoice.hosted_invoice_url}` : "",
+    invoice.invoice_pdf ? `Download PDF: ${invoice.invoice_pdf}` : "",
+    "",
+    "— Studio OS Cloud",
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  try {
+    await sendResendEmail({
+      to: recipientEmail,
+      subject: `Invoice ${invoiceNumber} — ${amountPaid} payment received`,
+      html,
+      text,
+      fromName: "Studio OS Cloud Billing",
+      tags: [
+        { name: "category", value: "invoice" },
+        { name: "invoice_id", value: invoice.id },
+      ],
+      idempotencyKey: `invoice-email-${invoice.id}`,
+    });
+  } catch (err) {
+    console.error("[webhook] Failed to send invoice email:", err);
+  }
 }
 
 async function syncDeletedSubscriptionState(
@@ -302,6 +490,9 @@ export async function POST(req: NextRequest) {
           if (photographer) {
             const liveSubscription = await retrieveStripeSubscription(invoice.subscription);
             await syncSubscriptionStateFromStripe(service, photographer, liveSubscription);
+
+            // Send automatic invoice/receipt email to the subscriber.
+            await sendInvoicePaidEmail(invoice, photographer);
           }
         }
         break;
