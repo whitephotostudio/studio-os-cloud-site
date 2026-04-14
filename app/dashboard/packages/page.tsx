@@ -1045,34 +1045,30 @@ export default function PackagesPage() {
               </div>
 
               <div style={{ marginBottom: 16 }}>
-                <label style={{ display: "block", fontSize: 13, fontWeight: 600, marginBottom: 6, color: "#333" }}>Size / Name</label>
-                <div style={{ position: "relative", marginBottom: editSizePreset === "custom" ? 8 : 0 }}>
-                  <select
-                    value={editSizePreset}
-                    onChange={e => {
-                      const v = e.target.value;
-                      setEditSizePreset(v);
-                      if (v !== "custom") {
-                        const match = PRINT_SIZES.find(s => s.value === v);
-                        if (match) setEditName(match.label);
-                      }
-                    }}
-                    style={{ ...inputStyle, appearance: "none", paddingRight: 36 }}
-                  >
-                    {PRINT_SIZES.map(s => (
-                      <option key={s.value} value={s.value}>{s.label}</option>
-                    ))}
-                  </select>
-                  <ChevronDown size={15} color="#999" style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }} />
+                <label style={{ display: "block", fontSize: 13, fontWeight: 600, marginBottom: 6, color: "#333" }}>Package Name</label>
+                <input
+                  value={editName}
+                  onChange={e => setEditName(e.target.value)}
+                  placeholder="e.g. Standard Pack, 8×10 Print, Family Bundle"
+                  style={inputStyle}
+                />
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 }}>
+                  {PRINT_SIZES.filter(s => s.value !== "custom").map(s => (
+                    <button
+                      key={s.value}
+                      type="button"
+                      onClick={() => { setEditName(s.label); setEditSizePreset(s.value); }}
+                      style={{
+                        padding: "4px 10px", fontSize: 12, borderRadius: 6, cursor: "pointer", fontWeight: 500,
+                        border: editName === s.label ? "1px solid #2563eb" : "1px solid #e5e5e5",
+                        background: editName === s.label ? "#eff6ff" : "#fafafa",
+                        color: editName === s.label ? "#2563eb" : "#666",
+                      }}
+                    >
+                      {s.label}
+                    </button>
+                  ))}
                 </div>
-                {editSizePreset === "custom" && (
-                  <input
-                    value={editName}
-                    onChange={e => setEditName(e.target.value)}
-                    placeholder="e.g. 3.5×5, Photo Keychain, etc."
-                    style={inputStyle}
-                  />
-                )}
               </div>
 
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>
