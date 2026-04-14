@@ -827,7 +827,7 @@ export async function createStudioAppSignedDownloadUrl(
   if (/^https?:\/\//i.test(rawUrl)) return rawUrl;
 
   // Treat as a Supabase Storage path — generate a short-lived signed URL.
-  const bucket = "studio-app";
+  const bucket = "studio-os-downloads";
   const { data, error } = await service.storage
     .from(bucket)
     .createSignedUrl(rawUrl, 60 * 10); // 10 min expiry
