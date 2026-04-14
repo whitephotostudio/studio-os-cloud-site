@@ -5,6 +5,7 @@ import { normalizePlanCode, type PlanCode } from "@/lib/studio-pricing";
 type ServiceClient = ReturnType<typeof createDashboardServiceClient>;
 
 export type StudioAppReleaseState = "hidden" | "beta" | "public";
+export type StudioAppReleaseAssetPlatform = "mac" | "windows";
 export type PhotographyKeyStatus = "active" | "suspended" | "revoked";
 export type PhotographyKeyActivationStatus = "active" | "deactivated";
 
@@ -800,4 +801,37 @@ export async function setStudioAppBetaAccess(
     .eq("slug", RELEASE_SLUG);
 
   return data as StudioAppPhotographerRow;
+}
+
+// ─── Download helpers ────────────────────────────────────────────────
+
+export function getProtectedStudioAppDownloadHref(
+  platform: StudioAppReleaseAssetPlatform,
+) {
+  return `/api/studio-os-app/download?platform=${encodeURIComponent(platform)}`;
+}
+
+export async function createStudioAppSignedDownloadUrl(
+  service: ServiceClient,
+  release: Pick<StudioAppReleaseRow, "mac_download_url" | "windows_download_url">,
+  platform: StudioAppReleaseAssetPlatform,
+) {
+  const rawUrl =
+    platform === "mac"
+      ? (release.mac_download_url ?? "").trim()
+      : (release.windows_download_url ?? "").trim();
+
+  if (!rawUrl) return null;
+
+  // If it's already a full URL (external host, CDN, etc.) just return it.
+  if (/^https?:\/\//i.test(rawUrl)) return rawUrl;
+
+  // Treat as a Supabase Storage path — generate a short-lived signed URL.
+  const bucket = "studio-app";
+  const { data, error } = await service.storage
+    .from(bucket)
+    .createSignedUrl(rawUrl, 60 * 10); // 10 min expiry
+
+  if (error) throw error;
+  return data?.signedUrl ?? null;
 }
