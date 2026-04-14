@@ -81,8 +81,13 @@ export async function GET(request: NextRequest) {
       const hasPaidSubscription =
         hasStripeSubscription && (subStatus === "active" || subStatus === "trialing");
 
-      let trialStatus: "active" | "expired" | "none" | "converted" = "none";
-      if (hasPaidSubscription && hasStripeSubscription) {
+      const isOwner = Boolean(u.is_platform_admin);
+
+      let trialStatus: "active" | "expired" | "none" | "converted" | "owner" = "none";
+      if (isOwner) {
+        // Platform admins (owners) never expire and aren't subject to trial logic.
+        trialStatus = "owner";
+      } else if (hasPaidSubscription && hasStripeSubscription) {
         trialStatus = "converted";
       } else if (trialEnd && trialEnd > now) {
         trialStatus = "active";

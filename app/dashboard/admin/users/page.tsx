@@ -34,7 +34,7 @@ type UserRow = {
   hasStripeSubscription: boolean;
   trialStartsAt: string | null;
   trialEndsAt: string | null;
-  trialStatus: "active" | "expired" | "none" | "converted";
+  trialStatus: "active" | "expired" | "none" | "converted" | "owner";
   trialDaysRemaining: number;
   isPlatformAdmin: boolean;
   lastSignIn: string | null;
@@ -76,6 +76,7 @@ function TrialBadge({ status, days }: { status: UserRow["trialStatus"]; days: nu
     active: { color: "#065f46", bg: "#d1fae5", label: `${days}d left` },
     expired: { color: "#991b1b", bg: "#fee2e2", label: "Expired" },
     converted: { color: "#1e40af", bg: "#dbeafe", label: "Subscribed" },
+    owner: { color: "#92400e", bg: "#fef3c7", label: "Owner" },
     none: { color: textMuted, bg: "#f3f4f6", label: "No trial" },
   };
   const s = styles[status] || styles.none;
@@ -83,6 +84,7 @@ function TrialBadge({ status, days }: { status: UserRow["trialStatus"]; days: nu
     active: <Clock3 size={11} />,
     expired: <AlertCircle size={11} />,
     converted: <CheckCircle2 size={11} />,
+    owner: <CheckCircle2 size={11} />,
   };
   return (
     <span
