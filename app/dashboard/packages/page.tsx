@@ -836,20 +836,22 @@ export default function PackagesPage() {
 
                   <div style={{ padding: 24 }}>
                     {/* Header row */}
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
-                      <h3
-                        onClick={() => { setSelectedProfile(profile); setSelectedCategory(null); }}
-                        style={{ margin: 0, fontSize: 17, fontWeight: 700, color: "#111", cursor: "pointer", flex: 1, paddingRight: 8 }}
-                        onMouseEnter={e => (e.currentTarget.style.color = "#cc0000")}
-                        onMouseLeave={e => (e.currentTarget.style.color = "#111")}
-                      >
-                        {profile.name}
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, flex: 1, minWidth: 0, paddingRight: 8 }}>
+                        <h3
+                          onClick={() => { setSelectedProfile(profile); setSelectedCategory(null); }}
+                          style={{ margin: 0, fontSize: 17, fontWeight: 700, color: "#111", cursor: "pointer", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+                          onMouseEnter={e => (e.currentTarget.style.color = "#cc0000")}
+                          onMouseLeave={e => (e.currentTarget.style.color = "#111")}
+                        >
+                          {profile.name}
+                        </h3>
                         {defaultProfileId === profile.id && (
-                          <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 700, color: "#059669", background: "#ecfdf5", padding: "3px 10px", borderRadius: 99, verticalAlign: "middle", letterSpacing: "0.03em", border: "1px solid #bbf7d0" }}>
+                          <span style={{ fontSize: 11, fontWeight: 700, color: "#059669", background: "#ecfdf5", padding: "2px 8px", borderRadius: 99, letterSpacing: "0.03em", border: "1px solid #bbf7d0", whiteSpace: "nowrap", flexShrink: 0 }}>
                             ✓ Default
                           </span>
                         )}
-                      </h3>
+                      </div>
 
                       {/* Kebab menu */}
                       <div style={{ position: "relative" }}>
