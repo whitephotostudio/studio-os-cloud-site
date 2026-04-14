@@ -451,11 +451,10 @@ export default function PackagesPage() {
 
   // ── Modals ─────────────────────────────────────────────────────────────────
 
-  const Overlay = ({ children }: { children: React.ReactNode }) => (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
-      {children}
-    </div>
-  );
+  // NOTE: Overlay is intentionally inlined (not a component) to prevent
+  // React from remounting the subtree on every state change, which would
+  // steal focus from inputs inside the modal.
+  const overlayStyle: React.CSSProperties = { position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 };
 
   // ── Profile list view ──────────────────────────────────────────────────────
 
@@ -643,7 +642,7 @@ export default function PackagesPage() {
 
         {/* ── New price sheet modal ── */}
         {showNewSheet && (
-          <Overlay>
+          <div style={overlayStyle}>
             <div style={{ background: "#fff", borderRadius: 16, padding: 32, width: 460, maxWidth: "100%" }}>
               <h2 style={{ margin: "0 0 6px", fontSize: 18, fontWeight: 700 }}>New Price Sheet</h2>
               <p style={{ color: "#888", fontSize: 13, margin: "0 0 24px" }}>
@@ -704,12 +703,12 @@ export default function PackagesPage() {
                 </button>
               </div>
             </div>
-          </Overlay>
+          </div>
         )}
 
         {/* ── Rename modal ── */}
         {renamingProfile && (
-          <Overlay>
+          <div style={overlayStyle}>
             <div style={{ background: "#fff", borderRadius: 16, padding: 32, width: 400, maxWidth: "100%" }}>
               <h2 style={{ margin: "0 0 20px", fontSize: 18, fontWeight: 700 }}>Rename Price Sheet</h2>
               <input
@@ -730,12 +729,12 @@ export default function PackagesPage() {
                 </button>
               </div>
             </div>
-          </Overlay>
+          </div>
         )}
 
         {/* ── Delete confirmation modal ── */}
         {deletingProfile && (
-          <Overlay>
+          <div style={overlayStyle}>
             <div style={{ background: "#fff", borderRadius: 16, padding: 32, width: 440, maxWidth: "100%" }}>
               <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
                 <div style={{ width: 40, height: 40, borderRadius: "50%", background: "#fef2f2", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
@@ -777,7 +776,7 @@ export default function PackagesPage() {
                 </button>
               </div>
             </div>
-          </Overlay>
+          </div>
         )}
       </div>
     );
@@ -878,7 +877,7 @@ export default function PackagesPage() {
 
         {/* Edit modal */}
         {editingPkg && (
-          <Overlay>
+          <div style={overlayStyle}>
             <div style={{ background: "#fff", borderRadius: 16, padding: 32, width: 560, maxWidth: "100%", maxHeight: "90vh", overflowY: "auto" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
                 <h2 style={{ margin: 0, fontSize: 18, fontWeight: 700 }}>Edit Item</h2>
@@ -997,7 +996,7 @@ export default function PackagesPage() {
                 </button>
               </div>
             </div>
-          </Overlay>
+          </div>
         )}
 
         {/* Item list */}
