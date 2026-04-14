@@ -4,6 +4,7 @@ import {
   sanitizeEventGallerySettingsForClient,
 } from "@/lib/event-gallery-settings";
 import { buildSchoolGalleryDownloadAccess } from "@/lib/school-gallery-downloads";
+import { filterPackagesForProfile } from "@/lib/package-profile-selection";
 
 export const dynamic = "force-dynamic";
 
@@ -175,7 +176,8 @@ async function loadSchoolCompositeMedia(
     .eq("project_id", projectId)
     .in("collection_id", collectionIds)
     .order("sort_order", { ascending: true })
-    .order("created_at", { ascending: true });
+    .order("created_at", { ascending: true })
+    .limit(5000);
 
   if (mediaError) throw mediaError;
 
@@ -344,7 +346,7 @@ export async function POST(request: NextRequest) {
           .order("sort_order", { ascending: true }),
         service
           .from("photographers")
-          .select("id,watermark_enabled,watermark_logo_url,logo_url,business_name,studio_address,studio_phone,studio_email")
+          .select("id,watermark_enabled,watermark_logo_url,logo_url,business_name,studio_address,studio_phone,studio_email,default_package_profile_id")
           .eq("id", activeSchool.photographer_id)
           .maybeSingle(),
       ]);
@@ -353,16 +355,14 @@ export async function POST(request: NextRequest) {
       if (backdropsResult.error) throw backdropsResult.error;
       if (photographerResult.error) throw photographerResult.error;
 
+      const photographerDefaultProfileId = ((photographerResult.data as Record<string, unknown> | null)?.default_package_profile_id as string | null) ?? null;
       const availablePackages = (packagesResult.data ?? []) as PackageRow[];
-      const normalizedProfile = clean(activeSchool.package_profile_id).toLowerCase();
-      const profilePackages =
-        normalizedProfile && normalizedProfile !== "default"
-          ? availablePackages.filter(
-              (pkg) => clean(pkg.profile_id) === clean(activeSchool.package_profile_id),
-            )
-          : [];
-
-      packageRows = profilePackages.length ? profilePackages : availablePackages;
+      packageRows = filterPackagesForProfile(availablePackages, {
+        selectedProfileId:
+          activeSchool.package_profile_id ||
+          publicGallerySettings.extras.priceSheetProfileId ||
+          photographerDefaultProfileId,
+      }).packages;
       backdropRows = (backdropsResult.data ?? []) as BackdropRow[];
 
       const photographer = photographerResult.data;

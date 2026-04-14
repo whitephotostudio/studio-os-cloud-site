@@ -4,6 +4,8 @@ import {
   sanitizeEventGallerySettingsForClient,
 } from "@/lib/event-gallery-settings";
 import { buildSchoolGalleryDownloadAccess } from "@/lib/school-gallery-downloads";
+import { buildStoredMediaUrls } from "@/lib/storage-images";
+import { filterPackagesForProfile } from "@/lib/package-profile-selection";
 
 export const dynamic = "force-dynamic";
 
@@ -168,10 +170,20 @@ async function loadSchoolCompositeMedia(
     }
   }
 
-  return Array.from(uniqueRows.values()).map((row) => ({
-    ...row,
-    collection_title: collectionTitleById.get(clean(row.collection_id)) || normalizedClass,
-  }));
+  return Array.from(uniqueRows.values()).map((row) => {
+    const mediaUrls = buildStoredMediaUrls({
+      storagePath: row.storage_path,
+      previewUrl: row.preview_url,
+      thumbnailUrl: row.thumbnail_url,
+    });
+
+    return {
+      ...row,
+      preview_url: mediaUrls.previewUrl || null,
+      thumbnail_url: mediaUrls.thumbnailUrl || null,
+      collection_title: collectionTitleById.get(clean(row.collection_id)) || normalizedClass,
+    };
+  });
 }
 
 export async function POST(request: NextRequest) {
@@ -335,7 +347,7 @@ export async function POST(request: NextRequest) {
               .order("sort_order", { ascending: true }),
             service
               .from("photographers")
-              .select("id,watermark_enabled,watermark_logo_url,logo_url,business_name,studio_address,studio_phone,studio_email")
+              .select("id,watermark_enabled,watermark_logo_url,logo_url,business_name,studio_address,studio_phone,studio_email,default_package_profile_id")
               .eq("id", selectedSchool.photographer_id)
               .maybeSingle(),
           ]);
@@ -353,13 +365,17 @@ export async function POST(request: NextRequest) {
           primaryStudent?.class_name,
         );
 
+        const publicGallerySettings = sanitizeEventGallerySettingsForClient(
+          selectedSchool.gallery_settings,
+        );
+        const photographerDefaultProfileId = ((photographerResult.data as Record<string, unknown> | null)?.default_package_profile_id as string | null) ?? null;
         const availablePackages = (packagesResult.data ?? []) as PackageRow[];
-        const normalizedProfile = clean(selectedSchool.package_profile_id).toLowerCase();
-        const profilePackages =
-          normalizedProfile && normalizedProfile !== "default"
-            ? availablePackages.filter((pkg) => clean(pkg.profile_id) === clean(selectedSchool.package_profile_id))
-            : [];
-        const packageRows = profilePackages.length ? profilePackages : availablePackages;
+        const packageRows = filterPackagesForProfile(availablePackages, {
+          selectedProfileId:
+            selectedSchool.package_profile_id ||
+            publicGallerySettings.extras.priceSheetProfileId ||
+            photographerDefaultProfileId,
+        }).packages;
 
         const photographer = photographerResult.data;
         const watermarkEnabled = photographer?.watermark_enabled !== false;
@@ -383,9 +399,6 @@ export async function POST(request: NextRequest) {
           order_due_date: selectedSchool.order_due_date ?? null,
           expiration_date: selectedSchool.expiration_date ?? null,
         };
-        const publicGallerySettings = sanitizeEventGallerySettingsForClient(
-          selectedSchool.gallery_settings,
-        );
         const downloadAccess = await buildSchoolGalleryDownloadAccess({
           service,
           schoolId: resolvedSchoolId,

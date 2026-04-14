@@ -4,6 +4,8 @@ import {
   normalizeEventGallerySettings,
   sanitizeEventGallerySettingsForClient,
 } from "@/lib/event-gallery-settings";
+import { buildStoredMediaUrls } from "@/lib/storage-images";
+import { filterPackagesForProfile } from "@/lib/package-profile-selection";
 
 export const dynamic = "force-dynamic";
 
@@ -353,6 +355,8 @@ export async function POST(request: NextRequest) {
 
     let mediaRows: MediaRow[] = [];
     if (collectionIds.length > 0) {
+      // Safety limit: cap at 5000 media items to prevent unbounded queries.
+      // Galleries with more than 5000 photos should use paginated loading.
       const { data: mediaData, error: mediaError } = await service
         .from("media")
         .select(
@@ -361,10 +365,23 @@ export async function POST(request: NextRequest) {
         .eq("project_id", selectedProjectId)
         .in("collection_id", collectionIds)
         .order("sort_order", { ascending: true })
-        .order("created_at", { ascending: true });
+        .order("created_at", { ascending: true })
+        .limit(5000);
 
       if (mediaError) throw mediaError;
-      mediaRows = (mediaData ?? []) as MediaRow[];
+      mediaRows = ((mediaData ?? []) as MediaRow[]).map((row) => {
+        const mediaUrls = buildStoredMediaUrls({
+          storagePath: row.storage_path,
+          previewUrl: row.preview_url,
+          thumbnailUrl: row.thumbnail_url,
+        });
+
+        return {
+          ...row,
+          preview_url: mediaUrls.previewUrl || null,
+          thumbnail_url: mediaUrls.thumbnailUrl || null,
+        };
+      });
     }
 
     const normalizedGallerySettings = normalizeEventGallerySettings(
@@ -441,7 +458,7 @@ export async function POST(request: NextRequest) {
         service
           .from("photographers")
           .select(
-            "id,watermark_enabled,watermark_logo_url,logo_url,business_name,studio_address,studio_phone,studio_email",
+            "id,watermark_enabled,watermark_logo_url,logo_url,business_name,studio_address,studio_phone,studio_email,default_package_profile_id",
           )
           .eq("id", projectRow.photographer_id)
           .maybeSingle<PhotographerRow>(),
@@ -450,16 +467,14 @@ export async function POST(request: NextRequest) {
       if (packagesResult.error) throw packagesResult.error;
       if (photographerResult.error) throw photographerResult.error;
 
+      const photographerDefaultProfileId = ((photographerResult.data as Record<string, unknown> | null)?.default_package_profile_id as string | null) ?? null;
       const availablePackages = (packagesResult.data ?? []) as PackageRow[];
-      const normalizedProfile = clean(projectRow.package_profile_id).toLowerCase();
-      const profilePackages =
-        normalizedProfile && normalizedProfile !== "default"
-          ? availablePackages.filter(
-              (pkg) => clean(pkg.profile_id) === clean(projectRow.package_profile_id),
-            )
-          : [];
-
-      packages = profilePackages.length ? profilePackages : availablePackages;
+      packages = filterPackagesForProfile(availablePackages, {
+        selectedProfileId:
+          projectRow.package_profile_id ||
+          normalizedGallerySettings.extras.priceSheetProfileId ||
+          photographerDefaultProfileId,
+      }).packages;
 
       const photographer = photographerResult.data;
       if (photographer) {

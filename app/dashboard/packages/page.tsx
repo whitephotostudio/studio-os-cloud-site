@@ -233,6 +233,9 @@ export default function PackagesPage() {
 
   useEffect(() => { init(); }, []); // eslint-disable-line
 
+  // Default profile
+  const [defaultProfileId, setDefaultProfileId] = useState<string | null>(null);
+
   // Outside-click is handled by a transparent backdrop rendered when menu is open
 
   // ── Init ───────────────────────────────────────────────────────────────────
@@ -244,9 +247,10 @@ export default function PackagesPage() {
     setUserEmail(user.email ?? "");
 
     const { data: pg } = await supabase.from("photographers")
-      .select("id").eq("user_id", user.id).maybeSingle();
+      .select("id,default_package_profile_id").eq("user_id", user.id).maybeSingle();
     if (!pg) { setLoading(false); return; }
     setPgId(pg.id);
+    setDefaultProfileId((pg as Record<string, unknown>).default_package_profile_id as string | null ?? null);
 
     await loadData(pg.id);
   }
@@ -529,6 +533,17 @@ export default function PackagesPage() {
     }
   }
 
+  async function setAsDefaultProfile(profileId: string) {
+    if (!pgId) return;
+    const { error } = await supabase
+      .from("photographers")
+      .update({ default_package_profile_id: profileId })
+      .eq("id", pgId);
+    if (!error) {
+      setDefaultProfileId(profileId);
+    }
+  }
+
   async function signOut() {
     await supabase.auth.signOut();
     window.location.href = "/sign-in";
@@ -656,6 +671,11 @@ export default function PackagesPage() {
                         onMouseLeave={e => (e.currentTarget.style.color = "#111")}
                       >
                         {profile.name}
+                        {defaultProfileId === profile.id && (
+                          <span style={{ marginLeft: 8, fontSize: 10, fontWeight: 700, color: "#059669", background: "#ecfdf5", padding: "2px 8px", borderRadius: 99, verticalAlign: "middle", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                            Default
+                          </span>
+                        )}
                       </h3>
 
                       {/* Kebab menu */}
@@ -693,6 +713,15 @@ export default function PackagesPage() {
                               style={{ width: "100%", padding: "10px 16px", background: "none", border: "none", cursor: "pointer", fontSize: 13, color: "#333", textAlign: "left", display: "flex", alignItems: "center", gap: 8 }}
                             >
                               <Copy size={13} /> Duplicate
+                            </button>
+                            <button
+                              onClick={e => {
+                                e.stopPropagation(); setMenuOpenId(null);
+                                setAsDefaultProfile(profile.id);
+                              }}
+                              style={{ width: "100%", padding: "10px 16px", background: "none", border: "none", cursor: "pointer", fontSize: 13, color: defaultProfileId === profile.id ? "#059669" : "#333", textAlign: "left", display: "flex", alignItems: "center", gap: 8 }}
+                            >
+                              <Check size={13} /> {defaultProfileId === profile.id ? "Default Price Sheet" : "Set as Default"}
                             </button>
                             <div style={{ borderTop: "1px solid #f0f0f0" }} />
                             <button
