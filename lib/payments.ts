@@ -83,6 +83,9 @@ export type PhotographerBillingRow = {
   studio_email: string | null;
   logo_url?: string | null;
   is_platform_admin?: boolean | null;
+  created_at?: string | null;
+  trial_starts_at?: string | null;
+  trial_ends_at?: string | null;
 };
 
 type CreditPackageRow = {
@@ -460,17 +463,115 @@ export async function recordStripeEvent(
   throw error;
 }
 
+/** Core photographer columns (always present). */
+const PHOTOGRAPHER_SELECT_BASE =
+  "id,user_id,business_name,brand_color,watermark_enabled,watermark_logo_url,studio_address,studio_phone,stripe_account_id,stripe_connected_account_id,stripe_connect_onboarding_complete,stripe_connect_charges_enabled,stripe_connect_payouts_enabled,stripe_platform_customer_id,stripe_subscription_id,stripe_subscription_item_base_id,stripe_subscription_item_extra_keys_id,stripe_subscription_item_usage_id,subscription_plan_code,subscription_billing_interval,subscription_status,subscription_current_period_start,subscription_current_period_end,billing_email,billing_currency,order_usage_rate_cents,extra_desktop_keys,studio_id,studio_email,logo_url,is_platform_admin,created_at";
+
+/** Full select including trial columns (requires migration). */
+const PHOTOGRAPHER_SELECT_FULL = `${PHOTOGRAPHER_SELECT_BASE},trial_starts_at,trial_ends_at`;
+
 export async function getPhotographerByUserId(service: ServiceClient, userId: string) {
-  const { data, error } = await service
+  // Try with trial columns first; fall back to base columns if the
+  // migration hasn't been run yet (column doesn't exist → 400 error).
+  let { data, error } = await service
     .from("photographers")
-    .select(
-      "id,user_id,business_name,brand_color,watermark_enabled,watermark_logo_url,studio_address,studio_phone,stripe_account_id,stripe_connected_account_id,stripe_connect_onboarding_complete,stripe_connect_charges_enabled,stripe_connect_payouts_enabled,stripe_platform_customer_id,stripe_subscription_id,stripe_subscription_item_base_id,stripe_subscription_item_extra_keys_id,stripe_subscription_item_usage_id,subscription_plan_code,subscription_billing_interval,subscription_status,subscription_current_period_start,subscription_current_period_end,billing_email,billing_currency,order_usage_rate_cents,extra_desktop_keys,studio_id,studio_email,logo_url,is_platform_admin",
-    )
+    .select(PHOTOGRAPHER_SELECT_FULL)
     .eq("user_id", userId)
     .maybeSingle();
 
-  if (error) throw error;
+  if (error) {
+    const msg = (error.message ?? "").toLowerCase();
+    if (msg.includes("trial_starts_at") || msg.includes("trial_ends_at") || error.code === "PGRST204") {
+      // Trial columns don't exist yet — retry without them.
+      const fallback = await service
+        .from("photographers")
+        .select(PHOTOGRAPHER_SELECT_BASE)
+        .eq("user_id", userId)
+        .maybeSingle();
+      data = fallback.data as typeof data;
+      error = fallback.error;
+    }
+    if (error) throw error;
+  }
+
   return (data as PhotographerBillingRow | null) ?? null;
+}
+
+/** Duration of the free trial in days. */
+export const FREE_TRIAL_DAYS = 30;
+
+export function isTrialStatus(status: string | null | undefined) {
+  const normalized = (status ?? "").trim().toLowerCase();
+  return normalized === "trial" || normalized === "trialing";
+}
+
+export function resolveFreeTrialEndsAt(photographer: {
+  trial_ends_at?: string | null;
+  trial_starts_at?: string | null;
+  created_at?: string | null;
+  subscription_status?: string | null;
+}) {
+  if (photographer.trial_ends_at) return photographer.trial_ends_at;
+  if (!isTrialStatus(photographer.subscription_status)) return null;
+
+  const anchor = photographer.trial_starts_at ?? photographer.created_at;
+  if (!anchor) return null;
+
+  const parsed = new Date(anchor);
+  if (Number.isNaN(parsed.getTime())) return null;
+
+  parsed.setDate(parsed.getDate() + FREE_TRIAL_DAYS);
+  return parsed.toISOString();
+}
+
+export function getFreeTrialDaysRemaining(photographer: {
+  trial_ends_at?: string | null;
+  trial_starts_at?: string | null;
+  created_at?: string | null;
+  subscription_status?: string | null;
+}) {
+  const trialEndsAt = resolveFreeTrialEndsAt(photographer);
+  if (!trialEndsAt) return 0;
+
+  return Math.max(
+    0,
+    Math.ceil(
+      (new Date(trialEndsAt).getTime() - Date.now()) / (1000 * 60 * 60 * 24),
+    ),
+  );
+}
+
+/**
+ * Returns true when a photographer's free trial is still running.
+ * A paid/trialing Stripe subscription always overrides the local trial.
+ */
+export function isFreeTrialActive(photographer: {
+  trial_ends_at?: string | null;
+  trial_starts_at?: string | null;
+  created_at?: string | null;
+  subscription_status?: string | null;
+}) {
+  // If they already have a paid Stripe subscription, trial doesn't matter.
+  if (isStripeBillingActive(photographer.subscription_status)) return false;
+  const trialEndsAt = resolveFreeTrialEndsAt(photographer);
+  if (!trialEndsAt) return false;
+  return new Date(trialEndsAt) > new Date();
+}
+
+/**
+ * Returns true when the free trial existed and has expired, and the user
+ * does NOT have a paid subscription.
+ */
+export function isFreeTrialExpired(photographer: {
+  trial_ends_at?: string | null;
+  trial_starts_at?: string | null;
+  created_at?: string | null;
+  subscription_status?: string | null;
+}) {
+  if (isStripeBillingActive(photographer.subscription_status)) return false;
+  const trialEndsAt = resolveFreeTrialEndsAt(photographer);
+  if (!trialEndsAt) return false;
+  return new Date(trialEndsAt) <= new Date();
 }
 
 export async function getOrCreatePhotographerByUser(
@@ -481,8 +582,13 @@ export async function getOrCreatePhotographerByUser(
   if (existing) return existing;
 
   const defaultName = user.email?.split("@")[0]?.trim() || "Studio OS Photographer";
+  const now = new Date();
+  const trialEnd = new Date(now);
+  trialEnd.setDate(trialEnd.getDate() + FREE_TRIAL_DAYS);
 
-  const { data, error } = await service
+  // Try inserting with trial fields first; fall back without them if the
+  // migration hasn't been run yet.
+  let { data, error } = await service
     .from("photographers")
     .insert({
       user_id: user.id,
@@ -493,13 +599,40 @@ export async function getOrCreatePhotographerByUser(
       order_usage_rate_cents: ORDER_USAGE_RATE_CENTS,
       extra_desktop_keys: 0,
       subscription_billing_interval: "month",
+      subscription_status: "trialing",
+      subscription_plan_code: "studio",
+      trial_starts_at: now.toISOString(),
+      trial_ends_at: trialEnd.toISOString(),
     })
-    .select(
-      "id,user_id,business_name,brand_color,watermark_enabled,watermark_logo_url,studio_address,studio_phone,stripe_account_id,stripe_connected_account_id,stripe_connect_onboarding_complete,stripe_connect_charges_enabled,stripe_connect_payouts_enabled,stripe_platform_customer_id,stripe_subscription_id,stripe_subscription_item_base_id,stripe_subscription_item_extra_keys_id,stripe_subscription_item_usage_id,subscription_plan_code,subscription_billing_interval,subscription_status,subscription_current_period_start,subscription_current_period_end,billing_email,billing_currency,order_usage_rate_cents,extra_desktop_keys,studio_id,studio_email,logo_url,is_platform_admin",
-    )
+    .select(PHOTOGRAPHER_SELECT_FULL)
     .single();
 
-  if (error) throw error;
+  if (error) {
+    const msg = (error.message ?? "").toLowerCase();
+    if (msg.includes("trial_starts_at") || msg.includes("trial_ends_at")) {
+      // Trial columns don't exist yet — insert without them.
+      const fallback = await service
+        .from("photographers")
+        .insert({
+          user_id: user.id,
+          business_name: defaultName,
+          brand_color: "#0f172a",
+          billing_email: user.email ?? null,
+          billing_currency: DEFAULT_BILLING_CURRENCY,
+          order_usage_rate_cents: ORDER_USAGE_RATE_CENTS,
+          extra_desktop_keys: 0,
+          subscription_billing_interval: "month",
+          subscription_status: "trialing",
+          subscription_plan_code: "studio",
+        })
+        .select(PHOTOGRAPHER_SELECT_BASE)
+        .single();
+      data = fallback.data as typeof data;
+      error = fallback.error;
+    }
+    if (error) throw error;
+  }
+
   return data as PhotographerBillingRow;
 }
 
@@ -1747,7 +1880,7 @@ export async function finalizePaidOrder(
   const { data: photographer, error: photographerError } = await service
     .from("photographers")
     .select(
-      "id,user_id,business_name,brand_color,watermark_enabled,watermark_logo_url,studio_address,studio_phone,stripe_account_id,stripe_connected_account_id,stripe_connect_onboarding_complete,stripe_connect_charges_enabled,stripe_connect_payouts_enabled,stripe_platform_customer_id,stripe_subscription_id,stripe_subscription_item_base_id,stripe_subscription_item_extra_keys_id,stripe_subscription_item_usage_id,subscription_plan_code,subscription_billing_interval,subscription_status,subscription_current_period_start,subscription_current_period_end,billing_email,billing_currency,order_usage_rate_cents,extra_desktop_keys,studio_id,studio_email,logo_url,is_platform_admin",
+      "id,user_id,business_name,brand_color,watermark_enabled,watermark_logo_url,studio_address,studio_phone,stripe_account_id,stripe_connected_account_id,stripe_connect_onboarding_complete,stripe_connect_charges_enabled,stripe_connect_payouts_enabled,stripe_platform_customer_id,stripe_subscription_id,stripe_subscription_item_base_id,stripe_subscription_item_extra_keys_id,stripe_subscription_item_usage_id,subscription_plan_code,subscription_billing_interval,subscription_status,subscription_current_period_start,subscription_current_period_end,billing_email,billing_currency,order_usage_rate_cents,extra_desktop_keys,studio_id,studio_email,logo_url,is_platform_admin,trial_starts_at,trial_ends_at",
     )
     .eq("id", order.photographer_id)
     .maybeSingle();
