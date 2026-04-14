@@ -550,7 +550,10 @@ export function isFreeTrialActive(photographer: {
   trial_starts_at?: string | null;
   created_at?: string | null;
   subscription_status?: string | null;
+  is_platform_admin?: boolean | null;
 }) {
+  // Platform owners (admins) bypass trial logic entirely.
+  if (photographer.is_platform_admin) return false;
   // If they already have a paid Stripe subscription, trial doesn't matter.
   if (isStripeBillingActive(photographer.subscription_status)) return false;
   const trialEndsAt = resolveFreeTrialEndsAt(photographer);

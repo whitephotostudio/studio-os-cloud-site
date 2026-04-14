@@ -325,12 +325,17 @@ export function resolveStudioAppEntitlement(
   photographer: StudioAppPhotographerRow,
   release: StudioAppReleaseRow,
 ): StudioAppEntitlement {
-  const planCode = normalizePlanCode(photographer.subscription_plan_code);
+  const isPlatformAdmin = Boolean(photographer.is_platform_admin);
+  // Platform admins (owners) are always treated as Studio-plan, subscription-active.
+  // This guarantees full desktop-app entitlement regardless of stored billing rows.
+  const planCode = isPlatformAdmin
+    ? "studio"
+    : normalizePlanCode(photographer.subscription_plan_code);
   const releaseState = normalizeReleaseState(release.release_state);
-  const subscriptionActive = isSubscriptionActive(photographer.subscription_status);
+  const subscriptionActive =
+    isPlatformAdmin || isSubscriptionActive(photographer.subscription_status);
   const appEligibleByPlan = canUseStudioAppPlan(planCode);
   const betaAccess = Boolean(photographer.studio_app_beta_access);
-  const isPlatformAdmin = Boolean(photographer.is_platform_admin);
   const rolloutEnabled =
     releaseState === "public" || betaAccess || isPlatformAdmin;
   const includedKeys = getIncludedPhotographyKeyCount(planCode);
