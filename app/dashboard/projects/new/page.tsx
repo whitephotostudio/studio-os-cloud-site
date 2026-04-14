@@ -131,6 +131,7 @@ export default function NewEventPage() {
           <Link href="/dashboard/orders" style={navItem}>Orders</Link>
           <Link href="/dashboard/packages" style={navItem}>Packages</Link>
           <Link href="/dashboard/settings" style={navItem}>Settings</Link>
+          <Link href="/dashboard/membership" style={navItem}>Membership</Link>
         </nav>
         <div className="p-4">
           {userEmail && (

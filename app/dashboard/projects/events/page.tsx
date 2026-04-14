@@ -304,6 +304,7 @@ export default function EventsPage() {
           <Link href="/dashboard/orders" style={navItem}>Orders</Link>
           <Link href="/dashboard/packages" style={navItem}>Packages</Link>
           <Link href="/dashboard/settings" style={navItem}>Settings</Link>
+          <Link href="/dashboard/membership" style={navItem}>Membership</Link>
         </nav>
         <div style={{ padding: "0 16px 8px", color: "#8f8f8f", fontSize: 12 }}>{userEmail}</div>
         <button

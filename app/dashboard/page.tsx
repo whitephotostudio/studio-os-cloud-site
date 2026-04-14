@@ -781,6 +781,7 @@ function DashboardPageContent() {
           <Link href="/dashboard/orders" style={navItem}>Orders</Link>
           <Link href="/dashboard/packages" style={navItem}>Packages</Link>
           <Link href="/dashboard/settings" style={navItem}>Settings</Link>
+          <Link href="/dashboard/membership" style={navItem}>Membership</Link>
           {userEmail?.toLowerCase() === "harout@me.com" || photographer?.is_platform_admin ? (
             <Link href="/dashboard/admin/users" style={navItem}>Admin</Link>
           ) : null}

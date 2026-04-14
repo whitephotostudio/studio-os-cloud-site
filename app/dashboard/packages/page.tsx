@@ -440,6 +440,8 @@ export default function PackagesPage() {
         <Link href="/dashboard/schools" style={navItem}>Schools</Link>
         <Link href="/dashboard/orders" style={navItem}>Orders</Link>
         <Link href="/dashboard/packages" style={navActive}>Packages</Link>
+        <Link href="/dashboard/settings" style={navItem}>Settings</Link>
+        <Link href="/dashboard/membership" style={navItem}>Membership</Link>
       </nav>
       <button onClick={signOut} style={{ margin: 16, padding: "10px", background: "transparent", border: "1px solid #333", borderRadius: 8, color: "#ccc", cursor: "pointer", display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
         <LogOut size={14} /> Sign Out

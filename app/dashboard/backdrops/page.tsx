@@ -334,6 +334,8 @@ export default function BackdropsPage() {
           <Link href="/dashboard/orders" style={navItem}>Orders</Link>
           <Link href="/dashboard/packages" style={navItem}>Packages</Link>
           <Link href="/dashboard/backdrops" style={navActive}><span style={{ display:"flex",alignItems:"center",gap:8 }}><Palette size={15}/> Backdrops</span></Link>
+          <Link href="/dashboard/settings" style={navItem}>Settings</Link>
+          <Link href="/dashboard/membership" style={navItem}>Membership</Link>
         </nav>
         <button onClick={signOut} style={{ margin:16, padding:"10px", background:"transparent", border:"1px solid #333", borderRadius:8, color:"#ccc", cursor:"pointer", display:"flex", alignItems:"center", gap:8, fontSize:13 }}><LogOut size={14}/> Sign Out</button>
       </div>
@@ -443,7 +445,7 @@ export default function BackdropsPage() {
                     <div style={{ display: "flex", gap: 8, padding: "14px 20px", overflowX: "auto" }}>
                       {g.bds.slice(0, 8).map(bd => (
                         <div key={bd.id} style={{ position: "relative", flexShrink: 0 }}>
-                          <img src={bd.image_url} alt={bd.name} style={{ width: 100, height: 70, objectFit: "cover", borderRadius: 8, display: "block", border: "1px solid #eee" }} />
+                          <img loading="lazy" src={bd.image_url} alt={bd.name} style={{ width: 100, height: 70, objectFit: "cover", borderRadius: 8, display: "block", border: "1px solid #eee" }} />
                           <div style={{ position: "absolute", top: 4, right: 4, background: bd.tier === "premium" ? "#f59e0b" : "#22c55e", color: bd.tier === "premium" ? "#000" : "#fff", fontSize: 8, fontWeight: 800, padding: "1px 5px", borderRadius: 4 }}>{bd.tier === "premium" ? `$${(bd.price_cents / 100).toFixed(2)}` : "FREE"}</div>
                           {!bd.active && <div style={{ position: "absolute", inset: 0, background: "rgba(255,255,255,0.6)", borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center" }}><EyeOff size={14} color="#999" /></div>}
                         </div>
@@ -476,7 +478,7 @@ export default function BackdropsPage() {
                       opacity: bd.active ? 1 : 0.5, transition: "all 0.15s",
                     }}>
                       <div style={{ height: Math.round(thumbSize * 0.6), position: "relative", overflow: "hidden" }}>
-                        <img src={bd.image_url} alt={bd.name} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+                        <img loading="lazy" src={bd.image_url} alt={bd.name} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
                         {/* Selection */}
                         <div style={{ position: "absolute", top: 6, left: 6, width: 22, height: 22, borderRadius: "50%", background: sel ? "#6366f1" : "rgba(255,255,255,0.85)", border: sel ? "none" : "1.5px solid #ccc", display: "flex", alignItems: "center", justifyContent: "center" }}>{sel && <Check size={13} color="#fff" strokeWidth={3} />}</div>
                         {/* Tier badge */}
@@ -562,7 +564,7 @@ export default function BackdropsPage() {
               <button onClick={() => setEditorOpen(false)} style={{ background: "#f5f5f5", border: "none", borderRadius: 8, padding: 6, cursor: "pointer", display: "flex", color: "#666" }}><X size={18} /></button>
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-              {editUrl && <img src={editUrl} alt="" style={{ width: "100%", height: 160, objectFit: "cover", borderRadius: 12, border: "1px solid #eee" }} />}
+              {editUrl && <img loading="lazy" src={editUrl} alt="" style={{ width: "100%", height: 160, objectFit: "cover", borderRadius: 12, border: "1px solid #eee" }} />}
               <div>
                 <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#666", marginBottom: 5, textTransform: "uppercase" }}>Name</label>
                 <input value={editName} onChange={e => setEditName(e.target.value)} placeholder="e.g. Classic Grey" style={{ width: "100%", border: "1.5px solid #e1e3e8", borderRadius: 10, padding: "10px 14px", fontSize: 14, outline: "none", boxSizing: "border-box" }} />
