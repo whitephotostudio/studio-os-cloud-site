@@ -826,11 +826,20 @@ export async function createStudioAppSignedDownloadUrl(
   // If it's already a full URL (external host, CDN, etc.) just return it.
   if (/^https?:\/\//i.test(rawUrl)) return rawUrl;
 
-  // Treat as a Supabase Storage path — generate a short-lived signed URL.
-  const bucket = "studio-os-downloads";
+  // Handle storage:// prefix format (e.g. "storage://bucket-name/file.zip")
+  // The dashboard settings UI instructs users to paste paths in this format.
+  let bucket = "studio-os-downloads";
+  let filePath = rawUrl;
+
+  const storageMatch = rawUrl.match(/^storage:\/\/([^/]+)\/(.+)$/);
+  if (storageMatch) {
+    bucket = storageMatch[1];
+    filePath = storageMatch[2];
+  }
+
   const { data, error } = await service.storage
     .from(bucket)
-    .createSignedUrl(rawUrl, 60 * 10); // 10 min expiry
+    .createSignedUrl(filePath, 60 * 10); // 10 min expiry
 
   if (error) throw error;
   return data?.signedUrl ?? null;
