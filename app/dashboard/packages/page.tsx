@@ -665,12 +665,15 @@ export default function PackagesPage() {
   }
 
   async function setAsDefaultProfile(profileId: string) {
-    if (!pgId) return;
+    if (!pgId) { alert("No photographer ID found"); return; }
     const { error } = await supabase
       .from("photographers")
       .update({ default_package_profile_id: profileId })
       .eq("id", pgId);
-    if (!error) {
+    if (error) {
+      console.error("setAsDefaultProfile error:", error);
+      alert(`Could not set default: ${error.message}`);
+    } else {
       setDefaultProfileId(profileId);
     }
   }
