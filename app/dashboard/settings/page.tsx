@@ -1633,11 +1633,15 @@ export default function SettingsPage() {
             <StatusRow label="Billing email" value={billingEmail || studioEmail || "Not set"} />
             <StatusRow label="Connected checkout" value={connectStatusLabel} ok={connectReadyForPayments} />
             <StatusRow label="Extra desktop keys" value={String(extraDesktopKeys)} ok />
-            <StatusRow label="Credit balance" value={`${creditBalance} credits`} ok />
+            <StatusRow
+              label="Credit balance"
+              value={isPlatformAdmin ? "Unlimited (owner)" : `${creditBalance} credits`}
+              ok
+            />
             <StatusRow
               label="Background credits"
-              value={displayIncludedCredits}
-              ok={creditBalance > 0}
+              value={isPlatformAdmin ? "Unlimited (owner)" : displayIncludedCredits}
+              ok={isPlatformAdmin || creditBalance > 0}
             />
 
             {subscriptionPlanCode ? (

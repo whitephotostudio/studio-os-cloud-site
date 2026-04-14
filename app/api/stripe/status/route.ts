@@ -156,7 +156,9 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    const creditBalance = await getCreditBalance(service, user.id, photographer.id);
+    const creditBalance = await getCreditBalance(service, user.id, photographer.id, {
+      isPlatformAdmin: photographer.is_platform_admin,
+    });
     const creditPacks = await ensureCreditPackageCatalog(service);
     const usageSummary = await getUsageSummaryForCurrentPeriod(service, photographer);
     const connectStatus = describeConnectStatus({

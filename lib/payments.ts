@@ -1622,7 +1622,22 @@ async function grantIncludedPlanCredits(
   });
 }
 
-export async function getCreditBalance(service: ServiceClient, userId: string, photographerId: string) {
+/**
+ * Sentinel balance reported for platform admins. Large enough that the
+ * desktop app's per-removal deduction can never realistically run it out,
+ * and we re-top it up on every dashboard load.
+ */
+export const OWNER_UNLIMITED_CREDIT_BALANCE = 1_000_000_000;
+const OWNER_CREDIT_FLOOR = 100_000_000;
+
+export async function getCreditBalance(
+  service: ServiceClient,
+  userId: string,
+  photographerId: string,
+  options?: { isPlatformAdmin?: boolean | null },
+) {
+  const isOwner = Boolean(options?.isPlatformAdmin);
+
   const { data, error } = await service
     .from("studio_credits")
     .select("id,balance,total_purchased,total_used")
@@ -1632,13 +1647,45 @@ export async function getCreditBalance(service: ServiceClient, userId: string, p
   if (error) throw error;
 
   if (data) {
-    if (!(data as { photographer_id?: string | null }).photographer_id) {
+    const row = data as {
+      id: string;
+      balance?: number | null;
+      photographer_id?: string | null;
+    };
+
+    if (!row.photographer_id) {
       await service
         .from("studio_credits")
         .update({ photographer_id: photographerId })
-        .eq("id", (data as { id: string }).id);
+        .eq("id", row.id);
     }
-    return (data as { balance?: number | null }).balance ?? 0;
+
+    // Owners: keep the on-disk balance topped up so the desktop app
+    // (which deducts from this row directly) never runs the owner dry.
+    if (isOwner) {
+      const currentBalance = row.balance ?? 0;
+      if (currentBalance < OWNER_CREDIT_FLOOR) {
+        await service
+          .from("studio_credits")
+          .update({ balance: OWNER_UNLIMITED_CREDIT_BALANCE })
+          .eq("id", row.id);
+      }
+      return OWNER_UNLIMITED_CREDIT_BALANCE;
+    }
+
+    return row.balance ?? 0;
+  }
+
+  // No credit row yet. For owners, materialize one with a huge balance.
+  if (isOwner) {
+    await service.from("studio_credits").insert({
+      studio_id: userId,
+      photographer_id: photographerId,
+      balance: OWNER_UNLIMITED_CREDIT_BALANCE,
+      total_purchased: 0,
+      total_used: 0,
+    });
+    return OWNER_UNLIMITED_CREDIT_BALANCE;
   }
 
   return 0;
