@@ -1,9 +1,15 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { Logo } from "@/components/logo";
+import {
+  getFreeTrialDaysRemaining,
+  isFreeTrialActive,
+  resolveFreeTrialEndsAt,
+} from "@/lib/payments";
 import {
   FolderOpen,
   GraduationCap,
@@ -22,11 +28,18 @@ import {
   Clock3,
   AlertCircle,
   TrendingUp,
+  Download,
+  MonitorSmartphone,
 } from "lucide-react";
 
 type Photographer = {
   id: string;
   business_name: string | null;
+  is_platform_admin?: boolean | null;
+  subscription_status?: string | null;
+  trial_starts_at?: string | null;
+  trial_ends_at?: string | null;
+  created_at?: string | null;
 };
 
 type SchoolRow = {
@@ -65,6 +78,19 @@ type EventsPayload = {
   projects?: ProjectRow[];
 };
 
+type StudioWelcomeStatus = {
+  release: {
+    version: string;
+    macDownloadUrl: string | null;
+    windowsDownloadUrl: string | null;
+  };
+  entitlement: {
+    planCode: string | null;
+    appAccessEnabled: boolean;
+    canDownload: boolean;
+  };
+};
+
 const pageBg = "#ffffff";
 const cardBg = "#ffffff";
 const textPrimary = "#111827";
@@ -72,6 +98,7 @@ const textMuted = "#667085";
 const borderSoft = "#e5e7eb";
 
 const DISMISSED_KEY = "dashboard_dismissed_orders";
+const STUDIO_WELCOME_PREFIX = "studio_os_download_welcome_seen:";
 
 function loadDismissed(): Set<string> {
   try {
@@ -276,8 +303,9 @@ function QuickStat({
   );
 }
 
-export default function DashboardPage() {
+function DashboardPageContent() {
   const supabase = useMemo(() => createClient(), []);
+  const searchParams = useSearchParams();
   const [userEmail, setUserEmail] = useState("");
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -288,6 +316,8 @@ export default function DashboardPage() {
   const [eventProjects, setEventProjects] = useState<ProjectRow[]>([]);
   const [students, setStudents] = useState<StudentRow[]>([]);
   const [orders, setOrders] = useState<OrderRow[]>([]);
+  const [studioWelcome, setStudioWelcome] = useState<StudioWelcomeStatus | null>(null);
+  const [showStudioWelcome, setShowStudioWelcome] = useState(false);
   // Dismissed notification IDs (persisted in localStorage)
   const [dismissed, setDismissed] = useState<Set<string>>(new Set());
 
@@ -314,14 +344,60 @@ export default function DashboardPage() {
       }
 
       setUserEmail(user.email ?? "");
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      const authHeaders: Record<string, string> = session?.access_token
+        ? { Authorization: `Bearer ${session.access_token}` }
+        : {};
 
-      const { data: photographerRow, error: photographerErr } = await supabase
+      let { data: photographerRow, error: photographerErr } = await supabase
         .from("photographers")
-        .select("id,business_name")
+        .select("id,business_name,is_platform_admin,subscription_status,trial_starts_at,trial_ends_at,created_at")
         .eq("user_id", user.id)
         .maybeSingle();
 
       if (photographerErr) throw photographerErr;
+
+      // First-visit bootstrap: if no photographer row exists yet, hit the
+      // status endpoint which creates one (with a fresh 30-day trial) via
+      // getOrCreatePhotographerByUser, then re-query so the rest of the
+      // dashboard (trial banner, schools, projects, orders) renders right
+      // away instead of showing an empty state.
+      if (!photographerRow) {
+        try {
+          await fetch("/api/studio-os-app/status", {
+            method: "GET",
+            cache: "no-store",
+            credentials: "include",
+            headers: authHeaders,
+          });
+          const retry = await supabase
+            .from("photographers")
+            .select("id,business_name,is_platform_admin,subscription_status,trial_starts_at,trial_ends_at,created_at")
+            .eq("user_id", user.id)
+            .maybeSingle();
+          photographerRow = retry.data;
+          if (retry.error) throw retry.error;
+        } catch (bootstrapErr) {
+          console.error("[dashboard] bootstrap failed:", bootstrapErr);
+        }
+      }
+
+      // Trial / billing gate — redirect expired trials to pricing.
+      // Platform admins and users with active Stripe subs skip this.
+      if (photographerRow && !photographerRow.is_platform_admin) {
+        const sub = (photographerRow.subscription_status ?? "").trim().toLowerCase();
+        const hasPaidSub = sub === "active" || sub === "trialing";
+        if (!hasPaidSub) {
+          const trialOk = isFreeTrialActive(photographerRow);
+          if (!trialOk) {
+            window.location.href = "/pricing?trial_expired=1";
+            return;
+          }
+        }
+      }
+
       if (!photographerRow) {
         setPhotographer(null);
         setSchools([]);
@@ -336,7 +412,7 @@ export default function DashboardPage() {
 
       setPhotographer(photographerRow as Photographer);
 
-      const [schoolRes, projectRes, orderRes, eventRes] = await Promise.all([
+      const [schoolRes, projectRes, orderRes, eventRes, studioAppRes] = await Promise.all([
         supabase
           .from("schools")
           .select("id,school_name,local_school_id,created_at")
@@ -357,6 +433,12 @@ export default function DashboardPage() {
           method: "GET",
           cache: "no-store",
         }),
+        fetch("/api/studio-os-app/status", {
+          method: "GET",
+          cache: "no-store",
+          credentials: "include",
+          headers: authHeaders,
+        }).catch(() => null),
       ]);
 
       if (schoolRes.error) throw schoolRes.error;
@@ -392,6 +474,42 @@ export default function DashboardPage() {
       } else {
         setStudents([]);
       }
+
+      if (studioAppRes && studioAppRes.ok) {
+        const studioJson = (await studioAppRes.json().catch(() => null)) as
+          | ({
+              ok?: boolean;
+              release?: StudioWelcomeStatus["release"];
+              entitlement?: StudioWelcomeStatus["entitlement"];
+            })
+          | null;
+
+        const eligible =
+          Boolean(studioJson?.ok) &&
+          Boolean(studioJson?.release) &&
+          Boolean(studioJson?.entitlement?.appAccessEnabled) &&
+          Boolean(studioJson?.entitlement?.canDownload) &&
+          (studioJson?.entitlement?.planCode === "core" ||
+            studioJson?.entitlement?.planCode === "studio");
+
+        if (eligible && studioJson?.release) {
+          const versionKey = `${STUDIO_WELCOME_PREFIX}${studioJson.release.version}`;
+          const queryRequestedWelcome = searchParams.get("studio-os-welcome") === "1";
+          const alreadySeen = typeof window !== "undefined" && localStorage.getItem(versionKey) === "1";
+
+          setStudioWelcome({
+            release: studioJson.release,
+            entitlement: studioJson.entitlement!,
+          });
+          setShowStudioWelcome(queryRequestedWelcome || !alreadySeen);
+        } else {
+          setStudioWelcome(null);
+          setShowStudioWelcome(false);
+        }
+      } else {
+        setStudioWelcome(null);
+        setShowStudioWelcome(false);
+      }
     } catch (err) {
       console.error("[dashboard] load error:", err);
       setError(err instanceof Error ? err.message : "Failed to load dashboard");
@@ -399,7 +517,7 @@ export default function DashboardPage() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [supabase]);
+  }, [searchParams, supabase]);
 
   async function handleSignOut() {
     await supabase.auth.signOut();
@@ -424,6 +542,20 @@ export default function DashboardPage() {
     });
   }
 
+  function dismissStudioWelcome() {
+    if (studioWelcome?.release.version) {
+      try {
+        localStorage.setItem(`${STUDIO_WELCOME_PREFIX}${studioWelcome.release.version}`, "1");
+      } catch {}
+    }
+    setShowStudioWelcome(false);
+    if (typeof window !== "undefined") {
+      const url = new URL(window.location.href);
+      url.searchParams.delete("studio-os-welcome");
+      window.history.replaceState({}, "", url.toString());
+    }
+  }
+
   // ── Derived values ──────────────────────────────────────────────────────────
   const schoolProjects = projects.filter((p) => p.workflow_type === "school");
   const revenueTracked = orders.reduce((sum, order) => sum + (order.total_cents || 0), 0);
@@ -431,6 +563,27 @@ export default function DashboardPage() {
   const coveragePct =
     students.length > 0 ? Math.round((imageCount / students.length) * 100) : 0;
   const businessName = clean(photographer?.business_name) || "My Photography Business";
+  const dashboardTrialActive = Boolean(
+    photographer &&
+      !photographer.is_platform_admin &&
+      isFreeTrialActive(photographer),
+  );
+  const dashboardTrialEndsAt =
+    dashboardTrialActive && photographer
+      ? resolveFreeTrialEndsAt(photographer)
+      : null;
+  const dashboardTrialDaysRemaining =
+    dashboardTrialActive && photographer
+      ? Math.max(1, getFreeTrialDaysRemaining(photographer))
+      : 0;
+  const dashboardTrialEndsLabel =
+    dashboardTrialEndsAt
+      ? new Date(dashboardTrialEndsAt).toLocaleDateString("en-US", {
+          month: "long",
+          day: "numeric",
+          year: "numeric",
+        })
+      : null;
 
   const pendingOrders = orders.filter(
     (o) => (clean(o.status) || "pending").toLowerCase() === "pending" ||
@@ -459,6 +612,153 @@ export default function DashboardPage() {
 
   return (
     <div style={{ display: "flex", minHeight: "100vh", background: pageBg }}>
+      {showStudioWelcome && studioWelcome ? (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(15,23,42,0.42)",
+            display: "grid",
+            placeItems: "center",
+            zIndex: 80,
+            padding: 24,
+          }}
+        >
+          <div
+            style={{
+              width: "min(680px, 100%)",
+              borderRadius: 28,
+              background: "#ffffff",
+              border: `1px solid ${borderSoft}`,
+              boxShadow: "0 30px 90px rgba(15,23,42,0.18)",
+              padding: 28,
+            }}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 20, alignItems: "flex-start" }}>
+              <div>
+                <div style={{ fontSize: 13, letterSpacing: "0.12em", fontWeight: 800, color: textMuted, marginBottom: 8 }}>
+                  WELCOME TO STUDIO OS
+                </div>
+                <h2 style={{ margin: 0, fontSize: 34, lineHeight: 1.1, color: textPrimary, fontWeight: 900 }}>
+                  Your app access is ready.
+                </h2>
+                <p style={{ margin: "12px 0 0", color: textMuted, fontSize: 15, lineHeight: 1.8 }}>
+                  Download the app on your computer, then sign in inside the app with this same account.
+                  If you are on Core or Studio, your desktop access is ready now.
+                </p>
+              </div>
+              <button
+                onClick={dismissStudioWelcome}
+                style={{
+                  background: "transparent",
+                  border: "none",
+                  color: "#94a3b8",
+                  cursor: "pointer",
+                  padding: 4,
+                }}
+                aria-label="Close Studio OS welcome"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginTop: 22 }}>
+              {studioWelcome.release.macDownloadUrl ? (
+                <a
+                  href="/api/studio-os-app/public-download?platform=mac"
+                  style={{
+                    border: "1px solid #0f172a",
+                    borderRadius: 18,
+                    background: "#0f172a",
+                    padding: "14px 18px",
+                    fontWeight: 800,
+                    color: "#fff",
+                    textDecoration: "none",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: 10,
+                  }}
+                >
+                  <Download size={16} /> Download Mac App
+                </a>
+              ) : (
+                <div
+                  style={{
+                    border: "1px solid #d6dfef",
+                    borderRadius: 18,
+                    background: "#f8fafc",
+                    padding: "14px 18px",
+                    fontWeight: 800,
+                    color: "#94a3b8",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: 10,
+                  }}
+                >
+                  <Download size={16} /> Mac Download
+                </div>
+              )}
+
+              {studioWelcome.release.windowsDownloadUrl ? (
+                <a
+                  href="/api/studio-os-app/public-download?platform=windows"
+                  style={{
+                    border: "1px solid #2563eb",
+                    borderRadius: 18,
+                    background: "#eff6ff",
+                    padding: "14px 18px",
+                    fontWeight: 800,
+                    color: "#1d4ed8",
+                    textDecoration: "none",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: 10,
+                  }}
+                >
+                  <MonitorSmartphone size={16} /> Download Windows App
+                </a>
+              ) : (
+                <div
+                  style={{
+                    border: "1px solid #d6dfef",
+                    borderRadius: 18,
+                    background: "#f8fafc",
+                    padding: "14px 18px",
+                    fontWeight: 800,
+                    color: "#94a3b8",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: 10,
+                  }}
+                >
+                  <MonitorSmartphone size={16} /> Windows Coming Soon
+                </div>
+              )}
+            </div>
+
+            <div
+              style={{
+                marginTop: 18,
+                borderRadius: 18,
+                border: "1px solid #d6dfef",
+                background: "#f8fafc",
+                padding: "14px 16px",
+                color: textMuted,
+                fontSize: 14,
+                lineHeight: 1.7,
+              }}
+            >
+              Tip: once the app opens, use your photographer login there too. If a computer is outside your allowed plan keys,
+              the app will tell you to purchase another key before it unlocks.
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       <aside style={sidebar}>
         <div style={{ padding: 18, background: "#ffffff", borderBottom: "1px solid #e5e7eb" }}>
           <div
@@ -481,6 +781,9 @@ export default function DashboardPage() {
           <Link href="/dashboard/orders" style={navItem}>Orders</Link>
           <Link href="/dashboard/packages" style={navItem}>Packages</Link>
           <Link href="/dashboard/settings" style={navItem}>Settings</Link>
+          {userEmail?.toLowerCase() === "harout@me.com" || photographer?.is_platform_admin ? (
+            <Link href="/dashboard/admin/users" style={navItem}>Admin</Link>
+          ) : null}
         </nav>
 
         <div style={{ marginTop: "auto", padding: 16, color: "#888", fontSize: 13 }}>{userEmail}</div>
@@ -563,6 +866,70 @@ export default function DashboardPage() {
           {error ? (
             <div style={{ marginBottom: 18, background: "#fef2f2", border: "1px solid #fecaca", color: "#991b1b", padding: "12px 14px", borderRadius: 10, fontSize: 13 }}>
               {error}
+            </div>
+          ) : null}
+
+          {dashboardTrialActive ? (
+            <div
+              style={{
+                marginBottom: 22,
+                borderRadius: 24,
+                border: "1px solid #bfdbfe",
+                background: "linear-gradient(180deg,#eff6ff 0%,#ffffff 100%)",
+                padding: "18px 22px",
+                boxShadow: "0 12px 30px rgba(59,130,246,0.08)",
+              }}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 18, alignItems: "center", flexWrap: "wrap" }}>
+                <div>
+                  <div style={{ fontSize: 13, letterSpacing: "0.12em", fontWeight: 800, color: "#2563eb", marginBottom: 8 }}>
+                    30-DAY TRIAL ACTIVE
+                  </div>
+                  <div style={{ fontSize: 24, lineHeight: 1.2, fontWeight: 900, color: "#0f172a" }}>
+                    {dashboardTrialDaysRemaining} day{dashboardTrialDaysRemaining === 1 ? "" : "s"} left in your Studio OS trial
+                  </div>
+                  <div style={{ marginTop: 8, color: "#475569", fontSize: 15, lineHeight: 1.7 }}>
+                    You have full Studio OS access right now. Download the app, test your workflow, and choose a paid plan before
+                    {dashboardTrialEndsLabel ? ` ${dashboardTrialEndsLabel}` : " your trial ends"}.
+                  </div>
+                </div>
+
+                <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+                  <Link
+                    href="/studio-os/download"
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 10,
+                      textDecoration: "none",
+                      background: "#0f172a",
+                      color: "#fff",
+                      borderRadius: 16,
+                      padding: "14px 18px",
+                      fontWeight: 800,
+                    }}
+                  >
+                    <Download size={16} /> Download App
+                  </Link>
+                  <Link
+                    href="/pricing"
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 10,
+                      textDecoration: "none",
+                      background: "#fff",
+                      color: textPrimary,
+                      border: `1px solid ${borderSoft}`,
+                      borderRadius: 16,
+                      padding: "14px 18px",
+                      fontWeight: 800,
+                    }}
+                  >
+                    View Pricing
+                  </Link>
+                </div>
+              </div>
             </div>
           ) : null}
 
@@ -781,5 +1148,13 @@ export default function DashboardPage() {
         }
       `}</style>
     </div>
+  );
+}
+
+export default function DashboardPage() {
+  return (
+    <Suspense fallback={<div style={{ minHeight: "100vh", background: "#ffffff" }} />}>
+      <DashboardPageContent />
+    </Suspense>
   );
 }
