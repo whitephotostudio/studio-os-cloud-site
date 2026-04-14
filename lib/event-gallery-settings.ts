@@ -1,4 +1,5 @@
 export type EventGalleryExtraSettings = {
+  priceSheetProfileId: string;
   allowSocialSharing: boolean;
   socialShareMessage: string;
   allowBlackWhiteFiltering: boolean;
@@ -12,6 +13,7 @@ export type EventGalleryExtraSettings = {
   freeDigitalResolution: "original" | "large" | "web";
   freeDigitalDownloadLimit: "unlimited" | "10" | "5" | "1";
   showDownloadAllButton: boolean;
+  showProofWatermark: boolean;
   downloadPinEnabled: boolean;
   downloadPin: string;
   allowClientFavoriteDownloads: boolean;
@@ -108,6 +110,7 @@ export type EventGallerySettings = {
 };
 
 export const defaultEventGalleryExtras: EventGalleryExtraSettings = {
+  priceSheetProfileId: "",
   allowSocialSharing: true,
   socialShareMessage: "Check out the photos from this gallery!",
   allowBlackWhiteFiltering: false,
@@ -121,6 +124,7 @@ export const defaultEventGalleryExtras: EventGalleryExtraSettings = {
   freeDigitalResolution: "original",
   freeDigitalDownloadLimit: "unlimited",
   showDownloadAllButton: false,
+  showProofWatermark: true,
   downloadPinEnabled: false,
   downloadPin: "",
   allowClientFavoriteDownloads: false,
@@ -227,6 +231,10 @@ export function normalizeEventGallerySettings(value: unknown): EventGallerySetti
       defaultEventGallerySettings.galleryLanguage,
     ),
     extras: {
+      priceSheetProfileId: asString(
+        extrasSource?.priceSheetProfileId,
+        defaultEventGalleryExtras.priceSheetProfileId,
+      ),
       allowSocialSharing: asBoolean(
         extrasSource?.allowSocialSharing,
         defaultEventGalleryExtras.allowSocialSharing,
@@ -275,6 +283,10 @@ export function normalizeEventGallerySettings(value: unknown): EventGallerySetti
         extrasSource?.freeDigitalDownloadLimit,
         ["unlimited", "10", "5", "1"] as const,
         defaultEventGalleryExtras.freeDigitalDownloadLimit,
+      ),
+      showProofWatermark: asBoolean(
+        extrasSource?.showProofWatermark,
+        defaultEventGalleryExtras.showProofWatermark,
       ),
       showDownloadAllButton: asBoolean(
         extrasSource?.showDownloadAllButton,

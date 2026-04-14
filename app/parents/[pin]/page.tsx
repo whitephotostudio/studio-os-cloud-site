@@ -27,6 +27,7 @@ import {
   Palette,
   Eye,
   RotateCcw,
+  LoaderCircle,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import {
@@ -860,7 +861,7 @@ function buildGalleryImageCandidates(
 ) {
   const rawCandidates =
     variant === "wall"
-      ? uniq([image.previewUrl, image.thumbnailUrl, image.downloadUrl, image.url])
+      ? uniq([image.thumbnailUrl, image.previewUrl, image.url, image.downloadUrl])
       : variant === "viewer-thumb"
         ? uniq([image.thumbnailUrl, image.previewUrl, image.downloadUrl, image.url])
         : uniq([image.downloadUrl, image.previewUrl, image.thumbnailUrl, image.url]);
@@ -2300,6 +2301,144 @@ function WatermarkOverlay({
   );
 }
 
+function ContainedViewerImage({
+  src,
+  fallbackSrc,
+  candidates,
+  alt,
+  aspectRatio,
+  imageFilter,
+  onError,
+  watermarkEnabled,
+  watermarkText,
+  watermarkLogoUrl,
+}: {
+  src: string;
+  fallbackSrc: string;
+  candidates: string[];
+  alt: string;
+  aspectRatio?: number | null;
+  imageFilter?: string;
+  onError?: (event: SyntheticEvent<HTMLImageElement, Event>) => void;
+  watermarkEnabled?: boolean;
+  watermarkText: string;
+  watermarkLogoUrl?: string;
+}) {
+  const frameRef = useRef<HTMLDivElement | null>(null);
+  const [imageBounds, setImageBounds] = useState<{ width: number; height: number } | null>(null);
+
+  useEffect(() => {
+    const frame = frameRef.current;
+    if (!frame) return;
+
+    const updateBounds = () => {
+      const nextWidth = frame.clientWidth;
+      const nextHeight = frame.clientHeight;
+      if (!nextWidth || !nextHeight) return;
+
+      if (!aspectRatio || aspectRatio <= 0) {
+        setImageBounds({ width: nextWidth, height: nextHeight });
+        return;
+      }
+
+      let fittedWidth = nextWidth;
+      let fittedHeight = fittedWidth / aspectRatio;
+
+      if (fittedHeight > nextHeight) {
+        fittedHeight = nextHeight;
+        fittedWidth = fittedHeight * aspectRatio;
+      }
+
+      const normalizedWidth = Math.max(1, Math.round(fittedWidth));
+      const normalizedHeight = Math.max(1, Math.round(fittedHeight));
+
+      setImageBounds((prev) => {
+        if (
+          prev &&
+          prev.width === normalizedWidth &&
+          prev.height === normalizedHeight
+        ) {
+          return prev;
+        }
+        return { width: normalizedWidth, height: normalizedHeight };
+      });
+    };
+
+    updateBounds();
+
+    const resizeObserver = new ResizeObserver(() => {
+      updateBounds();
+    });
+
+    resizeObserver.observe(frame);
+    window.addEventListener("resize", updateBounds);
+
+    return () => {
+      resizeObserver.disconnect();
+      window.removeEventListener("resize", updateBounds);
+    };
+  }, [aspectRatio]);
+
+  return (
+    <div
+      ref={frameRef}
+      style={{
+        position: "relative",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        width: "100%",
+        height: "100%",
+        maxWidth: "100%",
+        maxHeight: "100%",
+        overflow: "hidden",
+        borderRadius: 6,
+      }}
+    >
+      <div
+        style={{
+          position: "relative",
+          width: imageBounds ? `${imageBounds.width}px` : "100%",
+          height: imageBounds ? `${imageBounds.height}px` : "100%",
+          maxWidth: "100%",
+          maxHeight: "100%",
+          overflow: "hidden",
+          borderRadius: 6,
+          flexShrink: 0,
+        }}
+      >
+        <img
+          src={src || fallbackSrc}
+          data-candidates={candidates.join("|")}
+          data-candidate-index="0"
+          onError={onError}
+          alt={alt}
+          draggable={false}
+          decoding="async"
+          style={{
+            width: "100%",
+            height: "100%",
+            borderRadius: 6,
+            objectFit: "contain",
+            display: "block",
+            userSelect: "none",
+            WebkitUserDrag: "none",
+            pointerEvents: "none",
+            filter: imageFilter,
+          } as React.CSSProperties}
+        />
+        {watermarkEnabled ? (
+          <WatermarkOverlay
+            text={watermarkText}
+            logoUrl={watermarkLogoUrl}
+            variant="viewer"
+          />
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 function CompositeCanvas({
   backdropUrl,
   backdropFallbackUrl,
@@ -2971,6 +3110,9 @@ export default function ParentGalleryPage() {
   const [schoolName, setSchoolName] = useState("");
   const [project, setProject] = useState<ProjectRow | null>(null);
   const [images, setImages] = useState<GalleryImage[]>([]);
+  const [loadedGalleryImageIds, setLoadedGalleryImageIds] = useState<Set<string>>(
+    () => new Set(),
+  );
   const [selectedImageIndex, setSelectedImageIndex] = useState(0);
   const [eventPhotoStage, setEventPhotoStage] = useState<EventPhotoStage>(
     mode === "event" ? "albums" : "viewer",
@@ -3047,6 +3189,7 @@ export default function ParentGalleryPage() {
   const [favoriteMessage, setFavoriteMessage] = useState("");
   const [galleryActionMessage, setGalleryActionMessage] = useState("");
   const [downloadingGallery, setDownloadingGallery] = useState(false);
+  const [galleryDownloadProgress, setGalleryDownloadProgress] = useState<number | null>(null);
   const [downloadingFavorites, setDownloadingFavorites] = useState(false);
   const [gallerySettings, setGallerySettings] = useState<EventGallerySettings>(defaultEventGallerySettings);
   const [galleryDownloadAccess, setGalleryDownloadAccess] = useState<EventGalleryDownloadAccess>(
@@ -3074,6 +3217,23 @@ export default function ParentGalleryPage() {
     : displayStudioLogoUrl;
   const effectiveWatermarkText =
     clean(studioInfo.businessName) || schoolName || "PROOF";
+
+  useEffect(() => {
+    setLoadedGalleryImageIds((prev) => {
+      const validIds = new Set(images.map((img) => img.id));
+      const next = new Set(Array.from(prev).filter((id) => validIds.has(id)));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [images]);
+
+  function markGalleryImageLoaded(id: string) {
+    setLoadedGalleryImageIds((prev) => {
+      if (prev.has(id)) return prev;
+      const next = new Set(prev);
+      next.add(id);
+      return next;
+    });
+  }
 
   // ── Load ─────────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -3573,6 +3733,8 @@ export default function ParentGalleryPage() {
   const backdropForegroundScale = getBackdropForegroundScale(selectedImageAspectRatio);
   const backdropForegroundVerticalOffset = getBackdropForegroundVerticalOffset(selectedImageAspectRatio);
   const currentGalleryExtras = gallerySettings.extras;
+  const showProofWatermark =
+    watermarkEnabled && currentGalleryExtras.showProofWatermark !== false;
   const currentGalleryBranding = gallerySettings.branding;
   const galleryLocale = localeFromGalleryLanguage(gallerySettings.galleryLanguage);
   const galleryCopy = galleryTranslations[galleryLocale];
@@ -4056,14 +4218,23 @@ export default function ParentGalleryPage() {
       applyWatermark: boolean;
       includePrintRelease: boolean;
       batchLabel: string;
+      onProgress?: (percent: number) => void;
     },
   ) {
+    const nextPaint = () =>
+      new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+    const emitProgress = async (percent: number) => {
+      options.onProgress?.(Math.max(1, Math.min(100, Math.round(percent))));
+      await nextPaint();
+    };
     const watermarkText =
       effectiveWatermarkText || clean(galleryHeadline) || "PROOF";
     let logoImage: HTMLImageElement | null = null;
     const zipEntries: Array<{ name: string; data: Uint8Array }> = [];
     const usedNames = new Map<string, number>();
+    const workUnits = sourceImages.length + (options.includePrintRelease ? 1 : 0);
 
+    await emitProgress(8);
     if (options.applyWatermark && clean(effectiveWatermarkLogoUrl)) {
       try {
         logoImage = await imageElementFromUrl(clean(effectiveWatermarkLogoUrl));
@@ -4099,6 +4270,10 @@ export default function ParentGalleryPage() {
         ),
         data: new Uint8Array(await blob.arrayBuffer()),
       });
+
+      const completedUnits = index + 1;
+      const progressBase = workUnits > 0 ? completedUnits / workUnits : 1;
+      await emitProgress(10 + progressBase * 78);
     }
 
     if (options.includePrintRelease) {
@@ -4112,6 +4287,7 @@ export default function ParentGalleryPage() {
         name: uniqueDownloadName("Print Release.pdf", usedNames),
         data: new Uint8Array(await releasePdf.arrayBuffer()),
       });
+      await emitProgress(90);
     }
 
     if (!zipEntries.length) {
@@ -4122,8 +4298,11 @@ export default function ParentGalleryPage() {
       galleryHeaderTitle || galleryHeadline,
       isSchoolMode ? "school-gallery" : "event-gallery",
     );
+    await emitProgress(96);
+    const zipBlob = createZipBlob(zipEntries);
+    await emitProgress(100);
     triggerDownloadBlob(
-      createZipBlob(zipEntries),
+      zipBlob,
       `${archiveBaseName} ${options.batchLabel}.zip`,
     );
   }
@@ -4189,6 +4368,7 @@ export default function ParentGalleryPage() {
     }
 
     setDownloadingGallery(true);
+    setGalleryDownloadProgress(3);
     try {
       const response = await fetch(
         isSchoolMode ? "/api/portal/school-downloads" : "/api/portal/event-downloads",
@@ -4223,6 +4403,8 @@ export default function ParentGalleryPage() {
         throw new Error(payload.message || "Could not prepare gallery downloads.");
       }
 
+      setGalleryDownloadProgress(8);
+
       const allowedIds = new Set(
         (payload.allowedMediaIds ?? []).map((value) => clean(value)).filter(Boolean),
       );
@@ -4237,6 +4419,7 @@ export default function ParentGalleryPage() {
         applyWatermark: currentGalleryExtras.watermarkDownloads,
         includePrintRelease: currentGalleryExtras.includePrintRelease,
         batchLabel: "gallery",
+        onProgress: setGalleryDownloadProgress,
       });
 
       setGalleryDownloadAccess((prev) => ({
@@ -4275,6 +4458,7 @@ export default function ParentGalleryPage() {
       );
     } finally {
       setDownloadingGallery(false);
+      setGalleryDownloadProgress(null);
     }
   }
 
@@ -4555,6 +4739,7 @@ export default function ParentGalleryPage() {
     const wallImageCandidates = buildGalleryImageCandidates(img, "wall");
     const cardImageUrl = wallImageCandidates[0] || img.downloadUrl || img.url;
     const photoReference = getPhotoReference(index, img);
+    const imageLoaded = loadedGalleryImageIds.has(img.id);
     const canHoverDownload =
       isEventPhotoWall &&
       galleryDownloadAccess.enabled &&
@@ -4607,13 +4792,53 @@ export default function ParentGalleryPage() {
               background: isEventPhotoWall ? "#efeae2" : isLightGallery ? "#f8f8f7" : "#090909",
             }}
           >
+            {!imageLoaded ? (
+              <div
+                style={{
+                  position: "absolute",
+                  inset: 0,
+                  background: isEventPhotoWall
+                    ? "linear-gradient(135deg, #efe7dc 0%, #f7f2ea 45%, #efe7dc 100%)"
+                    : isLightGallery
+                      ? "linear-gradient(135deg, #f7f7f6 0%, #efefec 100%)"
+                      : "linear-gradient(135deg, #141414 0%, #222222 100%)",
+                  display: "grid",
+                  placeItems: "center",
+                  zIndex: 1,
+                }}
+              >
+                <div
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
+                    gap: 10,
+                    color: isEventPhotoWall ? "#8a7866" : isLightGallery ? "#98a2b3" : "#9ca3af",
+                  }}
+                >
+                  <LoaderCircle size={24} />
+                  <div
+                    style={{
+                      fontSize: 11,
+                      fontWeight: 700,
+                      letterSpacing: "0.08em",
+                      textTransform: "uppercase",
+                    }}
+                  >
+                    Loading photo
+                  </div>
+                </div>
+              </div>
+            ) : null}
             <img
               src={cardImageUrl}
               data-candidates={wallImageCandidates.join("|")}
               data-candidate-index="0"
               onError={handleGalleryImageError}
+              onLoad={() => markGalleryImageLoaded(img.id)}
               alt=""
-              loading={index < 8 ? "eager" : "lazy"}
+              loading={index < 16 ? "eager" : "lazy"}
+              fetchPriority={index < 6 ? "high" : "auto"}
               decoding="async"
               style={{
                 width: "100%",
@@ -4624,9 +4849,13 @@ export default function ParentGalleryPage() {
                 objectFit: "contain",
                 margin: "0 auto",
                 filter: galleryImageFilter,
+                opacity: imageLoaded ? 1 : 0.02,
+                transition: "opacity 220ms ease",
+                position: "relative",
+                zIndex: 2,
               }}
             />
-            {watermarkEnabled ? <WatermarkOverlay text={effectiveWatermarkText} logoUrl={effectiveWatermarkLogoUrl} /> : null}
+            {showProofWatermark ? <WatermarkOverlay text={effectiveWatermarkText} logoUrl={effectiveWatermarkLogoUrl} /> : null}
             {isEventPhotoWall && (canHoverDownload || canHoverShare || true) ? (
               <div
                 className="event-photo-actions"
@@ -6736,7 +6965,9 @@ export default function ParentGalleryPage() {
                 }}
               >
                 <Download size={14} />
-                {downloadingGallery ? "Preparing..." : galleryCopy.downloadAll}
+                {downloadingGallery
+                  ? `Preparing${typeof galleryDownloadProgress === "number" ? ` ${galleryDownloadProgress}%` : "..."}`
+                  : galleryCopy.downloadAll}
               </button>
             ) : null}
 
@@ -7409,7 +7640,7 @@ export default function ParentGalleryPage() {
                                 filter: galleryImageFilter,
                               }}
                             />
-                            {watermarkEnabled ? (
+                            {showProofWatermark ? (
                               <WatermarkOverlay
                                 text={effectiveWatermarkText}
                                 logoUrl={effectiveWatermarkLogoUrl}
@@ -7609,47 +7840,56 @@ export default function ParentGalleryPage() {
                       flexWrap: "wrap",
                     }}
                   >
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: 22, alignItems: "center" }}>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (isSchoolMode) {
-                            router.push("/parents");
-                            return;
-                          }
-                          setEventPhotoStage("grid");
-                        }}
-                        style={{
-                          border: "none",
-                          background: "transparent",
-                          color: "#6f6458",
-                          padding: 0,
-                          fontSize: 11,
-                          fontWeight: 700,
-                          letterSpacing: "0.16em",
-                          textTransform: "uppercase",
-                          cursor: "pointer",
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 8,
-                          fontFamily: galleryFontFamily,
-                        }}
-                      >
-                        <X size={14} />
-                        Close Viewer
-                      </button>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 22, alignItems: "flex-start" }}>
                       <div
                         style={{
-                          color: "#8b8176",
-                          padding: 0,
-                          fontSize: 11,
-                          fontWeight: 600,
-                          letterSpacing: "0.14em",
-                          textTransform: "uppercase",
-                          fontFamily: galleryFontFamily,
+                          display: "flex",
+                          flexDirection: "column",
+                          alignItems: "flex-start",
+                          gap: 6,
                         }}
                       >
-                        {selectedImageIndex + 1} / {visibleImages.length}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (isSchoolMode) {
+                              router.push("/parents");
+                              return;
+                            }
+                            setEventPhotoStage("grid");
+                          }}
+                          style={{
+                            border: "none",
+                            background: "transparent",
+                            color: "#6f6458",
+                            padding: 0,
+                            fontSize: 11,
+                            fontWeight: 700,
+                            letterSpacing: "0.16em",
+                            textTransform: "uppercase",
+                            cursor: "pointer",
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 8,
+                            fontFamily: galleryFontFamily,
+                          }}
+                        >
+                          <X size={14} />
+                          Close Viewer
+                        </button>
+                        <div
+                          style={{
+                            color: "#8b8176",
+                            padding: 0,
+                            fontSize: 11,
+                            fontWeight: 600,
+                            letterSpacing: "0.14em",
+                            textTransform: "uppercase",
+                            fontFamily: galleryFontFamily,
+                          }}
+                        >
+                          {selectedImageIndex + 1} / {visibleImages.length}
+                        </div>
                       </div>
                       {selectedImage ? (
                         <div
@@ -7718,6 +7958,8 @@ export default function ParentGalleryPage() {
                     const activeBackdrop = backdropPickerOpen
                       ? (selectedBackdrop ?? confirmedBackdrop)
                       : confirmedBackdrop;
+                    const backdropControlsVisible =
+                      backdropPickerOpen && currentNobgUrl && (selectedBackdrop || confirmedBackdrop);
                     const isPreview =
                       backdropPickerOpen && (
                         (selectedBlurBackground !== confirmedBlurBackground) ||
@@ -7729,9 +7971,13 @@ export default function ParentGalleryPage() {
                       <div
                         style={{
                           position: "relative",
-                          width: "min(980px, calc(100vw - 120px))",
+                          width: backdropControlsVisible
+                            ? "min(920px, calc(100vw - 160px))"
+                            : "min(980px, calc(100vw - 120px))",
                           maxWidth: "100%",
-                          height: "min(78vh, calc(100vh - 210px))",
+                          height: backdropControlsVisible
+                            ? "min(68vh, calc(100vh - 300px))"
+                            : "min(78vh, calc(100vh - 210px))",
                           display: "flex",
                           alignItems: "center",
                           justifyContent: "center",
@@ -7760,7 +8006,7 @@ export default function ParentGalleryPage() {
                             trimTransparentForeground
                             responsive
                             style={{ borderRadius: 6 }}
-                            showWatermark={watermarkEnabled}
+                            showWatermark={showProofWatermark}
                             watermarkText={effectiveWatermarkText}
                             watermarkLogoUrl={effectiveWatermarkLogoUrl}
                             watermarkVariant="viewer"
@@ -7796,7 +8042,7 @@ export default function ParentGalleryPage() {
                         )}
                         <div style={{
                           position: "absolute",
-                          bottom: 10,
+                          bottom: backdropControlsVisible ? 22 : 10,
                           left: "50%",
                           transform: "translateX(-50%)",
                           background: isPreview ? "rgba(0,0,0,0.55)" : "rgba(0,0,0,0.65)",
@@ -7847,45 +8093,23 @@ export default function ParentGalleryPage() {
                         <div
                           style={{
                             position: "relative",
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "center",
                             width: "100%",
                             height: "100%",
-                            overflow: "hidden",
-                            borderRadius: 6,
                           }}
                         >
-                          <img
+                          <ContainedViewerImage
                             key={selectedImage.id}
                             src={viewerImageCandidates[0] || selectedImage.url}
-                            data-candidates={viewerImageCandidates.join("|")}
-                            data-candidate-index="0"
-                            onError={handleGalleryImageError}
+                            fallbackSrc={selectedImage.url}
+                            candidates={viewerImageCandidates}
                             alt={student?.first_name ?? "Photo"}
-                            draggable={false}
-                            decoding="async"
-                            style={{
-                              width: "auto",
-                              height: "auto",
-                              maxWidth: "100%",
-                              maxHeight: "100%",
-                              borderRadius: 6,
-                              objectFit: "contain",
-                              display: "block",
-                              userSelect: "none",
-                              WebkitUserDrag: "none",
-                              pointerEvents: "none",
-                              filter: galleryImageFilter,
-                            } as React.CSSProperties}
+                            aspectRatio={selectedImageAspectRatio}
+                            imageFilter={galleryImageFilter}
+                            onError={handleGalleryImageError}
+                            watermarkEnabled={showProofWatermark}
+                            watermarkText={effectiveWatermarkText}
+                            watermarkLogoUrl={effectiveWatermarkLogoUrl}
                           />
-                          {watermarkEnabled && (
-                            <WatermarkOverlay
-                              text={effectiveWatermarkText}
-                              logoUrl={effectiveWatermarkLogoUrl}
-                              variant="viewer"
-                            />
-                          )}
                         </div>
                       </div>
                     );
@@ -7923,7 +8147,7 @@ export default function ParentGalleryPage() {
                 {backdropPickerOpen &&
                   currentNobgUrl &&
                   (selectedBackdrop || confirmedBackdrop) && (
-                  <div style={{ display: "flex", justifyContent: "center", padding: "10px 0 4px" }}>
+                  <div style={{ display: "flex", justifyContent: "center", padding: "18px 0 8px", position: "relative", zIndex: 6 }}>
                     <div style={{ display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "center" }}>
                       {selectedBackdrop ? (
                         <button

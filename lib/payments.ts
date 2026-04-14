@@ -1625,7 +1625,7 @@ async function grantIncludedPlanCredits(
 /**
  * Sentinel balance reported for platform admins. Large enough that the
  * desktop app's per-removal deduction can never realistically run it out,
- * and we re-top it up on every dashboard load.
+ * and we re-top it up on every dashboard load (see ensureOwnerCreditFloor).
  */
 export const OWNER_UNLIMITED_CREDIT_BALANCE = 1_000_000_000;
 const OWNER_CREDIT_FLOOR = 100_000_000;

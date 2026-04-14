@@ -27,6 +27,10 @@ import {
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { appendSchoolMediaRows, ensureSchoolCollectionId } from "@/lib/school-sync";
+import {
+  buildStoredMediaUrls,
+  extractStoragePathFromSupabaseUrl,
+} from "@/lib/storage-images";
 
 type School = {
   id: string;
@@ -117,14 +121,7 @@ function getRoleIcon(role: string) {
 }
 
 function extractObjectPathFromPublicUrl(url: string): string | null {
-  try {
-    const marker = "/storage/v1/object/public/thumbs/";
-    const idx = url.indexOf(marker);
-    if (idx === -1) return null;
-    return decodeURIComponent(url.substring(idx + marker.length));
-  } catch {
-    return null;
-  }
+  return extractStoragePathFromSupabaseUrl(url);
 }
 
 function extractFolderPathFromPublicUrl(url: string): string | null {
@@ -227,7 +224,12 @@ export default function SchoolsSchoolRoleGalleryPage() {
     const urls = files
       .filter((file) => !!file.name && /\.(png|jpg|jpeg|webp)$/i.test(file.name))
       .sort((a, b) => naturalCompare(a.name, b.name))
-      .map((file) => supabase.storage.from("thumbs").getPublicUrl(`${folderPath}/${file.name}`).data.publicUrl);
+      .map((file) =>
+        buildStoredMediaUrls({
+          storagePath: `${folderPath}/${file.name}`,
+        }).previewUrl,
+      )
+      .filter(Boolean);
 
     folderImagesCacheRef.current.set(folderPath, urls);
     return urls;
@@ -263,9 +265,22 @@ export default function SchoolsSchoolRoleGalleryPage() {
 
         if (peopleError) throw peopleError;
 
-        const filtered = ((data ?? []) as PersonRow[]).filter((person) =>
-          matchesRoleGallery(person, normalizedRouteRole)
-        );
+        const filtered = ((data ?? []) as PersonRow[])
+          .map((person) => {
+            const storagePath = extractObjectPathFromPublicUrl(clean(person.photo_url));
+            const previewUrl = storagePath
+              ? buildStoredMediaUrls({
+                  storagePath,
+                  previewUrl: person.photo_url,
+                }).previewUrl
+              : clean(person.photo_url);
+
+            return {
+              ...person,
+              photo_url: previewUrl || person.photo_url,
+            };
+          })
+          .filter((person) => matchesRoleGallery(person, normalizedRouteRole));
 
         const urlMap: Record<string, string[]> = {};
 
@@ -419,7 +434,7 @@ export default function SchoolsSchoolRoleGalleryPage() {
           throw new Error(uploadError.message || "Photo upload failed.");
         }
 
-        const publicUrl = supabase.storage.from("thumbs").getPublicUrl(storagePath).data.publicUrl;
+        const publicUrl = buildStoredMediaUrls({ storagePath }).previewUrl;
         if (clean(publicUrl)) {
           uploadedAssets.push({
             storagePath,
@@ -574,7 +589,7 @@ export default function SchoolsSchoolRoleGalleryPage() {
             throw new Error(uploadError.message || "Person added, but photo upload failed.");
           }
 
-          const publicUrl = supabase.storage.from("thumbs").getPublicUrl(storagePath).data.publicUrl;
+          const publicUrl = buildStoredMediaUrls({ storagePath }).previewUrl;
           if (clean(publicUrl)) {
             uploadedAssets.push({
               storagePath,

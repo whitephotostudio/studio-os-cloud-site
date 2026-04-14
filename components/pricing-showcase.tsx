@@ -56,7 +56,7 @@ type ComparisonRow = {
   values: Record<PlanCode, ComparisonValue>;
 };
 
-const plans: PlanCard[] = [
+const homePlans: PlanCard[] = [
   {
     code: "starter",
     icon: Globe,
@@ -96,13 +96,14 @@ const plans: PlanCard[] = [
       "Everything in Web Gallery",
       "Studio OS app access",
       "1 Photography Key",
+      "Direct camera tethering",
       "School photography workflow tools",
       "AI backdrop cleanup and replacement in the app",
       "Client backdrop preview gallery online",
+      "Set free and premium backdrop prices",
       "Premium backdrop choices for parents",
       "Print-ready stitched background workflow",
-      "Collage builder",
-      "Photography panel",
+      "One-click AI composites with separate pricing",
       "Roster converter",
     ],
     footerNote:
@@ -123,13 +124,14 @@ const plans: PlanCard[] = [
       "Everything in the App Plan",
       "2 Photography Keys",
       "Full Studio OS workflow",
+      "Direct camera tethering",
       "Advanced school shooting tools",
       "AI backdrop cleanup and replacement in the app",
       "Client backdrop preview gallery online",
+      "Set free and premium backdrop prices",
       "Premium backdrop choices for parents",
       "Print-ready stitched background workflow",
-      "Collage builder",
-      "Photography panel",
+      "One-click AI composites with separate pricing",
       "Roster converter",
       "Extra keys for $55 each",
     ],
@@ -138,11 +140,91 @@ const plans: PlanCard[] = [
   },
 ];
 
+const pagePlans: PlanCard[] = [
+  {
+    code: "starter",
+    icon: Globe,
+    name: "Starter Plan",
+    eyebrow: "For photographers getting started",
+    summary:
+      "For photographers getting started or using basic galleries.",
+    usageFee: "$0.55 per paid order",
+    ctaLabel: "Start Free Trial",
+    heroNote: "Basic gallery delivery",
+    included: [
+      "Deliver and sell photos through your own gallery",
+      "Let clients order prints and digital products directly",
+      "Share polished online galleries with clean client access",
+      "Send downloads and finished images without extra tools",
+    ],
+    excluded: [
+      "Desktop workflow tools",
+      "School roster workflows",
+      "Multi-photographer production tools",
+      "AI background upgrade tools",
+    ],
+    footerNote:
+      "A simple way to start selling and delivering online.",
+  },
+  {
+    code: "core",
+    icon: MonitorSmartphone,
+    name: "Core Plan",
+    eyebrow: "For full workflow and ordering",
+    badge: "Most Popular",
+    summary:
+      "For photographers who want full workflow, client ordering, and production tools in one system.",
+    usageFee: "$0.35 per paid order",
+    ctaLabel: "Start Free Trial",
+    heroNote: "1 Photography Key included",
+    included: [
+      "Everything in Starter",
+      "Run desktop capture and production inside Studio OS",
+      "Shoot faster with direct camera tethering",
+      "Keep school and event jobs organized from the start",
+      "Offer premium background upgrades and keep the revenue",
+      "Move from capture to delivery without switching tools",
+    ],
+    footerNote:
+      "Best fit for photographers replacing multiple tools with one connected system.",
+  },
+  {
+    code: "studio",
+    icon: Camera,
+    name: "Pro Plan",
+    eyebrow: "For scaling teams and advanced workflows",
+    summary:
+      "For studios scaling volume, teams, and advanced workflows.",
+    usageFee: "$0.25 per paid order",
+    ctaLabel: "Start Free Trial",
+    heroNote: "2 Photography Keys included",
+    included: [
+      "Everything in Core",
+      "Run multiple photographers inside one connected workflow",
+      "Scale school and event production with more team capacity",
+      "Add extra photography keys as your workflow grows",
+      "Keep capture, review, ordering, and delivery aligned at higher volume",
+    ],
+    footerNote:
+      "Built for studios ready to scale production volume without adding more disconnected software.",
+  },
+];
+
 const businessBenefits = [
+  {
+    title: "Direct camera tethering built in",
+    text: "No third-party tethering app required. Connect your camera in Studio OS, shoot directly, and keep the roster-confirmed workflow moving.",
+    icon: Camera,
+  },
   {
     title: "AI background removal in seconds",
     text: "AI handles the heavy lifting so photographers can clean up and replace backgrounds faster across high-volume jobs.",
     icon: Wand2,
+  },
+  {
+    title: "Convert rosters faster",
+    text: "Use roster conversion and school workflow tools to keep photo day organized from the start.",
+    icon: TableProperties,
   },
   {
     title: "No green screen required",
@@ -150,14 +232,9 @@ const businessBenefits = [
     icon: Sparkles,
   },
   {
-    title: "Build collages in seconds",
-    text: "Create polished collage layouts quickly instead of stitching together slow manual steps.",
+    title: "Build AI class composites in one click",
+    text: "Generate class composites fast with AI head sizing, crop alignment, logo placement, class auto-assignment, separate composite pricing, and full manual control when needed.",
     icon: Layers3,
-  },
-  {
-    title: "Convert rosters faster",
-    text: "Use roster conversion and school workflow tools to keep photo day organized from the start.",
-    icon: TableProperties,
   },
   {
     title: "Let parents preview online",
@@ -169,6 +246,13 @@ const businessBenefits = [
     text: "The premium backdrop fee belongs to the photographer. Studio OS does not take a cut.",
     icon: DollarSign,
   },
+];
+
+const pageValueBullets = [
+  "Run your full workflow from capture to delivery",
+  "Keep your production organized",
+  "Offer upgrades and increase revenue",
+  "Replace multiple tools with one system",
 ];
 
 const comparisonRows: ComparisonRow[] = [
@@ -193,11 +277,19 @@ const comparisonRows: ComparisonRow[] = [
     values: { starter: false, core: true, studio: true },
   },
   {
+    label: "Direct Camera Tethering",
+    values: { starter: false, core: true, studio: true },
+  },
+  {
     label: "AI Backdrop Removal in App",
     values: { starter: false, core: true, studio: true },
   },
   {
     label: "Client Backdrop Preview Gallery",
+    values: { starter: false, core: true, studio: true },
+  },
+  {
+    label: "Free & Premium Backdrop Pricing",
     values: { starter: false, core: true, studio: true },
   },
   {
@@ -230,6 +322,14 @@ const comparisonRows: ComparisonRow[] = [
       starter: { label: "Sold separately", note: "Purchase monthly credit packs as needed" },
       core: { label: "Sold separately", note: "Purchase monthly credit packs as needed" },
       studio: { label: "Sold separately", note: "Purchase monthly credit packs as needed" },
+    },
+  },
+  {
+    label: "Platform Usage Billing",
+    values: {
+      starter: { label: "$0.55 per paid order" },
+      core: { label: "$0.35 per paid order" },
+      studio: { label: "$0.25 per paid order" },
     },
   },
 ];
@@ -281,6 +381,84 @@ function renderComparisonValue(value: ComparisonValue) {
 export function PricingShowcase({ variant = "home" }: PricingShowcaseProps) {
   const [billingInterval, setBillingInterval] = useState<BillingInterval>("month");
   const showFullPage = variant === "page";
+  const pricingPlans = showFullPage ? pagePlans : homePlans;
+  const previewHref = "/studio-os";
+  const introEyebrow = showFullPage
+    ? "Pricing"
+    : "Keep more of what you earn";
+  const introHeading = showFullPage
+    ? "Simple Pricing. Built to Grow With You."
+    : "No hidden fees. No complicated workflows.";
+  const introText = showFullPage
+    ? "Start with what you need and scale as your photography business grows."
+    : "Just a clean system that helps you run your business better.";
+  const introSupportLine = showFullPage
+    ? "Most photographers replace multiple tools with Studio OS."
+    : null;
+  const introHighlights = showFullPage
+    ? [
+        "Starter for basic galleries",
+        "Core for full workflow and ordering",
+        "Pro for scaling teams and advanced production",
+      ]
+    : [
+        "Faster capture and organization",
+        "AI tools that reduce manual work",
+        "Client ordering inside your system",
+        "No green screen required",
+        "Print-ready delivery",
+        "Class composites and roster tools",
+        "Built for high-volume jobs",
+        "Keep 100% of premium upgrade revenue",
+      ];
+  const revenueEyebrow = showFullPage
+    ? "Built to earn more"
+    : "Revenue opportunity";
+  const revenueHeading = showFullPage
+    ? "Turn simple add-ons into real revenue."
+    : "Turn Every Photo Into More Value";
+  const revenueText = showFullPage
+    ? "Offer premium upgrades like background enhancements without adding extra manual work or handing away the profit."
+    : "Offer upgrades like background enhancements without adding extra work.";
+  const revenueItems = showFullPage
+    ? [
+        {
+          title: "Choose what is included",
+          text: "Set which options are standard and which become paid upgrades.",
+        },
+        {
+          title: "Sell inside your workflow",
+          text: "Parents and clients see upgrades in the same system used for delivery and ordering.",
+        },
+        {
+          title: "Keep the upside",
+          text: "Premium upgrade revenue stays with your studio, not the platform.",
+        },
+      ]
+    : [
+        {
+          title: "Set your pricing",
+          text: "Choose what is included and what becomes a paid upgrade.",
+        },
+        {
+          title: "Clients order directly",
+          text: "Parents and clients choose enhancements inside your own system.",
+        },
+        {
+          title: "More value per job",
+          text: "Upsells happen without slowing down production or adding extra admin.",
+        },
+      ];
+  const revenueNote = showFullPage
+    ? "No hidden fees. Premium upgrade revenue stays with the photographer."
+    : "No hidden fees. Premium upgrade revenue stays with the photographer.";
+  const businessEyebrow = showFullPage ? "Business outcomes" : "Built for real photography workflows";
+  const businessHeading = showFullPage
+    ? "Faster production, better delivery, and new photographer revenue."
+    : "Built for Real Photography Workflows";
+  const businessText = showFullPage
+    ? "The Studio OS app plans do more than host galleries. They let photographers tether a camera directly without a third-party tethering app, move faster on school photo day, clean up backgrounds with AI without a green screen, let parents preview new backdrops online, build AI class composites, convert rosters, and deliver beautiful print-ready images with almost no manual effort."
+    : "Studio OS is designed around how photographers actually work — not generic software.";
 
   return (
     <section className="relative overflow-hidden">
@@ -297,27 +475,22 @@ export function PricingShowcase({ variant = "home" }: PricingShowcaseProps) {
           <div className="grid gap-8 lg:grid-cols-[1.05fr_0.95fr] lg:gap-10">
             <div>
               <div className="text-sm font-semibold uppercase tracking-[0.18em] text-neutral-500">
-                Simple pricing for studios and school photographers
+                {introEyebrow}
               </div>
               <h2 className="mt-4 text-4xl font-semibold tracking-tight text-neutral-950 sm:text-5xl">
-                Start with gallery access or unlock the full Studio OS app.
+                {introHeading}
               </h2>
               <p className="mt-5 max-w-2xl text-lg leading-8 text-neutral-600">
-                Built for school photo day and studio workflow. Save time, speed up production,
-                remove and replace backgrounds with AI faster, and create new revenue opportunities with
-                parent-approved premium backdrops that feel effortless to offer.
+                {introText}
               </p>
+              {introSupportLine ? (
+                <p className="mt-3 text-sm font-medium leading-7 text-neutral-500">
+                  {introSupportLine}
+                </p>
+              ) : null}
 
               <div className="mt-6 flex flex-wrap gap-3 text-sm text-neutral-700">
-                {[
-                  "AI background removal in seconds",
-                  "Live parent backdrop previews",
-                  "Works without green screen",
-                  "Print-ready stitched results",
-                  "Build school collages in seconds",
-                  "Roster conversion tools",
-                  "Photographer keeps 100% of backdrop upsell revenue",
-                ].map((item) => (
+                {introHighlights.map((item) => (
                   <span
                     key={item}
                     className="inline-flex items-center gap-2 rounded-full border border-neutral-200 bg-white px-4 py-2 shadow-sm"
@@ -330,13 +503,13 @@ export function PricingShowcase({ variant = "home" }: PricingShowcaseProps) {
 
               <div className="mt-8 flex flex-col gap-3 sm:flex-row">
                 <Link
-                  href="/sign-up"
+                  href={showFullPage ? "#pricing-options" : "/sign-up"}
                   className="inline-flex items-center justify-center gap-2 rounded-2xl bg-black px-5 py-3 font-medium text-white shadow-md transition hover:opacity-90"
                 >
-                  Get Started
+                  {showFullPage ? "Start Free Trial" : "Get Started"}
                 </Link>
                 <Link
-                  href="/preview"
+                  href={previewHref}
                   className="inline-flex items-center justify-center gap-2 rounded-2xl border border-neutral-200 bg-white px-5 py-3 font-medium text-neutral-950 shadow-sm transition hover:bg-neutral-50"
                 >
                   Platform Demo
@@ -346,32 +519,17 @@ export function PricingShowcase({ variant = "home" }: PricingShowcaseProps) {
 
             <div className="rounded-[28px] border border-neutral-200 bg-white p-6 shadow-xl sm:p-8">
               <div className="inline-flex items-center gap-2 rounded-full border border-[#d9c2c8] bg-[#fcf7f8] px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-[#7a2f3f]">
-                Photographer revenue benefit
+                {revenueEyebrow}
               </div>
               <h3 className="mt-5 text-2xl font-semibold tracking-tight text-neutral-950">
-                Turn backdrop editing into extra income.
+                {revenueHeading}
               </h3>
               <p className="mt-3 text-base leading-8 text-neutral-600">
-                AI prepares the image, photographers choose the main backdrop options, parents
-                preview the new look online, and the approved background is stitched and ready for
-                print. Charge your own upgrade fee and keep 100% of that revenue.
+                {revenueText}
               </p>
 
               <div className="mt-6 grid gap-4 sm:grid-cols-3">
-                {[
-                  {
-                    title: "You choose the price",
-                    text: "Example: charge $2 for a premium backdrop upgrade.",
-                  },
-                  {
-                    title: "Parents see the upgrade",
-                    text: "Clients preview backdrop choices in a polished online gallery before they approve.",
-                  },
-                  {
-                    title: "You keep the revenue",
-                    text: "The upsell fee belongs to the photographer, not to Studio OS.",
-                  },
-                ].map((item) => (
+                {revenueItems.map((item) => (
                   <div key={item.title} className="rounded-2xl border border-neutral-200 bg-neutral-50 p-4">
                     <div className="text-sm font-semibold text-neutral-950">{item.title}</div>
                     <div className="mt-2 text-sm leading-6 text-neutral-600">{item.text}</div>
@@ -380,13 +538,50 @@ export function PricingShowcase({ variant = "home" }: PricingShowcaseProps) {
               </div>
 
               <div className="mt-6 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-4 text-sm font-semibold leading-7 text-emerald-800">
-                Premium backdrop fees are extra income for the photographer. Studio OS does not
-                take a cut.
+                {revenueNote}
               </div>
             </div>
           </div>
 
-          <div className="mt-10 flex flex-col items-start justify-between gap-5 rounded-[24px] border border-neutral-200 bg-white px-5 py-5 shadow-sm sm:flex-row sm:items-center sm:px-6">
+          <div className="mt-10 rounded-[30px] border border-neutral-200 bg-white p-6 shadow-lg sm:p-8">
+            <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
+              <div className="max-w-3xl">
+                <div className="text-sm font-semibold uppercase tracking-[0.16em] text-neutral-500">
+                  {businessEyebrow}
+                </div>
+                <h3 className="mt-3 text-3xl font-semibold tracking-tight text-neutral-950">
+                  {businessHeading}
+                </h3>
+                <p className="mt-4 text-base leading-8 text-neutral-600">
+                  {businessText}
+                </p>
+              </div>
+
+              <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-5 py-4 text-sm font-semibold leading-7 text-emerald-800">
+                Charge your own premium backdrop fee and keep 100% of that revenue.
+              </div>
+            </div>
+
+            <div className="mt-8 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+              {businessBenefits.map((benefit) => {
+                const Icon = benefit.icon;
+                return (
+                  <div key={benefit.title} className="rounded-[24px] border border-neutral-200 bg-neutral-50 p-5">
+                    <div className="inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-neutral-200 bg-white text-neutral-950">
+                      <Icon className="h-5 w-5" />
+                    </div>
+                    <div className="mt-4 text-lg font-semibold text-neutral-950">{benefit.title}</div>
+                    <p className="mt-2 text-sm leading-7 text-neutral-600">{benefit.text}</p>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          <div
+            id="pricing-options"
+            className="mt-10 flex flex-col items-start justify-between gap-5 rounded-[24px] border border-neutral-200 bg-white px-5 py-5 shadow-sm sm:flex-row sm:items-center sm:px-6"
+          >
             <div>
               <div className="text-sm font-semibold text-neutral-950">Choose monthly or annual billing</div>
               <div className="mt-1 text-sm leading-6 text-neutral-500">
@@ -417,7 +612,7 @@ export function PricingShowcase({ variant = "home" }: PricingShowcaseProps) {
           </div>
 
           <div className="mt-8 grid gap-6 lg:grid-cols-3">
-            {plans.map((plan) => {
+            {pricingPlans.map((plan) => {
               const activePrice = getPlanPriceCents(plan.code, billingInterval);
               const isFeatured = plan.code === "core";
               const annual = billingInterval === "year";
@@ -481,6 +676,18 @@ export function PricingShowcase({ variant = "home" }: PricingShowcaseProps) {
                         : "Billed monthly"}
                     </div>
 
+                    {showFullPage ? (
+                      <div
+                        className={
+                          isFeatured
+                            ? "mt-2 text-sm text-neutral-300"
+                            : "mt-2 text-sm text-neutral-500"
+                        }
+                      >
+                        Usage billing: {plan.usageFee}
+                      </div>
+                    ) : null}
+
                     <div className={isFeatured ? "mt-4 inline-flex rounded-full border border-white/15 bg-white/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-white" : "mt-4 inline-flex rounded-full border border-neutral-200 bg-neutral-50 px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-neutral-700"}>
                       {plan.heroNote}
                     </div>
@@ -488,10 +695,6 @@ export function PricingShowcase({ variant = "home" }: PricingShowcaseProps) {
                     <p className={isFeatured ? "mt-5 text-base leading-8 text-neutral-300" : "mt-5 text-base leading-8 text-neutral-600"}>
                       {plan.summary}
                     </p>
-
-                    <div className={isFeatured ? "mt-5 rounded-2xl border border-white/10 bg-white/5 px-4 py-4 text-sm font-semibold text-white" : "mt-5 rounded-2xl border border-neutral-200 bg-neutral-50 px-4 py-4 text-sm font-semibold text-neutral-900"}>
-                      Platform usage billing: {plan.usageFee}
-                    </div>
 
                     <div className="mt-6">
                       <div className={isFeatured ? "text-sm font-semibold uppercase tracking-[0.14em] text-neutral-400" : "text-sm font-semibold uppercase tracking-[0.14em] text-neutral-500"}>
@@ -552,59 +755,55 @@ export function PricingShowcase({ variant = "home" }: PricingShowcaseProps) {
             })}
           </div>
 
-          <div className="mt-10 rounded-[30px] border border-neutral-200 bg-white p-6 shadow-lg sm:p-8">
-            <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
-              <div className="max-w-3xl">
-                <div className="text-sm font-semibold uppercase tracking-[0.16em] text-neutral-500">
-                  Business outcomes
-                </div>
-                <h3 className="mt-3 text-3xl font-semibold tracking-tight text-neutral-950">
-                  Faster production, better delivery, and new photographer revenue.
-                </h3>
-                <p className="mt-4 text-base leading-8 text-neutral-600">
-                  The Studio OS app plans do more than host galleries. They help studios move faster
-                  on school photo day, clean up backgrounds with AI without a green screen, let parents
-                  preview new backdrops online, build collages, convert rosters, and deliver
-                  beautiful print-ready images with almost no manual effort.
-                </p>
-              </div>
-
-              <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-5 py-4 text-sm font-semibold leading-7 text-emerald-800">
-                Charge your own premium backdrop fee and keep 100% of that revenue.
-              </div>
-            </div>
-
-            <div className="mt-8 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-              {businessBenefits.map((benefit) => {
-                const Icon = benefit.icon;
-                return (
-                  <div key={benefit.title} className="rounded-[24px] border border-neutral-200 bg-neutral-50 p-5">
-                    <div className="inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-neutral-200 bg-white text-neutral-950">
-                      <Icon className="h-5 w-5" />
-                    </div>
-                    <div className="mt-4 text-lg font-semibold text-neutral-950">{benefit.title}</div>
-                    <p className="mt-2 text-sm leading-7 text-neutral-600">{benefit.text}</p>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
+          {showFullPage ? (
+            <p className="mt-6 text-sm font-medium leading-7 text-neutral-500">
+              Start simple. Upgrade when your workflow grows.
+            </p>
+          ) : null}
 
           {showFullPage ? (
             <>
+              <div className="mt-10 rounded-[30px] border border-neutral-200 bg-white p-6 shadow-lg sm:p-8">
+                <div className="max-w-3xl">
+                  <div className="text-sm font-semibold uppercase tracking-[0.16em] text-neutral-500">
+                    Why studios choose it
+                  </div>
+                  <h3 className="mt-3 text-3xl font-semibold tracking-tight text-neutral-950">
+                    More Than Just a Gallery Platform
+                  </h3>
+                </div>
+
+                <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                  {pageValueBullets.map((item) => (
+                    <div
+                      key={item}
+                      className="rounded-[24px] border border-neutral-200 bg-neutral-50 p-5"
+                    >
+                      <div className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-[#fff4f4] text-[#d3252b]">
+                        <Check className="h-4 w-4" />
+                      </div>
+                      <p className="mt-4 text-sm font-medium leading-7 text-neutral-800">
+                        {item}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
               <div className="mt-10 rounded-[30px] border border-neutral-200 bg-neutral-950 p-6 text-white shadow-2xl sm:p-8">
                 <div className="grid gap-8 lg:grid-cols-[1fr_0.95fr] lg:items-center">
                   <div>
-                    <div className="text-sm font-semibold uppercase tracking-[0.16em] text-neutral-400">
+                  <div className="text-sm font-semibold uppercase tracking-[0.16em] text-neutral-400">
                       Backdrop upsell benefit
                     </div>
                     <h3 className="mt-3 text-3xl font-semibold tracking-tight">
-                      Offer premium backdrops to parents and keep the money.
+                      Offer free and premium backdrops with your own pricing.
                     </h3>
                     <p className="mt-4 max-w-2xl text-base leading-8 text-neutral-300">
-                      This is not a Studio OS fee. The photographer decides the upgrade price, the
-                      app prepares the image, parents choose their favorite backdrop online, and the
-                      photographer keeps 100% of that backdrop upsell revenue.
+                      This is not a Studio OS fee. Photographers decide which backdrop options are
+                      free and which are premium, parents preview and choose online, and the
+                      approved background is stitched for print while the photographer keeps 100% of
+                      the premium backdrop revenue.
                     </p>
                   </div>
 
@@ -615,10 +814,10 @@ export function PricingShowcase({ variant = "home" }: PricingShowcaseProps) {
                     <div className="mt-4 space-y-3">
                       {[
                         "Prepare the image inside the Studio OS app.",
-                        "Offer a premium backdrop upgrade to parents.",
-                        "Set your own upgrade fee, for example $2.",
-                        "Parent previews the new backdrop online and approves it.",
-                        "The photographer keeps 100% of that revenue.",
+                        "Choose which backdrop options are free and which are premium.",
+                        "Set your own premium prices, for example free standard options and $2 upgrades.",
+                        "Parent previews the backdrop choices online and approves one.",
+                        "The photographer keeps 100% of any premium backdrop revenue.",
                       ].map((item) => (
                         <div key={item} className="flex items-start gap-3">
                           <span className="mt-1 inline-flex h-5 w-5 items-center justify-center rounded-full bg-emerald-500/20 text-emerald-300">
@@ -630,7 +829,8 @@ export function PricingShowcase({ variant = "home" }: PricingShowcaseProps) {
                     </div>
 
                     <div className="mt-5 rounded-2xl border border-emerald-400/20 bg-emerald-500/10 px-4 py-4 text-sm font-semibold leading-7 text-emerald-200">
-                      Studio OS does not take the $2. The photographer keeps it.
+                      Free and premium backdrop pricing stays in the photographer&apos;s control.
+                      Studio OS does not take the premium upgrade fee.
                     </div>
                   </div>
                 </div>
@@ -646,7 +846,7 @@ export function PricingShowcase({ variant = "home" }: PricingShowcaseProps) {
                   </h3>
                   <p className="mt-4 text-base leading-8 text-neutral-600">
                     Start with gallery delivery or move up to the Studio OS app when you need school
-                    workflow tools, backdrop revenue opportunities, collages, and more keys.
+                    workflow tools, backdrop revenue opportunities, AI class composites, and more keys.
                   </p>
                 </div>
 
@@ -657,7 +857,7 @@ export function PricingShowcase({ variant = "home" }: PricingShowcaseProps) {
                         <th className="border-b border-neutral-200 px-5 py-4 text-left text-sm font-semibold text-neutral-500">
                           Feature
                         </th>
-                        {plans.map((plan) => (
+                        {pricingPlans.map((plan) => (
                           <th
                             key={plan.code}
                             className="border-b border-neutral-200 px-5 py-4 text-left"
@@ -698,24 +898,25 @@ export function PricingShowcase({ variant = "home" }: PricingShowcaseProps) {
                       Ready to start
                     </div>
                     <h3 className="mt-3 text-3xl font-semibold tracking-tight text-neutral-950">
-                      Choose the plan that matches your workflow today.
+                      Choose the plan that fits your workflow today.
                     </h3>
                   <p className="mt-4 max-w-2xl text-base leading-8 text-neutral-600">
-                    Start with gallery delivery or unlock the Studio OS app for school photo day,
-                    backdrop tools, live parent approvals, collages, roster conversion, and
-                    premium parent upsells.
+                    Start with what you need today, then grow into more workflow power as your business expands.
+                  </p>
+                  <p className="mt-3 text-sm font-medium text-neutral-500">
+                    No long-term commitment. Cancel anytime.
                   </p>
                   </div>
 
                   <div className="flex flex-col gap-3 sm:flex-row">
                     <Link
-                      href="/sign-up"
+                      href="#pricing-options"
                       className="inline-flex items-center justify-center gap-2 rounded-2xl bg-black px-5 py-3 font-medium text-white shadow-md transition hover:opacity-90"
                     >
-                      Get Started
+                      Start Free Trial
                     </Link>
                     <Link
-                      href="/preview"
+                      href={previewHref}
                       className="inline-flex items-center justify-center gap-2 rounded-2xl border border-neutral-200 bg-white px-5 py-3 font-medium text-neutral-950 shadow-sm transition hover:bg-neutral-50"
                     >
                       Preview Platform
@@ -725,28 +926,33 @@ export function PricingShowcase({ variant = "home" }: PricingShowcaseProps) {
               </div>
             </>
           ) : (
-            <div className="mt-10 flex flex-col items-start justify-between gap-5 rounded-[28px] border border-neutral-200 bg-white p-6 shadow-lg sm:flex-row sm:items-center">
-              <div className="max-w-2xl">
-                <div className="text-sm font-semibold uppercase tracking-[0.16em] text-neutral-500">
-                  Need the full breakdown?
-                </div>
-                <div className="mt-2 text-2xl font-semibold tracking-tight text-neutral-950">
-                  Compare keys, backdrop tools, and school workflow access in one place.
-                </div>
-                <p className="mt-3 text-sm leading-7 text-neutral-600">
-                  See the full feature table, the photographer-owned backdrop upsell message, and
-                  the exact difference between Web Gallery, App, and Studio.
-                </p>
-              </div>
+            <>
+              <p className="mt-10 max-w-3xl text-sm font-medium leading-7 text-neutral-500 sm:text-base">
+                Once everything is connected, the way you run your business changes.
+              </p>
 
-              <Link
-                href="/pricing"
-                className="inline-flex items-center justify-center gap-2 rounded-2xl bg-black px-5 py-3 font-medium text-white shadow-md transition hover:opacity-90"
-              >
-                View Full Pricing
-                <ArrowUpRight className="h-4 w-4" />
-              </Link>
-            </div>
+              <div className="mt-5 flex flex-col items-start justify-between gap-5 rounded-[28px] border border-neutral-200 bg-white p-6 shadow-lg sm:flex-row sm:items-center">
+                <div className="max-w-2xl">
+                  <div className="text-sm font-semibold uppercase tracking-[0.16em] text-neutral-500">
+                    Take control
+                  </div>
+                  <div className="mt-2 text-2xl font-semibold tracking-tight text-neutral-950">
+                    Take Control of Your Workflow
+                  </div>
+                  <p className="mt-3 text-sm leading-7 text-neutral-600">
+                    Stop juggling tools and start running your photography business with one connected system.
+                  </p>
+                </div>
+
+                <Link
+                  href="/sign-up"
+                  className="inline-flex items-center justify-center gap-2 rounded-2xl bg-black px-5 py-3 font-medium text-white shadow-md transition hover:opacity-90"
+                >
+                  Start Free Trial
+                  <ArrowUpRight className="h-4 w-4" />
+                </Link>
+              </div>
+            </>
           )}
         </div>
       </div>

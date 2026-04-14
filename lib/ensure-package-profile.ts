@@ -20,7 +20,8 @@ export async function ensurePackageProfile({
 
   if (!profileId || !ownerId) return null;
 
-  // If profileId isn't a valid UUID, skip DB lookups that would fail with 22P02
+  // Legacy sheets may still use text IDs in packages.profile_id, but the
+  // project/school package_profile_id columns only safely store UUIDs.
   const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   if (!UUID_RE.test(profileId)) return null;
 

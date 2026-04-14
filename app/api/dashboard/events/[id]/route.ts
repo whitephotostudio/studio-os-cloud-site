@@ -12,6 +12,7 @@ import {
 } from "@/lib/project-email-deliveries";
 import { resendConfigured, sendResendEmail } from "@/lib/resend";
 import { ensurePackageProfile } from "@/lib/ensure-package-profile";
+import { buildStoredMediaUrls } from "@/lib/storage-images";
 
 export const dynamic = "force-dynamic";
 
@@ -487,21 +488,45 @@ export async function GET(
       else albumsCount += 1;
     }
 
-    const { data: mediaRows, error: mediaError } = await service
+    // Pagination for media — defaults: page 1, 200 items per page
+    const url = new URL(request.url);
+    const mediaPage = Math.max(1, Number(url.searchParams.get("mediaPage")) || 1);
+    const mediaLimit = Math.min(500, Math.max(1, Number(url.searchParams.get("mediaLimit")) || 200));
+    const mediaFrom = (mediaPage - 1) * mediaLimit;
+    const mediaTo = mediaFrom + mediaLimit - 1;
+
+    const { data: mediaRows, error: mediaError, count: mediaTotalCount } = await service
       .from("media")
-      .select("id,collection_id,preview_url,thumbnail_url,filename,created_at,sort_order")
+      .select("id,collection_id,storage_path,preview_url,thumbnail_url,filename,created_at,sort_order", { count: "exact" })
       .eq("project_id", projectId)
       .order("sort_order", { ascending: true })
-      .order("created_at", { ascending: true });
+      .order("created_at", { ascending: true })
+      .range(mediaFrom, mediaTo);
 
     if (mediaError) throw mediaError;
+
+    const normalizedMediaRows = (mediaRows ?? []).map((row) => {
+      const mediaUrls = buildStoredMediaUrls({
+        storagePath: "storage_path" in row ? row.storage_path : null,
+        previewUrl: "preview_url" in row ? row.preview_url : null,
+        thumbnailUrl: "thumbnail_url" in row ? row.thumbnail_url : null,
+      });
+
+      return {
+        ...row,
+        preview_url: mediaUrls.previewUrl || null,
+        thumbnail_url: mediaUrls.thumbnailUrl || null,
+      };
+    });
 
     return NextResponse.json({
       ok: true,
       project: projectRow,
       collections,
-      media: mediaRows ?? [],
-      mediaCount: (mediaRows ?? []).length,
+      media: normalizedMediaRows,
+      mediaCount: mediaTotalCount ?? normalizedMediaRows.length,
+      mediaPage,
+      mediaTotalCount: mediaTotalCount ?? normalizedMediaRows.length,
       classesCount,
       rolesCount,
       peopleCount,
@@ -628,7 +653,7 @@ export async function PATCH(
         photographerId: photographerRow.id,
         packageProfileId: body.package_profile_id,
       });
-      updatePayload.package_profile_id = isUuid(resolvedProfileId) ? resolvedProfileId : null;
+      updatePayload.package_profile_id = clean(resolvedProfileId) || null;
     }
     if (hasOwn(body, "email_required")) {
       updatePayload.email_required = body.email_required === true;

@@ -1603,7 +1603,7 @@ export default function OrdersPage() {
                       <div style={{ position: "relative" }}>
                         <div style={{ width: "100%", aspectRatio: "3/4", background: "#f3f4f6", overflow: "hidden" }}>
                           {clean(primaryUrl)
-                            ? <img src={primaryUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                            ? <img loading="lazy" src={primaryUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                             : <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "#d1d5db" }}><Users size={28} /></div>}
                         </div>
                         {/* Checkbox */}
@@ -1663,7 +1663,7 @@ export default function OrdersPage() {
                       </div>
                       <div>
                         <div style={{ width: 40, height: 52, borderRadius: 8, overflow: "hidden", background: "#f3f4f6", border: `1px solid ${borderColor}` }}>
-                          {clean(primaryUrl) ? <img src={primaryUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "#d1d5db" }}><Users size={14} /></div>}
+                          {clean(primaryUrl) ? <img loading="lazy" src={primaryUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "#d1d5db" }}><Users size={14} /></div>}
                         </div>
                       </div>
                       <div>
@@ -1731,7 +1731,7 @@ export default function OrdersPage() {
                             }}
                           >
                             {clean(primaryImageUrl) ? (
-                              <img src={primaryImageUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                              <img loading="lazy" src={primaryImageUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                             ) : (
                               <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "#9ca3af" }}>
                                 <Users size={26} />
@@ -1859,7 +1859,7 @@ export default function OrdersPage() {
                                   {imageUrls.map((url, index) => (
                                     <div key={`${group.key}-photo-${index}`} style={{ background: "#fff", border: `1px solid ${borderColor}`, borderRadius: 14, padding: 8 }}>
                                       <div style={{ width: "100%", aspectRatio: "3 / 4", overflow: "hidden", borderRadius: 10, background: "#f3f4f6", marginBottom: 6 }}>
-                                        <img src={url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                                        <img loading="lazy" src={url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                                       </div>
                                       <div style={{ fontSize: 11, color: textMuted, lineHeight: 1.35, wordBreak: "break-word" }}>{fileNameFromUrl(url, `photo-${index + 1}.jpg`)}</div>
                                     </div>
@@ -1869,7 +1869,7 @@ export default function OrdersPage() {
                                 <div style={{ display: "flex", alignItems: "center", gap: 8, overflow: "hidden" }}>
                                   {imageUrls.slice(0, 4).map((url, index) => (
                                     <div key={`${group.key}-photo-preview-${index}`} style={{ width: 46, height: 58, borderRadius: 10, overflow: "hidden", border: `1px solid ${borderColor}`, background: "#fff", flexShrink: 0 }}>
-                                      <img src={url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                                      <img loading="lazy" src={url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                                     </div>
                                   ))}
                                   {imageUrls.length > 4 ? (
@@ -2008,7 +2008,7 @@ export default function OrdersPage() {
                       <div style={{ width: 140, flexShrink: 0 }}>
                         <div style={{ width: 140, height: 180, borderRadius: 4, overflow: "hidden", border: `1px solid ${borderColor}`, background: "#f5f5f5" }}>
                           {photoGroup.url ? (
-                            <img src={photoGroup.url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                            <img loading="lazy" src={photoGroup.url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                           ) : (
                             <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "#ccc" }}>
                               <ImageIcon size={28} />
@@ -2194,7 +2194,7 @@ export default function OrdersPage() {
                       />
                       {item.sku ? (
                         <div style={{ marginTop: 10 }}>
-                          <img src={item.sku} alt="" style={{ width: 72, height: 92, objectFit: "cover", borderRadius: 10, border: `1px solid ${borderColor}` }} onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
+                          <img loading="lazy" src={item.sku} alt="" style={{ width: 72, height: 92, objectFit: "cover", borderRadius: 10, border: `1px solid ${borderColor}` }} onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
                         </div>
                       ) : null}
                     </div>
@@ -2321,7 +2321,7 @@ export default function OrdersPage() {
                         {/* Email header */}
                         <div style={{ background: "#111", padding: "20px 24px", textAlign: "center" }}>
                           {photographerBranding.logoUrl ? (
-                            <img src={photographerBranding.logoUrl} alt={photographerBranding.businessName || "Studio"} style={{ maxHeight: 44, maxWidth: 180 }} />
+                            <img loading="lazy" src={photographerBranding.logoUrl} alt={photographerBranding.businessName || "Studio"} style={{ maxHeight: 44, maxWidth: 180 }} />
                           ) : (
                             <div style={{ fontSize: 18, fontWeight: 900, color: "#fff" }}>{photographerBranding.businessName || "Studio OS"}</div>
                           )}

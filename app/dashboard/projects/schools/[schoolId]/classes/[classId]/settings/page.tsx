@@ -37,6 +37,7 @@ type ExtraSettings = {
   freeDigitalResolution: "original" | "large" | "web";
   freeDigitalDownloadLimit: "unlimited" | "10" | "5" | "1";
   showDownloadAllButton: boolean;
+  showProofWatermark: boolean;
   watermarkDownloads: boolean;
   includePrintRelease: boolean;
   enableStore: boolean;
@@ -67,6 +68,7 @@ const defaultExtras: ExtraSettings = {
   freeDigitalResolution: "original",
   freeDigitalDownloadLimit: "unlimited",
   showDownloadAllButton: false,
+  showProofWatermark: true,
   watermarkDownloads: false,
   includePrintRelease: false,
   enableStore: true,
@@ -717,6 +719,18 @@ export default function ClassSettingsPage() {
                           checked={extras.showDownloadAllButton}
                           onChange={(value) =>
                             handleExtrasChange("showDownloadAllButton", value)
+                          }
+                        />
+                      </div>
+
+                      <div className="flex items-center justify-between border-t border-neutral-200 pt-4">
+                        <label className="text-sm font-medium text-neutral-700">
+                          Show Proof Watermark in Gallery
+                        </label>
+                        <Toggle
+                          checked={extras.showProofWatermark}
+                          onChange={(value) =>
+                            handleExtrasChange("showProofWatermark", value)
                           }
                         />
                       </div>

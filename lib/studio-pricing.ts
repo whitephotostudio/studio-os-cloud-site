@@ -72,7 +72,7 @@ export const PLAN_DEFS: Record<PlanCode, PlanDefinition> = {
       annualizedCents(coreMonthly, ANNUAL_DISCOUNT_PERCENT),
     ),
     description:
-      "Unlock the Studio OS app with 1 photography key, school workflow tools, backdrop tools, collages, and roster conversion.",
+      "Unlock the Studio OS app with 1 photography key, direct camera tethering, school workflow tools, backdrop tools, collages, and roster conversion.",
     usageFeeApplies: true,
     usageRateCents: envInt("STRIPE_CORE_ORDER_USAGE_RATE_CENTS", 35),
     includedDesktopKeys: 1,
@@ -89,7 +89,7 @@ export const PLAN_DEFS: Record<PlanCode, PlanDefinition> = {
       annualizedCents(studioMonthly, ANNUAL_DISCOUNT_PERCENT),
     ),
     description:
-      "Everything in App Plan with 2 photography keys, advanced school tools, and the only plan that can add extra keys.",
+      "Everything in App Plan with 2 photography keys, direct camera tethering, advanced school tools, and the only plan that can add extra keys.",
     usageFeeApplies: true,
     usageRateCents: envInt("STRIPE_STUDIO_ORDER_USAGE_RATE_CENTS", 25),
     includedDesktopKeys: 2,

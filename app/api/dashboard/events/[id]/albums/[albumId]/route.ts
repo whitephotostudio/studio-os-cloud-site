@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createDashboardServiceClient, resolveDashboardAuth } from "@/lib/dashboard-auth";
+import { buildStoredMediaUrls } from "@/lib/storage-images";
 
 export const dynamic = "force-dynamic";
 
@@ -109,11 +110,25 @@ export async function GET(
 
     if (mediaError) throw mediaError;
 
+    const normalizedMedia = (mediaData ?? []).map((row) => {
+      const mediaUrls = buildStoredMediaUrls({
+        storagePath: row.storage_path,
+        previewUrl: row.preview_url,
+        thumbnailUrl: row.thumbnail_url,
+      });
+
+      return {
+        ...row,
+        preview_url: mediaUrls.previewUrl || null,
+        thumbnail_url: mediaUrls.thumbnailUrl || null,
+      };
+    });
+
     return NextResponse.json({
       ok: true,
       project: projectData,
       album: albumData,
-      media: mediaData ?? [],
+      media: normalizedMedia,
     });
   } catch (error) {
     return NextResponse.json(

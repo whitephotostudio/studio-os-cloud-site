@@ -25,6 +25,10 @@ import {
   ensureSchoolCollectionId,
   findSyncedSchoolProjectId,
 } from "@/lib/school-sync";
+import {
+  buildStoredMediaUrls,
+  extractStoragePathFromSupabaseUrl,
+} from "@/lib/storage-images";
 
 type School = {
   id: string;
@@ -70,14 +74,7 @@ function fullNameOf(student: Student) {
 }
 
 function extractObjectPathFromPublicUrl(url: string): string | null {
-  try {
-    const marker = "/storage/v1/object/public/thumbs/";
-    const idx = url.indexOf(marker);
-    if (idx === -1) return null;
-    return decodeURIComponent(url.substring(idx + marker.length));
-  } catch {
-    return null;
-  }
+  return extractStoragePathFromSupabaseUrl(url);
 }
 
 function extractFolderPathFromPublicUrl(url: string): string | null {
@@ -116,7 +113,11 @@ function assetFromPublicUrl(url: string): UploadedStudentAsset | null {
   );
   return {
     storagePath,
-    publicUrl: url,
+    publicUrl:
+      buildStoredMediaUrls({
+        storagePath,
+        previewUrl: url,
+      }).previewUrl || url,
     filename,
     mimeType: null,
   };
@@ -183,7 +184,12 @@ export default function SchoolsSchoolClassPage() {
     const urls = files
       .filter((file) => !!file.name && /\.(png|jpg|jpeg|webp)$/i.test(file.name))
       .sort((a, b) => naturalCompare(a.name, b.name))
-      .map((file) => supabase.storage.from("thumbs").getPublicUrl(`${folderPath}/${file.name}`).data.publicUrl);
+      .map((file) =>
+        buildStoredMediaUrls({
+          storagePath: `${folderPath}/${file.name}`,
+        }).previewUrl,
+      )
+      .filter(Boolean);
 
     folderImagesCacheRef.current.set(folderPath, urls);
     return urls;
@@ -238,7 +244,20 @@ export default function SchoolsSchoolClassPage() {
 
         if (err) throw err;
 
-        let loaded = (rows ?? []) as Student[];
+        let loaded = ((rows ?? []) as Student[]).map((student) => {
+          const storagePath = extractObjectPathFromPublicUrl(clean(student.photo_url));
+          const previewUrl = storagePath
+            ? buildStoredMediaUrls({
+                storagePath,
+                previewUrl: student.photo_url,
+              }).previewUrl
+            : clean(student.photo_url);
+
+          return {
+            ...student,
+            photo_url: previewUrl || student.photo_url,
+          };
+        });
         const urlMap: Record<string, string[]> = {};
 
         const studentsByFolder = new Map<string, Student[]>();
@@ -466,9 +485,7 @@ export default function SchoolsSchoolClassPage() {
           throw new Error(uploadError.message || "Photo upload failed.");
         }
 
-        const publicUrl = supabase.storage
-          .from("thumbs")
-          .getPublicUrl(storagePath).data.publicUrl;
+        const publicUrl = buildStoredMediaUrls({ storagePath }).previewUrl;
         if (clean(publicUrl)) {
           uploadedAssets.push({
             storagePath,

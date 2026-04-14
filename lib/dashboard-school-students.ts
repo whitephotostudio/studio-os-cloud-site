@@ -3,6 +3,10 @@ import {
   appendSchoolMediaRows,
   ensureSchoolCollectionId,
 } from "@/lib/school-sync";
+import {
+  buildStoredMediaUrls,
+  extractStoragePathFromSupabaseUrl,
+} from "@/lib/storage-images";
 
 type SupabaseClientLike = SupabaseClient;
 
@@ -57,14 +61,7 @@ export function safeStorageSegment(value: string, fallback: string) {
 }
 
 function extractObjectPathFromPublicUrl(url: string) {
-  try {
-    const marker = "/storage/v1/object/public/thumbs/";
-    const idx = url.indexOf(marker);
-    if (idx === -1) return null;
-    return decodeURIComponent(url.substring(idx + marker.length));
-  } catch {
-    return null;
-  }
+  return extractStoragePathFromSupabaseUrl(url);
 }
 
 export function extractFolderPathFromPublicUrl(url: string) {
@@ -75,14 +72,38 @@ export function extractFolderPathFromPublicUrl(url: string) {
   return objectPath.substring(0, lastSlash);
 }
 
+/** Maximum file size per upload: 25 MB */
+export const MAX_UPLOAD_FILE_SIZE = 25 * 1024 * 1024;
+
+/** Maximum number of files per upload request */
+export const MAX_UPLOAD_FILE_COUNT = 50;
+
 export function collectImageFiles(formData: FormData, key = "photos") {
-  return formData
+  const files = formData
     .getAll(key)
     .filter((value): value is File => value instanceof File && value.size > 0)
     .filter(
       (file) =>
         file.type.startsWith("image/") || /\.(png|jpg|jpeg|webp)$/i.test(file.name),
     );
+
+  // Enforce per-file size limit
+  const oversized = files.find((f) => f.size > MAX_UPLOAD_FILE_SIZE);
+  if (oversized) {
+    const sizeMB = (oversized.size / (1024 * 1024)).toFixed(1);
+    throw new Error(
+      `File "${oversized.name}" is ${sizeMB} MB — exceeds the 25 MB limit.`,
+    );
+  }
+
+  // Enforce file count limit
+  if (files.length > MAX_UPLOAD_FILE_COUNT) {
+    throw new Error(
+      `Too many files (${files.length}). Please upload at most ${MAX_UPLOAD_FILE_COUNT} at a time.`,
+    );
+  }
+
+  return files;
 }
 
 export async function loadOwnedSchool(params: {
@@ -167,9 +188,8 @@ export async function uploadStudentAssets(params: {
         throw new Error(uploadError.message || "Photo upload failed.");
       }
 
-      const publicUrl = params.service.storage
-        .from("thumbs")
-        .getPublicUrl(storagePath).data.publicUrl;
+      const mediaUrls = buildStoredMediaUrls({ storagePath });
+      const publicUrl = mediaUrls.previewUrl;
 
       if (clean(publicUrl)) {
         uploadedAssets.push({
@@ -238,7 +258,10 @@ export function storageFilePublicUrl(
   folderPath: string,
   file: { name: string },
 ) {
-  return service.storage
-    .from("thumbs")
-    .getPublicUrl(`${folderPath}/${file.name}`).data.publicUrl;
+  void service;
+  return (
+    buildStoredMediaUrls({
+      storagePath: `${folderPath}/${file.name}`,
+    }).previewUrl || ""
+  );
 }

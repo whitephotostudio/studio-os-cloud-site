@@ -27,6 +27,7 @@ import {
   type EventGalleryLinkedContact,
   type EventGalleryShareSettings,
 } from "@/lib/event-gallery-settings";
+import { resolvePackageProfileId } from "@/lib/package-profile-selection";
 
 type ProjectRow = Record<string, unknown>;
 type PackageProfileRow = {
@@ -559,6 +560,7 @@ export default function ProjectSettingsPage() {
     ]);
 
     let nextPackageProfiles: PackageProfileRow[] = [];
+    let nextPackageProfilePackages: PackageProfilePackageRow[] = [];
 
     if (projectData?.photographer_id) {
       const [profileResult, packagesResult] = await Promise.all([
@@ -576,6 +578,7 @@ export default function ProjectSettingsPage() {
 
       const rawProfiles = (profileResult.data ?? []) as PackageProfileRow[];
       const rawPackages = (packagesResult.data ?? []) as PackageProfilePackageRow[];
+      nextPackageProfilePackages = rawPackages;
       const seenProfileIds = new Set(
         rawProfiles.map((profile) => profile.id).filter(Boolean),
       );
@@ -603,7 +606,18 @@ export default function ProjectSettingsPage() {
       setShootDate(projectData.shoot_date || projectData.event_date || "");
       setOrderDueDate(projectData.order_due_date || "");
       setExpirationDate(projectData.expiration_date || "");
-      setPackageProfileId(projectData.package_profile_id || "");
+      const normalizedStoredSettings = normalizeEventGallerySettings(
+        projectData.gallery_settings,
+      );
+      setPackageProfileId(
+        resolvePackageProfileId({
+          selectedProfileId:
+            (projectData.package_profile_id as string | null | undefined) ||
+            normalizedStoredSettings.extras.priceSheetProfileId,
+          packageProfiles: nextPackageProfiles,
+          packages: nextPackageProfilePackages,
+        }) || "",
+      );
       setEmailRequired(Boolean(projectData.email_required));
       setCheckoutContactRequired(Boolean(projectData.checkout_contact_required));
       setInternalNotes(projectData.internal_notes || "");
@@ -617,7 +631,7 @@ export default function ProjectSettingsPage() {
         Object.keys(projectData.gallery_settings).length > 0;
 
       if (hasPersistedGallerySettings) {
-        const normalized = normalizeEventGallerySettings(projectData.gallery_settings);
+        const normalized = normalizedStoredSettings;
         setGalleryLanguage(normalized.galleryLanguage);
         setExtras(normalized.extras);
         setBranding(normalized.branding);
@@ -681,7 +695,10 @@ export default function ProjectSettingsPage() {
       access_updated_source: 'cloud',
       gallery_settings: normalizeEventGallerySettings({
         galleryLanguage,
-        extras,
+        extras: {
+          ...extras,
+          priceSheetProfileId: packageProfileId || "",
+        },
         branding,
         linkedContacts,
         share,
@@ -1545,6 +1562,12 @@ export default function ProjectSettingsPage() {
                         ) : null}
                       </div>
                     ) : null}
+                    <ToggleRow
+                      title="Show proof watermark in gallery"
+                      description="Control whether clients see your proof watermark while viewing this gallery. Downloaded files stay clean unless the download watermark switch below is turned on."
+                      checked={extras.showProofWatermark}
+                      onChange={(next) => setExtra("showProofWatermark", next)}
+                    />
                     <ToggleRow title='Show "Download All" button in gallery' checked={extras.showDownloadAllButton} onChange={(next) => setExtra("showDownloadAllButton", next)} />
                     {extras.showDownloadAllButton ? (
                       <>
@@ -1573,7 +1596,12 @@ export default function ProjectSettingsPage() {
                     {extras.allowClientFavoriteDownloads ? (
                       <ToggleRow title='Require a paid "All Digitals" order first' description="Only unlock favorite downloads after this visitor has purchased the gallery's full digital set." checked={extras.favoriteDownloadsRequireAllDigitalsPurchase} onChange={(next) => setExtra("favoriteDownloadsRequireAllDigitalsPurchase", next)} />
                     ) : null}
-                    <ToggleRow title="Apply a watermark to the downloaded files" checked={extras.watermarkDownloads} onChange={(next) => setExtra("watermarkDownloads", next)} />
+                    <ToggleRow
+                      title="Apply a watermark to the downloaded files"
+                      description="Turn this on only if you want the actual downloaded JPGs to include the logo. Leave it off to deliver clean digital files."
+                      checked={extras.watermarkDownloads}
+                      onChange={(next) => setExtra("watermarkDownloads", next)}
+                    />
                     <ToggleRow title="Include a Print Release" checked={extras.includePrintRelease} onChange={(next) => setExtra("includePrintRelease", next)} />
                   </Card>
                 </div>

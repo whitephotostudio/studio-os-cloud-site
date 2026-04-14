@@ -113,6 +113,12 @@ type StripeStatus = {
     expMonth: number;
     expYear: number;
   } | null;
+  trialStartsAt?: string | null;
+  trialEndsAt?: string | null;
+  trialActive?: boolean;
+  trialExpired?: boolean;
+  trialDaysRemaining?: number;
+  freeTrialDays?: number;
   warnings?: string[];
   message?: string;
 };
@@ -338,6 +344,9 @@ export default function SettingsPage() {
     useState<BillingInterval>("month");
   const [subscriptionStatus, setSubscriptionStatus] = useState("inactive");
   const [subscriptionIsActive, setSubscriptionIsActive] = useState(false);
+  const [trialActive, setTrialActive] = useState(false);
+  const [trialDaysRemaining, setTrialDaysRemaining] = useState(0);
+  const [trialEndsAt, setTrialEndsAt] = useState<string | null>(null);
   const [subscriptionCurrentPeriodStart, setSubscriptionCurrentPeriodStart] = useState<string | null>(null);
   const [subscriptionCurrentPeriodEnd, setSubscriptionCurrentPeriodEnd] = useState<string | null>(null);
   const [extraDesktopKeys, setExtraDesktopKeys] = useState(0);
@@ -425,12 +434,22 @@ export default function SettingsPage() {
       setSignedIn(Boolean(session?.user));
       setSessionReady(Boolean(token));
 
-      const res = await fetch("/api/stripe/status", {
-        method: "GET",
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-        credentials: "include",
-        cache: "no-store",
-      });
+      // Fetch Stripe status and Studio App status in parallel
+      const authHeaders: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
+      const [res, studioAppRes] = await Promise.all([
+        fetch("/api/stripe/status", {
+          method: "GET",
+          headers: authHeaders,
+          credentials: "include",
+          cache: "no-store",
+        }),
+        fetch("/api/studio-os-app/status", {
+          method: "GET",
+          headers: authHeaders,
+          credentials: "include",
+          cache: "no-store",
+        }).catch(() => null),
+      ]);
 
       const json: StripeStatus = await res.json();
 
@@ -476,6 +495,9 @@ export default function SettingsPage() {
       );
       setSubscriptionStatus(json.subscriptionStatus || "inactive");
       setSubscriptionIsActive(Boolean(json.subscriptionIsActive));
+      setTrialActive(Boolean(json.trialActive));
+      setTrialDaysRemaining(json.trialDaysRemaining ?? 0);
+      setTrialEndsAt(json.trialEndsAt || null);
       setSubscriptionCurrentPeriodStart(json.subscriptionCurrentPeriodStart || null);
       setSubscriptionCurrentPeriodEnd(json.subscriptionCurrentPeriodEnd || null);
       setExtraDesktopKeys(json.extraDesktopKeys ?? 0);
@@ -500,7 +522,25 @@ export default function SettingsPage() {
         (json.subscriptionBillingInterval || "month") as BillingInterval,
       );
       setDesiredExtraDesktopKeys(json.extraDesktopKeys ?? 0);
-      await loadStudioAppStatus(token);
+
+      // Apply Studio App status from parallel fetch
+      if (studioAppRes && studioAppRes.ok) {
+        try {
+          const studioJson = (await studioAppRes.json().catch(() => ({}))) as StudioAppStatus;
+          if (studioJson.ok) {
+            applyStudioAppStatus(studioJson);
+            setStudioAppError(null);
+          } else {
+            setStudioApp(emptyStudioAppStatus);
+            setStudioAppError(studioJson.message || "Unable to load Studio OS App beta access.");
+          }
+        } catch {
+          setStudioApp(emptyStudioAppStatus);
+        }
+      } else {
+        setStudioApp(emptyStudioAppStatus);
+        setStudioAppError("Unable to load Studio OS App beta access.");
+      }
 
       const params = new URLSearchParams(window.location.search);
       if (params.get("stripe") === "returned") {
@@ -535,6 +575,12 @@ export default function SettingsPage() {
   async function handleLogoUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
+
+    // Client-side file size validation (5 MB for logos)
+    if (file.size > 5 * 1024 * 1024) {
+      setError("Logo file is too large. Please choose an image under 5 MB.");
+      return;
+    }
 
     setUploadingLogo(true);
     setError(null);
@@ -1661,9 +1707,17 @@ export default function SettingsPage() {
               <div style={{ marginTop: 14, borderRadius: 14, border: "1px solid #bfdbfe", background: "#eff6ff", color: "#1d4ed8", padding: "12px 14px", lineHeight: 1.6, fontWeight: 700 }}>
                 This is the platform owner account, so billing stays free here. Use a separate non-owner photographer account when you want to test the paid Studio OS subscription flow.
               </div>
-            ) : showTrialInfo ? (
+            ) : showTrialInfo || trialActive ? (
               <div style={{ marginTop: 14, borderRadius: 14, border: "1px solid #bfdbfe", background: "#eff6ff", color: "#1d4ed8", padding: "12px 14px", lineHeight: 1.6, fontWeight: 700 }}>
-                Trial access is active. Connected checkout already works, but you should start a paid subscription before the trial ends to keep Studio OS features running without interruption.
+                {trialActive ? (
+                  <>
+                    Free trial active — <strong>{trialDaysRemaining} day{trialDaysRemaining === 1 ? "" : "s"} remaining</strong>
+                    {trialEndsAt ? ` (ends ${new Date(trialEndsAt).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })})` : ""}.
+                    {" "}Start a paid subscription before your trial ends to keep Studio OS features running without interruption.
+                  </>
+                ) : (
+                  <>Trial access is active. Connected checkout already works, but you should start a paid subscription before the trial ends to keep Studio OS features running without interruption.</>
+                )}
               </div>
             ) : null}
 
@@ -1866,9 +1920,7 @@ export default function SettingsPage() {
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 18 }}>
               {studioApp.release.macDownloadUrl && studioApp.entitlement.canDownload ? (
                 <a
-                  href={studioApp.release.macDownloadUrl}
-                  target="_blank"
-                  rel="noreferrer"
+                  href="/api/studio-os-app/download?platform=mac"
                   style={{
                     border: "1px solid #0f172a",
                     borderRadius: 18,
@@ -1908,9 +1960,7 @@ export default function SettingsPage() {
 
               {studioApp.release.windowsDownloadUrl && studioApp.entitlement.canDownload ? (
                 <a
-                  href={studioApp.release.windowsDownloadUrl}
-                  target="_blank"
-                  rel="noreferrer"
+                  href="/api/studio-os-app/download?platform=windows"
                   style={{
                     border: "1px solid #2563eb",
                     borderRadius: 18,
@@ -1928,24 +1978,39 @@ export default function SettingsPage() {
                   <Download size={16} /> Download Windows App
                 </a>
               ) : (
-                <button
-                  type="button"
-                  disabled
-                  style={{
-                    border: "1px solid #d6dfef",
-                    borderRadius: 18,
-                    background: "#f8fafc",
-                    padding: "14px 18px",
-                    fontWeight: 800,
-                    color: "#94a3b8",
-                    display: "inline-flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    gap: 10,
-                  }}
-                >
-                  <Download size={16} /> Windows Download
-                </button>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  <button
+                    type="button"
+                    disabled
+                    style={{
+                      border: "1px solid #d6dfef",
+                      borderRadius: 18,
+                      background: "#f8fafc",
+                      padding: "14px 18px",
+                      fontWeight: 800,
+                      color: "#94a3b8",
+                      display: "inline-flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      gap: 10,
+                      width: "100%",
+                    }}
+                  >
+                    <Download size={16} /> Windows Download
+                  </button>
+                  <div
+                    style={{
+                      textAlign: "center",
+                      fontSize: 12,
+                      fontWeight: 700,
+                      color: "#94a3b8",
+                      letterSpacing: "0.04em",
+                      textTransform: "uppercase",
+                    }}
+                  >
+                    Coming soon
+                  </div>
+                </div>
               )}
             </div>
 
@@ -2154,6 +2219,16 @@ export default function SettingsPage() {
                 />
               </div>
 
+              <div style={{ marginTop: 12, borderRadius: 16, border: "1px solid #d6dfef", background: "#f8fafc", padding: "12px 14px", color: "#475569", lineHeight: 1.7, fontSize: 14 }}>
+                For private Supabase Storage files, paste the bucket path in this format:
+                <br />
+                <span style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", fontWeight: 700, color: "#0f172a" }}>
+                  storage://studio-os-downloads/Studio OS.zip
+                </span>
+                <br />
+                The dashboard download button will route through a protected server check before creating a short-lived download link.
+              </div>
+
               <label style={{ display: "block", marginTop: 14 }}>
                 <div style={{ marginBottom: 8, fontSize: 13, fontWeight: 700, color: "#475569" }}>
                   Release notes
@@ -2279,6 +2354,395 @@ export default function SettingsPage() {
           </div>
         ) : null}
 
+        {/* ── Two-Factor Authentication ────────────────────────────── */}
+        <MfaSection accessToken={accessToken} sessionReady={sessionReady} />
+
+      </div>
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════════ */
+/*  Two-Factor Authentication Section                                 */
+/* ═══════════════════════════════════════════════════════════════════ */
+
+function MfaSection({
+  accessToken,
+  sessionReady,
+}: {
+  accessToken: string | null;
+  sessionReady: boolean;
+}) {
+  const [mfaEnabled, setMfaEnabled] = useState(false);
+  const [factors, setFactors] = useState<
+    Array<{ id: string; friendlyName: string; status: string; createdAt: string }>
+  >([]);
+  const [mfaLoading, setMfaLoading] = useState(true);
+  const [mfaMessage, setMfaMessage] = useState("");
+  const [mfaError, setMfaError] = useState("");
+
+  // Enrollment state
+  const [enrolling, setEnrolling] = useState(false);
+  const [enrollFactorId, setEnrollFactorId] = useState("");
+  const [enrollQrUri, setEnrollQrUri] = useState("");
+  const [enrollSecret, setEnrollSecret] = useState("");
+  const [verifyCode, setVerifyCode] = useState("");
+  const [verifying, setVerifying] = useState(false);
+  const [unenrolling, setUnenrolling] = useState(false);
+
+  const cardStyle: React.CSSProperties = {
+    borderRadius: 28,
+    border: "1px solid #d6dfef",
+    background: "#fff",
+    padding: "28px 28px",
+    boxShadow: "0 1px 2px rgba(0,0,0,0.04)",
+  };
+
+  const loadMfaStatus = useCallback(async () => {
+    try {
+      setMfaLoading(true);
+      const res = await fetch("/api/dashboard/mfa", {
+        method: "GET",
+        headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : {},
+        credentials: "include",
+        cache: "no-store",
+      });
+
+      const json = await res.json();
+      if (res.ok && json.ok) {
+        setFactors(json.factors ?? []);
+        setMfaEnabled(json.mfaEnabled ?? false);
+      }
+    } catch {
+      // Silently fail — MFA is optional
+    } finally {
+      setMfaLoading(false);
+    }
+  }, [accessToken]);
+
+  useEffect(() => {
+    if (sessionReady) void loadMfaStatus();
+  }, [sessionReady, loadMfaStatus]);
+
+  async function handleEnroll() {
+    setEnrolling(true);
+    setMfaError("");
+    setMfaMessage("");
+
+    try {
+      const res = await fetch("/api/dashboard/mfa", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+        },
+        credentials: "include",
+        body: JSON.stringify({ action: "enroll" }),
+      });
+
+      const json = await res.json();
+      if (!res.ok || !json.ok) {
+        setMfaError(json.message || "Failed to start enrollment.");
+        setEnrolling(false);
+        return;
+      }
+
+      setEnrollFactorId(json.factorId);
+      setEnrollQrUri(json.qrUri);
+      setEnrollSecret(json.secret);
+    } catch {
+      setMfaError("Failed to start enrollment.");
+      setEnrolling(false);
+    }
+  }
+
+  async function handleVerifyEnrollment() {
+    setVerifying(true);
+    setMfaError("");
+
+    try {
+      const res = await fetch("/api/dashboard/mfa", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+        },
+        credentials: "include",
+        body: JSON.stringify({
+          action: "verify",
+          factorId: enrollFactorId,
+          code: verifyCode.trim(),
+        }),
+      });
+
+      const json = await res.json();
+      if (!res.ok || !json.ok) {
+        setMfaError(json.message || "Verification failed.");
+        setVerifyCode("");
+        setVerifying(false);
+        return;
+      }
+
+      setMfaMessage("Two-factor authentication enabled successfully.");
+      setEnrolling(false);
+      setEnrollFactorId("");
+      setEnrollQrUri("");
+      setEnrollSecret("");
+      setVerifyCode("");
+      setVerifying(false);
+      void loadMfaStatus();
+    } catch {
+      setMfaError("Verification failed.");
+      setVerifying(false);
+    }
+  }
+
+  async function handleUnenroll(factorId: string) {
+    if (!confirm("Are you sure you want to disable two-factor authentication?")) return;
+
+    setUnenrolling(true);
+    setMfaError("");
+    setMfaMessage("");
+
+    try {
+      const res = await fetch("/api/dashboard/mfa", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+        },
+        credentials: "include",
+        body: JSON.stringify({ action: "unenroll", factorId }),
+      });
+
+      const json = await res.json();
+      if (!res.ok || !json.ok) {
+        setMfaError(json.message || "Failed to disable 2FA.");
+        setUnenrolling(false);
+        return;
+      }
+
+      setMfaMessage("Two-factor authentication has been disabled.");
+      setUnenrolling(false);
+      void loadMfaStatus();
+    } catch {
+      setMfaError("Failed to disable 2FA.");
+      setUnenrolling(false);
+    }
+  }
+
+  if (mfaLoading) return null;
+
+  return (
+    <div style={{ marginTop: 20 }}>
+      <div style={{ ...cardStyle, background: "#fefff8" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 18 }}>
+          <div style={{ width: 54, height: 54, borderRadius: 16, background: "#ecfdf5", display: "grid", placeItems: "center" }}>
+            <ShieldCheck size={24} color="#059669" />
+          </div>
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 800, letterSpacing: "0.14em", textTransform: "uppercase", color: "#64748b" }}>
+              Account security
+            </div>
+            <div style={{ fontSize: 20, fontWeight: 900, color: "#0f172a", marginTop: 2 }}>
+              Two-factor authentication
+            </div>
+          </div>
+        </div>
+
+        {mfaMessage ? (
+          <div style={{ borderRadius: 16, border: "1px solid #86efac", background: "#f0fdf4", color: "#166534", padding: "12px 16px", marginBottom: 14, fontWeight: 700 }}>
+            {mfaMessage}
+          </div>
+        ) : null}
+
+        {mfaError ? (
+          <div style={{ borderRadius: 16, border: "1px solid #fca5a5", background: "#fef2f2", color: "#991b1b", padding: "12px 16px", marginBottom: 14, fontWeight: 700 }}>
+            {mfaError}
+          </div>
+        ) : null}
+
+        {mfaEnabled && !enrolling ? (
+          <>
+            <div style={{ borderRadius: 16, border: "1px solid #d6dfef", background: "#fff", padding: "14px 16px", marginBottom: 12 }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <div>
+                  <div style={{ fontWeight: 800, color: "#0f172a" }}>Authenticator app</div>
+                  <div style={{ fontSize: 13, color: "#64748b", marginTop: 2 }}>
+                    Two-factor authentication is <strong style={{ color: "#059669" }}>enabled</strong>
+                  </div>
+                </div>
+                <button
+                  onClick={() => {
+                    const factor = factors.find((f) => f.status === "verified");
+                    if (factor) handleUnenroll(factor.id);
+                  }}
+                  disabled={unenrolling}
+                  style={{
+                    border: "1px solid #fca5a5",
+                    borderRadius: 14,
+                    background: "#fff",
+                    color: "#dc2626",
+                    padding: "10px 16px",
+                    fontWeight: 800,
+                    cursor: unenrolling ? "not-allowed" : "pointer",
+                    opacity: unenrolling ? 0.6 : 1,
+                    fontSize: 13,
+                  }}
+                >
+                  {unenrolling ? "Disabling..." : "Disable 2FA"}
+                </button>
+              </div>
+            </div>
+            <div style={{ color: "#64748b", lineHeight: 1.7, fontSize: 14 }}>
+              Your account is protected with two-factor authentication. You will be asked for a verification code each time you sign in.
+            </div>
+          </>
+        ) : enrolling && enrollQrUri ? (
+          <>
+            <div style={{ borderRadius: 16, border: "1px solid #d6dfef", background: "#fff", padding: "20px", marginBottom: 14 }}>
+              <div style={{ fontWeight: 800, color: "#0f172a", marginBottom: 8 }}>
+                Step 1: Scan QR code
+              </div>
+              <div style={{ fontSize: 14, color: "#64748b", marginBottom: 14 }}>
+                Open your authenticator app (Google Authenticator, 1Password, Authy, etc.) and scan the QR code below.
+              </div>
+              <div style={{ display: "flex", justifyContent: "center", padding: 16 }}>
+                {/* Render QR code as an img using a QR code API */}
+                <img
+                  loading="lazy"
+                  src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(enrollQrUri)}`}
+                  alt="Scan this QR code with your authenticator app"
+                  width={200}
+                  height={200}
+                  style={{ borderRadius: 12 }}
+                />
+              </div>
+              <div style={{ marginTop: 8, textAlign: "center" }}>
+                <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 4 }}>
+                  Or enter this secret manually:
+                </div>
+                <code style={{
+                  fontSize: 13,
+                  fontWeight: 700,
+                  background: "#f1f5f9",
+                  padding: "6px 12px",
+                  borderRadius: 8,
+                  letterSpacing: "0.08em",
+                  userSelect: "all",
+                  wordBreak: "break-all",
+                }}>
+                  {enrollSecret}
+                </code>
+              </div>
+            </div>
+
+            <div style={{ borderRadius: 16, border: "1px solid #d6dfef", background: "#fff", padding: "20px", marginBottom: 14 }}>
+              <div style={{ fontWeight: 800, color: "#0f172a", marginBottom: 8 }}>
+                Step 2: Enter verification code
+              </div>
+              <div style={{ fontSize: 14, color: "#64748b", marginBottom: 14 }}>
+                Enter the 6-digit code shown in your authenticator app.
+              </div>
+              <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  maxLength={6}
+                  value={verifyCode}
+                  onChange={(e) => {
+                    const val = e.target.value.replace(/\D/g, "").slice(0, 6);
+                    setVerifyCode(val);
+                  }}
+                  placeholder="000000"
+                  style={{
+                    flex: 1,
+                    borderRadius: 14,
+                    border: "1px solid #d6dfef",
+                    padding: "12px 16px",
+                    fontSize: 18,
+                    fontWeight: 700,
+                    textAlign: "center",
+                    letterSpacing: "0.3em",
+                    outline: "none",
+                  }}
+                />
+                <button
+                  onClick={handleVerifyEnrollment}
+                  disabled={verifying || verifyCode.length !== 6}
+                  style={{
+                    border: "1px solid #0f172a",
+                    borderRadius: 14,
+                    background: "#0f172a",
+                    color: "#fff",
+                    padding: "12px 20px",
+                    fontWeight: 800,
+                    cursor: verifying || verifyCode.length !== 6 ? "not-allowed" : "pointer",
+                    opacity: verifying || verifyCode.length !== 6 ? 0.6 : 1,
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {verifying ? "Verifying..." : "Verify & Enable"}
+                </button>
+              </div>
+            </div>
+
+            <button
+              onClick={() => {
+                setEnrolling(false);
+                setEnrollFactorId("");
+                setEnrollQrUri("");
+                setEnrollSecret("");
+                setVerifyCode("");
+              }}
+              style={{
+                border: "none",
+                background: "none",
+                color: "#64748b",
+                fontWeight: 700,
+                cursor: "pointer",
+                fontSize: 14,
+                padding: "8px 0",
+              }}
+            >
+              Cancel enrollment
+            </button>
+          </>
+        ) : (
+          <>
+            <div style={{ borderRadius: 16, border: "1px solid #d6dfef", background: "#fff", padding: "14px 16px", marginBottom: 12 }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <div>
+                  <div style={{ fontWeight: 800, color: "#0f172a" }}>Authenticator app</div>
+                  <div style={{ fontSize: 13, color: "#64748b", marginTop: 2 }}>
+                    Two-factor authentication is <strong style={{ color: "#b91c1c" }}>not enabled</strong>
+                  </div>
+                </div>
+                <button
+                  onClick={handleEnroll}
+                  disabled={!sessionReady}
+                  style={{
+                    border: "1px solid #0f172a",
+                    borderRadius: 14,
+                    background: "#0f172a",
+                    color: "#fff",
+                    padding: "10px 16px",
+                    fontWeight: 800,
+                    cursor: sessionReady ? "pointer" : "not-allowed",
+                    opacity: sessionReady ? 1 : 0.6,
+                    fontSize: 13,
+                  }}
+                >
+                  Enable 2FA
+                </button>
+              </div>
+            </div>
+            <div style={{ color: "#64748b", lineHeight: 1.7, fontSize: 14 }}>
+              Add an extra layer of security to your account. When enabled, you will be required to enter a verification code from your authenticator app each time you sign in.
+            </div>
+          </>
+        )}
       </div>
     </div>
   );

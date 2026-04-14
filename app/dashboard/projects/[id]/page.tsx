@@ -281,18 +281,35 @@ export default function ProjectDetailPage() {
   const [deleteAlbumTitle, setDeleteAlbumTitle] = useState("");
   const [deleteAlbumIds, setDeleteAlbumIds] = useState<string[]>([]);
   const [deletingAlbum, setDeletingAlbum] = useState(false);
+  const [moreActionsOpen, setMoreActionsOpen] = useState(false);
+  const [generatingPasswords, setGeneratingPasswords] = useState(false);
 
   useEffect(() => {
     let mounted = true;
 
-    async function load() {
+    async function loadAll() {
       try {
         setLoading(true);
+        setFavoritesLoading(true);
         setError("");
-        const response = await fetch(`/api/dashboard/events/${projectId}`, {
-          method: "GET",
-          cache: "no-store",
-        });
+        setFavoritesError("");
+
+        // Fetch project data and favorites in parallel
+        const [response, favResponse] = await Promise.all([
+          fetch(`/api/dashboard/events/${projectId}`, {
+            method: "GET",
+            cache: "no-store",
+          }),
+          fetch(`/api/dashboard/events/${projectId}/favorites`, {
+            method: "GET",
+            cache: "no-store",
+          }).catch(() => null),
+        ]);
+
+        if (response.status === 401) {
+          window.location.href = "/sign-in";
+          return;
+        }
 
         const payload = (await response.json()) as {
           ok?: boolean;
@@ -307,11 +324,6 @@ export default function ProjectDetailPage() {
           galleriesCount?: number;
           albumsCount?: number;
         };
-
-        if (response.status === 401) {
-          window.location.href = "/sign-in";
-          return;
-        }
 
         if (!response.ok || payload.ok === false || !payload.project) {
           throw new Error(payload.message || "Failed to load project.");
@@ -352,62 +364,34 @@ export default function ProjectDetailPage() {
         setGalleriesCount(payload.galleriesCount ?? 0);
         setAlbumsCount(payload.albumsCount ?? 0);
         setLoading(false);
+
+        // Process favorites result from parallel fetch
+        if (favResponse && favResponse.ok) {
+          try {
+            const favPayload = (await favResponse.json()) as {
+              ok?: boolean;
+              message?: string;
+              summary?: FavoritesSummary;
+            };
+            if (mounted && favPayload.ok !== false) {
+              setFavoritesSummary(favPayload.summary ?? emptyFavoritesSummary());
+            }
+          } catch {
+            if (mounted) setFavoritesSummary(emptyFavoritesSummary());
+          }
+        } else {
+          if (mounted) setFavoritesSummary(emptyFavoritesSummary());
+        }
+        if (mounted) setFavoritesLoading(false);
       } catch (err) {
         if (!mounted) return;
         setError(err instanceof Error ? err.message : "Failed to load project.");
         setLoading(false);
-      }
-    }
-
-    void load();
-
-    return () => {
-      mounted = false;
-    };
-  }, [projectId]);
-
-  useEffect(() => {
-    let mounted = true;
-
-    async function loadFavorites() {
-      try {
-        setFavoritesLoading(true);
-        setFavoritesError("");
-
-        const response = await fetch(`/api/dashboard/events/${projectId}/favorites`, {
-          method: "GET",
-          cache: "no-store",
-        });
-
-        const payload = (await response.json()) as {
-          ok?: boolean;
-          message?: string;
-          summary?: FavoritesSummary;
-        };
-
-        if (response.status === 401) {
-          window.location.href = "/sign-in";
-          return;
-        }
-
-        if (!response.ok || payload.ok === false) {
-          throw new Error(payload.message || "Failed to load favorite activity.");
-        }
-
-        if (!mounted) return;
-        setFavoritesSummary(payload.summary ?? emptyFavoritesSummary());
-        setFavoritesLoading(false);
-      } catch (err) {
-        if (!mounted) return;
-        setFavoritesSummary(emptyFavoritesSummary());
-        setFavoritesError(
-          err instanceof Error ? err.message : "Failed to load favorite activity.",
-        );
         setFavoritesLoading(false);
       }
     }
 
-    if (projectId) void loadFavorites();
+    if (projectId) void loadAll();
 
     return () => {
       mounted = false;
@@ -845,6 +829,91 @@ export default function ProjectDetailPage() {
     }
   }
 
+  function generateAlbumPin() {
+    return String(Math.floor(1000 + Math.random() * 9000));
+  }
+
+  async function generateAlbumPasswords() {
+    const targetAlbums = selectedAlbumIds.length
+      ? filteredCollections.filter((album) => selectedAlbumIds.includes(album.id))
+      : filteredCollections;
+
+    if (!targetAlbums.length) {
+      setShareNotice("There are no albums available to protect.");
+      window.setTimeout(() => setShareNotice(""), 2400);
+      return;
+    }
+
+    const confirmed = window.confirm(
+      selectedAlbumIds.length
+        ? `Generate fresh access PINs for ${targetAlbums.length} selected album${targetAlbums.length === 1 ? "" : "s"}?`
+        : `No albums are selected. Generate access PINs for all ${targetAlbums.length} visible album${targetAlbums.length === 1 ? "" : "s"}?`,
+    );
+
+    if (!confirmed) return;
+
+    setGeneratingPasswords(true);
+    setMoreActionsOpen(false);
+
+    try {
+      const results = await Promise.all(
+        targetAlbums.map(async (album) => {
+          const nextPin = generateAlbumPin();
+          const payload = await requestDashboard<{ album?: CollectionRow | null }>(
+            `/api/dashboard/events/${projectId}/albums/${album.id}`,
+            {
+              method: "PATCH",
+              body: JSON.stringify({
+                access_mode: "pin",
+                access_pin: nextPin,
+              }),
+            },
+          );
+
+          return {
+            albumId: album.id,
+            albumTitle: clean(album.title) || "Album",
+            pin: nextPin,
+            album: payload.album,
+          };
+        }),
+      );
+
+      setCollections((prev) =>
+        sortCollections(
+          prev.map((item) => {
+            const match = results.find((result) => result.albumId === item.id);
+            if (!match) return item;
+            return {
+              ...item,
+              ...(match.album ?? {}),
+              access_mode: match.album?.access_mode ?? "pin",
+              access_pin: match.pin,
+            };
+          }),
+        ),
+      );
+
+      const previewLines = results
+        .slice(0, 6)
+        .map((result) => `${result.albumTitle}: ${result.pin}`);
+      const summaryText =
+        results.length > 6
+          ? `${previewLines.join("\n")}\n...and ${results.length - 6} more`
+          : previewLines.join("\n");
+
+      window.alert(`Album access PINs generated:\n\n${summaryText}`);
+      setShareNotice(
+        `Generated access PIN${results.length === 1 ? "" : "s"} for ${results.length} album${results.length === 1 ? "" : "s"}.`,
+      );
+      window.setTimeout(() => setShareNotice(""), 3200);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Failed to generate album passwords.");
+    } finally {
+      setGeneratingPasswords(false);
+    }
+  }
+
   function openRenameAlbum(albumId: string, title?: string | null) {
     setMenuAlbumId(null);
     setRenameAlbumId(albumId);
@@ -1021,16 +1090,18 @@ export default function ProjectDetailPage() {
   }
 
   return (
-    <div style={{ minHeight: "100vh", background: "#faf7f7", padding: 24 }}>
-      <div style={{ maxWidth: 1560, margin: "0 auto" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16, marginBottom: 16 }}>
+    <div style={{ minHeight: "100vh", background: "#f7f5f2", padding: 10 }}>
+      <div style={{ maxWidth: 1880, margin: "0 auto" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16, marginBottom: 10, flexWrap: "wrap" }}>
           <div>
             <Link href="/dashboard/projects/events" style={{ color: "#111111", textDecoration: "none", fontSize: 14, fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 6 }}>
               <ArrowLeft size={16} /> Back to Event
             </Link>
-            <div style={{ marginTop: 8, color: "#6b7280", fontWeight: 700 }}>{clean(project.client_name) || "Studio OS Cloud"}</div>
-            <h1 style={{ margin: "8px 0 0", fontSize: 24, fontWeight: 900, color: "#111111", display: "inline-flex", alignItems: "center", gap: 8 }}>{projectName}{projectLocked ? <Lock size={16} style={{ color: "#b91c1c" }} /> : null}</h1>
-            <div style={{ color: "#b91c1c", fontWeight: 800, marginTop: 2 }}>{clean(project.portal_status) || clean(project.status) || "Active"}</div>
+            <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+              <div style={{ color: "#6b7280", fontWeight: 700 }}>{clean(project.client_name) || "Studio OS Cloud"}</div>
+              <h1 style={{ margin: 0, fontSize: 26, fontWeight: 900, color: "#111111", display: "inline-flex", alignItems: "center", gap: 8 }}>{projectName}{projectLocked ? <Lock size={16} style={{ color: "#b91c1c" }} /> : null}</h1>
+              <div style={{ color: "#b91c1c", fontWeight: 800 }}>{clean(project.portal_status) || clean(project.status) || "Active"}</div>
+            </div>
           </div>
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "flex-end" }}>
             <button onClick={() => { setShareView("menu"); setShareModalOpen(true); }} style={{ borderRadius: 10, border: "1px solid #111111", background: "#111111", color: "#fff", padding: "12px 16px", fontWeight: 800, cursor: "pointer" }}>Share Gallery</button>
@@ -1040,8 +1111,8 @@ export default function ProjectDetailPage() {
 
         {shareNotice ? <div style={{ marginBottom: 14, color: "#b91c1c", fontWeight: 700 }}>{shareNotice}</div> : null}
 
-        <div style={{ display: "grid", gridTemplateColumns: "320px minmax(0,1fr)", gap: 18, alignItems: "start" }}>
-          <aside style={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 20, padding: 16, position: "sticky", top: 24 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "244px minmax(0,1fr)", gap: 12, alignItems: "start" }}>
+          <aside style={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 18, padding: 12, position: "sticky", top: 10 }}>
             <div
               onClick={() => {
                 setCoverTarget({ type: "project" });
@@ -1049,7 +1120,7 @@ export default function ProjectDetailPage() {
                 setSelectedMediaId(null);
                 setCoverPickerOpen(true);
               }}
-              style={{ borderRadius: 16, overflow: "hidden", background: projectCover ? `url(${projectCover}) ${Math.round(focalX * 100)}% ${Math.round(focalY * 100)}%/cover no-repeat` : "linear-gradient(135deg,#111111,#4b5563)", aspectRatio: "1.35 / 1", border: "1px solid #e5e7eb", cursor: "pointer", position: "relative", display: "flex", alignItems: "center", justifyContent: "center" }}
+              style={{ borderRadius: 16, overflow: "hidden", background: projectCover ? `url(${projectCover}) ${Math.round(focalX * 100)}% ${Math.round(focalY * 100)}%/cover no-repeat` : "linear-gradient(135deg,#111111,#374151)", aspectRatio: "1 / 1", border: "1px solid #e5e7eb", cursor: "pointer", position: "relative", display: "flex", alignItems: "center", justifyContent: "center" }}
             >
               <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.3)", opacity: 0, transition: "opacity 0.2s", borderRadius: 16 }} className="hover-overlay" />
               <div style={{ color: "#fff", fontSize: 13, fontWeight: 700, background: "rgba(0,0,0,0.5)", borderRadius: 10, padding: "8px 14px", zIndex: 1 }}>
@@ -1067,7 +1138,7 @@ export default function ProjectDetailPage() {
                 Edit Cover Photo
               </button>
             )}
-            <div style={{ color: "#4b5563", fontSize: 14, marginTop: 10 }}>Shoot Date: {formatDisplayDate(projectDate)}</div>
+            <div style={{ color: "#4b5563", fontSize: 13, marginTop: 10 }}>Shoot Date: {formatDisplayDate(projectDate)}</div>
 
             <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
               <Link href={`/dashboard/projects/${projectId}/settings`} style={{ flex: 1, borderRadius: 10, border: "1px solid #111111", background: "#fff", color: "#b91c1c", padding: "12px 14px", fontWeight: 800, cursor: "pointer", textDecoration: "none", display: "inline-flex", alignItems: "center", justifyContent: "center", boxSizing: "border-box" }}>
@@ -1079,7 +1150,7 @@ export default function ProjectDetailPage() {
               </Link>
             </div>
 
-            <div style={{ marginTop: 18 }}>
+            <div style={{ marginTop: 14 }}>
               <div style={{ fontSize: 13, fontWeight: 800, color: "#111111", marginBottom: 8 }}>Contact</div>
               <button onClick={() => setContactModalOpen(true)} style={{ width: "100%", borderRadius: 10, border: "1px solid #d0d5dd", background: "#fff", color: "#111111", padding: "12px 14px", fontWeight: 700, textAlign: "left", cursor: "pointer" }}>
                 + Add Linked Contact
@@ -1096,7 +1167,7 @@ export default function ProjectDetailPage() {
               ) : null}
             </div>
 
-            <div style={{ marginTop: 18, border: "1px solid #e5e7eb", borderRadius: 12, overflow: "hidden" }}>
+            <div style={{ marginTop: 14, border: "1px solid #e5e7eb", borderRadius: 12, overflow: "hidden" }}>
               <div style={{ padding: "12px 14px", borderBottom: "1px solid #e5e7eb", background: "#fff5f5" }}>
                 <div style={{ fontSize: 13, fontWeight: 800, color: "#111111" }}>Visitor Activity</div>
                 <div style={{ fontSize: 12, color: "#4b5563", marginTop: 4 }}>
@@ -1181,7 +1252,7 @@ export default function ProjectDetailPage() {
               </button>
             </div>
 
-            <div style={{ marginTop: 18 }}>
+            <div style={{ marginTop: 14 }}>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 8 }}>
                 <div style={{ fontSize: 13, fontWeight: 800, color: "#111111" }}>Photos</div>
                 <button
@@ -1229,7 +1300,7 @@ export default function ProjectDetailPage() {
                     <span>All Photos Not in Albums</span>
                     <span>0</span>
                   </div>
-                  <div style={{ maxHeight: 360, overflow: "auto" }}>
+                  <div style={{ maxHeight: 300, overflow: "auto" }}>
                     {filteredCollections.map((album) => {
                       const active = selectedAlbumId === album.id || selectedAlbumIds.includes(album.id);
                       const count = albumStats[album.id]?.count ?? 0;
@@ -1258,8 +1329,8 @@ export default function ProjectDetailPage() {
             </div>
           </aside>
 
-          <main style={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 20, padding: 16 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: 14, flexWrap: "wrap" }}>
+          <main style={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 18, padding: 12 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: 10, flexWrap: "wrap" }}>
               <div style={{ display: "flex", alignItems: "center", gap: 10, color: "#111111", fontWeight: 700, flexWrap: "wrap", flex: "1 1 360px" }}>
                 <button onClick={() => setSelectedAlbumIds((prev) => (prev.length === filteredCollections.length ? [] : filteredCollections.map((item) => item.id)))} style={{ borderRadius: 8, border: "1px solid #111111", background: "#fff", color: "#111111", padding: "9px 12px", fontWeight: 700, cursor: "pointer" }}>{selectedAlbumIds.length === filteredCollections.length && filteredCollections.length ? "Clear Selection" : "Select"}</button>
                 <div style={{ flex: "1 1 280px", minWidth: 220, maxWidth: 420, position: "relative" }}>
@@ -1277,17 +1348,61 @@ export default function ProjectDetailPage() {
                 <button style={{ borderRadius: 8, border: "1px solid #111111", background: "#fff", color: "#111111", padding: "9px 12px", fontWeight: 700, cursor: "pointer" }}>Sort by: Name A-Z</button>
                 <button onClick={() => setNewAlbumOpen(true)} style={{ borderRadius: 8, border: "1px solid #111111", background: "#fff", color: "#111111", padding: "9px 12px", fontWeight: 700, cursor: "pointer" }}>Add Albums</button>
                 <button onClick={() => openDeleteAlbums(selectedAlbumIds)} disabled={!selectedAlbumIds.length} style={{ borderRadius: 8, border: "1px solid #fecaca", background: selectedAlbumIds.length ? "#fff" : "#f8fafc", color: selectedAlbumIds.length ? "#b42318" : "#98a2b3", padding: "9px 12px", fontWeight: 700, cursor: selectedAlbumIds.length ? "pointer" : "not-allowed" }}>Delete Selected{selectedAlbumIds.length ? ` (${selectedAlbumIds.length})` : ""}</button>
-                <button style={{ borderRadius: 8, border: "1px solid #111111", background: "#fff", color: "#111111", padding: "9px 12px", fontWeight: 700, cursor: "pointer" }}>Generate Passwords</button>
-                <button style={{ borderRadius: 8, border: "1px solid #111111", background: "#fff", color: "#111111", padding: "9px 12px", fontWeight: 700, cursor: "pointer" }}>More Actions</button>
+                <button
+                  onClick={() => void generateAlbumPasswords()}
+                  disabled={generatingPasswords || !filteredCollections.length}
+                  style={{ borderRadius: 8, border: "1px solid #111111", background: generatingPasswords || !filteredCollections.length ? "#f8fafc" : "#fff", color: generatingPasswords || !filteredCollections.length ? "#98a2b3" : "#111111", padding: "9px 12px", fontWeight: 700, cursor: generatingPasswords || !filteredCollections.length ? "not-allowed" : "pointer" }}
+                >
+                  {generatingPasswords ? "Generating..." : "Generate Passwords"}
+                </button>
+                <div style={{ position: "relative" }}>
+                  <button
+                    onClick={() => setMoreActionsOpen((prev) => !prev)}
+                    style={{ borderRadius: 8, border: "1px solid #111111", background: moreActionsOpen ? "#fff5f5" : "#fff", color: "#111111", padding: "9px 12px", fontWeight: 700, cursor: "pointer" }}
+                  >
+                    More Actions
+                  </button>
+                  {moreActionsOpen ? (
+                    <div style={{ position: "absolute", right: 0, top: "calc(100% + 8px)", zIndex: 40, width: 240, background: "#fff", border: "1px solid #e5e7eb", borderRadius: 14, boxShadow: "0 20px 40px rgba(16,24,40,0.14)", overflow: "hidden" }}>
+                      <button onClick={() => { setMoreActionsOpen(false); void copyEventLink(); }} style={{ width: "100%", textAlign: "left", padding: "11px 13px", border: 0, background: "#fff", color: "#344054", fontWeight: 700, cursor: "pointer" }}>Copy gallery link</button>
+                      <button onClick={() => { setMoreActionsOpen(false); openShareComposer("visitors"); }} style={{ width: "100%", textAlign: "left", padding: "11px 13px", border: 0, background: "#fff", color: "#344054", fontWeight: 700, borderTop: "1px solid #eef2f7", cursor: "pointer" }}>Email gallery visitors</button>
+                      <button onClick={() => { setMoreActionsOpen(false); setShareView("report"); setShareModalOpen(true); }} style={{ width: "100%", textAlign: "left", padding: "11px 13px", border: 0, background: "#fff", color: "#344054", fontWeight: 700, borderTop: "1px solid #eef2f7", cursor: "pointer" }}>Open visitor report</button>
+                      <button onClick={() => { setMoreActionsOpen(false); router.push(`/dashboard/projects/${projectId}/settings`); }} style={{ width: "100%", textAlign: "left", padding: "11px 13px", border: 0, background: "#fff", color: "#344054", fontWeight: 700, borderTop: "1px solid #eef2f7", cursor: "pointer" }}>Open gallery settings</button>
+                    </div>
+                  ) : null}
+                </div>
               </div>
             </div>
 
-            <div style={{ color: "#111111", marginBottom: 16, fontWeight: 700 }}>
-              {classesCount} classes • {rolesCount} roles • {peopleCount} people • {galleriesCount} galleries • {albumsCount} albums
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 12 }}>
+              {[
+                `${classesCount} classes`,
+                `${rolesCount} roles`,
+                `${peopleCount} people`,
+                `${galleriesCount} galleries`,
+                `${albumsCount} albums`,
+              ].map((label) => (
+                <div
+                  key={label}
+                  style={{
+                    borderRadius: 999,
+                    border: "1px solid #e5e7eb",
+                    background: "#faf7f7",
+                    color: "#344054",
+                    padding: "7px 11px",
+                    fontSize: 12,
+                    fontWeight: 800,
+                    letterSpacing: "0.04em",
+                    textTransform: "uppercase",
+                  }}
+                >
+                  {label}
+                </div>
+              ))}
             </div>
 
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(300px,1fr))", gap: 16, marginBottom: 18 }}>
-              <div style={{ border: "1px solid #e5e7eb", borderRadius: 18, padding: 16, background: "#fffaf9" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(260px,1fr))", gap: 12, marginBottom: 14 }}>
+              <div style={{ border: "1px solid #e5e7eb", borderRadius: 16, padding: 12, background: "#fffaf9" }}>
                 <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, marginBottom: 12 }}>
                   <div>
                     <div style={{ display: "flex", alignItems: "center", gap: 8, color: "#111111", fontSize: 15, fontWeight: 900 }}>
@@ -1356,7 +1471,7 @@ export default function ProjectDetailPage() {
                 )}
               </div>
 
-              <div style={{ border: "1px solid #e5e7eb", borderRadius: 18, padding: 16, background: "#fff" }}>
+              <div style={{ border: "1px solid #e5e7eb", borderRadius: 16, padding: 12, background: "#fff" }}>
                 <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, marginBottom: 12 }}>
                   <div>
                     <div style={{ color: "#111111", fontSize: 15, fontWeight: 900 }}>Top Favorite Viewers</div>
@@ -1411,7 +1526,7 @@ export default function ProjectDetailPage() {
             {filteredCollections.length === 0 ? (
               <div style={{ border: "1px dashed #d0d5dd", borderRadius: 18, padding: 24, color: "#4b5563" }}>{albumSearch ? "No albums found." : "No albums yet."}</div>
             ) : (
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(190px,1fr))", gap: 16 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(172px,1fr))", gap: 14 }}>
                 {filteredCollections.map((album) => {
                   const albumHref = `/dashboard/projects/${projectId}/albums/${album.id}`;
                   const cover = albumStats[album.id]?.preview || collectionCover(album);
@@ -1421,7 +1536,7 @@ export default function ProjectDetailPage() {
                   return (
                     <div key={album.id} style={{ position: "relative" }}>
                       <Link href={albumHref} onMouseEnter={() => setSelectedAlbumId(album.id)} style={{ display: "block", textDecoration: "none", color: "inherit" }}>
-                        <div style={{ position: "relative", height: 200, marginBottom: 10 }}>
+                        <div style={{ position: "relative", height: 160, marginBottom: 10 }}>
                           <div style={{ position: "absolute", inset: "10px 10px 0 10px", borderRadius: 4, background: cover ? `url(${cover}) center/cover no-repeat` : "linear-gradient(135deg,#e5e7eb,#cbd5e1)", transform: "rotate(-3deg)", boxShadow: "0 8px 20px rgba(15,23,42,0.10)" }} />
                           <div style={{ position: "absolute", inset: "4px 6px 6px 6px", borderRadius: 4, background: cover ? `url(${cover}) center/cover no-repeat` : "linear-gradient(135deg,#e5e7eb,#dbe4f0)", transform: "rotate(2deg)", boxShadow: "0 8px 20px rgba(15,23,42,0.10)" }} />
                           <div style={{ position: "absolute", inset: 0, borderRadius: 4, background: cover ? `url(${cover}) center/cover no-repeat` : "linear-gradient(135deg,#f8fafc,#e5e7eb)", border: active ? "2px solid #b91c1c" : "1px solid #d0d5dd", boxShadow: "0 10px 25px rgba(15,23,42,0.14)" }} />
@@ -1429,6 +1544,18 @@ export default function ProjectDetailPage() {
                       </Link>
                       <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 8, alignItems: "center" }}>
                         <div>
+                          <div
+                            style={{
+                              color: "#6b7280",
+                              fontSize: 10,
+                              fontWeight: 900,
+                              letterSpacing: "0.18em",
+                              textTransform: "uppercase",
+                              marginBottom: 4,
+                            }}
+                          >
+                            Album
+                          </div>
                           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                             {albumHasLock(album) ? <Lock size={13} style={{ color: "#344054", flex: "0 0 auto" }} /> : null}
                             <button
@@ -1440,7 +1567,7 @@ export default function ProjectDetailPage() {
                               {clean(album.title) || "Album"}
                             </button>
                           </div>
-                          <div style={{ color: "#4b5563", fontSize: 12, marginTop: 3, display: "inline-flex", alignItems: "center", gap: 8 }}>
+                          <div style={{ color: "#4b5563", fontSize: 11, marginTop: 3, display: "inline-flex", alignItems: "center", gap: 8 }}>
                             <span>{photoCount} Photos</span>
                             <span style={{ display: "inline-flex", alignItems: "center", gap: 4, color: favoriteCount ? "#b91c1c" : "#98a2b3" }}>
                               <Heart size={12} fill={favoriteCount ? "currentColor" : "none"} />
@@ -1448,10 +1575,22 @@ export default function ProjectDetailPage() {
                             </span>
                           </div>
                         </div>
-                        <div style={{ display: "inline-flex", alignItems: "center", gap: 6, color: "#4b5563", fontSize: 12 }}>
-                          <span style={{ width: 6, height: 6, borderRadius: 999, background: "#d0d5dd", display: "inline-block" }} />
-                          <span>{photoCount}</span>
-                        </div>
+                        <Link
+                          href={albumHref}
+                          style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: 6,
+                            color: "#111111",
+                            fontSize: 12,
+                            fontWeight: 800,
+                            textDecoration: "none",
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          <FolderOpen size={14} />
+                          <span>Open album</span>
+                        </Link>
                       </div>
                       <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 10, marginTop: 8, alignItems: "start" }}>
                         <button onClick={() => toggleAlbumSelected(album.id)} style={{ borderRadius: 8, border: selectedAlbumIds.includes(album.id) ? "1px solid #b91c1c" : "1px solid #111111", background: "#fff", color: selectedAlbumIds.includes(album.id) ? "#b91c1c" : "#111111", padding: "8px 10px", fontWeight: 700, cursor: "pointer" }}>{selectedAlbumIds.includes(album.id) ? "Selected" : "Select"}</button>

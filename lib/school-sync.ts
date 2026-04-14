@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { normalizeEventGallerySettings } from "@/lib/event-gallery-settings";
+import { buildStoredMediaUrls } from "@/lib/storage-images";
 
 type SupabaseClientLike = SupabaseClient;
 
@@ -281,17 +282,25 @@ export async function appendSchoolMediaRows(
 
   let nextSortOrder = Number(lastMediaRow?.sort_order ?? -1) + 1;
 
-  const payload = params.assets.map((asset) => ({
-    project_id: params.projectId,
-    collection_id: params.collectionId,
-    storage_path: asset.storagePath,
-    filename: asset.filename,
-    mime_type: asset.mimeType,
-    preview_url: asset.publicUrl,
-    thumbnail_url: asset.publicUrl,
-    sort_order: nextSortOrder++,
-    is_cover: false,
-  }));
+  const payload = params.assets.map((asset) => {
+    const mediaUrls = buildStoredMediaUrls({
+      storagePath: asset.storagePath,
+      previewUrl: asset.publicUrl,
+      thumbnailUrl: asset.publicUrl,
+    });
+
+    return {
+      project_id: params.projectId,
+      collection_id: params.collectionId,
+      storage_path: asset.storagePath,
+      filename: asset.filename,
+      mime_type: asset.mimeType,
+      preview_url: mediaUrls.previewUrl || null,
+      thumbnail_url: mediaUrls.thumbnailUrl || null,
+      sort_order: nextSortOrder++,
+      is_cover: false,
+    };
+  });
 
   const { error } = await supabase.from("media").insert(payload);
   if (error) throw error;

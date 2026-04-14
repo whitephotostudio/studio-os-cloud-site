@@ -23,6 +23,7 @@ import {
   type EventGallerySettings,
   type EventGalleryExtraSettings,
 } from "@/lib/event-gallery-settings";
+import { resolvePackageProfileId } from "@/lib/package-profile-selection";
 
 type SchoolRow = {
   school_name?: string | null;
@@ -188,6 +189,7 @@ export default function SchoolSettingsPage() {
     ]);
 
     let nextPackageProfiles: PackageProfileRow[] = [];
+    let nextPackageProfilePackages: PackageProfilePackageRow[] = [];
 
     if (schoolData?.photographer_id) {
       const [profileResult, packagesResult] = await Promise.all([
@@ -205,6 +207,7 @@ export default function SchoolSettingsPage() {
 
       const rawProfiles = (profileResult.data ?? []) as PackageProfileRow[];
       const rawPackages = (packagesResult.data ?? []) as PackageProfilePackageRow[];
+      nextPackageProfilePackages = rawPackages;
       const seenProfileIds = new Set(rawProfiles.map((profile) => profile.id).filter(Boolean));
 
       nextPackageProfiles = [...rawProfiles];
@@ -232,15 +235,22 @@ export default function SchoolSettingsPage() {
     }
 
     if (schoolData) {
+      const storedSettings = normalizeEventGallerySettings(schoolData.gallery_settings);
       setSchoolName(schoolData.school_name || "");
       setPortalStatus(schoolData.status || "inactive");
       setShootDate(schoolData.shoot_date || "");
       setOrderDueDate(schoolData.order_due_date || "");
       setExpirationDate(schoolData.expiration_date || "");
-      setPackageProfileId(schoolData.package_profile_id || "");
+      setPackageProfileId(
+        resolvePackageProfileId({
+          selectedProfileId:
+            schoolData.package_profile_id || storedSettings.extras.priceSheetProfileId,
+          packageProfiles: nextPackageProfiles,
+          packages: nextPackageProfilePackages,
+        }) || "",
+      );
       setCheckoutContactRequired(Boolean(schoolData.checkout_contact_required));
       setInternalNotes(schoolData.internal_notes || "");
-      const storedSettings = normalizeEventGallerySettings(schoolData.gallery_settings);
       setFullGallerySettings(storedSettings);
       setGalleryLanguage(storedSettings.galleryLanguage);
       setExtras({
@@ -292,6 +302,7 @@ export default function SchoolSettingsPage() {
       extras: {
         ...fullGallerySettings.extras,
         ...extras,
+        priceSheetProfileId: packageProfileId || "",
       },
     };
 
@@ -685,6 +696,12 @@ export default function SchoolSettingsPage() {
                         ) : null}
                       </div>
                     ) : null}
+                    <ToggleRow
+                      title="Show proof watermark in gallery"
+                      description="Control whether parents see your proof watermark while viewing this gallery. Downloaded files stay clean unless the download watermark switch is turned on."
+                      checked={extras.showProofWatermark}
+                      onChange={(next) => setExtra("showProofWatermark", next)}
+                    />
                     <ToggleRow title='Show "Download All" button in gallery' checked={extras.showDownloadAllButton} onChange={(next) => setExtra("showDownloadAllButton", next)} />
                     {extras.showDownloadAllButton ? (
                       <>
@@ -709,7 +726,12 @@ export default function SchoolSettingsPage() {
                         ) : null}
                       </>
                     ) : null}
-                    <ToggleRow title="Apply a watermark to the downloaded files" checked={extras.watermarkDownloads} onChange={(next) => setExtra("watermarkDownloads", next)} />
+                    <ToggleRow
+                      title="Apply a watermark to the downloaded files"
+                      description="Turn this on only if the delivered download itself should include the watermark."
+                      checked={extras.watermarkDownloads}
+                      onChange={(next) => setExtra("watermarkDownloads", next)}
+                    />
                     <ToggleRow title="Include a Print Release" checked={extras.includePrintRelease} onChange={(next) => setExtra("includePrintRelease", next)} />
                   </Card>
                 </div>

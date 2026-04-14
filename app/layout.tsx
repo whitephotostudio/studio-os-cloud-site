@@ -8,7 +8,7 @@ const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"]
 export const metadata: Metadata = {
   title: "Studio OS Cloud — Professional Photography Workflow",
   description:
-    "Studio OS Cloud and the Studio OS App work together to give photographers a premium connected workflow for roster-based organization, galleries, ordering, printing, and lab fulfillment.",
+    "Studio OS Cloud and the Studio OS App work together to give photographers a premium connected workflow for direct camera tethering, roster-based organization, galleries, ordering, printing, and lab fulfillment.",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {

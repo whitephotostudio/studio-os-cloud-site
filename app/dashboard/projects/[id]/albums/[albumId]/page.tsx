@@ -3,8 +3,9 @@
 import { ChangeEvent, MouseEvent as ReactMouseEvent, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
-import { ArrowLeft, CheckSquare, FolderPlus, Lock, Menu, Settings, Trash2, Upload, X, ZoomIn } from "lucide-react";
+import { ArrowLeft, CheckSquare, FolderPlus, Lock, Menu, Settings, Trash2, Upload, X, ZoomIn, LoaderCircle, Image as ImageIcon } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { buildStoredMediaUrls } from "@/lib/storage-images";
 
 type ProjectRow = {
   id: string;
@@ -36,8 +37,31 @@ type MediaRow = {
   sort_order?: number | null;
 };
 
+type UploadQueueItem = {
+  id: string;
+  filename: string;
+  status: "queued" | "uploading" | "processing" | "done" | "error";
+};
+
+type UploadSession = {
+  total: number;
+  completed: number;
+  failed: number;
+  activeFileName: string;
+  activePreviewUrl: string | null;
+  phase: "uploading" | "complete" | "complete_with_errors";
+  items: UploadQueueItem[];
+};
+
 function clean(value: string | null | undefined) {
   return (value ?? "").trim();
+}
+
+function shortFileName(value: string | null | undefined) {
+  const cleaned = clean(value);
+  if (!cleaned) return "Photo";
+  const parts = cleaned.split("/");
+  return clean(parts[parts.length - 1]) || cleaned;
 }
 
 function labelForProject(project: ProjectRow | null) {
@@ -67,8 +91,13 @@ export default function ProjectAlbumPage() {
   const [savedNotice, setSavedNotice] = useState("");
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [viewerIndex, setViewerIndex] = useState<number | null>(null);
+  const [viewerAspectRatio, setViewerAspectRatio] = useState<number | null>(null);
   const [busyPhotoIds, setBusyPhotoIds] = useState<string[]>([]);
   const [openPhotoMenuId, setOpenPhotoMenuId] = useState<string | null>(null);
+  const [uploadSession, setUploadSession] = useState<UploadSession | null>(null);
+  const [loadedMediaIds, setLoadedMediaIds] = useState<Set<string>>(new Set());
+  const uploadPreviewRef = useRef<string | null>(null);
+  const uploadResetTimeoutRef = useRef<number | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -139,6 +168,65 @@ export default function ProjectAlbumPage() {
     }
   }, [searchParams]);
 
+  useEffect(() => {
+    setLoadedMediaIds((prev) => {
+      const validIds = new Set(media.map((item) => item.id));
+      const next = new Set(Array.from(prev).filter((id) => validIds.has(id)));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [media]);
+
+  useEffect(() => {
+    return () => {
+      if (uploadPreviewRef.current && typeof URL !== "undefined") {
+        URL.revokeObjectURL(uploadPreviewRef.current);
+      }
+      if (uploadResetTimeoutRef.current && typeof window !== "undefined") {
+        window.clearTimeout(uploadResetTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  function clearUploadPreview() {
+    if (uploadPreviewRef.current && typeof URL !== "undefined") {
+      URL.revokeObjectURL(uploadPreviewRef.current);
+      uploadPreviewRef.current = null;
+    }
+  }
+
+  function markMediaLoaded(id: string) {
+    setLoadedMediaIds((prev) => {
+      if (prev.has(id)) return prev;
+      const next = new Set(prev);
+      next.add(id);
+      return next;
+    });
+  }
+
+  function setUploadPreview(file: File | null) {
+    clearUploadPreview();
+    if (!file || typeof URL === "undefined" || !file.type.startsWith("image/")) {
+      setUploadSession((prev) => (prev ? { ...prev, activePreviewUrl: null } : prev));
+      return;
+    }
+
+    const nextUrl = URL.createObjectURL(file);
+    uploadPreviewRef.current = nextUrl;
+    setUploadSession((prev) => (prev ? { ...prev, activePreviewUrl: nextUrl } : prev));
+  }
+
+  function scheduleUploadReset(delayMs: number) {
+    if (typeof window === "undefined") return;
+    if (uploadResetTimeoutRef.current) {
+      window.clearTimeout(uploadResetTimeoutRef.current);
+    }
+    uploadResetTimeoutRef.current = window.setTimeout(() => {
+      clearUploadPreview();
+      setUploadSession(null);
+      uploadResetTimeoutRef.current = null;
+    }, delayMs);
+  }
+
   async function copyAlbumLink() {
     const url = typeof window !== "undefined" ? window.location.href : "";
     if (!url) return;
@@ -200,68 +288,178 @@ export default function ProjectAlbumPage() {
       return;
     }
 
+    if (uploadResetTimeoutRef.current && typeof window !== "undefined") {
+      window.clearTimeout(uploadResetTimeoutRef.current);
+      uploadResetTimeoutRef.current = null;
+    }
+
     setUploading(true);
     setError("");
+    const batchId = Date.now();
+    const queueItems: UploadQueueItem[] = files.map((file, index) => ({
+      id: `${batchId}-${index}`,
+      filename: shortFileName(file.webkitRelativePath || file.name),
+      status: index === 0 ? "uploading" : "queued",
+    }));
+
+    setUploadSession({
+      total: files.length,
+      completed: 0,
+      failed: 0,
+      activeFileName: queueItems[0]?.filename ?? "",
+      activePreviewUrl: null,
+      phase: "uploading",
+      items: queueItems,
+    });
+    setUploadPreview(files[0] ?? null);
 
     try {
-      const uploadedRows: MediaRow[] = [];
+      let uploadedCount = 0;
+      let failedCount = 0;
 
       for (const file of files) {
+        const queueId = `${batchId}-${files.indexOf(file)}`;
+        const displayName = shortFileName(file.webkitRelativePath || file.name);
+        setUploadPreview(file);
+        setUploadSession((prev) =>
+          prev
+            ? {
+                ...prev,
+                activeFileName: displayName,
+                items: prev.items.map((item) =>
+                  item.id === queueId
+                    ? { ...item, status: "uploading" }
+                    : item.status === "uploading"
+                      ? { ...item, status: "queued" }
+                      : item,
+                ),
+              }
+            : prev,
+        );
+
         const originalExt = file.name.includes(".") ? file.name.split(".").pop() : "jpg";
         const ext = clean(originalExt).toLowerCase() || "jpg";
         const safeName = `${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
         const storagePath = `projects/${projectId}/albums/${albumId}/${safeName}`;
 
-        const { error: uploadError } = await supabase.storage.from("thumbs").upload(storagePath, file, {
-          cacheControl: "3600",
-          upsert: false,
-          contentType: file.type || undefined,
-        });
+        try {
+          const { error: uploadError } = await supabase.storage.from("thumbs").upload(storagePath, file, {
+            cacheControl: "3600",
+            upsert: false,
+            contentType: file.type || undefined,
+          });
 
-        if (uploadError) {
-          throw new Error(uploadError.message || "Failed to upload file to storage.");
+          if (uploadError) {
+            throw new Error(uploadError.message || "Failed to upload file to storage.");
+          }
+
+          setUploadSession((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  items: prev.items.map((item) =>
+                    item.id === queueId ? { ...item, status: "processing" } : item,
+                  ),
+                }
+              : prev,
+          );
+
+          const { previewUrl, thumbnailUrl } = buildStoredMediaUrls({
+            storagePath,
+          });
+
+          const payload = {
+            project_id: projectId,
+            collection_id: albumId,
+            storage_path: storagePath,
+            filename: file.name,
+            mime_type: file.type || null,
+            preview_url: previewUrl || null,
+            thumbnail_url: thumbnailUrl || null,
+            sort_order: media.length + uploadedCount + failedCount,
+            is_cover: false,
+          };
+
+          const { data: insertedRow, error: insertError } = await supabase
+            .from("media")
+            .insert(payload)
+            .select("id,storage_path,thumbnail_url,preview_url,filename,mime_type,created_at,sort_order")
+            .single();
+
+          if (insertError) {
+            throw new Error(insertError.message || "Failed to save photo record.");
+          }
+
+          const nextRow = (insertedRow ?? {
+            id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+            storage_path: storagePath,
+            filename: file.name,
+            mime_type: file.type || null,
+            preview_url: previewUrl || null,
+            thumbnail_url: thumbnailUrl || null,
+            created_at: new Date().toISOString(),
+            sort_order: media.length + uploadedCount + failedCount,
+          }) as MediaRow;
+
+          uploadedCount += 1;
+          setMedia((prev) => [...prev, nextRow]);
+          setUploadSession((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  completed: uploadedCount,
+                  items: prev.items.map((item) =>
+                    item.id === queueId ? { ...item, status: "done" } : item,
+                  ),
+                }
+              : prev,
+          );
+        } catch (fileError) {
+          failedCount += 1;
+          setUploadSession((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  failed: failedCount,
+                  items: prev.items.map((item) =>
+                    item.id === queueId ? { ...item, status: "error" } : item,
+                  ),
+                }
+              : prev,
+          );
+          console.error(fileError);
         }
-
-        const { data: publicData } = supabase.storage.from("thumbs").getPublicUrl(storagePath);
-        const publicUrl = clean(publicData?.publicUrl);
-
-        const payload = {
-          project_id: projectId,
-          collection_id: albumId,
-          storage_path: storagePath,
-          filename: file.name,
-          mime_type: file.type || null,
-          preview_url: publicUrl || null,
-          thumbnail_url: publicUrl || null,
-          sort_order: media.length + uploadedRows.length,
-          is_cover: false,
-        };
-
-        const { data: insertedRow, error: insertError } = await supabase
-          .from("media")
-          .insert(payload)
-          .select("id,storage_path,thumbnail_url,preview_url,filename,mime_type,created_at,sort_order")
-          .single();
-
-        if (insertError) {
-          throw new Error(insertError.message || "Failed to save photo record.");
-        }
-
-        uploadedRows.push((insertedRow ?? {
-          id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
-          storage_path: storagePath,
-          filename: file.name,
-          mime_type: file.type || null,
-          preview_url: publicUrl || null,
-          thumbnail_url: publicUrl || null,
-          created_at: new Date().toISOString(),
-          sort_order: media.length + uploadedRows.length,
-        }) as MediaRow);
       }
 
-      setMedia((prev) => [...prev, ...uploadedRows]);
+      const successCount = uploadedCount;
+      if (failedCount > 0 && successCount > 0) {
+        setError(`Uploaded ${successCount} of ${files.length} photo${files.length === 1 ? "" : "s"}. ${failedCount} failed.`);
+      } else if (failedCount > 0) {
+        setError(`Could not upload ${failedCount} photo${failedCount === 1 ? "" : "s"}. Please try again.`);
+      }
+
+      setUploadSession((prev) =>
+        prev
+          ? {
+              ...prev,
+              activeFileName: failedCount > 0 ? `${successCount} uploaded • ${failedCount} failed` : `${successCount} uploaded`,
+              phase: failedCount > 0 ? "complete_with_errors" : "complete",
+            }
+          : prev,
+      );
+      scheduleUploadReset(failedCount > 0 ? 5000 : 2600);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to upload photos.");
+      setUploadSession((prev) =>
+        prev
+          ? {
+              ...prev,
+              phase: "complete_with_errors",
+              activeFileName: "Upload could not be completed.",
+            }
+          : prev,
+      );
+      scheduleUploadReset(5000);
     } finally {
       setUploading(false);
       event.target.value = "";
@@ -274,6 +472,7 @@ export default function ProjectAlbumPage() {
 
   function openViewer(index: number) {
     setOpenPhotoMenuId(null);
+    setViewerAspectRatio(null);
     setViewerIndex(index);
   }
 
@@ -341,6 +540,34 @@ export default function ProjectAlbumPage() {
   const selectedCount = selectedIds.length;
   const allSelected = media.length > 0 && selectedCount === media.length;
   const viewerItem = viewerIndex === null ? null : media[viewerIndex] ?? null;
+  const viewerIsPortrait =
+    viewerAspectRatio !== null ? viewerAspectRatio < 0.95 : false;
+  const viewerSrc = viewerItem
+    ? buildStoredMediaUrls({
+        storagePath: clean(viewerItem.storage_path),
+        previewUrl: viewerItem.preview_url,
+        thumbnailUrl: viewerItem.thumbnail_url,
+      }).originalUrl ||
+      clean(viewerItem.preview_url) ||
+      clean(viewerItem.thumbnail_url) ||
+      ""
+    : "";
+  const pendingUploadItems =
+    uploadSession?.items.filter(
+      (item) => item.status === "queued" || item.status === "uploading" || item.status === "processing",
+    ) ?? [];
+  const uploadPlaceholders = pendingUploadItems.slice(0, 8);
+  const uploadProcessedCount = (uploadSession?.completed ?? 0) + (uploadSession?.failed ?? 0);
+  const uploadDisplayCount = uploadSession
+    ? uploadSession.phase === "uploading"
+      ? Math.min(uploadProcessedCount + 1, uploadSession.total)
+      : uploadProcessedCount
+    : 0;
+  const uploadProgress =
+    uploadSession && uploadSession.total > 0
+      ? Math.min(100, Math.round((uploadProcessedCount / uploadSession.total) * 100))
+      : 0;
+  const hasGridContent = media.length > 0 || uploadPlaceholders.length > 0;
 
   if (loading) {
     return (
@@ -374,7 +601,28 @@ export default function ProjectAlbumPage() {
             </Link>
             <div style={{ color: "#6b7280", fontSize: 14, marginTop: 10 }}>{labelForProject(project)}</div>
             <h1 style={{ fontSize: 34, fontWeight: 900, color: "#111827", margin: "8px 0 0" }}>{clean(album.title) || "Album"}</h1>
-            <div style={{ color: "#4b5563", marginTop: 8 }}>{media.length} photos</div>
+            <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10, marginTop: 8 }}>
+              <div style={{ color: "#4b5563" }}>{media.length} photos</div>
+              {uploadSession ? (
+                <div
+                  style={{
+                    borderRadius: 999,
+                    border: "1px solid #fde68a",
+                    background: "#fffbeb",
+                    color: uploadSession.phase === "complete_with_errors" ? "#b45309" : "#92400e",
+                    padding: "6px 10px",
+                    fontSize: 12,
+                    fontWeight: 800,
+                  }}
+                >
+                  {uploadSession.phase === "uploading"
+                    ? `Uploading ${uploadDisplayCount} of ${uploadSession.total}`
+                    : uploadSession.phase === "complete_with_errors"
+                      ? `${uploadSession.completed} uploaded • ${uploadSession.failed} failed`
+                      : `${uploadSession.completed} uploaded`}
+                </div>
+              ) : null}
+            </div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", justifyContent: "flex-end" }}>
             <input ref={fileInputRef} type="file" multiple accept="image/*" onChange={handleUpload} style={{ display: "none" }} />
@@ -386,10 +634,10 @@ export default function ProjectAlbumPage() {
               <Trash2 size={16} /> Delete Selected{selectedCount ? ` (${selectedCount})` : ""}
             </button>
             <button onClick={() => fileInputRef.current?.click()} disabled={uploading} style={{ display: "inline-flex", alignItems: "center", gap: 8, background: "#fff", border: "1px solid #111111", borderRadius: 12, padding: "12px 16px", fontWeight: 700, color: "#111827", cursor: "pointer", opacity: uploading ? 0.7 : 1 }}>
-              <Upload size={16} /> {uploading ? "Uploading..." : "Upload Photos"}
+              <Upload size={16} /> {uploadSession?.phase === "uploading" ? `Uploading ${uploadDisplayCount}/${uploadSession.total}` : "Upload Photos"}
             </button>
             <button onClick={() => folderInputRef.current?.click()} disabled={uploading} style={{ display: "inline-flex", alignItems: "center", gap: 8, background: "#fff", border: "1px solid #111111", borderRadius: 12, padding: "12px 16px", fontWeight: 700, color: "#111827", cursor: "pointer", opacity: uploading ? 0.7 : 1 }}>
-              <FolderPlus size={16} /> {uploading ? "Uploading..." : "Upload Folder"}
+              <FolderPlus size={16} /> {uploadSession?.phase === "uploading" ? `Uploading ${uploadDisplayCount}/${uploadSession.total}` : "Upload Folder"}
             </button>
             <div style={{ position: "relative" }}>
               <button onClick={() => setManageOpen((prev) => !prev)} style={{ display: "inline-flex", alignItems: "center", gap: 8, background: "#fff", border: "1px solid #111111", borderRadius: 12, padding: "12px 16px", fontWeight: 700, color: "#111827", cursor: "pointer" }}>
@@ -410,23 +658,90 @@ export default function ProjectAlbumPage() {
         {savedNotice ? <div style={{ marginBottom: 14, color: "#b91c1c", fontWeight: 700 }}>{savedNotice}</div> : null}
         {error ? <div style={{ marginBottom: 14, color: "#b42318", fontWeight: 700 }}>{error}</div> : null}
 
-        {media.length === 0 ? (
+        {!hasGridContent ? (
           <div style={{ background: "#fff", border: "1px dashed #d0d5dd", borderRadius: 18, padding: 28, color: "#4b5563" }}>
             No photos in this album yet.
           </div>
         ) : (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(230px,1fr))", gap: 18 }}>
+            {uploadPlaceholders.map((item) => {
+              const isActive = item.status === "uploading" || item.status === "processing";
+              return (
+                <div
+                  key={item.id}
+                  style={{
+                    background: "#fff",
+                    border: "1px dashed #d0d5dd",
+                    borderRadius: 18,
+                    overflow: "hidden",
+                    boxShadow: "0 8px 24px rgba(16,24,40,0.05)",
+                    position: "relative",
+                  }}
+                >
+                  <div
+                    style={{
+                      aspectRatio: "3 / 4",
+                      background:
+                        "linear-gradient(180deg, rgba(248,250,252,1) 0%, rgba(241,245,249,1) 100%)",
+                      display: "grid",
+                      placeItems: "center",
+                      color: isActive ? "#111827" : "#94a3b8",
+                    }}
+                  >
+                    {isActive ? <LoaderCircle size={34} /> : <ImageIcon size={34} />}
+                  </div>
+                  <div style={{ padding: 14 }}>
+                    <div
+                      style={{
+                        color: "#111827",
+                        fontWeight: 700,
+                        fontSize: 14,
+                        whiteSpace: "nowrap",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                      }}
+                    >
+                      {item.filename}
+                    </div>
+                    <div style={{ color: "#6b7280", fontSize: 13, marginTop: 8 }}>
+                      {item.status === "queued" ? "Waiting in queue..." : "Processing..."}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
             {media.map((item, index) => {
-              const src = clean(item.preview_url) || clean(item.thumbnail_url) || "";
+              const src = clean(item.thumbnail_url) || clean(item.preview_url) || "";
               const selected = selectedIds.includes(item.id);
               const busy = busyPhotoIds.includes(item.id);
+              const loaded = loadedMediaIds.has(item.id);
               return (
                 <div key={item.id} style={{ background: "#fff", border: selected ? "2px solid #b91c1c" : "1px solid #e5e7eb", borderRadius: 18, overflow: "visible", boxShadow: "0 8px 24px rgba(16,24,40,0.05)", position: "relative", zIndex: openPhotoMenuId === item.id ? 30 : 1 }}>
                   <button onClick={() => toggleSelect(item.id)} style={{ position: "absolute", top: 12, left: 12, zIndex: 3, width: 28, height: 28, borderRadius: 999, border: selected ? "1px solid #111111" : "1px solid rgba(17,24,39,0.16)", background: selected ? "#111111" : "rgba(255,255,255,0.95)", color: selected ? "#fff" : "#667085", display: "grid", placeItems: "center", cursor: "pointer" }}>
                     <CheckSquare size={15} />
                   </button>
                   <button onDoubleClick={() => openViewer(index)} onClick={() => openViewer(index)} style={{ display: "block", width: "100%", border: 0, padding: 0, background: "#f8fafc", cursor: "zoom-in", overflow: "hidden", borderTopLeftRadius: 18, borderTopRightRadius: 18 }}>
-                    <div style={{ aspectRatio: "3 / 4", background: src ? `url(${src}) center/contain no-repeat` : "#e5e7eb" }} />
+                    <div style={{ aspectRatio: "3 / 4", background: "linear-gradient(180deg, rgba(248,250,252,1) 0%, rgba(241,245,249,1) 100%)", position: "relative", display: "grid", placeItems: "center" }}>
+                      {!loaded ? <LoaderCircle size={28} color="#94a3b8" /> : null}
+                      {src ? (
+                        <img
+                          loading="lazy"
+                          decoding="async"
+                          src={src}
+                          alt={clean(item.filename) || "Photo"}
+                          onLoad={() => markMediaLoaded(item.id)}
+                          style={{
+                            position: "absolute",
+                            inset: 0,
+                            width: "100%",
+                            height: "100%",
+                            objectFit: "contain",
+                            opacity: loaded ? 1 : 0,
+                            transition: "opacity 0.18s ease",
+                          }}
+                        />
+                      ) : null}
+                    </div>
                   </button>
                   <div style={{ padding: 14 }}>
                     <div style={{ color: "#111827", fontWeight: 700, fontSize: 14, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
@@ -485,6 +800,93 @@ export default function ProjectAlbumPage() {
         )}
       </div>
 
+      {uploadSession ? (
+        <div
+          style={{
+            position: "fixed",
+            right: 24,
+            bottom: 24,
+            zIndex: 95,
+            width: "min(360px, calc(100vw - 32px))",
+            background: "#fff",
+            border: "1px solid #e5e7eb",
+            borderRadius: 22,
+            boxShadow: "0 24px 48px rgba(15,23,42,0.18)",
+            padding: 18,
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+            <div
+              style={{
+                width: 58,
+                height: 58,
+                flex: "0 0 auto",
+                borderRadius: 16,
+                border: "1px solid #e5e7eb",
+                background: uploadSession.activePreviewUrl
+                  ? `url(${uploadSession.activePreviewUrl}) center/cover no-repeat`
+                  : "linear-gradient(135deg, #f8fafc 0%, #eef2ff 100%)",
+                display: "grid",
+                placeItems: "center",
+                color: "#111827",
+                overflow: "hidden",
+              }}
+            >
+              {uploadSession.activePreviewUrl ? null : <Upload size={22} />}
+            </div>
+            <div style={{ minWidth: 0, flex: 1 }}>
+              <div style={{ color: "#111827", fontWeight: 900, fontSize: 16 }}>
+                {uploadSession.phase === "uploading"
+                  ? "Uploading Photos..."
+                  : uploadSession.phase === "complete_with_errors"
+                    ? "Upload finished with issues"
+                    : "Upload complete"}
+              </div>
+              <div style={{ color: "#4b5563", fontSize: 13, marginTop: 4 }}>
+                {uploadSession.phase === "uploading"
+                  ? `${uploadDisplayCount} of ${uploadSession.total} photos`
+                  : uploadSession.phase === "complete_with_errors"
+                    ? `${uploadSession.completed} uploaded • ${uploadSession.failed} failed`
+                    : `${uploadSession.completed} photos uploaded`}
+              </div>
+              <div
+                style={{
+                  color: "#6b7280",
+                  fontSize: 12,
+                  marginTop: 6,
+                  whiteSpace: "nowrap",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                }}
+              >
+                {uploadSession.activeFileName}
+              </div>
+            </div>
+          </div>
+          <div
+            style={{
+              marginTop: 14,
+              height: 8,
+              borderRadius: 999,
+              background: "#eef2f7",
+              overflow: "hidden",
+            }}
+          >
+            <div
+              style={{
+                height: "100%",
+                width: `${uploadSession.phase === "uploading" ? uploadProgress : 100}%`,
+                background:
+                  uploadSession.phase === "complete_with_errors"
+                    ? "linear-gradient(90deg, #f59e0b 0%, #f97316 100%)"
+                    : "linear-gradient(90deg, #0ea5e9 0%, #2563eb 100%)",
+                transition: "width 0.25s ease",
+              }}
+            />
+          </div>
+        </div>
+      ) : null}
+
       {viewerItem ? (
         <div onClick={() => setViewerIndex(null)} style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.88)", display: "grid", placeItems: "center", zIndex: 90, padding: 24 }}>
           <div onClick={(e: ReactMouseEvent<HTMLDivElement>) => e.stopPropagation()} style={{ width: "100%", maxWidth: 1180, maxHeight: "92vh", background: "#0f172a", borderRadius: 24, border: "1px solid rgba(255,255,255,0.08)", boxShadow: "0 30px 80px rgba(0,0,0,0.4)", overflow: "hidden" }}>
@@ -500,7 +902,26 @@ export default function ProjectAlbumPage() {
               </div>
             </div>
             <div style={{ display: "grid", placeItems: "center", padding: 18, height: "calc(92vh - 82px)", background: "#020617" }}>
-              <img src={clean(viewerItem.preview_url) || clean(viewerItem.thumbnail_url) || ""} alt={clean(viewerItem.filename) || "Photo"} style={{ maxWidth: "100%", maxHeight: "100%", width: "auto", height: "auto", objectFit: "contain", borderRadius: 18 }} />
+              <img
+                loading="eager"
+                src={viewerSrc}
+                alt={clean(viewerItem.filename) || "Photo"}
+                onLoad={(event) => {
+                  const image = event.currentTarget;
+                  const naturalWidth = image.naturalWidth || image.width;
+                  const naturalHeight = image.naturalHeight || image.height;
+                  if (!naturalWidth || !naturalHeight) return;
+                  setViewerAspectRatio(naturalWidth / naturalHeight);
+                }}
+                style={{
+                  maxWidth: viewerIsPortrait ? "min(54vw, 620px)" : "100%",
+                  maxHeight: viewerIsPortrait ? "calc(92vh - 150px)" : "100%",
+                  width: "auto",
+                  height: "auto",
+                  objectFit: "contain",
+                  borderRadius: 18,
+                }}
+              />
             </div>
           </div>
         </div>

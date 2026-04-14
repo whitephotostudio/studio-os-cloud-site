@@ -15,37 +15,44 @@ export function Hero() {
         <div className="grid items-start gap-10 lg:grid-cols-2">
           <div>
             <h1 className="text-4xl font-semibold leading-tight tracking-tight text-neutral-950 sm:text-5xl lg:text-6xl">
-              Professional tools for photographers,
-              <span className="block">built to simplify workflows.</span>
+              Run Your Photography Business
+              <span className="block">From One Connected System</span>
             </h1>
 
             <p className="mt-5 max-w-xl text-lg leading-8 text-neutral-600">
-              Studio OS Cloud and the Studio OS App work together to give photographers a premium connected workflow for roster-based organization, galleries, ordering, printing, and lab fulfillment.
+              Studio OS helps photographers capture, organize, sell, and
+              deliver — without juggling multiple tools.
             </p>
 
             <div className="mt-8 flex flex-col gap-3 sm:flex-row">
               <Link
+                href="/studio-os/download"
+                className="inline-flex items-center justify-center gap-2 rounded-2xl border border-[#050505] bg-[linear-gradient(180deg,#181818_0%,#080808_52%,#000000_100%)] px-5 py-3 text-center font-medium text-white shadow-[0_16px_30px_rgba(0,0,0,0.22)] transition hover:brightness-[1.03]"
+              >
+                Download App
+              </Link>
+              <Link
                 href="/pricing"
-                className="inline-flex items-center justify-center gap-2 rounded-2xl border border-[#d7d3cc] bg-[linear-gradient(180deg,#ffffff_0%,#faf8f4_52%,#f1ede5_100%)] px-5 py-3 font-medium text-neutral-950 shadow-[0_12px_24px_rgba(24,24,24,0.08)] transition hover:brightness-[0.99]"
+                className="inline-flex items-center justify-center gap-2 rounded-2xl border border-[#d7d3cc] bg-[linear-gradient(180deg,#ffffff_0%,#faf8f4_52%,#f1ede5_100%)] px-5 py-3 text-center font-medium text-neutral-950 shadow-[0_12px_24px_rgba(24,24,24,0.08)] transition hover:brightness-[0.99]"
               >
                 See Pricing
               </Link>
               <Link
-                href="/preview"
-                className="inline-flex items-center justify-center gap-2 rounded-2xl border border-[#050505] bg-[linear-gradient(180deg,#181818_0%,#080808_52%,#000000_100%)] px-5 py-3 font-medium text-white shadow-[0_16px_30px_rgba(0,0,0,0.22)] transition hover:brightness-[1.03]"
+                href="/studio-os"
+                className="inline-flex items-center justify-center gap-2 rounded-2xl border border-neutral-200 bg-white px-5 py-3 text-center font-medium text-neutral-950 shadow-[0_12px_24px_rgba(24,24,24,0.08)] transition hover:bg-neutral-50"
               >
                 Platform Demo
               </Link>
               <Link
                 href="/sign-up"
-                className="inline-flex items-center justify-center gap-2 rounded-2xl border border-[#a9191d] bg-[linear-gradient(180deg,#f03a3e_0%,#da262b_46%,#b81c21_100%)] px-5 py-3 font-medium text-white shadow-[0_14px_28px_rgba(146,15,23,0.18)] transition hover:brightness-[0.98]"
+                className="inline-flex items-center justify-center gap-2 rounded-2xl border border-[#a9191d] bg-[linear-gradient(180deg,#f03a3e_0%,#da262b_46%,#b81c21_100%)] px-5 py-3 text-center font-medium text-white shadow-[0_14px_28px_rgba(146,15,23,0.18)] transition hover:brightness-[0.98]"
               >
                 Create Account
               </Link>
             </div>
 
             <div className="mt-8 text-sm text-neutral-500">
-              Studio OS App + Studio OS Cloud in one connected platform, with direct Stripe Connect checkout and no sales percentage fee.
+              Built for school, event, and high-volume photography workflows.
             </div>
           </div>
 
@@ -58,10 +65,10 @@ export function Hero() {
                       Studio OS
                     </div>
                     <div className="mt-1 whitespace-nowrap text-sm font-semibold text-neutral-900">
-                      Desktop workflow
+                      Capture + organize
                     </div>
                     <div className="mt-1 text-xs text-neutral-500">
-                      Capture, organize, and manage production.
+                      Capture faster and keep every job organized from the start.
                     </div>
                   </div>
 
@@ -70,16 +77,16 @@ export function Hero() {
                       Studio OS Cloud
                     </div>
                     <div className="mt-1 whitespace-nowrap text-sm font-semibold text-neutral-900">
-                      Online delivery
+                      Sell + deliver
                     </div>
                     <div className="mt-1 text-xs text-neutral-500">
-                      Galleries, orders, and cloud-connected access.
+                      Orders, galleries, and client access in one connected system.
                     </div>
                   </div>
 
                   <div className="flex flex-wrap items-start gap-2 xl:flex-row xl:items-center">
                     <div className="inline-flex items-center gap-2 whitespace-nowrap rounded-full border border-neutral-200 bg-white px-3 py-1 text-xs text-neutral-700">
-                      Free 7 days trial
+                      Start free trial
                     </div>
                     <div className="inline-flex items-center gap-2 whitespace-nowrap rounded-full border border-neutral-200 bg-white px-3 py-1 text-xs text-neutral-700">
                       <div className="h-2 w-2 rounded-full bg-green-500" />
@@ -102,17 +109,17 @@ export function Hero() {
                   </div>
                 </div>
 
-                <div className="rounded-2xl border border-neutral-200 bg-white p-5">
-                  <div className="text-sm font-semibold text-neutral-900">
-                    What photographers manage here
-                  </div>
+                  <div className="rounded-2xl border border-neutral-200 bg-white p-5">
+                    <div className="text-sm font-semibold text-neutral-900">
+                      What Studio OS connects
+                    </div>
 
-                  <div className="mt-4 space-y-3 text-sm text-neutral-700">
-                    {[
-                      "Private client galleries",
-                      "Online ordering",
-                      "Account and workflow management",
-                    ].map((line) => (
+                    <div className="mt-4 space-y-3 text-sm text-neutral-700">
+                      {[
+                        "Capture and job organization",
+                        "Client galleries and ordering",
+                        "Delivery and business workflow",
+                      ].map((line) => (
                       <div key={line} className="flex items-center gap-3">
                         <div className="h-2 w-2 rounded-full bg-[#df2b2f]" />
                         {line}
@@ -132,10 +139,10 @@ export function Hero() {
                 Studio OS App
               </div>
               <p className="mt-2 text-base leading-8 text-neutral-600">
-                Desktop workflow for photographers.
+                Capture and organize faster across school, event, and high-volume jobs.
               </p>
               <div className="mt-1 text-sm leading-7 text-neutral-500">
-                Roster • Capture • Sorting • Printing
+                Tethering • Rosters • Sorting • AI Tools • Print Workflow
               </div>
             </div>
 
@@ -144,10 +151,10 @@ export function Hero() {
                 Studio OS Cloud
               </div>
               <p className="mt-1 text-base leading-8 text-neutral-600">
-                Online delivery and ordering.
+                Sell and deliver through galleries, ordering, and client access.
               </p>
               <div className="mt-1 text-sm leading-7 text-neutral-500">
-                Private Access • Organized Galleries • Easy Parent Ordering
+                Galleries • Orders • Downloads • Client Access
               </div>
             </div>
           </div>

@@ -5,9 +5,9 @@ import { Logo } from "./logo";
 const navLinks = [
   { href: "/", label: "Home" },
   { href: "/studio-os", label: "Studio OS" },
+  { href: "/studio-os/download", label: "Download App" },
   { href: "/pricing", label: "Pricing" },
   { href: "/parents", label: "Parents" },
-  { href: "/preview", label: "Preview" },
 ];
 
 export function SiteHeader() {
@@ -47,10 +47,10 @@ export function SiteHeader() {
           </Link>
 
           <Link
-            href="/preview"
+            href="/studio-os/download"
             className="rounded-2xl border border-[#050505] bg-[linear-gradient(180deg,#181818_0%,#080808_55%,#000000_100%)] px-4 py-2.5 text-sm font-medium text-white shadow-[0_14px_28px_rgba(0,0,0,0.18)] transition hover:brightness-[1.03]"
           >
-            Platform Demo
+            Download App
           </Link>
         </div>
       </div>
