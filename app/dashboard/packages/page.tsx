@@ -14,7 +14,7 @@ import {
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 type PackageItem =
-  | { name?: string; qty?: number | string; type?: string; size?: string; finish?: string }
+  | { name?: string; qty?: number | string; type?: string; size?: string; finish?: string; composite?: boolean | null }
   | string;
 
 type Pkg = {
@@ -36,6 +36,7 @@ type Profile = {
   name: string;
   photographer_id: string | null;
   created_at: string;
+  composites_enabled: boolean;
   packages: Pkg[];
   count: number;
 };
@@ -67,6 +68,19 @@ const PRINT_SIZES = [
   { value: "20x24",     label: "20×24" },
   { value: "24x30",     label: "24×30" },
   { value: "custom",    label: "Custom Size" },
+];
+
+const COMPOSITE_SIZES = [
+  { value: "composite_8x10",  label: "Composite 8×10" },
+  { value: "composite_11x14", label: "Composite 11×14" },
+  { value: "composite_16x20", label: "Composite 16×20" },
+  { value: "composite_20x24", label: "Composite 20×24" },
+];
+
+const ALL_ITEM_SIZES = [
+  ...PRINT_SIZES,
+  { value: "_sep_composite", label: "── Composites ──", disabled: true },
+  ...COMPOSITE_SIZES,
 ];
 
 // ── Package Pack Presets ──────────────────────────────────────────────────────
@@ -158,7 +172,16 @@ function formatItem(item: PackageItem): string {
   const name = item.name?.trim() || "";
   const size = item.size?.trim() || "";
   const finish = item.finish?.trim() || "";
-  return [qty + name, size, finish].filter(Boolean).join(" ");
+  const label = [qty + name, size, finish].filter(Boolean).join(" ");
+  return item.composite ? `${label} (auto)` : label;
+}
+
+function isCompositePackageItem(item: PackageItem): boolean {
+  return typeof item !== "string" && !!item.composite;
+}
+
+function packageHasCompositeItems(pkg: Pkg): boolean {
+  return (pkg.items ?? []).some(isCompositePackageItem);
 }
 
 function genProfileId(): string {
@@ -202,7 +225,7 @@ export default function PackagesPage() {
   const [editPrice, setEditPrice]     = useState("");
   const [editDesc, setEditDesc]       = useState("");
   const [editCategory, setEditCategory] = useState("");
-  const [editItems, setEditItems]     = useState<{ name: string; qty: number }[]>([]);
+  const [editItems, setEditItems]     = useState<{ name: string; qty: number; composite?: boolean }[]>([]);
   const [editActive, setEditActive]   = useState(true);
   const [editSizePreset, setEditSizePreset] = useState("custom");
   const [saving, setSaving]           = useState(false);
@@ -273,7 +296,7 @@ export default function PackagesPage() {
     // Load profiles and packages in parallel
     const [profilesRes, packagesRes] = await Promise.all([
       supabase.from("package_profiles")
-        .select("id,name,photographer_id,created_at")
+        .select("id,name,photographer_id,created_at,composites_enabled")
         .eq("photographer_id", pid)
         .order("created_at"),
       supabase.from("packages")
@@ -309,6 +332,7 @@ export default function PackagesPage() {
           name: sample.profile_name ?? profileId,
           photographer_id: pid,
           created_at: new Date().toISOString(),
+          composites_enabled: false,
           packages: pkgs,
           count: pkgs.length,
         });
@@ -423,8 +447,8 @@ export default function PackagesPage() {
     setEditCategory(getCategoryKey(pkg));
     setEditActive(pkg.active);
     const items = (pkg.items ?? []).map(item => {
-      if (typeof item === "string") return { name: item, qty: 1 };
-      return { name: item.name?.trim() || "", qty: parseInt(String(item.qty ?? 1)) || 1 };
+      if (typeof item === "string") return { name: item, qty: 1, composite: false };
+      return { name: item.name?.trim() || "", qty: parseInt(String(item.qty ?? 1)) || 1, composite: !!item.composite };
     });
     setEditItems(items.length > 0 ? items : [{ name: "", qty: 1 }]);
   }
@@ -438,7 +462,7 @@ export default function PackagesPage() {
       price_cents: Math.round(parseFloat(editPrice) * 100),
       category:    editCategory,
       active:      editActive,
-      items:       editItems.filter(i => i.name.trim()).map(i => ({ name: i.name.trim(), qty: i.qty })),
+      items:       editItems.filter(i => i.name.trim()).map(i => ({ name: i.name.trim(), qty: i.qty, ...(i.composite ? { composite: true } : {}) })),
     }).eq("id", editingPkg.id);
     setSaving(false);
     setEditingPkg(null);
@@ -678,6 +702,29 @@ export default function PackagesPage() {
     }
   }
 
+  async function toggleCompositesEnabled(profileId: string, currentValue: boolean) {
+    const newValue = !currentValue;
+    // Optimistic update
+    setProfiles(prev => prev.map(p =>
+      p.id === profileId ? { ...p, composites_enabled: newValue } : p
+    ));
+    if (selectedProfile?.id === profileId) {
+      setSelectedProfile(prev => prev ? { ...prev, composites_enabled: newValue } : prev);
+    }
+    const { error } = await supabase
+      .from("package_profiles")
+      .update({ composites_enabled: newValue })
+      .eq("id", profileId);
+    if (error) {
+      console.error("toggleCompositesEnabled error:", error);
+      alert(`Could not toggle composites: ${error.message}`);
+      // Revert
+      setProfiles(prev => prev.map(p =>
+        p.id === profileId ? { ...p, composites_enabled: currentValue } : p
+      ));
+    }
+  }
+
   async function signOut() {
     await supabase.auth.signOut();
     window.location.href = "/sign-in";
@@ -913,6 +960,22 @@ export default function PackagesPage() {
                           </div>
                         )}
                       </div>
+                    </div>
+
+                    {/* Composites toggle */}
+                    <div
+                      style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14, padding: "8px 10px", background: profile.composites_enabled ? "#faf5ff" : "#f9f9f9", borderRadius: 8, border: profile.composites_enabled ? "1px solid #e9d5ff" : "1px solid #f0f0f0" }}
+                      onClick={e => e.stopPropagation()}
+                    >
+                      <button
+                        onClick={() => toggleCompositesEnabled(profile.id, profile.composites_enabled)}
+                        style={{ width: 36, height: 20, borderRadius: 10, background: profile.composites_enabled ? "#7c3aed" : "#d1d5db", border: "none", cursor: "pointer", position: "relative", transition: "background 0.2s", flexShrink: 0 }}
+                      >
+                        <span style={{ position: "absolute", top: 2, left: profile.composites_enabled ? 18 : 2, width: 16, height: 16, borderRadius: "50%", background: "#fff", transition: "left 0.2s", boxShadow: "0 1px 2px rgba(0,0,0,0.15)" }} />
+                      </button>
+                      <span style={{ fontSize: 12, color: profile.composites_enabled ? "#7c3aed" : "#888", fontWeight: 500 }}>
+                        {profile.composites_enabled ? "Composites ON" : "Composites OFF"}
+                      </span>
                     </div>
 
                     {/* Category breakdown */}
@@ -1365,26 +1428,49 @@ export default function PackagesPage() {
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
                   <label style={{ fontSize: 13, fontWeight: 600, color: "#333" }}>Package Contents</label>
                 </div>
-                {editItems.map((item, i) => (
+                {editItems.map((item, i) => {
+                  const isCompositeItem = !!item.composite;
+                  const allSizes = isCompositeItem ? COMPOSITE_SIZES : PRINT_SIZES;
+                  const matchedSize = allSizes.find(s => s.label === item.name || s.value === item.name);
+                  const sizeValue = matchedSize ? matchedSize.value : "custom";
+                  return (
                   <div key={i} style={{ display: "flex", gap: 8, marginBottom: 8, alignItems: "center" }}>
+                    {isCompositeItem && (
+                      <span style={{ fontSize: 10, fontWeight: 700, color: "#7c3aed", background: "#f5f3ff", padding: "2px 6px", borderRadius: 4, whiteSpace: "nowrap", letterSpacing: "0.04em" }}>
+                        AUTO
+                      </span>
+                    )}
                     <div style={{ flex: 1, display: "flex", gap: 8 }}>
                       <select
-                        value={PRINT_SIZES.some(s => s.label === item.name || s.value === item.name) ? (PRINT_SIZES.find(s => s.label === item.name || s.value === item.name)?.value ?? "custom") : "custom"}
+                        value={sizeValue}
                         onChange={e => {
                           const n = [...editItems];
-                          const match = PRINT_SIZES.find(s => s.value === e.target.value);
-                          if (match && match.value !== "custom") {
-                            n[i] = { ...n[i], name: match.label };
+                          const val = e.target.value;
+                          const compositeMatch = COMPOSITE_SIZES.find(s => s.value === val);
+                          const printMatch = PRINT_SIZES.find(s => s.value === val);
+                          if (compositeMatch) {
+                            n[i] = { ...n[i], name: compositeMatch.label, composite: true };
+                          } else if (printMatch && printMatch.value !== "custom") {
+                            n[i] = { ...n[i], name: printMatch.label, composite: false };
+                          } else {
+                            n[i] = { ...n[i], composite: false };
                           }
                           setEditItems(n);
                         }}
-                        style={{ flex: 1, padding: "8px 12px", border: "1px solid #e5e5e5", borderRadius: 8, fontSize: 14, color: "#111", background: "#fff", appearance: "auto" }}
+                        style={{ flex: 1, padding: "8px 12px", border: isCompositeItem ? "1px solid #c4b5fd" : "1px solid #e5e5e5", borderRadius: 8, fontSize: 14, color: "#111", background: isCompositeItem ? "#faf5ff" : "#fff", appearance: "auto" }}
                       >
-                        {PRINT_SIZES.map(s => (
-                          <option key={s.value} value={s.value}>{s.label}</option>
-                        ))}
+                        <optgroup label="Print Sizes">
+                          {PRINT_SIZES.map(s => (
+                            <option key={s.value} value={s.value}>{s.label}</option>
+                          ))}
+                        </optgroup>
+                        <optgroup label="Composites (auto-filled)">
+                          {COMPOSITE_SIZES.map(s => (
+                            <option key={s.value} value={s.value}>{s.label}</option>
+                          ))}
+                        </optgroup>
                       </select>
-                      {(!PRINT_SIZES.some(s => s.label === item.name && s.value !== "custom")) && (
+                      {(!allSizes.some(s => s.label === item.name && s.value !== "custom")) && !isCompositeItem && (
                         <input
                           value={item.name}
                           onChange={e => { const n = [...editItems]; n[i] = { ...n[i], name: e.target.value }; setEditItems(n); }}
@@ -1410,11 +1496,18 @@ export default function PackagesPage() {
                       <Trash2 size={15} />
                     </button>
                   </div>
-                ))}
-                <button type="button" onClick={() => setEditItems([...editItems, { name: "", qty: 1 }])}
-                  style={{ width: "100%", padding: "10px", border: "1px dashed #d4d4d4", borderRadius: 8, background: "#fafafa", cursor: "pointer", fontSize: 13, color: "#666", fontWeight: 500, marginTop: 4 }}>
-                  + Add Item
-                </button>
+                  );
+                })}
+                <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+                  <button type="button" onClick={() => setEditItems([...editItems, { name: "", qty: 1, composite: false }])}
+                    style={{ flex: 1, padding: "10px", border: "1px dashed #d4d4d4", borderRadius: 8, background: "#fafafa", cursor: "pointer", fontSize: 13, color: "#666", fontWeight: 500 }}>
+                    + Add Print Item
+                  </button>
+                  <button type="button" onClick={() => setEditItems([...editItems, { name: "Composite 8×10", qty: 1, composite: true }])}
+                    style={{ flex: 1, padding: "10px", border: "1px dashed #c4b5fd", borderRadius: 8, background: "#faf5ff", cursor: "pointer", fontSize: 13, color: "#7c3aed", fontWeight: 500 }}>
+                    + Add Composite
+                  </button>
+                </div>
                 {editItems.length === 0 && (
                   <p style={{ fontSize: 13, color: "#bbb", margin: "8px 0 0", fontStyle: "italic" }}>No contents listed — add an item above.</p>
                 )}

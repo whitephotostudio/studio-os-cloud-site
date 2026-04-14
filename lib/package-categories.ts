@@ -6,6 +6,7 @@ export type PackageItemValue =
       type?: string | null;
       size?: string | null;
       finish?: string | null;
+      composite?: boolean | null;
     };
 
 export type PackageCategory =

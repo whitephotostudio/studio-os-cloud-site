@@ -113,6 +113,7 @@ type PackageItemValue =
       type?: string | null;
       size?: string | null;
       finish?: string | null;
+      composite?: boolean | null;
     };
 
 type PackageRow = {
@@ -236,7 +237,7 @@ type DrawerView =
   | "category-list"
   | "build-package"
   | "checkout";
-type ItemSlot = { label: string; assignedImageUrl: string | null };
+type ItemSlot = { label: string; assignedImageUrl: string | null; composite?: boolean };
 type CartBackdropSelection = Pick<
   BackdropRow,
   "id" | "name" | "image_url" | "tier" | "price_cents"
@@ -1425,12 +1426,13 @@ function isAllDigitalsPackage(pkg: PackageRow) {
   );
 }
 
-function buildSlots(pkg: PackageRow, orderQty: number = 1): ItemSlot[] {
+function buildSlots(pkg: PackageRow, orderQty: number = 1, compositeImageUrl?: string | null): ItemSlot[] {
   const slots: ItemSlot[] = [];
   const safeOrderQty = Math.max(1, orderQty);
 
   for (const item of pkg.items ?? []) {
     const baseLabel = formatPackageItem(item);
+    const isComposite = typeof item === "object" && !!item.composite;
     const qty =
       typeof item === "object" && item.qty
         ? parseInt(String(item.qty), 10) || 1
@@ -1442,7 +1444,8 @@ function buildSlots(pkg: PackageRow, orderQty: number = 1): ItemSlot[] {
         const slotTotal = qty * safeOrderQty;
         slots.push({
           label: makeIndexedLabel(baseLabel, slotIndex, slotTotal),
-          assignedImageUrl: null,
+          assignedImageUrl: isComposite && compositeImageUrl ? compositeImageUrl : null,
+          composite: isComposite,
         });
       }
     }
@@ -5219,11 +5222,17 @@ export default function ParentGalleryPage() {
         : null);
     setSelectedOrderQty(chosenQty);
     setSelectedPkg(pkg);
-    const newSlots = buildSlots(pkg, chosenQty);
+
+    // Find the first composite image for auto-filling composite slots in mixed packages
+    const firstCompositeImage = images.find((img) => img.source === "composite");
+    const compositeAutoFillUrl = firstCompositeImage?.url ?? null;
+
+    const newSlots = buildSlots(pkg, chosenQty, compositeAutoFillUrl);
     setSlots(
       newSlots.map((s) => ({
         ...s,
-        assignedImageUrl: initialAssignedImageUrl,
+        // For non-composite slots, pre-assign the selected image; composite slots keep their auto-fill
+        assignedImageUrl: s.composite ? s.assignedImageUrl : initialAssignedImageUrl,
       }))
     );
     setActiveSlotIndex(null);
@@ -5244,6 +5253,8 @@ export default function ParentGalleryPage() {
 
   function assignImageToSlot(imageUrl: string) {
     if (activeSlotIndex === null) return;
+    // Don't allow assigning to composite slots — they're auto-filled
+    if (slots[activeSlotIndex]?.composite) return;
     const selectedGalleryImage = visibleImages.find((img) => img.url === imageUrl);
     if (isCompositeGalleryImage(selectedGalleryImage)) return;
     setSlots((prev) =>
@@ -5251,8 +5262,9 @@ export default function ParentGalleryPage() {
         i === activeSlotIndex ? { ...s, assignedImageUrl: imageUrl } : s
       )
     );
+    // Skip composite slots when finding next empty
     const nextEmpty = slots.findIndex(
-      (s, i) => i > activeSlotIndex && !s.assignedImageUrl
+      (s, i) => i > activeSlotIndex && !s.assignedImageUrl && !s.composite
     );
     setActiveSlotIndex(nextEmpty >= 0 ? nextEmpty : null);
   }
@@ -9119,22 +9131,29 @@ export default function ParentGalleryPage() {
                     >
                       {slots.map((slot, i) => {
                         const isActive = activeSlotIndex === i;
+                        const isCompositeSlot = !!slot.composite;
                         return (
                           <div
                             key={i}
-                            onClick={() => setActiveSlotIndex(isActive ? null : i)}
+                            onClick={() => {
+                              if (isCompositeSlot) return; // composite slots are not selectable
+                              setActiveSlotIndex(isActive ? null : i);
+                            }}
                             style={{
                               display: "flex",
                               alignItems: "center",
                               gap: 14,
-                              background: isActive ? "#1e2a1e" : "#242424",
-                              border: isActive
+                              background: isCompositeSlot ? "#1a1a2e" : isActive ? "#1e2a1e" : "#242424",
+                              border: isCompositeSlot
+                                ? "1px solid #4338ca"
+                                : isActive
                                 ? "1.5px solid #3a7a3a"
                                 : "1px solid #2e2e2e",
                               borderRadius: 12,
                               padding: "12px 14px",
-                              cursor: "pointer",
+                              cursor: isCompositeSlot ? "default" : "pointer",
                               transition: "border-color 0.15s, background 0.15s",
+                              opacity: isCompositeSlot ? 0.85 : 1,
                             }}
                           >
                             <div
@@ -9227,17 +9246,19 @@ export default function ParentGalleryPage() {
                                       width: 6,
                                       height: 6,
                                       borderRadius: "50%",
-                                      background: "#4ade80",
+                                      background: isCompositeSlot ? "#818cf8" : "#4ade80",
                                       flexShrink: 0,
                                     }}
                                   />
                                   <span
                                     style={{
                                       fontSize: 11,
-                                      color: "#4ade80",
+                                      color: isCompositeSlot ? "#818cf8" : "#4ade80",
                                     }}
                                   >
-                                    {isActive
+                                    {isCompositeSlot
+                                      ? "Class photo (auto-included)"
+                                      : isActive
                                       ? `Selected for slot ${i + 1} of ${slots.length}`
                                       : `Assigned to slot ${i + 1} of ${slots.length}`}
                                   </span>
