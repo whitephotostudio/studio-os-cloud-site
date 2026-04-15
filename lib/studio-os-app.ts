@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { createDashboardServiceClient } from "@/lib/dashboard-auth";
+import { isFreeTrialActive } from "@/lib/payments";
 import { normalizePlanCode, type PlanCode } from "@/lib/studio-pricing";
 
 type ServiceClient = ReturnType<typeof createDashboardServiceClient>;
@@ -20,6 +21,9 @@ export type StudioAppPhotographerRow = {
   extra_desktop_keys: number | null;
   is_platform_admin: boolean | null;
   studio_app_beta_access: boolean | null;
+  trial_starts_at?: string | null;
+  trial_ends_at?: string | null;
+  created_at?: string | null;
 };
 
 type StudioAppReleaseRow = {
@@ -141,7 +145,7 @@ const DEFAULT_NOTES =
 const DEFAULT_BETA_WARNING =
   "Beta builds are intended for approved photographers only. Download links, activations, and workflows may change during rollout.";
 const PHOTOGRAPHER_SELECT =
-  "id,user_id,business_name,billing_email,studio_email,subscription_plan_code,subscription_status,extra_desktop_keys,is_platform_admin,studio_app_beta_access";
+  "id,user_id,business_name,billing_email,studio_email,subscription_plan_code,subscription_status,extra_desktop_keys,is_platform_admin,studio_app_beta_access,trial_starts_at,trial_ends_at,created_at";
 const RELEASE_SELECT =
   "id,slug,release_state,version,release_notes,beta_warning,mac_download_url,windows_download_url,published_at,created_at,updated_at";
 const KEY_SELECT =
@@ -340,9 +344,10 @@ export function resolveStudioAppEntitlement(
     ? "studio"
     : normalizePlanCode(photographer.subscription_plan_code);
   const releaseState = normalizeReleaseState(release.release_state);
+  const freeTrialRunning = isFreeTrialActive(photographer);
   const subscriptionActive =
-    isPlatformAdmin || isSubscriptionActive(photographer.subscription_status);
-  const appEligibleByPlan = canUseStudioAppPlan(planCode);
+    isPlatformAdmin || isSubscriptionActive(photographer.subscription_status) || freeTrialRunning;
+  const appEligibleByPlan = canUseStudioAppPlan(planCode) || freeTrialRunning;
   const betaAccess = Boolean(photographer.studio_app_beta_access);
   const rolloutEnabled =
     releaseState === "public" || betaAccess || isPlatformAdmin;
