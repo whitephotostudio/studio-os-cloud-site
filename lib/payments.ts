@@ -498,7 +498,7 @@ export async function getPhotographerByUserId(service: ServiceClient, userId: st
 }
 
 /** Duration of the free trial in days. */
-export const FREE_TRIAL_DAYS = 30;
+export const FREE_TRIAL_DAYS = 7;
 
 export function isTrialStatus(status: string | null | undefined) {
   const normalized = (status ?? "").trim().toLowerCase();
