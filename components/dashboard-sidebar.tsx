@@ -38,6 +38,7 @@ const NAV_ITEMS = [
   { href: "/dashboard/packages", label: "Packages", match: /^\/dashboard\/packages/ },
   { href: "/dashboard/settings", label: "Settings", match: /^\/dashboard\/settings/ },
   { href: "/dashboard/membership", label: "Membership", match: /^\/dashboard\/membership/ },
+  { href: "/dashboard/feature-requests", label: "Feature Requests", match: /^\/dashboard\/feature-requests/ },
 ];
 
 export function DashboardSidebar() {
