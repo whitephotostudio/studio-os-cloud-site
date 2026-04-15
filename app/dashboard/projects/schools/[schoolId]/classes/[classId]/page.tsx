@@ -25,6 +25,7 @@ import {
   ensureSchoolCollectionId,
   findSyncedSchoolProjectId,
 } from "@/lib/school-sync";
+import { generateThumbnails } from "@/lib/generate-thumbnails-client";
 import {
   buildStoredMediaUrls,
   extractStoragePathFromSupabaseUrl,
@@ -485,7 +486,10 @@ export default function SchoolsSchoolClassPage() {
           throw new Error(uploadError.message || "Photo upload failed.");
         }
 
-        const publicUrl = buildStoredMediaUrls({ storagePath }).previewUrl;
+        // Generate pre-sized thumbnails server-side (avoids Supabase transform quota)
+        const accessToken = (await supabase.auth.getSession()).data.session?.access_token || "";
+        const generated = await generateThumbnails(storagePath, accessToken);
+        const publicUrl = generated.previewUrl || buildStoredMediaUrls({ storagePath }).previewUrl;
         if (clean(publicUrl)) {
           uploadedAssets.push({
             storagePath,

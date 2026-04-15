@@ -31,6 +31,7 @@ import {
   buildStoredMediaUrls,
   extractStoragePathFromSupabaseUrl,
 } from "@/lib/storage-images";
+import { generateThumbnails } from "@/lib/generate-thumbnails-client";
 
 type School = {
   id: string;
@@ -434,7 +435,10 @@ export default function SchoolsSchoolRoleGalleryPage() {
           throw new Error(uploadError.message || "Photo upload failed.");
         }
 
-        const publicUrl = buildStoredMediaUrls({ storagePath }).previewUrl;
+        // Generate pre-sized thumbnails server-side (avoids Supabase transform quota)
+        const accessToken = (await supabase.auth.getSession()).data.session?.access_token || "";
+        const generated = await generateThumbnails(storagePath, accessToken);
+        const publicUrl = generated.previewUrl || buildStoredMediaUrls({ storagePath }).previewUrl;
         if (clean(publicUrl)) {
           uploadedAssets.push({
             storagePath,
@@ -589,7 +593,10 @@ export default function SchoolsSchoolRoleGalleryPage() {
             throw new Error(uploadError.message || "Person added, but photo upload failed.");
           }
 
-          const publicUrl = buildStoredMediaUrls({ storagePath }).previewUrl;
+          // Generate pre-sized thumbnails server-side (avoids Supabase transform quota)
+          const accessToken = (await supabase.auth.getSession()).data.session?.access_token || "";
+          const generated = await generateThumbnails(storagePath, accessToken);
+          const publicUrl = generated.previewUrl || buildStoredMediaUrls({ storagePath }).previewUrl;
           if (clean(publicUrl)) {
             uploadedAssets.push({
               storagePath,

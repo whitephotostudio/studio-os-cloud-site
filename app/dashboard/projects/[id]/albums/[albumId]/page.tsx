@@ -6,6 +6,7 @@ import { useParams, useSearchParams } from "next/navigation";
 import { ArrowLeft, CheckSquare, FolderPlus, Lock, Menu, Settings, Trash2, Upload, X, ZoomIn, LoaderCircle, Image as ImageIcon } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { buildStoredMediaUrls } from "@/lib/storage-images";
+import { generateThumbnails } from "@/lib/generate-thumbnails-client";
 
 type ProjectRow = {
   id: string;
@@ -364,9 +365,14 @@ export default function ProjectAlbumPage() {
               : prev,
           );
 
-          const { previewUrl, thumbnailUrl } = buildStoredMediaUrls({
-            storagePath,
-          });
+          // Generate pre-sized thumbnails server-side (avoids Supabase Image
+          // Transformation quota).  Falls back gracefully if generation fails.
+          const accessToken = (await supabase.auth.getSession()).data.session?.access_token || "";
+          const generated = await generateThumbnails(storagePath, accessToken);
+
+          const { previewUrl, thumbnailUrl } = generated.thumbnailUrl
+            ? { previewUrl: generated.previewUrl!, thumbnailUrl: generated.thumbnailUrl! }
+            : buildStoredMediaUrls({ storagePath });
 
           const payload = {
             project_id: projectId,

@@ -98,29 +98,23 @@ export function buildStoredMediaUrls(
 ) {
   const storagePath = clean(input.storagePath);
   const originalUrl = publicStorageUrl(storagePath, bucket);
-  const fallbackThumbnailUrl = transformedStorageUrl(
-    storagePath,
-    { width: 560, quality: 72, resize: "contain" },
-    bucket,
-  );
-  const fallbackPreviewUrl = transformedStorageUrl(
-    storagePath,
-    { width: 1600, quality: 84, resize: "contain" },
-    bucket,
-  );
 
   const existingThumbnailUrl = clean(input.thumbnailUrl);
   const existingPreviewUrl = clean(input.previewUrl);
 
+  // Use pre-generated thumbnails if they exist; otherwise fall back to the
+  // original public URL.  We no longer generate Supabase transform URLs
+  // (/render/image/) because each unique transform counts against the
+  // plan's Image Transformations quota.
   const thumbnailUrl =
-    !existingThumbnailUrl || existingThumbnailUrl === originalUrl || isOriginalStorageUrl(existingThumbnailUrl, bucket)
-      ? fallbackThumbnailUrl || existingPreviewUrl || originalUrl
-      : existingThumbnailUrl;
+    existingThumbnailUrl && existingThumbnailUrl !== originalUrl && !isOriginalStorageUrl(existingThumbnailUrl, bucket)
+      ? existingThumbnailUrl
+      : originalUrl;
 
   const previewUrl =
-    !existingPreviewUrl || existingPreviewUrl === originalUrl || isOriginalStorageUrl(existingPreviewUrl, bucket)
-      ? fallbackPreviewUrl || thumbnailUrl || originalUrl
-      : existingPreviewUrl;
+    existingPreviewUrl && existingPreviewUrl !== originalUrl && !isOriginalStorageUrl(existingPreviewUrl, bucket)
+      ? existingPreviewUrl
+      : originalUrl;
 
   return {
     originalUrl,
