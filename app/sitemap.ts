@@ -37,6 +37,21 @@ export default function sitemap(): MetadataRoute.Sitemap {
     },
   ];
 
+  // SEO landing pages
+  const seoLandingPages: MetadataRoute.Sitemap = [
+    "school-photography-software",
+    "high-volume-photography-software",
+    "photography-workflow-software",
+    "online-photo-gallery-ordering-software",
+    "pixieset-alternative",
+    "gotphoto-alternative",
+  ].map((slug) => ({
+    url: `${baseUrl}/${slug}`,
+    lastModified: new Date(),
+    changeFrequency: "monthly" as const,
+    priority: 0.9,
+  }));
+
   // Competitor comparison pages
   const competitors = [
     "gotphoto",
@@ -55,5 +70,5 @@ export default function sitemap(): MetadataRoute.Sitemap {
     priority: 0.8,
   }));
 
-  return [...staticPages, ...comparisonPages];
+  return [...staticPages, ...seoLandingPages, ...comparisonPages];
 }

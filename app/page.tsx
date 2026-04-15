@@ -45,6 +45,13 @@ export default function HomePage() {
       <SiteHeader />
       <main className="flex-1">
         <Hero />
+        <div className="px-4 py-6 sm:px-6 lg:px-8">
+          <p className="mx-auto max-w-3xl text-center text-base leading-7 text-neutral-600">
+            Studio OS Cloud is photography workflow software for school, event, and high-volume
+            photographers who need galleries, ordering, rosters, and connected desktop + cloud
+            workflow.
+          </p>
+        </div>
         <SectionTransition>
           Everything you need to run your photography workflow — in one place.
         </SectionTransition>
