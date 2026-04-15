@@ -15,6 +15,7 @@ type FeatureRequest = {
   created_at: string;
   updated_at: string;
   has_voted: boolean;
+  author_email?: string;
 };
 
 const STATUS_CONFIG = {
@@ -382,12 +383,19 @@ export default function FeatureRequestsPage() {
                     </div>
                   )}
 
-                  <div style={{ marginTop: 8, fontSize: 12, color: "#94a3b8" }}>
-                    {new Date(req.created_at).toLocaleDateString("en-US", {
-                      month: "short",
-                      day: "numeric",
-                      year: "numeric",
-                    })}
+                  <div style={{ marginTop: 8, fontSize: 12, color: "#94a3b8", display: "flex", gap: 8, alignItems: "center" }}>
+                    <span>
+                      {new Date(req.created_at).toLocaleDateString("en-US", {
+                        month: "short",
+                        day: "numeric",
+                        year: "numeric",
+                      })}
+                    </span>
+                    {req.author_email && (
+                      <span style={{ color: "#64748b", fontWeight: 600 }}>
+                        — {req.author_email}
+                      </span>
+                    )}
                   </div>
 
                   {/* Admin controls */}

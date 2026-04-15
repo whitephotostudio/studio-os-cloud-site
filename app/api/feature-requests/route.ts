@@ -23,7 +23,7 @@ export async function GET(request: NextRequest) {
     // Get photographer id
     const { data: pg } = await service
       .from("photographers")
-      .select("id")
+      .select("id, is_platform_admin")
       .eq("user_id", user.id)
       .maybeSingle();
 
@@ -31,13 +31,38 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ ok: false, message: "Photographer not found." }, { status: 404 });
     }
 
+    // Check if admin
+    const isAdmin = pg.is_platform_admin || user.email?.toLowerCase() === "harout@me.com";
+
     const statusFilter = request.nextUrl.searchParams.get("status") as FeatureRequestStatus | null;
     const requests = await listFeatureRequests(service, statusFilter ? { status: statusFilter } : undefined);
     const votedSet = await listVotesByPhotographer(service, pg.id);
 
+    // If admin, fetch author emails for each request
+    let authorEmails: Record<string, string> = {};
+    if (isAdmin && requests.length > 0) {
+      const photographerIds = [...new Set(requests.map((r) => r.photographer_id))];
+      const { data: photographers } = await service
+        .from("photographers")
+        .select("id, user_id")
+        .in("id", photographerIds);
+
+      if (photographers && photographers.length > 0) {
+        const userIds = photographers.map((p: { user_id: string }) => p.user_id);
+        const { data: { users } } = await service.auth.admin.listUsers();
+        const userMap = new Map(
+          (users ?? []).map((u: { id: string; email?: string }) => [u.id, u.email ?? ""])
+        );
+        for (const p of photographers) {
+          authorEmails[p.id] = (userMap.get(p.user_id) as string) ?? "";
+        }
+      }
+    }
+
     const enriched = requests.map((r) => ({
       ...r,
       has_voted: votedSet.has(r.id),
+      ...(isAdmin ? { author_email: authorEmails[r.photographer_id] ?? "" } : {}),
     }));
 
     return NextResponse.json({ ok: true, data: enriched });
