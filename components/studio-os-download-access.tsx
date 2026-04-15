@@ -198,13 +198,13 @@ export function StudioOSDownloadAccess({
             <div className="max-w-2xl">
               <div className="inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-4 py-1.5 text-xs font-bold uppercase tracking-[0.2em] text-emerald-700">
                 <Clock3 className="h-4 w-4" />
-                Activate your 30-day trial
+                Activate your 7-day trial
               </div>
               <h2 className="mt-4 text-3xl font-black tracking-tight text-neutral-950 sm:text-4xl">
                 Use your email first, then download the app.
               </h2>
               <p className="mt-4 text-base leading-7 text-neutral-600">
-                Create your photographer account first so we can activate your 30-day Studio OS trial,
+                Create your photographer account first so we can activate your 7-day Studio OS trial,
                 track your access, and bring you back to the app download when you are ready.
               </p>
             </div>
@@ -245,7 +245,7 @@ export function StudioOSDownloadAccess({
                   </>
                 ) : (
                   <>
-                    Start Free 30-Day Trial
+                    Start Free 7-Day Trial
                     <ArrowRight className="h-4 w-4" />
                   </>
                 )}
@@ -387,7 +387,7 @@ export function StudioOSDownloadAccess({
             Already a photographer account?
           </div>
           <p className="mt-3 text-base leading-7 text-neutral-600">
-            Sign in first and this page will immediately swap over to your app download buttons. New photographers can start with the free 30-day trial.
+            Sign in first and this page will immediately swap over to your app download buttons. New photographers can start with the free 7-day trial.
           </p>
           <div className="mt-5 flex flex-wrap items-center justify-center gap-3">
             <Link

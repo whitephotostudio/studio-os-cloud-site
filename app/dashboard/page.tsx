@@ -360,7 +360,7 @@ function DashboardPageContent() {
       if (photographerErr) throw photographerErr;
 
       // First-visit bootstrap: if no photographer row exists yet, hit the
-      // status endpoint which creates one (with a fresh 30-day trial) via
+      // status endpoint which creates one (with a fresh 7-day trial) via
       // getOrCreatePhotographerByUser, then re-query so the rest of the
       // dashboard (trial banner, schools, projects, orders) renders right
       // away instead of showing an empty state.

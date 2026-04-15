@@ -17,7 +17,7 @@ type CallbackState =
  * Supabase email confirmation links redirect the user back here after they
  * click the link in their welcome email. We finish the auth exchange, show
  * a friendly "you're verified" screen, and then bounce them into the
- * dashboard so their 30-day trial starts immediately.
+ * dashboard so their 7-day trial starts immediately.
  *
  * Supports two link formats:
  *   1. PKCE (?code=...)        — exchangeCodeForSession
@@ -163,7 +163,7 @@ export default function AuthCallbackPage() {
                     , <span className="font-semibold">{state.email}</span>
                   </>
                 ) : null}
-                . Your 30-day free trial is now active. Taking you to your
+                . Your 7-day free trial is now active. Taking you to your
                 dashboard...
               </p>
               <div className="mt-8 flex flex-wrap gap-3">

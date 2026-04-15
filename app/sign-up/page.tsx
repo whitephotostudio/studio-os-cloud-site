@@ -113,10 +113,10 @@ export default function SignUpPage() {
               Photographer Registration
             </p>
             <h1 className="max-w-xl text-4xl font-semibold tracking-tight text-neutral-950 md:text-5xl">
-              Start your free 30-day trial
+              Start your free 7-day trial
             </h1>
             <p className="mt-6 max-w-xl text-lg leading-8 text-neutral-600">
-              Get full access to every Studio OS Cloud feature for 30 days — no credit
+              Get full access to every Studio OS Cloud feature for 7 days — no credit
               card required. Build your photographer portal, school galleries, and
               connected online workflow.
             </p>
@@ -125,7 +125,7 @@ export default function SignUpPage() {
               <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
               </svg>
-              Full Studio plan access — free for 30 days
+              Full Studio plan access — free for 7 days
             </div>
 
             {selectedPlan ? (
@@ -166,7 +166,7 @@ export default function SignUpPage() {
                     Create your free account
                   </h2>
                   <p className="mt-2 text-sm text-neutral-500">
-                    No credit card needed. Your 30-day trial begins after email verification.
+                    No credit card needed. Your 7-day trial begins after email verification.
                   </p>
 
                   <form onSubmit={handleSignUp} className="mt-8 space-y-5">
