@@ -637,28 +637,29 @@ export function PricingShowcase({ variant = "home" }: PricingShowcaseProps) {
                   />
 
                   <div className="relative">
-                    <div className="flex items-start justify-between gap-4">
-                      <div>
-                        <div className={isFeatured ? "inline-flex h-12 w-12 items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-white" : "inline-flex h-12 w-12 items-center justify-center rounded-2xl border border-neutral-200 bg-neutral-50 text-neutral-950"}>
-                          <Icon className="h-5 w-5" />
-                        </div>
-                        <div className={isFeatured ? "mt-4 text-sm font-semibold uppercase tracking-[0.16em] text-neutral-400" : "mt-4 text-sm font-semibold uppercase tracking-[0.16em] text-neutral-500"}>
-                          {plan.eyebrow}
-                        </div>
-                        <h3 className="mt-3 text-3xl font-semibold tracking-tight">{plan.name}</h3>
+                    <div className="flex items-center justify-between gap-4">
+                      <div className={isFeatured ? "inline-flex h-12 w-12 items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-white" : "inline-flex h-12 w-12 items-center justify-center rounded-2xl border border-neutral-200 bg-neutral-50 text-neutral-950"}>
+                        <Icon className="h-5 w-5" />
                       </div>
 
                       {plan.badge ? (
                         <span
                           className={
                             isFeatured
-                              ? "rounded-full border border-white/15 bg-white/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-white"
-                              : "rounded-full border border-[#d9c2c8] bg-[#fcf7f8] px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-[#7a2f3f]"
+                              ? "rounded-full border border-white/15 bg-white/10 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-white text-center leading-tight"
+                              : "rounded-full border border-[#d9c2c8] bg-[#fcf7f8] px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#7a2f3f] text-center leading-tight"
                           }
                         >
                           {plan.badge}
                         </span>
                       ) : null}
+                    </div>
+
+                    <div>
+                      <div className={isFeatured ? "mt-4 text-sm font-semibold uppercase tracking-[0.16em] text-neutral-400" : "mt-4 text-sm font-semibold uppercase tracking-[0.16em] text-neutral-500"}>
+                        {plan.eyebrow}
+                      </div>
+                      <h3 className="mt-3 text-3xl font-semibold tracking-tight">{plan.name}</h3>
                     </div>
 
                     <div className="mt-6 flex items-end gap-2">
