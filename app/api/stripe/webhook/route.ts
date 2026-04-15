@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createDashboardServiceClient } from "@/lib/dashboard-auth";
 import { syncPhotographyKeysByPhotographerId } from "@/lib/studio-os-app";
 import { resendConfigured, sendResendEmail } from "@/lib/resend";
+import { r2DeletePrefix } from "@/lib/r2";
 import {
   asIsoTimestamp,
   finalizePaidOrder,
@@ -371,6 +372,46 @@ async function syncDeletedSubscriptionState(
   if (subscriptionError) throw subscriptionError;
 
   await syncPhotographyKeysByPhotographerId(service, photographer.id);
+
+  // ── Delete ALL photos from R2 when subscription is cancelled ──
+  // Fetch all media storage paths belonging to this photographer's projects
+  const { data: mediaRows } = await service
+    .from("media")
+    .select("storage_path, project_id")
+    .in(
+      "project_id",
+      (
+        await service
+          .from("projects")
+          .select("id")
+          .eq("photographer_id", photographer.id)
+      ).data?.map((p: { id: string }) => p.id) ?? [],
+    );
+
+  if (mediaRows && mediaRows.length > 0) {
+    // Collect unique folder prefixes to delete from R2
+    const prefixes = new Set<string>();
+    for (const row of mediaRows) {
+      if (row.storage_path) {
+        const folder = row.storage_path.substring(0, row.storage_path.lastIndexOf("/") + 1);
+        if (folder) prefixes.add(folder);
+      }
+    }
+    // Fire-and-forget: delete all photo folders from R2
+    Promise.allSettled(
+      Array.from(prefixes).map((prefix) => r2DeletePrefix(prefix)),
+    ).catch((err) => console.error("R2 cancellation cleanup error:", err));
+
+    // Also delete media rows from database
+    const projectIds = [...new Set(mediaRows.map((r) => r.project_id))].filter(Boolean);
+    if (projectIds.length > 0) {
+      await service.from("media").delete().in("project_id", projectIds);
+      await service.from("collections").delete().in("project_id", projectIds);
+      await service.from("projects").delete().eq("photographer_id", photographer.id);
+    }
+  }
+
+  console.log(`[webhook] Subscription cancelled for photographer ${photographer.id} — all photos queued for R2 deletion.`);
 }
 
 async function markSubscriptionPaymentFailure(

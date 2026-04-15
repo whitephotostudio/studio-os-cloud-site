@@ -13,6 +13,7 @@ import {
 import { resendConfigured, sendResendEmail } from "@/lib/resend";
 import { ensurePackageProfile } from "@/lib/ensure-package-profile";
 import { buildStoredMediaUrls } from "@/lib/storage-images";
+import { r2DeletePrefix } from "@/lib/r2";
 
 export const dynamic = "force-dynamic";
 
@@ -831,6 +832,12 @@ export async function DELETE(
       return NextResponse.json({ ok: false, message: "Project not found." }, { status: 404 });
     }
 
+    // Collect all storage paths so we can delete from R2
+    const { data: mediaRows } = await service
+      .from("media")
+      .select("storage_path")
+      .eq("project_id", projectId);
+
     // Delete related data first, then the project
     await Promise.all([
       service.from("media").delete().eq("project_id", projectId),
@@ -844,6 +851,23 @@ export async function DELETE(
       .eq("photographer_id", photographerRow.id);
 
     if (deleteError) throw deleteError;
+
+    // Delete files from R2 in the background (don't block the response)
+    // Each storage_path is the original; also delete _thumbnail and _preview variants.
+    if (mediaRows && mediaRows.length > 0) {
+      const prefixes = new Set<string>();
+      for (const row of mediaRows) {
+        if (row.storage_path) {
+          // Derive the folder prefix from storage path (e.g. "projects/abc/albums/xyz/")
+          const folder = row.storage_path.substring(0, row.storage_path.lastIndexOf("/") + 1);
+          if (folder) prefixes.add(folder);
+        }
+      }
+      // Delete each unique folder prefix from R2
+      Promise.allSettled(
+        Array.from(prefixes).map((prefix) => r2DeletePrefix(prefix)),
+      ).catch((err) => console.error("R2 cleanup error:", err));
+    }
 
     return NextResponse.json({ ok: true });
   } catch (error) {

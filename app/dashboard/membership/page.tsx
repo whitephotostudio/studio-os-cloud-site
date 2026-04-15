@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
+  AlertTriangle,
   ArrowLeft,
   CheckCircle2,
   CreditCard,
@@ -13,6 +14,7 @@ import {
   Search,
   Shield,
   Sparkles,
+  Trash2,
   XCircle,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
@@ -166,11 +168,188 @@ function invoiceStatusColor(status: string | null | undefined) {
 
 /* ───────── Component ───────── */
 
+/* ───────── Cancel Confirmation Dialog ───────── */
+
+function CancelConfirmationDialog({
+  open,
+  onClose,
+  onConfirm,
+  loading,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onConfirm: () => void;
+  loading: boolean;
+}) {
+  const [typed, setTyped] = useState("");
+  const confirmed = typed.trim().toUpperCase() === "DELETE MY PHOTOS";
+
+  if (!open) return null;
+
+  return (
+    <div
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 9999,
+        display: "grid",
+        placeItems: "center",
+        background: "rgba(0,0,0,0.55)",
+        backdropFilter: "blur(4px)",
+      }}
+      onClick={onClose}
+    >
+      <div
+        style={{
+          background: "#fff",
+          borderRadius: 24,
+          maxWidth: 520,
+          width: "90vw",
+          padding: "36px 32px",
+          boxShadow: "0 20px 60px rgba(0,0,0,0.3)",
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 20 }}>
+          <div
+            style={{
+              width: 56,
+              height: 56,
+              borderRadius: 16,
+              background: "#fef2f2",
+              display: "grid",
+              placeItems: "center",
+              flexShrink: 0,
+            }}
+          >
+            <AlertTriangle size={28} color="#dc2626" />
+          </div>
+          <div>
+            <div style={{ fontSize: 20, fontWeight: 800, color: "#dc2626" }}>
+              Cancel Membership
+            </div>
+            <div style={{ fontSize: 13, color: textMuted, marginTop: 2 }}>
+              This action is permanent and cannot be undone
+            </div>
+          </div>
+        </div>
+
+        <div
+          style={{
+            background: "#fef2f2",
+            border: "1px solid #fecaca",
+            borderRadius: 16,
+            padding: "20px 18px",
+            marginBottom: 20,
+            lineHeight: 1.7,
+          }}
+        >
+          <div style={{ fontWeight: 800, color: "#991b1b", fontSize: 14, marginBottom: 8 }}>
+            WARNING — Read carefully:
+          </div>
+          <ul style={{ margin: 0, paddingLeft: 18, color: "#7f1d1d", fontSize: 13.5 }}>
+            <li style={{ marginBottom: 6 }}>
+              <strong>ALL your photos will be permanently deleted</strong> from our servers
+              immediately.
+            </li>
+            <li style={{ marginBottom: 6 }}>
+              This includes every gallery, album, school project, and backdrop you have uploaded.
+            </li>
+            <li style={{ marginBottom: 6 }}>
+              Your clients will <strong>lose access</strong> to all their galleries and will no
+              longer be able to view or download any photos.
+            </li>
+            <li style={{ marginBottom: 6 }}>
+              <strong>There is no undo.</strong> Once deleted, photos cannot be recovered — ever.
+            </li>
+            <li>
+              If you want to keep your photos, download them from your galleries <strong>before</strong>{" "}
+              cancelling.
+            </li>
+          </ul>
+        </div>
+
+        <div style={{ marginBottom: 20 }}>
+          <label
+            style={{
+              display: "block",
+              fontSize: 13,
+              fontWeight: 700,
+              color: textPrimary,
+              marginBottom: 8,
+            }}
+          >
+            Type <span style={{ color: "#dc2626", fontFamily: "monospace", background: "#fef2f2", padding: "2px 6px", borderRadius: 6 }}>DELETE MY PHOTOS</span> to confirm:
+          </label>
+          <input
+            type="text"
+            value={typed}
+            onChange={(e) => setTyped(e.target.value)}
+            placeholder="DELETE MY PHOTOS"
+            style={{
+              width: "100%",
+              border: `2px solid ${confirmed ? "#dc2626" : borderSoft}`,
+              borderRadius: 12,
+              padding: "12px 14px",
+              fontSize: 15,
+              fontFamily: "monospace",
+              fontWeight: 700,
+              outline: "none",
+              color: textPrimary,
+              boxSizing: "border-box",
+            }}
+          />
+        </div>
+
+        <div style={{ display: "flex", gap: 12, justifyContent: "flex-end" }}>
+          <button
+            onClick={onClose}
+            style={{
+              border: `1px solid ${borderSoft}`,
+              borderRadius: 12,
+              padding: "12px 24px",
+              fontWeight: 700,
+              fontSize: 14,
+              background: "#fff",
+              color: textPrimary,
+              cursor: "pointer",
+            }}
+          >
+            Keep My Membership
+          </button>
+          <button
+            onClick={onConfirm}
+            disabled={!confirmed || loading}
+            style={{
+              border: "none",
+              borderRadius: 12,
+              padding: "12px 24px",
+              fontWeight: 700,
+              fontSize: 14,
+              background: confirmed && !loading ? "#dc2626" : "#e5e7eb",
+              color: confirmed && !loading ? "#fff" : "#9ca3af",
+              cursor: confirmed && !loading ? "pointer" : "not-allowed",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 8,
+            }}
+          >
+            <Trash2 size={15} />
+            {loading ? "Cancelling..." : "Cancel & Delete Everything"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function MembershipPage() {
   const [data, setData] = useState<MembershipData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [invoiceFilter, setInvoiceFilter] = useState("");
+  const [showCancelDialog, setShowCancelDialog] = useState(false);
+  const [cancelLoading, setCancelLoading] = useState(false);
   const fetchedRef = useRef(false);
 
   const loadData = useCallback(async () => {
@@ -240,6 +419,36 @@ export default function MembershipPage() {
     }
   }, [loadData]);
 
+  const handleCancelMembership = useCallback(async () => {
+    setCancelLoading(true);
+    try {
+      const supabase = createClient();
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData?.session?.access_token;
+      if (!token) throw new Error("Not signed in");
+
+      // Open the Stripe billing portal where user can confirm cancellation
+      const res = await fetch("/api/stripe/billing", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ action: "portal" }),
+      });
+
+      const json = await res.json();
+      if (json.url) {
+        window.location.href = json.url;
+      } else {
+        throw new Error(json.message || "Failed to open billing portal");
+      }
+    } catch (err: any) {
+      alert(err.message || "Something went wrong. Please try again.");
+      setCancelLoading(false);
+    }
+  }, []);
+
   const filteredInvoices = useMemo(() => {
     if (!data) return [];
     const query = invoiceFilter.toLowerCase().trim();
@@ -304,6 +513,13 @@ export default function MembershipPage() {
             {error}
           </div>
         ) : null}
+
+        <CancelConfirmationDialog
+          open={showCancelDialog}
+          onClose={() => { setShowCancelDialog(false); setCancelLoading(false); }}
+          onConfirm={handleCancelMembership}
+          loading={cancelLoading}
+        />
 
         {data ? (
           <>
@@ -709,6 +925,69 @@ export default function MembershipPage() {
                 </div>
               )}
             </div>
+
+            {/* ── Cancel Membership ── */}
+            {data.subscriptionIsActive && !data.isPlatformAdmin ? (
+              <div
+                style={{
+                  ...cardStyle,
+                  marginTop: 20,
+                  border: "1px solid #fecaca",
+                  background: "#fffbfb",
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 16 }}>
+                  <div
+                    style={{
+                      width: 50,
+                      height: 50,
+                      borderRadius: 14,
+                      background: "#fef2f2",
+                      display: "grid",
+                      placeItems: "center",
+                    }}
+                  >
+                    <AlertTriangle size={22} color="#dc2626" />
+                  </div>
+                  <div>
+                    <div style={labelStyle}>Danger Zone</div>
+                    <div style={{ ...headingStyle, color: "#dc2626" }}>Cancel Membership</div>
+                  </div>
+                </div>
+                <p
+                  style={{
+                    color: "#7f1d1d",
+                    fontSize: 13.5,
+                    lineHeight: 1.7,
+                    margin: "0 0 16px",
+                  }}
+                >
+                  If you cancel your membership, <strong>all your photos, galleries, and client
+                  data will be permanently deleted</strong> from our servers. Your clients will
+                  lose access to their galleries immediately. This action cannot be undone.
+                  Please make sure to download any photos you want to keep before cancelling.
+                </p>
+                <button
+                  onClick={() => setShowCancelDialog(true)}
+                  style={{
+                    border: "1px solid #dc2626",
+                    borderRadius: 12,
+                    padding: "12px 24px",
+                    fontWeight: 700,
+                    fontSize: 14,
+                    background: "#fff",
+                    color: "#dc2626",
+                    cursor: "pointer",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 8,
+                  }}
+                >
+                  <Trash2 size={15} />
+                  Cancel Membership
+                </button>
+              </div>
+            ) : null}
           </>
         ) : loading ? (
           <div style={{ ...cardStyle, textAlign: "center", padding: "60px 20px", color: textMuted, fontSize: 15 }}>

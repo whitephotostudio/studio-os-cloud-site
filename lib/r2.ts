@@ -1,4 +1,11 @@
-import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
+import {
+  S3Client,
+  PutObjectCommand,
+  GetObjectCommand,
+  DeleteObjectCommand,
+  DeleteObjectsCommand,
+  ListObjectsV2Command,
+} from "@aws-sdk/client-s3";
 
 function env(name: string) {
   const value = process.env[name];
@@ -93,4 +100,43 @@ export async function r2Delete(key: string) {
       Key: key,
     }),
   );
+}
+
+/**
+ * Delete ALL files under a given prefix (folder) in R2.
+ * R2 supports up to 1000 deletes per batch request.
+ */
+export async function r2DeletePrefix(prefix: string) {
+  const client = getR2Client();
+  let continuationToken: string | undefined;
+  let totalDeleted = 0;
+
+  do {
+    const list = await client.send(
+      new ListObjectsV2Command({
+        Bucket: R2_BUCKET,
+        Prefix: prefix,
+        MaxKeys: 1000,
+        ContinuationToken: continuationToken,
+      }),
+    );
+
+    const objects = list.Contents;
+    if (!objects || objects.length === 0) break;
+
+    await client.send(
+      new DeleteObjectsCommand({
+        Bucket: R2_BUCKET,
+        Delete: {
+          Objects: objects.map((o) => ({ Key: o.Key! })),
+          Quiet: true,
+        },
+      }),
+    );
+
+    totalDeleted += objects.length;
+    continuationToken = list.IsTruncated ? list.NextContinuationToken : undefined;
+  } while (continuationToken);
+
+  return totalDeleted;
 }
