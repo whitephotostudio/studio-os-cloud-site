@@ -21,7 +21,20 @@ export default function robots(): MetadataRoute.Robots {
       },
       // Explicitly allow AI crawlers to access everything public
       {
-        userAgent: ["GPTBot", "ChatGPT-User", "Claude-Web", "PerplexityBot", "Applebot-Extended"],
+        userAgent: [
+          "GPTBot",
+          "ChatGPT-User",
+          "OAI-SearchBot",
+          "Claude-Web",
+          "ClaudeBot",
+          "PerplexityBot",
+          "Applebot-Extended",
+          "GoogleOther",
+          "Google-Extended",
+          "Bytespider",
+          "CCBot",
+          "cohere-ai",
+        ],
         allow: ["/", "/llms.txt", "/llms-full.txt"],
         disallow: ["/dashboard/", "/api/", "/auth/", "/parents/", "/schools/"],
       },

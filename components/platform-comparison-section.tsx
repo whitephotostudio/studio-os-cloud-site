@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { Check, X } from "lucide-react";
 
 type ComparisonValue = "check" | "x" | "limited";
@@ -172,6 +173,27 @@ export function PlatformComparisonSection() {
               If you&apos;re only using a gallery platform, you&apos;re only
               using part of what&apos;s possible.
             </p>
+          </div>
+
+          <div className="mt-8 flex flex-wrap gap-3">
+            <Link href="/photography-workflow-software" className="rounded-full border border-neutral-200 bg-white px-4 py-2 text-sm font-medium text-neutral-700 transition hover:border-neutral-400 hover:text-neutral-950">
+              Photography Workflow Software
+            </Link>
+            <Link href="/school-photography-software" className="rounded-full border border-neutral-200 bg-white px-4 py-2 text-sm font-medium text-neutral-700 transition hover:border-neutral-400 hover:text-neutral-950">
+              School Photography Software
+            </Link>
+            <Link href="/high-volume-photography-software" className="rounded-full border border-neutral-200 bg-white px-4 py-2 text-sm font-medium text-neutral-700 transition hover:border-neutral-400 hover:text-neutral-950">
+              High Volume Photography Software
+            </Link>
+            <Link href="/online-photo-gallery-ordering-software" className="rounded-full border border-neutral-200 bg-white px-4 py-2 text-sm font-medium text-neutral-700 transition hover:border-neutral-400 hover:text-neutral-950">
+              Gallery & Ordering Software
+            </Link>
+            <Link href="/pixieset-alternative" className="rounded-full border border-neutral-200 bg-white px-4 py-2 text-sm font-medium text-neutral-700 transition hover:border-neutral-400 hover:text-neutral-950">
+              Pixieset Alternative
+            </Link>
+            <Link href="/gotphoto-alternative" className="rounded-full border border-neutral-200 bg-white px-4 py-2 text-sm font-medium text-neutral-700 transition hover:border-neutral-400 hover:text-neutral-950">
+              GotPhoto Alternative
+            </Link>
           </div>
         </div>
       </div>
