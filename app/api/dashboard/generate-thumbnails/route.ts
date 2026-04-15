@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { resolveDashboardAuth, createDashboardServiceClient } from "@/lib/dashboard-auth";
+import { resolveDashboardAuth } from "@/lib/dashboard-auth";
+import { r2Download, r2Upload } from "@/lib/r2";
 import sharp from "sharp";
-
-const MEDIA_BUCKET = "thumbs";
 
 type Size = { width: number; quality: number };
 
@@ -18,36 +17,27 @@ export async function POST(request: NextRequest) {
   }
 
   const body = await request.json();
-  const storagePath: string | undefined = body.storagePath;
+  const storageKey: string | undefined = body.storagePath || body.key;
 
-  if (!storagePath || typeof storagePath !== "string") {
+  if (!storageKey || typeof storageKey !== "string") {
     return NextResponse.json(
-      { error: "storagePath is required" },
+      { error: "storagePath (or key) is required" },
       { status: 400 },
     );
   }
 
-  const supabase = createDashboardServiceClient();
-
-  // Download the original image from storage
-  const { data: fileData, error: downloadError } = await supabase.storage
-    .from(MEDIA_BUCKET)
-    .download(storagePath);
-
-  if (downloadError || !fileData) {
+  // Download the original image from R2
+  let buffer: Buffer;
+  try {
+    buffer = await r2Download(storageKey);
+  } catch (err: any) {
     return NextResponse.json(
-      { error: downloadError?.message || "Failed to download original" },
+      { error: err.message || "Failed to download original from R2" },
       { status: 500 },
     );
   }
 
-  const buffer = Buffer.from(await fileData.arrayBuffer());
   const results: Record<string, string> = {};
-
-  const supabaseUrl = (process.env.NEXT_PUBLIC_SUPABASE_URL || "").replace(
-    /\/$/,
-    "",
-  );
 
   for (const [label, size] of Object.entries(SIZES)) {
     try {
@@ -56,32 +46,11 @@ export async function POST(request: NextRequest) {
         .jpeg({ quality: size.quality, mozjpeg: true })
         .toBuffer();
 
-      // Store resized version alongside original with a prefix
-      const ext = storagePath.split(".").pop() || "jpg";
-      const basePath = storagePath.replace(/\.[^.]+$/, "");
-      const resizedPath = `${basePath}_${label}.jpg`;
+      const basePath = storageKey.replace(/\.[^.]+$/, "");
+      const resizedKey = `${basePath}_${label}.jpg`;
 
-      const { error: uploadError } = await supabase.storage
-        .from(MEDIA_BUCKET)
-        .upload(resizedPath, resized, {
-          cacheControl: "31536000",
-          upsert: true,
-          contentType: "image/jpeg",
-        });
-
-      if (uploadError) {
-        console.error(`Failed to upload ${label}:`, uploadError.message);
-        continue;
-      }
-
-      // Return the direct public URL (no transforms needed!)
-      const encodedPath = resizedPath
-        .split("/")
-        .filter(Boolean)
-        .map((s) => encodeURIComponent(s))
-        .join("/");
-      results[`${label}Url`] =
-        `${supabaseUrl}/storage/v1/object/public/${MEDIA_BUCKET}/${encodedPath}`;
+      const publicUrl = await r2Upload(resizedKey, resized, "image/jpeg");
+      results[`${label}Url`] = publicUrl;
     } catch (err) {
       console.error(`Sharp error for ${label}:`, err);
     }

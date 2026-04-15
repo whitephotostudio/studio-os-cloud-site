@@ -7,6 +7,7 @@ import { ArrowLeft, CheckSquare, FolderPlus, Lock, Menu, Settings, Trash2, Uploa
 import { createClient } from "@/lib/supabase/client";
 import { buildStoredMediaUrls } from "@/lib/storage-images";
 import { generateThumbnails } from "@/lib/generate-thumbnails-client";
+import { uploadToR2 } from "@/lib/upload-to-r2-client";
 
 type ProjectRow = {
   id: string;
@@ -344,14 +345,12 @@ export default function ProjectAlbumPage() {
         const storagePath = `projects/${projectId}/albums/${albumId}/${safeName}`;
 
         try {
-          const { error: uploadError } = await supabase.storage.from("thumbs").upload(storagePath, file, {
-            cacheControl: "3600",
-            upsert: false,
-            contentType: file.type || undefined,
-          });
+          // Upload original to Cloudflare R2 (zero egress fees for downloads)
+          const accessToken = (await supabase.auth.getSession()).data.session?.access_token || "";
+          const r2Result = await uploadToR2(file, storagePath, accessToken);
 
-          if (uploadError) {
-            throw new Error(uploadError.message || "Failed to upload file to storage.");
+          if (!r2Result) {
+            throw new Error("Failed to upload file to storage.");
           }
 
           setUploadSession((prev) =>
@@ -365,14 +364,11 @@ export default function ProjectAlbumPage() {
               : prev,
           );
 
-          // Generate pre-sized thumbnails server-side (avoids Supabase Image
-          // Transformation quota).  Falls back gracefully if generation fails.
-          const accessToken = (await supabase.auth.getSession()).data.session?.access_token || "";
+          // Generate pre-sized thumbnails server-side on R2
           const generated = await generateThumbnails(storagePath, accessToken);
 
-          const { previewUrl, thumbnailUrl } = generated.thumbnailUrl
-            ? { previewUrl: generated.previewUrl!, thumbnailUrl: generated.thumbnailUrl! }
-            : buildStoredMediaUrls({ storagePath });
+          const previewUrl = generated.previewUrl || r2Result.publicUrl;
+          const thumbnailUrl = generated.thumbnailUrl || r2Result.publicUrl;
 
           const payload = {
             project_id: projectId,

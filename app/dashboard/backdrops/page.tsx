@@ -4,6 +4,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
+import { uploadToR2 } from "@/lib/upload-to-r2-client";
 import {
   LogOut, Plus, Trash2, Pencil, Eye, EyeOff, Upload, X, Star, Check, Palette,
   ChevronRight, Grid3X3, Images, CheckCircle2, Copy, Flame, FolderOpen,
@@ -137,8 +138,10 @@ export default function BackdropsPage() {
         const f = files[i];
         const ext = f.name.split(".").pop()?.toLowerCase() || "jpg";
         const obj = `${pgId}/${Date.now()}_${i}_${Math.random().toString(36).slice(2,8)}.${ext}`;
-        await supabase.storage.from(BUCKET).upload(obj, f, { upsert: true, contentType: f.type || "image/jpeg" });
-        const url = `${SUPABASE_URL}/storage/v1/object/public/${BUCKET}/${obj}`;
+        // Upload to Cloudflare R2
+        const accessToken = (await supabase.auth.getSession()).data.session?.access_token || "";
+        const r2Result = await uploadToR2(f, `backdrops/${obj}`, accessToken);
+        const url = r2Result?.publicUrl || `${SUPABASE_URL}/storage/v1/object/public/${BUCKET}/${obj}`;
         const name = f.name.replace(/\.[^.]+$/, "").replace(/[-_]+/g, " ").replace(/\b\w/g, c => c.toUpperCase());
         await supabase.from("backdrop_catalog").insert({
           photographer_id: pgId, name, description: "", image_url: url, thumbnail_url: url,

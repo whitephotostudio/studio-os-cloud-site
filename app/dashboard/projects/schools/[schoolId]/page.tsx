@@ -22,6 +22,7 @@ import {
   Heart,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { uploadToR2 } from "@/lib/upload-to-r2-client";
 import { ensureSchoolCollectionId } from "@/lib/school-sync";
 
 type School = {
@@ -947,18 +948,16 @@ export default function SchoolsSchoolDetailPage() {
       const ext = clean(file.name.split(".").pop()).toLowerCase() || "jpg";
       const storagePath = `${basePath}/__school_cover__/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
 
-      const { error: uploadError } = await supabase.storage.from("thumbs").upload(storagePath, file, {
-        cacheControl: "3600",
-        upsert: false,
-        contentType: file.type || undefined,
-      });
+      // Upload to Cloudflare R2
+      const accessToken = (await supabase.auth.getSession()).data.session?.access_token || "";
+      const r2Result = await uploadToR2(file, storagePath, accessToken);
 
-      if (uploadError) {
-        throw new Error(uploadError.message || "School cover upload failed.");
+      if (!r2Result) {
+        throw new Error("School cover upload failed.");
       }
 
-      const publicUrl = supabase.storage.from("thumbs").getPublicUrl(storagePath).data.publicUrl;
-      if (!clean(publicUrl)) {
+      const publicUrl = r2Result.publicUrl;
+      if (!publicUrl) {
         throw new Error("School cover uploaded, but no public URL was returned.");
       }
 

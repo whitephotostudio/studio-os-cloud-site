@@ -32,6 +32,7 @@ import {
   extractStoragePathFromSupabaseUrl,
 } from "@/lib/storage-images";
 import { generateThumbnails } from "@/lib/generate-thumbnails-client";
+import { uploadToR2 } from "@/lib/upload-to-r2-client";
 
 type School = {
   id: string;
@@ -425,20 +426,16 @@ export default function SchoolsSchoolRoleGalleryPage() {
         const ext = clean(originalExt).toLowerCase() || "jpg";
         const storagePath = `${storageFolderPath}/${Date.now()}-${index}-${Math.random().toString(36).slice(2)}.${ext}`;
 
-        const { error: uploadError } = await supabase.storage.from("thumbs").upload(storagePath, file, {
-          cacheControl: "3600",
-          upsert: false,
-          contentType: file.type || undefined,
-        });
-
-        if (uploadError) {
-          throw new Error(uploadError.message || "Photo upload failed.");
+        // Upload to Cloudflare R2
+        const accessToken = (await supabase.auth.getSession()).data.session?.access_token || "";
+        const r2Result = await uploadToR2(file, storagePath, accessToken);
+        if (!r2Result) {
+          throw new Error("Photo upload failed.");
         }
 
-        // Generate pre-sized thumbnails server-side (avoids Supabase transform quota)
-        const accessToken = (await supabase.auth.getSession()).data.session?.access_token || "";
+        // Generate pre-sized thumbnails server-side on R2
         const generated = await generateThumbnails(storagePath, accessToken);
-        const publicUrl = generated.previewUrl || buildStoredMediaUrls({ storagePath }).previewUrl;
+        const publicUrl = generated.previewUrl || r2Result.publicUrl;
         if (clean(publicUrl)) {
           uploadedAssets.push({
             storagePath,
@@ -583,20 +580,16 @@ export default function SchoolsSchoolRoleGalleryPage() {
           const ext = clean(originalExt).toLowerCase() || "jpg";
           const storagePath = `${basePath}/roles/${rolePath}/${folderName}/${Date.now()}-${index}-${Math.random().toString(36).slice(2)}.${ext}`;
 
-          const { error: uploadError } = await supabase.storage.from("thumbs").upload(storagePath, file, {
-            cacheControl: "3600",
-            upsert: false,
-            contentType: file.type || undefined,
-          });
-
-          if (uploadError) {
-            throw new Error(uploadError.message || "Person added, but photo upload failed.");
+          // Upload to Cloudflare R2
+          const accessToken = (await supabase.auth.getSession()).data.session?.access_token || "";
+          const r2Result = await uploadToR2(file, storagePath, accessToken);
+          if (!r2Result) {
+            throw new Error("Person added, but photo upload failed.");
           }
 
-          // Generate pre-sized thumbnails server-side (avoids Supabase transform quota)
-          const accessToken = (await supabase.auth.getSession()).data.session?.access_token || "";
+          // Generate pre-sized thumbnails server-side on R2
           const generated = await generateThumbnails(storagePath, accessToken);
-          const publicUrl = generated.previewUrl || buildStoredMediaUrls({ storagePath }).previewUrl;
+          const publicUrl = generated.previewUrl || r2Result.publicUrl;
           if (clean(publicUrl)) {
             uploadedAssets.push({
               storagePath,
