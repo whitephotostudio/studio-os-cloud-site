@@ -165,7 +165,7 @@ export default function FeatureRequestsPage() {
           <h1 style={{ fontSize: 28, fontWeight: 700, color: "#0f172a", margin: 0 }}>
             Feature Requests
           </h1>
-          <p style={{ fontSize: 14, color: "#64748b", marginTop: 4 }}>
+          <p style={{ fontSize: 14, color: "#0f172a", marginTop: 4 }}>
             Vote on features you want or suggest new ones.
           </p>
         </div>
@@ -193,7 +193,7 @@ export default function FeatureRequestsPage() {
       {showForm && (
         <form onSubmit={handleSubmit} style={{ ...cardStyle, marginBottom: 24, border: "2px solid #0f172a" }}>
           <div style={{ marginBottom: 12 }}>
-            <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#475569", marginBottom: 6 }}>
+            <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#000000", marginBottom: 6 }}>
               Title
             </label>
             <input
@@ -208,12 +208,13 @@ export default function FeatureRequestsPage() {
                 borderRadius: 10,
                 border: "1px solid #d1d5db",
                 fontSize: 15,
+                color: "#000000",
                 outline: "none",
               }}
             />
           </div>
           <div style={{ marginBottom: 16 }}>
-            <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#475569", marginBottom: 6 }}>
+            <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#000000", marginBottom: 6 }}>
               Details (optional)
             </label>
             <textarea
@@ -227,6 +228,7 @@ export default function FeatureRequestsPage() {
                 borderRadius: 10,
                 border: "1px solid #d1d5db",
                 fontSize: 14,
+                color: "#000000",
                 outline: "none",
                 resize: "vertical",
               }}
@@ -373,7 +375,7 @@ export default function FeatureRequestsPage() {
                         background: "#f8fafc",
                         border: "1px solid #e2e8f0",
                         fontSize: 13,
-                        color: "#475569",
+                        color: "#000000",
                       }}
                     >
                       <strong>Team note:</strong> {req.admin_note}
