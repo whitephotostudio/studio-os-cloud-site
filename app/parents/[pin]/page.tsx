@@ -867,7 +867,7 @@ function buildGalleryImageCandidates(
     variant === "wall"
       ? uniq([image.previewUrl, image.downloadUrl, image.url, image.thumbnailUrl])
       : variant === "viewer-thumb"
-        ? uniq([image.thumbnailUrl, image.previewUrl, image.downloadUrl, image.url])
+        ? uniq([image.previewUrl, image.downloadUrl, image.thumbnailUrl, image.url])
         : uniq([image.downloadUrl, image.previewUrl, image.thumbnailUrl, image.url]);
 
   return rawCandidates.map((url, candidateIndex) =>
