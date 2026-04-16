@@ -1009,6 +1009,125 @@ function preferredDownloadUrl(
   return candidates.map((value) => clean(value)).find(Boolean) || "";
 }
 
+type EventWallRow = {
+  height: number;
+  items: Array<{
+    image: GalleryImage;
+    index: number;
+    aspectRatio: number;
+    width: number;
+  }>;
+};
+
+const EVENT_WALL_FALLBACK_ASPECT_RATIO = 1;
+const MIN_EVENT_WALL_ASPECT_RATIO = 0.56;
+const MAX_EVENT_WALL_ASPECT_RATIO = 2.35;
+
+function getSafeAspectRatio(width?: number | null, height?: number | null) {
+  if (!width || !height) return null;
+  const ratio = width / height;
+  if (!Number.isFinite(ratio) || ratio <= 0) return null;
+  return ratio;
+}
+
+function getEventWallAspectRatio(value?: number | null) {
+  return clampNumber(
+    value && Number.isFinite(value) ? value : EVENT_WALL_FALLBACK_ASPECT_RATIO,
+    MIN_EVENT_WALL_ASPECT_RATIO,
+    MAX_EVENT_WALL_ASPECT_RATIO,
+  );
+}
+
+function buildEventPhotoRows(
+  images: GalleryImage[],
+  aspectRatios: Record<string, number>,
+  containerWidth: number,
+  gap: number,
+  targetRowHeight: number,
+) {
+  const safeContainerWidth = Math.max(320, Math.floor(containerWidth));
+  const safeGap = Math.max(10, Math.round(gap));
+  const minRowHeight = Math.max(170, Math.round(targetRowHeight * 0.76));
+  const maxRowHeight = Math.max(minRowHeight + 24, Math.round(targetRowHeight * 1.18));
+  const rows: EventWallRow[] = [];
+  let currentRow: Array<{
+    image: GalleryImage;
+    index: number;
+    aspectRatio: number;
+  }> = [];
+  let currentRatioTotal = 0;
+
+  const commitRow = (justify: boolean) => {
+    if (!currentRow.length) return;
+    const rowGapWidth = safeGap * Math.max(0, currentRow.length - 1);
+    const nextHeight =
+      justify && currentRow.length > 1
+        ? (safeContainerWidth - rowGapWidth) / currentRatioTotal
+        : targetRowHeight;
+    const rowHeight = clampNumber(nextHeight, minRowHeight, maxRowHeight);
+    rows.push({
+      height: rowHeight,
+      items: currentRow.map((item) => ({
+        ...item,
+        width: Math.max(94, Math.round(rowHeight * item.aspectRatio)),
+      })),
+    });
+    currentRow = [];
+    currentRatioTotal = 0;
+  };
+
+  for (let index = 0; index < images.length; index += 1) {
+    const image = images[index];
+    const aspectRatio = getEventWallAspectRatio(aspectRatios[image.id]);
+    currentRow.push({ image, index, aspectRatio });
+    currentRatioTotal += aspectRatio;
+
+    const isLastImage = index === images.length - 1;
+    const rowGapWidth = safeGap * Math.max(0, currentRow.length - 1);
+    const projectedWidth = currentRatioTotal * targetRowHeight + rowGapWidth;
+    const shouldJustify = currentRow.length > 1 && projectedWidth >= safeContainerWidth;
+
+    if (shouldJustify) {
+      const justifiedHeight = (safeContainerWidth - rowGapWidth) / currentRatioTotal;
+      if (currentRow.length > 2 && justifiedHeight < minRowHeight) {
+        const overflowImage = currentRow.pop();
+        if (overflowImage) {
+          currentRatioTotal -= overflowImage.aspectRatio;
+          commitRow(true);
+          currentRow.push(overflowImage);
+          currentRatioTotal += overflowImage.aspectRatio;
+        } else {
+          commitRow(true);
+        }
+      } else {
+        commitRow(true);
+      }
+    }
+
+    if (isLastImage) {
+      commitRow(false);
+    }
+  }
+
+  return rows;
+}
+
+function getGalleryActionErrorMessage(error: unknown, fallback: string) {
+  if (!(error instanceof Error)) return fallback;
+  const message = clean(error.message);
+  if (!message) return fallback;
+  const normalized = message.toLowerCase();
+  if (
+    normalized === "load failed"
+    || normalized === "failed to fetch"
+    || normalized.includes("networkerror")
+    || normalized.includes("network request failed")
+  ) {
+    return fallback;
+  }
+  return message;
+}
+
 function buildArchiveBaseName(value: string, fallback: string) {
   const cleaned = clean(value)
     .replace(/[\\/:*?"<>|]+/g, " ")
@@ -3110,6 +3229,7 @@ export default function ParentGalleryPage() {
   const [schoolName, setSchoolName] = useState("");
   const [project, setProject] = useState<ProjectRow | null>(null);
   const [images, setImages] = useState<GalleryImage[]>([]);
+  const [galleryImageRatios, setGalleryImageRatios] = useState<Record<string, number>>({});
   const [loadedGalleryImageIds, setLoadedGalleryImageIds] = useState<Set<string>>(
     () => new Set(),
   );
@@ -3119,6 +3239,7 @@ export default function ParentGalleryPage() {
   );
   const viewerThumbnailStripRef = useRef<HTMLDivElement | null>(null);
   const viewerThumbnailButtonRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+  const eventPhotoWallRef = useRef<HTMLDivElement | null>(null);
   const [packages, setPackages] = useState<PackageRow[]>([]);
   const [selectedPkg, setSelectedPkg] = useState<PackageRow | null>(null);
   const [cartItems, setCartItems] = useState<CartLineItem[]>([]);
@@ -3190,6 +3311,7 @@ export default function ParentGalleryPage() {
   const [galleryActionMessage, setGalleryActionMessage] = useState("");
   const [downloadingGallery, setDownloadingGallery] = useState(false);
   const [galleryDownloadProgress, setGalleryDownloadProgress] = useState<number | null>(null);
+  const [eventPhotoWallWidth, setEventPhotoWallWidth] = useState(0);
   const [downloadingFavorites, setDownloadingFavorites] = useState(false);
   const [gallerySettings, setGallerySettings] = useState<EventGallerySettings>(defaultEventGallerySettings);
   const [galleryDownloadAccess, setGalleryDownloadAccess] = useState<EventGalleryDownloadAccess>(
@@ -3219,20 +3341,36 @@ export default function ParentGalleryPage() {
     clean(studioInfo.businessName) || schoolName || "PROOF";
 
   useEffect(() => {
+    const validIds = new Set(images.map((img) => img.id));
     setLoadedGalleryImageIds((prev) => {
-      const validIds = new Set(images.map((img) => img.id));
       const next = new Set(Array.from(prev).filter((id) => validIds.has(id)));
       return next.size === prev.size ? prev : next;
     });
+    setGalleryImageRatios((prev) => {
+      const nextEntries = Object.entries(prev).filter(([id]) => validIds.has(id));
+      return nextEntries.length === Object.keys(prev).length
+        ? prev
+        : Object.fromEntries(nextEntries);
+    });
   }, [images]);
 
-  function markGalleryImageLoaded(id: string) {
+  function markGalleryImageLoaded(id: string, aspectRatio?: number | null) {
     setLoadedGalleryImageIds((prev) => {
       if (prev.has(id)) return prev;
       const next = new Set(prev);
       next.add(id);
       return next;
     });
+    if (!aspectRatio || !Number.isFinite(aspectRatio) || aspectRatio <= 0) return;
+    const nextAspectRatio = getEventWallAspectRatio(aspectRatio);
+    setGalleryImageRatios((prev) =>
+      prev[id] === nextAspectRatio
+        ? prev
+        : {
+            ...prev,
+            [id]: nextAspectRatio,
+          },
+    );
   }
 
   // ── Load ─────────────────────────────────────────────────────────────────
@@ -4055,6 +4193,32 @@ export default function ParentGalleryPage() {
     visibleImages.length,
   ]);
 
+  useEffect(() => {
+    if (!showEventPhotoGrid) {
+      setEventPhotoWallWidth(0);
+      return;
+    }
+
+    const node = eventPhotoWallRef.current;
+    if (!node) return;
+
+    const updateWidth = () => {
+      const nextWidth = Math.max(0, Math.floor(node.getBoundingClientRect().width));
+      setEventPhotoWallWidth((prev) => (prev === nextWidth ? prev : nextWidth));
+    };
+
+    updateWidth();
+
+    if (typeof ResizeObserver === "undefined") {
+      window.addEventListener("resize", updateWidth);
+      return () => window.removeEventListener("resize", updateWidth);
+    }
+
+    const observer = new ResizeObserver(() => updateWidth());
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [showEventPhotoGrid, visibleImages.length]);
+
   function goBack() {
     if (activeView !== "photos") {
       setActiveView("photos");
@@ -4187,9 +4351,7 @@ export default function ParentGalleryPage() {
           : `${allowedImages.length} favorites packaged into one ZIP.`,
       );
     } catch (error) {
-      setFavoriteMessage(
-        error instanceof Error ? error.message : "Could not download favorites.",
-      );
+      setFavoriteMessage(getGalleryActionErrorMessage(error, "Could not download favorites."));
     } finally {
       setDownloadingFavorites(false);
       window.setTimeout(() => setFavoriteMessage(""), 3200);
@@ -4439,7 +4601,7 @@ export default function ParentGalleryPage() {
       );
     } catch (error) {
       showGalleryActionNotice(
-        error instanceof Error ? error.message : "Could not download gallery photos.",
+        getGalleryActionErrorMessage(error, "Could not download gallery photos."),
       );
     } finally {
       setDownloadingGallery(false);
@@ -4707,7 +4869,7 @@ export default function ParentGalleryPage() {
       showGalleryActionNotice(`${reference.number} download prepared.`);
     } catch (error) {
       showGalleryActionNotice(
-        error instanceof Error ? error.message : "Could not download this photo.",
+        getGalleryActionErrorMessage(error, "Could not download this photo."),
       );
     }
   }
@@ -4715,7 +4877,11 @@ export default function ParentGalleryPage() {
   function renderPhotoWallCard(
     img: GalleryImage,
     index: number,
-    options?: { layout?: "subway" | "cascade" | "editorial"; featured?: boolean },
+    options?: {
+      layout?: "subway" | "cascade" | "editorial";
+      featured?: boolean;
+      imageAspectRatio?: number;
+    },
   ) {
     const layout = options?.layout ?? photoWallStyle;
     const isFavorited = favorites.has(img.id);
@@ -4725,6 +4891,9 @@ export default function ParentGalleryPage() {
     const cardImageUrl = wallImageCandidates[0] || img.downloadUrl || img.url;
     const photoReference = getPhotoReference(index, img);
     const imageLoaded = loadedGalleryImageIds.has(img.id);
+    const eventImageAspectRatio = isEventPhotoWall
+      ? getEventWallAspectRatio(options?.imageAspectRatio ?? galleryImageRatios[img.id])
+      : null;
     const canHoverDownload =
       isEventPhotoWall &&
       galleryDownloadAccess.enabled &&
@@ -4775,6 +4944,7 @@ export default function ParentGalleryPage() {
               borderRadius: isEventPhotoWall ? 0 : 18,
               overflow: "hidden",
               background: isEventPhotoWall ? "#efeae2" : isLightGallery ? "#f8f8f7" : "#090909",
+              aspectRatio: eventImageAspectRatio ?? undefined,
             }}
           >
             {!imageLoaded ? (
@@ -4820,14 +4990,22 @@ export default function ParentGalleryPage() {
               data-candidates={wallImageCandidates.join("|")}
               data-candidate-index="0"
               onError={handleGalleryImageError}
-              onLoad={() => markGalleryImageLoaded(img.id)}
+              onLoad={(event) =>
+                markGalleryImageLoaded(
+                  img.id,
+                  getSafeAspectRatio(
+                    event.currentTarget.naturalWidth,
+                    event.currentTarget.naturalHeight,
+                  ),
+                )
+              }
               alt=""
               loading={index < 16 ? "eager" : "lazy"}
               fetchPriority={index < 6 ? "high" : "auto"}
               decoding="async"
               style={{
                 width: "100%",
-                height: "auto",
+                height: isEventPhotoWall ? "100%" : "auto",
                 display: "block",
                 background: isEventPhotoWall ? "#efeae2" : isLightGallery ? "#f8f8f7" : "#090909",
                 maxHeight: options?.featured && !isEventPhotoWall ? 620 : "none",
@@ -5030,18 +5208,56 @@ export default function ParentGalleryPage() {
     if (isEventPhotoWall) {
       const eventGap = Math.max(12, Math.min(galleryGap, 16));
       const eventColumnWidth = Math.max(220, photoWallColumnWidth - 30);
+      const eventWallFallbackWidth =
+        typeof window !== "undefined"
+          ? Math.max(320, Math.floor(window.innerWidth - 48))
+          : Math.max(980, eventColumnWidth * 4 + eventGap * 3);
+      const eventTargetRowHeight = Math.max(
+        210,
+        Math.min(250, Math.round(eventColumnWidth * 0.98)),
+      );
+      const eventRows = buildEventPhotoRows(
+        imagesToRender,
+        galleryImageRatios,
+        eventPhotoWallWidth || eventWallFallbackWidth,
+        eventGap,
+        eventTargetRowHeight,
+      );
       return (
         <div
+          ref={eventPhotoWallRef}
           style={{
             display: "grid",
-            gridTemplateColumns: `repeat(auto-fill, minmax(${eventColumnWidth}px, 1fr))`,
             gap: `${eventGap}px`,
-            alignItems: "start",
+            alignContent: "start",
           }}
         >
-          {imagesToRender.map((img, index) =>
-            renderPhotoWallCard(img, index, { layout: "cascade" }),
-          )}
+          {eventRows.map((row, rowIndex) => (
+            <div
+              key={`event-wall-row-${rowIndex}`}
+              style={{
+                display: "flex",
+                alignItems: "flex-start",
+                gap: `${eventGap}px`,
+              }}
+            >
+              {row.items.map((item) => (
+                <div
+                  key={item.image.id}
+                  style={{
+                    width: `${item.width}px`,
+                    flex: `0 0 ${item.width}px`,
+                    minWidth: 0,
+                  }}
+                >
+                  {renderPhotoWallCard(item.image, item.index, {
+                    layout: "cascade",
+                    imageAspectRatio: item.aspectRatio,
+                  })}
+                </div>
+              ))}
+            </div>
+          ))}
         </div>
       );
     }
