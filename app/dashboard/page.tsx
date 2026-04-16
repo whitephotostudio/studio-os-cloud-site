@@ -388,7 +388,7 @@ function DashboardPageContent() {
       // Platform admins and users with active Stripe subs skip this.
       if (photographerRow && !photographerRow.is_platform_admin) {
         const sub = (photographerRow.subscription_status ?? "").trim().toLowerCase();
-        const hasPaidSub = sub === "active" || sub === "trialing";
+        const hasPaidSub = sub === "active" || sub === "trialing" || sub === "trial";
         if (!hasPaidSub) {
           const trialOk = isFreeTrialActive(photographerRow);
           if (!trialOk) {
@@ -835,7 +835,7 @@ function DashboardPageContent() {
               <div style={{ display: "flex", justifyContent: "space-between", gap: 18, alignItems: "center", flexWrap: "wrap" }}>
                 <div>
                   <div style={{ fontSize: 13, letterSpacing: "0.12em", fontWeight: 800, color: "#2563eb", marginBottom: 8 }}>
-                    30-DAY TRIAL ACTIVE
+                    7-DAY TRIAL ACTIVE
                   </div>
                   <div style={{ fontSize: 24, lineHeight: 1.2, fontWeight: 900, color: "#0f172a" }}>
                     {dashboardTrialDaysRemaining} day{dashboardTrialDaysRemaining === 1 ? "" : "s"} left in your Studio OS trial

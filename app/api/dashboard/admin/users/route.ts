@@ -145,7 +145,7 @@ export async function GET(request: NextRequest) {
       const subStatus = ((u.subscription_status as string) ?? "").trim().toLowerCase();
       const hasStripeSubscription = Boolean(u.stripe_subscription_id);
       const hasPaidSubscription =
-        hasStripeSubscription && (subStatus === "active" || subStatus === "trialing");
+        hasStripeSubscription && (subStatus === "active" || subStatus === "trialing" || subStatus === "trial");
 
       const isOwner = Boolean(u.is_platform_admin);
 
@@ -285,7 +285,7 @@ export async function POST(request: NextRequest) {
       }
       const subStatus = ((target.subscription_status as string) ?? "").trim().toLowerCase();
       if (subStatus !== "active") {
-        updates.subscription_status = "trialing";
+        updates.subscription_status = "trial";
         updates.subscription_plan_code = "studio";
       }
 

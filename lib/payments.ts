@@ -605,7 +605,7 @@ export async function getOrCreatePhotographerByUser(
       order_usage_rate_cents: ORDER_USAGE_RATE_CENTS,
       extra_desktop_keys: 0,
       subscription_billing_interval: "month",
-      subscription_status: "trialing",
+      subscription_status: "trial",
       subscription_plan_code: "studio",
       trial_starts_at: now.toISOString(),
       trial_ends_at: trialEnd.toISOString(),
@@ -628,7 +628,7 @@ export async function getOrCreatePhotographerByUser(
           order_usage_rate_cents: ORDER_USAGE_RATE_CENTS,
           extra_desktop_keys: 0,
           subscription_billing_interval: "month",
-          subscription_status: "trialing",
+          subscription_status: "trial",
           subscription_plan_code: "studio",
         })
         .select(PHOTOGRAPHER_SELECT_BASE)

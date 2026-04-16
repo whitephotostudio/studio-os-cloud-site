@@ -163,7 +163,7 @@ function normalizedEmail(value: string | null | undefined) {
 
 function isSubscriptionActive(status: string | null | undefined) {
   const normalized = clean(status).toLowerCase();
-  return normalized === "active" || normalized === "trialing";
+  return normalized === "active" || normalized === "trialing" || normalized === "trial";
 }
 
 function normalizeReleaseState(value: string | null | undefined): StudioAppReleaseState {
