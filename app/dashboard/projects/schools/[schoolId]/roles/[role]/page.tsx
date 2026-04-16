@@ -213,24 +213,24 @@ export default function SchoolsSchoolRoleGalleryPage() {
     const cached = folderImagesCacheRef.current.get(folderPath);
     if (cached) return cached;
 
-    const { data: files, error: listError } = await supabase.storage.from("thumbs").list(folderPath, {
-      limit: 1000,
-      sortBy: { column: "name", order: "asc" },
-    });
+    const response = await fetch(
+      `/api/dashboard/storage-folder?path=${encodeURIComponent(folderPath)}`,
+      { cache: "no-store" },
+    );
+    const payload = (await response.json().catch(() => ({}))) as {
+      ok?: boolean;
+      files?: Array<{ name: string; url: string }>;
+    };
 
-    if (listError || !files) {
+    if (!response.ok || payload.ok === false || !payload.files) {
       folderImagesCacheRef.current.set(folderPath, []);
       return [];
     }
 
-    const urls = files
+    const urls = payload.files
       .filter((file) => !!file.name && /\.(png|jpg|jpeg|webp)$/i.test(file.name))
       .sort((a, b) => naturalCompare(a.name, b.name))
-      .map((file) =>
-        buildStoredMediaUrls({
-          storagePath: `${folderPath}/${file.name}`,
-        }).previewUrl,
-      )
+      .map((file) => clean(file.url))
       .filter(Boolean);
 
     folderImagesCacheRef.current.set(folderPath, urls);

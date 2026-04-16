@@ -5,6 +5,7 @@ import {
 } from "@/lib/event-gallery-settings";
 import { buildSchoolGalleryDownloadAccess } from "@/lib/school-gallery-downloads";
 import { filterPackagesForProfile } from "@/lib/package-profile-selection";
+import { buildSchoolCandidateFolders, loadFolderMediaRows } from "@/lib/storage-folder";
 
 export const dynamic = "force-dynamic";
 
@@ -83,6 +84,7 @@ type CompositeMediaRow = {
   storage_path: string | null;
   preview_url: string | null;
   thumbnail_url: string | null;
+  download_url?: string | null;
   filename: string | null;
   created_at: string | null;
   sort_order: number | null;
@@ -319,6 +321,7 @@ export async function POST(request: NextRequest) {
     let packageRows: PackageRow[] = [];
     let backdropRows: BackdropRow[] = [];
     let compositeRows: CompositeMediaRow[] = [];
+    let mediaRows: CompositeMediaRow[] = [];
     let photographerId: string | null = activeSchool?.photographer_id ?? null;
     let watermarkEnabled = true;
     let watermarkLogoUrl = "";
@@ -390,6 +393,20 @@ export async function POST(request: NextRequest) {
       activeSchool,
       primaryStudent.class_name,
     );
+    mediaRows = (
+      await loadFolderMediaRows(
+        buildSchoolCandidateFolders({
+          studentCandidates,
+          activeSchool,
+          selectedSchoolId,
+        }),
+      )
+    ).map((row) => ({
+      ...row,
+      collection_id: null,
+      created_at: null,
+      sort_order: null,
+    }));
 
     return NextResponse.json({
       ok: true,
@@ -401,6 +418,7 @@ export async function POST(request: NextRequest) {
       activeProject,
       gallerySettings: publicGallerySettings,
       downloadAccess,
+      media: mediaRows,
       composites: compositeRows,
       packages: packageRows,
       backdrops: backdropRows,

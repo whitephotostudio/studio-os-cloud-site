@@ -64,6 +64,7 @@ type MediaRow = {
   storage_path: string | null;
   preview_url: string | null;
   thumbnail_url: string | null;
+  download_url?: string | null;
   filename: string | null;
   created_at: string | null;
   sort_order: number | null;
@@ -378,6 +379,7 @@ export async function POST(request: NextRequest) {
 
         return {
           ...row,
+          download_url: mediaUrls.originalUrl || null,
           preview_url: mediaUrls.previewUrl || null,
           thumbnail_url: mediaUrls.thumbnailUrl || null,
         };

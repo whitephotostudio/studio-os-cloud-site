@@ -6,6 +6,7 @@ import {
 import { buildSchoolGalleryDownloadAccess } from "@/lib/school-gallery-downloads";
 import { buildStoredMediaUrls } from "@/lib/storage-images";
 import { filterPackagesForProfile } from "@/lib/package-profile-selection";
+import { buildSchoolCandidateFolders, loadFolderMediaRows } from "@/lib/storage-folder";
 
 export const dynamic = "force-dynamic";
 
@@ -53,6 +54,7 @@ type CompositeMediaRow = {
   storage_path: string | null;
   preview_url: string | null;
   thumbnail_url: string | null;
+  download_url?: string | null;
   filename: string | null;
   created_at: string | null;
   sort_order: number | null;
@@ -359,6 +361,20 @@ export async function POST(request: NextRequest) {
           studentCandidates.find((s) => s.school_id === resolvedSchoolId) ??
           studentCandidates[0] ??
           null;
+        const mediaRows = (
+          await loadFolderMediaRows(
+            buildSchoolCandidateFolders({
+              studentCandidates,
+              activeSchool: selectedSchool,
+              selectedSchoolId: resolvedSchoolId,
+            }),
+          )
+        ).map((row) => ({
+          ...row,
+          collection_id: null,
+          created_at: null,
+          sort_order: null,
+        }));
         const compositeRows = await loadSchoolCompositeMedia(
           service,
           selectedSchool,
@@ -423,6 +439,7 @@ export async function POST(request: NextRequest) {
           activeProject,
           gallerySettings: publicGallerySettings,
           downloadAccess,
+          media: mediaRows,
           composites: compositeRows,
           packages: packageRows,
           backdrops: backdropsResult.data ?? [],

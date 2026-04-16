@@ -515,6 +515,7 @@ export async function GET(
 
       return {
         ...row,
+        download_url: mediaUrls.originalUrl || null,
         preview_url: mediaUrls.previewUrl || null,
         thumbnail_url: mediaUrls.thumbnailUrl || null,
       };

@@ -1,4 +1,9 @@
 const SUPABASE_URL = (process.env.NEXT_PUBLIC_SUPABASE_URL || "").replace(/\/$/, "");
+const R2_PUBLIC_URL = (
+  process.env.NEXT_PUBLIC_R2_PUBLIC_URL ||
+  process.env.R2_PUBLIC_URL ||
+  ""
+).replace(/\/$/, "");
 
 export const MEDIA_BUCKET = "thumbs";
 
@@ -46,7 +51,9 @@ export function publicStorageUrl(
   bucket = MEDIA_BUCKET,
 ) {
   const safePath = clean(storagePath);
-  if (!SUPABASE_URL || !safePath) return "";
+  if (!safePath) return "";
+  if (R2_PUBLIC_URL) return `${R2_PUBLIC_URL}/${encodeStoragePath(safePath)}`;
+  if (!SUPABASE_URL) return "";
   return `${SUPABASE_URL}/storage/v1/object/public/${bucket}/${encodeStoragePath(safePath)}`;
 }
 
@@ -67,6 +74,15 @@ export function extractStoragePathFromSupabaseUrl(
   const candidate = clean(url);
   if (!candidate) return null;
 
+  if (R2_PUBLIC_URL && candidate.startsWith(`${R2_PUBLIC_URL}/`)) {
+    try {
+      const parsed = new URL(candidate);
+      return decodeURIComponent(parsed.pathname.replace(/^\/+/, ""));
+    } catch {
+      return decodeURIComponent(candidate.slice(R2_PUBLIC_URL.length + 1));
+    }
+  }
+
   const markers = [
     `/storage/v1/object/public/${bucket}/`,
     `/storage/v1/render/image/public/${bucket}/`,
@@ -81,6 +97,16 @@ export function extractStoragePathFromSupabaseUrl(
     return decodeURIComponent(nextPath);
   }
 
+  try {
+    const parsed = new URL(candidate);
+    const pathname = decodeURIComponent(parsed.pathname.replace(/^\/+/, ""));
+    if (pathname && /\.(png|jpe?g|webp|gif|avif)$/i.test(pathname)) {
+      return pathname;
+    }
+  } catch {
+    // Ignore invalid URLs.
+  }
+
   return null;
 }
 
@@ -89,7 +115,10 @@ export function isOriginalStorageUrl(
   bucket = MEDIA_BUCKET,
 ) {
   const candidate = clean(url);
-  return !!candidate && candidate.includes(`/storage/v1/object/public/${bucket}/`);
+  return !!candidate && (
+    candidate.includes(`/storage/v1/object/public/${bucket}/`) ||
+    (R2_PUBLIC_URL ? candidate.startsWith(`${R2_PUBLIC_URL}/`) : false)
+  );
 }
 
 export function buildStoredMediaUrls(

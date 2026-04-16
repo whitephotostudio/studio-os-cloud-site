@@ -37,6 +37,7 @@ import {
 } from "@/lib/event-gallery-settings";
 import { getPackageCategory } from "@/lib/package-categories";
 import { defaultSchoolGalleryDownloadAccess } from "@/lib/school-gallery-downloads";
+import { extractStoragePathFromSupabaseUrl } from "@/lib/storage-images";
 import { createZipBlob } from "@/lib/zip";
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -98,6 +99,7 @@ type EventMediaRow = {
   id: string;
   collection_id?: string | null;
   storage_path?: string | null;
+  download_url?: string | null;
   preview_url?: string | null;
   thumbnail_url?: string | null;
   filename?: string | null;
@@ -130,6 +132,7 @@ type CompositeMediaRow = {
   id: string;
   collection_id: string | null;
   storage_path: string | null;
+  download_url?: string | null;
   preview_url: string | null;
   thumbnail_url: string | null;
   filename: string | null;
@@ -149,6 +152,7 @@ type GalleryContextPayload = {
   activeProject?: ProjectRow | null;
   gallerySettings?: EventGallerySettings;
   downloadAccess?: EventGalleryDownloadAccess;
+  media?: EventMediaRow[];
   composites?: CompositeMediaRow[];
   packages?: PackageRow[];
   backdrops?: BackdropRow[];
@@ -504,7 +508,6 @@ function defaultGalleryDownloadAccess(
 
 // ── Constants ──────────────────────────────────────────────────────────────
 const SUPABASE_URL = "https://bwqhzczxoevouiondjak.supabase.co";
-const BUCKET = "thumbs";
 const NOBG_BUCKET = "nobg-photos";
 
 const BACKDROP_CATEGORIES = [
@@ -942,20 +945,14 @@ function formatPackageItem(item: PackageItemValue): string {
 
 function folderFromPhotoUrl(photoUrl: string): string | null {
   try {
-    const marker = `/object/public/${BUCKET}/`;
-    const idx = photoUrl.indexOf(marker);
-    if (idx === -1) return null;
-    const decoded = decodeURIComponent(photoUrl.slice(idx + marker.length));
-    const parts = decoded.split("/");
+    const storagePath = extractStoragePathFromSupabaseUrl(photoUrl);
+    if (!storagePath) return null;
+    const parts = storagePath.split("/");
     if (parts.length < 2) return null;
     return parts.slice(0, parts.length - 1).join("/");
   } catch {
     return null;
   }
-}
-
-function publicUrl(path: string): string {
-  return `${SUPABASE_URL}/storage/v1/object/public/${BUCKET}/${path}`;
 }
 
 function favoriteStorageKey(projectId: string | null | undefined, email: string | null | undefined, pin: string | null | undefined) {
@@ -3285,10 +3282,9 @@ export default function ParentGalleryPage() {
           const mediaRows = contextPayload.media ?? [];
           const eventImages = mediaRows
             .map((row) => {
-              const storagePath = "storage_path" in row ? clean((row as EventMediaRow & { storage_path?: string | null }).storage_path) : "";
               const thumbnailUrl = clean(row.thumbnail_url) || null;
               const previewUrl = clean(row.preview_url) || null;
-              const downloadUrl = storagePath ? publicUrl(storagePath) : previewUrl || thumbnailUrl;
+              const downloadUrl = clean(row.download_url) || previewUrl || thumbnailUrl;
               const url = previewUrl || thumbnailUrl || downloadUrl;
               if (!url) return null;
               return {
@@ -3453,12 +3449,12 @@ export default function ParentGalleryPage() {
         const activeSchool = contextPayload.activeSchool ?? null;
         const activeProject = contextPayload.activeProject ?? null;
         const compositeRows = contextPayload.composites ?? [];
+        const schoolMediaRows = contextPayload.media ?? [];
 
         if (!primaryStudent || !studentCandidates.length) {
           throw new Error("Student not found for this PIN.");
         }
 
-        // Load photos from storage
         const combinedImages: GalleryImage[] = [];
         const seenUrls = new Set<string>();
 
@@ -3477,34 +3473,20 @@ export default function ParentGalleryPage() {
             : null,
         ]);
 
-        const folderListings = await Promise.all(
-          candidateFolders.map(async (folder) => {
-            const { data: storageFiles } = await supabase.storage
-              .from(BUCKET)
-              .list(folder, {
-                limit: 200,
-                sortBy: { column: "name", order: "asc" },
-              });
-
-            return { folder, storageFiles: storageFiles ?? [] };
-          })
-        );
-
-        for (const { folder, storageFiles } of folderListings) {
-          if (!storageFiles.length) continue;
-
-          for (const file of storageFiles) {
-            if (!file.name || file.name.startsWith(".") || !isImageFileName(file.name)) continue;
-            const url = publicUrl(`${folder}/${file.name}`);
-            if (seenUrls.has(url)) continue;
-            seenUrls.add(url);
-            combinedImages.push({
-              id: file.id ?? `${folder}/${file.name}`,
-              url,
-              filename: file.name,
-              source: "photo",
-            });
-          }
+        for (const row of schoolMediaRows) {
+          const downloadUrl = clean(row.download_url) || clean(row.preview_url) || clean(row.thumbnail_url);
+          const displayUrl = clean(row.preview_url) || clean(row.thumbnail_url) || downloadUrl;
+          if (!displayUrl || seenUrls.has(displayUrl)) continue;
+          seenUrls.add(displayUrl);
+          combinedImages.push({
+            id: row.id,
+            url: displayUrl,
+            filename: clean(row.filename) || null,
+            downloadUrl: downloadUrl || displayUrl,
+            previewUrl: clean(row.preview_url) || null,
+            thumbnailUrl: clean(row.thumbnail_url) || null,
+            source: "photo",
+          });
         }
 
         if (!combinedImages.length) {
@@ -5051,21 +5033,15 @@ export default function ParentGalleryPage() {
       return (
         <div
           style={{
-            columnWidth: `${eventColumnWidth}px`,
-            columnGap: `${eventGap}px`,
+            display: "grid",
+            gridTemplateColumns: `repeat(auto-fill, minmax(${eventColumnWidth}px, 1fr))`,
+            gap: `${eventGap}px`,
+            alignItems: "start",
           }}
         >
-          {imagesToRender.map((img, index) => (
-            <div
-              key={img.id}
-              style={{
-                ...columnItemStyle,
-                marginBottom: eventGap,
-              }}
-            >
-              {renderPhotoWallCard(img, index, { layout: "cascade" })}
-            </div>
-          ))}
+          {imagesToRender.map((img, index) =>
+            renderPhotoWallCard(img, index, { layout: "cascade" }),
+          )}
         </div>
       );
     }

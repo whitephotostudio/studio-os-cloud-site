@@ -3,6 +3,7 @@ import {
   createDashboardServiceClient,
   resolveDashboardAuth,
 } from "@/lib/dashboard-auth";
+import { r2DeleteWithVariants } from "@/lib/r2";
 
 export const dynamic = "force-dynamic";
 
@@ -212,11 +213,7 @@ export async function DELETE(
     );
 
     if (storagePaths.length > 0) {
-      const { error: storageRemoveError } = await auth.service.storage
-        .from("thumbs")
-        .remove(storagePaths);
-
-      if (storageRemoveError) throw storageRemoveError;
+      await r2DeleteWithVariants(storagePaths);
     }
 
     const { error: mediaDeleteError } = await auth.service

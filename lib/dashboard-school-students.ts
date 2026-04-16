@@ -7,6 +7,7 @@ import {
   buildStoredMediaUrls,
   extractStoragePathFromSupabaseUrl,
 } from "@/lib/storage-images";
+import { listR2FolderImages, r2DeleteWithVariants, r2Upload } from "@/lib/r2";
 
 type SupabaseClientLike = SupabaseClient;
 
@@ -144,9 +145,11 @@ async function removeUploadedAssets(
   service: SupabaseClientLike,
   storagePaths: string[],
 ) {
+  void service;
   if (!storagePaths.length) return;
-  const { error } = await service.storage.from("thumbs").remove(storagePaths);
-  if (error) {
+  try {
+    await r2DeleteWithVariants(storagePaths);
+  } catch (error) {
     console.warn("Failed to remove uploaded student assets after rollback:", error);
   }
 }
@@ -174,22 +177,12 @@ export async function uploadStudentAssets(params: {
         : "jpg";
       const ext = clean(originalExt).toLowerCase() || "jpg";
       const storagePath = `${storageFolderPath}/${Date.now()}-${index}-${Math.random().toString(36).slice(2)}.${ext}`;
-      const bytes = new Uint8Array(await file.arrayBuffer());
-
-      const { error: uploadError } = await params.service.storage
-        .from("thumbs")
-        .upload(storagePath, bytes, {
-          cacheControl: "3600",
-          upsert: false,
-          contentType: file.type || undefined,
-        });
-
-      if (uploadError) {
-        throw new Error(uploadError.message || "Photo upload failed.");
-      }
-
-      const mediaUrls = buildStoredMediaUrls({ storagePath });
-      const publicUrl = mediaUrls.previewUrl;
+      const bytes = Buffer.from(await file.arrayBuffer());
+      const publicUrl = await r2Upload(
+        storagePath,
+        bytes,
+        file.type || "application/octet-stream",
+      );
 
       if (clean(publicUrl)) {
         uploadedAssets.push({
@@ -247,21 +240,22 @@ export function listStorageFolderAssets(
   service: SupabaseClientLike,
   folderPath: string,
 ) {
-  return service.storage.from("thumbs").list(folderPath, {
-    limit: 1000,
-    sortBy: { column: "name", order: "asc" },
-  });
+  void service;
+  return listR2FolderImages(folderPath)
+    .then((files) => ({ data: files, error: null }))
+    .catch((error) => ({
+      data: null,
+      error: error instanceof Error ? error : new Error("Failed to list storage folder."),
+    }));
 }
 
 export function storageFilePublicUrl(
   service: SupabaseClientLike,
   folderPath: string,
-  file: { name: string },
+  file: { name: string; url?: string },
 ) {
   void service;
-  return (
-    buildStoredMediaUrls({
-      storagePath: `${folderPath}/${file.name}`,
-    }).previewUrl || ""
-  );
+  return clean(file.url) || buildStoredMediaUrls({
+    storagePath: `${folderPath}/${file.name}`,
+  }).previewUrl || "";
 }

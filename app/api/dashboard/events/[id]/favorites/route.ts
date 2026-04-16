@@ -3,6 +3,7 @@ import {
   createDashboardServiceClient,
   resolveDashboardAuth,
 } from "@/lib/dashboard-auth";
+import { buildStoredMediaUrls } from "@/lib/storage-images";
 
 export const dynamic = "force-dynamic";
 
@@ -34,6 +35,7 @@ type MediaRow = {
   storage_path: string | null;
   preview_url: string | null;
   thumbnail_url: string | null;
+  download_url?: string | null;
   filename: string | null;
 };
 
@@ -237,7 +239,22 @@ export async function GET(
     if (mediaRows.error) throw mediaRows.error;
 
     const mediaMap = new Map(
-      ((mediaRows.data ?? []) as MediaRow[]).map((row) => [row.id, row] as const),
+      ((mediaRows.data ?? []) as MediaRow[]).map((row) => {
+        const mediaUrls = buildStoredMediaUrls({
+          storagePath: row.storage_path,
+          previewUrl: row.preview_url,
+          thumbnailUrl: row.thumbnail_url,
+        });
+        return [
+          row.id,
+          {
+            ...row,
+            download_url: mediaUrls.originalUrl || null,
+            preview_url: mediaUrls.previewUrl || null,
+            thumbnail_url: mediaUrls.thumbnailUrl || null,
+          },
+        ] as const;
+      }),
     );
 
     const viewerMap = new Map<
@@ -272,6 +289,7 @@ export async function GET(
         previewUrl: string;
         filename: string;
         storagePath: string | null;
+        downloadUrl: string | null;
       }
     >();
 
@@ -365,6 +383,9 @@ export async function GET(
           if (!existingMedia.storagePath && clean(mediaRow?.storage_path)) {
             existingMedia.storagePath = clean(mediaRow?.storage_path);
           }
+          if (!existingMedia.downloadUrl && clean(mediaRow?.download_url)) {
+            existingMedia.downloadUrl = clean(mediaRow?.download_url);
+          }
         } else {
           favoriteMediaMap.set(mediaId, {
             mediaId,
@@ -375,6 +396,7 @@ export async function GET(
             previewUrl,
             filename: clean(mediaRow?.filename) || "Photo",
             storagePath: clean(mediaRow?.storage_path) || null,
+            downloadUrl: clean(mediaRow?.download_url) || null,
           });
         }
       }

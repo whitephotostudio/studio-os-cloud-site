@@ -36,6 +36,32 @@ export function getR2Client() {
 export const R2_BUCKET = process.env.R2_BUCKET_NAME || "whitephoto-media";
 export const R2_PUBLIC_URL = (process.env.R2_PUBLIC_URL || "").replace(/\/$/, "");
 
+type R2FolderImage = {
+  key: string;
+  name: string;
+  url: string;
+};
+
+function naturalCompare(a: string, b: string) {
+  return a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" });
+}
+
+function normalizePrefix(prefix: string) {
+  return prefix
+    .split("/")
+    .map((segment) => segment.trim())
+    .filter(Boolean)
+    .join("/");
+}
+
+function isImageKey(key: string) {
+  return /\.(png|jpe?g|webp|gif|avif)$/i.test(key);
+}
+
+function isDerivedVariantKey(key: string) {
+  return /_(thumbnail|preview)\.(png|jpe?g|webp|gif|avif)$/i.test(key);
+}
+
 /**
  * Returns the public URL for a given storage key in R2.
  */
@@ -139,4 +165,90 @@ export async function r2DeletePrefix(prefix: string) {
   } while (continuationToken);
 
   return totalDeleted;
+}
+
+export function r2VariantKeys(key: string) {
+  const normalized = normalizePrefix(key);
+  if (!normalized) return [];
+  const extMatch = normalized.match(/(\.[^.]+)$/);
+  const ext = extMatch?.[1] ?? "";
+  const base = ext ? normalized.slice(0, -ext.length) : normalized;
+  return Array.from(
+    new Set([
+      normalized,
+      `${base}_thumbnail.jpg`,
+      `${base}_preview.jpg`,
+    ]),
+  );
+}
+
+export async function r2DeleteWithVariants(keys: string[]) {
+  const normalizedKeys = Array.from(
+    new Set(
+      keys
+        .flatMap((key) => r2VariantKeys(key))
+        .map((key) => normalizePrefix(key))
+        .filter(Boolean),
+    ),
+  );
+
+  if (!normalizedKeys.length) return 0;
+
+  const client = getR2Client();
+  let totalDeleted = 0;
+
+  for (let index = 0; index < normalizedKeys.length; index += 1000) {
+    const batch = normalizedKeys.slice(index, index + 1000);
+    await client.send(
+      new DeleteObjectsCommand({
+        Bucket: R2_BUCKET,
+        Delete: {
+          Objects: batch.map((key) => ({ Key: key })),
+          Quiet: true,
+        },
+      }),
+    );
+    totalDeleted += batch.length;
+  }
+
+  return totalDeleted;
+}
+
+export async function listR2FolderImages(prefix: string): Promise<R2FolderImage[]> {
+  const normalizedPrefix = normalizePrefix(prefix);
+  if (!normalizedPrefix) return [];
+
+  const client = getR2Client();
+  const results: R2FolderImage[] = [];
+  let continuationToken: string | undefined;
+
+  do {
+    const page = await client.send(
+      new ListObjectsV2Command({
+        Bucket: R2_BUCKET,
+        Prefix: `${normalizedPrefix}/`,
+        MaxKeys: 1000,
+        ContinuationToken: continuationToken,
+      }),
+    );
+
+    for (const item of page.Contents ?? []) {
+      const key = normalizePrefix(item.Key ?? "");
+      if (!key || key === normalizedPrefix) continue;
+      const name = key.split("/").pop() ?? "";
+      if (!name || name.startsWith(".") || !isImageKey(name) || isDerivedVariantKey(name)) {
+        continue;
+      }
+
+      results.push({
+        key,
+        name,
+        url: r2PublicUrl(key),
+      });
+    }
+
+    continuationToken = page.IsTruncated ? page.NextContinuationToken : undefined;
+  } while (continuationToken);
+
+  return results.sort((a, b) => naturalCompare(a.name, b.name));
 }

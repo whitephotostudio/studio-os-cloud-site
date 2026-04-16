@@ -117,6 +117,7 @@ type FavoriteMediaRow = {
   previewUrl?: string | null;
   filename: string;
   storagePath?: string | null;
+  downloadUrl?: string | null;
 };
 
 type FavoritesSummary = {
@@ -743,7 +744,10 @@ export default function ProjectDetailPage() {
 
     try {
       for (const item of items) {
-        const sourceUrl = publicStorageUrl(item.storagePath) || clean(item.previewUrl);
+        const sourceUrl =
+          clean(item.downloadUrl) ||
+          publicStorageUrl(item.storagePath) ||
+          clean(item.previewUrl);
         if (!sourceUrl) continue;
         const response = await fetch(sourceUrl);
         if (!response.ok) throw new Error(`Download failed for ${item.filename}.`);
@@ -1845,7 +1849,10 @@ export default function ProjectDetailPage() {
                   favoriteMediaItems.length ? (
                     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(220px,1fr))", gap: 16 }}>
                       {favoriteMediaItems.map((item) => {
-                        const downloadUrl = publicStorageUrl(item.storagePath) || clean(item.previewUrl);
+                        const downloadUrl =
+                          clean(item.downloadUrl) ||
+                          publicStorageUrl(item.storagePath) ||
+                          clean(item.previewUrl);
                         return (
                           <div key={item.mediaId} style={{ borderRadius: 20, overflow: "hidden", border: "1px solid #e5e7eb", background: "#fff" }}>
                             <div style={{ aspectRatio: "4 / 5", background: item.previewUrl ? `url(${item.previewUrl}) center/cover no-repeat` : "linear-gradient(135deg,#f3f4f6,#e5e7eb)" }} />

@@ -31,6 +31,7 @@ type CollectionRow = {
 type MediaRow = {
   id: string;
   storage_path?: string | null;
+  download_url?: string | null;
   thumbnail_url?: string | null;
   preview_url?: string | null;
   filename?: string | null;
@@ -392,15 +393,18 @@ export default function ProjectAlbumPage() {
             throw new Error(insertError.message || "Failed to save photo record.");
           }
 
-          const nextRow = (insertedRow ?? {
-            id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
-            storage_path: storagePath,
-            filename: file.name,
-            mime_type: file.type || null,
-            preview_url: previewUrl || null,
-            thumbnail_url: thumbnailUrl || null,
-            created_at: new Date().toISOString(),
-            sort_order: media.length + uploadedCount + failedCount,
+          const nextRow = ({
+            ...(insertedRow ?? {
+              id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+              storage_path: storagePath,
+              filename: file.name,
+              mime_type: file.type || null,
+              preview_url: previewUrl || null,
+              thumbnail_url: thumbnailUrl || null,
+              created_at: new Date().toISOString(),
+              sort_order: media.length + uploadedCount + failedCount,
+            }),
+            download_url: r2Result.publicUrl,
           }) as MediaRow;
 
           uploadedCount += 1;
@@ -510,19 +514,22 @@ export default function ProjectAlbumPage() {
     setOpenPhotoMenuId((prev) => (prev && ids.includes(prev) ? null : prev));
     setBusyPhotoIds((prev) => [...new Set([...prev, ...ids])]);
     try {
-      const targets = media.filter((item) => ids.includes(item.id));
-      for (const item of targets) {
-        const path = clean(item.storage_path);
-        if (path) {
-          const { error: storageError } = await supabase.storage.from("thumbs").remove([path]);
-          if (storageError) {
-            throw new Error(storageError.message || "Failed to delete file from storage.");
-          }
-        }
-      }
+      const response = await fetch(`/api/dashboard/events/${projectId}/albums/${albumId}`, {
+        method: "DELETE",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ ids }),
+      });
 
-      const { error: deleteError } = await supabase.from("media").delete().in("id", ids).eq("project_id", projectId);
-      if (deleteError) throw deleteError;
+      const payload = (await response.json().catch(() => ({}))) as {
+        ok?: boolean;
+        message?: string;
+      };
+
+      if (!response.ok || payload.ok === false) {
+        throw new Error(payload.message || "Failed to delete photo(s).");
+      }
 
       setMedia((prev) => prev.filter((item) => !ids.includes(item.id)));
       setSelectedIds((prev) => prev.filter((id) => !ids.includes(id)));
@@ -545,7 +552,8 @@ export default function ProjectAlbumPage() {
   const viewerIsPortrait =
     viewerAspectRatio !== null ? viewerAspectRatio < 0.95 : false;
   const viewerSrc = viewerItem
-    ? buildStoredMediaUrls({
+    ? clean(viewerItem.download_url) ||
+      buildStoredMediaUrls({
         storagePath: clean(viewerItem.storage_path),
         previewUrl: viewerItem.preview_url,
         thumbnailUrl: viewerItem.thumbnail_url,

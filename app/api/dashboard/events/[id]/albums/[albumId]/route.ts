@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createDashboardServiceClient, resolveDashboardAuth } from "@/lib/dashboard-auth";
 import { buildStoredMediaUrls } from "@/lib/storage-images";
+import { r2DeleteWithVariants } from "@/lib/r2";
 
 export const dynamic = "force-dynamic";
 
@@ -119,6 +120,7 @@ export async function GET(
 
       return {
         ...row,
+        download_url: mediaUrls.originalUrl || null,
         preview_url: mediaUrls.previewUrl || null,
         thumbnail_url: mediaUrls.thumbnailUrl || null,
       };
@@ -269,6 +271,120 @@ export async function PATCH(
         ok: false,
         message:
           error instanceof Error ? error.message : "Failed to update album.",
+      },
+      { status: 500 },
+    );
+  }
+}
+
+export async function DELETE(
+  request: NextRequest,
+  context: { params: Promise<{ id: string; albumId: string }> },
+) {
+  try {
+    const { user } = await resolveDashboardAuth(request);
+    if (!user) {
+      return NextResponse.json(
+        { ok: false, message: "Please sign in again." },
+        { status: 401 },
+      );
+    }
+
+    const { id: projectId, albumId } = await context.params;
+    const service = createDashboardServiceClient();
+
+    const { data: photographerRow, error: photographerError } = await service
+      .from("photographers")
+      .select("id")
+      .eq("user_id", user.id)
+      .maybeSingle();
+
+    if (photographerError) throw photographerError;
+    if (!photographerRow?.id) {
+      return NextResponse.json(
+        { ok: false, message: "Photographer profile not found." },
+        { status: 404 },
+      );
+    }
+
+    const { data: projectData, error: projectError } = await service
+      .from("projects")
+      .select("id")
+      .eq("id", projectId)
+      .eq("photographer_id", photographerRow.id)
+      .maybeSingle();
+
+    if (projectError) throw projectError;
+    if (!projectData) {
+      return NextResponse.json(
+        { ok: false, message: "Project not found." },
+        { status: 404 },
+      );
+    }
+
+    const { data: albumData, error: albumError } = await service
+      .from("collections")
+      .select("id")
+      .eq("id", albumId)
+      .eq("project_id", projectId)
+      .maybeSingle();
+
+    if (albumError) throw albumError;
+    if (!albumData) {
+      return NextResponse.json(
+        { ok: false, message: "Album not found." },
+        { status: 404 },
+      );
+    }
+
+    const body = (await request.json().catch(() => ({}))) as { ids?: string[] };
+    const deleteIds = Array.isArray(body.ids)
+      ? body.ids.map((value) => clean(String(value))).filter(Boolean)
+      : [];
+
+    if (!deleteIds.length) {
+      return NextResponse.json(
+        { ok: false, message: "Select at least one photo to delete." },
+        { status: 400 },
+      );
+    }
+
+    const { data: mediaRows, error: mediaError } = await service
+      .from("media")
+      .select("id,storage_path")
+      .eq("project_id", projectId)
+      .eq("collection_id", albumId)
+      .in("id", deleteIds);
+
+    if (mediaError) throw mediaError;
+
+    const storagePaths = Array.from(
+      new Set(
+        ((mediaRows ?? []) as Array<{ storage_path?: string | null }>)
+          .map((row) => clean(row.storage_path))
+          .filter(Boolean),
+      ),
+    );
+
+    if (storagePaths.length) {
+      await r2DeleteWithVariants(storagePaths);
+    }
+
+    const { error: deleteError } = await service
+      .from("media")
+      .delete()
+      .eq("project_id", projectId)
+      .eq("collection_id", albumId)
+      .in("id", deleteIds);
+
+    if (deleteError) throw deleteError;
+
+    return NextResponse.json({ ok: true, deletedIds: deleteIds });
+  } catch (error) {
+    return NextResponse.json(
+      {
+        ok: false,
+        message: error instanceof Error ? error.message : "Failed to delete photo(s).",
       },
       { status: 500 },
     );

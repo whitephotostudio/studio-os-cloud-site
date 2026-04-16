@@ -5,12 +5,14 @@
 //   RESEND_API_KEY   — your Resend API key (from resend.com)
 //   SUPABASE_URL     — your project URL (auto-injected)
 //   SUPABASE_SERVICE_ROLE_KEY — service role key (auto-injected)
+//   R2_PUBLIC_URL    — optional public base URL for migrated R2 photo storage
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const RESEND_API_KEY = (Deno.env.get("RESEND_API_KEY") ?? "").trim().replace(/[^\x20-\x7E]/g, "");
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+const R2_PUBLIC_URL = (Deno.env.get("R2_PUBLIC_URL") ?? "").trim().replace(/\/$/, "");
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
@@ -21,6 +23,14 @@ interface DigitalDeliveryPayload {
   student_name?: string;
   school_name?: string;
   photo_paths: string[]; // storage paths in the photos bucket
+}
+
+function encodeKey(key: string) {
+  return key
+    .split("/")
+    .filter(Boolean)
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
 }
 
 Deno.serve(async (req) => {
@@ -46,18 +56,28 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Generate signed URLs for each photo (valid for 7 days = 604800 seconds)
+    const usingR2PublicUrls = !!R2_PUBLIC_URL;
+
+    // Generate R2 public URLs when configured; otherwise fall back to
+    // Supabase signed URLs for legacy storage.
     const signedUrls: { path: string; url: string }[] = [];
     for (const path of photo_paths) {
-      const { data, error } = await supabase.storage
-        .from("photos")
-        .createSignedUrl(path, 604800); // 7 days
+      if (usingR2PublicUrls) {
+        signedUrls.push({
+          path,
+          url: `${R2_PUBLIC_URL}/${encodeKey(path)}`,
+        });
+      } else {
+        const { data, error } = await supabase.storage
+          .from("photos")
+          .createSignedUrl(path, 604800); // 7 days
 
-      if (error || !data?.signedUrl) {
-        console.error(`Failed to create signed URL for ${path}:`, error);
-        continue;
+        if (error || !data?.signedUrl) {
+          console.error(`Failed to create signed URL for ${path}:`, error);
+          continue;
+        }
+        signedUrls.push({ path, url: data.signedUrl });
       }
-      signedUrls.push({ path, url: data.signedUrl });
     }
 
     if (signedUrls.length === 0) {
@@ -123,10 +143,16 @@ Deno.serve(async (req) => {
                 ${photoLinksHtml}
               </table>
 
-              <p style="margin: 0 0 8px; font-size: 13px; color: #999; line-height: 1.6;">
+              ${
+                usingR2PublicUrls
+                  ? `<p style="margin: 0 0 8px; font-size: 13px; color: #999; line-height: 1.6;">
+                Save your photos to your device for safekeeping after download.
+              </p>`
+                  : `<p style="margin: 0 0 8px; font-size: 13px; color: #999; line-height: 1.6;">
                 ⏱ These download links expire in <strong>7 days</strong>. 
                 Please save your photos before then.
-              </p>
+              </p>`
+              }
               <p style="margin: 0; font-size: 13px; color: #999; line-height: 1.6;">
                 Order reference: <code style="font-size: 11px; color: #bbb;">${order_id}</code>
               </p>

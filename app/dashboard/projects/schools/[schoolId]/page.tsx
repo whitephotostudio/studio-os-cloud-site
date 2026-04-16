@@ -24,6 +24,7 @@ import {
 import { createClient } from "@/lib/supabase/client";
 import { uploadToR2 } from "@/lib/upload-to-r2-client";
 import { ensureSchoolCollectionId } from "@/lib/school-sync";
+import { extractStoragePathFromSupabaseUrl } from "@/lib/storage-images";
 
 type School = {
   id: string;
@@ -112,14 +113,7 @@ function safeStorageSegment(value: string, fallback: string) {
 }
 
 function extractObjectPathFromPublicUrl(url: string): string | null {
-  try {
-    const marker = "/storage/v1/object/public/thumbs/";
-    const idx = url.indexOf(marker);
-    if (idx === -1) return null;
-    return decodeURIComponent(url.substring(idx + marker.length));
-  } catch {
-    return null;
-  }
+  return extractStoragePathFromSupabaseUrl(url);
 }
 
 function extractFolderPathFromPublicUrl(url: string): string | null {
@@ -502,21 +496,25 @@ export default function SchoolsSchoolDetailPage() {
     const cached = coverFolderCacheRef.current.get(folderPath);
     if (cached) return cached;
 
-    const { data: files, error: listError } = await supabase.storage.from("thumbs").list(folderPath, {
-      limit: 1000,
-      sortBy: { column: "name", order: "asc" },
-    });
+    const response = await fetch(
+      `/api/dashboard/storage-folder?path=${encodeURIComponent(folderPath)}`,
+      { cache: "no-store" },
+    );
+    const payload = (await response.json().catch(() => ({}))) as {
+      ok?: boolean;
+      files?: Array<{ name: string; url: string }>;
+    };
 
-    if (listError || !files) {
+    if (!response.ok || payload.ok === false || !payload.files) {
       coverFolderCacheRef.current.set(folderPath, []);
       return [];
     }
 
-    const assets = files
+    const assets = payload.files
       .filter((file) => !!file.name && /\.(png|jpg|jpeg|webp)$/i.test(file.name))
       .sort((a, b) => naturalCompare(a.name, b.name))
       .map((file) => ({
-        url: supabase.storage.from("thumbs").getPublicUrl(`${folderPath}/${file.name}`).data.publicUrl,
+        url: clean(file.url),
         label: file.name,
       }));
 
