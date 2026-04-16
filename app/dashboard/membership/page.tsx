@@ -350,6 +350,7 @@ export default function MembershipPage() {
   const [invoiceFilter, setInvoiceFilter] = useState("");
   const [showCancelDialog, setShowCancelDialog] = useState(false);
   const [cancelLoading, setCancelLoading] = useState(false);
+  const [deactivatingKeyId, setDeactivatingKeyId] = useState<string | null>(null);
   const fetchedRef = useRef(false);
 
   const loadData = useCallback(async () => {
@@ -448,6 +449,28 @@ export default function MembershipPage() {
       setCancelLoading(false);
     }
   }, []);
+
+  const handleDeactivateKey = useCallback(async (keyId: string) => {
+    if (!confirm("Deactivate this device? The key will become available for another computer.")) return;
+    setDeactivatingKeyId(keyId);
+    try {
+      const supabase = createClient();
+      const { data: result, error: rpcError } = await supabase.rpc("deactivate_photography_key", {
+        p_key_id: keyId,
+      });
+      if (rpcError) throw rpcError;
+      const row = Array.isArray(result) ? result[0] : result;
+      if (!row?.success) {
+        alert(row?.message || "Failed to deactivate key.");
+      }
+      // Refresh data
+      await loadData();
+    } catch (err: any) {
+      alert(err.message || "Failed to deactivate key.");
+    } finally {
+      setDeactivatingKeyId(null);
+    }
+  }, [loadData]);
 
   const filteredInvoices = useMemo(() => {
     if (!data) return [];
@@ -697,9 +720,30 @@ export default function MembershipPage() {
                             </span>
                           </div>
                         </div>
-                        <div style={{ marginTop: 6, fontSize: 12, color: textMuted }}>
-                          {key.deviceName ? `Device: ${key.deviceName}` : "No device linked"}
-                          {key.platform ? ` (${key.platform})` : ""}
+                        <div style={{ marginTop: 6, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                          <div style={{ fontSize: 12, color: textMuted }}>
+                            {key.deviceName ? `Device: ${key.deviceName}` : "No device linked"}
+                            {key.platform ? ` (${key.platform})` : ""}
+                          </div>
+                          {key.activationStatus === "active" && key.deviceId ? (
+                            <button
+                              onClick={() => handleDeactivateKey(key.id)}
+                              disabled={deactivatingKeyId === key.id}
+                              style={{
+                                fontSize: 11,
+                                fontWeight: 700,
+                                color: "#dc2626",
+                                background: "#fef2f2",
+                                border: "1px solid #fecaca",
+                                borderRadius: 8,
+                                padding: "4px 10px",
+                                cursor: deactivatingKeyId === key.id ? "not-allowed" : "pointer",
+                                opacity: deactivatingKeyId === key.id ? 0.5 : 1,
+                              }}
+                            >
+                              {deactivatingKeyId === key.id ? "Deactivating..." : "Deactivate"}
+                            </button>
+                          ) : null}
                         </div>
                         <div style={{ marginTop: 2, fontSize: 11, color: "#94a3b8", fontFamily: "monospace" }}>
                           {key.keyCode}
