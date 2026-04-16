@@ -1027,6 +1027,21 @@ function fileNameFromUrl(url: string, fallback = "photo.jpg") {
   }
 }
 
+function buildGalleryDownloadFetchUrl(url: string) {
+  const candidate = clean(url);
+  if (!candidate || typeof window === "undefined") return candidate;
+
+  try {
+    const parsed = new URL(candidate, window.location.origin);
+    if (parsed.origin === window.location.origin) {
+      return parsed.toString();
+    }
+    return `/api/portal/download-file?url=${encodeURIComponent(parsed.toString())}`;
+  } catch {
+    return candidate;
+  }
+}
+
 function preferredDownloadUrl(
   image: Pick<GalleryImage, "downloadUrl" | "previewUrl" | "thumbnailUrl" | "url">,
   resolution: EventGallerySettings["extras"]["freeDigitalResolution"],
@@ -1194,7 +1209,7 @@ async function imageElementFromBlob(blob: Blob) {
 }
 
 async function imageElementFromUrl(url: string) {
-  const response = await fetch(url, { cache: "no-store" });
+  const response = await fetch(buildGalleryDownloadFetchUrl(url), { cache: "no-store" });
   if (!response.ok) {
     throw new Error("Could not load studio logo for download.");
   }
@@ -4444,7 +4459,9 @@ export default function ParentGalleryPage() {
       const image = sourceImages[index];
       const sourceUrl = preferredDownloadUrl(image, options.resolution);
       if (!sourceUrl) continue;
-      const response = await fetch(sourceUrl, { cache: "no-store" });
+      const response = await fetch(buildGalleryDownloadFetchUrl(sourceUrl), {
+        cache: "no-store",
+      });
       if (!response.ok) {
         throw new Error(
           `Failed to download ${image.filename || `${options.batchLabel}-${index + 1}`}.`,
