@@ -131,8 +131,12 @@ export async function POST(request: NextRequest) {
         .from("projects")
         .insert({
           photographer_id: photographerId,
-          workflow_type: "project",
-          source_type: "desktop",
+          // DB check constraints:
+          //   workflow_type ∈ {school, event}
+          //   source_type   ∈ {local_school_sync, cloud_only, hybrid}
+          // Desktop-synced galleries are recorded as cloud_only events.
+          workflow_type: "event",
+          source_type: "cloud_only",
           title,
           client_name: clientName || null,
           linked_local_school_id: localProjectId || null,
