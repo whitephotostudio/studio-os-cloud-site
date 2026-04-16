@@ -354,6 +354,8 @@ export default function ProjectAlbumPage() {
             throw new Error("Failed to upload file to storage.");
           }
 
+          const uploadedStoragePath = clean(r2Result.key) || storagePath;
+
           setUploadSession((prev) =>
             prev
               ? {
@@ -366,7 +368,7 @@ export default function ProjectAlbumPage() {
           );
 
           // Generate pre-sized thumbnails server-side on R2
-          const generated = await generateThumbnails(storagePath, accessToken);
+          const generated = await generateThumbnails(uploadedStoragePath, accessToken);
 
           const previewUrl = generated.previewUrl || r2Result.publicUrl;
           const thumbnailUrl = generated.thumbnailUrl || r2Result.publicUrl;
@@ -374,7 +376,7 @@ export default function ProjectAlbumPage() {
           const payload = {
             project_id: projectId,
             collection_id: albumId,
-            storage_path: storagePath,
+            storage_path: uploadedStoragePath,
             filename: file.name,
             mime_type: file.type || null,
             preview_url: previewUrl || null,
@@ -396,7 +398,7 @@ export default function ProjectAlbumPage() {
           const nextRow = ({
             ...(insertedRow ?? {
               id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
-              storage_path: storagePath,
+              storage_path: uploadedStoragePath,
               filename: file.name,
               mime_type: file.type || null,
               preview_url: previewUrl || null,

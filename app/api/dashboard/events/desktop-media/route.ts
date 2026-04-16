@@ -4,6 +4,7 @@ import {
   resolveDashboardAuth,
 } from "@/lib/dashboard-auth";
 import { normalizeEventGallerySettings } from "@/lib/event-gallery-settings";
+import { listR2FolderImages } from "@/lib/r2";
 
 export const dynamic = "force-dynamic";
 
@@ -19,6 +20,43 @@ type MediaItemPayload = {
 
 function clean(value: string | null | undefined) {
   return (value ?? "").trim();
+}
+
+function extensionOf(value: string | null | undefined) {
+  const match = clean(value).toLowerCase().match(/\.([a-z0-9]+)$/i);
+  return match?.[1] ?? "";
+}
+
+function withExtension(value: string, nextExtension: string) {
+  const trimmed = clean(value);
+  if (!trimmed) return trimmed;
+  if (/\.[^.\/]+$/.test(trimmed)) {
+    return trimmed.replace(/\.[^.\/]+$/, nextExtension);
+  }
+  return `${trimmed}${nextExtension}`;
+}
+
+function folderPrefixOf(value: string) {
+  const trimmed = clean(value);
+  const slashIndex = trimmed.lastIndexOf("/");
+  return slashIndex >= 0 ? trimmed.slice(0, slashIndex) : "";
+}
+
+function inferMimeType(value: string | null | undefined) {
+  const extension = extensionOf(value);
+  if (extension === "jpg" || extension === "jpeg") return "image/jpeg";
+  if (extension === "png") return "image/png";
+  if (extension === "webp") return "image/webp";
+  if (extension === "gif") return "image/gif";
+  if (extension === "avif") return "image/avif";
+  return "";
+}
+
+function isProjectAlbumJpeg(storagePath: string, filename: string) {
+  return (
+    /^projects\/[^/]+\/albums\/[^/]+\//i.test(clean(storagePath)) &&
+    (extensionOf(filename) === "jpg" || extensionOf(filename) === "jpeg")
+  );
 }
 
 type NormalizedMediaItem = {
@@ -174,7 +212,7 @@ export async function POST(request: NextRequest) {
         collection_id: clean(item.collection_id),
         storage_path: clean(item.storage_path),
         filename: clean(item.filename),
-        mime_type: clean(item.mime_type) || "image/png",
+        mime_type: clean(item.mime_type),
         preview_url: clean(item.preview_url),
         thumbnail_url: clean(item.thumbnail_url),
         is_cover: item.is_cover === true,
@@ -240,6 +278,49 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: true, inserted: 0, skipped: normalizedItems.length, items: [] });
     }
 
+    const folderKeyCache = new Map<string, Promise<Set<string>>>();
+    async function folderKeys(prefix: string) {
+      const normalizedPrefix = clean(prefix);
+      if (!normalizedPrefix) return new Set<string>();
+      let pending = folderKeyCache.get(normalizedPrefix);
+      if (!pending) {
+        pending = listR2FolderImages(normalizedPrefix).then(
+          (items) => new Set(items.map((item) => item.key)),
+        );
+        folderKeyCache.set(normalizedPrefix, pending);
+      }
+      return pending;
+    }
+
+    const resolvedItems = await Promise.all(
+      filteredItems.map(async (item) => {
+        let storagePath = item.storage_path;
+
+        if (isProjectAlbumJpeg(storagePath, item.filename) && extensionOf(storagePath) === "png") {
+          const jpegPath = withExtension(storagePath, ".jpg");
+          const folderPrefix = folderPrefixOf(storagePath);
+          if (folderPrefix) {
+            const keys = await folderKeys(folderPrefix);
+            if (keys.has(jpegPath)) {
+              storagePath = jpegPath;
+            }
+          }
+        }
+
+        const inferredMimeType = inferMimeType(item.filename) || inferMimeType(storagePath);
+        const incomingMimeType = clean(item.mime_type).toLowerCase();
+        const mimeType = isProjectAlbumJpeg(storagePath, item.filename)
+          ? "image/jpeg"
+          : incomingMimeType || inferredMimeType || "image/jpeg";
+
+        return {
+          ...item,
+          storage_path: storagePath,
+          mime_type: mimeType,
+        };
+      }),
+    );
+
     const { data: existingRows, error: existingError } = await service
       .from("media")
       .select("id,collection_id,storage_path,sort_order")
@@ -275,9 +356,9 @@ export async function POST(request: NextRequest) {
     }
 
     const inserts: Array<Record<string, string | number | boolean | null>> = [];
-    let skipped = normalizedItems.length - filteredItems.length;
+    let skipped = normalizedItems.length - resolvedItems.length;
 
-    for (const item of filteredItems) {
+    for (const item of resolvedItems) {
       const key = `${item.collection_id}::${item.storage_path}`;
       if (existingKeys.has(key)) {
         skipped += 1;
@@ -317,7 +398,7 @@ export async function POST(request: NextRequest) {
     );
     const coverSource = normalizedSettings.extras.coverSource;
 
-    if (coverSource !== "manual" && filteredItems.length > 0) {
+    if (coverSource !== "manual" && resolvedItems.length > 0) {
       const collectionRowsTyped = (collectionRows ?? []) as Array<{
         id?: string | null;
         cover_photo_url?: string | null;
@@ -331,7 +412,7 @@ export async function POST(request: NextRequest) {
           if (!collectionId || clean(collection.cover_photo_url)) continue;
 
           const candidate = chooseCoverCandidate(
-            filteredItems.filter((item) => item.collection_id === collectionId),
+            resolvedItems.filter((item) => item.collection_id === collectionId),
             coverSource,
           );
           const candidateUrl = candidate ? preferredCoverUrl(candidate) : null;
@@ -361,7 +442,7 @@ export async function POST(request: NextRequest) {
         normalizedSettings.extras.autoChooseProjectCover &&
         !clean((projectRow as { cover_photo_url?: string | null } | null)?.cover_photo_url)
       ) {
-        const candidate = chooseCoverCandidate(filteredItems, coverSource);
+        const candidate = chooseCoverCandidate(resolvedItems, coverSource);
         const candidateUrl = candidate ? preferredCoverUrl(candidate) : null;
 
         if (candidateUrl) {
