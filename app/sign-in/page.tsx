@@ -15,6 +15,14 @@ type StudioAppSignInStatus = {
   };
 };
 
+// LocalStorage keys used by the "Keep me signed in" feature.  Kept in one
+// place so the matching guard inside the dashboard layout can reference the
+// same constants and stay in sync.
+const REMEMBER_ME_KEY = "studio-os-remember-me";
+const REMEMBERED_EMAIL_KEY = "studio-os-last-email";
+export const TRANSIENT_SESSION_FLAG = "studio-os-transient-session";
+export const SESSION_STARTED_FLAG = "studio-os-session-started";
+
 export default function SignInPage() {
   const supabase = createClient();
 
@@ -22,6 +30,10 @@ export default function SignInPage() {
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
+  // Default ON — Supabase already persists the session; this toggle lets the
+  // photographer opt out so the dashboard guard clears their session the next
+  // time they reopen the browser.
+  const [rememberMe, setRememberMe] = useState(true);
 
   // MFA challenge state
   const [mfaRequired, setMfaRequired] = useState(false);
@@ -46,8 +58,42 @@ export default function SignInPage() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const prefilledEmail = params.get("email");
-    if (prefilledEmail) setEmail(prefilledEmail);
+    if (prefilledEmail) {
+      setEmail(prefilledEmail);
+      return;
+    }
+    // Restore the saved "Remember me" preference + email so returning
+    // photographers land on a prefilled form.
+    try {
+      const savedRemember = window.localStorage.getItem(REMEMBER_ME_KEY);
+      if (savedRemember != null) setRememberMe(savedRemember !== "0");
+      const savedEmail = window.localStorage.getItem(REMEMBERED_EMAIL_KEY);
+      if (savedEmail) setEmail(savedEmail);
+    } catch {
+      // localStorage may be unavailable (private mode) – fail silently.
+    }
   }, []);
+
+  function persistRememberPreference(nextEmail: string) {
+    try {
+      if (rememberMe) {
+        window.localStorage.setItem(REMEMBER_ME_KEY, "1");
+        window.localStorage.setItem(REMEMBERED_EMAIL_KEY, nextEmail);
+        // We're remembering the session, so clear any transient marker from
+        // a previous "uncheck" flow.
+        window.localStorage.removeItem(TRANSIENT_SESSION_FLAG);
+      } else {
+        window.localStorage.setItem(REMEMBER_ME_KEY, "0");
+        window.localStorage.removeItem(REMEMBERED_EMAIL_KEY);
+        // Mark this session as transient and tag the current browser session
+        // so the dashboard layout won't sign us out on first load.
+        window.localStorage.setItem(TRANSIENT_SESSION_FLAG, "1");
+        window.sessionStorage.setItem(SESSION_STARTED_FLAG, "1");
+      }
+    } catch {
+      // Ignore – persistence is a nice-to-have, not required for sign-in.
+    }
+  }
 
   async function handleSignIn(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -103,6 +149,7 @@ export default function SignInPage() {
         }
       }
 
+      persistRememberPreference(email.trim());
       await redirectAfterSignIn(data.session?.access_token ?? null);
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "Sign-in failed. Please try again.");
@@ -148,6 +195,7 @@ export default function SignInPage() {
     const {
       data: { session },
     } = await supabase.auth.getSession();
+    persistRememberPreference(email.trim());
     await redirectAfterSignIn(session?.access_token ?? null);
   }
 
@@ -344,6 +392,18 @@ export default function SignInPage() {
                         {message}
                       </div>
                     ) : null}
+
+                    <label className="flex cursor-pointer items-center gap-3 text-sm text-neutral-700 select-none">
+                      <input
+                        type="checkbox"
+                        checked={rememberMe}
+                        onChange={(e) => setRememberMe(e.target.checked)}
+                        className="h-4 w-4 cursor-pointer rounded border-neutral-300 accent-black"
+                      />
+                      <span>
+                        Keep me signed in on this device
+                      </span>
+                    </label>
 
                     <button
                       type="submit"
