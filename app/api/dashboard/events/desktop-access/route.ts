@@ -6,243 +6,41 @@ import {
 
 export const dynamic = "force-dynamic";
 
-type ProjectRow = {
-  id: string;
-  title: string | null;
-  client_name: string | null;
-  linked_local_school_id: string | null;
-  access_mode: string | null;
-  access_pin: string | null;
-  access_updated_at: string | null;
-  access_updated_source: string | null;
-  updated_at: string | null;
-  event_date: string | null;
-  shoot_date: string | null;
-  order_due_date: string | null;
-  expiration_date: string | null;
-};
-
-type CollectionRow = {
-  id: string;
-  title: string | null;
-  local_id: string | null;
-  kind: string | null;
-  access_mode: string | null;
-  access_pin: string | null;
-  access_updated_at: string | null;
-  access_updated_source: string | null;
-  updated_at: string | null;
-};
-
-type AlbumPayload = {
-  name?: string | null;
-  localId?: string | null;
-  accessMode?: string | null;
-  accessPin?: string | null;
-};
-
 function clean(value: string | null | undefined) {
   return (value ?? "").trim();
 }
 
-function slugify(value: string) {
-  return (
-    value
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "") || "album"
-  );
+function slugify(value: string, fallback = "gallery") {
+  return clean(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "") || fallback;
 }
 
-function normalizeProjectMode(value: string | null | undefined) {
-  const mode = clean(value).toLowerCase();
-  if (mode === "pin" || mode === "protected" || mode === "private") return "pin";
+// Valid gallery statuses matching the web dashboard
+const VALID_STATUSES = ["active", "inactive", "pre_released", "closed"];
+
+function normalizeGalleryStatus(value: string | null | undefined): string {
+  const raw = clean(value).toLowerCase().replace("-", "_");
+  return VALID_STATUSES.includes(raw) ? raw : "active";
+}
+
+function normalizeAccessMode(value: string | null | undefined): string {
+  const raw = clean(value).toLowerCase();
+  if (raw === "pin" || raw === "protected" || raw === "private") return "pin";
   return "public";
 }
 
-function normalizeAlbumMode(value: string | null | undefined) {
-  const mode = clean(value).toLowerCase();
-  if (!mode || mode === "inherit" || mode === "inherit_project" || mode === "project") {
-    return "inherit";
-  }
-  if (mode === "public") return "public";
-  if (mode === "pin" || mode === "protected" || mode === "private") return "pin";
-  return "inherit";
+function buildGalleryUrl(
+  projectId: string,
+  slug: string | null | undefined,
+  title: string,
+): string {
+  const effectiveSlug = clean(slug) || slugify(title);
+  return `https://www.studiooscloud.com/gallery/${effectiveSlug}`;
 }
 
-function normalizeAlbumKey(value: string) {
-  return clean(value).toLowerCase();
-}
-
-export async function GET(request: NextRequest) {
-  try {
-    const { user } = await resolveDashboardAuth(request);
-    if (!user) {
-      return NextResponse.json(
-        { ok: false, message: "Please sign in again." },
-        { status: 401 },
-      );
-    }
-
-    const searchParams = request.nextUrl.searchParams;
-    const mode = clean(searchParams.get("mode"));
-    const localProjectId = clean(searchParams.get("localProjectId"));
-    const cloudProjectId = clean(searchParams.get("cloudProjectId"));
-    const title = clean(searchParams.get("title"));
-
-    const service = createDashboardServiceClient();
-
-    const { data: photographerRow, error: photographerError } = await service
-      .from("photographers")
-      .select("id")
-      .eq("user_id", user.id)
-      .maybeSingle();
-
-    if (photographerError) throw photographerError;
-    if (!photographerRow?.id) {
-      return NextResponse.json(
-        { ok: false, message: "Photographer profile not found." },
-        { status: 404 },
-      );
-    }
-
-    const photographerId = photographerRow.id as string;
-
-    /* ── mode=all: return every project with its collections ── */
-    if (mode === "all") {
-      const { data: allProjects, error: allProjectsError } = await service
-        .from("projects")
-        .select(
-          "id,title,client_name,linked_local_school_id,access_mode,access_pin,access_updated_at,access_updated_source,updated_at,event_date,shoot_date,order_due_date,expiration_date",
-        )
-        .eq("photographer_id", photographerId)
-        .eq("workflow_type", "event")
-        .order("created_at", { ascending: false });
-
-      if (allProjectsError) throw allProjectsError;
-
-      const projects = (allProjects ?? []) as ProjectRow[];
-      const projectIds = projects.map((p) => p.id);
-
-      let allCollections: CollectionRow[] = [];
-      if (projectIds.length > 0) {
-        const { data: collRows, error: collError } = await service
-          .from("collections")
-          .select(
-            "id,title,local_id,kind,access_mode,access_pin,access_updated_at,access_updated_source,updated_at,project_id",
-          )
-          .in("project_id", projectIds)
-          .order("sort_order", { ascending: true })
-          .order("created_at", { ascending: true });
-
-        if (collError) throw collError;
-        allCollections = (collRows ?? []) as (CollectionRow & { project_id?: string })[];
-      }
-
-      // Group collections by project_id
-      const collectionsByProject: Record<string, CollectionRow[]> = {};
-      for (const c of allCollections as Array<CollectionRow & { project_id?: string }>) {
-        const pid = c.project_id ?? "";
-        if (!collectionsByProject[pid]) collectionsByProject[pid] = [];
-        collectionsByProject[pid].push(c);
-      }
-
-      return NextResponse.json({
-        ok: true,
-        projects: projects.map((p) => ({
-          project: p,
-          collections: collectionsByProject[p.id] ?? [],
-        })),
-      });
-    }
-
-    /* ── Single-project lookup (original behavior) ── */
-    if (!localProjectId && !cloudProjectId && !title) {
-      return NextResponse.json(
-        { ok: false, message: "A project lookup value is required." },
-        { status: 400 },
-      );
-    }
-
-    let projectRow: ProjectRow | null = null;
-
-    if (cloudProjectId) {
-      const { data } = await service
-        .from("projects")
-        .select(
-          "id,title,client_name,linked_local_school_id,access_mode,access_pin,access_updated_at,access_updated_source,updated_at,event_date,shoot_date,order_due_date,expiration_date",
-        )
-        .eq("id", cloudProjectId)
-        .eq("workflow_type", "event")
-        .eq("photographer_id", photographerId)
-        .maybeSingle();
-      projectRow = (data as ProjectRow | null) ?? null;
-    }
-
-    if (!projectRow && localProjectId) {
-      const { data } = await service
-        .from("projects")
-        .select(
-          "id,title,client_name,linked_local_school_id,access_mode,access_pin,access_updated_at,access_updated_source,updated_at,event_date,shoot_date,order_due_date,expiration_date",
-        )
-        .eq("workflow_type", "event")
-        .eq("photographer_id", photographerId)
-        .eq("linked_local_school_id", localProjectId)
-        .maybeSingle();
-      projectRow = (data as ProjectRow | null) ?? null;
-    }
-
-    if (!projectRow && title) {
-      const { data } = await service
-        .from("projects")
-        .select(
-          "id,title,client_name,linked_local_school_id,access_mode,access_pin,access_updated_at,access_updated_source,updated_at,event_date,shoot_date,order_due_date,expiration_date",
-        )
-        .eq("workflow_type", "event")
-        .eq("photographer_id", photographerId)
-        .ilike("title", title)
-        .order("created_at", { ascending: false })
-        .limit(1);
-      projectRow = ((data ?? [])[0] as ProjectRow | undefined) ?? null;
-    }
-
-    if (!projectRow) {
-      return NextResponse.json(
-        { ok: false, message: "Project not found." },
-        { status: 404 },
-      );
-    }
-
-    const { data: collectionRows, error: collectionError } = await service
-      .from("collections")
-      .select(
-        "id,title,local_id,kind,access_mode,access_pin,access_updated_at,access_updated_source,updated_at",
-      )
-      .eq("project_id", projectRow.id)
-      .order("sort_order", { ascending: true })
-      .order("created_at", { ascending: true });
-
-    if (collectionError) throw collectionError;
-
-    return NextResponse.json({
-      ok: true,
-      project: projectRow,
-      collections: (collectionRows ?? []) as CollectionRow[],
-    });
-  } catch (error) {
-    return NextResponse.json(
-      {
-        ok: false,
-        message:
-          error instanceof Error
-            ? error.message
-            : "Failed to load desktop project access.",
-      },
-      { status: 500 },
-    );
-  }
-}
-
+// ─── POST: Sync access settings from desktop app to cloud ───────────
 export async function POST(request: NextRequest) {
   try {
     const { user } = await resolveDashboardAuth(request);
@@ -261,26 +59,18 @@ export async function POST(request: NextRequest) {
       createdAt?: string | null;
       accessMode?: string | null;
       accessPin?: string | null;
-      albums?: AlbumPayload[] | null;
+      galleryStatus?: string | null;
+      albums?: Array<{
+        name?: string | null;
+        localId?: string | null;
+        accessMode?: string | null;
+        accessPin?: string | null;
+      }> | null;
     };
-
-    const localProjectId = clean(body.localProjectId);
-    const title = clean(body.title);
-    if (!localProjectId) {
-      return NextResponse.json(
-        { ok: false, message: "Local project id is required." },
-        { status: 400 },
-      );
-    }
-    if (!title) {
-      return NextResponse.json(
-        { ok: false, message: "Project name is required." },
-        { status: 400 },
-      );
-    }
 
     const service = createDashboardServiceClient();
 
+    // ── Resolve photographer ──
     const { data: photographerRow, error: photographerError } = await service
       .from("photographers")
       .select("id")
@@ -288,229 +78,391 @@ export async function POST(request: NextRequest) {
       .maybeSingle();
 
     if (photographerError) throw photographerError;
-    if (!photographerRow?.id) {
+    const photographerId = clean(photographerRow?.id);
+    if (!photographerId) {
       return NextResponse.json(
         { ok: false, message: "Photographer profile not found." },
         { status: 404 },
       );
     }
 
-    const photographerId = photographerRow.id as string;
-    const desiredProjectMode = normalizeProjectMode(body.accessMode);
-    const desiredProjectPin =
-      desiredProjectMode === "pin" ? clean(body.accessPin) || null : null;
-    const normalizedDate =
-      clean(body.createdAt).slice(0, 10) || new Date().toISOString().slice(0, 10);
-    const nowIso = new Date().toISOString();
-
-    let projectRow: ProjectRow | null = null;
+    // ── Find or create project ──
     const cloudProjectId = clean(body.cloudProjectId);
+    const localProjectId = clean(body.localProjectId);
+    const title = clean(body.title) || "Untitled Project";
+    const clientName = clean(body.clientName);
+    const accessMode = normalizeAccessMode(body.accessMode);
+    const accessPin = accessMode === "pin" ? clean(body.accessPin) : null;
+    const galleryStatus = normalizeGalleryStatus(body.galleryStatus);
+    const preRelease = galleryStatus === "pre_released";
 
-    if (cloudProjectId) {
-      const { data } = await service
+    let projectId = cloudProjectId;
+
+    if (projectId) {
+      // Verify the project belongs to this photographer
+      const { data: existing } = await service
         .from("projects")
-        .select(
-          "id,title,client_name,linked_local_school_id,access_mode,access_pin,access_updated_at,access_updated_source,updated_at,event_date,shoot_date,order_due_date,expiration_date",
-        )
-        .eq("id", cloudProjectId)
-        .eq("workflow_type", "event")
+        .select("id")
+        .eq("id", projectId)
         .eq("photographer_id", photographerId)
         .maybeSingle();
-      projectRow = (data as ProjectRow | null) ?? null;
+
+      if (!existing?.id) projectId = "";
     }
 
-    if (!projectRow) {
-      const { data } = await service
+    if (!projectId && localProjectId) {
+      // Try to find by linked_local_school_id
+      const { data: linked } = await service
         .from("projects")
-        .select(
-          "id,title,client_name,linked_local_school_id,access_mode,access_pin,access_updated_at,access_updated_source,updated_at,event_date,shoot_date,order_due_date,expiration_date",
-        )
-        .eq("workflow_type", "event")
-        .eq("photographer_id", photographerId)
+        .select("id")
         .eq("linked_local_school_id", localProjectId)
-        .maybeSingle();
-      projectRow = (data as ProjectRow | null) ?? null;
-    }
-
-    if (!projectRow) {
-      const { data } = await service
-        .from("projects")
-        .select(
-          "id,title,client_name,linked_local_school_id,access_mode,access_pin,access_updated_at,access_updated_source,updated_at,event_date,shoot_date,order_due_date,expiration_date",
-        )
-        .eq("workflow_type", "event")
         .eq("photographer_id", photographerId)
-        .ilike("title", title)
         .order("created_at", { ascending: false })
-        .limit(1);
-      projectRow = ((data ?? [])[0] as ProjectRow | undefined) ?? null;
+        .limit(1)
+        .maybeSingle();
+
+      if (linked?.id) projectId = linked.id;
     }
 
-    if (!projectRow) {
-      const { data, error } = await service
+    if (!projectId) {
+      // Create new project
+      const slug = slugify(title);
+      const { data: inserted, error: insertError } = await service
         .from("projects")
         .insert({
           photographer_id: photographerId,
-          workflow_type: "event",
-          source_type: "cloud_only",
-          status: "active",
-          linked_local_school_id: localProjectId,
+          workflow_type: "project",
+          source_type: "desktop",
           title,
-          client_name: clean(body.clientName) || null,
-          event_date: normalizedDate,
-          access_mode: desiredProjectMode,
-          access_pin: desiredProjectPin,
-          access_updated_at: nowIso,
-          access_updated_source: "desktop_app",
-          updated_at: nowIso,
+          client_name: clientName || null,
+          linked_local_school_id: localProjectId || null,
+          access_mode: accessMode,
+          access_pin: accessPin,
+          access_updated_at: new Date().toISOString(),
+          access_updated_source: "desktop",
+          portal_status: galleryStatus,
+          pre_release: preRelease,
+          gallery_slug: slug,
         })
-        .select(
-          "id,title,client_name,linked_local_school_id,access_mode,access_pin,access_updated_at,access_updated_source,updated_at,event_date,shoot_date,order_due_date,expiration_date",
-        )
-        .maybeSingle();
+        .select("id,gallery_slug")
+        .single();
 
-      if (error) throw error;
-      if (!data) {
-        return NextResponse.json(
-          { ok: false, message: "Unable to create cloud project." },
-          { status: 500 },
-        );
-      }
-      projectRow = data as ProjectRow;
+      if (insertError) throw insertError;
+      projectId = clean(inserted?.id);
     } else {
-      const { data, error } = await service
+      // Update existing project
+      const { error: updateError } = await service
         .from("projects")
         .update({
-          linked_local_school_id: localProjectId,
           title,
-          client_name: clean(body.clientName) || null,
-          access_mode: desiredProjectMode,
-          access_pin: desiredProjectPin,
-          access_updated_at: nowIso,
-          access_updated_source: "desktop_app",
-          updated_at: nowIso,
+          client_name: clientName || null,
+          access_mode: accessMode,
+          access_pin: accessPin,
+          access_updated_at: new Date().toISOString(),
+          access_updated_source: "desktop",
+          portal_status: galleryStatus,
+          pre_release: preRelease,
+          updated_at: new Date().toISOString(),
         })
-        .eq("id", projectRow.id)
-        .eq("photographer_id", photographerId)
-        .select(
-          "id,title,client_name,linked_local_school_id,access_mode,access_pin,access_updated_at,access_updated_source,updated_at,event_date,shoot_date,order_due_date,expiration_date",
-        )
-        .maybeSingle();
+        .eq("id", projectId);
 
-      if (error) throw error;
-      if (!data) {
-        return NextResponse.json(
-          { ok: false, message: "Cloud project is not editable for this account." },
-          { status: 403 },
-        );
-      }
-      projectRow = data as ProjectRow;
+      if (updateError) throw updateError;
     }
 
-    const { data: existingCollectionRows, error: existingCollectionsError } =
-      await service
-        .from("collections")
-        .select(
-          "id,title,local_id,kind,access_mode,access_pin,access_updated_at,access_updated_source,updated_at",
-        )
-        .eq("project_id", projectRow.id)
-        .order("created_at", { ascending: true });
+    // ── Read back project for response ──
+    const { data: projectRow, error: projectReadError } = await service
+      .from("projects")
+      .select(
+        "id,title,client_name,shoot_date,event_date,order_due_date,expiration_date,portal_status,pre_release,gallery_slug,access_mode,access_pin,access_updated_at,access_updated_source,updated_at",
+      )
+      .eq("id", projectId)
+      .single();
 
-    if (existingCollectionsError) throw existingCollectionsError;
+    if (projectReadError) throw projectReadError;
 
-    const existingCollections = (existingCollectionRows ?? []) as CollectionRow[];
-    const existingByLocalId = new Map<string, CollectionRow>();
-    const existingByTitle = new Map<string, CollectionRow>();
+    const galleryUrl = buildGalleryUrl(
+      projectId,
+      projectRow?.gallery_slug,
+      projectRow?.title ?? title,
+    );
 
-    for (const row of existingCollections) {
-      const localId = clean(row.local_id);
-      const key = normalizeAlbumKey(row.title ?? "");
-      if (localId) existingByLocalId.set(localId, row);
-      if (key && !existingByTitle.has(key)) existingByTitle.set(key, row);
-    }
-
-    const syncedCollections: CollectionRow[] = [];
+    // ── Sync album/collection access ──
     const albums = Array.isArray(body.albums) ? body.albums : [];
+    const collectionResults: Array<Record<string, unknown>> = [];
 
     for (const album of albums) {
       const albumName = clean(album.name);
       if (!albumName) continue;
 
-      const localId = clean(album.localId);
-      const normalizedAlbumMode = normalizeAlbumMode(album.accessMode);
-      const albumPin =
-        normalizedAlbumMode === "pin" ? clean(album.accessPin) || null : null;
-      const existing =
-        (localId ? existingByLocalId.get(localId) : undefined) ??
-        existingByTitle.get(normalizeAlbumKey(albumName));
+      const albumLocalId = clean(album.localId);
+      const albumSlug = slugify(albumName);
+      const albumAccessMode = clean(album.accessMode) || "inherit_project";
+      const albumAccessPin =
+        albumAccessMode === "pin" ? clean(album.accessPin) : null;
 
-      const collectionPayload = {
-        title: albumName,
-        slug: slugify(albumName),
-        kind: existing?.kind || "album",
-        local_id: localId || existing?.local_id || null,
-        access_mode: normalizedAlbumMode,
-        access_pin: albumPin,
-        access_updated_at: nowIso,
-        access_updated_source: "desktop_app",
-        updated_at: nowIso,
-      };
+      // Find existing collection by local_id or slug/title
+      let collectionId = "";
 
-      if (existing) {
-        const { data, error } = await service
+      if (albumLocalId) {
+        const { data: byLocalId } = await service
           .from("collections")
-          .update(collectionPayload)
-          .eq("id", existing.id)
-          .eq("project_id", projectRow.id)
-          .select(
-            "id,title,local_id,kind,access_mode,access_pin,access_updated_at,access_updated_source,updated_at",
-          )
+          .select("id")
+          .eq("project_id", projectId)
+          .eq("local_id", albumLocalId)
+          .is("deleted_at", null)
           .maybeSingle();
 
-        if (error) throw error;
-        if (data) syncedCollections.push(data as CollectionRow);
-        continue;
+        if (byLocalId?.id) collectionId = byLocalId.id;
       }
 
-      const { data, error } = await service
-        .from("collections")
-        .insert({
-          project_id: projectRow.id,
-          ...collectionPayload,
-        })
-        .select(
-          "id,title,local_id,kind,access_mode,access_pin,access_updated_at,access_updated_source,updated_at",
-        )
-        .maybeSingle();
+      if (!collectionId) {
+        const { data: bySlug } = await service
+          .from("collections")
+          .select("id")
+          .eq("project_id", projectId)
+          .eq("kind", "gallery")
+          .or(`slug.eq.${albumSlug},title.ilike.${albumName}`)
+          .is("deleted_at", null)
+          .order("created_at", { ascending: true })
+          .limit(1)
+          .maybeSingle();
 
-      if (error) throw error;
-      if (data) syncedCollections.push(data as CollectionRow);
+        if (bySlug?.id) collectionId = bySlug.id;
+      }
+
+      if (!collectionId) {
+        // Get next sort_order
+        const { data: lastRow } = await service
+          .from("collections")
+          .select("sort_order")
+          .eq("project_id", projectId)
+          .is("deleted_at", null)
+          .order("sort_order", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        const nextSort = (Number(lastRow?.sort_order ?? -1)) + 1;
+
+        const { data: inserted, error: insertErr } = await service
+          .from("collections")
+          .insert({
+            project_id: projectId,
+            kind: "gallery",
+            title: albumName,
+            slug: albumSlug,
+            sort_order: nextSort,
+            visibility: "public",
+            local_id: albumLocalId || null,
+            sync_source: "desktop",
+            access_mode: albumAccessMode,
+            access_pin: albumAccessPin,
+            access_updated_at: new Date().toISOString(),
+            access_updated_source: "desktop",
+          })
+          .select("id")
+          .single();
+
+        if (insertErr) throw insertErr;
+        collectionId = clean(inserted?.id);
+      } else {
+        // Update existing collection
+        const updatePayload: Record<string, unknown> = {
+          title: albumName,
+          access_mode: albumAccessMode,
+          access_pin: albumAccessPin,
+          access_updated_at: new Date().toISOString(),
+          access_updated_source: "desktop",
+          updated_at: new Date().toISOString(),
+        };
+        if (albumLocalId) updatePayload.local_id = albumLocalId;
+
+        const { error: updateErr } = await service
+          .from("collections")
+          .update(updatePayload)
+          .eq("id", collectionId);
+
+        if (updateErr) throw updateErr;
+      }
+
+      collectionResults.push({
+        id: collectionId,
+        title: albumName,
+        local_id: albumLocalId,
+        access_mode: albumAccessMode,
+        access_pin: albumAccessPin,
+        access_updated_at: new Date().toISOString(),
+        access_updated_source: "desktop",
+      });
     }
-
-    // Include cloud-only collections (created on web) that weren't in the
-    // Flutter app's album list so the app can discover and display them.
-    const syncedIds = new Set(syncedCollections.map((c) => c.id));
-    const cloudOnlyCollections = existingCollections.filter(
-      (c) => !syncedIds.has(c.id),
-    );
-    const allCollections = [...syncedCollections, ...cloudOnlyCollections];
 
     return NextResponse.json({
       ok: true,
-      message: `Project synced to cloud. Albums: ${allCollections.length}`,
-      project: projectRow,
-      collections: allCollections,
-    });
-  } catch (error) {
-    return NextResponse.json(
-      {
-        ok: false,
-        message:
-          error instanceof Error
-            ? error.message
-            : "Failed to sync desktop project access.",
+      project: {
+        id: projectId,
+        title: projectRow?.title ?? title,
+        client_name: projectRow?.client_name ?? clientName,
+        shoot_date: projectRow?.shoot_date ?? "",
+        event_date: projectRow?.event_date ?? "",
+        order_due_date: projectRow?.order_due_date ?? "",
+        expiration_date: projectRow?.expiration_date ?? "",
+        portal_status: projectRow?.portal_status ?? galleryStatus,
+        gallery_status: projectRow?.portal_status ?? galleryStatus,
+        pre_release: projectRow?.pre_release ?? preRelease,
+        gallery_url: galleryUrl,
+        gallery_slug: projectRow?.gallery_slug ?? "",
+        access_mode: projectRow?.access_mode ?? accessMode,
+        access_pin: projectRow?.access_pin ?? "",
+        access_updated_at: projectRow?.access_updated_at ?? "",
+        access_updated_source: projectRow?.access_updated_source ?? "desktop",
+        updated_at: projectRow?.updated_at ?? "",
       },
-      { status: 500 },
+      collections: collectionResults,
+      message: `Access settings synced. Gallery is ${galleryStatus.replace("_", "-")}.`,
+    });
+  } catch (error: unknown) {
+    const message =
+      error instanceof Error ? error.message : "Internal server error";
+    console.error("[desktop-access POST]", message);
+    return NextResponse.json({ ok: false, message }, { status: 500 });
+  }
+}
+
+// ─── GET: Pull access settings from cloud to desktop app ────────────
+export async function GET(request: NextRequest) {
+  try {
+    const { user } = await resolveDashboardAuth(request);
+    if (!user) {
+      return NextResponse.json(
+        { ok: false, message: "Please sign in again." },
+        { status: 401 },
+      );
+    }
+
+    const service = createDashboardServiceClient();
+
+    // ── Resolve photographer ──
+    const { data: photographerRow, error: photographerError } = await service
+      .from("photographers")
+      .select("id")
+      .eq("user_id", user.id)
+      .maybeSingle();
+
+    if (photographerError) throw photographerError;
+    const photographerId = clean(photographerRow?.id);
+    if (!photographerId) {
+      return NextResponse.json(
+        { ok: false, message: "Photographer profile not found." },
+        { status: 404 },
+      );
+    }
+
+    const url = new URL(request.url);
+    const mode = url.searchParams.get("mode");
+
+    // ── mode=all: return all projects ──
+    if (mode === "all") {
+      const { data: allProjects, error: allError } = await service
+        .from("projects")
+        .select(
+          "id,title,client_name,shoot_date,event_date,order_due_date,expiration_date,portal_status,pre_release,gallery_slug,access_mode,access_pin,access_updated_at,access_updated_source,linked_local_school_id,updated_at",
+        )
+        .eq("photographer_id", photographerId)
+        .order("created_at", { ascending: false });
+
+      if (allError) throw allError;
+
+      const results = [];
+      for (const proj of allProjects ?? []) {
+        const { data: collections } = await service
+          .from("collections")
+          .select(
+            "id,title,slug,local_id,access_mode,access_pin,access_updated_at,access_updated_source,sort_order",
+          )
+          .eq("project_id", proj.id)
+          .is("deleted_at", null)
+          .order("sort_order", { ascending: true });
+
+        results.push({
+          project: {
+            ...proj,
+            gallery_status: proj.portal_status,
+            gallery_url: buildGalleryUrl(proj.id, proj.gallery_slug, proj.title),
+          },
+          collections: collections ?? [],
+        });
+      }
+
+      return NextResponse.json({ ok: true, projects: results });
+    }
+
+    // ── Single project pull ──
+    const cloudProjectId = clean(url.searchParams.get("cloudProjectId"));
+    const localProjectId = clean(url.searchParams.get("localProjectId"));
+    const titleHint = clean(url.searchParams.get("title"));
+
+    let projectId = cloudProjectId;
+
+    if (!projectId && localProjectId) {
+      const { data: linked } = await service
+        .from("projects")
+        .select("id")
+        .eq("linked_local_school_id", localProjectId)
+        .eq("photographer_id", photographerId)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (linked?.id) projectId = linked.id;
+    }
+
+    if (!projectId) {
+      return NextResponse.json(
+        { ok: false, message: "Cloud project not found." },
+        { status: 404 },
+      );
+    }
+
+    const { data: projectRow, error: projectError } = await service
+      .from("projects")
+      .select(
+        "id,title,client_name,shoot_date,event_date,order_due_date,expiration_date,portal_status,pre_release,gallery_slug,access_mode,access_pin,access_updated_at,access_updated_source,linked_local_school_id,updated_at",
+      )
+      .eq("id", projectId)
+      .eq("photographer_id", photographerId)
+      .single();
+
+    if (projectError) throw projectError;
+
+    const { data: collections, error: collError } = await service
+      .from("collections")
+      .select(
+        "id,title,slug,local_id,access_mode,access_pin,access_updated_at,access_updated_source,sort_order",
+      )
+      .eq("project_id", projectId)
+      .is("deleted_at", null)
+      .order("sort_order", { ascending: true });
+
+    if (collError) throw collError;
+
+    const galleryUrl = buildGalleryUrl(
+      projectId,
+      projectRow?.gallery_slug,
+      projectRow?.title ?? titleHint,
     );
+
+    return NextResponse.json({
+      ok: true,
+      project: {
+        ...projectRow,
+        gallery_status: projectRow?.portal_status,
+        gallery_url: galleryUrl,
+      },
+      collections: collections ?? [],
+    });
+  } catch (error: unknown) {
+    const message =
+      error instanceof Error ? error.message : "Internal server error";
+    console.error("[desktop-access GET]", message);
+    return NextResponse.json({ ok: false, message }, { status: 500 });
   }
 }
