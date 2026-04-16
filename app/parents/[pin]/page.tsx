@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, SyntheticEvent, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, SyntheticEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import {
   ArrowLeft,
@@ -865,7 +865,7 @@ function buildGalleryImageCandidates(
 ) {
   const rawCandidates =
     variant === "wall"
-      ? uniq([image.thumbnailUrl, image.previewUrl, image.url, image.downloadUrl])
+      ? uniq([image.previewUrl, image.downloadUrl, image.url, image.thumbnailUrl])
       : variant === "viewer-thumb"
         ? uniq([image.thumbnailUrl, image.previewUrl, image.downloadUrl, image.url])
         : uniq([image.downloadUrl, image.previewUrl, image.thumbnailUrl, image.url]);
@@ -980,6 +980,38 @@ function writeStoredFavorites(key: string, values: Iterable<string>) {
   if (!key || typeof window === "undefined") return;
   try {
     window.localStorage.setItem(key, JSON.stringify(Array.from(values)));
+  } catch {
+    // Ignore storage errors and keep the in-memory state.
+  }
+}
+
+function eventWallRatioStorageKey(projectId: string, email: string, pin: string) {
+  const safeProjectId = clean(projectId);
+  const safeEmail = clean(email).toLowerCase();
+  const safePin = clean(pin);
+  if (!safeProjectId || !safeEmail || !safePin) return "";
+  return `event-wall-ratios:${safeProjectId}:${safeEmail}:${safePin}`;
+}
+
+function readStoredEventWallRatios(key: string) {
+  if (!key || typeof window === "undefined") return {} as Record<string, number>;
+  try {
+    const raw = window.localStorage.getItem(key);
+    if (!raw) return {} as Record<string, number>;
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const nextEntries = Object.entries(parsed)
+      .map(([id, value]) => [id, getEventWallAspectRatio(Number(value))] as const)
+      .filter(([, value]) => Number.isFinite(value));
+    return Object.fromEntries(nextEntries);
+  } catch {
+    return {} as Record<string, number>;
+  }
+}
+
+function writeStoredEventWallRatios(key: string, values: Record<string, number>) {
+  if (!key || typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(key, JSON.stringify(values));
   } catch {
     // Ignore storage errors and keep the in-memory state.
   }
@@ -3339,6 +3371,9 @@ export default function ParentGalleryPage() {
     : displayStudioLogoUrl;
   const effectiveWatermarkText =
     clean(studioInfo.businessName) || schoolName || "PROOF";
+  const eventWallRatiosKey = !isSchoolMode
+    ? eventWallRatioStorageKey(projectId, eventEmail, pin)
+    : "";
 
   useEffect(() => {
     const validIds = new Set(images.map((img) => img.id));
@@ -3353,6 +3388,11 @@ export default function ParentGalleryPage() {
         : Object.fromEntries(nextEntries);
     });
   }, [images]);
+
+  useEffect(() => {
+    if (!eventWallRatiosKey || !Object.keys(galleryImageRatios).length) return;
+    writeStoredEventWallRatios(eventWallRatiosKey, galleryImageRatios);
+  }, [eventWallRatiosKey, galleryImageRatios]);
 
   function markGalleryImageLoaded(id: string, aspectRatio?: number | null) {
     setLoadedGalleryImageIds((prev) => {
@@ -3502,6 +3542,14 @@ export default function ParentGalleryPage() {
                     .filter(Boolean),
                 ])
               : storedFavorites;
+          const storedWallRatios = readStoredEventWallRatios(
+            eventWallRatioStorageKey(projectId, eventEmail, pin),
+          );
+          const nextEventWallRatios = Object.fromEntries(
+            eventImages
+              .map((image) => [image.id, storedWallRatios[image.id]] as const)
+              .filter((entry): entry is readonly [string, number] => Number.isFinite(entry[1])),
+          );
 
           if (!mounted) return;
 
@@ -3511,6 +3559,7 @@ export default function ParentGalleryPage() {
           setGallerySettings(nextGallerySettings);
           setGalleryDownloadAccess(nextGalleryDownloadAccess);
           setFavoriteDownloadAccess(nextFavoriteDownloadAccess);
+          setGalleryImageRatios(nextEventWallRatios);
           setImages(eventImages);
           setSelectedImageIndex(0);
           setEventCollections(collections);
@@ -3680,6 +3729,7 @@ export default function ParentGalleryPage() {
 
         if (!mounted) return;
 
+        setGalleryImageRatios({});
         setStudent(primaryStudent);
         setSchoolName(activeSchool?.school_name ?? currentSchool?.school_name ?? "");
         setProject(activeProject ?? null);
@@ -4193,7 +4243,7 @@ export default function ParentGalleryPage() {
     visibleImages.length,
   ]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!showEventPhotoGrid) {
       setEventPhotoWallWidth(0);
       return;
