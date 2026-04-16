@@ -794,6 +794,27 @@ export default function SettingsPage() {
     }
   }
 
+  async function deactivatePhotographyKey(keyId: string) {
+    if (!confirm("Deactivate this device? The key will become available for another computer.")) return;
+    try {
+      const sb = createClient();
+      const { data: result, error: rpcError } = await sb.rpc("deactivate_photography_key", {
+        p_key_id: keyId,
+      });
+      if (rpcError) throw rpcError;
+      const row = Array.isArray(result) ? result[0] : result;
+      if (!row?.success) {
+        setError(row?.message || "Failed to deactivate key.");
+        return;
+      }
+      setNotice("Device deactivated. Key is now available.");
+      const { data: { session } } = await sb.auth.getSession();
+      await loadStudioAppStatus(session?.access_token ?? null);
+    } catch (err: any) {
+      setError(err.message || "Failed to deactivate key.");
+    }
+  }
+
   async function runStudioAppAdminAction(
     actionKey: string,
     payload: Record<string, unknown>,
@@ -2053,8 +2074,8 @@ export default function SettingsPage() {
                             : "Not activated on a device yet"}
                         </div>
                       </div>
-                      <div style={{ fontWeight: 800, color: key.status === "active" ? "#15803d" : "#92400e" }}>
-                        {key.status === "active" ? "Active" : "Suspended"}
+                      <div style={{ fontWeight: 800, color: key.activationStatus === "active" ? "#15803d" : "#94a3b8" }}>
+                        {key.activationStatus === "active" ? "In Use" : "Available"}
                       </div>
                     </div>
 
@@ -2080,6 +2101,26 @@ export default function SettingsPage() {
                       >
                         <Copy size={14} /> Copy
                       </button>
+                      {key.activationStatus === "active" && key.deviceId ? (
+                        <button
+                          type="button"
+                          onClick={() => deactivatePhotographyKey(key.id)}
+                          style={{
+                            border: "1px solid #fecaca",
+                            borderRadius: 14,
+                            background: "#fef2f2",
+                            padding: "10px 14px",
+                            fontWeight: 800,
+                            color: "#dc2626",
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: 8,
+                            cursor: "pointer",
+                          }}
+                        >
+                          Deactivate
+                        </button>
+                      ) : null}
                     </div>
 
                     <div style={{ color: "#64748b", fontSize: 13, lineHeight: 1.7 }}>
