@@ -82,7 +82,7 @@ function sanitizeEntryName(name: string) {
   return normalized || "download";
 }
 
-export function createZipBlob(entries: ZipEntry[]) {
+export function createZipBytes(entries: ZipEntry[]) {
   const encoder = new TextEncoder();
   const localParts: Uint8Array[] = [];
   const centralParts: Uint8Array[] = [];
@@ -151,7 +151,11 @@ export function createZipBlob(entries: ZipEntry[]) {
     uint16(0),
   ]);
 
-  return new Blob([localDirectory, centralDirectory, endRecord], {
+  return concatBytes([localDirectory, centralDirectory, endRecord]);
+}
+
+export function createZipBlob(entries: ZipEntry[]) {
+  return new Blob([createZipBytes(entries)], {
     type: "application/zip",
   });
 }

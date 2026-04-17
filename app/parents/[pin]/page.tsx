@@ -38,6 +38,10 @@ import {
 import { getPackageCategory } from "@/lib/package-categories";
 import { defaultSchoolGalleryDownloadAccess } from "@/lib/school-gallery-downloads";
 import { extractStoragePathFromSupabaseUrl } from "@/lib/storage-images";
+import {
+  eventGalleryDownloadManifestStorageKey,
+  type EventGalleryDownloadManifest,
+} from "@/lib/event-gallery-downloads";
 import { createZipBlob } from "@/lib/zip";
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -1017,6 +1021,18 @@ function writeStoredEventWallRatios(key: string, values: Record<string, number>)
   }
 }
 
+function writeEventGalleryDownloadManifest(manifest: EventGalleryDownloadManifest) {
+  if (typeof window === "undefined") return false;
+  const storageKey = eventGalleryDownloadManifestStorageKey(manifest.id);
+  if (!storageKey) return false;
+  try {
+    window.sessionStorage.setItem(storageKey, JSON.stringify(manifest));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function fileNameFromUrl(url: string, fallback = "photo.jpg") {
   try {
     const pathname = new URL(url).pathname;
@@ -1191,6 +1207,40 @@ function uniqueDownloadName(name: string, usedNames: Map<string, number>) {
   const nextCount = (usedNames.get(cleaned) ?? 0) + 1;
   usedNames.set(cleaned, nextCount);
   return nextCount === 1 ? cleaned : `${base}-${nextCount}${ext}`;
+}
+
+function splitIntoBatches<T>(values: T[], batchSize: number) {
+  const safeBatchSize = Math.max(1, Math.floor(batchSize) || 1);
+  const batches: T[][] = [];
+  for (let index = 0; index < values.length; index += safeBatchSize) {
+    batches.push(values.slice(index, index + safeBatchSize));
+  }
+  return batches;
+}
+
+function galleryZipBatchSize(
+  resolution: EventGallerySettings["extras"]["freeDigitalResolution"],
+  applyWatermark: boolean,
+) {
+  const baseSize =
+    resolution === "original"
+      ? 32
+      : resolution === "large"
+        ? 48
+        : 72;
+  return applyWatermark ? Math.max(18, baseSize - 10) : baseSize;
+}
+
+function formatSkippedFilesMessage(fileNames: string[]) {
+  if (!fileNames.length) return "";
+  if (fileNames.length === 1) {
+    return `Skipped 1 file: ${fileNames[0]}.`;
+  }
+  const preview = fileNames.slice(0, 2).join(", ");
+  if (fileNames.length === 2) {
+    return `Skipped 2 files: ${preview}.`;
+  }
+  return `Skipped ${fileNames.length} files, including ${preview}.`;
 }
 
 async function imageElementFromBlob(blob: Blob) {
@@ -4404,16 +4454,27 @@ export default function ParentGalleryPage() {
         }
       }
 
-      await downloadImagesBatch(allowedImages, {
+      const result = await downloadImagesBatch(allowedImages, {
         resolution: currentGalleryExtras.freeDigitalResolution,
         applyWatermark: currentGalleryExtras.watermarkDownloads,
         includePrintRelease: currentGalleryExtras.includePrintRelease,
         batchLabel: "favorite",
       });
+      if (!result.archivedPhotoCount) {
+        throw new Error(
+          result.failedFileNames.length === 1
+            ? `Failed to download ${result.failedFileNames[0]}.`
+            : "Could not download favorites.",
+        );
+      }
       setFavoriteMessage(
-        allowedImages.length === 1
-          ? "Favorite ZIP is ready."
-          : `${allowedImages.length} favorites packaged into one ZIP.`,
+        `${result.archivedPhotoCount} favorite${
+          result.archivedPhotoCount === 1 ? "" : "s"
+        } packaged into one ZIP.${
+          result.failedFileNames.length
+            ? ` ${formatSkippedFilesMessage(result.failedFileNames)}`
+            : ""
+        }`,
       );
     } catch (error) {
       setFavoriteMessage(getGalleryActionErrorMessage(error, "Could not download favorites."));
@@ -4430,6 +4491,7 @@ export default function ParentGalleryPage() {
       applyWatermark: boolean;
       includePrintRelease: boolean;
       batchLabel: string;
+      archiveLabel?: string;
       onProgress?: (percent: number) => void;
     },
   ) {
@@ -4444,6 +4506,8 @@ export default function ParentGalleryPage() {
     let logoImage: HTMLImageElement | null = null;
     const zipEntries: Array<{ name: string; data: Uint8Array }> = [];
     const usedNames = new Map<string, number>();
+    const failedFileNames: string[] = [];
+    let archivedPhotoCount = 0;
     const workUnits = sourceImages.length + (options.includePrintRelease ? 1 : 0);
 
     await emitProgress(8);
@@ -4458,39 +4522,50 @@ export default function ParentGalleryPage() {
     for (let index = 0; index < sourceImages.length; index += 1) {
       const image = sourceImages[index];
       const sourceUrl = preferredDownloadUrl(image, options.resolution);
-      if (!sourceUrl) continue;
-      const response = await fetch(buildGalleryDownloadFetchUrl(sourceUrl), {
-        cache: "no-store",
-      });
-      if (!response.ok) {
-        throw new Error(
-          `Failed to download ${image.filename || `${options.batchLabel}-${index + 1}`}.`,
-        );
+      const fallbackName = `${options.batchLabel}-${index + 1}.jpg`;
+      if (!sourceUrl) {
+        failedFileNames.push(clean(image.filename) || fallbackName);
+      } else {
+        try {
+          const response = await fetch(buildGalleryDownloadFetchUrl(sourceUrl), {
+            cache: "no-store",
+          });
+          if (!response.ok) {
+            throw new Error(
+              `Failed to download ${image.filename || `${options.batchLabel}-${index + 1}`}.`,
+            );
+          }
+          let blob = await response.blob();
+          if (options.applyWatermark) {
+            blob = await addWatermarkToBlob(blob, {
+              watermarkText,
+              logoImage,
+            });
+          }
+          const resolvedFallbackName = `${options.batchLabel}-${index + 1}${
+            blob.type.includes("png") ? ".png" : ".jpg"
+          }`;
+          zipEntries.push({
+            name: uniqueDownloadName(
+              clean(image.filename) || fileNameFromUrl(sourceUrl, resolvedFallbackName),
+              usedNames,
+            ),
+            data: new Uint8Array(await blob.arrayBuffer()),
+          });
+          archivedPhotoCount += 1;
+        } catch {
+          failedFileNames.push(
+            clean(image.filename) || fileNameFromUrl(sourceUrl, fallbackName),
+          );
+        }
       }
-      let blob = await response.blob();
-      if (options.applyWatermark) {
-        blob = await addWatermarkToBlob(blob, {
-          watermarkText,
-          logoImage,
-        });
-      }
-      const fallbackName = `${options.batchLabel}-${index + 1}${
-        blob.type.includes("png") ? ".png" : ".jpg"
-      }`;
-      zipEntries.push({
-        name: uniqueDownloadName(
-          clean(image.filename) || fileNameFromUrl(sourceUrl, fallbackName),
-          usedNames,
-        ),
-        data: new Uint8Array(await blob.arrayBuffer()),
-      });
 
       const completedUnits = index + 1;
       const progressBase = workUnits > 0 ? completedUnits / workUnits : 1;
       await emitProgress(10 + progressBase * 78);
     }
 
-    if (options.includePrintRelease) {
+    if (options.includePrintRelease && archivedPhotoCount > 0) {
       const releasePdf = await createPrintReleasePdf({
         studioName: clean(studioInfo.businessName) || "Studio OS",
         galleryName: clean(galleryHeadline) || "Event Gallery",
@@ -4504,21 +4579,88 @@ export default function ParentGalleryPage() {
       await emitProgress(90);
     }
 
-    if (!zipEntries.length) {
-      throw new Error("There were no downloadable files in this selection.");
+    if (!archivedPhotoCount || !zipEntries.length) {
+      return {
+        archivedPhotoCount: 0,
+        failedFileNames,
+        archiveFileName: null as string | null,
+      };
     }
 
     const archiveBaseName = buildArchiveBaseName(
       galleryHeaderTitle || galleryHeadline,
       isSchoolMode ? "school-gallery" : "event-gallery",
     );
+    const archiveFileName = `${archiveBaseName} ${options.archiveLabel || options.batchLabel}.zip`;
     await emitProgress(96);
     const zipBlob = createZipBlob(zipEntries);
     await emitProgress(100);
-    triggerDownloadBlob(
-      zipBlob,
-      `${archiveBaseName} ${options.batchLabel}.zip`,
-    );
+    triggerDownloadBlob(zipBlob, archiveFileName);
+    return {
+      archivedPhotoCount,
+      failedFileNames,
+      archiveFileName,
+    };
+  }
+
+  async function downloadImagesInZipBatches(
+    sourceImages: GalleryImage[],
+    options: {
+      resolution: EventGallerySettings["extras"]["freeDigitalResolution"];
+      applyWatermark: boolean;
+      includePrintRelease: boolean;
+      batchLabel: string;
+      batchSize: number;
+      onProgress?: (percent: number) => void;
+    },
+  ) {
+    const batches = splitIntoBatches(sourceImages, options.batchSize);
+    const waitBetweenDownloads = () =>
+      new Promise<void>((resolve) => window.setTimeout(resolve, 160));
+    let archivedPhotoCount = 0;
+    let archiveCount = 0;
+    const failedFileNames: string[] = [];
+
+    for (let batchIndex = 0; batchIndex < batches.length; batchIndex += 1) {
+      const batch = batches[batchIndex] ?? [];
+      const batchStartPercent = (batchIndex / Math.max(1, batches.length)) * 100;
+      const batchSpanPercent = 100 / Math.max(1, batches.length);
+      const batchLabel =
+        batches.length === 1
+          ? options.batchLabel
+          : `${options.batchLabel} part ${batchIndex + 1} of ${batches.length}`;
+
+      const batchResult = await downloadImagesBatch(batch, {
+        resolution: options.resolution,
+        applyWatermark: options.applyWatermark,
+        includePrintRelease: options.includePrintRelease && batchIndex === 0,
+        batchLabel: options.batchLabel,
+        archiveLabel: batchLabel,
+        onProgress: (percent) => {
+          const normalizedPercent = Math.max(0, Math.min(100, percent));
+          const overallPercent =
+            batchStartPercent + (normalizedPercent / 100) * batchSpanPercent;
+          options.onProgress?.(Math.max(1, Math.min(100, Math.round(overallPercent))));
+        },
+      });
+
+      archivedPhotoCount += batchResult.archivedPhotoCount;
+      failedFileNames.push(...batchResult.failedFileNames);
+      if (batchResult.archiveFileName) {
+        archiveCount += 1;
+      }
+
+      if (batchIndex < batches.length - 1) {
+        await waitBetweenDownloads();
+      }
+    }
+
+    options.onProgress?.(100);
+    return {
+      archivedPhotoCount,
+      archiveCount,
+      failedFileNames,
+    };
   }
 
   async function downloadGalleryImages() {
@@ -4584,88 +4726,165 @@ export default function ParentGalleryPage() {
     setDownloadingGallery(true);
     setGalleryDownloadProgress(3);
     try {
-      const response = await fetch(
-        isSchoolMode ? "/api/portal/school-downloads" : "/api/portal/event-downloads",
-        {
+      if (isSchoolMode) {
+        const response = await fetch("/api/portal/school-downloads", {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
-            projectId: isSchoolMode ? undefined : projectId,
-            schoolId: isSchoolMode ? schoolId : undefined,
-            email: isSchoolMode ? schoolViewerEmail : eventEmail,
+            schoolId,
+            email: schoolViewerEmail,
             pin,
             downloadPin,
-            collectionId:
-              !isSchoolMode && galleryDownloadAccess.audience === "album"
-                ? activeEventCollectionId
-                : null,
             mediaIds: candidateImages.map((image) => image.id),
             downloadType: "gallery",
           }),
-        },
-      );
+        });
 
-      const payload = (await response.json().catch(() => ({}))) as {
-        ok?: boolean;
-        message?: string;
-        allowedMediaIds?: string[];
-        downloadsUsed?: number;
-        downloadsRemaining?: number | null;
-      };
+        const payload = (await response.json().catch(() => ({}))) as {
+          ok?: boolean;
+          message?: string;
+          allowedMediaIds?: string[];
+          downloadsUsed?: number;
+          downloadsRemaining?: number | null;
+        };
 
-      if (!response.ok || payload.ok === false) {
-        throw new Error(payload.message || "Could not prepare gallery downloads.");
+        if (!response.ok || payload.ok === false) {
+          throw new Error(payload.message || "Could not prepare gallery downloads.");
+        }
+
+        setGalleryDownloadProgress(8);
+
+        const allowedIds = new Set(
+          (payload.allowedMediaIds ?? []).map((value) => clean(value)).filter(Boolean),
+        );
+        const allowedImages = candidateImages.filter((image) => allowedIds.has(image.id));
+
+        if (!allowedImages.length) {
+          throw new Error(galleryCopy.freeLimitReached);
+        }
+
+        const batchSize = galleryZipBatchSize(
+          galleryDownloadAccess.resolution,
+          currentGalleryExtras.watermarkDownloads,
+        );
+        const result = await downloadImagesInZipBatches(allowedImages, {
+          resolution: galleryDownloadAccess.resolution,
+          applyWatermark: currentGalleryExtras.watermarkDownloads,
+          includePrintRelease: currentGalleryExtras.includePrintRelease,
+          batchLabel: "gallery",
+          batchSize,
+          onProgress: setGalleryDownloadProgress,
+        });
+        if (!result.archivedPhotoCount || !result.archiveCount) {
+          throw new Error(
+            result.failedFileNames.length === 1
+              ? `Failed to download ${result.failedFileNames[0]}.`
+              : "Could not download gallery photos.",
+          );
+        }
+
+        setGalleryDownloadAccess((prev) => ({
+          ...prev,
+          downloadsUsed:
+            typeof payload.downloadsUsed === "number"
+              ? payload.downloadsUsed
+              : prev.downloadsUsed + allowedImages.length,
+          downloadsRemaining:
+            payload.downloadsRemaining === null ||
+            typeof payload.downloadsRemaining === "number"
+              ? payload.downloadsRemaining
+              : prev.downloadsRemaining,
+          canDownload:
+            payload.downloadsRemaining === null
+              ? true
+              : typeof payload.downloadsRemaining === "number"
+                ? payload.downloadsRemaining > 0
+                : prev.canDownload,
+          message:
+            payload.downloadsRemaining === 0
+              ? "This gallery's free download limit has been reached."
+              : prev.message,
+        }));
+
+        showGalleryActionNotice(
+          `${
+            allowedImages.length === candidateImages.length
+              ? `${result.archivedPhotoCount} photo${
+                  result.archivedPhotoCount === 1 ? "" : "s"
+                } packaged into ${
+                  result.archiveCount === 1 ? "one ZIP" : `${result.archiveCount} ZIP files`
+                }.`
+              : `${result.archivedPhotoCount} of ${candidateImages.length} photos packaged into ${
+                  result.archiveCount === 1 ? "one ZIP" : `${result.archiveCount} ZIP files`
+                } within this gallery's free limit.`
+          }${
+            result.failedFileNames.length
+              ? ` ${formatSkippedFilesMessage(result.failedFileNames)}`
+              : ""
+          }`,
+        );
+      } else {
+        const response = await fetch("/api/portal/event-download-ready", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            projectId,
+            email: eventEmail,
+            pin,
+            downloadPin,
+            collectionId:
+              galleryDownloadAccess.audience === "album" ? activeEventCollectionId : null,
+            mediaIds: candidateImages.map((image) => image.id),
+          }),
+        });
+
+        const payload = (await response.json().catch(() => ({}))) as {
+          ok?: boolean;
+          message?: string;
+          manifest?: EventGalleryDownloadManifest;
+        };
+
+        if (!response.ok || payload.ok === false || !payload.manifest) {
+          throw new Error(payload.message || "Could not prepare gallery downloads.");
+        }
+
+        setGalleryDownloadProgress(100);
+        const manifest: EventGalleryDownloadManifest = {
+          ...payload.manifest,
+          returnUrl: window.location.pathname + window.location.search,
+        };
+        if (!writeEventGalleryDownloadManifest(manifest)) {
+          throw new Error("Could not prepare the download page on this browser.");
+        }
+        setGalleryDownloadAccess((prev) => ({
+          ...prev,
+          downloadsUsed:
+            typeof manifest.downloadsUsed === "number"
+              ? manifest.downloadsUsed
+              : prev.downloadsUsed + manifest.photoCount,
+          downloadsRemaining:
+            manifest.downloadsRemaining === null ||
+            typeof manifest.downloadsRemaining === "number"
+              ? manifest.downloadsRemaining
+              : prev.downloadsRemaining,
+          canDownload:
+            manifest.downloadsRemaining === null
+              ? true
+              : typeof manifest.downloadsRemaining === "number"
+                ? manifest.downloadsRemaining > 0
+                : prev.canDownload,
+          message:
+            manifest.downloadsRemaining === 0
+              ? "This gallery's free download limit has been reached."
+              : prev.message,
+        }));
+
+        router.push(
+          `/parents/${encodeURIComponent(pin)}/downloads?manifest=${encodeURIComponent(
+            manifest.id,
+          )}`,
+        );
       }
-
-      setGalleryDownloadProgress(8);
-
-      const allowedIds = new Set(
-        (payload.allowedMediaIds ?? []).map((value) => clean(value)).filter(Boolean),
-      );
-      const allowedImages = candidateImages.filter((image) => allowedIds.has(image.id));
-
-      if (!allowedImages.length) {
-        throw new Error(galleryCopy.freeLimitReached);
-      }
-
-      await downloadImagesBatch(allowedImages, {
-        resolution: galleryDownloadAccess.resolution,
-        applyWatermark: currentGalleryExtras.watermarkDownloads,
-        includePrintRelease: currentGalleryExtras.includePrintRelease,
-        batchLabel: "gallery",
-        onProgress: setGalleryDownloadProgress,
-      });
-
-      setGalleryDownloadAccess((prev) => ({
-        ...prev,
-        downloadsUsed:
-          typeof payload.downloadsUsed === "number"
-            ? payload.downloadsUsed
-            : prev.downloadsUsed + allowedImages.length,
-        downloadsRemaining:
-          payload.downloadsRemaining === null ||
-          typeof payload.downloadsRemaining === "number"
-            ? payload.downloadsRemaining
-            : prev.downloadsRemaining,
-        canDownload:
-          payload.downloadsRemaining === null
-            ? true
-            : typeof payload.downloadsRemaining === "number"
-              ? payload.downloadsRemaining > 0
-              : prev.canDownload,
-        message:
-          payload.downloadsRemaining === 0
-            ? "This gallery's free download limit has been reached."
-            : prev.message,
-      }));
-
-      showGalleryActionNotice(
-        allowedImages.length === candidateImages.length
-          ? `${allowedImages.length} photo${
-              allowedImages.length === 1 ? "" : "s"
-            } packaged into one ZIP.`
-          : `${allowedImages.length} of ${candidateImages.length} photos packaged within this gallery's free limit.`,
-      );
     } catch (error) {
       showGalleryActionNotice(
         getGalleryActionErrorMessage(error, "Could not download gallery photos."),
@@ -4903,12 +5122,19 @@ export default function ParentGalleryPage() {
         throw new Error("This photo is not available for download right now.");
       }
 
-      await downloadImagesBatch([image], {
+      const result = await downloadImagesBatch([image], {
         resolution: galleryDownloadAccess.resolution,
         applyWatermark: currentGalleryExtras.watermarkDownloads,
         includePrintRelease: currentGalleryExtras.includePrintRelease,
         batchLabel: "photo",
       });
+      if (!result.archivedPhotoCount) {
+        throw new Error(
+          result.failedFileNames.length === 1
+            ? `Failed to download ${result.failedFileNames[0]}.`
+            : "Could not download this photo.",
+        );
+      }
 
       setGalleryDownloadAccess((prev) => ({
         ...prev,

@@ -104,6 +104,7 @@ export default function EventVisitorsPage() {
   const [loading, setLoading] = useState(true);
   const [projectName, setProjectName] = useState("");
   const [visitors, setVisitors] = useState<Visitor[]>([]);
+  const [error, setError] = useState("");
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [selectedVisitor, setSelectedVisitor] = useState<Visitor | null>(null);
@@ -126,35 +127,49 @@ export default function EventVisitorsPage() {
 
   const load = useCallback(async () => {
     setLoading(true);
+    setError("");
     const { data: { session } } = await supabase.auth.getSession();
-    if (!session) { setLoading(false); return; }
-
-    const { data: { user } } = await supabase.auth.getUser();
-    if (user) {
-      const { data: pg } = await supabase
-        .from("photographers")
-        .select("business_name, studio_email, billing_email, logo_url, studio_phone, studio_address")
-        .eq("user_id", user.id)
-        .maybeSingle();
-      if (pg) {
-        const p = pg as Record<string, unknown>;
-        setBranding({
-          businessName: (p.business_name as string) || "",
-          logoUrl: (p.logo_url as string) || "",
-          studioPhone: (p.studio_phone as string) || "",
-          studioEmail: (p.studio_email as string) || (p.billing_email as string) || "",
-          studioAddress: (p.studio_address as string) || "",
-        });
-      }
+    if (!session) {
+      setError("Please sign in again.");
+      setLoading(false);
+      return;
     }
 
-    const res = await fetch(`/api/dashboard/events/${projectId}/visitors`, {
-      headers: { Authorization: `Bearer ${session.access_token}` },
-    });
-    if (res.ok) {
-      const data = await res.json();
-      setProjectName(data.projectName || "");
-      setVisitors(data.visitors || []);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        const { data: pg } = await supabase
+          .from("photographers")
+          .select("business_name, studio_email, billing_email, logo_url, studio_phone, studio_address")
+          .eq("user_id", user.id)
+          .maybeSingle();
+        if (pg) {
+          const p = pg as Record<string, unknown>;
+          setBranding({
+            businessName: (p.business_name as string) || "",
+            logoUrl: (p.logo_url as string) || "",
+            studioPhone: (p.studio_phone as string) || "",
+            studioEmail: (p.studio_email as string) || (p.billing_email as string) || "",
+            studioAddress: (p.studio_address as string) || "",
+          });
+        }
+      }
+
+      const res = await fetch(`/api/dashboard/events/${projectId}/visitors`, {
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      });
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        throw new Error((data as { error?: string }).error || "Failed to load visitors.");
+      }
+
+      setProjectName((data as { projectName?: string }).projectName || "");
+      setVisitors((data as { visitors?: Visitor[] }).visitors || []);
+    } catch (err) {
+      setVisitors([]);
+      setProjectName("");
+      setError(err instanceof Error ? err.message : "Failed to load visitors.");
     }
     setLoading(false);
   }, [supabase, projectId]);
@@ -234,7 +249,7 @@ export default function EventVisitorsPage() {
                 Gallery Visitors
               </h1>
               <div style={{ fontSize: 13, color: textMuted, marginTop: 4 }}>
-                {projectName} &middot; {visitors.length} visitor{visitors.length !== 1 ? "s" : ""}
+                {projectName ? `${projectName} · ` : ""}{visitors.length} visitor{visitors.length !== 1 ? "s" : ""}
               </div>
             </div>
             {selected.size > 0 && (
@@ -252,6 +267,12 @@ export default function EventVisitorsPage() {
             )}
           </div>
         </div>
+
+        {error ? (
+          <div style={{ marginBottom: 16, padding: "12px 14px", borderRadius: 10, border: "1px solid #fecaca", background: "#fef2f2", color: "#991b1b", fontSize: 13, fontWeight: 700 }}>
+            {error}
+          </div>
+        ) : null}
 
         {/* Search */}
         <div style={{ position: "relative", marginBottom: 20, maxWidth: 480 }}>
