@@ -2202,7 +2202,7 @@ export default function SchoolsSchoolDetailPage() {
                   <div style={{ width: 44, height: 44, borderRadius: 999, background: "#fff3e8", color: "#f97316", display: "grid", placeItems: "center" }}><Mail size={20} /></div>
                   <div>
                     <div style={{ color: "#111111", fontWeight: 800 }}>Email Gallery Visitors</div>
-                    <div style={{ color: "#4b5563", fontSize: 13, marginTop: 4 }}>Send mass emails to registered school visitors.</div>
+                    <div style={{ color: "#4b5563", fontSize: 13, marginTop: 4 }}>Send to everyone on your list — gallery visitors plus parents who registered during pre-release.</div>
                   </div>
                 </div>
                 <ExternalLink size={18} color="#6b7280" />

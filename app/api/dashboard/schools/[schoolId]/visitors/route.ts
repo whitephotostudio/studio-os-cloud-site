@@ -64,6 +64,16 @@ export async function GET(
     .eq("school_id", schoolId)
     .order("created_at", { ascending: false });
 
+  // ✅ Also fetch pre-release email registrations so the photographer can
+  // see (and contact) parents who registered before the gallery went live.
+  // Without this, pre-release signups were saved silently and never surfaced
+  // in the admin UI, which made the "notify me when ready" flow feel broken.
+  const { data: preReleaseRegs } = await service
+    .from("pre_release_registrations")
+    .select("id, email, created_at")
+    .eq("school_id", schoolId)
+    .order("created_at", { ascending: false });
+
   // Build enriched visitor list
   const visitorList = (visitors ?? []).map((v: Record<string, unknown>) => {
     const email = (v.viewer_email as string || "").toLowerCase();
@@ -109,16 +119,72 @@ export async function GET(
       downloads: visitorDownloads,
       orderCount: visitorOrders.length,
       downloadCount: visitorDownloads.reduce((sum, d) => sum + (Number(d.downloadCount) || 0), 0 as number),
+      preRelease: false as boolean,
     };
   });
 
+  // Append pre-release registrants that don't already appear as real
+  // visitors. If the same email shows up in both tables (parent registered
+  // pre-release AND later opened the gallery), we keep the visitor row and
+  // flag it with `alsoPreRelease: true` so the UI can show both badges.
+  const existingEmails = new Set(
+    visitorList.map((row) => (row.email ?? "").toLowerCase()),
+  );
+  const existingByEmail = new Map(
+    visitorList.map((row) => [(row.email ?? "").toLowerCase(), row]),
+  );
+  const preReleaseOnly = ((preReleaseRegs ?? []) as Array<{ id: string; email: string | null; created_at: string | null }>)
+    .map((row) => ({
+      id: `pre_${row.id}`,
+      email: row.email ?? "",
+      firstVisit: row.created_at ?? "",
+      lastVisit: row.created_at ?? "",
+      orders: [] as VisitorOrder[],
+      downloads: [] as VisitorDownload[],
+      orderCount: 0,
+      downloadCount: 0,
+      preRelease: true as boolean,
+    }))
+    .filter((row) => {
+      const key = row.email.toLowerCase();
+      if (!key) return false;
+      if (existingEmails.has(key)) {
+        // Flag the existing visitor entry as also-pre-release so the UI
+        // can render a small "Pre-release" chip next to their name.
+        const existing = existingByEmail.get(key);
+        if (existing) (existing as { alsoPreRelease?: boolean }).alsoPreRelease = true;
+        return false;
+      }
+      return true;
+    });
+
+  const combined = [...visitorList, ...preReleaseOnly];
+
   return NextResponse.json({
     schoolName: school.school_name,
-    visitors: visitorList,
-    totalVisitors: visitorList.length,
+    visitors: combined,
+    totalVisitors: combined.length,
     totalOrders: (orders ?? []).length,
+    preReleaseCount: preReleaseOnly.length,
   });
 }
+
+type VisitorOrder = {
+  id: string;
+  status: string;
+  totalCents: number;
+  createdAt: string;
+  studentName: string;
+  className: string;
+};
+
+type VisitorDownload = {
+  id: string;
+  downloadType: string;
+  downloadCount: number;
+  mediaIds: string[];
+  createdAt: string;
+};
 
 /**
  * PATCH /api/dashboard/schools/[schoolId]/visitors
@@ -157,6 +223,22 @@ export async function PATCH(
 
   if (!visitorId || !newEmail) {
     return NextResponse.json({ error: "Missing visitorId or newEmail" }, { status: 400 });
+  }
+
+  // ✅ Pre-release registrant IDs are returned from GET prefixed with `pre_`
+  // so we can distinguish them from school_gallery_visitors rows. Route the
+  // update to the right table.
+  if (visitorId.startsWith("pre_")) {
+    const realId = visitorId.slice("pre_".length);
+    const { error } = await service
+      .from("pre_release_registrations")
+      .update({ email: newEmail.trim().toLowerCase() })
+      .eq("id", realId)
+      .eq("school_id", schoolId);
+    if (error) {
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+    return NextResponse.json({ ok: true });
   }
 
   const { error } = await service

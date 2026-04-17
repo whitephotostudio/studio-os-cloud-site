@@ -53,6 +53,12 @@ type Visitor = {
   downloads: VisitorDownload[];
   orderCount: number;
   downloadCount: number;
+  /** True when this entry is only a pre-release registrant (hasn't opened
+   *  the gallery yet). Never combined with orders/downloads. */
+  preRelease?: boolean;
+  /** True when the visitor also registered during pre-release (they later
+   *  opened the gallery). Used to show a small secondary badge. */
+  alsoPreRelease?: boolean;
 };
 
 /* ── helpers ─────────────────────────────────────────────────── */
@@ -317,7 +323,15 @@ export default function SchoolVisitorsPage() {
                 Gallery Visitors
               </h1>
               <div style={{ fontSize: 13, color: textMuted, marginTop: 4 }}>
-                {schoolName} &middot; {visitors.length} visitor{visitors.length !== 1 ? "s" : ""}
+                {schoolName} &middot; {(() => {
+                  const real = visitors.filter((v) => !v.preRelease).length;
+                  const pre = visitors.filter((v) => v.preRelease).length;
+                  const parts = [
+                    `${real} visitor${real !== 1 ? "s" : ""}`,
+                  ];
+                  if (pre > 0) parts.push(`${pre} on notification list`);
+                  return parts.join(" · ");
+                })()}
               </div>
             </div>
             {selected.size > 0 && (
@@ -451,7 +465,43 @@ export default function SchoolVisitorsPage() {
                       </button>
                     </div>
                   ) : (
-                    <div style={{ fontSize: 13, fontWeight: 600, color: textPrimary }}>{v.email}</div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: textPrimary }}>{v.email}</div>
+                      {v.preRelease && (
+                        <span
+                          title="Registered for notification before the gallery opened"
+                          style={{
+                            display: "inline-block",
+                            padding: "1px 8px",
+                            borderRadius: 999,
+                            fontSize: 10,
+                            fontWeight: 700,
+                            background: "#eef2ff",
+                            color: "#3730a3",
+                            letterSpacing: "0.03em",
+                          }}
+                        >
+                          PRE-RELEASE
+                        </span>
+                      )}
+                      {v.alsoPreRelease && !v.preRelease && (
+                        <span
+                          title="Also signed up for the pre-release notification"
+                          style={{
+                            display: "inline-block",
+                            padding: "1px 8px",
+                            borderRadius: 999,
+                            fontSize: 10,
+                            fontWeight: 700,
+                            background: "#eef2ff",
+                            color: "#3730a3",
+                            letterSpacing: "0.03em",
+                          }}
+                        >
+                          PRE-RELEASE
+                        </span>
+                      )}
+                    </div>
                   )}
                   {v.orders.length > 0 && (
                     <div style={{ fontSize: 11, color: textMuted, marginTop: 2 }}>
@@ -459,7 +509,11 @@ export default function SchoolVisitorsPage() {
                     </div>
                   )}
                 </div>
-                <div style={{ fontSize: 12, color: textMuted }}>{fmtDateTime(v.lastVisit)}</div>
+                <div style={{ fontSize: 12, color: textMuted }}>
+                  {v.preRelease
+                    ? `Registered ${fmtDate(v.firstVisit)}`
+                    : fmtDateTime(v.lastVisit)}
+                </div>
                 <div>
                   {v.orderCount > 0 ? (
                     <span style={{ fontSize: 12, fontWeight: 700, color: "#166534" }}>
