@@ -1945,7 +1945,7 @@ export default function ProjectDetailPage() {
                           {visitorEmails.length ? `${visitorEmails.length} gallery visitors` : "No visitor emails yet"}
                         </div>
                       ) : (
-                        <textarea value={shareRecipientInput} onChange={(e) => setShareRecipientInput(e.target.value)} placeholder="harout@me.com, client@example.com" style={{ minHeight: 80, width: "100%", boxSizing: "border-box", borderRadius: 12, border: "1px solid #d0d5dd", padding: "12px 14px", fontSize: 14, color: "#111111", outline: "none" }} />
+                        <textarea value={shareRecipientInput} onChange={(e) => setShareRecipientInput(e.target.value)} placeholder="client@example.com, parent@example.com" style={{ minHeight: 80, width: "100%", boxSizing: "border-box", borderRadius: 12, border: "1px solid #d0d5dd", padding: "12px 14px", fontSize: 14, color: "#111111", outline: "none" }} />
                       )}
                     </label>
 

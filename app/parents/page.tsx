@@ -40,6 +40,10 @@ function isInactive(value: string | null | undefined) {
   return clean(value).toLowerCase() === "inactive";
 }
 
+function isPreRelease(value: string | null | undefined) {
+  return clean(value).toLowerCase().replaceAll("-", "_") === "pre_release";
+}
+
 function projectLabel(project: EventProjectRow) {
   return clean(project.title) || clean(project.client_name) || "Untitled Event";
 }
@@ -97,8 +101,13 @@ async function getPortalChoices(prefilledProjectId?: string): Promise<{
       const trimmedName = clean(row.school_name);
       const key = trimmedName.toLowerCase();
       if (!trimmedName) continue;
-      if (!schoolIdsWithStudents.has(row.id)) continue;
       if (isInactive(row.status)) continue;
+      // ✅ Include the school if it either:
+      //   (a) has at least one student synced (normal case), OR
+      //   (b) is in pre_release status — so parents can register their
+      //       email for a notification before the gallery has any photos.
+      const hasStudents = schoolIdsWithStudents.has(row.id);
+      if (!hasStudents && !isPreRelease(row.status)) continue;
       if (!uniqueSchools.has(key)) {
         uniqueSchools.set(key, { ...row, school_name: trimmedName });
       }

@@ -52,7 +52,11 @@ export async function POST(request: NextRequest) {
         school_name: schoolName,
         photographer_id: photographerRow.id,
         local_school_id: localSchoolId,
-        status: "inactive",
+        // ✅ Default new schools to "pre_release" so parents can register
+        // their email for a gallery-ready notification before any photos
+        // or students have been uploaded. Photographer can change the
+        // status from the school settings page once the gallery is live.
+        status: "pre_release",
         email_required: true,
       })
       .select("id,school_name,status,created_at")
