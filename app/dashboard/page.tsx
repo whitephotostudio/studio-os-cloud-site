@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { Logo } from "@/components/logo";
+import { StudioAssistant } from "@/components/studio-assistant/studio-assistant";
 import {
   getFreeTrialDaysRemaining,
   isFreeTrialActive,
@@ -813,6 +814,11 @@ function DashboardPageContent() {
                 <FolderOpen size={16} /> Open Projects
               </Link>
             </div>
+          </div>
+
+          {/* Studio Assistant — premium command layer (Phase 1: UI + mock parsing) */}
+          <div style={{ marginBottom: 24 }}>
+            <StudioAssistant greetingName={clean(photographer?.business_name) || null} />
           </div>
 
           {error ? (
