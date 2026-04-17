@@ -32,11 +32,11 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // Fetch all photographers with contact + billing + trial data.
+    // Fetch all photographers with contact + billing + trial + voice data.
     const { data: users, error } = await service
       .from("photographers")
       .select(
-        "id,user_id,business_name,billing_email,studio_email,studio_phone,studio_address,subscription_plan_code,subscription_status,subscription_billing_interval,subscription_current_period_start,subscription_current_period_end,stripe_subscription_id,extra_desktop_keys,trial_starts_at,trial_ends_at,is_platform_admin,created_at",
+        "id,user_id,business_name,billing_email,studio_email,studio_phone,studio_address,subscription_plan_code,subscription_status,subscription_billing_interval,subscription_current_period_start,subscription_current_period_end,stripe_subscription_id,extra_desktop_keys,trial_starts_at,trial_ends_at,is_platform_admin,created_at,voice_premium_enabled,voice_monthly_char_limit,voice_chars_used_this_month,voice_usage_period_start",
       )
       .order("created_at", { ascending: false });
 
@@ -175,6 +175,20 @@ export async function GET(request: NextRequest) {
       };
       const totalSpentCents = spentByPhotographer.get(u.id as string) ?? 0;
 
+      // Roll the monthly window forward in the response if we've crossed
+      // a month boundary, so the UI shows "0 used" cleanly without waiting
+      // for the next TTS request to do the reset.
+      const periodStart = u.voice_usage_period_start
+        ? new Date(u.voice_usage_period_start as string)
+        : null;
+      const sameMonth =
+        periodStart &&
+        periodStart.getUTCFullYear() === now.getUTCFullYear() &&
+        periodStart.getUTCMonth() === now.getUTCMonth();
+      const voiceUsedThisMonth = sameMonth
+        ? Number(u.voice_chars_used_this_month ?? 0)
+        : 0;
+
       return {
         id: u.id,
         userId: u.user_id,
@@ -202,10 +216,39 @@ export async function GET(request: NextRequest) {
         isPlatformAdmin: Boolean(u.is_platform_admin),
         lastSignIn: authMeta?.lastSignIn || null,
         createdAt: u.created_at,
+        voicePremiumEnabled: Boolean(u.voice_premium_enabled),
+        voiceMonthlyCharLimit: Number(u.voice_monthly_char_limit ?? 0),
+        voiceCharsUsedThisMonth: voiceUsedThisMonth,
       };
     });
 
-    return NextResponse.json({ ok: true, users: enriched });
+    // Calculate "new since last visit" before we update the seen timestamp.
+    const { data: adminRow } = await service
+      .from("photographers")
+      .select("admin_seen_users_at")
+      .eq("id", photographer.id)
+      .maybeSingle();
+    const seenAt = adminRow?.admin_seen_users_at
+      ? new Date(adminRow.admin_seen_users_at as string)
+      : null;
+    const newSinceLastVisit = enriched.filter((u) => {
+      if (!u.createdAt) return false;
+      const created = new Date(u.createdAt as string);
+      return seenAt ? created > seenAt : true;
+    }).length;
+
+    // Mark the badge as cleared by stamping the seen timestamp to "now".
+    await service
+      .from("photographers")
+      .update({ admin_seen_users_at: now.toISOString() })
+      .eq("id", photographer.id);
+
+    return NextResponse.json({
+      ok: true,
+      users: enriched,
+      newSinceLastVisit,
+      previousSeenAt: seenAt ? seenAt.toISOString() : null,
+    });
   } catch (error) {
     return NextResponse.json(
       {
@@ -427,8 +470,47 @@ export async function POST(request: NextRequest) {
       });
     }
 
+    if (body.action === "update_voice") {
+      const enabled = Boolean(
+        (body as { voicePremiumEnabled?: boolean }).voicePremiumEnabled,
+      );
+      const rawLimit = (body as { voiceMonthlyCharLimit?: number }).voiceMonthlyCharLimit;
+      const limit = Math.max(
+        0,
+        Math.min(1_000_000, Number.isFinite(Number(rawLimit)) ? Number(rawLimit) : 1000),
+      );
+      const resetUsage = Boolean((body as { resetUsage?: boolean }).resetUsage);
+
+      const updates: Record<string, unknown> = {
+        voice_premium_enabled: enabled,
+        voice_monthly_char_limit: limit,
+      };
+      if (resetUsage) {
+        updates.voice_chars_used_this_month = 0;
+        updates.voice_usage_period_start = new Date().toISOString();
+      }
+
+      const { error: updateError } = await service
+        .from("photographers")
+        .update(updates)
+        .eq("id", targetId);
+
+      if (updateError) throw updateError;
+
+      return NextResponse.json({
+        ok: true,
+        message: enabled
+          ? `Premium voice enabled (${limit.toLocaleString()} chars/month).`
+          : "Premium voice disabled for this user.",
+      });
+    }
+
     return NextResponse.json(
-      { ok: false, message: "Valid actions: extend_trial, revoke_trial, delete_user." },
+      {
+        ok: false,
+        message:
+          "Valid actions: extend_trial, revoke_trial, delete_user, update_voice.",
+      },
       { status: 400 },
     );
   } catch (error) {

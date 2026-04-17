@@ -46,6 +46,7 @@ export function DashboardSidebar() {
   const supabase = createClient();
   const [userEmail, setUserEmail] = useState("");
   const [isAdmin, setIsAdmin] = useState(false);
+  const [adminBadgeCount, setAdminBadgeCount] = useState(0);
 
   useEffect(() => {
     (async () => {
@@ -62,6 +63,31 @@ export function DashboardSidebar() {
       }
     })();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Pull the new-photographer badge count whenever the admin navigates.
+  // The count clears server-side when the admin opens /dashboard/admin/users.
+  useEffect(() => {
+    if (!isAdmin) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
+        const headers: Record<string, string> = session?.access_token
+          ? { Authorization: `Bearer ${session.access_token}` }
+          : {};
+        const res = await fetch("/api/dashboard/admin/badge", { headers });
+        const json = (await res.json().catch(() => ({}))) as { count?: number };
+        if (!cancelled) setAdminBadgeCount(Number(json.count ?? 0));
+      } catch {
+        if (!cancelled) setAdminBadgeCount(0);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isAdmin, pathname, supabase]);
 
   async function handleSignOut() {
     await supabase.auth.signOut();
@@ -91,9 +117,33 @@ export function DashboardSidebar() {
         {isAdmin && (
           <Link
             href="/dashboard/admin/users"
-            style={/^\/dashboard\/admin/.test(pathname) ? navActiveStyle : navItemStyle}
+            style={{
+              ...(/^\/dashboard\/admin/.test(pathname) ? navActiveStyle : navItemStyle),
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 8,
+            }}
           >
-            Admin
+            <span>Admin</span>
+            {adminBadgeCount > 0 ? (
+              <span
+                aria-label={`${adminBadgeCount} new photographer${adminBadgeCount === 1 ? "" : "s"}`}
+                style={{
+                  background: "#dc2626",
+                  color: "#fff",
+                  fontSize: 11,
+                  fontWeight: 700,
+                  borderRadius: 999,
+                  minWidth: 20,
+                  padding: "1px 6px",
+                  textAlign: "center",
+                  lineHeight: "16px",
+                }}
+              >
+                {adminBadgeCount > 99 ? "99+" : adminBadgeCount}
+              </span>
+            ) : null}
           </Link>
         )}
       </nav>

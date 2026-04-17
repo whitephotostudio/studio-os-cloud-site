@@ -803,8 +803,9 @@ function SettingsPopover({
                 lineHeight: 1.5,
               }}
             >
-              Requires <code>ELEVENLABS_API_KEY</code> in your <code>.env.local</code>.
-              Free tier: ~10,000 characters/month (roughly 300 replies).
+              Premium voice is included with eligible Studio plans. If you
+              hear the browser voice instead, your monthly premium-voice
+              budget may be paused — your administrator can adjust it.
             </div>
           </div>
         ) : null}

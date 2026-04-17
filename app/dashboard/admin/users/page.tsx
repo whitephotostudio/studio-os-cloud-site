@@ -17,6 +17,9 @@ import {
   ChevronDown,
   ChevronUp,
   Search,
+  Volume2,
+  VolumeX,
+  Sparkles,
 } from "lucide-react";
 
 type UserRow = {
@@ -46,7 +49,20 @@ type UserRow = {
   creditTotalPurchased?: number;
   creditTotalUsed?: number;
   totalSpentCents?: number;
+  voicePremiumEnabled?: boolean;
+  voiceMonthlyCharLimit?: number;
+  voiceCharsUsedThisMonth?: number;
 };
+
+const NEW_SIGNUP_WINDOW_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+
+function isNewSignup(createdAt: string | null, since: Date | null): boolean {
+  if (!createdAt) return false;
+  const created = new Date(createdAt);
+  if (Number.isNaN(created.getTime())) return false;
+  if (since && created > since) return true;
+  return Date.now() - created.getTime() < NEW_SIGNUP_WINDOW_MS;
+}
 
 function formatMoney(cents: number | undefined | null) {
   const c = Number(cents ?? 0);
@@ -142,6 +158,209 @@ function PlanBadge({ plan, interval }: { plan: string | null; interval: string |
   );
 }
 
+function VoicePanel({
+  user,
+  draft,
+  onChangeDraft,
+  onSave,
+  onResetUsage,
+  busy,
+}: {
+  user: UserRow;
+  draft: { enabled: boolean; limit: number } | undefined;
+  onChangeDraft: (next: { enabled: boolean; limit: number }) => void;
+  onSave: () => void;
+  onResetUsage: () => void;
+  busy: boolean;
+}) {
+  const enabled = draft?.enabled ?? Boolean(user.voicePremiumEnabled);
+  const limit = draft?.limit ?? Number(user.voiceMonthlyCharLimit ?? 1000);
+  const used = Number(user.voiceCharsUsedThisMonth ?? 0);
+  const pct = limit > 0 ? Math.min(100, Math.round((used / limit) * 100)) : 0;
+  const dirty =
+    enabled !== Boolean(user.voicePremiumEnabled) ||
+    limit !== Number(user.voiceMonthlyCharLimit ?? 1000);
+  const overLimit = enabled && used >= limit && limit > 0;
+
+  return (
+    <div
+      style={{
+        marginTop: 16,
+        background: "#f9fafb",
+        borderRadius: 14,
+        padding: "16px 18px",
+        fontSize: 13,
+        border: `1px solid ${borderSoft}`,
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          fontWeight: 700,
+          fontSize: 13,
+          marginBottom: 12,
+        }}
+      >
+        {enabled ? (
+          <Volume2 size={14} color="#059669" />
+        ) : (
+          <VolumeX size={14} color="#9ca3af" />
+        )}
+        Premium Voice (ElevenLabs)
+      </div>
+
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 16,
+          flexWrap: "wrap",
+          marginBottom: 12,
+        }}
+      >
+        {/* Enable toggle */}
+        <label
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 8,
+            fontSize: 12,
+            fontWeight: 600,
+            cursor: "pointer",
+          }}
+        >
+          <input
+            type="checkbox"
+            checked={enabled}
+            onChange={(e) =>
+              onChangeDraft({ enabled: e.target.checked, limit })
+            }
+            style={{ width: 16, height: 16, cursor: "pointer" }}
+          />
+          {enabled ? "Enabled" : "Disabled"}
+        </label>
+
+        {/* Monthly limit */}
+        <div style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+          <span style={{ fontSize: 12, color: textMuted }}>Monthly cap</span>
+          <input
+            type="number"
+            min={0}
+            max={1_000_000}
+            step={100}
+            value={limit}
+            disabled={!enabled}
+            onChange={(e) =>
+              onChangeDraft({
+                enabled,
+                limit: Math.max(
+                  0,
+                  Math.min(1_000_000, Number(e.target.value) || 0),
+                ),
+              })
+            }
+            style={{
+              width: 90,
+              padding: "6px 8px",
+              borderRadius: 10,
+              border: `1px solid ${borderSoft}`,
+              fontSize: 12,
+              textAlign: "right",
+              opacity: enabled ? 1 : 0.5,
+            }}
+          />
+          <span style={{ fontSize: 12, color: textMuted }}>chars / month</span>
+        </div>
+
+        <button
+          disabled={busy || !dirty}
+          onClick={onSave}
+          style={{
+            padding: "6px 14px",
+            borderRadius: 10,
+            border: "none",
+            background: dirty ? "#059669" : "#d1d5db",
+            color: "#fff",
+            fontSize: 12,
+            fontWeight: 700,
+            cursor: dirty ? "pointer" : "default",
+            whiteSpace: "nowrap",
+            opacity: busy ? 0.6 : 1,
+          }}
+        >
+          Save voice settings
+        </button>
+      </div>
+
+      {/* Usage bar */}
+      {enabled ? (
+        <div>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              fontSize: 11,
+              color: textMuted,
+              marginBottom: 4,
+            }}
+          >
+            <span>
+              {used.toLocaleString()} / {limit.toLocaleString()} chars used this
+              month
+            </span>
+            <button
+              onClick={onResetUsage}
+              disabled={busy}
+              style={{
+                background: "none",
+                border: "none",
+                color: "#2563eb",
+                fontSize: 11,
+                fontWeight: 600,
+                cursor: "pointer",
+                padding: 0,
+              }}
+            >
+              Reset usage
+            </button>
+          </div>
+          <div
+            style={{
+              height: 6,
+              background: "#e5e7eb",
+              borderRadius: 999,
+              overflow: "hidden",
+            }}
+          >
+            <div
+              style={{
+                width: `${pct}%`,
+                height: "100%",
+                background: overLimit ? "#dc2626" : pct > 80 ? "#f59e0b" : "#059669",
+                transition: "width 0.2s",
+              }}
+            />
+          </div>
+          {overLimit ? (
+            <div style={{ fontSize: 11, color: "#dc2626", marginTop: 6 }}>
+              Limit reached — premium voice is paused for this user until next
+              month or until you raise the cap or reset usage.
+            </div>
+          ) : null}
+        </div>
+      ) : (
+        <div style={{ fontSize: 12, color: textMuted, lineHeight: 1.5 }}>
+          When disabled, this photographer hears the browser&apos;s built-in voice
+          for spoken assistant replies. Toggle on and click Save to grant
+          premium voice access.
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function AdminUsersPage() {
   const supabase = createClient();
   const [users, setUsers] = useState<UserRow[]>([]);
@@ -153,6 +372,11 @@ export default function AdminUsersPage() {
   const [isAdmin, setIsAdmin] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
+  const [newSinceLastVisit, setNewSinceLastVisit] = useState(0);
+  const [previousSeenAt, setPreviousSeenAt] = useState<Date | null>(null);
+  const [voiceDraft, setVoiceDraft] = useState<
+    Record<string, { enabled: boolean; limit: number }>
+  >({});
 
   const fetchUsers = useCallback(async () => {
     setLoading(true);
@@ -174,6 +398,10 @@ export default function AdminUsersPage() {
       }
       setUsers(json.users || []);
       setIsAdmin(true);
+      setNewSinceLastVisit(Number(json.newSinceLastVisit ?? 0));
+      setPreviousSeenAt(
+        json.previousSeenAt ? new Date(json.previousSeenAt) : null,
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load users.");
     } finally {
@@ -184,6 +412,86 @@ export default function AdminUsersPage() {
   useEffect(() => {
     fetchUsers();
   }, [fetchUsers]);
+
+  async function saveVoiceForUser(u: UserRow) {
+    const draft = voiceDraft[u.id] ?? {
+      enabled: Boolean(u.voicePremiumEnabled),
+      limit: Number(u.voiceMonthlyCharLimit ?? 1000),
+    };
+    setActionBusy(u.id);
+    setActionMessage(null);
+    try {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+        ...(session?.access_token
+          ? { Authorization: `Bearer ${session.access_token}` }
+          : {}),
+      };
+      const res = await fetch("/api/dashboard/admin/users", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          action: "update_voice",
+          photographerId: u.id,
+          voicePremiumEnabled: draft.enabled,
+          voiceMonthlyCharLimit: draft.limit,
+        }),
+      });
+      const json = await res.json();
+      setActionMessage(json.message || (json.ok ? "Voice updated." : "Update failed."));
+      if (json.ok) {
+        await fetchUsers();
+        setVoiceDraft((prev) => {
+          const next = { ...prev };
+          delete next[u.id];
+          return next;
+        });
+      }
+    } catch (err) {
+      setActionMessage(err instanceof Error ? err.message : "Voice update failed.");
+    } finally {
+      setActionBusy(null);
+    }
+  }
+
+  async function resetVoiceUsage(photographerId: string) {
+    setActionBusy(photographerId);
+    setActionMessage(null);
+    try {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+        ...(session?.access_token
+          ? { Authorization: `Bearer ${session.access_token}` }
+          : {}),
+      };
+      const target = users.find((u) => u.id === photographerId);
+      if (!target) return;
+      const res = await fetch("/api/dashboard/admin/users", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          action: "update_voice",
+          photographerId,
+          voicePremiumEnabled: Boolean(target.voicePremiumEnabled),
+          voiceMonthlyCharLimit: Number(target.voiceMonthlyCharLimit ?? 1000),
+          resetUsage: true,
+        }),
+      });
+      const json = await res.json();
+      setActionMessage(json.ok ? "Usage counter reset." : json.message ?? "Reset failed.");
+      if (json.ok) await fetchUsers();
+    } catch (err) {
+      setActionMessage(err instanceof Error ? err.message : "Reset failed.");
+    } finally {
+      setActionBusy(null);
+    }
+  }
 
   async function handleAction(
     action: "extend_trial" | "revoke_trial" | "delete_user",
@@ -407,6 +715,33 @@ export default function AdminUsersPage() {
           />
         </div>
 
+        {/* New-signup callout */}
+        {newSinceLastVisit > 0 ? (
+          <div
+            style={{
+              marginBottom: 14,
+              padding: "10px 16px",
+              borderRadius: 12,
+              background: "#fff7ed",
+              border: "1px solid #fed7aa",
+              fontSize: 13,
+              color: "#9a3412",
+              fontWeight: 600,
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 8,
+            }}
+          >
+            <Sparkles size={14} color="#c2410c" />
+            {newSinceLastVisit === 1
+              ? "1 new photographer registered"
+              : `${newSinceLastVisit} new photographers registered`}{" "}
+            {previousSeenAt
+              ? `since ${previousSeenAt.toLocaleString()}.`
+              : "(first visit — all users are new to you)."}
+          </div>
+        ) : null}
+
         {/* Action message */}
         {actionMessage ? (
           <div
@@ -491,9 +826,38 @@ export default function AdminUsersPage() {
                     >
                       {/* Client */}
                       <div>
-                        <div style={{ display: "flex", alignItems: "center", gap: 6, fontWeight: 600 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 6, fontWeight: 600, flexWrap: "wrap" }}>
                           {u.isPlatformAdmin ? <Crown size={13} color="#f59e0b" /> : null}
                           {u.fullName || u.businessName || "—"}
+                          {isNewSignup(u.createdAt, previousSeenAt) ? (
+                            <span
+                              style={{
+                                fontSize: 10,
+                                fontWeight: 700,
+                                color: "#9a3412",
+                                background: "#fff7ed",
+                                border: "1px solid #fed7aa",
+                                borderRadius: 999,
+                                padding: "1px 7px",
+                                letterSpacing: "0.04em",
+                              }}
+                            >
+                              NEW
+                            </span>
+                          ) : null}
+                          {u.voicePremiumEnabled || u.isPlatformAdmin ? (
+                            <Volume2
+                              size={13}
+                              color="#059669"
+                              aria-label="Premium voice enabled"
+                            />
+                          ) : (
+                            <VolumeX
+                              size={13}
+                              color="#9ca3af"
+                              aria-label="Premium voice disabled"
+                            />
+                          )}
                         </div>
                         {u.fullName && u.businessName ? (
                           <div style={{ fontSize: 12, color: textMuted, marginTop: 2 }}>
@@ -803,6 +1167,39 @@ export default function AdminUsersPage() {
                           </div>
                         </div>
                       </div>
+
+                      {/* Voice access control — admin-only, not shown for self */}
+                      {u.isPlatformAdmin ? (
+                        <div
+                          style={{
+                            marginTop: 16,
+                            background: "#f0fdf4",
+                            borderRadius: 14,
+                            padding: "16px 18px",
+                            fontSize: 13,
+                            border: "1px solid #bbf7d0",
+                          }}
+                        >
+                          <div style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 700, fontSize: 13, marginBottom: 6 }}>
+                            <Volume2 size={14} color="#059669" />
+                            Premium Voice (ElevenLabs) — Admin
+                          </div>
+                          <div style={{ fontSize: 12, color: "#166534" }}>
+                            Admin accounts have unlimited premium voice usage. No quota applies.
+                          </div>
+                        </div>
+                      ) : (
+                        <VoicePanel
+                          user={u}
+                          draft={voiceDraft[u.id]}
+                          onChangeDraft={(next) =>
+                            setVoiceDraft((prev) => ({ ...prev, [u.id]: next }))
+                          }
+                          onSave={() => saveVoiceForUser(u)}
+                          onResetUsage={() => resetVoiceUsage(u.id)}
+                          busy={actionBusy === u.id}
+                        />
+                      )}
                       </div>
                     ) : null}
                   </div>
