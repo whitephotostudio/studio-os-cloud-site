@@ -7470,6 +7470,45 @@ export default function ParentGalleryPage() {
 
             <button
               type="button"
+              onClick={() => setActiveView("favorites")}
+              style={{
+                background:
+                  favorites.size > 0 && !isEventImageStage
+                    ? isLightGallery
+                      ? "rgba(239,68,68,0.08)"
+                      : "rgba(255,255,255,0.08)"
+                    : "transparent",
+                color:
+                  favorites.size > 0
+                    ? isEventImageStage
+                      ? "#b45309"
+                      : "#dc2626"
+                    : isEventImageStage
+                      ? "#7a6f63"
+                      : galleryTone.text,
+                border: isEventImageStage
+                  ? "none"
+                  : `1px solid ${
+                      favorites.size > 0 ? "rgba(220,38,38,0.24)" : galleryTone.border
+                    }`,
+                borderRadius: 999,
+                padding: isEventImageStage ? 0 : "8px 16px",
+                fontSize: 12,
+                fontWeight: isEventImageStage ? 500 : 700,
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+              }}
+            >
+              <Heart size={14} fill={favorites.size > 0 ? "currentColor" : "none"} />
+              {favorites.size > 0
+                ? `${galleryCopy.favorites} (${favorites.size})`
+                : galleryCopy.favorites}
+            </button>
+
+            <button
+              type="button"
               onClick={basketItemCount > 0 ? openCartCheckout : openBuyDrawer}
               disabled={orderingDisabled}
               style={{
