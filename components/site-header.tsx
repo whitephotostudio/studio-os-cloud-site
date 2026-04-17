@@ -7,7 +7,8 @@ const navLinks = [
   { href: "/studio-os", label: "Studio OS" },
   { href: "/studio-os/download", label: "Download App" },
   { href: "/pricing", label: "Pricing" },
-  { href: "/parents", label: "Parents" },
+  // The prominent "Parents Portal" button on the right side of the header
+  // already links to /parents, so the small-text link here was redundant.
 ];
 
 export function SiteHeader() {
