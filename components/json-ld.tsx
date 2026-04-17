@@ -221,7 +221,7 @@ export function FaqJsonLd() {
             name: "How does AI background replacement work?",
             acceptedAnswer: {
               "@type": "Answer",
-              text: "Photographers purchase credit packs starting at $15 for 250 credits. Clients can select AI-generated background options as paid upgrades inside the gallery ordering flow. Each swap uses one credit and helps turn standard portraits into premium add-on revenue.",
+              text: "Photographers purchase credit packs starting at $15 for 250 credits. Unused credits do not carry over to the next month. Clients can select AI-generated background options as paid upgrades inside the gallery ordering flow. Each swap uses one credit and helps turn standard portraits into premium add-on revenue.",
             },
           },
           {

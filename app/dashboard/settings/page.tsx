@@ -1010,7 +1010,7 @@ export default function SettingsPage() {
       : "Pending";
   const displayIncludedCredits = isPlatformAdmin
     ? "Owner access included"
-    : "Sold separately — purchase credit packs below";
+    : "Sold separately — purchase credit packs below. Unused credits do not carry over to the next month.";
   const showSubscriptionLockedWarning =
     !isPlatformAdmin && !subscriptionIsActive && !subscriptionInTrial;
   const showTrialInfo = !isPlatformAdmin && subscriptionInTrial;
@@ -1772,7 +1772,7 @@ export default function SettingsPage() {
             </div>
 
             <div style={{ marginBottom: 16, fontSize: 13, color: "#64748b", lineHeight: 1.7, padding: "12px 14px", background: "#f8fafc", borderRadius: 14, border: "1px solid #e2e8f0" }}>
-              Credits reset every billing cycle. Unused credits do not roll over.
+              Credits reset every billing cycle. Unused credits do not carry over to the next month.
             </div>
 
             <div style={{ marginBottom: 16, fontSize: 13, color: "#475569", lineHeight: 1.7, padding: "12px 14px", background: "#f1f5f9", borderRadius: 14, border: "1px solid #e2e8f0" }}>
@@ -1807,6 +1807,9 @@ export default function SettingsPage() {
                       </div>
                       <div style={{ marginTop: 2, color: "#94a3b8", fontSize: 12 }}>
                         Approx. {Math.floor(pack.credits / 4)} Premium Cloud removals
+                      </div>
+                      <div style={{ marginTop: 4, color: "#94a3b8", fontSize: 12 }}>
+                        Unused credits do not carry over to the next month.
                       </div>
                     </div>
                     <button

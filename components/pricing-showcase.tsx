@@ -319,9 +319,9 @@ const comparisonRows: ComparisonRow[] = [
   {
     label: "Background Removal Credits",
     values: {
-      starter: { label: "Sold separately", note: "Purchase monthly credit packs as needed" },
-      core: { label: "Sold separately", note: "Purchase monthly credit packs as needed" },
-      studio: { label: "Sold separately", note: "Purchase monthly credit packs as needed" },
+      starter: { label: "Sold separately", note: "Purchase monthly credit packs as needed. Unused credits do not carry over to the next month." },
+      core: { label: "Sold separately", note: "Purchase monthly credit packs as needed. Unused credits do not carry over to the next month." },
+      studio: { label: "Sold separately", note: "Purchase monthly credit packs as needed. Unused credits do not carry over to the next month." },
     },
   },
   {

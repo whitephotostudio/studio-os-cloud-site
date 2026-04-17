@@ -147,6 +147,12 @@ function humanPlan(code: string | null, interval: string | null) {
   return `${label} / ${interval === "year" ? "yr" : "mo"}`;
 }
 
+function humanBillingCadence(interval: string | null | undefined) {
+  if (interval === "year") return "Annual subscription";
+  if (interval === "month") return "Monthly subscription";
+  return "Subscription";
+}
+
 function humanStatus(status: string | null | undefined) {
   if (!status) return "Inactive";
   const s = status.toLowerCase();
@@ -500,10 +506,11 @@ export default function MembershipPage() {
             <ArrowLeft size={14} /> Back to Settings
           </Link>
           <h1 style={{ fontSize: 40, fontWeight: 900, color: textPrimary, lineHeight: 1.1 }}>
-            Membership
+            Membership & Billing
           </h1>
           <p style={{ marginTop: 10, fontSize: 16, color: textMuted, lineHeight: 1.6, maxWidth: 700 }}>
-            Your plan, photography keys, background credits, and billing history — all in one place.
+            Manage your Studio OS subscription, billing cadence, photography keys, background
+            credits, and invoice history in one place.
           </p>
         </div>
 
@@ -555,10 +562,38 @@ export default function MembershipPage() {
                     <Shield size={22} color="#4f46e5" />
                   </div>
                   <div>
-                    <div style={labelStyle}>Your Plan</div>
+                    <div style={labelStyle}>Current Subscription</div>
                     <div style={headingStyle}>{humanPlan(data.subscriptionPlanCode, data.subscriptionBillingInterval)}</div>
+                    <div
+                      style={{
+                        marginTop: 8,
+                        display: "inline-flex",
+                        alignItems: "center",
+                        padding: "5px 10px",
+                        borderRadius: 999,
+                        fontSize: 11,
+                        fontWeight: 800,
+                        letterSpacing: "0.06em",
+                        textTransform: "uppercase",
+                        background: data.isPlatformAdmin ? "#fef3c7" : "#eef2ff",
+                        color: data.isPlatformAdmin ? "#92400e" : "#4338ca",
+                      }}
+                    >
+                      {data.isPlatformAdmin
+                        ? "Owner account"
+                        : data.trialActive && !data.subscriptionPlanCode
+                          ? "Free trial"
+                          : humanBillingCadence(data.subscriptionBillingInterval)}
+                    </div>
                   </div>
                 </div>
+
+                {!data.isPlatformAdmin && data.subscriptionPlanCode ? (
+                  <div style={rowStyle}>
+                    <span style={rowLabelStyle}>Billing cadence</span>
+                    <span style={{ fontWeight: 700 }}>{humanBillingCadence(data.subscriptionBillingInterval)}</span>
+                  </div>
+                ) : null}
 
                 <div style={rowStyle}>
                   <span style={rowLabelStyle}>Status</span>
@@ -595,7 +630,9 @@ export default function MembershipPage() {
 
                 {data.subscriptionCurrentPeriodEnd && !data.isPlatformAdmin ? (
                   <div style={rowStyle}>
-                    <span style={rowLabelStyle}>Current period ends</span>
+                    <span style={rowLabelStyle}>
+                      {data.subscriptionIsActive ? "Next billing date" : "Current period ends"}
+                    </span>
                     <span>{formatDate(data.subscriptionCurrentPeriodEnd)}</span>
                   </div>
                 ) : null}
@@ -797,6 +834,9 @@ export default function MembershipPage() {
                   <div style={{ fontWeight: 700, marginBottom: 6, color: textPrimary }}>Credit Usage Rates</div>
                   <div>Background Removal (Local) — 1 credit</div>
                   <div>Background Removal (Premium Cloud) — 4 credits</div>
+                  <div style={{ marginTop: 6, fontSize: 12, color: textMuted }}>
+                    Purchased credits do not carry over to the next month.
+                  </div>
                 </div>
 
                 {!data.isPlatformAdmin ? (
@@ -818,6 +858,9 @@ export default function MembershipPage() {
                     >
                       <CreditCard size={15} /> Buy more credits
                     </Link>
+                    <div style={{ marginTop: 8, fontSize: 12, color: textMuted }}>
+                      Unused purchased credits do not carry over to the next month.
+                    </div>
                   </div>
                 ) : null}
               </div>
@@ -832,7 +875,7 @@ export default function MembershipPage() {
                   </div>
                   <div>
                     <div style={labelStyle}>Billing History</div>
-                    <div style={headingStyle}>Invoices</div>
+                    <div style={headingStyle}>Subscription Invoices</div>
                   </div>
                 </div>
 
