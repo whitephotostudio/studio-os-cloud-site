@@ -111,10 +111,14 @@ export async function GET(
     }));
 
     return {
-      id: v.id,
-      email: v.viewer_email,
-      firstVisit: v.created_at,
-      lastVisit: v.last_opened_at,
+      id: (v.id as string) ?? "",
+      // ✅ Coerce to string up front. `v` is typed Record<string, unknown>
+      // so without this the downstream `.toLowerCase()` calls below fail
+      // TypeScript compilation on Vercel ("Property 'toLowerCase' does not
+      // exist on type '{}'").
+      email: typeof v.viewer_email === "string" ? v.viewer_email : "",
+      firstVisit: typeof v.created_at === "string" ? v.created_at : "",
+      lastVisit: typeof v.last_opened_at === "string" ? v.last_opened_at : "",
       orders: visitorOrders,
       downloads: visitorDownloads,
       orderCount: visitorOrders.length,
