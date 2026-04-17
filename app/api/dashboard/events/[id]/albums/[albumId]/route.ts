@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createDashboardServiceClient, resolveDashboardAuth } from "@/lib/dashboard-auth";
 import { buildStoredMediaUrls } from "@/lib/storage-images";
-import { r2DeleteWithVariants } from "@/lib/r2";
+import { r2DeleteWithVariantsBestEffort } from "@/lib/r2";
 
 export const dynamic = "force-dynamic";
 
@@ -367,7 +367,7 @@ export async function DELETE(
     );
 
     if (storagePaths.length) {
-      await r2DeleteWithVariants(storagePaths);
+      await r2DeleteWithVariantsBestEffort(storagePaths);
     }
 
     const { error: deleteError } = await service

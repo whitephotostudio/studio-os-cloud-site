@@ -80,6 +80,7 @@ export default function ProjectAlbumPage() {
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [loadError, setLoadError] = useState("");
   const [project, setProject] = useState<ProjectRow | null>(null);
   const [album, setAlbum] = useState<CollectionRow | null>(null);
   const [media, setMedia] = useState<MediaRow[]>([]);
@@ -107,7 +108,7 @@ export default function ProjectAlbumPage() {
 
     async function load() {
       setLoading(true);
-      setError("");
+      setLoadError("");
 
       try {
         const response = await fetch(
@@ -147,7 +148,7 @@ export default function ProjectAlbumPage() {
         }
       } catch (err) {
         if (!cancelled) {
-          setError(err instanceof Error ? err.message : "Failed to load album.");
+          setLoadError(err instanceof Error ? err.message : "Failed to load album.");
           setProject(null);
           setAlbum(null);
           setMedia([]);
@@ -490,6 +491,7 @@ export default function ProjectAlbumPage() {
   }
 
   async function renamePhoto(item: MediaRow) {
+    setError("");
     setOpenPhotoMenuId(null);
     const currentName = clean(item.filename) || "Photo";
     const nextName = typeof window !== "undefined" ? window.prompt("Rename photo", currentName) : null;
@@ -513,6 +515,7 @@ export default function ProjectAlbumPage() {
     const confirmed = typeof window !== "undefined" ? window.confirm(ids.length === 1 ? "Delete this photo?" : `Delete ${ids.length} selected photos?`) : false;
     if (!confirmed) return;
 
+    setError("");
     setOpenPhotoMenuId((prev) => (prev && ids.includes(prev) ? null : prev));
     setBusyPhotoIds((prev) => [...new Set([...prev, ...ids])]);
     try {
@@ -589,12 +592,12 @@ export default function ProjectAlbumPage() {
     );
   }
 
-  if (error || !project || !album) {
+  if (!project || !album) {
     return (
       <div style={{ minHeight: "100vh", display: "grid", placeItems: "center", background: "#faf7f7", padding: 24 }}>
         <div style={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 18, padding: 28, width: "100%", maxWidth: 420, textAlign: "center" }}>
-          <h1 style={{ margin: 0, fontSize: 28, color: "#111827" }}>{project && album ? "Upload failed" : "Album not found"}</h1>
-          <p style={{ color: "#6b7280", margin: "10px 0 18px" }}>{error || "Failed to load album."}</p>
+          <h1 style={{ margin: 0, fontSize: 28, color: "#111827" }}>{loadError ? "Album unavailable" : "Album not found"}</h1>
+          <p style={{ color: "#6b7280", margin: "10px 0 18px" }}>{loadError || "Failed to load album."}</p>
           <Link href={`/dashboard/projects/${projectId}`} style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", background: "#111827", color: "#fff", borderRadius: 999, padding: "12px 18px", textDecoration: "none", fontWeight: 800 }}>
             Back to Event
           </Link>

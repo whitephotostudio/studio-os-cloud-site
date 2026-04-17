@@ -14,6 +14,7 @@ function env(name: string) {
 }
 
 let _client: S3Client | null = null;
+let _missingConfigWarned = false;
 
 /**
  * Returns a singleton S3-compatible client configured for Cloudflare R2.
@@ -31,6 +32,20 @@ export function getR2Client() {
     });
   }
   return _client;
+}
+
+export function hasR2Config() {
+  return Boolean(
+    process.env.R2_ACCOUNT_ID &&
+      process.env.R2_ACCESS_KEY_ID &&
+      process.env.R2_SECRET_ACCESS_KEY,
+  );
+}
+
+function warnMissingR2ConfigOnce() {
+  if (_missingConfigWarned) return;
+  _missingConfigWarned = true;
+  console.warn("R2 cleanup skipped because R2 env vars are missing.");
 }
 
 export const R2_BUCKET = process.env.R2_BUCKET_NAME || "whitephoto-media";
@@ -212,6 +227,21 @@ export async function r2DeleteWithVariants(keys: string[]) {
   }
 
   return totalDeleted;
+}
+
+export async function r2DeleteWithVariantsBestEffort(keys: string[]) {
+  if (!keys.length) return 0;
+  if (!hasR2Config()) {
+    warnMissingR2ConfigOnce();
+    return 0;
+  }
+
+  try {
+    return await r2DeleteWithVariants(keys);
+  } catch (error) {
+    console.warn("Failed to delete R2 files with variants:", error);
+    return 0;
+  }
 }
 
 export async function listR2FolderImages(prefix: string): Promise<R2FolderImage[]> {
