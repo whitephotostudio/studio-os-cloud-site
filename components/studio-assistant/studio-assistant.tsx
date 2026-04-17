@@ -39,6 +39,103 @@ import { createClient } from "@/lib/supabase/client";
 const BORDER = "#e5e7eb";
 const TEXT_MUTED = "#667085";
 
+/* -------------------------------------------------------------------------- */
+/*  Find-result navigation                                                    */
+/* -------------------------------------------------------------------------- */
+
+type FindNavigation = {
+  /** Optional URL to navigate to (single, unambiguous match only). */
+  href?: string;
+  /** Override for the spoken acknowledgement. */
+  spokenMessage?: string;
+  /** Override for the message displayed in the result panel. */
+  panelMessage?: string;
+};
+
+function asResultArray(data: unknown): Array<Record<string, unknown>> {
+  if (!data || typeof data !== "object") return [];
+  const results = (data as Record<string, unknown>).results;
+  return Array.isArray(results) ? (results as Array<Record<string, unknown>>) : [];
+}
+
+function schoolDisplayName(row: Record<string, unknown>): string {
+  const name = row.school_name;
+  return typeof name === "string" && name.trim() ? name.trim() : "this school";
+}
+
+function studentDisplayName(row: Record<string, unknown>): string {
+  const first = typeof row.first_name === "string" ? row.first_name.trim() : "";
+  const last = typeof row.last_name === "string" ? row.last_name.trim() : "";
+  const full = [first, last].filter(Boolean).join(" ");
+  return full || "this student";
+}
+
+/**
+ * Decide whether a find result should auto-open a page and what to say out
+ * loud. Single match → navigate. 2–3 matches → read the names aloud so the
+ * user can pick verbally. Larger sets → return null and let the caller use
+ * the default "Found N matching" voice line.
+ */
+function resolveFindNavigation(
+  intent: string | null,
+  data: unknown,
+): FindNavigation | null {
+  if (intent !== "find_school" && intent !== "find_student") return null;
+  const rows = asResultArray(data);
+  if (!rows.length) return null;
+
+  if (intent === "find_school") {
+    if (rows.length === 1) {
+      const row = rows[0];
+      const name = schoolDisplayName(row);
+      const id = typeof row.id === "string" ? row.id : null;
+      if (!id) return null;
+      return {
+        href: `/dashboard/projects/schools/${id}`,
+        spokenMessage: `Opening ${name}.`,
+        panelMessage: `Opening ${name}…`,
+      };
+    }
+    if (rows.length <= 3) {
+      const names = rows.map(schoolDisplayName);
+      const last = names.pop() as string;
+      const phrase = names.length ? `${names.join(", ")} and ${last}` : last;
+      return {
+        spokenMessage: `I found ${rows.length} schools: ${phrase}. Which one?`,
+      };
+    }
+    return null;
+  }
+
+  // find_student — students live inside schools, so we open the school page.
+  if (rows.length === 1) {
+    const row = rows[0];
+    const name = studentDisplayName(row);
+    const schoolId = typeof row.school_id === "string" ? row.school_id : null;
+    if (!schoolId) {
+      return { spokenMessage: `Found ${name}.` };
+    }
+    const school =
+      typeof row.school_name === "string" && row.school_name.trim()
+        ? ` at ${row.school_name.trim()}`
+        : "";
+    return {
+      href: `/dashboard/projects/schools/${schoolId}`,
+      spokenMessage: `Opening ${name}${school}.`,
+      panelMessage: `Opening ${name}${school}…`,
+    };
+  }
+  if (rows.length <= 3) {
+    const names = rows.map(studentDisplayName);
+    const last = names.pop() as string;
+    const phrase = names.length ? `${names.join(", ")} and ${last}` : last;
+    return {
+      spokenMessage: `I found ${rows.length} students: ${phrase}. Which one?`,
+    };
+  }
+  return null;
+}
+
 export type StudioAssistantProps = {
   /** Optional greeting text spoken/shown when the assistant first opens. */
   greetingName?: string | null;
@@ -352,12 +449,31 @@ export function StudioAssistant({ greetingName }: StudioAssistantProps) {
               memoryRef.current = nextMemory;
               saveAssistantMemory(nextMemory);
 
+              // Auto-navigate when a find returns exactly one obvious match.
+              // For 2–3 matches, read the names aloud so the user can choose
+              // without scanning the panel. Larger result sets fall through
+              // to the default "Found N matching" message + clickable cards.
+              const navigation = resolveFindNavigation(p.intent, json.data);
+              const spokenMessage =
+                navigation?.spokenMessage ??
+                shortSpokenAck(p.intent, json.message ?? "Done.");
+
               if (settings.spokenAckEnabled) {
-                void smartSpeak(shortSpokenAck(p.intent, json.message ?? "Done."));
+                void smartSpeak(spokenMessage);
               }
+
+              const navHref = navigation?.href;
+              if (navHref) {
+                // Small delay so the spoken "Opening …" has a chance to start
+                // before the page transition cuts the audio off.
+                setTimeout(() => {
+                  window.location.assign(navHref);
+                }, 600);
+              }
+
               return {
                 ok: true,
-                message: json.message ?? "Action completed.",
+                message: navigation?.panelMessage ?? json.message ?? "Action completed.",
                 data: json.data,
               };
             }
