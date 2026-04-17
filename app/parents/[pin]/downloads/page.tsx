@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
-import { AlertCircle, ArrowLeft, Clock3, Download, FileArchive } from "lucide-react";
+import { AlertCircle, ArrowLeft, CheckCircle2, Clock3, Download, FileArchive, LoaderCircle } from "lucide-react";
 import {
   eventGalleryDownloadManifestStorageKey,
   type EventGalleryDownloadManifest,
@@ -35,6 +35,22 @@ function formatTime(value: string) {
   });
 }
 
+function triggerBatchDownload(url: string, fileName: string) {
+  if (typeof document === "undefined") return;
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = fileName;
+  anchor.rel = "noopener";
+  anchor.style.display = "none";
+  document.body.appendChild(anchor);
+  anchor.click();
+  document.body.removeChild(anchor);
+}
+
+function wait(ms: number) {
+  return new Promise<void>((resolve) => window.setTimeout(resolve, ms));
+}
+
 export default function ParentGalleryDownloadsPage() {
   const params = useParams();
   const router = useRouter();
@@ -44,6 +60,9 @@ export default function ParentGalleryDownloadsPage() {
 
   const [manifest, setManifest] = useState<EventGalleryDownloadManifest | null>(null);
   const [status, setStatus] = useState<"loading" | "ready" | "missing" | "expired">("loading");
+  const [downloadingAll, setDownloadingAll] = useState(false);
+  const [downloadedBatchCount, setDownloadedBatchCount] = useState(0);
+  const [downloadNotice, setDownloadNotice] = useState("");
 
   useEffect(() => {
     const nextManifest = readStoredManifest(manifestId);
@@ -74,6 +93,37 @@ export default function ParentGalleryDownloadsPage() {
       : status === "expired"
         ? "Download Session Expired"
         : "Download Files";
+
+  async function handleDownloadAllBatches() {
+    if (!manifest || downloadingAll) return;
+    setDownloadingAll(true);
+    setDownloadedBatchCount(0);
+    setDownloadNotice("");
+
+    try {
+      for (let index = 0; index < manifest.batches.length; index += 1) {
+        const batch = manifest.batches[index];
+        triggerBatchDownload(
+          `/api/portal/event-download-batch?token=${encodeURIComponent(batch.token)}`,
+          batch.fileName,
+        );
+        setDownloadedBatchCount(index + 1);
+        if (index < manifest.batches.length - 1) {
+          await wait(1400);
+        }
+      }
+
+      setDownloadNotice(
+        manifest.batchCount === 1
+          ? "Your ZIP download has started."
+          : `Started ${manifest.batchCount} ZIP downloads. Your browser may ask you to allow multiple downloads.`,
+      );
+    } catch {
+      setDownloadNotice("Could not start all ZIP downloads automatically.");
+    } finally {
+      setDownloadingAll(false);
+    }
+  }
 
   return (
     <main
@@ -236,6 +286,72 @@ export default function ParentGalleryDownloadsPage() {
                     Ready until {formatTime(manifest.expiresAt)}
                   </div>
                 </div>
+
+                <div
+                  style={{
+                    display: "flex",
+                    flexWrap: "wrap",
+                    alignItems: "center",
+                    gap: 12,
+                  }}
+                >
+                  <button
+                    type="button"
+                    onClick={() => void handleDownloadAllBatches()}
+                    disabled={downloadingAll}
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 10,
+                      border: "none",
+                      borderRadius: 999,
+                      background: "#111111",
+                      color: "#fff",
+                      padding: "14px 20px",
+                      fontSize: 14,
+                      fontWeight: 800,
+                      cursor: downloadingAll ? "default" : "pointer",
+                      opacity: downloadingAll ? 0.8 : 1,
+                    }}
+                  >
+                    {downloadingAll ? <LoaderCircle size={16} /> : <Download size={16} />}
+                    {downloadingAll
+                      ? `Starting ZIP ${Math.max(1, downloadedBatchCount)} of ${manifest.batchCount}`
+                      : manifest.batchCount === 1
+                        ? "Download ZIP File"
+                        : `Download All ${manifest.batchCount} ZIP Files`}
+                  </button>
+
+                  <div
+                    style={{
+                      fontSize: 13,
+                      lineHeight: 1.5,
+                      color: "#655d56",
+                      maxWidth: 430,
+                    }}
+                  >
+                    One click will start each ZIP automatically. For very large galleries, your browser may ask for permission to allow multiple downloads.
+                  </div>
+                </div>
+
+                {downloadNotice ? (
+                  <div
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 8,
+                      borderRadius: 16,
+                      background: "#eef7ee",
+                      color: "#245c2f",
+                      padding: "12px 14px",
+                      fontSize: 14,
+                      fontWeight: 600,
+                    }}
+                  >
+                    <CheckCircle2 size={16} />
+                    {downloadNotice}
+                  </div>
+                ) : null}
 
                 {manifest.photoCount < manifest.requestedPhotoCount ? (
                   <div

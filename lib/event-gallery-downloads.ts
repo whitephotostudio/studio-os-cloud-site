@@ -41,11 +41,9 @@ export function galleryZipBatchSize(
 ) {
   const baseSize =
     resolution === "original"
-      ? 32
-      : resolution === "large"
-        ? 48
-        : 72;
-  return applyWatermark ? Math.max(18, baseSize - 10) : baseSize;
+      ? 72
+      : 100;
+  return applyWatermark ? Math.max(40, baseSize - 16) : baseSize;
 }
 
 export function splitIntoBatches<T>(values: T[], batchSize: number) {
