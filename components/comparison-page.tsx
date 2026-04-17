@@ -82,7 +82,7 @@ export function ComparisonPage({
       {/* Feature Comparison Table */}
       <div className="pb-12">
         <h2 className="text-2xl font-semibold tracking-tight text-neutral-950">
-          Feature-by-Feature Comparison
+          Core Capabilities
         </h2>
         <div className="mt-6 overflow-hidden rounded-2xl border border-neutral-200">
           {/* Header */}
@@ -124,7 +124,7 @@ export function ComparisonPage({
       <div className="grid gap-6 pb-12 md:grid-cols-2">
         <div className="rounded-2xl border border-neutral-200 bg-neutral-50 p-6">
           <h3 className="text-lg font-semibold text-neutral-950">
-            Where Studio OS Wins
+            Where Studio OS Goes Deeper
           </h3>
           <ul className="mt-4 space-y-3">
             {studioOsAdvantages.map((adv) => (
@@ -138,7 +138,7 @@ export function ComparisonPage({
 
         <div className="rounded-2xl border border-neutral-200 bg-white p-6">
           <h3 className="text-lg font-semibold text-neutral-950">
-            Where {competitorName} Wins
+            Where {competitorName} Is Stronger
           </h3>
           <ul className="mt-4 space-y-3">
             {competitorAdvantages.map((adv) => (
@@ -154,7 +154,7 @@ export function ComparisonPage({
       {/* Who Should Choose What */}
       <div className="pb-12">
         <h2 className="text-2xl font-semibold tracking-tight text-neutral-950">
-          Who Is Each Platform Best For?
+          Best Fit by Photographer Type
         </h2>
         <p className="mt-4 text-base leading-8 text-neutral-700">
           {targetAudience}
@@ -180,7 +180,8 @@ export function ComparisonPage({
             Ready to Try Studio OS Cloud?
           </h2>
           <p className="mx-auto mt-2 max-w-lg text-sm leading-7 text-white/70">
-            Start your free trial and see the full capture-to-delivery workflow in action. No credit card required.
+            See how premium galleries, connected workflow, and delivery fit
+            together in one system. No credit card required.
           </p>
           <div className="mt-6 flex flex-col items-center gap-3 sm:flex-row sm:justify-center">
             <Link

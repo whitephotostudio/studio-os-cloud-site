@@ -5,42 +5,42 @@ type ComparisonValue = "check" | "x" | "limited";
 
 const comparisonRows = [
   {
-    label: "Online Galleries",
+    label: "Premium Online Galleries",
     typical: "check" as const,
     studioOs: "check" as const,
   },
   {
-    label: "Client Ordering",
+    label: "Client Ordering and Downloads",
     typical: "check" as const,
     studioOs: "check" as const,
   },
   {
-    label: "Desktop Workflow",
-    typical: "x" as const,
-    studioOs: "check" as const,
-  },
-  {
-    label: "Multi-Photographer Support",
-    typical: "x" as const,
-    studioOs: "check" as const,
-  },
-  {
-    label: "School Roster System",
-    typical: "x" as const,
-    studioOs: "check" as const,
-  },
-  {
-    label: "AI Background Upsells",
+    label: "Projects and Job Structure",
     typical: "limited" as const,
     studioOs: "check" as const,
   },
   {
-    label: "Order Review Before Print",
+    label: "Desktop + Cloud Workflow",
     typical: "x" as const,
     studioOs: "check" as const,
   },
   {
-    label: "Full Capture to Delivery Workflow",
+    label: "Order Review Before Print",
+    typical: "limited" as const,
+    studioOs: "check" as const,
+  },
+  {
+    label: "Multi-Photographer or Structured Jobs",
+    typical: "limited" as const,
+    studioOs: "check" as const,
+  },
+  {
+    label: "AI Upsells Inside the Workflow",
+    typical: "limited" as const,
+    studioOs: "check" as const,
+  },
+  {
+    label: "Connected Capture-to-Delivery Workflow",
     typical: "x" as const,
     studioOs: "check" as const,
   },
@@ -92,11 +92,11 @@ export function PlatformComparisonSection() {
               Comparison
             </div>
             <h2 className="mt-3 text-3xl font-semibold tracking-tight text-neutral-950 sm:text-4xl">
-              More Than a Gallery Platform
+              Why Photographers Outgrow Gallery-Only Platforms
             </h2>
             <p className="mt-4 text-base leading-8 text-neutral-600">
-              Most photography platforms focus on delivery. Studio OS goes
-              further by connecting your entire workflow.
+              Beautiful galleries are essential. The difference is whether your
+              platform also handles the work before and after the gallery.
             </p>
           </div>
 
@@ -107,10 +107,10 @@ export function PlatformComparisonSection() {
                   Workflow capability
                 </div>
                 <div className="px-6 py-4 text-center text-sm font-semibold uppercase tracking-[0.16em] text-neutral-500">
-                  Typical Platforms
+                  Gallery-Only Stack
                 </div>
                 <div className="bg-[linear-gradient(180deg,#171717_0%,#101010_100%)] px-6 py-4 text-center text-sm font-semibold uppercase tracking-[0.16em] text-white">
-                  Studio OS
+                  Studio OS Cloud
                 </div>
               </div>
 
@@ -148,7 +148,7 @@ export function PlatformComparisonSection() {
                   <div className="mt-4 grid gap-3 sm:grid-cols-2">
                     <div className="rounded-2xl border border-neutral-200 bg-neutral-50 px-4 py-3">
                       <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-neutral-500">
-                        Typical Platforms
+                        Gallery-Only Stack
                       </div>
                       <div className="mt-3">
                         <ComparisonBadge value={row.typical} variant="typical" />
@@ -156,7 +156,7 @@ export function PlatformComparisonSection() {
                     </div>
                     <div className="rounded-2xl border border-[#f4c7c9] bg-[#fff8f8] px-4 py-3">
                       <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#8a4a53]">
-                        Studio OS
+                        Studio OS Cloud
                       </div>
                       <div className="mt-3">
                         <ComparisonBadge value={row.studioOs} variant="studio" />
@@ -170,8 +170,8 @@ export function PlatformComparisonSection() {
 
           <div className="mt-8 rounded-[24px] border border-neutral-200 bg-[linear-gradient(180deg,#fcfbf8_0%,#f6f1ea_100%)] px-6 py-5 shadow-[0_12px_30px_rgba(20,20,20,0.04)]">
             <p className="text-lg font-medium leading-8 text-neutral-950 sm:text-xl">
-              If you&apos;re only using a gallery platform, you&apos;re only
-              using part of what&apos;s possible.
+              If presentation matters as much as workflow, you eventually need
+              more than a gallery alone.
             </p>
           </div>
 

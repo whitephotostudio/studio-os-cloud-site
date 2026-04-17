@@ -18,7 +18,7 @@ function JsonLd({ data }: JsonLdProps) {
   );
 }
 
-/** Organization schema — used in the root layout (every page) */
+/** Organization schema - used in the root layout (every page) */
 export function OrganizationJsonLd() {
   return (
     <JsonLd
@@ -29,7 +29,7 @@ export function OrganizationJsonLd() {
         url: "https://studiooscloud.com",
         logo: "https://studiooscloud.com/studio_os_logo.png",
         description:
-          "Professional photography workflow platform connecting capture, organization, galleries, ordering, and delivery in one system.",
+          "Premium photography gallery and workflow platform connecting Projects, client galleries, ordering, and delivery in one system.",
         sameAs: [],
         contactPoint: {
           "@type": "ContactPoint",
@@ -41,7 +41,7 @@ export function OrganizationJsonLd() {
   );
 }
 
-/** SoftwareApplication schema — used on the homepage and Studio OS page */
+/** SoftwareApplication schema - used on the homepage and Studio OS page */
 export function SoftwareApplicationJsonLd() {
   return (
     <JsonLd
@@ -52,7 +52,7 @@ export function SoftwareApplicationJsonLd() {
         applicationCategory: "PhotographyApplication",
         operatingSystem: "Web, macOS, Windows",
         description:
-          "End-to-end photography workflow software for school, event, and high-volume photographers. Includes camera tethering, roster management, online galleries, client ordering, AI backgrounds, and print fulfillment.",
+          "Premium photography gallery and workflow platform for portrait, wedding, event, school, sports, and volume photographers. Includes online galleries, client ordering, digital delivery, Projects, connected desktop and cloud workflow, AI background tools, and production control.",
         url: "https://studiooscloud.com",
         offers: [
           {
@@ -62,7 +62,7 @@ export function SoftwareApplicationJsonLd() {
             priceCurrency: "USD",
             priceValidUntil: "2027-12-31",
             description:
-              "Web gallery access for online photo viewing, delivery, and ordering.",
+              "Premium online galleries, client ordering, digital delivery, and private client access in the cloud.",
             url: "https://studiooscloud.com/pricing",
           },
           {
@@ -72,7 +72,7 @@ export function SoftwareApplicationJsonLd() {
             priceCurrency: "USD",
             priceValidUntil: "2027-12-31",
             description:
-              "Desktop app with camera tethering, school workflow tools, AI backgrounds, and cloud galleries.",
+              "Connected desktop and cloud workflow with capture control, Projects, AI background tools, and online galleries.",
             url: "https://studiooscloud.com/pricing",
           },
           {
@@ -82,20 +82,22 @@ export function SoftwareApplicationJsonLd() {
             priceCurrency: "USD",
             priceValidUntil: "2027-12-31",
             description:
-              "Multi-photographer studio plan with 2 photography keys, advanced school tools, and extra key add-ons.",
+              "Multi-photographer plan with advanced structured workflow tools for studios and high-volume teams.",
             url: "https://studiooscloud.com/pricing",
           },
         ],
         featureList: [
-          "Direct camera tethering",
-          "School roster management",
           "Online photo galleries",
           "Client ordering system",
-          "AI background replacement",
-          "Multi-photographer capture support",
+          "Digital delivery",
+          "Projects and job organization",
+          "Connected desktop and cloud workflow",
+          "Direct camera tethering",
           "Order review before print",
+          "AI background replacement",
+          "School roster management",
+          "Multi-photographer capture support",
           "Automated email campaigns",
-          "Digital download delivery",
           "Gallery analytics",
           "Sports team photo organization",
           "Graduation ceremony workflow",
@@ -109,7 +111,7 @@ export function SoftwareApplicationJsonLd() {
   );
 }
 
-/** Product pricing schema — used on the pricing page */
+/** Product pricing schema - used on the pricing page */
 export function PricingJsonLd() {
   return (
     <JsonLd
@@ -174,7 +176,7 @@ export function PricingJsonLd() {
   );
 }
 
-/** FAQ schema — used on the homepage or a dedicated FAQ section */
+/** FAQ schema - used on the homepage or a dedicated FAQ section */
 export function FaqJsonLd() {
   return (
     <JsonLd
@@ -187,7 +189,7 @@ export function FaqJsonLd() {
             name: "What types of photographers is Studio OS designed for?",
             acceptedAnswer: {
               "@type": "Answer",
-              text: "Studio OS is designed for school photographers, event photographers, portrait photographers, and any high-volume photography operation that needs an end-to-end workflow from capture to delivery.",
+              text: "Studio OS is designed for photographers who want premium galleries and stronger workflow control. It supports portrait, wedding, event, school, sports, and high-volume photography, and is especially strong when jobs need more structure behind the scenes.",
             },
           },
           {
@@ -195,7 +197,7 @@ export function FaqJsonLd() {
             name: "How is Studio OS different from ShootProof or Pixieset?",
             acceptedAnswer: {
               "@type": "Answer",
-              text: "Studio OS includes a desktop capture app with camera tethering, school roster management, AI background replacement, and multi-photographer support — features that gallery-only platforms like ShootProof and Pixieset don't offer. It covers the full workflow from capture to delivery, not just the gallery and ordering part.",
+              text: "Platforms like ShootProof and Pixieset are strong for gallery delivery and client presentation. Studio OS also treats galleries as a core product, but goes deeper by connecting Projects, production control, desktop and cloud workflow, order review, and structured job organization in one system.",
             },
           },
           {
@@ -219,7 +221,7 @@ export function FaqJsonLd() {
             name: "How does AI background replacement work?",
             acceptedAnswer: {
               "@type": "Answer",
-              text: "Photographers purchase credit packs starting at $15 for 250 credits. When parents view a gallery, they can select AI-generated background options as paid upgrades. Each swap uses one credit, turning standard portraits into premium upsell opportunities. No other school or volume photography platform offers this natively.",
+              text: "Photographers purchase credit packs starting at $15 for 250 credits. Clients can select AI-generated background options as paid upgrades inside the gallery ordering flow. Each swap uses one credit and helps turn standard portraits into premium add-on revenue.",
             },
           },
           {
@@ -227,7 +229,7 @@ export function FaqJsonLd() {
             name: "How is Studio OS different from GotPhoto?",
             acceptedAnswer: {
               "@type": "Answer",
-              text: "Both offer school roster management and ordering workflows. However, Studio OS includes a built-in desktop tethering app (GotPhoto requires third-party Smart Shooter), AI background replacement as a revenue stream, and a combined capture-to-delivery experience in one platform.",
+              text: "Both platforms support school ordering and roster-based workflows. Studio OS goes deeper with built-in desktop capture, connected cloud galleries, AI background tools, and one workflow from capture through delivery.",
             },
           },
           {
@@ -260,7 +262,7 @@ export function FaqJsonLd() {
   );
 }
 
-/** WebSite schema with search action — helps Google show a sitelinks search box */
+/** WebSite schema with search action - helps Google show a sitelinks search box */
 export function WebSiteJsonLd() {
   return (
     <JsonLd
@@ -270,7 +272,28 @@ export function WebSiteJsonLd() {
         name: "Studio OS Cloud",
         url: "https://studiooscloud.com",
         description:
-          "Professional photography workflow platform for school, event, and high-volume photographers.",
+          "Premium photography gallery and workflow platform for photographers who need more than a standalone gallery.",
+      }}
+    />
+  );
+}
+
+export function BreadcrumbJsonLd({
+  items,
+}: {
+  items: Array<{ name: string; item: string }>;
+}) {
+  return (
+    <JsonLd
+      data={{
+        "@context": "https://schema.org",
+        "@type": "BreadcrumbList",
+        itemListElement: items.map((entry, index) => ({
+          "@type": "ListItem",
+          position: index + 1,
+          name: entry.name,
+          item: entry.item,
+        })),
       }}
     />
   );

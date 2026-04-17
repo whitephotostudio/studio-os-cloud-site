@@ -2,21 +2,22 @@ import type { Metadata } from "next";
 import Link from "next/link";
 
 import { SiteHeader } from "../../components/site-header";
+import { BreadcrumbJsonLd, SoftwareApplicationJsonLd } from "@/components/json-ld";
 import { StudioPanelShowcase } from "@/components/studio-panel-showcase";
 import { VisualSlot } from "@/components/visual-slot";
 import { studioFeatureAssets } from "@/lib/studio-os-content";
 
 export const metadata: Metadata = {
-  title: "Studio OS App — Desktop Photography Workflow Software",
+  title: "Studio OS App | Desktop Workflow Software Connected to Studio OS Cloud",
   description:
-    "The Studio OS desktop app connects directly to your camera for live tethering, roster-based sorting, AI background replacement, collage creation, and seamless cloud sync. Available for Mac and Windows.",
+    "The Studio OS App gives photographers desktop capture control, Projects, sorting, AI background tools, and live sync to Studio OS Cloud galleries and ordering.",
   alternates: {
     canonical: "https://studiooscloud.com/studio-os",
   },
   openGraph: {
-    title: "Studio OS App — Desktop Photography Workflow Software",
+    title: "Studio OS App | Desktop Workflow Connected to Studio OS Cloud",
     description:
-      "Direct camera tethering, roster management, AI backgrounds, and cloud sync. The desktop app that connects to Studio OS Cloud.",
+      "Desktop capture control, Projects, AI background tools, and live sync to Studio OS Cloud galleries and ordering.",
     url: "https://studiooscloud.com/studio-os",
   },
 };
@@ -89,6 +90,13 @@ export default function StudioOSPage() {
 
   return (
     <div className="min-h-screen bg-white text-neutral-900">
+      <SoftwareApplicationJsonLd />
+      <BreadcrumbJsonLd
+        items={[
+          { name: "Home", item: "https://studiooscloud.com" },
+          { name: "Studio OS App", item: "https://studiooscloud.com/studio-os" },
+        ]}
+      />
       <SiteHeader />
 
       <main
@@ -101,17 +109,17 @@ export default function StudioOSPage() {
         <div className="mx-auto max-w-6xl space-y-10">
           <div className="mx-auto max-w-3xl space-y-5 pb-2 text-center">
             <div className="inline-flex items-center gap-2 rounded-full border border-red-100 bg-red-50 px-4 py-1.5 text-xs font-bold uppercase tracking-widest text-red-500">
-              ✦ Studio OS · Desktop + Mobile
+              ✦ Studio OS App · Desktop + Cloud Workflow
             </div>
             <h1 className="text-5xl font-black leading-[1.05] tracking-tight text-neutral-950 sm:text-[62px]">
-              Run your entire workflow.
+              Run the workflow
               <br />
-              <span className="text-red-500">One desktop app.</span>
+              <span className="text-red-500">behind every gallery.</span>
             </h1>
             <p className="mx-auto max-w-xl text-lg leading-relaxed text-neutral-500">
-              Capture faster, stay organized, and prepare every order with
-              confidence — all in one connected system built for real
-              photographers.
+              Studio OS App gives photographers a fast desktop workspace for
+              capture, Projects, sorting, production control, and live sync to
+              Studio OS Cloud galleries and ordering.
             </p>
             <div className="flex items-center justify-center gap-3 pt-1">
               <Link
@@ -160,7 +168,7 @@ export default function StudioOSPage() {
                   </h2>
                   <p className="max-w-xs text-sm text-neutral-400">
                     Offer clean, professional backdrop upgrades without slowing
-                    down your workflow. No green screen required — every upgrade
+                    down your workflow. No green screen required, and every upgrade
                     becomes revenue you keep.
                   </p>
                 </div>
@@ -248,7 +256,7 @@ export default function StudioOSPage() {
             >
               <div className="space-y-2">
                 <div className="text-[10px] font-bold uppercase tracking-widest text-red-200">
-                  School Day · Sports · Events · Any Shoot
+                  Portraits · Schools · Events · Volume
                 </div>
                 <h2 className="text-3xl font-black leading-tight tracking-tight text-white">
                   Capture without
@@ -256,9 +264,10 @@ export default function StudioOSPage() {
                   slowing down.
                 </h2>
                 <p className="text-sm leading-relaxed text-red-100">
-                  Keep photo day moving with a fast, structured workflow. Scan
-                  before you shoot, confirm who&apos;s in frame, and keep every
-                  session organized — no mix-ups, no corrections later.
+                  Keep fast, structured workflows moving. Scan before you shoot
+                  when the job needs it, confirm who&apos;s in frame, and keep
+                  every session organized without fixing avoidable mistakes
+                  later.
                 </p>
               </div>
 
@@ -332,7 +341,7 @@ export default function StudioOSPage() {
                   </h2>
                   <p className="text-sm leading-relaxed text-neutral-500">
                     Stop spending hours building class composites manually.
-                    Studio OS builds them for you — AI handles head sizing and
+                    Studio OS builds them for you. AI handles head sizing and
                     alignment, you add your branding, and each composite gets
                     assigned to the right class automatically with its own
                     pricing.
@@ -395,7 +404,7 @@ export default function StudioOSPage() {
                 </h2>
                 <p className="text-sm leading-relaxed text-neutral-500">
                   Upload your school spreadsheet and Studio OS handles the rest
-                  — student IDs, PINs, and QR codes generated automatically.
+                  with student IDs, PINs, and QR codes generated automatically.
                   <span className="mt-3 block">
                     No extra software needed. What used to take hours takes
                     minutes.
@@ -437,7 +446,7 @@ export default function StudioOSPage() {
                     </h2>
                     <p className="text-sm leading-relaxed text-neutral-500">
                       Every photo matched to the right student automatically.
-                      Review before production — no surprises, no reprints.
+                      Review before production, with no surprises and no reprints.
                     </p>
                   </div>
                   <div className="mt-5 space-y-2">
@@ -493,14 +502,15 @@ export default function StudioOSPage() {
                       Built for every job
                     </div>
                     <h2 className="text-xl font-black leading-snug tracking-tight text-white">
-                      One system.
+                      One connected workflow.
                       <br />
-                      Every shoot type.
+                      Any shoot type.
                     </h2>
                     <p className="text-sm text-neutral-400">
-                      Switch between School and Event mode in one tap. Rosters,
-                      QR codes, composites, and cloud delivery all adapt with
-                      you.
+                      Switch between School and Event mode in one tap. The same
+                      connected workflow can support portraits, sports,
+                      graduations, and other structured jobs without rebuilding
+                      your process.
                     </p>
                   </div>
                   <div className="mt-5 space-y-2">
@@ -559,7 +569,7 @@ export default function StudioOSPage() {
                   </h2>
                   <p className="max-w-sm text-sm leading-relaxed text-neutral-500">
                     Your Studio OS desktop connects directly to online galleries,
-                    parent ordering, and final delivery. Every job syncs live —
+                    parent ordering, and final delivery. Every job syncs live,
                     parents and clients get their own access link without you
                     lifting a finger.
                   </p>
@@ -647,12 +657,12 @@ export default function StudioOSPage() {
               Start running your business.
             </h2>
             <p className="text-sm text-neutral-400">
-              One connected system for every shoot — from the first capture to
-              final delivery.
+              One connected system for every shoot, from the first capture to
+              branded gallery delivery.
             </p>
             <div className="flex items-center justify-center gap-3 pt-2">
               <Link
-                href="/studio-os"
+                href="/sign-up"
                 className="inline-flex items-center gap-2 rounded-2xl bg-red-500 px-8 py-3 text-sm font-bold text-white shadow-lg shadow-red-500/25 transition-colors hover:bg-red-600"
               >
                 Start Free Trial →

@@ -11,16 +11,16 @@ import { SiteFooter } from "../components/site-footer";
 import { SoftwareApplicationJsonLd, FaqJsonLd } from "@/components/json-ld";
 
 export const metadata: Metadata = {
-  title: "Studio OS Cloud — Run Your Photography Business From One Connected System",
+  title: "Studio OS Cloud | Premium Online Galleries and Connected Photography Workflow",
   description:
-    "The only photography platform that connects camera tethering, roster management, online galleries, client ordering, AI backgrounds, and print fulfillment. Built for school, event, and high-volume photographers. Plans from $49/mo.",
+    "Premium online galleries, client ordering, digital delivery, and connected desktop + cloud workflow for photographers. Organize Projects, fulfill orders, and scale from one system.",
   alternates: {
     canonical: "https://studiooscloud.com",
   },
   openGraph: {
-    title: "Studio OS Cloud — Run Your Photography Business From One Connected System",
+    title: "Studio OS Cloud | Premium Online Galleries and Connected Workflow",
     description:
-      "Stop juggling multiple tools. Studio OS connects your entire photography workflow from capture to delivery.",
+      "Great galleries for all photographers. Deeper workflow power for photographers who need more.",
     url: "https://studiooscloud.com",
   },
 };
@@ -47,21 +47,24 @@ export default function HomePage() {
         <Hero />
         <div className="px-4 py-6 sm:px-6 lg:px-8">
           <p className="mx-auto max-w-3xl text-center text-base leading-7 text-neutral-600">
-            Studio OS Cloud is photography workflow software for school, event, and high-volume
-            photographers who need galleries, ordering, rosters, and connected desktop + cloud
-            workflow.
+            Studio OS Cloud is a premium gallery and workflow platform for photographers. Use it
+            for beautiful online galleries, client ordering, and delivery, then go deeper with
+            Projects, production control, and connected desktop + cloud workflow when your business
+            needs more.
           </p>
         </div>
         <SectionTransition>
-          Everything you need to run your photography workflow — in one place.
+          Great galleries are only the beginning. Studio OS starts before the gallery and stays
+          connected after delivery.
         </SectionTransition>
         <UseCaseVisualStrip />
         <SectionTransition>
-          But a smooth workflow is only part of the story.
+          From portraits and weddings to schools, sports, and structured events, the workflow
+          stays organized.
         </SectionTransition>
         <BeyondWorkflowSection />
         <SectionTransition>
-          Here&apos;s where Studio OS goes further than most platforms.
+          That is where Projects, production control, and desktop + cloud workflow start to matter.
         </SectionTransition>
         <PlatformComparisonSection />
         <GalleryBrandingShowcase />

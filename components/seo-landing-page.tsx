@@ -79,7 +79,7 @@ export function SeoLandingPage({
       {/* What Makes Studio OS Different */}
       <div className="pb-12">
         <h2 className="text-2xl font-semibold tracking-tight text-neutral-950">
-          {differentiators.heading ?? "What Makes Studio OS Cloud Different"}
+          {differentiators.heading ?? "Where Studio OS Goes Deeper"}
         </h2>
         <p className="mt-3 text-base leading-8 text-neutral-600">
           {differentiators.description}

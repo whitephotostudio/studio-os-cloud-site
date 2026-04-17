@@ -1,22 +1,35 @@
 import {
   ClipboardCheck,
+  FolderKanban,
+  Images,
   MonitorSmartphone,
-  School,
   Sparkles,
   Users,
 } from "lucide-react";
 
 const featureCards = [
   {
+    title: "Premium Online Galleries",
+    detail:
+      "Deliver branded galleries, client ordering, downloads, and private access as a core part of the platform.",
+    icon: Images,
+  },
+  {
+    title: "Projects That Organize Real Jobs",
+    detail:
+      "Keep albums, access, orders, and delivery tied to the same job instead of scattered across folders and extra tools.",
+    icon: FolderKanban,
+  },
+  {
     title: "Desktop + Cloud Connected Workflow",
     detail:
-      "Run your full production locally while delivering online — fully connected.",
+      "Capture locally, sync to the cloud, and keep the work moving without an export-and-upload gap.",
     icon: MonitorSmartphone,
   },
   {
-    title: "Multi-Photographer Capture",
+    title: "Structured Workflows at Scale",
     detail:
-      "Handle multiple photographers and merge everything into one workflow.",
+      "Stay organized across school, sports, event, and multi-photographer jobs without losing polish for portrait and client delivery.",
     icon: Users,
   },
   {
@@ -26,15 +39,9 @@ const featureCards = [
     icon: Sparkles,
   },
   {
-    title: "Built for School Workflows",
-    detail:
-      "Roster-based system designed for real school photography.",
-    icon: School,
-  },
-  {
     title: "Full Order Control",
     detail:
-      "Review and verify every order before sending to print.",
+      "Review and verify orders before print so fulfillment stays under your control.",
     icon: ClipboardCheck,
   },
 ];
@@ -49,11 +56,12 @@ export function BeyondWorkflowSection() {
               Why it stands apart
             </div>
             <h2 className="mt-3 text-3xl font-semibold tracking-tight text-neutral-950 sm:text-4xl">
-              Go Beyond a Basic Workflow
+              Built for Workflow, Not Just Delivery
             </h2>
             <p className="mt-4 text-base leading-8 text-neutral-600">
-              Even if your current system works, it may be limiting what you
-              can do. Studio OS gives you tools most platforms don&apos;t offer.
+              Studio OS gives photographers premium galleries as a core product,
+              then goes deeper with Projects, production control, and connected
+              desktop + cloud workflow.
             </p>
           </div>
 
@@ -82,9 +90,9 @@ export function BeyondWorkflowSection() {
 
           <div className="mt-8 rounded-[24px] border border-neutral-200 bg-[linear-gradient(180deg,#171717_0%,#0f0f0f_100%)] px-6 py-5 text-white shadow-[0_18px_40px_rgba(20,20,20,0.12)]">
             <p className="text-lg font-medium leading-8 text-white/90 sm:text-xl">
-              Most platforms help you deliver photos.
-              <br className="hidden sm:block" /> Studio OS helps you run your
-              entire operation.
+              Most platforms help you share finished photos.
+              <br className="hidden sm:block" /> Studio OS helps you run the
+              job behind them.
             </p>
           </div>
         </div>

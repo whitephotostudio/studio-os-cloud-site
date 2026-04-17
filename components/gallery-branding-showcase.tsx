@@ -4,23 +4,23 @@ import { CalendarDays, Download, ShieldCheck, ShoppingBag } from "lucide-react";
 const galleryHighlights = [
   {
     icon: CalendarDays,
-    title: "Capture",
-    detail: "Shoot faster and keep every job organized from the start.",
+    title: "Present",
+    detail: "Deliver branded galleries that feel premium for every client.",
   },
   {
     icon: ShieldCheck,
     title: "Organize",
-    detail: "No more folder chaos — everything stays structured automatically.",
+    detail: "Projects, albums, and access stay tied to the same job.",
   },
   {
     icon: ShoppingBag,
     title: "Sell",
-    detail: "Parents and clients order directly through your system.",
+    detail: "Accept prints, packages, and digital orders without extra tools.",
   },
   {
     icon: Download,
     title: "Deliver",
-    detail: "Get images and products out without confusion or delays.",
+    detail: "Move from selection to delivery and fulfillment in one system.",
   },
 ];
 
@@ -43,11 +43,11 @@ export function GalleryBrandingShowcase() {
                 Studio OS Cloud
               </div>
               <h2 className="mt-5 text-4xl font-semibold leading-tight tracking-tight sm:text-5xl">
-                Built for Real Photography Workflows.
+                Premium Online Galleries, Connected to the Rest of the Job.
               </h2>
               <p className="mt-5 text-lg leading-8 text-neutral-600">
-                Studio OS is designed around how photographers actually work —
-                not generic software.
+                Studio OS Cloud treats galleries as a core product, then
+                connects them to capture, Projects, ordering, and delivery.
               </p>
 
               <div className="mt-8 grid gap-4 sm:grid-cols-2">
@@ -77,10 +77,10 @@ export function GalleryBrandingShowcase() {
 
               <div className="mt-8 flex flex-col gap-3 sm:flex-row">
                 <Link
-                  href="/studio-os"
+                  href="/online-photo-gallery-ordering-software"
                   className="inline-flex items-center justify-center gap-2 rounded-2xl bg-[linear-gradient(180deg,#f03a3e_0%,#da262b_46%,#b81c21_100%)] px-5 py-3 font-semibold text-white shadow-[0_16px_34px_rgba(184,28,33,0.22)] transition hover:brightness-[0.99]"
                 >
-                  Explore Studio OS
+                  Explore Online Galleries
                 </Link>
                 <Link
                   href="/parents"
@@ -97,21 +97,21 @@ export function GalleryBrandingShowcase() {
                   One connected system
                 </div>
                 <h3 className="mt-3 text-3xl font-semibold tracking-tight text-white">
-                  Capture, organize, sell, and deliver.
+                  More than a gallery link.
                 </h3>
                 <p className="mt-4 max-w-xl text-base leading-8 text-white/68">
-                  Stop switching between platforms. Studio OS connects your
-                  entire process — from photo day to final delivery.
+                  Give clients a polished gallery experience while keeping the
+                  work around it connected to the same platform.
                 </p>
 
                 <div className="mt-6 grid gap-3 sm:grid-cols-2">
                   {[
-                    "Direct camera tethering",
-                    "Structured jobs and rosters",
-                    "Online galleries and ordering",
-                    "Private links and access",
-                    "Downloads and delivery",
-                    "School, event, and studio workflows",
+                    "Projects, albums, and access control",
+                    "Branded galleries and client ordering",
+                    "Private delivery and digital downloads",
+                    "Print workflow and order review",
+                    "Desktop + cloud sync",
+                    "Especially strong for structured jobs",
                   ].map((feature) => (
                     <div
                       key={feature}
@@ -129,16 +129,16 @@ export function GalleryBrandingShowcase() {
               <div className="grid gap-4 sm:grid-cols-3">
                 {[
                   {
-                    title: "School photographers",
-                    detail: "Move faster on photo day and keep every student job structured from the start.",
+                    title: "Portrait and wedding photographers",
+                    detail: "Deliver polished galleries and ordering without treating workflow as an afterthought.",
                   },
                   {
-                    title: "Event photographers",
-                    detail: "Deliver galleries, selections, and orders without sending clients to another tool.",
+                    title: "Event photographers and studios",
+                    detail: "Keep albums, selections, access, and delivery tied to the same project from start to finish.",
                   },
                   {
-                    title: "High-volume studios",
-                    detail: "Reduce admin work, keep teams aligned, and move more jobs through one connected system.",
+                    title: "School, sports, and volume teams",
+                    detail: "Scale structured jobs with private access, ordering, and production control in one connected workflow.",
                   },
                 ].map((card) => (
                   <div

@@ -3,11 +3,11 @@ import { studioUseCases } from "@/lib/studio-os-content";
 
 const useCaseCopy: Record<string, string> = {
   school:
-    "Run photo day with faster capture, cleaner organization, and smoother delivery to families.",
+    "Keep picture day structured from roster and capture to private parent gallery delivery.",
   corporate:
-    "Handle headshots and event coverage without piecing together extra software for galleries and delivery.",
+    "Handle headshots and events with organized delivery, downloads, and client access in one system.",
   wedding:
-    "Deliver polished galleries, manage selections, and keep the client experience organized from start to finish.",
+    "Deliver polished galleries and selections without losing the production workflow behind them.",
 };
 
 export function UseCaseVisualStrip() {
@@ -20,11 +20,12 @@ export function UseCaseVisualStrip() {
               Platform overview
             </div>
             <h2 className="mt-3 text-3xl font-semibold tracking-tight text-neutral-950 sm:text-4xl">
-              Everything You Need. One Workflow.
+              Great Galleries. Connected Workflow.
             </h2>
             <p className="mt-4 text-base leading-8 text-neutral-600">
-              Stop switching between platforms. Studio OS connects your entire
-              process — from photo day to final delivery.
+              Studio OS supports polished delivery for portraits, weddings,
+              events, schools, and structured volume jobs without splitting the
+              work across disconnected tools.
             </p>
           </div>
 

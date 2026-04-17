@@ -15,13 +15,16 @@ export function Hero() {
         <div className="grid items-start gap-10 lg:grid-cols-2">
           <div>
             <h1 className="text-4xl font-semibold leading-tight tracking-tight text-neutral-950 sm:text-5xl lg:text-6xl">
-              Run Your Photography Business
-              <span className="block">From One Connected System</span>
+              Great Galleries for
+              <span className="block">Every Photographer</span>
+              <span className="block">Deeper Workflow When You Need More</span>
             </h1>
 
             <p className="mt-5 max-w-xl text-lg leading-8 text-neutral-600">
-              Studio OS helps photographers capture, organize, sell, and
-              deliver — without juggling multiple tools.
+              Studio OS Cloud gives photographers premium online galleries,
+              client ordering, and digital delivery, then goes deeper with
+              Projects, production control, and connected desktop + cloud
+              workflow.
             </p>
 
             <div className="mt-8 flex flex-col gap-3 sm:flex-row">
@@ -52,7 +55,8 @@ export function Hero() {
             </div>
 
             <div className="mt-8 text-sm text-neutral-500">
-              Built for school, event, and high-volume photography workflows.
+              Built for portraits, weddings, events, schools, sports, and
+              workflow-heavy studios.
             </div>
           </div>
 
@@ -65,10 +69,11 @@ export function Hero() {
                       Studio OS
                     </div>
                     <div className="mt-1 whitespace-nowrap text-sm font-semibold text-neutral-900">
-                      Capture + organize
+                      Capture + Projects
                     </div>
                     <div className="mt-1 text-xs text-neutral-500">
-                      Capture faster and keep every job organized from the start.
+                      Organize real jobs before the gallery with faster capture
+                      and cleaner structure.
                     </div>
                   </div>
 
@@ -77,20 +82,21 @@ export function Hero() {
                       Studio OS Cloud
                     </div>
                     <div className="mt-1 whitespace-nowrap text-sm font-semibold text-neutral-900">
-                      Sell + deliver
+                      Galleries + ordering
                     </div>
                     <div className="mt-1 text-xs text-neutral-500">
-                      Orders, galleries, and client access in one connected system.
+                      Premium client galleries, orders, downloads, and access
+                      in the same connected system.
                     </div>
                   </div>
 
                   <div className="flex flex-wrap items-start gap-2 xl:flex-row xl:items-center">
                     <div className="inline-flex items-center gap-2 whitespace-nowrap rounded-full border border-neutral-200 bg-white px-3 py-1 text-xs text-neutral-700">
-                      Start free trial
+                      Projects synced
                     </div>
                     <div className="inline-flex items-center gap-2 whitespace-nowrap rounded-full border border-neutral-200 bg-white px-3 py-1 text-xs text-neutral-700">
                       <div className="h-2 w-2 rounded-full bg-green-500" />
-                      Cloud synced
+                      Cloud connected
                     </div>
                   </div>
                 </div>
@@ -104,7 +110,7 @@ export function Hero() {
                   </div>
 
                   <div className="rounded-2xl border border-neutral-200 bg-neutral-50 p-5">
-                    <div className="text-xs text-neutral-500">New orders</div>
+                    <div className="text-xs text-neutral-500">Active projects</div>
                     <div className="mt-2 text-3xl font-semibold text-neutral-950">27</div>
                   </div>
                 </div>
@@ -116,9 +122,9 @@ export function Hero() {
 
                     <div className="mt-4 space-y-3 text-sm text-neutral-700">
                       {[
-                        "Capture and job organization",
-                        "Client galleries and ordering",
-                        "Delivery and business workflow",
+                        "Projects and job organization",
+                        "Online galleries and client ordering",
+                        "Print workflow and delivery",
                       ].map((line) => (
                       <div key={line} className="flex items-center gap-3">
                         <div className="h-2 w-2 rounded-full bg-[#df2b2f]" />
@@ -139,10 +145,11 @@ export function Hero() {
                 Studio OS App
               </div>
               <p className="mt-2 text-base leading-8 text-neutral-600">
-                Capture and organize faster across school, event, and high-volume jobs.
+                Capture faster, manage Projects, and keep production organized
+                before the gallery.
               </p>
               <div className="mt-1 text-sm leading-7 text-neutral-500">
-                Tethering • Rosters • Sorting • AI Tools • Print Workflow
+                Tethering • Projects • Sorting • AI Tools • Production Control
               </div>
             </div>
 
@@ -151,7 +158,8 @@ export function Hero() {
                 Studio OS Cloud
               </div>
               <p className="mt-1 text-base leading-8 text-neutral-600">
-                Sell and deliver through galleries, ordering, and client access.
+                Deliver branded galleries, ordering, downloads, and private
+                client access.
               </p>
               <div className="mt-1 text-sm leading-7 text-neutral-500">
                 Galleries • Orders • Downloads • Client Access

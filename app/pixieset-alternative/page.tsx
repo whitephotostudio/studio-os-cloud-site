@@ -1,164 +1,166 @@
 import type { Metadata } from "next";
 import { SeoLandingPage } from "@/components/seo-landing-page";
+import { BreadcrumbJsonLd } from "@/components/json-ld";
 
 export const metadata: Metadata = {
   title: "Pixieset Alternative for Photographers",
   description:
-    "Looking for a Pixieset alternative that does more than gallery delivery? Studio OS Cloud connects camera tethering, roster management, AI backgrounds, online ordering, and print fulfillment in one platform.",
+    "Looking for a Pixieset alternative with premium galleries and more workflow depth? Studio OS Cloud connects Projects, production control, online ordering, and desktop + cloud workflow in one platform.",
   alternates: {
     canonical: "https://studiooscloud.com/pixieset-alternative",
   },
   openGraph: {
     title: "Pixieset Alternative for Photographers | Studio OS Cloud",
     description:
-      "More than galleries. Studio OS Cloud connects capture, organization, ordering, and delivery in one workflow.",
+      "Pixieset is strong for polished galleries and simplicity. Studio OS Cloud goes deeper on workflow, Projects, and production control.",
     url: "https://studiooscloud.com/pixieset-alternative",
   },
 };
 
 export default function PixiesetAlternativePage() {
   return (
-    <SeoLandingPage
-      badge="Pixieset Alternative"
-      headline="A Pixieset Alternative for Photographers Who Need More Than Galleries"
-      subheadline="Pixieset is a great gallery platform. But if you need tethered capture, roster management, AI backgrounds, and a connected workflow, Studio OS Cloud picks up where Pixieset stops."
-      introduction="Pixieset is one of the most popular gallery delivery platforms for photographers. It does galleries, digital downloads, and basic print ordering well. But if your work involves tethered shooting, school rosters, multi-photographer sessions, AI background upsells, or order review before fulfillment, you will find yourself adding separate tools to fill those gaps. Studio OS Cloud is a Pixieset alternative that handles the full workflow — from the camera to the delivered print — in one connected system."
-      whoItsFor={{
-        description:
-          "Studio OS Cloud is the right Pixieset alternative if you need more than gallery hosting and basic ordering.",
-        personas: [
-          "School photographers who need roster management and tethered capture",
-          "Volume photographers who need multi-photographer support",
-          "Photographers who want AI background upsells built into ordering",
-          "Studios that need order review before sending to the lab",
-          "Any photographer who wants capture and delivery in one platform",
-          "Photographers outgrowing gallery-only platforms",
-        ],
-      }}
-      differentiators={{
-        heading: "What Studio OS Cloud Adds Beyond Pixieset",
-        description:
-          "Pixieset focuses on beautiful galleries and simple ordering. Studio OS Cloud does that too, plus connects your entire production workflow.",
-        points: [
+    <>
+      <BreadcrumbJsonLd
+        items={[
+          { name: "Home", item: "https://studiooscloud.com" },
           {
-            title: "Built-in Camera Tethering",
-            detail:
-              "Pixieset starts after you finish shooting. Studio OS starts at the camera — tether directly through the desktop app.",
+            name: "Pixieset Alternative",
+            item: "https://studiooscloud.com/pixieset-alternative",
+          },
+        ]}
+      />
+      <SeoLandingPage
+        badge="Pixieset Alternative"
+        headline="A Pixieset Alternative for Photographers Who Need More Than a Gallery"
+        subheadline="Pixieset is strong for polished galleries, websites, and simple client delivery. Studio OS Cloud is built for photographers who want premium galleries too, plus Projects, production control, and connected desktop + cloud workflow."
+        introduction="Pixieset is one of the most popular gallery platforms in photography, and for good reason: it offers polished presentation, websites, and a simple cloud workflow. Studio OS Cloud takes a different path. It keeps galleries and ordering as a core part of the product, then goes deeper for photographers who need the work behind the gallery to stay connected too. If your business needs Projects, stronger production control, desktop + cloud workflow, or structured jobs that are hard to manage in a gallery-only stack, Studio OS gives you more operating depth without giving up client presentation."
+        whoItsFor={{
+          description:
+            "Studio OS Cloud is the right Pixieset alternative when the gallery is only one part of the job.",
+          personas: [
+            "Photographers who want branded galleries and stronger job organization behind them",
+            "Studios managing portraits, events, schools, sports, or other structured jobs",
+            "Teams that want Projects, albums, access, and delivery tied together",
+            "Photographers who need order review before print or fulfillment",
+            "Businesses that have outgrown upload-only gallery workflows",
+            "Photographers who still want polished client presentation, not just workflow tools",
+          ],
+        }}
+        differentiators={{
+          heading: "Where Studio OS Cloud Goes Deeper",
+          description:
+            "Pixieset is strong for presentation and simplicity. Studio OS goes deeper on the workflow around the gallery.",
+          points: [
+            {
+              title: "Premium Galleries Are Still Core",
+              detail:
+                "Studio OS Cloud is not asking you to trade presentation for workflow. You still get branded galleries, client ordering, downloads, and private access as part of the platform.",
+            },
+            {
+              title: "Projects That Organize Real Jobs",
+              detail:
+                "Keep albums, access, orders, and delivery connected to the same job instead of managing them across separate steps.",
+            },
+            {
+              title: "Desktop + Cloud Workflow",
+              detail:
+                "When your business needs capture and production control before the gallery, Studio OS connects that work to the cloud instead of starting after the upload.",
+            },
+            {
+              title: "Order Review Before Print",
+              detail:
+                "Review orders before they go into production so quality control stays with you.",
+            },
+            {
+              title: "AI Background Upsells",
+              detail:
+                "Offer AI background options inside the ordering flow when that kind of upsell fits your business.",
+            },
+            {
+              title: "Especially Strong for Structured Jobs",
+              detail:
+                "Schools, sports, events, and volume workflows benefit from rosters, multi-photographer support, and connected production steps.",
+            },
+          ],
+        }}
+        features={[
+          {
+            name: "Branded Online Galleries",
+            description:
+              "Deliver polished galleries with ordering, downloads, and private access in a client-ready experience.",
           },
           {
-            title: "School Roster Management",
-            detail:
-              "Import rosters, match students to photos, organize by class. Pixieset does not have roster tools.",
+            name: "Projects and Job Structure",
+            description:
+              "Keep albums, orders, access, and delivery connected to a real job structure instead of a loose gallery list.",
           },
           {
-            title: "AI Background Replacement",
-            detail:
-              "Offer background swaps as a paid upsell inside the gallery. Pixieset does not offer AI background tools.",
+            name: "Desktop Camera Tethering",
+            description:
+              "Capture and organize through the desktop app when the workflow needs more control before images reach the gallery.",
           },
           {
-            title: "Multi-Photographer Capture",
-            detail:
-              "Multiple cameras feed into the same job simultaneously. Pixieset does not handle multi-photographer capture.",
+            name: "Order Review Dashboard",
+            description:
+              "Approve and review orders before they move into production.",
           },
           {
-            title: "Order Review Before Print",
-            detail:
-              "Review every order before it goes to the lab. Pixieset sends orders directly without a review step.",
+            name: "AI Background Upsells",
+            description:
+              "Offer additional background choices inside the ordering flow when portrait upgrades are part of the sale.",
           },
           {
-            title: "Connected Desktop + Cloud Workflow",
-            detail:
-              "Your capture app and gallery platform are one system. No exporting and re-uploading between separate tools.",
+            name: "Structured Subject Management",
+            description:
+              "Import rosters, match subjects, and keep organized jobs intact when the workflow is more complex than a simple gallery upload.",
           },
-        ],
-      }}
-      features={[
-        {
-          name: "Desktop Camera Tethering",
-          description:
-            "Shoot tethered with live preview and instant organization. Your photos flow into the cloud workflow automatically.",
-        },
-        {
-          name: "Branded Online Galleries",
-          description:
-            "Deliver custom-branded galleries with private access, built-in ordering, and Stripe payments.",
-        },
-        {
-          name: "AI Background Upsells",
-          description:
-            "Clients choose from multiple backgrounds when ordering. The swap is automatic and adds revenue to every order.",
-        },
-        {
-          name: "Roster Import and Matching",
-          description:
-            "Import school or event rosters. Match subjects to photos during or after capture.",
-        },
-        {
-          name: "Order Review Dashboard",
-          description:
-            "Approve every order before it goes to the lab. Catch issues before they become reprints.",
-        },
-        {
-          name: "Print Fulfillment Pipeline",
-          description:
-            "Route reviewed orders to your lab and track fulfillment through delivery.",
-        },
-        {
-          name: "Multi-Photographer Support",
-          description:
-            "Run multiple cameras at the same job. All photos sync to one organized workspace.",
-        },
-        {
-          name: "Automated Email Workflows",
-          description:
-            "Gallery access, order reminders, abandoned cart recovery, and delivery notifications — all automated.",
-        },
-      ]}
-      comparisonIntro="Here is a side-by-side look at what Pixieset and Studio OS Cloud each offer."
-      comparisonPoints={[
-        {
-          label: "Online galleries",
-          studioOs: "Yes",
-          others: "Yes",
-        },
-        {
-          label: "Print and digital ordering",
-          studioOs: "Yes",
-          others: "Yes",
-        },
-        {
-          label: "Camera tethering",
-          studioOs: "Built-in desktop app",
-          others: "Not available",
-        },
-        {
-          label: "School roster management",
-          studioOs: "Yes",
-          others: "Not available",
-        },
-        {
-          label: "AI background replacement",
-          studioOs: "Built in",
-          others: "Not available",
-        },
-        {
-          label: "Multi-photographer capture",
-          studioOs: "Yes",
-          others: "Not available",
-        },
-        {
-          label: "Order review before print",
-          studioOs: "Yes",
-          others: "No",
-        },
-        {
-          label: "Desktop + cloud connected",
-          studioOs: "One platform",
-          others: "Cloud only",
-        },
-      ]}
-      ctaHeading="Ready for More Than Galleries?"
-      ctaDescription="Start your free trial and see how Studio OS Cloud connects your full workflow — from camera to delivered print."
-    />
+          {
+            name: "Print Fulfillment Pipeline",
+            description:
+              "Move from reviewed orders to production and delivery in the same connected system.",
+          },
+          {
+            name: "Automated Gallery Communication",
+            description:
+              "Send gallery access, reminders, and delivery updates automatically.",
+          },
+        ]}
+        comparisonIntro="Both platforms handle polished client galleries well. The bigger difference is how much of the job happens before and after the gallery."
+        comparisonPoints={[
+          {
+            label: "Premium branded galleries",
+            studioOs: "Yes",
+            others: "Yes",
+          },
+          {
+            label: "Print and digital ordering",
+            studioOs: "Yes",
+            others: "Yes",
+          },
+          {
+            label: "Projects and job structure",
+            studioOs: "Yes",
+            others: "Limited",
+          },
+          {
+            label: "Order review before print",
+            studioOs: "Yes",
+            others: "No",
+          },
+          {
+            label: "Desktop + cloud connected workflow",
+            studioOs: "Yes",
+            others: "No",
+          },
+          {
+            label: "Website builder and CRM tools",
+            studioOs: "Not the core focus",
+            others: "Yes",
+          },
+        ]}
+        ctaHeading="Choose Studio OS If Workflow Matters as Much as Presentation"
+        ctaDescription="Start your free trial and see how premium galleries, Projects, and production control can live in one connected system."
+      />
+    </>
   );
 }

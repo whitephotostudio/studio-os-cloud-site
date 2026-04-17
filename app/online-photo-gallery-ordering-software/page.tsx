@@ -1,153 +1,166 @@
 import type { Metadata } from "next";
 import { SeoLandingPage } from "@/components/seo-landing-page";
+import { BreadcrumbJsonLd } from "@/components/json-ld";
 
 export const metadata: Metadata = {
-  title: "Online Photo Gallery and Ordering Software for Photographers",
+  title: "Premium Online Photo Gallery and Ordering Software for Photographers",
   description:
-    "Online photo gallery and ordering software that connects to your full photography workflow. Deliver branded galleries, accept orders, process payments, and fulfill prints — all from one platform.",
+    "Deliver premium online galleries, private client access, print and digital ordering, and connected workflow visibility from one photography platform.",
   alternates: {
     canonical: "https://studiooscloud.com/online-photo-gallery-ordering-software",
   },
   openGraph: {
-    title: "Online Photo Gallery and Ordering Software | Studio OS Cloud",
+    title: "Premium Online Photo Gallery and Ordering Software | Studio OS Cloud",
     description:
-      "Branded galleries with built-in ordering, Stripe payments, and print fulfillment. Connected to your capture workflow.",
+      "Premium galleries with ordering, private access, digital delivery, and deeper workflow connection when you need it.",
     url: "https://studiooscloud.com/online-photo-gallery-ordering-software",
   },
 };
 
 export default function OnlinePhotoGalleryOrderingSoftwarePage() {
   return (
-    <SeoLandingPage
-      badge="Galleries & Ordering"
-      headline="Online Galleries and Ordering Software That Connects to Your Workflow"
-      subheadline="Deliver branded photo galleries, accept print and digital orders, process payments, and fulfill — all connected to your capture and production workflow."
-      introduction="Studio OS Cloud is online photo gallery and ordering software built for professional photographers who need more than a standalone gallery host. Your galleries connect directly to your capture workflow, your ordering system, your fulfillment pipeline, and your client communication. Instead of uploading finished images to a separate gallery platform, Studio OS lets your photos flow from camera to gallery to order to delivery in one connected system."
-      whoItsFor={{
-        description:
-          "Studio OS Cloud galleries and ordering are built for photographers who sell prints, packages, and digital downloads to their clients.",
-        personas: [
-          "School photographers delivering parent galleries with ordering",
-          "Event photographers selling prints from corporate and social events",
-          "Portrait photographers offering gallery proofing and ordering",
-          "Sports photographers selling team and individual packages",
-          "Wedding photographers delivering galleries with print ordering",
-          "Any photographer who wants galleries and ordering in one place instead of two",
-        ],
-      }}
-      differentiators={{
-        description:
-          "Gallery-only platforms handle delivery and ordering, but they are disconnected from capture and production. Studio OS connects everything.",
-        points: [
+    <>
+      <BreadcrumbJsonLd
+        items={[
+          { name: "Home", item: "https://studiooscloud.com" },
           {
-            title: "Galleries Connected to Capture",
-            detail:
-              "Photos flow from tethered capture to galleries without manual exports or uploads. Your desktop workflow and cloud galleries are one system.",
+            name: "Online Galleries & Ordering",
+            item: "https://studiooscloud.com/online-photo-gallery-ordering-software",
+          },
+        ]}
+      />
+      <SeoLandingPage
+        badge="Galleries & Ordering"
+        headline="Premium Online Galleries and Ordering Software for Photographers"
+        subheadline="Deliver branded galleries, accept print and digital orders, and keep client delivery connected to Projects, production, and fulfillment."
+        introduction="Studio OS Cloud is online photo gallery and ordering software for photographers who care about presentation as much as operations. Use it for premium client galleries, private access, print sales, and digital delivery on its own, or connect it to a deeper desktop + cloud workflow that starts before the gallery. Instead of treating delivery as a separate upload step, Studio OS keeps galleries tied to the job, the order, and the work that follows."
+        whoItsFor={{
+          description:
+            "Built for photographers who want polished client galleries today and room to grow into a more connected workflow tomorrow.",
+          personas: [
+            "Portrait photographers delivering proofing, print sales, and digital downloads",
+            "Wedding photographers who want polished galleries with ordering and favorites",
+            "Event photographers handling selections, access, and delivery in one place",
+            "School and sports photographers delivering private galleries with ordering",
+            "Studios that need branded presentation without losing control behind the scenes",
+            "Photographers who want galleries alone or galleries connected to a deeper workflow",
+          ],
+        }}
+        differentiators={{
+          heading: "Online Galleries Connected to Production",
+          description:
+            "Studio OS Cloud makes galleries a core product, then connects them to the work around them.",
+          points: [
+            {
+              title: "Premium Client Presentation",
+              detail:
+                "Deliver branded galleries with a polished look, client favorites, ordering, and digital delivery built in.",
+            },
+            {
+              title: "Projects and Albums Stay Connected",
+              detail:
+                "Keep galleries tied to the same job structure, albums, access settings, and delivery workflow instead of splitting them into separate systems.",
+            },
+            {
+              title: "Private Access When Needed",
+              detail:
+                "Use PINs and controlled access for schools, events, or any client work that needs privacy.",
+            },
+            {
+              title: "Order Review Before Print",
+              detail:
+                "Review orders before they go to production so fulfillment stays under your control.",
+            },
+            {
+              title: "Digital Delivery and Print Workflow",
+              detail:
+                "Sell downloads, prints, and packages from the same gallery experience clients already use.",
+            },
+            {
+              title: "Desktop + Cloud Connection",
+              detail:
+                "When you use Studio OS App, galleries connect directly to capture and production instead of waiting for a manual upload step.",
+            },
+          ],
+        }}
+        features={[
+          {
+            name: "Branded Online Galleries",
+            description:
+              "Deliver a premium client experience with your logo, styling, and a gallery flow that feels built for photography.",
           },
           {
-            title: "AI Background Upsells in Galleries",
-            detail:
-              "Clients can choose alternative backgrounds when ordering. The AI swap happens automatically — turning backgrounds into revenue.",
+            name: "Print and Package Ordering",
+            description:
+              "Sell prints, packages, and add-ons directly inside the gallery with a built-in cart and checkout.",
           },
           {
-            title: "Order Review Before Print",
-            detail:
-              "Every order passes through a review step before going to the lab. You approve crops, packages, and selections before printing.",
+            name: "Digital Download Sales",
+            description:
+              "Offer individual files or full-gallery downloads without sending clients to another system.",
           },
           {
-            title: "Private Access with PINs",
-            detail:
-              "Each client or family gets their own gallery access code. No one sees photos that are not theirs.",
+            name: "Private Access and PIN Control",
+            description:
+              "Protect galleries when privacy matters, whether you are delivering to families, schools, teams, or private event clients.",
           },
           {
-            title: "Stripe-Powered Payments",
-            detail:
-              "Secure payment processing through Stripe. Clients pay directly in the gallery — no redirects to third-party checkouts.",
+            name: "Favorites and Selection Flow",
+            description:
+              "Let clients mark favorites and work from a clearer selection process before they order.",
           },
           {
-            title: "Automated Email Campaigns",
-            detail:
-              "Send gallery links, order reminders, abandoned cart follow-ups, and delivery notifications automatically.",
+            name: "Order Review Dashboard",
+            description:
+              "Approve and review orders before they move into print production.",
           },
-        ],
-      }}
-      features={[
-        {
-          name: "Branded Online Galleries",
-          description:
-            "Custom-branded galleries with your logo, colors, and domain. Professional presentation for every client.",
-        },
-        {
-          name: "Print and Package Ordering",
-          description:
-            "Clients choose prints, packages, and add-ons from your price list. Built-in cart and checkout.",
-        },
-        {
-          name: "Digital Download Sales",
-          description:
-            "Sell individual digital files or full gallery downloads alongside print orders.",
-        },
-        {
-          name: "AI Background Options",
-          description:
-            "Offer background replacement as a paid add-on in the gallery ordering flow.",
-        },
-        {
-          name: "PIN-Protected Access",
-          description:
-            "Private galleries with unique PINs for each family, student, or subject.",
-        },
-        {
-          name: "Order Review Dashboard",
-          description:
-            "Review and approve every order before sending to the lab. Catch issues early.",
-        },
-        {
-          name: "Lab Fulfillment Integration",
-          description:
-            "Route approved orders to your print lab. Track production and delivery status.",
-        },
-        {
-          name: "Abandoned Cart Recovery",
-          description:
-            "Automatically email clients who started ordering but did not complete checkout.",
-        },
-      ]}
-      comparisonIntro="Photographers often compare Studio OS Cloud to gallery-only platforms like Pixieset, ShootProof, SmugMug, and Zenfolio. Here is the key difference."
-      comparisonPoints={[
-        {
-          label: "Connected to capture workflow",
-          studioOs: "Yes, desktop + cloud",
-          others: "No (upload-only)",
-        },
-        {
-          label: "AI background upsells",
-          studioOs: "Built in",
-          others: "Not available",
-        },
-        {
-          label: "Order review before print",
-          studioOs: "Yes",
-          others: "Varies",
-        },
-        {
-          label: "Roster-based galleries",
-          studioOs: "Yes",
-          others: "Limited",
-        },
-        {
-          label: "Multi-photographer support",
-          studioOs: "Yes",
-          others: "No",
-        },
-        {
-          label: "Branded galleries with ordering",
-          studioOs: "Yes",
-          others: "Yes",
-        },
-      ]}
-      ctaHeading="Galleries That Do More Than Display Photos"
-      ctaDescription="Start your free trial and deliver galleries connected to your full photography workflow."
-    />
+          {
+            name: "Lab Fulfillment Integration",
+            description:
+              "Route approved orders into your print workflow and keep delivery moving without extra admin.",
+          },
+          {
+            name: "Automated Gallery Communication",
+            description:
+              "Send access links, reminders, and delivery updates automatically.",
+          },
+        ]}
+        comparisonIntro="Many gallery platforms handle presentation well. The bigger difference is whether the gallery stays connected to the rest of the job."
+        comparisonPoints={[
+          {
+            label: "Premium branded galleries",
+            studioOs: "Yes",
+            others: "Yes",
+          },
+          {
+            label: "Print and digital ordering",
+            studioOs: "Yes",
+            others: "Yes",
+          },
+          {
+            label: "Private access and PIN control",
+            studioOs: "Yes",
+            others: "Varies",
+          },
+          {
+            label: "Projects and job structure",
+            studioOs: "Yes",
+            others: "Limited",
+          },
+          {
+            label: "Order review before print",
+            studioOs: "Yes",
+            others: "Varies",
+          },
+          {
+            label: "Desktop + cloud connected workflow",
+            studioOs: "Yes",
+            others: "No",
+          },
+        ]}
+        ctaHeading="Great Galleries. More Workflow When You Need It."
+        ctaDescription="Start your free trial and deliver galleries that feel premium while staying connected to the work behind them."
+      />
+    </>
   );
 }
