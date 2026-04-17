@@ -184,12 +184,43 @@ export function StudioAssistant({ greetingName }: StudioAssistantProps) {
     setMemory(loadAssistantMemory());
   }
 
-  // Speak helper — prefers ElevenLabs premium when toggled on, otherwise
-  // uses the browser's speech synthesis.  Silently falls back if the
-  // premium endpoint fails (no key, quota hit, network error).
+  // Premium-voice access for this photographer (admin-controlled). When
+  // false, the settings panel hides the toggle entirely and smartSpeak
+  // skips the ElevenLabs path so the user always hears the browser voice.
+  const [voiceAccessEnabled, setVoiceAccessEnabled] = useState(false);
+  useEffect(() => {
+    if (!hydrated) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const supabase = createClient();
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
+        const headers: Record<string, string> = session?.access_token
+          ? { Authorization: `Bearer ${session.access_token}` }
+          : {};
+        const res = await fetch("/api/dashboard/voice-access", { headers });
+        const json = (await res.json().catch(() => ({}))) as {
+          enabled?: boolean;
+        };
+        if (!cancelled) setVoiceAccessEnabled(Boolean(json.enabled));
+      } catch {
+        if (!cancelled) setVoiceAccessEnabled(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [hydrated]);
+
+  // Speak helper — prefers ElevenLabs premium when toggled on AND the
+  // photographer has been granted access by the admin.  Otherwise uses
+  // the browser's speech synthesis.  Silently falls back if the premium
+  // endpoint fails (no key, quota hit, network error).
   const smartSpeak = useCallback(
     async (phrase: string) => {
-      if (settings.elevenLabsEnabled) {
+      if (settings.elevenLabsEnabled && voiceAccessEnabled) {
         try {
           const supabase = createClient();
           const {
@@ -218,6 +249,7 @@ export function StudioAssistant({ greetingName }: StudioAssistantProps) {
       settings.voiceRate,
       settings.voicePitch,
       settings.voiceURI,
+      voiceAccessEnabled,
     ],
   );
 
@@ -398,6 +430,7 @@ export function StudioAssistant({ greetingName }: StudioAssistantProps) {
           settings={settings}
           onChange={updateSettings}
           onClose={() => setSettingsOpen(false)}
+          voiceAccessEnabled={voiceAccessEnabled}
         />
       ) : null}
 
@@ -591,10 +624,13 @@ function SettingsPopover({
   settings,
   onChange,
   onClose,
+  voiceAccessEnabled,
 }: {
   settings: StudioAssistantSettings;
   onChange: (patch: Partial<StudioAssistantSettings>) => void;
   onClose: () => void;
+  /** True when this photographer is permitted to use ElevenLabs premium voice. */
+  voiceAccessEnabled: boolean;
 }) {
   const synthesisSupported = isSpeechSynthesisSupported();
   const [voices, setVoices] = useState(() => listSpeechVoices());
@@ -746,6 +782,7 @@ function SettingsPopover({
         </div>
       ) : null}
 
+      {voiceAccessEnabled ? (
       <div
         style={{
           borderTop: `1px solid ${BORDER}`,
@@ -810,6 +847,7 @@ function SettingsPopover({
           </div>
         ) : null}
       </div>
+      ) : null}
 
       <div
         style={{
