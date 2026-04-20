@@ -140,11 +140,35 @@ export default function BackdropsPage() {
         const obj = `${pgId}/${Date.now()}_${i}_${Math.random().toString(36).slice(2,8)}.${ext}`;
         // Upload to Cloudflare R2
         const accessToken = (await supabase.auth.getSession()).data.session?.access_token || "";
-        const r2Result = await uploadToR2(f, `backdrops/${obj}`, accessToken);
+        const storageKey = `backdrops/${obj}`;
+        const r2Result = await uploadToR2(f, storageKey, accessToken);
         const url = r2Result?.publicUrl || `${SUPABASE_URL}/storage/v1/object/public/${BUCKET}/${obj}`;
+
+        // ✅ PERF: Generate a 560px thumbnail for the backdrop picker so
+        // parents aren't downloading the full-resolution image 50× in the
+        // thumbnail grid. Failure is non-fatal — we fall back to the
+        // original url, which preserves the pre-fix behavior.
+        let thumbUrl = url;
+        try {
+          const thumbRes = await fetch("/api/dashboard/generate-thumbnails", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${accessToken}`,
+            },
+            body: JSON.stringify({ storagePath: storageKey }),
+          });
+          if (thumbRes.ok) {
+            const thumbJson = (await thumbRes.json()) as { thumbnailUrl?: string | null };
+            if (thumbJson?.thumbnailUrl) thumbUrl = thumbJson.thumbnailUrl;
+          }
+        } catch (thumbErr) {
+          console.warn("Backdrop thumbnail generation failed (non-fatal):", thumbErr);
+        }
+
         const name = f.name.replace(/\.[^.]+$/, "").replace(/[-_]+/g, " ").replace(/\b\w/g, c => c.toUpperCase());
         await supabase.from("backdrop_catalog").insert({
-          photographer_id: pgId, name, description: "", image_url: url, thumbnail_url: url,
+          photographer_id: pgId, name, description: "", image_url: url, thumbnail_url: thumbUrl,
           category: upCat, tier: upTier,
           price_cents: upTier === "premium" ? Math.round(parseFloat(upPrice || "0") * 100) : 0,
           sort_order: base + i, active: true,

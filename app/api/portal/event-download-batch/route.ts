@@ -114,7 +114,7 @@ async function fetchBuffer(url: string) {
   });
 
   if (!response.ok) {
-    throw new Error(`Could not load ${url}.`);
+    throw new Error(`Could not load ${url}: HTTP ${response.status} ${response.statusText}`);
   }
 
   const buffer = Buffer.from(await response.arrayBuffer());
@@ -124,7 +124,27 @@ async function fetchBuffer(url: string) {
   };
 }
 
-function preferredDownloadUrl(
+async function fetchFirstAvailable(
+  urls: string[],
+  mediaId: string,
+): Promise<{ buffer: Buffer; contentType: string; url: string }> {
+  const errors: string[] = [];
+  for (const url of urls) {
+    try {
+      const result = await fetchBuffer(url);
+      return { ...result, url };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      errors.push(message);
+      console.warn(`[event-download-batch] fetch failed for media ${mediaId}: ${message}`);
+    }
+  }
+  throw new Error(
+    `All ${urls.length} candidate URL(s) failed for media ${mediaId}: ${errors.join(" | ")}`,
+  );
+}
+
+function preferredDownloadUrls(
   row: Pick<MediaRow, "storage_path" | "preview_url" | "thumbnail_url">,
   resolution: "original" | "large" | "web",
 ) {
@@ -134,14 +154,31 @@ function preferredDownloadUrl(
     thumbnailUrl: row.thumbnail_url,
   });
 
-  const candidates =
+  // Primary ranked candidates from the canonical URL builder.
+  const primary =
     resolution === "web"
       ? [mediaUrls.thumbnailUrl, mediaUrls.previewUrl, mediaUrls.originalUrl]
       : resolution === "large"
         ? [mediaUrls.previewUrl, mediaUrls.originalUrl, mediaUrls.thumbnailUrl]
         : [mediaUrls.originalUrl, mediaUrls.previewUrl, mediaUrls.thumbnailUrl];
 
-  return candidates.map((value) => clean(value)).find(Boolean) || "";
+  // ALSO try the raw DB-stored URLs as last-resort fallbacks. buildStoredMediaUrls
+  // discards Supabase-hosted preview/thumbnail URLs in favour of the R2
+  // originalUrl, so if R2 serves 404 for this key (which happens when a row was
+  // migrated to R2 pointers but the object never made it across), we still have
+  // working Supabase URLs to try.
+  const rawFallbacks = [clean(row.preview_url), clean(row.thumbnail_url)];
+
+  // De-dupe while preserving order.
+  const seen = new Set<string>();
+  const ordered: string[] = [];
+  for (const value of [...primary, ...rawFallbacks]) {
+    const v = clean(value);
+    if (!v || seen.has(v)) continue;
+    seen.add(v);
+    ordered.push(v);
+  }
+  return ordered;
 }
 
 async function buildPrintReleasePdf(options: {
@@ -356,15 +393,18 @@ export async function GET(request: NextRequest) {
         continue;
       }
 
-      const sourceUrl = preferredDownloadUrl(row, payload.resolution);
+      const candidateUrls = preferredDownloadUrls(row, payload.resolution);
       const fallbackName = clean(row.filename) || `${mediaId}.jpg`;
-      if (!sourceUrl) {
+      if (!candidateUrls.length) {
+        console.warn(`[event-download-batch] no candidate URLs for media ${mediaId}`);
         failedFileNames.push(fallbackName);
         continue;
       }
 
+      let sourceUrl = candidateUrls[0];
       try {
-        const source = await fetchBuffer(sourceUrl);
+        const source = await fetchFirstAvailable(candidateUrls, mediaId);
+        sourceUrl = source.url;
         let outputBytes = new Uint8Array(source.buffer);
         let outputExt = clean(row.filename).toLowerCase().endsWith(".png") ? ".png" : ".jpg";
         if (payload.applyWatermark) {
@@ -385,7 +425,9 @@ export async function GET(request: NextRequest) {
           name: uniqueDownloadName(normalizedName, usedNames),
           data: outputBytes,
         });
-      } catch {
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.error(`[event-download-batch] skipping media ${mediaId} (${fallbackName}): ${message}`);
         failedFileNames.push(clean(row.filename) || fileNameFromUrl(sourceUrl, fallbackName));
       }
     }

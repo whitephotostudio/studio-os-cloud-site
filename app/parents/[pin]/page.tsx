@@ -2972,6 +2972,35 @@ function CompositeCanvas({
 
   return (
     <div style={wrapperStyle}>
+      {/*
+        ✅ PERF: Render the original photo as a base layer while the composite
+        is still loading. This eliminates the "Loading preview…" gray box so
+        parents see their photo immediately. The canvas/blur layer renders on
+        top and replaces this once drawn; we unmount it after the first frame
+        so later backdrop swaps stay seamless (old composite stays visible
+        until the new one draws, because the canvas updates atomically).
+      */}
+      {!hasRenderedFrame && fallbackUrl ? (
+        <img
+          src={fallbackUrl}
+          alt=""
+          aria-hidden
+          draggable={false}
+          decoding="async"
+          fetchPriority="high"
+          style={{
+            position: "absolute",
+            inset: 0,
+            width: "100%",
+            height: "100%",
+            objectFit: "contain",
+            borderRadius: 6,
+            pointerEvents: "none",
+            userSelect: "none",
+            display: "block",
+          }}
+        />
+      ) : null}
       {useDomBlurLayer ? (
         <div
           style={{
@@ -3063,8 +3092,12 @@ function CompositeCanvas({
             height: "100%",
             display: "block",
             borderRadius: 6,
+            // ✅ PERF: Snap in the moment the composite is drawn. The
+            // base-layer <img> above shows the original photo until this
+            // canvas has content, so we don't need a fade to mask loading.
+            // Removing the 0.3s transition avoids a dark flash during the
+            // base-img → canvas handoff.
             opacity: ready || hasRenderedFrame ? 1 : 0,
-            transition: "opacity 0.3s ease",
           }}
         />
       )}
@@ -3075,19 +3108,11 @@ function CompositeCanvas({
           variant={watermarkVariant}
         />
       ) : null}
-      {!ready && !hasRenderedFrame && (
-        <div style={{
-          position: "absolute",
-          inset: 0,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          color: "#444",
-          fontSize: 12,
-        }}>
-          Loading preview…
-        </div>
-      )}
+      {/*
+        "Loading preview…" overlay removed: the base <img> above now shows
+        the original photo instantly while the composite draws, so a
+        placeholder text is no longer needed.
+      */}
     </div>
   );
 }
