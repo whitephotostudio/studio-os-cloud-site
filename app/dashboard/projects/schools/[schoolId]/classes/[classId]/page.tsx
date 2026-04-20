@@ -994,8 +994,11 @@ export default function SchoolsSchoolClassPage() {
             ) : (
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(230px,1fr))", gap: 18 }}>
                 {filteredStudents.map((student) => {
-                  const photoUrl = clean(student.photo_url);
                   const photoUrls = getPhotoUrls(student);
+                  // Prefer the resolved folder URL (server-side R2 listing) over
+                  // the DB photo_url, which may be stale or point to a missing
+                  // variant. Fall back to DB value if the map hasn't populated yet.
+                  const photoUrl = clean(photoUrls[0]) || clean(student.photo_url);
                   const selected =
                     selectedStudentIds.includes(student.id) ||
                     hoveredStudentId === student.id ||
@@ -1054,36 +1057,57 @@ export default function SchoolsSchoolClassPage() {
                       >
                         <div
                           style={{
+                            position: "relative",
                             aspectRatio: "3 / 4",
-                            background: photoUrl ? `url(${photoUrl}) center/cover no-repeat` : "#e5e7eb",
-                            display: photoUrl ? "block" : "flex",
+                            background: "#e5e7eb",
+                            display: "flex",
                             alignItems: "center",
                             justifyContent: "center",
                             flexDirection: "column",
                             gap: 8,
+                            overflow: "hidden",
                           }}
                         >
+                          {photoUrl ? (
+                            <img
+                              src={photoUrl}
+                              alt={fullNameOf(student)}
+                              loading="lazy"
+                              onError={(e) => {
+                                // Hide broken images so the initials fallback shows through.
+                                (e.currentTarget as HTMLImageElement).style.display = "none";
+                              }}
+                              style={{
+                                position: "absolute",
+                                inset: 0,
+                                width: "100%",
+                                height: "100%",
+                                objectFit: "cover",
+                              }}
+                            />
+                          ) : null}
+                          <div
+                            style={{
+                              width: 52,
+                              height: 52,
+                              borderRadius: "50%",
+                              background: "#d0d5dd",
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              fontSize: 20,
+                              color: "#fff",
+                              fontWeight: 700,
+                              zIndex: 0,
+                            }}
+                          >
+                            {student.first_name[0]}
+                            {student.last_name?.[0] ?? ""}
+                          </div>
                           {!photoUrl ? (
-                            <>
-                              <div
-                                style={{
-                                  width: 52,
-                                  height: 52,
-                                  borderRadius: "50%",
-                                  background: "#d0d5dd",
-                                  display: "flex",
-                                  alignItems: "center",
-                                  justifyContent: "center",
-                                  fontSize: 20,
-                                  color: "#fff",
-                                  fontWeight: 700,
-                                }}
-                              >
-                                {student.first_name[0]}
-                                {student.last_name?.[0] ?? ""}
-                              </div>
-                              <span style={{ fontSize: 11, color: "#98a2b3" }}>No photo synced</span>
-                            </>
+                            <span style={{ fontSize: 11, color: "#98a2b3", zIndex: 0 }}>
+                              No photo synced
+                            </span>
                           ) : null}
                         </div>
                       </button>
