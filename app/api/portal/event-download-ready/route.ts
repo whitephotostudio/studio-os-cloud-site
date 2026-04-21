@@ -9,6 +9,7 @@ import {
 } from "@/lib/event-gallery-downloads";
 import { createEventGalleryBatchToken } from "@/lib/event-gallery-download-tokens";
 import { normalizeEventGallerySettings } from "@/lib/event-gallery-settings";
+import { validateUuidArray } from "@/lib/request-validation";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -94,7 +95,20 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const requestedMediaIds = uniqueMediaIds(body.mediaIds ?? []);
+    // Validate shape + cap before dedup: ensures `mediaIds` is an array of
+    // UUIDs no bigger than 5000 entries (which is also the safety cap the
+    // gallery context query uses).
+    const validatedMediaIds = validateUuidArray(body.mediaIds, "mediaIds", {
+      min: 1,
+      max: 5000,
+    });
+    if (!validatedMediaIds.ok) {
+      return NextResponse.json(
+        { ok: false, message: validatedMediaIds.message },
+        { status: 400 },
+      );
+    }
+    const requestedMediaIds = uniqueMediaIds(validatedMediaIds.value);
     if (!requestedMediaIds.length) {
       return NextResponse.json(
         { ok: false, message: "No photos were selected for download." },

@@ -6,6 +6,7 @@ import {
 import { buildSchoolGalleryDownloadAccess } from "@/lib/school-gallery-downloads";
 import { filterPackagesForProfile } from "@/lib/package-profile-selection";
 import { buildSchoolCandidateFolders, loadFolderMediaRows } from "@/lib/storage-folder";
+import { hasActiveSubscription } from "@/lib/subscription-gate";
 
 export const dynamic = "force-dynamic";
 
@@ -349,7 +350,7 @@ export async function POST(request: NextRequest) {
           .order("sort_order", { ascending: true }),
         service
           .from("photographers")
-          .select("id,watermark_enabled,watermark_logo_url,logo_url,business_name,studio_address,studio_phone,studio_email,default_package_profile_id")
+          .select("id,watermark_enabled,watermark_logo_url,logo_url,business_name,studio_address,studio_phone,studio_email,default_package_profile_id,is_platform_admin,subscription_status,trial_starts_at,trial_ends_at,created_at")
           .eq("id", activeSchool.photographer_id)
           .maybeSingle(),
       ]);
@@ -357,6 +358,17 @@ export async function POST(request: NextRequest) {
       if (packagesResult.error) throw packagesResult.error;
       if (backdropsResult.error) throw backdropsResult.error;
       if (photographerResult.error) throw photographerResult.error;
+
+      // Defense-in-depth gate: block cancelled photographers at read time even
+      // if the Stripe-webhook cleanup hasn't landed yet (webhook is
+      // eventually-consistent and can fail/race). Platform admins and active
+      // trial users pass.
+      if (!hasActiveSubscription(photographerResult.data)) {
+        return NextResponse.json(
+          { ok: false, message: "This gallery is no longer available." },
+          { status: 410 },
+        );
+      }
 
       const photographerDefaultProfileId = ((photographerResult.data as Record<string, unknown> | null)?.default_package_profile_id as string | null) ?? null;
       const availablePackages = (packagesResult.data ?? []) as PackageRow[];

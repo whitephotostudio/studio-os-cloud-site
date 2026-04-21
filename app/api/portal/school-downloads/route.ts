@@ -3,6 +3,7 @@ import { createDashboardServiceClient } from "@/lib/dashboard-auth";
 import { normalizeEventGallerySettings } from "@/lib/event-gallery-settings";
 import { buildSchoolGalleryDownloadAccess } from "@/lib/school-gallery-downloads";
 import { getClientIp, rateLimit } from "@/lib/rate-limit";
+import { validateUuidArray } from "@/lib/request-validation";
 
 export const dynamic = "force-dynamic";
 
@@ -161,15 +162,18 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const mediaIds = Array.isArray(body.mediaIds)
-      ? body.mediaIds.map((value) => clean(String(value))).filter(Boolean)
-      : [];
-    if (!mediaIds.length) {
+    // Hard cap + UUID format: prevent oversized / malformed batch DoS.
+    const mediaIdsResult = validateUuidArray(body.mediaIds, "mediaIds", {
+      min: 1,
+      max: 2000,
+    });
+    if (!mediaIdsResult.ok) {
       return NextResponse.json(
-        { ok: false, message: "No photos were selected for download." },
+        { ok: false, message: mediaIdsResult.message },
         { status: 400 },
       );
     }
+    const mediaIds = mediaIdsResult.value;
 
     const downloadAccess = await buildSchoolGalleryDownloadAccess({
       service: access.service,

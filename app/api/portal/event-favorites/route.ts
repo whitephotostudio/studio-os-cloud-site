@@ -2,6 +2,7 @@ import { createHash } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { createDashboardServiceClient } from "@/lib/dashboard-auth";
 import { getClientIp, rateLimit } from "@/lib/rate-limit";
+import { validateUuid } from "@/lib/request-validation";
 
 export const dynamic = "force-dynamic";
 
@@ -262,13 +263,15 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const mediaId = clean(body.mediaId);
-    if (!mediaId) {
+    // UUID-shape check: blocks arbitrary string IDs from touching the DB.
+    const mediaIdResult = validateUuid(body.mediaId, "mediaId");
+    if (!mediaIdResult.ok) {
       return NextResponse.json(
-        { ok: false, message: "Missing media id." },
+        { ok: false, message: mediaIdResult.message },
         { status: 400 },
       );
     }
+    const mediaId = mediaIdResult.value;
 
     const { data: mediaRow, error: mediaError } = await access.service
       .from("media")

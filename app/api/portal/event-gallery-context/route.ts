@@ -6,6 +6,7 @@ import {
 } from "@/lib/event-gallery-settings";
 import { buildStoredMediaUrls } from "@/lib/storage-images";
 import { filterPackagesForProfile } from "@/lib/package-profile-selection";
+import { hasActiveSubscription } from "@/lib/subscription-gate";
 
 export const dynamic = "force-dynamic";
 
@@ -99,6 +100,11 @@ type PhotographerRow = {
   studio_address: string | null;
   studio_phone: string | null;
   studio_email: string | null;
+  is_platform_admin?: boolean | null;
+  subscription_status?: string | null;
+  trial_starts_at?: string | null;
+  trial_ends_at?: string | null;
+  created_at?: string | null;
 };
 
 type OrderRow = {
@@ -460,7 +466,7 @@ export async function POST(request: NextRequest) {
         service
           .from("photographers")
           .select(
-            "id,watermark_enabled,watermark_logo_url,logo_url,business_name,studio_address,studio_phone,studio_email,default_package_profile_id",
+            "id,watermark_enabled,watermark_logo_url,logo_url,business_name,studio_address,studio_phone,studio_email,default_package_profile_id,is_platform_admin,subscription_status,trial_starts_at,trial_ends_at,created_at",
           )
           .eq("id", projectRow.photographer_id)
           .maybeSingle<PhotographerRow>(),
@@ -468,6 +474,16 @@ export async function POST(request: NextRequest) {
 
       if (packagesResult.error) throw packagesResult.error;
       if (photographerResult.error) throw photographerResult.error;
+
+      // Defense-in-depth gate: block cancelled photographers at read time even
+      // if the Stripe-webhook cleanup hasn't landed yet. Platform admins and
+      // active trial users pass.
+      if (!hasActiveSubscription(photographerResult.data)) {
+        return NextResponse.json(
+          { ok: false, message: "This gallery is no longer available." },
+          { status: 410 },
+        );
+      }
 
       const photographerDefaultProfileId = ((photographerResult.data as Record<string, unknown> | null)?.default_package_profile_id as string | null) ?? null;
       const availablePackages = (packagesResult.data ?? []) as PackageRow[];
