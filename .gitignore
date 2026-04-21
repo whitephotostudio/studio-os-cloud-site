@@ -50,3 +50,6 @@ next-env.d.ts
 # build scratch
 tmp/
 supabase/.temp/
+
+SCHOOL_GALLERY_AUDIT.md
+scripts/backfill-backdrop-thumbnails.mjs
