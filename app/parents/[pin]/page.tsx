@@ -5936,12 +5936,28 @@ export default function ParentGalleryPage() {
       }
     }
 
+    // Try thumbnail_url first (proven to work in the viewer), fall back to
+    // image_url if thumbnail is missing or fails to load. This mirrors the
+    // URL chain used by CompositeCanvas / MiniComposite so the packages
+    // mockups composite the applied backdrop correctly.
+    const backdropPrimary = activeConfirmedBackdrop.thumbnail_url || activeConfirmedBackdrop.image_url;
+    const backdropFallback = activeConfirmedBackdrop.image_url;
+    let bgTriedFallback = false;
+
     bgImg.onload = () => { bgDone = true; draw(); };
     fgImg.onload = () => { fgDone = true; draw(); };
-    bgImg.onerror = () => { bgDone = true; draw(); };
+    bgImg.onerror = () => {
+      if (!bgTriedFallback && backdropFallback && backdropFallback !== backdropPrimary) {
+        bgTriedFallback = true;
+        bgImg.src = backdropFallback;
+        return;
+      }
+      bgDone = true;
+      draw();
+    };
     fgImg.onerror = () => { fgDone = true; draw(); };
 
-    bgImg.src = activeConfirmedBackdrop.image_url;
+    bgImg.src = backdropPrimary;
     fgImg.src = currentNobgUrl;
 
     return () => { cancelled = true; };
