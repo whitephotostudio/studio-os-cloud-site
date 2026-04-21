@@ -195,7 +195,7 @@ export async function POST(request: NextRequest) {
     // through PINs unnoticed. Window intentionally short so legitimate users
     // retry quickly.
     const clientIp = getClientIp(request);
-    const limitResult = rateLimit(clientIp, {
+    const limitResult = await rateLimit(clientIp, {
       namespace: "pin-auth-school",
       limit: 8,
       windowSeconds: 10,

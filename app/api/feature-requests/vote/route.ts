@@ -16,7 +16,7 @@ export async function POST(request: NextRequest) {
     // Cap toggle rate so a misbehaving client can't hammer the DB with
     // rapid vote flips (each call does a read + write). 30 toggles/minute
     // is well above any plausible human rate.
-    const limitResult = rateLimit(user.id, {
+    const limitResult = await rateLimit(user.id, {
       namespace: "feature-request-vote",
       limit: 30,
       windowSeconds: 60,

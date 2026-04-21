@@ -358,7 +358,7 @@ export async function POST(request: NextRequest) {
   try {
     // 10 creates per minute per IP. Far above any realistic human
     // checkout rate; tight enough to kill scripts hammering orders.
-    const limitResult = rateLimit(getClientIp(request), {
+    const limitResult = await rateLimit(getClientIp(request), {
       namespace: "orders-create",
       limit: 10,
       windowSeconds: 60,

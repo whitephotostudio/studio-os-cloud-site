@@ -17,7 +17,7 @@ export async function POST(request: NextRequest) {
   try {
     // Extra rate limiting: 5 activation attempts per 10 minutes per IP
     const ip = getClientIp(request);
-    const rl = rateLimit(ip, { namespace: "key-activate", limit: 5, windowSeconds: 600 });
+    const rl = await rateLimit(ip, { namespace: "key-activate", limit: 5, windowSeconds: 600 });
     if (!rl.allowed) {
       return NextResponse.json(
         { ok: false, message: "Too many activation attempts. Please wait 10 minutes." },

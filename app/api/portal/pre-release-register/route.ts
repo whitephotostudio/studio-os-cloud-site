@@ -16,7 +16,7 @@ export async function POST(request: NextRequest) {
     // junk rows using distinct @attacker.com addresses. Cap at 10 requests
     // per 5-minute window per IP; legitimate visitors only hit this once.
     const clientIp = getClientIp(request);
-    const limitResult = rateLimit(clientIp, {
+    const limitResult = await rateLimit(clientIp, {
       namespace: "pre-release-register",
       limit: 10,
       windowSeconds: 300,

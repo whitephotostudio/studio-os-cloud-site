@@ -15,7 +15,7 @@ type ValidateBody = {
 export async function POST(request: NextRequest) {
   try {
     const ip = getClientIp(request);
-    const rl = rateLimit(ip, { namespace: "key-validate", limit: 20, windowSeconds: 60 });
+    const rl = await rateLimit(ip, { namespace: "key-validate", limit: 20, windowSeconds: 60 });
     if (!rl.allowed) {
       return NextResponse.json(
         { ok: false, message: "Too many validation attempts. Please wait." },

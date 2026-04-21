@@ -29,14 +29,14 @@ function addSecurityHeaders(response: NextResponse) {
   return response;
 }
 
-export function proxy(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   const ip = getClientIp(request);
   const pathname = request.nextUrl.pathname;
 
   // Strict rate limiting for auth-sensitive routes (10 requests per minute)
   const isStrict = STRICT_ROUTES.some((route) => pathname.startsWith(route));
   if (isStrict) {
-    const result = rateLimit(ip, {
+    const result = await rateLimit(ip, {
       namespace: "strict",
       limit: 10,
       windowSeconds: 60,
@@ -54,7 +54,7 @@ export function proxy(request: NextRequest) {
 
   // Standard rate limiting for all API routes (100 requests per minute)
   if (pathname.startsWith(API_PREFIX)) {
-    const result = rateLimit(ip, {
+    const result = await rateLimit(ip, {
       namespace: "api",
       limit: 100,
       windowSeconds: 60,

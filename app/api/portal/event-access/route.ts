@@ -65,7 +65,7 @@ export async function POST(request: NextRequest) {
     // retry quickly; limit is tight because a real user shouldn't need more
     // than a few attempts in a 10s window.
     const clientIp = getClientIp(request);
-    const limitResult = rateLimit(clientIp, {
+    const limitResult = await rateLimit(clientIp, {
       namespace: "pin-auth-event",
       limit: 8,
       windowSeconds: 10,

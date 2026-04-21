@@ -25,7 +25,7 @@ export async function POST(request: NextRequest) {
     // attacker can flood portal_email_captures with millions of junk
     // @attacker.com addresses. A real visitor only clicks Download once
     // per platform, so 5/hour per IP is more than enough.
-    const limitResult = rateLimit(getClientIp(request), {
+    const limitResult = await rateLimit(getClientIp(request), {
       namespace: "download-interest",
       limit: 5,
       windowSeconds: 3600,

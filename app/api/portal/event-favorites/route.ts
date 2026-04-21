@@ -222,7 +222,7 @@ export async function POST(request: NextRequest) {
     // Cap favorite toggle rate per IP. Each toggle does a DB upsert/delete;
     // without a limit a script could spam the favorites table. 60/min is
     // far above any plausible human browsing rate.
-    const limitResult = rateLimit(getClientIp(request), {
+    const limitResult = await rateLimit(getClientIp(request), {
       namespace: "event-favorites",
       limit: 60,
       windowSeconds: 60,

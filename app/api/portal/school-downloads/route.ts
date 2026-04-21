@@ -120,7 +120,7 @@ export async function POST(request: NextRequest) {
     // Cap per-IP download prep rate. Each call validates access, checks
     // download eligibility, and writes a download row. 20/min is comfortably
     // above any plausible human interaction.
-    const limitResult = rateLimit(getClientIp(request), {
+    const limitResult = await rateLimit(getClientIp(request), {
       namespace: "school-downloads",
       limit: 20,
       windowSeconds: 60,
