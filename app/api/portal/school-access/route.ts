@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createDashboardServiceClient } from "@/lib/dashboard-auth";
+import { getClientIp, rateLimit } from "@/lib/rate-limit";
 import {
   sanitizeEventGallerySettingsForClient,
 } from "@/lib/event-gallery-settings";
@@ -190,6 +191,27 @@ async function loadSchoolCompositeMedia(
 
 export async function POST(request: NextRequest) {
   try {
+    // Rate-limit PIN auth attempts per client IP so an attacker cannot grind
+    // through PINs unnoticed. Window intentionally short so legitimate users
+    // retry quickly.
+    const clientIp = getClientIp(request);
+    const limitResult = rateLimit(clientIp, {
+      namespace: "pin-auth-school",
+      limit: 8,
+      windowSeconds: 10,
+    });
+    if (!limitResult.allowed) {
+      return NextResponse.json(
+        { ok: false, message: "Too many attempts. Please wait a few seconds and try again." },
+        {
+          status: 429,
+          headers: {
+            "Retry-After": Math.max(1, Math.ceil((limitResult.resetAt - Date.now()) / 1000)).toString(),
+          },
+        },
+      );
+    }
+
     const body = (await request.json()) as {
       schoolId?: string;
       pin?: string;

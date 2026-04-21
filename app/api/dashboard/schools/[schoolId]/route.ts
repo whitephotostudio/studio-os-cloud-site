@@ -247,7 +247,13 @@ export async function PATCH(
 
     if (hasOwn(body, "portal_status") || hasOwn(body, "status")) {
       const nextStatus = clean(body.portal_status || body.status) || null;
+      // schools.status and schools.portal_status are two separate columns and
+      // various read paths key off one or the other (e.g. dashboard uses
+      // portal_status via loadOwnedSchool, portal/event-gallery checks both,
+      // cron archiver writes to both). Keep them in sync on every write so
+      // one doesn't drift behind the other.
       updates.status = nextStatus;
+      updates.portal_status = nextStatus;
     }
 
     if (hasOwn(body, "shoot_date")) updates.shoot_date = clean(body.shoot_date) || null;

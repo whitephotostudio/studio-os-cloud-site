@@ -18,7 +18,12 @@ function clean(value: string | null | undefined) {
 
 function isAuthorized(request: NextRequest) {
   const expected = clean(process.env.CRON_SECRET);
-  if (!expected) return true;
+  // Fail closed: if CRON_SECRET is unset (e.g. mis-deploy, env rotation gap),
+  // refuse the request instead of allowing every caller.
+  if (!expected) {
+    console.error("[cron] CRON_SECRET is not configured; rejecting request.");
+    return false;
+  }
   const header = clean(request.headers.get("authorization"));
   return header === `Bearer ${expected}`;
 }

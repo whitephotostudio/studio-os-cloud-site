@@ -1,7 +1,59 @@
 import { NextRequest, NextResponse } from "next/server";
-import { resolveDashboardAuth } from "@/lib/dashboard-auth";
-import { r2Download, r2Upload } from "@/lib/r2";
+import {
+  createDashboardServiceClient,
+  resolveDashboardAuth,
+} from "@/lib/dashboard-auth";
+import { r2Download, r2Upload, r2PublicUrl } from "@/lib/r2";
 import sharp from "sharp";
+
+function clean(value: string | null | undefined) {
+  return (value ?? "").trim();
+}
+
+async function photographerOwnsKey(
+  service: ReturnType<typeof createDashboardServiceClient>,
+  photographerId: string,
+  rawKey: string,
+): Promise<boolean> {
+  const key = clean(rawKey);
+  if (!key || key.includes("..") || key.startsWith("/")) return false;
+  const segments = key.split("/").filter(Boolean);
+  if (segments.length < 2) return false;
+
+  const [first, second] = segments;
+
+  if (first === "projects") {
+    const { data } = await service
+      .from("projects")
+      .select("id")
+      .eq("id", second)
+      .eq("photographer_id", photographerId)
+      .maybeSingle();
+    return !!data?.id;
+  }
+
+  if (first === "backdrops") {
+    const { data } = await service
+      .from("backdrops")
+      .select("id")
+      .eq("photographer_id", photographerId)
+      .or(
+        `id.eq.${second},storage_path.ilike.backdrops/${second}%,storage_path.ilike.backdrops/${second}/%`,
+      )
+      .limit(1)
+      .maybeSingle();
+    return !!data?.id;
+  }
+
+  const { data } = await service
+    .from("schools")
+    .select("id")
+    .eq("photographer_id", photographerId)
+    .or(`id.eq.${first},local_school_id.eq.${first}`)
+    .limit(1)
+    .maybeSingle();
+  return !!data?.id;
+}
 
 type Size = { width: number; quality: number };
 
@@ -23,6 +75,46 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(
       { error: "storagePath (or key) is required" },
       { status: 400 },
+    );
+  }
+
+  // Confirm this photographer is allowed to touch that storage key.  Without
+  // this check, any signed-in user could ask us to download and re-process
+  // any object in R2, including another studio's originals.
+  try {
+    const service = createDashboardServiceClient();
+    const { data: photographerRow } = await service
+      .from("photographers")
+      .select("id")
+      .eq("user_id", auth.user.id)
+      .maybeSingle();
+
+    if (!photographerRow?.id) {
+      return NextResponse.json(
+        { error: "Photographer profile not found." },
+        { status: 403 },
+      );
+    }
+
+    const allowed = await photographerOwnsKey(
+      service,
+      photographerRow.id,
+      storageKey,
+    );
+    if (!allowed) {
+      console.warn(
+        `[generate-thumbnails] rejected key for photographer ${photographerRow.id}: ${storageKey}`,
+      );
+      return NextResponse.json(
+        { error: "You cannot generate thumbnails for that path." },
+        { status: 403 },
+      );
+    }
+  } catch (err) {
+    console.error("generate-thumbnails ownership check failed:", err);
+    return NextResponse.json(
+      { error: "Could not verify thumbnail permissions." },
+      { status: 500 },
     );
   }
 
@@ -56,8 +148,13 @@ export async function POST(request: NextRequest) {
     }
   }
 
+  // If sharp failed for either label, fall back to the original object URL so
+  // callers never write NULL into media.preview_url / media.thumbnail_url.
+  // Storing NULL there breaks gallery rendering (buildStoredMediaUrls only
+  // treats empty string as "missing", not NULL).
+  const originalUrl = r2PublicUrl(storageKey);
   return NextResponse.json({
-    thumbnailUrl: results.thumbnailUrl || null,
-    previewUrl: results.previewUrl || null,
+    thumbnailUrl: results.thumbnailUrl || originalUrl || null,
+    previewUrl: results.previewUrl || originalUrl || null,
   });
 }

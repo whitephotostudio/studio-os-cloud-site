@@ -321,6 +321,27 @@ export default function ProjectAlbumPage() {
       let uploadedCount = 0;
       let failedCount = 0;
 
+      // Ask the DB for the highest existing sort_order in this collection so
+      // concurrent uploaders (or a page that hasn't refreshed) don't collide
+      // on media.length and produce duplicate sort_order values. Fall back to
+      // the locally-known count if the query errors for any reason.
+      let sortOrderBase = media.length;
+      try {
+        const { data: maxRow, error: maxError } = await supabase
+          .from("media")
+          .select("sort_order")
+          .eq("project_id", projectId)
+          .eq("collection_id", albumId)
+          .order("sort_order", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (!maxError && maxRow && typeof maxRow.sort_order === "number") {
+          sortOrderBase = maxRow.sort_order + 1;
+        }
+      } catch {
+        // non-fatal — fall back to media.length
+      }
+
       for (const file of files) {
         const queueId = `${batchId}-${files.indexOf(file)}`;
         const displayName = shortFileName(file.webkitRelativePath || file.name);
@@ -382,7 +403,7 @@ export default function ProjectAlbumPage() {
             mime_type: file.type || null,
             preview_url: previewUrl || null,
             thumbnail_url: thumbnailUrl || null,
-            sort_order: media.length + uploadedCount + failedCount,
+            sort_order: sortOrderBase + uploadedCount + failedCount,
             is_cover: false,
           };
 
@@ -405,7 +426,7 @@ export default function ProjectAlbumPage() {
               preview_url: previewUrl || null,
               thumbnail_url: thumbnailUrl || null,
               created_at: new Date().toISOString(),
-              sort_order: media.length + uploadedCount + failedCount,
+              sort_order: sortOrderBase + uploadedCount + failedCount,
             }),
             download_url: r2Result.publicUrl,
           }) as MediaRow;

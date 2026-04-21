@@ -9,6 +9,13 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 export const maxDuration = 120;
 
+// Upper bound on photos included in a single ZIP request. The /event-download-ready
+// route already chunks batches (~72–100 photos per token depending on resolution
+// and watermark), but we enforce a hard cap here as a defense-in-depth guard so
+// a forged/tampered token cannot ask us to materialize thousands of full-size
+// buffers in memory at once.
+const MAX_MEDIA_PER_BATCH = 150;
+
 type MediaRow = {
   id: string;
   storage_path: string | null;
@@ -363,6 +370,15 @@ export async function GET(request: NextRequest) {
     }
 
     const payload = verifyEventGalleryBatchToken(token);
+    if (Array.isArray(payload.mediaIds) && payload.mediaIds.length > MAX_MEDIA_PER_BATCH) {
+      return NextResponse.json(
+        {
+          ok: false,
+          message: `This batch exceeds the ${MAX_MEDIA_PER_BATCH}-photo per-request limit. Please request a new download link.`,
+        },
+        { status: 400 },
+      );
+    }
     const service = createDashboardServiceClient();
     const { data: mediaRows, error: mediaError } = await service
       .from("media")

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createDashboardServiceClient } from "@/lib/dashboard-auth";
+import { getClientIp, rateLimit } from "@/lib/rate-limit";
 
 export const dynamic = "force-dynamic";
 
@@ -59,6 +60,28 @@ function isMissingVisitorsTable(error: unknown) {
 
 export async function POST(request: NextRequest) {
   try {
+    // Rate-limit PIN auth attempts per client IP so an attacker cannot grind
+    // through PINs unnoticed. Window intentionally short so legitimate users
+    // retry quickly; limit is tight because a real user shouldn't need more
+    // than a few attempts in a 10s window.
+    const clientIp = getClientIp(request);
+    const limitResult = rateLimit(clientIp, {
+      namespace: "pin-auth-event",
+      limit: 8,
+      windowSeconds: 10,
+    });
+    if (!limitResult.allowed) {
+      return NextResponse.json(
+        { ok: false, message: "Too many attempts. Please wait a few seconds and try again." },
+        {
+          status: 429,
+          headers: {
+            "Retry-After": Math.max(1, Math.ceil((limitResult.resetAt - Date.now()) / 1000)).toString(),
+          },
+        },
+      );
+    }
+
     const { eventId, email, pin } = (await request.json()) as {
       eventId?: string;
       email?: string;
