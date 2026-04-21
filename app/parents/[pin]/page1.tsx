@@ -1839,126 +1839,63 @@ export default function ParentGalleryPage() {
     setPlacing(true);
     setOrderError("");
 
-    const { data: schoolRow } = await supabase
-      .from("schools")
-      .select("photographer_id")
-      .eq("id", student.school_id)
-      .maybeSingle();
-
-    const packagePrice = selectedPkg.price_cents / 100;
-    const backdropAddOnCents = premiumBackdropCents;
-    const totalCents = (selectedPkg.price_cents * selectedOrderQty) + backdropAddOnCents;
-    const isDigital = getCategory(selectedPkg) === "digital";
-
-    const backdropNote = confirmedBackdrop
-      ? `BACKDROP: ${confirmedBackdrop.name}${confirmedBackdrop.tier === "premium" ? ` (Premium · $${(backdropAddOnCents / 100).toFixed(2)})` : " (Included)"}`
-      : "";
-
-    const slotsSummary = isDigital
-      ? `Digital download order`
-      : slots
-          .map(
-            (s, i) => `Item ${i + 1}: ${s.label} → ${s.assignedImageUrl ?? "no photo"}`
-          )
-          .join("\n");
-
-    const shippingBlock =
-      deliveryMethod === "shipping"
-        ? [
-            `Delivery: shipping`,
-            `Name: ${shippingName.trim()}`,
-            `Address: ${shippingAddress1.trim()}`,
-            shippingAddress2.trim() ? `Line 2: ${shippingAddress2.trim()}` : "",
-            `City: ${shippingCity.trim()}`,
-            `Province: ${shippingProvince.trim()}`,
-            `Postal: ${shippingPostalCode.trim()}`,
-          ]
-            .filter(Boolean)
-            .join("\n")
-        : "Delivery: pickup";
-
-    const combinedNotes = [
-      notes.trim(),
-      backdropNote,
-      isDigital ? "DIGITAL ORDER" : "PHOTO SELECTIONS:\n" + slotsSummary,
-      shippingBlock,
-    ]
-      .filter(Boolean)
-      .join("\n\n");
-
-    const { data: orderRow, error: orderErr } = await supabase
-      .from("orders")
-      .insert({
-        school_id: student.school_id,
-        class_id: student.class_id ?? null,
-        student_id: student.id,
-        photographer_id: schoolRow?.photographer_id ?? null,
-        parent_name: parentName.trim() || null,
-        parent_email: parentEmail.trim() || null,
-        parent_phone: parentPhone.trim() || null,
-        customer_name: parentName.trim() || null,
-        customer_email: parentEmail.trim() || null,
-        package_id: selectedPkg.id,
-        package_name: selectedPkg.name,
-        package_price: packagePrice,
-        special_notes: combinedNotes || null,
-        notes: combinedNotes || null,
-        status: isDigital ? "payment_pending" : "payment_pending",
-        seen_by_photographer: false,
-        subtotal_cents: selectedPkg.price_cents * selectedOrderQty,
-        tax_cents: 0,
-        total_cents: totalCents,
-        total_amount: totalCents / 100,
-        currency: "cad",
-      })
-      .select("id")
-      .single();
-
-    if (orderErr || !orderRow) {
-      setOrderError(orderErr?.message ?? "Failed to create order draft.");
-      setPlacing(false);
-      return;
-    }
-
-    const itemsToInsert = isDigital
-      ? [
-          {
-            order_id: orderRow.id,
-            product_name: selectedPkg.name,
-            quantity: selectedOrderQty,
-            price: packagePrice,
-            unit_price_cents: selectedPkg.price_cents,
-            line_total_cents: selectedPkg.price_cents * selectedOrderQty,
-            sku: selectedImage?.url ?? null,
+    // Route the order creation through the server-side endpoint. We no
+    // longer write `orders` / `order_items` with the public anon key —
+    // the server looks up the real package + backdrop prices from the
+    // packages / backdrop_catalog tables and computes the total itself.
+    // See: app/api/portal/orders/create/route.ts
+    let orderId: string;
+    try {
+      const createRes = await fetch("/api/portal/orders/create", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          mode: "school",
+          pin,
+          schoolId: student.school_id,
+          packageId: selectedPkg.id,
+          quantity: selectedOrderQty,
+          backdropId: confirmedBackdrop?.id ?? null,
+          slots: slots.map((s) => ({
+            label: s.label,
+            assignedImageUrl: s.assignedImageUrl ?? null,
+          })),
+          parent: {
+            name: parentName.trim() || undefined,
+            email: parentEmail.trim(),
+            phone: parentPhone.trim() || undefined,
           },
-        ]
-      : slots.map((slot) => ({
-          order_id: orderRow.id,
-          product_name: slot.label,
-          quantity: 1,
-          price: (packagePrice * selectedOrderQty) / Math.max(slots.length, 1),
-          unit_price_cents: Math.round((selectedPkg.price_cents * selectedOrderQty) / Math.max(slots.length, 1)),
-          line_total_cents: Math.round((selectedPkg.price_cents * selectedOrderQty) / Math.max(slots.length, 1)),
-          sku: slot.assignedImageUrl ?? null,
-        }));
-
-    // Add premium backdrop as a separate line item
-    if (backdropAddOnCents > 0 && confirmedBackdrop) {
-      itemsToInsert.push({
-        order_id: orderRow.id,
-        product_name: `★ Premium Backdrop: ${confirmedBackdrop.name}`,
-        quantity: 1,
-        price: backdropAddOnCents / 100,
-        unit_price_cents: backdropAddOnCents,
-        line_total_cents: backdropAddOnCents,
-        sku: confirmedBackdrop.image_url ?? null,
+          delivery:
+            deliveryMethod === "shipping"
+              ? {
+                  method: "shipping",
+                  name: shippingName.trim(),
+                  address1: shippingAddress1.trim(),
+                  address2: shippingAddress2.trim(),
+                  city: shippingCity.trim(),
+                  province: shippingProvince.trim(),
+                  postalCode: shippingPostalCode.trim(),
+                }
+              : { method: "pickup" },
+          notes: notes.trim() || undefined,
+        }),
       });
-    }
 
-    const { error: orderItemsError } = await supabase.from("order_items").insert(itemsToInsert);
-
-    if (orderItemsError) {
-      setOrderError(orderItemsError.message || "Failed to prepare order items.");
+      const createJson = (await createRes.json().catch(() => ({}))) as {
+        ok?: boolean;
+        message?: string;
+        orderId?: string;
+      };
+      if (!createRes.ok || createJson.ok === false || !createJson.orderId) {
+        throw new Error(
+          typeof createJson.message === "string"
+            ? createJson.message
+            : "Failed to create order draft.",
+        );
+      }
+      orderId = createJson.orderId;
+    } catch (err) {
+      setOrderError(err instanceof Error ? err.message : "Failed to create order draft.");
       setPlacing(false);
       return;
     }
@@ -1968,7 +1905,7 @@ export default function ParentGalleryPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          orderId: orderRow.id,
+          orderId,
           pin,
           schoolId: student.school_id,
           customerEmail: parentEmail.trim(),
