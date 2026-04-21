@@ -10,6 +10,8 @@ export type EventGalleryProjectAccessRow = {
   access_pin: string | null;
   gallery_settings: unknown;
   photographer_id: string | null;
+  order_due_date: string | null;
+  expiration_date: string | null;
 };
 
 type EventGalleryCollectionAccessRow = {
@@ -68,7 +70,7 @@ export async function validateEventGalleryAccess(params: {
   const { data: projectRow, error: projectError } = await service
     .from("projects")
     .select(
-      "id,title,workflow_type,status,email_required,access_mode,access_pin,gallery_settings,photographer_id",
+      "id,title,workflow_type,status,email_required,access_mode,access_pin,gallery_settings,photographer_id,order_due_date,expiration_date",
     )
     .eq("id", selectedProjectId)
     .maybeSingle<EventGalleryProjectAccessRow>();

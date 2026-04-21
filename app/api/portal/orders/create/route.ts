@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createDashboardServiceClient } from "@/lib/dashboard-auth";
 import { validateEventGalleryAccess } from "@/lib/event-gallery-access";
+import { isOrderingWindowOpen } from "@/lib/ordering-window";
 import { getClientIp, rateLimit } from "@/lib/rate-limit";
 import { hasActiveSubscription } from "@/lib/subscription-gate";
 import {
@@ -88,6 +89,8 @@ type ParentPayload = {
 type SchoolRow = {
   id: string;
   photographer_id: string | null;
+  order_due_date: string | null;
+  expiration_date: string | null;
 };
 
 type StudentRow = {
@@ -468,7 +471,7 @@ export async function POST(request: NextRequest) {
 
       const { data: schoolRow, error: schoolError } = await sb
         .from("schools")
-        .select("id,photographer_id")
+        .select("id,photographer_id,order_due_date,expiration_date")
         .eq("id", schoolIdResult.value)
         .maybeSingle<SchoolRow>();
       if (schoolError) throw schoolError;
@@ -476,6 +479,13 @@ export async function POST(request: NextRequest) {
         return NextResponse.json(
           { ok: false, message: "This school is not linked to a photographer." },
           { status: 404 },
+        );
+      }
+
+      if (!isOrderingWindowOpen(schoolRow)) {
+        return NextResponse.json(
+          { ok: false, message: "Ordering is no longer available for this gallery." },
+          { status: 410 },
         );
       }
 
@@ -513,6 +523,13 @@ export async function POST(request: NextRequest) {
         return NextResponse.json(
           { ok: false, message: "This event is not linked to a photographer." },
           { status: 404 },
+        );
+      }
+
+      if (!isOrderingWindowOpen(access.project)) {
+        return NextResponse.json(
+          { ok: false, message: "Ordering is no longer available for this gallery." },
+          { status: 410 },
         );
       }
 
