@@ -3983,10 +3983,20 @@ export default function ParentGalleryPage() {
     };
   }, [checkoutStatus, sessionId, placed]);
 
+  // In school mode, once ANY photo in the set has a cutout (background-removed),
+  // hide the non-cutout "originals" from the viewer thumbnail strip so parents
+  // aren't presented with duplicates of the same face — one swappable, one not.
+  // If no cutouts exist yet for the shoot, fall back to showing everything.
+  const schoolModeVisibleImages = (() => {
+    if (!isSchoolMode) return images;
+    const anyHasNobg = images.some((img) => !!nobgUrls[img.id]);
+    if (!anyHasNobg) return images;
+    return images.filter((img) => !!nobgUrls[img.id]);
+  })();
   const visibleImages =
     !isSchoolMode && activeEventCollectionId
       ? images.filter((img) => clean(img.collectionId) === activeEventCollectionId)
-      : images;
+      : schoolModeVisibleImages;
   const selectedImage = visibleImages[selectedImageIndex] ?? null;
   const isCompositeSelection = isSchoolMode && isCompositeGalleryImage(selectedImage);
   const selectedImageAspectRatio = useImageAspectRatio(
