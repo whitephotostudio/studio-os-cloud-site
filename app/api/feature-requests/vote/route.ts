@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createDashboardServiceClient, resolveDashboardAuth } from "@/lib/dashboard-auth";
+import { rateLimit } from "@/lib/rate-limit";
 import { toggleVote } from "@/lib/feature-requests";
 
 export const dynamic = "force-dynamic";
@@ -10,6 +11,29 @@ export async function POST(request: NextRequest) {
     const { user } = await resolveDashboardAuth(request);
     if (!user) {
       return NextResponse.json({ ok: false, message: "Sign in required." }, { status: 401 });
+    }
+
+    // Cap toggle rate so a misbehaving client can't hammer the DB with
+    // rapid vote flips (each call does a read + write). 30 toggles/minute
+    // is well above any plausible human rate.
+    const limitResult = rateLimit(user.id, {
+      namespace: "feature-request-vote",
+      limit: 30,
+      windowSeconds: 60,
+    });
+    if (!limitResult.allowed) {
+      return NextResponse.json(
+        { ok: false, message: "Too many votes. Please wait a moment." },
+        {
+          status: 429,
+          headers: {
+            "Retry-After": Math.max(
+              1,
+              Math.ceil((limitResult.resetAt - Date.now()) / 1000),
+            ).toString(),
+          },
+        },
+      );
     }
 
     const service = createDashboardServiceClient();

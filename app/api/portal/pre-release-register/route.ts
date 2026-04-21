@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createDashboardServiceClient } from "@/lib/dashboard-auth";
+import { getClientIp, rateLimit } from "@/lib/rate-limit";
 
 export const dynamic = "force-dynamic";
 
@@ -9,6 +10,32 @@ function clean(value: string | null | undefined) {
 
 export async function POST(request: NextRequest) {
   try {
+    // Unauthenticated public endpoint — any anonymous caller can POST here.
+    // Without a rate limit, an attacker can flood pre_release_emails /
+    // pre_release_registrations / portal_email_captures with millions of
+    // junk rows using distinct @attacker.com addresses. Cap at 10 requests
+    // per 5-minute window per IP; legitimate visitors only hit this once.
+    const clientIp = getClientIp(request);
+    const limitResult = rateLimit(clientIp, {
+      namespace: "pre-release-register",
+      limit: 10,
+      windowSeconds: 300,
+    });
+    if (!limitResult.allowed) {
+      return NextResponse.json(
+        { ok: false, message: "Too many requests. Please try again in a few minutes." },
+        {
+          status: 429,
+          headers: {
+            "Retry-After": Math.max(
+              1,
+              Math.ceil((limitResult.resetAt - Date.now()) / 1000),
+            ).toString(),
+          },
+        },
+      );
+    }
+
     const { schoolId, projectId, email } = (await request.json()) as {
       schoolId?: string;
       projectId?: string;

@@ -463,20 +463,31 @@ export async function POST(req: NextRequest) {
   }
 
   const service = createDashboardServiceClient();
-  const { data: existingEvent, error: existingEventError } = await service
-    .from("stripe_events")
-    .select("id")
-    .eq("id", event.id)
-    .maybeSingle();
 
-  if (existingEventError) {
+  // Insert-first dedup: atomically claim this event.id before doing any work.
+  // If another concurrent delivery already inserted it, recordStripeEvent
+  // returns { inserted: false } (via unique-violation 23505) and we short-
+  // circuit. This closes the race window in the previous "select then insert"
+  // pattern where two parallel deliveries could both pass the existence check
+  // and both run the handler.
+  let dedupResult: { inserted: boolean };
+  try {
+    dedupResult = await recordStripeEvent(
+      service,
+      event,
+      JSON.parse(rawBody) as Record<string, unknown>,
+    );
+  } catch (error) {
     return NextResponse.json(
-      { ok: false, message: existingEventError.message },
+      {
+        ok: false,
+        message: error instanceof Error ? error.message : "Failed to record Stripe event.",
+      },
       { status: 500 },
     );
   }
 
-  if (existingEvent) {
+  if (!dedupResult.inserted) {
     return NextResponse.json({ ok: true, duplicate: true });
   }
 
@@ -643,13 +654,31 @@ export async function POST(req: NextRequest) {
         break;
     }
 
-    await recordStripeEvent(service, event, JSON.parse(rawBody) as Record<string, unknown>);
+    // Event already recorded above via insert-first dedup — nothing more to do.
     return NextResponse.json({ ok: true });
   } catch (error) {
+    console.error("[stripe-webhook] handler failed", {
+      eventId: event.id,
+      type: event.type,
+      error,
+    });
+    // The insert-first dedup row would permanently block Stripe retries if we
+    // left it in place after a handler failure. Roll it back so the next
+    // retry can reprocess this event cleanly. If the delete itself fails,
+    // log it and move on — operators can replay manually from the Stripe
+    // dashboard if needed.
+    try {
+      await service.from("stripe_events").delete().eq("id", event.id);
+    } catch (rollbackError) {
+      console.error("[stripe-webhook] failed to roll back dedup row", {
+        eventId: event.id,
+        rollbackError,
+      });
+    }
     return NextResponse.json(
       {
         ok: false,
-        message: error instanceof Error ? error.message : "Failed to process Stripe webhook.",
+        message: "Failed to process Stripe webhook.",
       },
       { status: 500 },
     );
