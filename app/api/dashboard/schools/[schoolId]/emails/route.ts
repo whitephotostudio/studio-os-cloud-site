@@ -193,11 +193,9 @@ export async function POST(
       failedRecipients,
     });
   } catch (error) {
+    console.error("[dashboard:schools:emails]", error);
     return NextResponse.json(
-      {
-        ok: false,
-        message: error instanceof Error ? error.message : "Failed to send school campaign emails.",
-      },
+      { ok: false, message: "Failed to send school campaign emails." },
       { status: 500 },
     );
   }

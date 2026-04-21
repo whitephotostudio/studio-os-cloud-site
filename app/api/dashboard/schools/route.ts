@@ -77,12 +77,9 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ ok: true, school: newSchool });
   } catch (error) {
-    console.error("School creation error:", error);
+    console.error("[dashboard:schools:POST]", error);
     return NextResponse.json(
-      {
-        ok: false,
-        message: error instanceof Error ? error.message : "Failed to create school.",
-      },
+      { ok: false, message: "Failed to create school." },
       { status: 500 },
     );
   }

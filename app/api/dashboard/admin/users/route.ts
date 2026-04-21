@@ -250,12 +250,9 @@ export async function GET(request: NextRequest) {
       previousSeenAt: seenAt ? seenAt.toISOString() : null,
     });
   } catch (error) {
+    console.error("[dashboard:admin:users:GET]", error);
     return NextResponse.json(
-      {
-        ok: false,
-        message:
-          error instanceof Error ? error.message : "Unable to load registered users.",
-      },
+      { ok: false, message: "Unable to load registered users." },
       { status: 500 },
     );
   }
@@ -514,12 +511,9 @@ export async function POST(request: NextRequest) {
       { status: 400 },
     );
   } catch (error) {
+    console.error("[dashboard:admin:users:PATCH]", error);
     return NextResponse.json(
-      {
-        ok: false,
-        message:
-          error instanceof Error ? error.message : "Unable to update user trial.",
-      },
+      { ok: false, message: "Unable to update user trial." },
       { status: 500 },
     );
   }

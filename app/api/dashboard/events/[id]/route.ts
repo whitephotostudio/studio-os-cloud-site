@@ -536,11 +536,9 @@ export async function GET(
       albumsCount,
     });
   } catch (error) {
+    console.error("[dashboard:events:GET]", error);
     return NextResponse.json(
-      {
-        ok: false,
-        message: error instanceof Error ? error.message : "Failed to load project.",
-      },
+      { ok: false, message: "Failed to load project." },
       { status: 500 },
     );
   }
@@ -770,6 +768,8 @@ export async function PATCH(
       campaignEmailResult,
     });
   } catch (error) {
+    // Keep full details in the log for debugging; return a generic
+    // response so constraint names / DB codes don't leak to clients.
     const errMsg =
       error instanceof Error ? error.message : "Failed to update project.";
     const errDetails =
@@ -782,12 +782,7 @@ export async function PATCH(
         : undefined;
     console.error("[PATCH /api/dashboard/events/[id]]", { errMsg, errDetails, errCode, error });
     return NextResponse.json(
-      {
-        ok: false,
-        message: errMsg,
-        details: errDetails || null,
-        code: errCode || null,
-      },
+      { ok: false, message: "Failed to update project." },
       { status: 500 },
     );
   }
@@ -874,7 +869,7 @@ export async function DELETE(
   } catch (error) {
     console.error("[DELETE /api/dashboard/events/[id]]", error);
     return NextResponse.json(
-      { ok: false, message: error instanceof Error ? error.message : "Failed to delete project." },
+      { ok: false, message: "Failed to delete project." },
       { status: 500 },
     );
   }

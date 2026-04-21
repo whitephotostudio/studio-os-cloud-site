@@ -120,12 +120,9 @@ export async function POST(req: NextRequest) {
       status: "paid",
     });
   } catch (error) {
+    console.error("[stripe:checkout:confirm]", error);
     return NextResponse.json(
-      {
-        ok: false,
-        message:
-          error instanceof Error ? error.message : "Failed to confirm Stripe checkout.",
-      },
+      { ok: false, message: "Failed to confirm Stripe checkout." },
       { status: 500 },
     );
   }

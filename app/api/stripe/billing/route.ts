@@ -192,12 +192,9 @@ export async function POST(request: NextRequest) {
       extraDesktopKeys,
     });
   } catch (error) {
+    console.error("[stripe:billing]", error);
     return NextResponse.json(
-      {
-        ok: false,
-        message:
-          error instanceof Error ? error.message : "Unable to update Stripe billing.",
-      },
+      { ok: false, message: "Unable to update Stripe billing." },
       { status: 500 },
     );
   }

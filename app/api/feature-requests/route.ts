@@ -67,8 +67,9 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({ ok: true, data: enriched });
   } catch (error) {
+    console.error("[feature-requests:GET]", error);
     return NextResponse.json(
-      { ok: false, message: error instanceof Error ? error.message : "Failed to load requests." },
+      { ok: false, message: "Failed to load requests." },
       { status: 500 },
     );
   }
@@ -127,8 +128,9 @@ export async function POST(request: NextRequest) {
     const created = await createFeatureRequest(service, pg.id, title, description);
     return NextResponse.json({ ok: true, data: created }, { status: 201 });
   } catch (error) {
+    console.error("[feature-requests:POST]", error);
     return NextResponse.json(
-      { ok: false, message: error instanceof Error ? error.message : "Failed to create request." },
+      { ok: false, message: "Failed to create request." },
       { status: 500 },
     );
   }

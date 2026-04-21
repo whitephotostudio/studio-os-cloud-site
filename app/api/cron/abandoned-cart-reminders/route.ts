@@ -252,12 +252,9 @@ export async function GET(request: NextRequest) {
       failed,
     });
   } catch (error) {
+    console.error("[cron:abandoned-cart-reminders]", error);
     return NextResponse.json(
-      {
-        ok: false,
-        message:
-          error instanceof Error ? error.message : "Failed to send abandoned cart reminders.",
-      },
+      { ok: false, message: "Failed to send abandoned cart reminders." },
       { status: 500 },
     );
   }

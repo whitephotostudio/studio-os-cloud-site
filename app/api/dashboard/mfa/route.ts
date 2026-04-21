@@ -73,12 +73,9 @@ export async function GET() {
       mfaEnabled: totpFactors.some((f) => f.status === "verified"),
     });
   } catch (error) {
+    console.error("[dashboard:mfa:GET]", error);
     return NextResponse.json(
-      {
-        ok: false,
-        message:
-          error instanceof Error ? error.message : "Failed to load MFA status.",
-      },
+      { ok: false, message: "Failed to load MFA status." },
       { status: 500 },
     );
   }
@@ -194,12 +191,9 @@ export async function POST(request: NextRequest) {
       { status: 400 },
     );
   } catch (error) {
+    console.error("[dashboard:mfa:POST]", error);
     return NextResponse.json(
-      {
-        ok: false,
-        message:
-          error instanceof Error ? error.message : "MFA operation failed.",
-      },
+      { ok: false, message: "MFA operation failed." },
       { status: 500 },
     );
   }

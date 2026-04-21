@@ -283,12 +283,9 @@ export async function POST(req: NextRequest) {
       planCode: photographer.subscription_plan_code,
     });
   } catch (error) {
+    console.error("[stripe:checkout]", error);
     return NextResponse.json(
-      {
-        ok: false,
-        message:
-          error instanceof Error ? error.message : "Failed to create Stripe checkout.",
-      },
+      { ok: false, message: "Failed to create Stripe checkout." },
       { status: 500 },
     );
   }

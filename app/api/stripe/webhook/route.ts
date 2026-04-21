@@ -478,11 +478,9 @@ export async function POST(req: NextRequest) {
       JSON.parse(rawBody) as Record<string, unknown>,
     );
   } catch (error) {
+    console.error("[stripe:webhook:recordStripeEvent]", error);
     return NextResponse.json(
-      {
-        ok: false,
-        message: error instanceof Error ? error.message : "Failed to record Stripe event.",
-      },
+      { ok: false, message: "Failed to record Stripe event." },
       { status: 500 },
     );
   }

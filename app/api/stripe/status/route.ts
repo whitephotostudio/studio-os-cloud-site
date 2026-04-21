@@ -189,9 +189,8 @@ export async function GET(request: NextRequest) {
       try {
         recentInvoices = await listRecentStripeInvoices(photographer.stripe_platform_customer_id);
       } catch (error) {
-        warnings.push(
-          error instanceof Error ? error.message : "Unable to load recent Stripe invoices.",
-        );
+        console.error("[stripe:status:listInvoices]", error);
+        warnings.push("Unable to load recent Stripe invoices.");
       }
     }
 
@@ -253,12 +252,12 @@ export async function GET(request: NextRequest) {
       warnings,
     });
   } catch (error) {
+    console.error("[stripe:status]", error);
     return NextResponse.json(
       {
         ...EMPTY_PROFILE,
         signedIn: true,
-        message:
-          error instanceof Error ? error.message : "Unable to load Stripe billing status.",
+        message: "Unable to load Stripe billing status.",
       },
       { status: 500 },
     );

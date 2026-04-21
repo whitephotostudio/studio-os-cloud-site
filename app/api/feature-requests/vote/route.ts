@@ -58,8 +58,9 @@ export async function POST(request: NextRequest) {
     const voted = await toggleVote(service, featureRequestId, pg.id);
     return NextResponse.json({ ok: true, voted });
   } catch (error) {
+    console.error("[feature-requests:vote]", error);
     return NextResponse.json(
-      { ok: false, message: error instanceof Error ? error.message : "Failed to toggle vote." },
+      { ok: false, message: "Failed to toggle vote." },
       { status: 500 },
     );
   }

@@ -117,7 +117,7 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error("Order notify error:", error);
     return NextResponse.json(
-      { ok: false, message: error instanceof Error ? error.message : "Failed to send email." },
+      { ok: false, message: "Failed to send email." },
       { status: 500 }
     );
   }

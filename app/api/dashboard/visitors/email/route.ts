@@ -122,7 +122,7 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error("Mass email error:", error);
     return NextResponse.json(
-      { ok: false, message: error instanceof Error ? error.message : "Failed to send emails." },
+      { ok: false, message: "Failed to send emails." },
       { status: 500 },
     );
   }

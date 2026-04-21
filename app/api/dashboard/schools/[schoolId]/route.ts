@@ -358,12 +358,9 @@ export async function PATCH(
       emailSummary,
     });
   } catch (error) {
+    console.error("[dashboard:schools:PATCH]", error);
     return NextResponse.json(
-      {
-        ok: false,
-        message:
-          error instanceof Error ? error.message : "Failed to save school settings.",
-      },
+      { ok: false, message: "Failed to save school settings." },
       { status: 500 },
     );
   }
@@ -424,7 +421,7 @@ export async function DELETE(
   } catch (error) {
     console.error("[DELETE /api/dashboard/schools/[schoolId]]", error);
     return NextResponse.json(
-      { ok: false, message: error instanceof Error ? error.message : "Failed to delete school." },
+      { ok: false, message: "Failed to delete school." },
       { status: 500 },
     );
   }

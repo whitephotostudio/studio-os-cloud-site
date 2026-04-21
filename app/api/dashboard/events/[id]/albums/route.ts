@@ -139,12 +139,9 @@ export async function POST(
       album: albumData as CollectionRow,
     });
   } catch (error) {
+    console.error("[dashboard:events:albums:POST]", error);
     return NextResponse.json(
-      {
-        ok: false,
-        message:
-          error instanceof Error ? error.message : "Failed to create album.",
-      },
+      { ok: false, message: "Failed to create album." },
       { status: 500 },
     );
   }
@@ -238,12 +235,9 @@ export async function DELETE(
       deletedMediaCount: mediaRows?.length ?? 0,
     });
   } catch (error) {
+    console.error("[dashboard:events:albums:DELETE]", error);
     return NextResponse.json(
-      {
-        ok: false,
-        message:
-          error instanceof Error ? error.message : "Failed to delete album.",
-      },
+      { ok: false, message: "Failed to delete album." },
       { status: 500 },
     );
   }

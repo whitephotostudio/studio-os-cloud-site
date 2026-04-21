@@ -324,10 +324,11 @@ export async function POST(request: NextRequest) {
       message: `Access settings synced. Gallery is ${galleryStatus.replace("_", "-")}.`,
     });
   } catch (error: unknown) {
-    const message =
-      error instanceof Error ? error.message : "Internal server error";
-    console.error("[desktop-access POST]", message);
-    return NextResponse.json({ ok: false, message }, { status: 500 });
+    console.error("[desktop-access POST]", error);
+    return NextResponse.json(
+      { ok: false, message: "Internal server error" },
+      { status: 500 },
+    );
   }
 }
 
@@ -464,9 +465,10 @@ export async function GET(request: NextRequest) {
       collections: collections ?? [],
     });
   } catch (error: unknown) {
-    const message =
-      error instanceof Error ? error.message : "Internal server error";
-    console.error("[desktop-access GET]", message);
-    return NextResponse.json({ ok: false, message }, { status: 500 });
+    console.error("[desktop-access GET]", error);
+    return NextResponse.json(
+      { ok: false, message: "Internal server error" },
+      { status: 500 },
+    );
   }
 }

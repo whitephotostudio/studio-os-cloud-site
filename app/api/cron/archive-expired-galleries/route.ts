@@ -107,12 +107,9 @@ export async function GET(request: NextRequest) {
       failed,
     });
   } catch (error) {
+    console.error("[cron:archive-expired-galleries]", error);
     return NextResponse.json(
-      {
-        ok: false,
-        message:
-          error instanceof Error ? error.message : "Failed to archive expired galleries.",
-      },
+      { ok: false, message: "Failed to archive expired galleries." },
       { status: 500 },
     );
   }

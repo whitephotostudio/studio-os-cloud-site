@@ -499,7 +499,7 @@ export async function GET(request: NextRequest) {
   } catch (error) {
     console.error("Order download error:", error);
     return NextResponse.json(
-      { ok: false, message: error instanceof Error ? error.message : "Download failed." },
+      { ok: false, message: "Download failed." },
       { status: 500 },
     );
   }

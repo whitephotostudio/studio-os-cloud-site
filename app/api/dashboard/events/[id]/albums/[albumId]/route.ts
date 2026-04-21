@@ -133,11 +133,9 @@ export async function GET(
       media: normalizedMedia,
     });
   } catch (error) {
+    console.error("[dashboard:events:album:GET]", error);
     return NextResponse.json(
-      {
-        ok: false,
-        message: error instanceof Error ? error.message : "Failed to load album.",
-      },
+      { ok: false, message: "Failed to load album." },
       { status: 500 },
     );
   }
@@ -266,12 +264,9 @@ export async function PATCH(
       album: albumData as CollectionRow,
     });
   } catch (error) {
+    console.error("[dashboard:events:album:PATCH]", error);
     return NextResponse.json(
-      {
-        ok: false,
-        message:
-          error instanceof Error ? error.message : "Failed to update album.",
-      },
+      { ok: false, message: "Failed to update album." },
       { status: 500 },
     );
   }
@@ -381,11 +376,9 @@ export async function DELETE(
 
     return NextResponse.json({ ok: true, deletedIds: deleteIds });
   } catch (error) {
+    console.error("[dashboard:events:album:DELETE]", error);
     return NextResponse.json(
-      {
-        ok: false,
-        message: error instanceof Error ? error.message : "Failed to delete photo(s).",
-      },
+      { ok: false, message: "Failed to delete photo(s)." },
       { status: 500 },
     );
   }

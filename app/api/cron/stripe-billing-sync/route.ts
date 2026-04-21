@@ -64,12 +64,9 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({ ok: true, processed, synced, failed });
   } catch (error) {
+    console.error("[cron:stripe-billing-sync]", error);
     return NextResponse.json(
-      {
-        ok: false,
-        message:
-          error instanceof Error ? error.message : "Unable to sync Stripe billing state.",
-      },
+      { ok: false, message: "Unable to sync Stripe billing state." },
       { status: 500 },
     );
   }

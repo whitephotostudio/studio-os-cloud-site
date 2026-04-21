@@ -115,11 +115,9 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ ok: true, project: data });
   } catch (error) {
+    console.error("[dashboard:events:POST]", error);
     return NextResponse.json(
-      {
-        ok: false,
-        message: error instanceof Error ? error.message : "Failed to create event.",
-      },
+      { ok: false, message: "Failed to create event." },
       { status: 500 },
     );
   }
@@ -223,11 +221,9 @@ export async function GET(request: NextRequest) {
       totalCount: totalCount ?? 0,
     });
   } catch (error) {
+    console.error("[dashboard:events:GET]", error);
     return NextResponse.json(
-      {
-        ok: false,
-        message: error instanceof Error ? error.message : "Failed to load events.",
-      },
+      { ok: false, message: "Failed to load events." },
       { status: 500 },
     );
   }

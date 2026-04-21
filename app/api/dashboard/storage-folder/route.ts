@@ -99,11 +99,9 @@ export async function GET(request: NextRequest) {
     const files = await listR2FolderImages(folderPath);
     return NextResponse.json({ ok: true, files });
   } catch (error) {
+    console.error("[dashboard:storage-folder]", error);
     return NextResponse.json(
-      {
-        ok: false,
-        message: error instanceof Error ? error.message : "Failed to list storage folder.",
-      },
+      { ok: false, message: "Failed to list storage folder." },
       { status: 500 },
     );
   }

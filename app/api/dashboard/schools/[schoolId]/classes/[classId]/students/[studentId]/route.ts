@@ -94,12 +94,9 @@ export async function PATCH(
 
     return NextResponse.json({ ok: true, student: updatedRow });
   } catch (error) {
+    console.error("[dashboard:student:PATCH]", error);
     return NextResponse.json(
-      {
-        ok: false,
-        message:
-          error instanceof Error ? error.message : "Failed to save student settings.",
-      },
+      { ok: false, message: "Failed to save student settings." },
       { status: 500 },
     );
   }
@@ -166,12 +163,9 @@ export async function DELETE(
 
     return NextResponse.json({ ok: true });
   } catch (error) {
+    console.error("[dashboard:student:DELETE]", error);
     return NextResponse.json(
-      {
-        ok: false,
-        message:
-          error instanceof Error ? error.message : "Failed to delete student.",
-      },
+      { ok: false, message: "Failed to delete student." },
       { status: 500 },
     );
   }
