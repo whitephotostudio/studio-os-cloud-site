@@ -8537,7 +8537,13 @@ export default function ParentGalleryPage() {
                         (!!selectedBackdrop && selectedBackdrop.id !== confirmedBackdrop?.id)
                       );
                     const viewerImageCandidates = buildGalleryImageCandidates(selectedImage, "viewer-main");
-                    const activeBackdropSource = activeBackdrop?.image_url;
+                    // Mirror the Live Preview card's URL chain (thumbnail_url first, then image_url)
+                    // so that backdrops whose image_url fails (CORS / 404 / missing key) still render
+                    // here. Without this, the big viewer stays cutout-on-black while the small Live
+                    // Preview card composites correctly.
+                    const activeBackdropSource = activeBackdrop
+                      ? (activeBackdrop.thumbnail_url || activeBackdrop.image_url)
+                      : undefined;
                     return activeBackdrop && currentNobgUrl ? (
                       <div
                         style={{
