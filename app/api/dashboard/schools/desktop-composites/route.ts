@@ -4,6 +4,7 @@ import {
   resolveDashboardAuth,
 } from "@/lib/dashboard-auth";
 import { ensureSchoolCollectionId } from "@/lib/school-sync";
+import { normalizeStorageUrl } from "@/lib/storage-images";
 
 export const dynamic = "force-dynamic";
 
@@ -93,8 +94,8 @@ export async function POST(request: NextRequest) {
         storage_path: clean(item.storage_path),
         filename: clean(item.filename),
         mime_type: clean(item.mime_type) || "image/jpeg",
-        preview_url: clean(item.preview_url),
-        thumbnail_url: clean(item.thumbnail_url),
+        preview_url: normalizeStorageUrl(item.preview_url),
+        thumbnail_url: normalizeStorageUrl(item.thumbnail_url),
         is_cover: item.is_cover === true,
       };
       if (!normalized.class_name || !normalized.storage_path) continue;
@@ -255,7 +256,7 @@ export async function POST(request: NextRequest) {
         inserted += 1;
       }
 
-      const coverUrl = item.preview_url || item.thumbnail_url;
+      const coverUrl = normalizeStorageUrl(item.preview_url || item.thumbnail_url);
       if (coverUrl) {
         collectionCoverUpdates.set(collectionId, coverUrl);
       }

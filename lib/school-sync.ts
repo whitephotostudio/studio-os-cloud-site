@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { normalizeEventGallerySettings } from "@/lib/event-gallery-settings";
-import { buildStoredMediaUrls } from "@/lib/storage-images";
+import { buildStoredMediaUrls, normalizeStorageUrl } from "@/lib/storage-images";
 
 type SupabaseClientLike = SupabaseClient;
 
@@ -82,7 +82,7 @@ async function applySchoolAutoCovers(
   if (coverSource === "manual") return;
 
   const candidate = chooseSchoolCoverCandidate(params.assets, coverSource);
-  const candidateUrl = clean(candidate?.publicUrl);
+  const candidateUrl = normalizeStorageUrl(candidate?.publicUrl);
   if (!candidateUrl) return;
 
   if (settings.extras.autoChooseAlbumCover && !clean(collectionRow?.cover_photo_url)) {

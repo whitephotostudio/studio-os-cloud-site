@@ -5,6 +5,7 @@ import {
 } from "@/lib/dashboard-auth";
 import { normalizeEventGallerySettings } from "@/lib/event-gallery-settings";
 import { listR2FolderImages } from "@/lib/r2";
+import { normalizeStorageUrl } from "@/lib/storage-images";
 
 export const dynamic = "force-dynamic";
 
@@ -213,8 +214,8 @@ export async function POST(request: NextRequest) {
         storage_path: clean(item.storage_path),
         filename: clean(item.filename),
         mime_type: clean(item.mime_type),
-        preview_url: clean(item.preview_url),
-        thumbnail_url: clean(item.thumbnail_url),
+        preview_url: normalizeStorageUrl(item.preview_url),
+        thumbnail_url: normalizeStorageUrl(item.thumbnail_url),
         is_cover: item.is_cover === true,
       }))
       .filter((item) => item.collection_id && item.storage_path);

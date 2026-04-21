@@ -154,13 +154,21 @@ function preferredDownloadUrls(
     thumbnailUrl: row.thumbnail_url,
   });
 
+  // For "original" we do NOT fall back to preview/thumbnail — the whole point of
+  // requesting "original" is to get the full-resolution file. Silent fallback
+  // previously masked a real bug where desktop uploads registered preview-sized
+  // files as the original, so users got 1600px downloads while believing they
+  // were getting full-res. If the original is missing, surface that instead.
+  if (resolution === "original") {
+    const originalCandidate = clean(mediaUrls.originalUrl);
+    return originalCandidate ? [originalCandidate] : [];
+  }
+
   // Primary ranked candidates from the canonical URL builder.
   const primary =
     resolution === "web"
       ? [mediaUrls.thumbnailUrl, mediaUrls.previewUrl, mediaUrls.originalUrl]
-      : resolution === "large"
-        ? [mediaUrls.previewUrl, mediaUrls.originalUrl, mediaUrls.thumbnailUrl]
-        : [mediaUrls.originalUrl, mediaUrls.previewUrl, mediaUrls.thumbnailUrl];
+      : /* "large" */ [mediaUrls.previewUrl, mediaUrls.originalUrl, mediaUrls.thumbnailUrl];
 
   // ALSO try the raw DB-stored URLs as last-resort fallbacks. buildStoredMediaUrls
   // discards Supabase-hosted preview/thumbnail URLs in favour of the R2

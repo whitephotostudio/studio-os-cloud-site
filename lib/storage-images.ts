@@ -57,14 +57,44 @@ export function publicStorageUrl(
   return `${SUPABASE_URL}/storage/v1/object/public/${bucket}/${encodeStoragePath(safePath)}`;
 }
 
-export function transformedStorageUrl(
-  storagePath: string | null | undefined,
-  options: TransformOptions,
-  bucket = MEDIA_BUCKET,
-) {
-  const safePath = clean(storagePath);
-  if (!SUPABASE_URL || !safePath) return "";
-  return `${SUPABASE_URL}/storage/v1/render/image/public/${bucket}/${encodeStoragePath(safePath)}${buildQueryString(options)}`;
+/**
+ * Rewrite any Supabase Image Transformation URL (/storage/v1/render/image/...)
+ * into the raw public object URL (/storage/v1/object/...), stripping any
+ * transform query string (width, quality, resize, etc.).  Safe for non-
+ * transform URLs — passes them through unchanged.
+ *
+ * Each unique transform URL counts against the plan's Image Transformation
+ * quota, so every ingestion point that stores a URL must route it through
+ * this helper.
+ */
+export function normalizeStorageUrl(url: string | null | undefined) {
+  const candidate = clean(url);
+  if (!candidate) return "";
+
+  // Fast path: no render/image segment and no query string → unchanged.
+  if (!candidate.includes("/render/image/") && !candidate.includes("?")) {
+    return candidate;
+  }
+
+  try {
+    const parsed = new URL(candidate);
+    parsed.search = "";
+    parsed.hash = "";
+    if (parsed.pathname.includes("/storage/v1/render/image/public/")) {
+      parsed.pathname = parsed.pathname.replace(
+        "/storage/v1/render/image/public/",
+        "/storage/v1/object/public/",
+      );
+    }
+    return parsed.toString();
+  } catch {
+    // Fall back to a string-level rewrite for malformed inputs.
+    const withoutQuery = candidate.split("?")[0].split("#")[0];
+    return withoutQuery.replace(
+      "/storage/v1/render/image/public/",
+      "/storage/v1/object/public/",
+    );
+  }
 }
 
 export function extractStoragePathFromSupabaseUrl(
