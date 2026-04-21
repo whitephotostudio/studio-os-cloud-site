@@ -19,6 +19,7 @@ type OrderRow = {
   photographer_id: string | null;
   parent_email: string | null;
   customer_email: string | null;
+  package_id: string | null;
   package_name: string | null;
   total_cents: number | null;
   total_amount: number | null;
@@ -87,7 +88,7 @@ export async function POST(req: NextRequest) {
     const { data: order, error: orderError } = await sb
       .from("orders")
       .select(
-        "id,school_id,project_id,student_id,photographer_id,parent_email,customer_email,package_name,total_cents,total_amount,currency,status,payment_status,stripe_checkout_session_id",
+        "id,school_id,project_id,student_id,photographer_id,parent_email,customer_email,package_id,package_name,total_cents,total_amount,currency,status,payment_status,stripe_checkout_session_id",
       )
       .eq("id", body.orderId)
       .maybeSingle<OrderRow>();
@@ -221,6 +222,107 @@ export async function POST(req: NextRequest) {
         { ok: false, message: "This order total is invalid." },
         { status: 400 },
       );
+    }
+
+    // Defense against client-side price tampering. The parents portal still
+    // inserts the `orders` row via the anon key, which means a malicious
+    // caller could set total_cents = 1 and pay a penny for any package.
+    // Two cross-checks before we hand the total to Stripe:
+    //   1. Sum of order_items must match total_cents (±2¢ rounding).
+    //   2. total_cents must be at least the authoritative package price
+    //      from the `packages` table — prevents the attacker from also
+    //      tampering order_items. The full fix is to move the order
+    //      insert itself server-side; this is the interim guard.
+    {
+      const { data: itemRows, error: itemError } = await sb
+        .from("order_items")
+        .select("line_total_cents,unit_price_cents,quantity")
+        .eq("order_id", order.id);
+      if (itemError) throw itemError;
+
+      if (!itemRows || itemRows.length === 0) {
+        return NextResponse.json(
+          { ok: false, message: "This order has no line items." },
+          { status: 400 },
+        );
+      }
+
+      let computedCents = 0;
+      for (const row of itemRows) {
+        const lineTotal = Number(row.line_total_cents);
+        if (Number.isFinite(lineTotal) && lineTotal > 0) {
+          computedCents += lineTotal;
+          continue;
+        }
+        const unit = Number(row.unit_price_cents);
+        const qty = Number(row.quantity);
+        if (Number.isFinite(unit) && Number.isFinite(qty) && unit > 0 && qty > 0) {
+          computedCents += unit * qty;
+        }
+      }
+
+      // Allow 2¢ of wiggle for rounding across split-per-slot line items.
+      if (computedCents <= 0 || Math.abs(computedCents - totalCents) > 2) {
+        console.error("[stripe:checkout] total mismatch", {
+          orderId: order.id,
+          stored: totalCents,
+          computed: computedCents,
+        });
+        return NextResponse.json(
+          { ok: false, message: "This order total is invalid." },
+          { status: 400 },
+        );
+      }
+
+      // Authoritative minimum: the base package itself. If this order
+      // references a package_id we look up the real price and require
+      // total_cents >= that floor. Backdrops/extras can inflate it, but
+      // nothing should bring it below the package's own price.
+      if (order.package_id) {
+        const { data: packageRow, error: packageError } = await sb
+          .from("packages")
+          .select("id,price_cents,photographer_id")
+          .eq("id", order.package_id)
+          .maybeSingle();
+        if (packageError) throw packageError;
+
+        if (packageRow) {
+          // The package must belong to the photographer we're about to
+          // charge — otherwise the attacker is pointing at a cheap
+          // package from a different studio.
+          if (
+            packageRow.photographer_id &&
+            photographerId &&
+            packageRow.photographer_id !== photographerId
+          ) {
+            console.error("[stripe:checkout] package/photographer mismatch", {
+              orderId: order.id,
+              orderPackageOwner: packageRow.photographer_id,
+              chargePhotographer: photographerId,
+            });
+            return NextResponse.json(
+              { ok: false, message: "This order total is invalid." },
+              { status: 400 },
+            );
+          }
+          const authoritativePackageCents = Number(packageRow.price_cents);
+          if (
+            Number.isFinite(authoritativePackageCents) &&
+            authoritativePackageCents > 0 &&
+            totalCents + 2 < authoritativePackageCents
+          ) {
+            console.error("[stripe:checkout] below-package-floor", {
+              orderId: order.id,
+              stored: totalCents,
+              packageFloor: authoritativePackageCents,
+            });
+            return NextResponse.json(
+              { ok: false, message: "This order total is invalid." },
+              { status: 400 },
+            );
+          }
+        }
+      }
     }
 
     const currency = clean(order.currency || "cad").toLowerCase();

@@ -2004,17 +2004,32 @@ export default function ParentGalleryPage() {
     setCaptureBusy(true);
     setCaptureError("");
 
-    const { error } = await supabase.from("pre_release_emails").insert({
-      project_id: project.id,
-      email,
-    });
-
-    setCaptureBusy(false);
-
-    if (error) {
-      setCaptureError(error.message);
+    // Route through server API so we pick up the IP rate limit + service
+    // client on the write. Keeps the public anon key off this table path
+    // once the permissive INSERT policy is tightened.
+    try {
+      const response = await fetch("/api/portal/pre-release-register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectId: project.id, email }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || payload.ok === false) {
+        setCaptureBusy(false);
+        setCaptureError(
+          typeof payload.message === "string"
+            ? payload.message
+            : "We couldn't save your email. Please try again.",
+        );
+        return;
+      }
+    } catch {
+      setCaptureBusy(false);
+      setCaptureError("Network error. Please try again.");
       return;
     }
+
+    setCaptureBusy(false);
 
     setCaptureDone(true);
     setCaptureEmail("");
