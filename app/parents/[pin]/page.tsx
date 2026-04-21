@@ -8985,7 +8985,7 @@ export default function ParentGalleryPage() {
                           >
                             {showComposite ? (
                               <MiniComposite
-                                backdropUrl={confirmedBackdrop!.image_url}
+                                backdropUrl={confirmedBackdrop!.thumbnail_url || confirmedBackdrop!.image_url}
                                 backdropFallbackUrl={confirmedBackdrop!.image_url}
                                 nobgUrl={nobgUrls[img.id]}
                                 fallbackUrl={img.previewUrl || img.url}
@@ -9742,7 +9742,7 @@ export default function ParentGalleryPage() {
                                 const slotNobg = nobgForUrl(slot.assignedImageUrl);
                                 return confirmedBackdrop && slotNobg ? (
                                   <MiniComposite
-                                    backdropUrl={confirmedBackdrop.image_url}
+                                    backdropUrl={confirmedBackdrop.thumbnail_url || confirmedBackdrop.image_url}
                                     backdropFallbackUrl={confirmedBackdrop.image_url}
                                     nobgUrl={slotNobg}
                                     fallbackUrl={slot.assignedImageUrl}
@@ -9892,7 +9892,7 @@ export default function ParentGalleryPage() {
                               >
                                 {showComp ? (
                                   <MiniComposite
-                                    backdropUrl={confirmedBackdrop!.image_url}
+                                    backdropUrl={confirmedBackdrop!.thumbnail_url || confirmedBackdrop!.image_url}
                                     backdropFallbackUrl={confirmedBackdrop!.image_url}
                                     nobgUrl={imgNobg}
                                     fallbackUrl={img.url}
