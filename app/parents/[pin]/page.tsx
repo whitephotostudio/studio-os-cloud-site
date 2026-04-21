@@ -6257,23 +6257,6 @@ export default function ParentGalleryPage() {
     setPlacing(true);
     setOrderError("");
 
-    let resolvedPhotographerId = photographerId;
-    if (isSchoolMode && student?.school_id) {
-      const { data: schoolRow } = await supabase
-        .from("schools")
-        .select("photographer_id")
-        .eq("id", student.school_id)
-        .maybeSingle();
-      resolvedPhotographerId =
-        (schoolRow?.photographer_id as string | null) ?? resolvedPhotographerId;
-    }
-
-    if (!resolvedPhotographerId) {
-      setOrderError("This gallery is missing a photographer link.");
-      setPlacing(false);
-      return;
-    }
-
     const resolvedProjectId = !isSchoolMode ? project?.id || projectId || null : null;
     const totalCents = checkoutTotalCents;
     const firstCheckoutItem = checkoutItems[0];
@@ -6294,161 +6277,106 @@ export default function ParentGalleryPage() {
       return;
     }
 
+    if (isSchoolMode && !student?.school_id) {
+      setOrderError("This gallery is missing a school link.");
+      setPlacing(false);
+      return;
+    }
+
     if (!isSchoolMode && !resolvedProjectId) {
       setOrderError("This event gallery is missing a project link.");
       setPlacing(false);
       return;
     }
 
-    const shippingBlock =
+    // Build the server-authoritative payload. The server looks up package
+    // and backdrop prices itself from `packages` / `backdrop_catalog` — the
+    // client just sends "what was selected". The anon key no longer
+    // touches `orders` or `order_items`; everything goes through
+    // /api/portal/orders/create, which uses the service client.
+    const entriesPayload = checkoutItems.map((entry) => ({
+      packageId: entry.packageId,
+      quantity: entry.quantity,
+      backdrop: entry.backdrop
+        ? {
+            id: entry.backdrop.id,
+            blurred: !!entry.backdrop.blurred,
+            blurAmount: entry.backdrop.blurAmount ?? DEFAULT_BACKDROP_BLUR_PX,
+          }
+        : null,
+      slots: entry.slots.map((slot) => ({
+        label: slot.label,
+        assignedImageUrl: slot.assignedImageUrl ?? null,
+      })),
+      selectedImageUrl: entry.selectedImageUrl ?? null,
+      isComposite: !!entry.isCompositeOrder,
+      compositeTitle: entry.compositeTitle ?? null,
+    }));
+
+    const deliveryPayload =
       anyPhysicalCheckoutItem && deliveryMethod === "shipping"
-        ? [
-            `Delivery: shipping`,
-            `Name: ${shippingName.trim()}`,
-            `Address: ${shippingAddress1.trim()}`,
-            shippingAddress2.trim() ? `Line 2: ${shippingAddress2.trim()}` : "",
-            `City: ${shippingCity.trim()}`,
-            `Province: ${shippingProvince.trim()}`,
-            `Postal: ${shippingPostalCode.trim()}`,
-          ]
-            .filter(Boolean)
-            .join("\n")
-        : anyPhysicalCheckoutItem
-          ? "Delivery: pickup"
-          : "";
+        ? {
+            method: "shipping" as const,
+            name: shippingName.trim(),
+            address1: shippingAddress1.trim(),
+            address2: shippingAddress2.trim(),
+            city: shippingCity.trim(),
+            province: shippingProvince.trim(),
+            postalCode: shippingPostalCode.trim(),
+          }
+        : { method: "pickup" as const };
 
-    const entryNotes = checkoutItems.map((entry, index) => {
-      const backdropNote = entry.backdrop
-        ? `BACKDROP: ${entry.backdrop.name}${entry.backdrop.tier === "premium" ? ` (Premium · $${(entry.backdropAddOnCents / 100).toFixed(2)})` : " (Included)"}${entry.backdrop.blurred ? ` · Blurred ${entry.backdrop.blurAmount || DEFAULT_BACKDROP_BLUR_PX}px` : ""}`
-        : "";
-      const compositeNote = entry.isCompositeOrder
-        ? `CLASS COMPOSITE: ${entry.compositeTitle || "Class composite"}`
-        : "";
-      const slotsSummary =
-        entry.category === "digital"
-          ? `Digital download order x${entry.quantity}`
-          : entry.slots
-              .map(
-                (slot, slotIndex) =>
-                  `Item ${slotIndex + 1}: ${slot.label} → ${slot.assignedImageUrl ?? "no photo"}`,
-              )
-              .join("\n");
+    const parentPayload = {
+      name: parentName.trim(),
+      email: parentEmail.trim(),
+      phone: parentPhone.trim(),
+    };
 
-      return [
-        `ORDER ITEM ${index + 1}: ${entry.isCompositeOrder ? `Composite • ${entry.packageName}` : entry.packageName}`,
-        compositeNote,
-        backdropNote,
-        entry.category === "digital"
-          ? "DIGITAL ORDER"
-          : "PHOTO SELECTIONS:\n" + slotsSummary,
-      ]
-        .filter(Boolean)
-        .join("\n");
-    });
+    const notesPayload = currentGalleryExtras.allowClientComments ? notes.trim() : "";
 
-    const combinedNotes = [
-      currentGalleryExtras.allowClientComments ? notes.trim() : "",
-      ...entryNotes,
-      shippingBlock,
-    ]
-      .filter(Boolean)
-      .join("\n\n");
+    const createBody = isSchoolMode
+      ? {
+          mode: "school" as const,
+          pin,
+          schoolId: student?.school_id ?? "",
+          parent: parentPayload,
+          delivery: deliveryPayload,
+          notes: notesPayload,
+          entries: entriesPayload,
+        }
+      : {
+          mode: "event" as const,
+          pin,
+          projectId: resolvedProjectId ?? "",
+          email: eventEmail.trim(),
+          parent: parentPayload,
+          delivery: deliveryPayload,
+          notes: notesPayload,
+          entries: entriesPayload,
+        };
 
-    const orderSummaryName =
-      checkoutItems.length === 1
-        ? firstCheckoutItem.isCompositeOrder
-          ? `Composite • ${firstCheckoutItem.packageName}`
-          : firstCheckoutItem.packageName
-        : `${firstCheckoutItem.isCompositeOrder ? `Composite • ${firstCheckoutItem.packageName}` : firstCheckoutItem.packageName} + ${checkoutItems.length - 1} more`;
-
-    const { data: orderRow, error: orderErr } = await supabase
-      .from("orders")
-      .insert({
-        school_id: isSchoolMode ? student?.school_id ?? null : null,
-        class_id: isSchoolMode ? student?.class_id ?? null : null,
-        student_id: isSchoolMode ? student?.id ?? null : null,
-        project_id: resolvedProjectId,
-        photographer_id: resolvedPhotographerId,
-        parent_name: parentName.trim() || null,
-        parent_email: parentEmail.trim() || null,
-        parent_phone: parentPhone.trim() || null,
-        customer_name: parentName.trim() || null,
-        customer_email: parentEmail.trim() || null,
-        package_id: firstCheckoutItem.packageId,
-        package_name: orderSummaryName,
-        package_price: totalCents / 100,
-        special_notes: combinedNotes || null,
-        notes: combinedNotes || null,
-        status: "payment_pending",
-        seen_by_photographer: false,
-        subtotal_cents: totalCents,
-        tax_cents: 0,
-        total_cents: totalCents,
-        total_amount: totalCents / 100,
-        currency: "cad",
-      })
-      .select("id")
-      .single();
-
-    if (orderErr || !orderRow) {
-      setOrderError(orderErr?.message ?? "Failed to create order draft.");
-      setPlacing(false);
-      return;
-    }
-
-    const itemsToInsert = checkoutItems.flatMap((entry) => {
-      const orderItems =
-        entry.category === "digital"
-          ? [
-              {
-                order_id: orderRow.id,
-                product_name: entry.isCompositeOrder
-                  ? `Composite • ${entry.packageName}`
-                  : entry.packageName,
-                quantity: entry.quantity,
-                price: entry.packageSubtotalCents / 100,
-                unit_price_cents: Math.round(
-                  entry.packageSubtotalCents / Math.max(entry.quantity, 1),
-                ),
-                line_total_cents: entry.packageSubtotalCents,
-                sku: entry.selectedImageUrl,
-              },
-            ]
-          : entry.slots.map((slot) => ({
-              order_id: orderRow.id,
-              product_name: slot.label,
-              quantity: 1,
-              price: entry.packageSubtotalCents / 100 / Math.max(entry.slots.length, 1),
-              unit_price_cents: Math.round(
-                entry.packageSubtotalCents / Math.max(entry.slots.length, 1),
-              ),
-              line_total_cents: Math.round(
-                entry.packageSubtotalCents / Math.max(entry.slots.length, 1),
-              ),
-              sku: slot.assignedImageUrl ?? null,
-            }));
-
-      if (entry.backdropAddOnCents > 0 && entry.backdrop) {
-        orderItems.push({
-          order_id: orderRow.id,
-          product_name: `★ Premium Backdrop: ${entry.backdrop.name}${entry.backdrop.blurred ? ` (Blurred ${entry.backdrop.blurAmount || DEFAULT_BACKDROP_BLUR_PX}px)` : ""}`,
-          quantity: 1,
-          price: entry.backdropAddOnCents / 100,
-          unit_price_cents: entry.backdropAddOnCents,
-          line_total_cents: entry.backdropAddOnCents,
-          sku: entry.backdrop.image_url ?? null,
-        });
+    let createdOrderId: string;
+    try {
+      const createRes = await fetch("/api/portal/orders/create", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(createBody),
+      });
+      const createJson = (await createRes.json()) as {
+        ok: boolean;
+        message?: string;
+        orderId?: string;
+      };
+      if (!createRes.ok || !createJson.ok || !createJson.orderId) {
+        setOrderError(createJson.message || "Failed to create order draft.");
+        setPlacing(false);
+        return;
       }
-
-      return orderItems;
-    });
-
-    const { error: orderItemsError } = await supabase
-      .from("order_items")
-      .insert(itemsToInsert);
-
-    if (orderItemsError) {
-      setOrderError(orderItemsError.message || "Failed to prepare order items.");
+      createdOrderId = createJson.orderId;
+    } catch (err) {
+      setOrderError(
+        err instanceof Error ? err.message : "Failed to create order draft.",
+      );
       setPlacing(false);
       return;
     }
@@ -6458,7 +6386,7 @@ export default function ParentGalleryPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          orderId: orderRow.id,
+          orderId: createdOrderId,
           pin,
           schoolId: isSchoolMode ? student?.school_id ?? null : null,
           projectId: resolvedProjectId,
