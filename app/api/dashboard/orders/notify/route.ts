@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import {
   createDashboardServiceClient,
   resolveDashboardAuth,
 } from "@/lib/dashboard-auth";
+import { parseJson } from "@/lib/api-validation";
 import { resendConfigured, sendResendEmail } from "@/lib/resend";
 
 export const dynamic = "force-dynamic";
@@ -11,14 +13,17 @@ function clean(v: string | null | undefined) {
   return (v ?? "").trim();
 }
 
-type NotifyBody = {
-  orderId: string;
-  recipientEmail: string;
-  subject: string;
-  headline: string;
-  message: string;
-  newStatus: string;
-};
+const NotifyBodySchema = z.object({
+  orderId: z.string().min(1, "orderId is required."),
+  recipientEmail: z
+    .string()
+    .min(1, "recipientEmail is required.")
+    .email("recipientEmail must be a valid email."),
+  subject: z.string().min(1, "subject is required.").max(200),
+  headline: z.string().max(200).default(""),
+  message: z.string().max(5000).default(""),
+  newStatus: z.string().max(64).default(""),
+});
 
 export async function POST(request: NextRequest) {
   try {
@@ -27,12 +32,9 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: false, message: "Please sign in again." }, { status: 401 });
     }
 
-    const body: NotifyBody = await request.json();
-    const { orderId, recipientEmail, subject, headline, message, newStatus } = body;
-
-    if (!orderId || !recipientEmail || !subject) {
-      return NextResponse.json({ ok: false, message: "Missing required fields." }, { status: 400 });
-    }
+    const parsed = await parseJson(request, NotifyBodySchema);
+    if (!parsed.ok) return parsed.response;
+    const { orderId, recipientEmail, subject, headline, message, newStatus } = parsed.data;
 
     if (!resendConfigured()) {
       return NextResponse.json({ ok: false, message: "Email sending is not configured." }, { status: 500 });

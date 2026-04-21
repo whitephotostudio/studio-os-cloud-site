@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import {
   createDashboardServiceClient,
   resolveDashboardAuth,
 } from "@/lib/dashboard-auth";
+import { parseJson } from "@/lib/api-validation";
 import {
   buildGalleryShareEmail,
   eventFromName,
@@ -14,14 +16,14 @@ import { resendConfigured, sendResendEmail } from "@/lib/resend";
 
 export const dynamic = "force-dynamic";
 
-type SendCampaignBody = {
-  recipientMode?: "visitors" | "others";
-  recipients?: string[] | string;
-  subject?: string;
-  headline?: string;
-  buttonLabel?: string;
-  message?: string;
-};
+const SendCampaignBodySchema = z.object({
+  recipientMode: z.enum(["visitors", "others"]).optional(),
+  recipients: z.union([z.array(z.string()), z.string()]).optional(),
+  subject: z.string().max(200).optional(),
+  headline: z.string().max(200).optional(),
+  buttonLabel: z.string().max(100).optional(),
+  message: z.string().max(5000).optional(),
+});
 
 function clean(value: string | null | undefined) {
   return (value ?? "").trim();
@@ -64,7 +66,9 @@ export async function POST(
     }
 
     const { id: projectId } = await context.params;
-    const body = (await request.json().catch(() => ({}))) as SendCampaignBody;
+    const parsed = await parseJson(request, SendCampaignBodySchema);
+    if (!parsed.ok) return parsed.response;
+    const body = parsed.data;
     const service = createDashboardServiceClient();
 
     const { data: photographerRow, error: photographerError } = await service

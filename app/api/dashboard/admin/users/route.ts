@@ -1,11 +1,38 @@
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import {
   createDashboardServiceClient,
   resolveDashboardAuth,
 } from "@/lib/dashboard-auth";
+import { parseJson } from "@/lib/api-validation";
 import { getOrCreatePhotographerByUser } from "@/lib/payments";
 
 export const dynamic = "force-dynamic";
+
+const PhotographerIdField = z.string().uuid("photographerId must be a UUID.");
+
+const AdminUserActionSchema = z.discriminatedUnion("action", [
+  z.object({
+    action: z.literal("extend_trial"),
+    photographerId: PhotographerIdField,
+    extraDays: z.number().int().min(1).max(365).optional(),
+  }),
+  z.object({
+    action: z.literal("revoke_trial"),
+    photographerId: PhotographerIdField,
+  }),
+  z.object({
+    action: z.literal("delete_user"),
+    photographerId: PhotographerIdField,
+  }),
+  z.object({
+    action: z.literal("update_voice"),
+    photographerId: PhotographerIdField,
+    voicePremiumEnabled: z.boolean().optional(),
+    voiceMonthlyCharLimit: z.number().int().min(0).max(1_000_000).optional(),
+    resetUsage: z.boolean().optional(),
+  }),
+]);
 
 /**
  * GET /api/dashboard/admin/users
@@ -282,22 +309,14 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const body = (await request.json().catch(() => ({}))) as {
-      action?: string;
-      photographerId?: string;
-      extraDays?: number;
-    };
+    const parsed = await parseJson(request, AdminUserActionSchema);
+    if (!parsed.ok) return parsed.response;
+    const body = parsed.data;
 
-    const targetId = (body.photographerId ?? "").trim();
-    if (!targetId) {
-      return NextResponse.json(
-        { ok: false, message: "photographerId is required." },
-        { status: 400 },
-      );
-    }
+    const targetId = body.photographerId;
 
     if (body.action === "extend_trial") {
-      const extraDays = Math.max(1, Math.min(365, Number(body.extraDays) || 30));
+      const extraDays = body.extraDays ?? 30;
 
       const { data: target, error: fetchError } = await service
         .from("photographers")
@@ -468,15 +487,9 @@ export async function POST(request: NextRequest) {
     }
 
     if (body.action === "update_voice") {
-      const enabled = Boolean(
-        (body as { voicePremiumEnabled?: boolean }).voicePremiumEnabled,
-      );
-      const rawLimit = (body as { voiceMonthlyCharLimit?: number }).voiceMonthlyCharLimit;
-      const limit = Math.max(
-        0,
-        Math.min(1_000_000, Number.isFinite(Number(rawLimit)) ? Number(rawLimit) : 1000),
-      );
-      const resetUsage = Boolean((body as { resetUsage?: boolean }).resetUsage);
+      const enabled = Boolean(body.voicePremiumEnabled);
+      const limit = body.voiceMonthlyCharLimit ?? 1000;
+      const resetUsage = Boolean(body.resetUsage);
 
       const updates: Record<string, unknown> = {
         voice_premium_enabled: enabled,
