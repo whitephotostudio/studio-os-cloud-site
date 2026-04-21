@@ -428,11 +428,9 @@ export async function POST(request: NextRequest) {
       studioInfo,
     });
   } catch (error) {
+    console.error("[gallery-context]", error);
     return NextResponse.json(
-      {
-        ok: false,
-        message: error instanceof Error ? error.message : "Failed to load gallery context.",
-      },
+      { ok: false, message: "Failed to load gallery context." },
       { status: 500 },
     );
   }

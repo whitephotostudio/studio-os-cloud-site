@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createDashboardServiceClient } from "@/lib/dashboard-auth";
 import { normalizeEventGallerySettings } from "@/lib/event-gallery-settings";
+import { getClientIp, rateLimit } from "@/lib/rate-limit";
 
 export const dynamic = "force-dynamic";
 
@@ -192,6 +193,29 @@ async function validateEventAccess(params: {
 
 export async function POST(request: NextRequest) {
   try {
+    // Cap per-IP download prep rate. Each call validates access, reads orders,
+    // reads packages, reads download logs, and writes a download row — an
+    // expensive path. 20/min is well above any plausible human interaction.
+    const limitResult = rateLimit(getClientIp(request), {
+      namespace: "event-downloads",
+      limit: 20,
+      windowSeconds: 60,
+    });
+    if (!limitResult.allowed) {
+      return NextResponse.json(
+        { ok: false, message: "Too many download requests. Please slow down." },
+        {
+          status: 429,
+          headers: {
+            "Retry-After": Math.max(
+              1,
+              Math.ceil((limitResult.resetAt - Date.now()) / 1000),
+            ).toString(),
+          },
+        },
+      );
+    }
+
     const body = (await request.json().catch(() => ({}))) as {
       projectId?: string;
       email?: string;
@@ -432,12 +456,9 @@ export async function POST(request: NextRequest) {
           : Math.max(0, downloadsRemaining - allowedMediaIds.length),
     });
   } catch (error) {
+    console.error("[event-downloads]", error);
     return NextResponse.json(
-      {
-        ok: false,
-        message:
-          error instanceof Error ? error.message : "Failed to prepare event downloads.",
-      },
+      { ok: false, message: "Failed to prepare event downloads." },
       { status: 500 },
     );
   }

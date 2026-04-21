@@ -1,6 +1,7 @@
 import { createHash } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { createDashboardServiceClient } from "@/lib/dashboard-auth";
+import { getClientIp, rateLimit } from "@/lib/rate-limit";
 
 export const dynamic = "force-dynamic";
 
@@ -205,14 +206,11 @@ export async function GET(request: NextRequest) {
       mediaIds,
     });
   } catch (error) {
+    // Log the real error server-side; return a generic message to the
+    // caller so DB/internal details don't leak to anonymous visitors.
+    console.error("[event-favorites:GET]", error);
     return NextResponse.json(
-      {
-        ok: false,
-        message:
-          error instanceof Error
-            ? error.message
-            : "Failed to load event favorites.",
-      },
+      { ok: false, message: "Failed to load event favorites." },
       { status: 500 },
     );
   }
@@ -220,6 +218,29 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
+    // Cap favorite toggle rate per IP. Each toggle does a DB upsert/delete;
+    // without a limit a script could spam the favorites table. 60/min is
+    // far above any plausible human browsing rate.
+    const limitResult = rateLimit(getClientIp(request), {
+      namespace: "event-favorites",
+      limit: 60,
+      windowSeconds: 60,
+    });
+    if (!limitResult.allowed) {
+      return NextResponse.json(
+        { ok: false, message: "Too many updates. Please slow down." },
+        {
+          status: 429,
+          headers: {
+            "Retry-After": Math.max(
+              1,
+              Math.ceil((limitResult.resetAt - Date.now()) / 1000),
+            ).toString(),
+          },
+        },
+      );
+    }
+
     const body = (await request.json().catch(() => ({}))) as {
       projectId?: string;
       email?: string;
@@ -323,14 +344,9 @@ export async function POST(request: NextRequest) {
       favorited: shouldFavorite,
     });
   } catch (error) {
+    console.error("[event-favorites:POST]", error);
     return NextResponse.json(
-      {
-        ok: false,
-        message:
-          error instanceof Error
-            ? error.message
-            : "Failed to save event favorite.",
-      },
+      { ok: false, message: "Failed to save event favorite." },
       { status: 500 },
     );
   }

@@ -215,11 +215,9 @@ export async function POST(request: NextRequest) {
       pin: pinValue,
     });
   } catch (error) {
+    console.error("[event-access]", error);
     return NextResponse.json(
-      {
-        ok: false,
-        message: error instanceof Error ? error.message : "Failed to check event access.",
-      },
+      { ok: false, message: "Failed to check event access." },
       { status: 500 },
     );
   }

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createDashboardServiceClient } from "@/lib/dashboard-auth";
 import { normalizeEventGallerySettings } from "@/lib/event-gallery-settings";
 import { buildSchoolGalleryDownloadAccess } from "@/lib/school-gallery-downloads";
+import { getClientIp, rateLimit } from "@/lib/rate-limit";
 
 export const dynamic = "force-dynamic";
 
@@ -115,6 +116,29 @@ async function validateSchoolDownloadAccess(params: {
 
 export async function POST(request: NextRequest) {
   try {
+    // Cap per-IP download prep rate. Each call validates access, checks
+    // download eligibility, and writes a download row. 20/min is comfortably
+    // above any plausible human interaction.
+    const limitResult = rateLimit(getClientIp(request), {
+      namespace: "school-downloads",
+      limit: 20,
+      windowSeconds: 60,
+    });
+    if (!limitResult.allowed) {
+      return NextResponse.json(
+        { ok: false, message: "Too many download requests. Please slow down." },
+        {
+          status: 429,
+          headers: {
+            "Retry-After": Math.max(
+              1,
+              Math.ceil((limitResult.resetAt - Date.now()) / 1000),
+            ).toString(),
+          },
+        },
+      );
+    }
+
     const body = (await request.json().catch(() => ({}))) as {
       schoolId?: string;
       email?: string;
@@ -244,12 +268,9 @@ export async function POST(request: NextRequest) {
           : Math.max(0, downloadAccess.downloadsRemaining - allowedMediaIds.length),
     });
   } catch (error) {
+    console.error("[school-downloads]", error);
     return NextResponse.json(
-      {
-        ok: false,
-        message:
-          error instanceof Error ? error.message : "Failed to prepare school downloads.",
-      },
+      { ok: false, message: "Failed to prepare school downloads." },
       { status: 500 },
     );
   }

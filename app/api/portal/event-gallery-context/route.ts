@@ -642,14 +642,9 @@ export async function POST(request: NextRequest) {
       studioInfo,
     });
   } catch (error) {
+    console.error("[event-gallery-context]", error);
     return NextResponse.json(
-      {
-        ok: false,
-        message:
-          error instanceof Error
-            ? error.message
-            : "Failed to load event gallery.",
-      },
+      { ok: false, message: "Failed to load event gallery." },
       { status: 500 },
     );
   }

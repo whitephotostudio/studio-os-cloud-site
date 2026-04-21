@@ -343,12 +343,9 @@ export async function POST(request: NextRequest) {
       manifest,
     });
   } catch (error) {
+    console.error("[event-download-ready]", error);
     return NextResponse.json(
-      {
-        ok: false,
-        message:
-          error instanceof Error ? error.message : "Failed to prepare gallery downloads.",
-      },
+      { ok: false, message: "Failed to prepare gallery downloads." },
       { status: 500 },
     );
   }

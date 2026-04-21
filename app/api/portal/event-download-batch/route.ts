@@ -504,12 +504,9 @@ export async function GET(request: NextRequest) {
     response.headers.set("content-length", String(zipBytes.length));
     return response;
   } catch (error) {
+    console.error("[event-download-batch]", error);
     return NextResponse.json(
-      {
-        ok: false,
-        message:
-          error instanceof Error ? error.message : "Failed to build the gallery ZIP file.",
-      },
+      { ok: false, message: "Failed to build the gallery ZIP file." },
       { status: 500 },
     );
   }

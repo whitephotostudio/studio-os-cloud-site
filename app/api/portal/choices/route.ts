@@ -105,11 +105,9 @@ export async function GET() {
       },
     );
   } catch (error) {
+    console.error("[portal-choices]", error);
     return NextResponse.json(
-      {
-        ok: false,
-        message: error instanceof Error ? error.message : "Failed to load portal choices.",
-      },
+      { ok: false, message: "Failed to load portal choices." },
       { status: 500 },
     );
   }

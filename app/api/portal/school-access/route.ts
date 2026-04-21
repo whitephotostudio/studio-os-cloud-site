@@ -483,11 +483,9 @@ export async function POST(request: NextRequest) {
       ...(galleryContext ? { galleryContext } : {}),
     });
   } catch (error) {
+    console.error("[school-access]", error);
     return NextResponse.json(
-      {
-        ok: false,
-        message: error instanceof Error ? error.message : "Failed to check school access.",
-      },
+      { ok: false, message: "Failed to check school access." },
       { status: 500 },
     );
   }

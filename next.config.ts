@@ -23,13 +23,42 @@ const nextConfig: NextConfig = {
   // Powered-by header leaks framework info — disable it
   poweredByHeader: false,
 
-  // Security headers applied at the framework level
-  // (CSP and most headers are in middleware.ts for more control)
+  // Security headers applied at the framework level.
+  // CSP is intentionally NOT set here because the site loads third-party
+  // scripts (Stripe Elements, Supabase, R2 images). A proper CSP requires a
+  // manual audit of every embedded origin — defer until that audit is done.
+  // Everything else is safe defaults that don't break anything.
   headers: async () => [
     {
       source: "/(.*)",
       headers: [
         { key: "X-DNS-Prefetch-Control", value: "on" },
+        // Forces browsers to stay on HTTPS for a year; covers subdomains so
+        // *.studio-os.cloud can't be downgraded either.
+        {
+          key: "Strict-Transport-Security",
+          value: "max-age=31536000; includeSubDomains; preload",
+        },
+        // Blocks MIME-sniffing. A .js file being served as text/html (via an
+        // open-redirect or misconfigured storage) cannot be re-interpreted
+        // as a script by the browser.
+        { key: "X-Content-Type-Options", value: "nosniff" },
+        // Prevents any site from iframing us, which defeats clickjacking
+        // attacks against the dashboard and checkout flows. We don't embed
+        // our own pages inside iframes, so DENY is safe.
+        { key: "X-Frame-Options", value: "DENY" },
+        // Sends the full referrer on same-origin navigations (needed for
+        // analytics) but strips the path/query when going cross-origin, so
+        // we don't leak order IDs or PINs to third parties.
+        { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+        // Deny access to powerful APIs the site never uses. Narrow scope
+        // reduces supply-chain blast-radius if a dependency tries to
+        // silently use them.
+        {
+          key: "Permissions-Policy",
+          value:
+            "camera=(), microphone=(), geolocation=(), payment=(self), usb=(), magnetometer=(), gyroscope=(), accelerometer=(), interest-cohort=()",
+        },
       ],
     },
     {

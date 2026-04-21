@@ -81,11 +81,9 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ ok: true });
   } catch (error) {
+    console.error("[pre-release-register]", error);
     return NextResponse.json(
-      {
-        ok: false,
-        message: error instanceof Error ? error.message : "Something went wrong. Please try again.",
-      },
+      { ok: false, message: "Something went wrong. Please try again." },
       { status: 500 },
     );
   }
