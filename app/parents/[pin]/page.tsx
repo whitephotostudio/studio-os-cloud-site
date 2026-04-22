@@ -746,7 +746,23 @@ function getFavoritesMinWidth(settings: EventGallerySettings) {
   }
 }
 
-function getSlotGridColumns(settings: EventGallerySettings) {
+// Tracks whether the viewport is phone-sized. Used to swap desktop grid
+// densities for mobile-friendly layouts.
+function useIsMobile(breakpointPx = 640) {
+  const [isMobile, setIsMobile] = useState(false);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const mq = window.matchMedia(`(max-width: ${breakpointPx - 1}px)`);
+    const update = () => setIsMobile(mq.matches);
+    update();
+    mq.addEventListener("change", update);
+    return () => mq.removeEventListener("change", update);
+  }, [breakpointPx]);
+  return isMobile;
+}
+
+function getSlotGridColumns(settings: EventGallerySettings, isMobile = false) {
+  if (isMobile) return "repeat(2, minmax(0, 1fr))";
   switch (settings.branding.gridDensity) {
     case "airy":
       return "repeat(3, minmax(0, 1fr))";
@@ -757,7 +773,8 @@ function getSlotGridColumns(settings: EventGallerySettings) {
   }
 }
 
-function getPhotoGridMinWidth(settings: EventGallerySettings) {
+function getPhotoGridMinWidth(settings: EventGallerySettings, isMobile = false) {
+  if (isMobile) return 140;
   switch (settings.branding.gridDensity) {
     case "airy":
       return 280;
@@ -4022,8 +4039,9 @@ export default function ParentGalleryPage() {
   const galleryFontFamily = getGalleryFontFamily(gallerySettings);
   const viewerPadding = getViewerPadding(gallerySettings);
   const thumbnailSize = getThumbnailSize(gallerySettings);
-  const slotGridColumns = getSlotGridColumns(gallerySettings);
-  const photoGridMinWidth = getPhotoGridMinWidth(gallerySettings);
+  const isMobileViewport = useIsMobile();
+  const slotGridColumns = getSlotGridColumns(gallerySettings, isMobileViewport);
+  const photoGridMinWidth = getPhotoGridMinWidth(gallerySettings, isMobileViewport);
   const photoWallColumnWidth = getPhotoWallColumnWidth(gallerySettings);
   const photoWallStyle = currentGalleryBranding.photoLayout;
   const eventCollectionPhotoCounts = useMemo(() => {
@@ -5623,7 +5641,12 @@ export default function ParentGalleryPage() {
             <div
               style={{
                 display: "grid",
-                gridTemplateColumns: leadImages.length > 1 ? "minmax(0, 1.35fr) minmax(320px, 1fr)" : "minmax(0, 1fr)",
+                gridTemplateColumns:
+                  isMobileViewport
+                    ? "minmax(0, 1fr)"
+                    : leadImages.length > 1
+                      ? "minmax(0, 1.35fr) minmax(320px, 1fr)"
+                      : "minmax(0, 1fr)",
                 gap: galleryGap,
                 alignItems: "stretch",
               }}
@@ -5646,7 +5669,7 @@ export default function ParentGalleryPage() {
           {trailingImages.length ? (
             <div
               style={{
-                columnWidth: `${Math.max(220, photoWallColumnWidth - 20)}px`,
+                columnWidth: `${isMobileViewport ? 140 : Math.max(220, photoWallColumnWidth - 20)}px`,
                 columnGap: `${galleryGap}px`,
               }}
             >
@@ -6761,7 +6784,8 @@ export default function ParentGalleryPage() {
                 fontSize: 14,
                 fontWeight: 700,
                 cursor: "pointer",
-                minWidth: 220,
+                minWidth: isMobileViewport ? 0 : 220,
+                width: isMobileViewport ? "100%" : undefined,
               }}
             >
               Continue Shopping
@@ -9154,7 +9178,9 @@ export default function ParentGalleryPage() {
                     <div
                       style={{
                         display: "grid",
-                        gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+                        gridTemplateColumns: isMobileViewport
+                          ? "repeat(2, minmax(0, 1fr))"
+                          : "repeat(3, minmax(0, 1fr))",
                         gap: 12,
                         marginBottom: 22,
                       }}
@@ -11073,7 +11099,7 @@ export default function ParentGalleryPage() {
                 display: "flex",
                 alignItems: currentGalleryBranding.introLayout === "centered" ? "center" : "stretch",
                 justifyContent: "center",
-                padding: "40px 24px",
+                padding: isMobileViewport ? "24px 16px" : "40px 24px",
               }}
             >
               <div
@@ -11082,7 +11108,11 @@ export default function ParentGalleryPage() {
                   maxWidth: currentGalleryBranding.introLayout === "split" ? 1240 : 760,
                   display: "grid",
                   gridTemplateColumns:
-                    currentGalleryBranding.introLayout === "split" ? "minmax(0, 1.2fr) minmax(320px, 460px)" : "minmax(0, 1fr)",
+                    isMobileViewport
+                      ? "minmax(0, 1fr)"
+                      : currentGalleryBranding.introLayout === "split"
+                        ? "minmax(0, 1.2fr) minmax(320px, 460px)"
+                        : "minmax(0, 1fr)",
                   gap: 28,
                   alignItems: "center",
                 }}
