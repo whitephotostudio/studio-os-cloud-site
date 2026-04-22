@@ -39,9 +39,23 @@ function hasUpstashEnv(): boolean {
 }
 
 let cachedRedis: Redis | null = null;
+let redisInitFailed = false;
 function getRedis(): Redis | null {
   if (!hasUpstashEnv()) return null;
-  if (!cachedRedis) cachedRedis = Redis.fromEnv();
+  if (redisInitFailed) return null;
+  if (!cachedRedis) {
+    try {
+      cachedRedis = Redis.fromEnv();
+    } catch (error) {
+      // Malformed env vars (wrong URL shape, bad token, etc.) would
+      // otherwise throw synchronously at first request and 500 the route.
+      // Fall back to the in-memory limiter instead of taking the whole
+      // handler down.
+      console.warn("[rate-limit] Redis.fromEnv() failed, using in-memory fallback:", error);
+      redisInitFailed = true;
+      return null;
+    }
+  }
   return cachedRedis;
 }
 
@@ -58,18 +72,23 @@ function getUpstashLimiter(config: RateLimitConfig): Ratelimit | null {
   const cached = ratelimitCache.get(cacheKey);
   if (cached) return cached;
 
-  const limiter = new Ratelimit({
-    redis,
-    limiter: Ratelimit.fixedWindow(
-      config.limit,
-      `${config.windowSeconds} s` as const,
-    ),
-    prefix: `rl:${config.namespace}`,
-    // analytics off — we don't want extra commands against the free tier
-    analytics: false,
-  });
-  ratelimitCache.set(cacheKey, limiter);
-  return limiter;
+  try {
+    const limiter = new Ratelimit({
+      redis,
+      limiter: Ratelimit.fixedWindow(
+        config.limit,
+        `${config.windowSeconds} s` as const,
+      ),
+      prefix: `rl:${config.namespace}`,
+      // analytics off — we don't want extra commands against the free tier
+      analytics: false,
+    });
+    ratelimitCache.set(cacheKey, limiter);
+    return limiter;
+  } catch (error) {
+    console.warn("[rate-limit] Ratelimit constructor failed, using in-memory fallback:", error);
+    return null;
+  }
 }
 
 // ------------------------------------------------------------------

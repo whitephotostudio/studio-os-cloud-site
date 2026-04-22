@@ -195,7 +195,22 @@ export default function LoginForm({
         }),
       });
 
-      const payload = (await response.json()) as SchoolAccessPayload;
+      // Parse defensively: if the server returned an HTML error page (e.g.
+      // a 500 with a Vercel/Next runtime error), response.json() throws a
+      // cryptic DOMException ("The string did not match the expected
+      // pattern." in Safari). Show a friendly message instead.
+      let payload: SchoolAccessPayload;
+      try {
+        payload = (await response.json()) as SchoolAccessPayload;
+      } catch {
+        setSearching(false);
+        setLoginError(
+          response.status >= 500
+            ? "Server error — please try again in a moment."
+            : "Could not reach the gallery service. Please try again.",
+        );
+        return;
+      }
       setSearching(false);
 
       if (payload.step === "school_closed") { setStep("school_closed"); return; }
@@ -287,7 +302,19 @@ export default function LoginForm({
         }),
       });
 
-      const payload = (await response.json()) as EventAccessPayload;
+      // Defensive parse (see school-access notes above).
+      let payload: EventAccessPayload;
+      try {
+        payload = (await response.json()) as EventAccessPayload;
+      } catch {
+        setSearching(false);
+        setLoginError(
+          response.status >= 500
+            ? "Server error — please try again in a moment."
+            : "Could not reach the gallery service. Please try again.",
+        );
+        return;
+      }
       setSearching(false);
 
       if (payload.step === "event_prerelease") {
