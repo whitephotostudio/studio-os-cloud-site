@@ -5,6 +5,7 @@ import {
   resolveDashboardAuth,
 } from "@/lib/dashboard-auth";
 import { parseJson } from "@/lib/api-validation";
+import { recordAudit } from "@/lib/audit";
 
 export const dynamic = "force-dynamic";
 
@@ -246,6 +247,26 @@ export async function POST(request: NextRequest) {
       )
       .single();
     if (insertError) throw insertError;
+
+    await recordAudit({
+      request,
+      actorUserId: user.id,
+      actorPhotographerId: ownership.school.photographer_id ?? null,
+      action: source === "restore" ? "roster.restore" : "roster.snapshot_write",
+      entityType: "school",
+      entityId: schoolId,
+      targetPhotographerId: ownership.school.photographer_id ?? null,
+      metadata: {
+        snapshotId: (inserted as { id?: string | null })?.id ?? null,
+        version: (inserted as { version?: number | null })?.version ?? null,
+        studentCount: students.length,
+        teacherCount: teachers.length,
+        source,
+        machine,
+        markCurrent,
+      },
+      result: "ok",
+    });
 
     return NextResponse.json({ ok: true, snapshot: inserted });
   } catch (error) {

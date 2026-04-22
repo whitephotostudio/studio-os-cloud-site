@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { createDashboardServiceClient, resolveDashboardAuth } from "@/lib/dashboard-auth";
 import { parseJson } from "@/lib/api-validation";
+import { recordAudit, diffFields } from "@/lib/audit";
 import { normalizeEventGallerySettings } from "@/lib/event-gallery-settings";
 import {
   buildGalleryShareEmail,
@@ -767,6 +768,45 @@ export async function PATCH(
       });
     }
 
+    // Audit: distinguish an access_mode/pin change from a routine update.
+    const accessChanged = hasOwn(body, "access_mode");
+    const auditDiff = diffFields(
+      currentProject as Record<string, unknown>,
+      projectData as Record<string, unknown>,
+      [
+        "title",
+        "project_name",
+        "name",
+        "portal_status",
+        "status",
+        "shoot_date",
+        "order_due_date",
+        "expiration_date",
+        "package_profile_id",
+        "email_required",
+        "checkout_contact_required",
+        "internal_notes",
+        "access_mode",
+        "gallery_slug",
+      ] as (keyof Record<string, unknown>)[],
+    );
+    await recordAudit({
+      request,
+      actorUserId: user.id,
+      actorPhotographerId: photographerRow.id,
+      action: accessChanged ? "project.access_change" : "project.update",
+      entityType: "project",
+      entityId: projectId,
+      targetPhotographerId: photographerRow.id,
+      before: auditDiff.before,
+      after: auditDiff.after,
+      metadata: {
+        releaseEmailsSent: releaseEmailResult?.sent ?? 0,
+        campaignEmailsSent: campaignEmailResult?.sent ?? 0,
+      },
+      result: "ok",
+    });
+
     return NextResponse.json({
       ok: true,
       project: projectData,
@@ -824,7 +864,7 @@ export async function DELETE(
     // Verify the project belongs to the photographer before deleting
     const { data: projectRow, error: projectError } = await service
       .from("projects")
-      .select("id")
+      .select("id,title,project_name,name")
       .eq("id", projectId)
       .eq("photographer_id", photographerRow.id)
       .maybeSingle();
@@ -840,6 +880,12 @@ export async function DELETE(
       .select("storage_path")
       .eq("project_id", projectId);
 
+    // Count collections for audit metadata.
+    const { count: albumCount } = await service
+      .from("collections")
+      .select("id", { count: "exact", head: true })
+      .eq("project_id", projectId);
+
     // Delete related data first, then the project
     await Promise.all([
       service.from("media").delete().eq("project_id", projectId),
@@ -853,6 +899,26 @@ export async function DELETE(
       .eq("photographer_id", photographerRow.id);
 
     if (deleteError) throw deleteError;
+
+    await recordAudit({
+      request,
+      actorUserId: user.id,
+      actorPhotographerId: photographerRow.id,
+      action: "project.delete",
+      entityType: "project",
+      entityId: projectId,
+      targetPhotographerId: photographerRow.id,
+      before: {
+        title: projectRow.title ?? null,
+        project_name: projectRow.project_name ?? null,
+        name: projectRow.name ?? null,
+      },
+      metadata: {
+        mediaCount: mediaRows?.length ?? 0,
+        albumCount: albumCount ?? 0,
+      },
+      result: "ok",
+    });
 
     // Delete files from R2 in the background (don't block the response)
     // Each storage_path is the original; also delete _thumbnail and _preview variants.

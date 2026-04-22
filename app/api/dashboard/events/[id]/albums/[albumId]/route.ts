@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { createDashboardServiceClient, resolveDashboardAuth } from "@/lib/dashboard-auth";
 import { parseJson } from "@/lib/api-validation";
+import { recordAudit, diffFields } from "@/lib/audit";
 import { buildStoredMediaUrls } from "@/lib/storage-images";
 import { r2DeleteWithVariantsBestEffort } from "@/lib/r2";
 
@@ -199,6 +200,23 @@ export async function PATCH(
       );
     }
 
+    const { data: currentAlbum, error: currentAlbumError } = await service
+      .from("collections")
+      .select(
+        "id,project_id,title,kind,slug,cover_photo_url,sort_order,created_at,access_mode,access_pin",
+      )
+      .eq("id", albumId)
+      .eq("project_id", projectId)
+      .maybeSingle();
+
+    if (currentAlbumError) throw currentAlbumError;
+    if (!currentAlbum) {
+      return NextResponse.json(
+        { ok: false, message: "Album not found." },
+        { status: 404 },
+      );
+    }
+
     const parsed = await parseJson(request, AlbumPatchBodySchema);
     if (!parsed.ok) return parsed.response;
     const body = parsed.data;
@@ -268,6 +286,26 @@ export async function PATCH(
         { status: 404 },
       );
     }
+
+    const accessChanged = Object.prototype.hasOwnProperty.call(body, "access_mode");
+    const auditDiff = diffFields(
+      currentAlbum as Record<string, unknown>,
+      albumData as Record<string, unknown>,
+      ["title", "slug", "cover_photo_url", "access_mode"] as (keyof Record<string, unknown>)[],
+    );
+    await recordAudit({
+      request,
+      actorUserId: user.id,
+      actorPhotographerId: photographerRow.id,
+      action: accessChanged ? "album.access_change" : "album.update",
+      entityType: "album",
+      entityId: albumId,
+      targetPhotographerId: photographerRow.id,
+      before: auditDiff.before,
+      after: auditDiff.after,
+      metadata: { projectId },
+      result: "ok",
+    });
 
     return NextResponse.json({
       ok: true,
@@ -385,6 +423,23 @@ export async function DELETE(
       .in("id", deleteIds);
 
     if (deleteError) throw deleteError;
+
+    await recordAudit({
+      request,
+      actorUserId: user.id,
+      actorPhotographerId: photographerRow.id,
+      action: "media.bulk_delete",
+      entityType: "media",
+      entityId: null,
+      targetPhotographerId: photographerRow.id,
+      metadata: {
+        projectId,
+        albumId,
+        deletedMediaCount: mediaRows?.length ?? deleteIds.length,
+        deletedIds: deleteIds,
+      },
+      result: "ok",
+    });
 
     return NextResponse.json({ ok: true, deletedIds: deleteIds });
   } catch (error) {

@@ -3,6 +3,7 @@ import { z } from "zod";
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 import { parseJson } from "@/lib/api-validation";
+import { recordAudit } from "@/lib/audit";
 
 export const dynamic = "force-dynamic";
 
@@ -128,6 +129,16 @@ export async function POST(request: NextRequest) {
 
       if (error) throw error;
 
+      await recordAudit({
+        request,
+        actorUserId: user.id,
+        action: "mfa.enroll",
+        entityType: "mfa",
+        entityId: data.id,
+        metadata: { factorType: "totp" },
+        result: "ok",
+      });
+
       return NextResponse.json({
         ok: true,
         factorId: data.id,
@@ -167,11 +178,29 @@ export async function POST(request: NextRequest) {
       });
 
       if (verifyError) {
+        await recordAudit({
+          request,
+          actorUserId: user.id,
+          action: "mfa.verify",
+          entityType: "mfa",
+          entityId: factorId,
+          result: "denied",
+          errorMessage: verifyError.message ?? "Invalid code.",
+        });
         return NextResponse.json(
           { ok: false, message: "Invalid verification code. Please try again." },
           { status: 400 },
         );
       }
+
+      await recordAudit({
+        request,
+        actorUserId: user.id,
+        action: "mfa.verify",
+        entityType: "mfa",
+        entityId: factorId,
+        result: "ok",
+      });
 
       return NextResponse.json({ ok: true, verified: true });
     }
@@ -188,6 +217,15 @@ export async function POST(request: NextRequest) {
 
       const { error } = await supabase.auth.mfa.unenroll({ factorId });
       if (error) throw error;
+
+      await recordAudit({
+        request,
+        actorUserId: user.id,
+        action: "mfa.unenroll",
+        entityType: "mfa",
+        entityId: factorId,
+        result: "ok",
+      });
 
       return NextResponse.json({ ok: true, unenrolled: true });
     }

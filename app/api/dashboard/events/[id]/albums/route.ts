@@ -5,6 +5,7 @@ import {
   resolveDashboardAuth,
 } from "@/lib/dashboard-auth";
 import { parseJson } from "@/lib/api-validation";
+import { recordAudit } from "@/lib/audit";
 import { r2DeleteWithVariantsBestEffort } from "@/lib/r2";
 
 export const dynamic = "force-dynamic";
@@ -91,7 +92,11 @@ async function resolveAuthorizedProject(
     };
   }
 
-  return { service };
+  return {
+    service,
+    userId: user.id,
+    photographerId: photographerRow.id as string,
+  };
 }
 
 export async function POST(
@@ -143,6 +148,24 @@ export async function POST(
       .single();
 
     if (insertError) throw insertError;
+
+    await recordAudit({
+      request,
+      actorUserId: auth.userId,
+      actorPhotographerId: auth.photographerId,
+      action: "album.create",
+      entityType: "album",
+      entityId: (albumData as { id?: string | null })?.id ?? null,
+      targetPhotographerId: auth.photographerId,
+      after: {
+        title: (albumData as CollectionRow).title ?? null,
+        slug: (albumData as CollectionRow).slug ?? null,
+        kind: (albumData as CollectionRow).kind ?? null,
+        sort_order: (albumData as CollectionRow).sort_order ?? null,
+      },
+      metadata: { projectId },
+      result: "ok",
+    });
 
     return NextResponse.json({
       ok: true,
@@ -238,6 +261,22 @@ export async function DELETE(
       .in("id", deleteIds);
 
     if (collectionDeleteError) throw collectionDeleteError;
+
+    await recordAudit({
+      request,
+      actorUserId: auth.userId,
+      actorPhotographerId: auth.photographerId,
+      action: "album.delete",
+      entityType: "album",
+      entityId: deleteIds.length === 1 ? deleteIds[0] : null,
+      targetPhotographerId: auth.photographerId,
+      metadata: {
+        projectId,
+        deletedIds: deleteIds,
+        deletedMediaCount: mediaRows?.length ?? 0,
+      },
+      result: "ok",
+    });
 
     return NextResponse.json({
       ok: true,

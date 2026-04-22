@@ -5,6 +5,7 @@ import {
   resolveDashboardAuth,
 } from "@/lib/dashboard-auth";
 import { parseJson } from "@/lib/api-validation";
+import { recordAudit, diffFields } from "@/lib/audit";
 import {
   DashboardStudentRow,
   loadOwnedSchool,
@@ -98,6 +99,28 @@ export async function PATCH(
 
     if (updateError) throw updateError;
 
+    const auditDiff = diffFields(
+      student as unknown as Record<string, unknown>,
+      updatedRow as unknown as Record<string, unknown>,
+      ["first_name", "last_name", "class_id", "class_name", "folder_name", "external_student_id"] as (keyof Record<string, unknown>)[],
+    );
+    // Pin changes are sensitive — record that it changed, but don't log the value.
+    const pinChanged =
+      clean(body.studentPin) !== "" && clean(body.studentPin) !== clean(student.pin ?? "");
+    await recordAudit({
+      request,
+      actorUserId: user.id,
+      actorPhotographerId: photographerRow.id,
+      action: "student.update",
+      entityType: "student",
+      entityId: studentId,
+      targetPhotographerId: photographerRow.id,
+      before: auditDiff.before,
+      after: auditDiff.after,
+      metadata: { schoolId, pinChanged },
+      result: "ok",
+    });
+
     return NextResponse.json({ ok: true, student: updatedRow });
   } catch (error) {
     console.error("[dashboard:student:PATCH]", error);
@@ -166,6 +189,23 @@ export async function DELETE(
       .eq("school_id", schoolId);
 
     if (deleteError) throw deleteError;
+
+    await recordAudit({
+      request,
+      actorUserId: user.id,
+      actorPhotographerId: photographerRow.id,
+      action: "student.delete",
+      entityType: "student",
+      entityId: studentId,
+      targetPhotographerId: photographerRow.id,
+      before: {
+        first_name: (student as { first_name?: string | null }).first_name ?? null,
+        last_name: (student as { last_name?: string | null }).last_name ?? null,
+        class_name: (student as { class_name?: string | null }).class_name ?? null,
+      },
+      metadata: { schoolId },
+      result: "ok",
+    });
 
     return NextResponse.json({ ok: true });
   } catch (error) {

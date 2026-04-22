@@ -5,6 +5,7 @@ import {
   resolveDashboardAuth,
 } from "@/lib/dashboard-auth";
 import { parseJson } from "@/lib/api-validation";
+import { recordAudit } from "@/lib/audit";
 
 export const dynamic = "force-dynamic";
 
@@ -233,6 +234,8 @@ export async function PATCH(
   if (!parsed.ok) return parsed.response;
   const { visitorId, newEmail } = parsed.data;
 
+  const normalizedEmail = newEmail.trim().toLowerCase();
+
   // ✅ Pre-release registrant IDs are returned from GET prefixed with `pre_`
   // so we can distinguish them from school_gallery_visitors rows. Route the
   // update to the right table.
@@ -240,24 +243,49 @@ export async function PATCH(
     const realId = visitorId.slice("pre_".length);
     const { error } = await service
       .from("pre_release_registrations")
-      .update({ email: newEmail.trim().toLowerCase() })
+      .update({ email: normalizedEmail })
       .eq("id", realId)
       .eq("school_id", schoolId);
     if (error) {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
+    await recordAudit({
+      request,
+      actorUserId: user.id,
+      actorPhotographerId: pgRow.id,
+      action: "visitor.email_update",
+      entityType: "visitor",
+      entityId: realId,
+      targetPhotographerId: pgRow.id,
+      after: { email: normalizedEmail },
+      metadata: { schoolId, source: "pre_release_registrations" },
+      result: "ok",
+    });
     return NextResponse.json({ ok: true });
   }
 
   const { error } = await service
     .from("school_gallery_visitors")
-    .update({ viewer_email: newEmail.trim().toLowerCase() })
+    .update({ viewer_email: normalizedEmail })
     .eq("id", visitorId)
     .eq("school_id", schoolId);
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
+
+  await recordAudit({
+    request,
+    actorUserId: user.id,
+    actorPhotographerId: pgRow.id,
+    action: "visitor.email_update",
+    entityType: "visitor",
+    entityId: visitorId,
+    targetPhotographerId: pgRow.id,
+    after: { email: normalizedEmail },
+    metadata: { schoolId, source: "school_gallery_visitors" },
+    result: "ok",
+  });
 
   return NextResponse.json({ ok: true });
 }

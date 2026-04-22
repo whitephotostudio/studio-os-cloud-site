@@ -5,6 +5,7 @@ import {
   resolveDashboardAuth,
 } from "@/lib/dashboard-auth";
 import { parseJson } from "@/lib/api-validation";
+import { recordAudit, diffFields } from "@/lib/audit";
 import {
   buildSchoolShareEmail,
   eventFromName,
@@ -358,6 +359,40 @@ export async function PATCH(
       };
     }
 
+    const auditDiff = diffFields(
+      schoolRow as Record<string, unknown>,
+      updatedSchoolRow as Record<string, unknown>,
+      [
+        "school_name",
+        "status",
+        "portal_status",
+        "shoot_date",
+        "order_due_date",
+        "expiration_date",
+        "package_profile_id",
+        "email_required",
+        "checkout_contact_required",
+        "internal_notes",
+        "gallery_slug",
+      ] as (keyof Record<string, unknown>)[],
+    );
+    await recordAudit({
+      request,
+      actorUserId: user.id,
+      actorPhotographerId: photographerRow.id,
+      action: "school.update",
+      entityType: "school",
+      entityId: schoolId,
+      targetPhotographerId: photographerRow.id,
+      before: auditDiff.before,
+      after: auditDiff.after,
+      metadata: {
+        emailsSent: emailSummary?.sent ?? 0,
+        emailType: emailSummary?.type ?? null,
+      },
+      result: "ok",
+    });
+
     return NextResponse.json({
       ok: true,
       school: updatedSchoolRow,
@@ -402,7 +437,7 @@ export async function DELETE(
     // Verify the school belongs to the photographer
     const { data: schoolRow, error: schoolError } = await service
       .from("schools")
-      .select("id")
+      .select("id,school_name")
       .eq("id", schoolId)
       .eq("photographer_id", photographerRow.id)
       .maybeSingle();
@@ -411,6 +446,12 @@ export async function DELETE(
     if (!schoolRow) {
       return NextResponse.json({ ok: false, message: "School not found." }, { status: 404 });
     }
+
+    // Count students about to be cascade-deleted so the audit row captures scope.
+    const { count: studentCount } = await service
+      .from("students")
+      .select("id", { count: "exact", head: true })
+      .eq("school_id", schoolId);
 
     // Delete students first, then the school
     await service.from("students").delete().eq("school_id", schoolId);
@@ -422,6 +463,19 @@ export async function DELETE(
       .eq("photographer_id", photographerRow.id);
 
     if (deleteError) throw deleteError;
+
+    await recordAudit({
+      request,
+      actorUserId: user.id,
+      actorPhotographerId: photographerRow.id,
+      action: "school.delete",
+      entityType: "school",
+      entityId: schoolId,
+      targetPhotographerId: photographerRow.id,
+      before: { school_name: schoolRow.school_name },
+      metadata: { studentsDeleted: studentCount ?? 0 },
+      result: "ok",
+    });
 
     return NextResponse.json({ ok: true });
   } catch (error) {

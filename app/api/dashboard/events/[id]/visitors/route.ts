@@ -5,6 +5,7 @@ import {
   resolveDashboardAuth,
 } from "@/lib/dashboard-auth";
 import { parseJson } from "@/lib/api-validation";
+import { recordAudit } from "@/lib/audit";
 
 export const dynamic = "force-dynamic";
 
@@ -194,15 +195,29 @@ export async function PATCH(
   if (!parsed.ok) return parsed.response;
   const { visitorId, newEmail } = parsed.data;
 
+  const normalizedEmail = newEmail.trim().toLowerCase();
   const { error } = await service
     .from("event_gallery_visitors")
-    .update({ viewer_email: newEmail.trim().toLowerCase() })
+    .update({ viewer_email: normalizedEmail })
     .eq("id", visitorId)
     .eq("project_id", projectId);
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
+
+  await recordAudit({
+    request,
+    actorUserId: user.id,
+    actorPhotographerId: pgRow.id,
+    action: "visitor.email_update",
+    entityType: "visitor",
+    entityId: visitorId,
+    targetPhotographerId: pgRow.id,
+    after: { email: normalizedEmail },
+    metadata: { projectId, source: "event_gallery_visitors" },
+    result: "ok",
+  });
 
   return NextResponse.json({ ok: true });
 }
