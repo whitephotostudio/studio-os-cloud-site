@@ -2078,6 +2078,26 @@ export async function markOrderPaymentFailure(
   return order.id;
 }
 
+export type MarkOrderRefundedResult = {
+  orderId: string;
+  photographerId: string | null;
+  fullyRefunded: boolean;
+  partial: boolean;
+  before: {
+    status: string | null;
+    payment_status: string | null;
+    refund_status: string | null;
+    refund_amount_cents: number | null;
+  };
+  after: {
+    status: string | null;
+    payment_status: string;
+    refund_status: string;
+    refund_amount_cents: number;
+    refunded_at: string;
+  };
+};
+
 export async function markOrderRefunded(
   service: ServiceClient,
   input: {
@@ -2085,11 +2105,15 @@ export async function markOrderRefunded(
     orderId?: string | null;
     partial: boolean;
     note: string;
+    /** Total dollars refunded across all refund events for this order (cents). */
+    refundAmountCents?: number | null;
   },
-) {
+): Promise<MarkOrderRefundedResult | null> {
   let query = service
     .from("orders")
-    .select("id,notes")
+    .select(
+      "id,notes,photographer_id,status,payment_status,refund_status,refund_amount_cents",
+    )
     .limit(1);
 
   if (input.paymentIntentId) {
@@ -2106,17 +2130,54 @@ export async function markOrderRefunded(
 
   const mergedNotes = await appendOrderNote(order.notes ?? null, input.note);
 
+  const refundedAt = new Date().toISOString();
+  const fullyRefunded = !input.partial;
+  const nextPaymentStatus = fullyRefunded ? "refunded" : "partially_refunded";
+  const nextRefundStatus = fullyRefunded ? "refunded" : "partially_refunded";
+  // On a full refund, flip the order status so the Flutter print queue and the
+  // dashboard "new orders" view drop the row.  On a partial refund, leave the
+  // status alone — the photographer may still need to fulfill part of it.
+  const nextStatus = fullyRefunded ? "refunded" : (order.status ?? null);
+  const nextRefundAmountCents = Math.max(
+    Number(input.refundAmountCents ?? 0) || 0,
+    Number(order.refund_amount_cents ?? 0) || 0,
+  );
+
   const { error: updateError } = await service
     .from("orders")
     .update({
-      payment_status: input.partial ? "partially_refunded" : "refunded",
-      refund_status: input.partial ? "partially_refunded" : "refunded",
+      status: nextStatus,
+      payment_status: nextPaymentStatus,
+      refund_status: nextRefundStatus,
+      refund_amount_cents: nextRefundAmountCents,
+      refunded_at: refundedAt,
+      seen_by_photographer: false,
       notes: mergedNotes,
     })
     .eq("id", order.id);
 
   if (updateError) throw updateError;
-  return order.id;
+
+  return {
+    orderId: order.id as string,
+    photographerId: (order.photographer_id as string | null) ?? null,
+    fullyRefunded,
+    partial: input.partial,
+    before: {
+      status: (order.status as string | null) ?? null,
+      payment_status: (order.payment_status as string | null) ?? null,
+      refund_status: (order.refund_status as string | null) ?? null,
+      refund_amount_cents:
+        (order.refund_amount_cents as number | null) ?? null,
+    },
+    after: {
+      status: nextStatus,
+      payment_status: nextPaymentStatus,
+      refund_status: nextRefundStatus,
+      refund_amount_cents: nextRefundAmountCents,
+      refunded_at: refundedAt,
+    },
+  };
 }
 
 export async function retrieveCheckoutSession(

@@ -3,6 +3,7 @@ import { createDashboardServiceClient } from "@/lib/dashboard-auth";
 import { syncPhotographyKeysByPhotographerId } from "@/lib/studio-os-app";
 import { resendConfigured, sendResendEmail } from "@/lib/resend";
 import { r2DeletePrefix } from "@/lib/r2";
+import { recordAudit } from "@/lib/audit";
 import {
   asIsoTimestamp,
   finalizePaidOrder,
@@ -638,12 +639,39 @@ export async function POST(req: NextRequest) {
         if (charge.metadata?.pack_code) {
           await handleCreditChargeRefunded(service, charge);
         } else if (event.account && (charge.metadata?.order_id || charge.payment_intent)) {
-          await markOrderRefunded(service, {
+          const partial = charge.amount_refunded < charge.amount;
+          const refundResult = await markOrderRefunded(service, {
             paymentIntentId: charge.payment_intent ?? null,
             orderId: charge.metadata?.order_id ?? null,
-            partial: charge.amount_refunded < charge.amount,
+            partial,
+            refundAmountCents: charge.amount_refunded,
             note: `[Stripe charge ${charge.id}] refund recorded`,
           });
+
+          if (refundResult) {
+            await recordAudit({
+              request: req,
+              actorUserId: null,
+              actorPhotographerId: null,
+              action: "order.refund",
+              entityType: "order",
+              entityId: refundResult.orderId,
+              targetPhotographerId: refundResult.photographerId,
+              before: refundResult.before,
+              after: refundResult.after,
+              metadata: {
+                source: "stripe.charge.refunded",
+                stripeEventId: event.id,
+                stripeChargeId: charge.id,
+                stripeAccount: event.account ?? null,
+                paymentIntentId: charge.payment_intent ?? null,
+                chargeAmountCents: charge.amount,
+                amountRefundedCents: charge.amount_refunded,
+                fullyRefunded: refundResult.fullyRefunded,
+              },
+              result: "ok",
+            });
+          }
         }
         break;
       }
