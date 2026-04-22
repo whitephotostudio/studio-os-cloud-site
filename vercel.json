@@ -13,5 +13,5 @@
       "schedule": "0 4 * * *"
     }
   ],
-  "ignoreCommand": "git diff --quiet HEAD^ HEAD -- . ':(exclude)CLAUDE.md' ':(exclude)docs/' ':(exclude)supabase/migrations/' ':(exclude)*.md' ':(exclude).gitignore' ':(exclude)tmp_*' ':(exclude)tmp-*'"
+  "ignoreCommand": "echo \"$VERCEL_GIT_COMMIT_MESSAGE\" | grep -qF '[skip build]'"
 }
