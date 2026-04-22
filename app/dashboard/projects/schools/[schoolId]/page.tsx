@@ -22,6 +22,7 @@ import {
   Heart,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { useIsMobile } from "@/lib/use-is-mobile";
 import { uploadToR2 } from "@/lib/upload-to-r2-client";
 import { ensureSchoolCollectionId } from "@/lib/school-sync";
 import { extractStoragePathFromSupabaseUrl } from "@/lib/storage-images";
@@ -305,6 +306,7 @@ async function ensureSyncedProjectId(
 
 export default function SchoolsSchoolDetailPage() {
   const [supabase] = useState(() => createClient());
+  const isMobile = useIsMobile();
   const params = useParams();
   const schoolCoverInputRef = useRef<HTMLInputElement | null>(null);
   const coverFolderCacheRef = useRef<Map<string, FolderCoverAsset[]>>(new Map());
@@ -1315,21 +1317,21 @@ export default function SchoolsSchoolDetailPage() {
   const classSearchCountLabel = `${filteredClasses.length} of ${orderedClasses.length}`;
 
   return (
-    <div style={{ minHeight: "100vh", background: "#faf7f7", padding: 24 }}>
+    <div style={{ minHeight: "100vh", background: "#faf7f7", padding: isMobile ? 14 : 24 }}>
       <div style={{ maxWidth: 1560, margin: "0 auto" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16, marginBottom: 16 }}>
+        <div style={{ display: "flex", flexDirection: isMobile ? "column" : "row", justifyContent: "space-between", alignItems: isMobile ? "stretch" : "flex-start", gap: isMobile ? 12 : 16, marginBottom: 16 }}>
           <div>
             <Link href="/dashboard/schools" style={{ color: "#111111", textDecoration: "none", fontSize: 14, fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 6 }}>
               <ArrowLeft size={16} /> Back to Schools
             </Link>
-            <div style={{ marginTop: 8, color: "#b91c1c", fontWeight: 800 }}>School Gallery</div>
-            <h1 style={{ margin: "8px 0 0", fontSize: 24, fontWeight: 900, color: "#111111", display: "inline-flex", alignItems: "center", gap: 8 }}>
+            <div style={{ marginTop: 8, color: "#b91c1c", fontWeight: 800, fontSize: isMobile ? 12 : undefined }}>School Gallery</div>
+            <h1 style={{ margin: "8px 0 0", fontSize: isMobile ? 20 : 24, fontWeight: 900, color: "#111111", display: "inline-flex", alignItems: "center", gap: 8, lineHeight: 1.2 }}>
               {school?.school_name || "School"}
               {schoolLocked ? <Lock size={16} style={{ color: "#b91c1c" }} /> : null}
             </h1>
-            <div style={{ color: "#b91c1c", fontWeight: 800, marginTop: 2 }}>{schoolStatus}</div>
+            <div style={{ color: "#b91c1c", fontWeight: 800, marginTop: 2, fontSize: isMobile ? 12 : undefined }}>{schoolStatus}</div>
           </div>
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "flex-end" }}>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", justifyContent: isMobile ? "stretch" : "flex-end" }}>
             <button onClick={() => { setError(""); setCreateGalleryKind("class"); setCreateGalleryName(""); }} style={{ borderRadius: 10, border: "1px solid #111111", background: "#fff", color: "#111111", padding: "12px 16px", fontWeight: 800, cursor: "pointer" }}>Add Class</button>
             <button onClick={() => { setError(""); setCreateGalleryKind("role"); setCreateGalleryName(""); }} style={{ borderRadius: 10, border: "1px solid #111111", background: "#fff", color: "#111111", padding: "12px 16px", fontWeight: 800, cursor: "pointer" }}>Add Role Gallery</button>
             <button onClick={() => setShareModalOpen(true)} style={{ borderRadius: 10, border: "1px solid #111111", background: "#111111", color: "#fff", padding: "12px 16px", fontWeight: 800, cursor: "pointer" }}>Share Gallery</button>
@@ -1367,8 +1369,8 @@ export default function SchoolsSchoolDetailPage() {
         {loading && <p style={{ color: "#999", fontSize: 13 }}>Loading…</p>}
 
         {!loading && school && (
-          <div style={{ display: "grid", gridTemplateColumns: "320px minmax(0,1fr)", gap: 18, alignItems: "start" }}>
-            <aside style={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 20, padding: 16, position: "sticky", top: 24, zIndex: 6 }}>
+          <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "320px minmax(0,1fr)", gap: isMobile ? 14 : 18, alignItems: "start" }}>
+            <aside style={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 20, padding: isMobile ? 12 : 16, position: isMobile ? "static" : "sticky", top: isMobile ? undefined : 24, zIndex: 6 }}>
               <button
                 type="button"
                 onClick={() => void openSchoolCoverPicker()}

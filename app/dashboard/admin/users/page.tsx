@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
+import { useIsMobile } from "@/lib/use-is-mobile";
 import {
   ArrowLeft,
   CheckCircle2,
@@ -363,6 +364,7 @@ function VoicePanel({
 
 export default function AdminUsersPage() {
   const supabase = createClient();
+  const isMobile = useIsMobile();
   const [users, setUsers] = useState<UserRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -596,7 +598,7 @@ export default function AdminUsersPage() {
       style={{
         background: "#eef3fa",
         minHeight: "100vh",
-        padding: "32px 28px 60px",
+        padding: isMobile ? "18px 14px 48px" : "32px 28px 60px",
         fontFamily: "system-ui, -apple-system, sans-serif",
         color: textPrimary,
       }}
@@ -766,7 +768,8 @@ export default function AdminUsersPage() {
             background: "#fff",
             borderRadius: 20,
             border: `1px solid ${borderSoft}`,
-            overflow: "hidden",
+            overflow: isMobile ? "auto" : "hidden",
+            WebkitOverflowScrolling: "touch",
           }}
         >
           {loading ? (
@@ -778,7 +781,7 @@ export default function AdminUsersPage() {
               {query ? "No matching users found." : "No registered users yet."}
             </div>
           ) : (
-            <div>
+            <div style={{ minWidth: isMobile ? 820 : undefined }}>
               {/* Table header */}
               <div
                 style={{

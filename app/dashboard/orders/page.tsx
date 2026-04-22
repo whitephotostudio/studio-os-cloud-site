@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
   ArrowLeft,
@@ -408,6 +408,19 @@ export default function OrdersPage() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [filter, setFilter] = useState<string>("new");
   const [selected, setSelected] = useState<Order | null>(null);
+  const detailsPanelRef = useRef<HTMLDivElement | null>(null);
+  // On mobile the details panel renders beneath the orders list instead of
+  // in a sticky sidebar. Without a scroll-into-view, tapping "Open details"
+  // feels like nothing happened — the panel is offscreen below. Scroll to it.
+  useEffect(() => {
+    if (!isMobile) return;
+    if (!selected) return;
+    // rAF so the panel has mounted before we measure.
+    const raf = requestAnimationFrame(() => {
+      detailsPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [selected?.id, isMobile]);
   const [updatingId, setUpdatingId] = useState<string | null>(null);
   const [userEmail, setUserEmail] = useState("");
   const [pgId, setPgId] = useState<string | null>(null);
@@ -1592,12 +1605,12 @@ export default function OrdersPage() {
                         background: cardBg,
                         border: isSelected ? "2px solid #cc0000" : isNew ? "2px solid #ef4444" : `1px solid ${borderColor}`,
                         borderRadius: 24,
-                        padding: 18,
+                        padding: isMobile ? 14 : 18,
                         boxShadow: isSelected ? "0 0 0 4px rgba(204,0,0,0.08)" : isNew ? "0 0 0 4px rgba(239,68,68,0.08)" : "0 10px 24px rgba(15,23,42,0.04)",
                         cursor: "pointer",
                       }}
                     >
-                      <div style={{ display: "flex", gap: 16, alignItems: "stretch" }}>
+                      <div style={{ display: "flex", gap: isMobile ? 12 : 16, alignItems: "stretch" }}>
                         {/* Checkbox */}
                         <div style={{ display: "flex", alignItems: "flex-start", paddingTop: 4 }} onClick={(e) => e.stopPropagation()}>
                           <button
@@ -1608,12 +1621,12 @@ export default function OrdersPage() {
                             {isSelected && <Check size={13} color="#fff" strokeWidth={3} />}
                           </button>
                         </div>
-                        <div style={{ width: 110, flexShrink: 0 }}>
+                        <div style={{ width: isMobile ? 72 : 110, flexShrink: 0 }}>
                           <div
                             style={{
-                              width: 110,
-                              height: 138,
-                              borderRadius: 18,
+                              width: isMobile ? 72 : 110,
+                              height: isMobile ? 92 : 138,
+                              borderRadius: isMobile ? 12 : 18,
                               overflow: "hidden",
                               background: "#f3f4f6",
                               border: `1px solid ${borderColor}`,
@@ -1629,11 +1642,11 @@ export default function OrdersPage() {
                           </div>
                         </div>
 
-                        <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 12 }}>
-                          <div style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "flex-start" }}>
+                        <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: isMobile ? 8 : 12 }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", gap: isMobile ? 10 : 16, alignItems: "flex-start", flexWrap: isMobile ? "wrap" : "nowrap" }}>
                             <div style={{ minWidth: 0 }}>
                               <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 6 }}>
-                                <h3 style={{ margin: 0, fontSize: 20, fontWeight: 900, color: textPrimary }}>
+                                <h3 style={{ margin: 0, fontSize: isMobile ? 15 : 20, fontWeight: 900, color: textPrimary, lineHeight: 1.2 }}>
                                   {`${order.student?.first_name ?? "Student"} ${order.student?.last_name ?? ""}`.trim()}
                                 </h3>
                                 {isNew ? (
@@ -1661,45 +1674,45 @@ export default function OrdersPage() {
                                   </span>
                                 ) : null}
                               </div>
-                              <div style={{ fontSize: 14, color: textMuted, lineHeight: 1.6 }}>
+                              <div style={{ fontSize: isMobile ? 12 : 14, color: textMuted, lineHeight: 1.5 }}>
                                 {order.school?.school_name ?? "—"} · {order.class?.class_name ?? "—"} · {group.orderCount > 1 ? `Latest order ${order.id.slice(0, 8)}` : `Order ${order.id.slice(0, 8)}`}
                               </div>
-                              <div style={{ fontSize: 14, color: textMuted, lineHeight: 1.6 }}>
+                              <div style={{ fontSize: isMobile ? 12 : 14, color: textMuted, lineHeight: 1.5, wordBreak: "break-word" }}>
                                 Parent: {order.parent_name ?? order.customer_name ?? "—"} {clean(order.parent_email ?? order.customer_email) ? `· ${order.parent_email ?? order.customer_email}` : ""}
                               </div>
                             </div>
 
-                            <div style={{ textAlign: "right", flexShrink: 0 }}>
-                              <div style={{ fontSize: 12, color: textMuted, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase" }}>Order Total</div>
-                              <div style={{ fontSize: 24, fontWeight: 900, color: textPrimary, marginTop: 4 }}>{moneyFromCents(orderTotal, currency)}</div>
-                              <div style={{ fontSize: 12, color: textMuted, marginTop: 4 }}>{formatDate(order.created_at)}</div>
+                            <div style={{ textAlign: isMobile ? "left" : "right", flexShrink: 0 }}>
+                              <div style={{ fontSize: isMobile ? 10 : 12, color: textMuted, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase" }}>Order Total</div>
+                              <div style={{ fontSize: isMobile ? 18 : 24, fontWeight: 900, color: textPrimary, marginTop: 2 }}>{moneyFromCents(orderTotal, currency)}</div>
+                              <div style={{ fontSize: isMobile ? 11 : 12, color: textMuted, marginTop: 2 }}>{formatDate(order.created_at)}</div>
                             </div>
                           </div>
 
                           <div
                             style={{
                               display: "grid",
-                              gridTemplateColumns: "minmax(0,1.5fr) minmax(0,1fr) minmax(0,1fr)",
-                              gap: 12,
+                              gridTemplateColumns: isMobile ? "1fr" : "minmax(0,1.5fr) minmax(0,1fr) minmax(0,1fr)",
+                              gap: isMobile ? 8 : 12,
                             }}
                           >
-                            <div style={{ background: "#f9fafb", border: `1px solid ${borderColor}`, borderRadius: 18, padding: 14 }}>
-                              <div style={{ fontSize: 11, color: textMuted, fontWeight: 900, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 8 }}>Package</div>
-                              <div style={{ fontSize: 16, fontWeight: 800, color: textPrimary }}>{group.packageSummary}</div>
-                              <div style={{ fontSize: 13, color: textMuted, marginTop: 6 }}>
+                            <div style={{ background: "#f9fafb", border: `1px solid ${borderColor}`, borderRadius: isMobile ? 12 : 18, padding: isMobile ? 10 : 14 }}>
+                              <div style={{ fontSize: isMobile ? 10 : 11, color: textMuted, fontWeight: 900, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: isMobile ? 4 : 8 }}>Package</div>
+                              <div style={{ fontSize: isMobile ? 13 : 16, fontWeight: 800, color: textPrimary }}>{group.packageSummary}</div>
+                              <div style={{ fontSize: isMobile ? 11 : 13, color: textMuted, marginTop: isMobile ? 2 : 6 }}>
                                 {`${group.itemsCount} line item${group.itemsCount === 1 ? "" : "s"} across ${group.orderCount} order${group.orderCount === 1 ? "" : "s"}`}
                               </div>
                             </div>
 
-                            <div style={{ background: "#f9fafb", border: `1px solid ${borderColor}`, borderRadius: 18, padding: 14 }}>
-                              <div style={{ fontSize: 11, color: textMuted, fontWeight: 900, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 8 }}>Original Files</div>
-                              <div style={{ fontSize: 18, fontWeight: 900, color: textPrimary }}>{imageUrls.length}</div>
-                              <div style={{ fontSize: 13, color: textMuted, marginTop: 6 }}>Ready for lab export</div>
+                            <div style={{ background: "#f9fafb", border: `1px solid ${borderColor}`, borderRadius: isMobile ? 12 : 18, padding: isMobile ? 10 : 14 }}>
+                              <div style={{ fontSize: isMobile ? 10 : 11, color: textMuted, fontWeight: 900, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: isMobile ? 4 : 8 }}>Original Files</div>
+                              <div style={{ fontSize: isMobile ? 14 : 18, fontWeight: 900, color: textPrimary }}>{imageUrls.length}</div>
+                              <div style={{ fontSize: isMobile ? 11 : 13, color: textMuted, marginTop: isMobile ? 2 : 6 }}>Ready for lab export</div>
                             </div>
 
-                            <div style={{ background: "#f9fafb", border: `1px solid ${borderColor}`, borderRadius: 18, padding: 14 }}>
-                              <div style={{ fontSize: 11, color: textMuted, fontWeight: 900, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 8 }}>Export Flow</div>
-                              <div style={{ fontSize: 13, fontWeight: 700, color: textPrimary, lineHeight: 1.6 }}>Summary sheet + manifest + originals</div>
+                            <div style={{ background: "#f9fafb", border: `1px solid ${borderColor}`, borderRadius: isMobile ? 12 : 18, padding: isMobile ? 10 : 14 }}>
+                              <div style={{ fontSize: isMobile ? 10 : 11, color: textMuted, fontWeight: 900, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: isMobile ? 4 : 8 }}>Export Flow</div>
+                              <div style={{ fontSize: isMobile ? 11 : 13, fontWeight: 700, color: textPrimary, lineHeight: 1.5 }}>Summary sheet + manifest + originals</div>
                             </div>
                           </div>
 
@@ -1827,6 +1840,7 @@ export default function OrdersPage() {
 
           {selected ? (
             <div
+              ref={detailsPanelRef}
               style={{
                 width: isMobile ? "100%" : 420,
                 flexShrink: isMobile ? 1 : 0,
@@ -1839,13 +1853,14 @@ export default function OrdersPage() {
                 borderRadius: isMobile ? 20 : 28,
                 padding: isMobile ? 14 : 20,
                 boxShadow: "0 14px 40px rgba(15,23,42,0.08)",
+                scrollMarginTop: 72,
               }}
             >
               {/* ── Order Header ── */}
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 20 }}>
-                <div>
-                  <div style={{ fontSize: 28, fontWeight: 900, color: textPrimary }}>Order {selected.id.slice(0, 8)}</div>
-                  <div style={{ fontSize: 13, color: textMuted, marginTop: 4 }}>Placed {formatDate(selected.created_at)}</div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: isMobile ? 14 : 20, gap: 10 }}>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: isMobile ? 18 : 28, fontWeight: 900, color: textPrimary, lineHeight: 1.2 }}>Order {selected.id.slice(0, 8)}</div>
+                  <div style={{ fontSize: isMobile ? 12 : 13, color: textMuted, marginTop: 4 }}>Placed {formatDate(selected.created_at)}</div>
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                   <span style={{

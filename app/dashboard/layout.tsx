@@ -88,8 +88,9 @@ export default function DashboardLayout({
             alignItems: "center",
             justifyContent: "space-between",
             padding: "10px 14px",
-            background: "#000",
-            borderBottom: "1px solid #1a1a1a",
+            background: "#ffffff",
+            borderBottom: "1px solid #e5e7eb",
+            boxShadow: "0 1px 0 rgba(15,23,42,0.03)",
           }}
         >
           <div style={{ display: "inline-flex", alignItems: "center" }}>
@@ -107,9 +108,9 @@ export default function DashboardLayout({
               width: 40,
               height: 40,
               borderRadius: 10,
-              background: "transparent",
-              color: "#fff",
-              border: "1px solid #333",
+              background: "#ffffff",
+              color: "#111111",
+              border: "1px solid #e5e7eb",
               cursor: "pointer",
             }}
           >
