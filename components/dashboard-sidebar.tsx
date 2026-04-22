@@ -7,7 +7,7 @@ import { Logo } from "@/components/logo";
 import { createClient } from "@/lib/supabase/client";
 import { useEffect, useState } from "react";
 
-const sidebarStyle: React.CSSProperties = {
+const sidebarBaseStyle: React.CSSProperties = {
   width: 220,
   minHeight: "100vh",
   background: "#000",
@@ -41,7 +41,16 @@ const NAV_ITEMS = [
   { href: "/dashboard/feature-requests", label: "Feature Requests", match: /^\/dashboard\/feature-requests/ },
 ];
 
-export function DashboardSidebar() {
+export function DashboardSidebar({
+  onNavigate,
+  mobileOverlay = false,
+}: {
+  /** Called when a nav link is clicked — lets the parent close a mobile drawer. */
+  onNavigate?: () => void;
+  /** When true, the sidebar renders without flexShrink:0 and lets its width be
+   * controlled externally. Used by the mobile drawer in DashboardLayout. */
+  mobileOverlay?: boolean;
+} = {}) {
   const pathname = usePathname();
   const supabase = createClient();
   const [userEmail, setUserEmail] = useState("");
@@ -94,6 +103,10 @@ export function DashboardSidebar() {
     window.location.href = "/sign-in";
   }
 
+  const sidebarStyle: React.CSSProperties = mobileOverlay
+    ? { ...sidebarBaseStyle, width: "100%", flexShrink: 1 }
+    : sidebarBaseStyle;
+
   return (
     <aside style={sidebarStyle}>
       <div style={{ padding: 18, background: "#ffffff", borderBottom: "1px solid #e5e7eb" }}>
@@ -109,6 +122,7 @@ export function DashboardSidebar() {
           <Link
             key={item.href}
             href={item.href}
+            onClick={onNavigate}
             style={item.match.test(pathname) ? navActiveStyle : navItemStyle}
           >
             {item.label}
@@ -117,6 +131,7 @@ export function DashboardSidebar() {
         {isAdmin && (
           <Link
             href="/dashboard/admin/users"
+            onClick={onNavigate}
             style={{
               ...(/^\/dashboard\/admin/.test(pathname) ? navActiveStyle : navItemStyle),
               display: "flex",

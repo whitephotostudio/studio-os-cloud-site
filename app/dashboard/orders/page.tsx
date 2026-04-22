@@ -43,6 +43,7 @@ import {
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { Logo } from "@/components/logo";
+import { useIsMobile } from "@/lib/use-is-mobile";
 
 type OrderItem = {
   id?: string;
@@ -402,6 +403,7 @@ pre{white-space:pre-wrap;line-height:1.55;font-size:12px;background:#f9fafb;bord
 
 export default function OrdersPage() {
   const supabase = createClient();
+  const isMobile = useIsMobile();
   const [loading, setLoading] = useState(true);
   const [orders, setOrders] = useState<Order[]>([]);
   const [filter, setFilter] = useState<string>("new");
@@ -1069,11 +1071,12 @@ export default function OrdersPage() {
             background: "rgba(255,255,255,0.9)",
             backdropFilter: "blur(16px)",
             borderBottom: `1px solid ${borderColor}`,
-            padding: "14px 28px",
+            padding: isMobile ? "10px 14px" : "14px 28px",
             display: "flex",
-            alignItems: "center",
+            flexDirection: isMobile ? "column" : "row",
+            alignItems: isMobile ? "stretch" : "center",
             justifyContent: "space-between",
-            gap: 16,
+            gap: isMobile ? 10 : 16,
           }}
         >
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
@@ -1085,7 +1088,7 @@ export default function OrdersPage() {
               <span style={{ color: textPrimary, fontWeight: 700 }}>Orders</span>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <h1 style={{ margin: 0, fontSize: 28, fontWeight: 900, color: textPrimary }}>Orders</h1>
+              <h1 style={{ margin: 0, fontSize: isMobile ? 22 : 28, fontWeight: 900, color: textPrimary }}>Orders</h1>
               {newCount > 0 ? (
                 <span
                   style={{
@@ -1156,30 +1159,32 @@ export default function OrdersPage() {
             >
               <RefreshCw size={16} /> Refresh
             </button>
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 8,
-                background: "#fff",
-                border: `1px solid ${borderColor}`,
-                borderRadius: 999,
-                padding: "8px 12px",
-              }}
-            >
-              <UserCircle2 size={18} color="#9ca3af" />
-              <span style={{ fontSize: 13, color: textPrimary, fontWeight: 600 }}>{userEmail}</span>
-            </div>
+            {isMobile ? null : (
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  background: "#fff",
+                  border: `1px solid ${borderColor}`,
+                  borderRadius: 999,
+                  padding: "8px 12px",
+                }}
+              >
+                <UserCircle2 size={18} color="#9ca3af" />
+                <span style={{ fontSize: 13, color: textPrimary, fontWeight: 600 }}>{userEmail}</span>
+              </div>
+            )}
           </div>
         </header>
 
-        <main style={{ padding: 28, display: "flex", gap: 24, alignItems: "flex-start" }}>
-          <div style={{ flex: 1, minWidth: 0 }}>
+        <main style={{ padding: isMobile ? 14 : 28, display: "flex", flexDirection: isMobile ? "column" : "row", gap: isMobile ? 14 : 24, alignItems: isMobile ? "stretch" : "flex-start" }}>
+          <div style={{ flex: 1, minWidth: 0, width: "100%" }}>
             <div
               style={{
                 display: "grid",
-                gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
-                gap: 16,
+                gridTemplateColumns: isMobile ? "repeat(2, minmax(0, 1fr))" : "repeat(4, minmax(0, 1fr))",
+                gap: isMobile ? 10 : 16,
                 marginBottom: 18,
               }}
             >
@@ -1514,7 +1519,8 @@ export default function OrdersPage() {
 
             /* ── TABLE VIEW ────────────────────────────────────── */
             ) : viewMode === "table" ? (
-              <div style={{ background: cardBg, border: `1px solid ${borderColor}`, borderRadius: 20, overflow: "hidden" }}>
+              <div style={{ background: cardBg, border: `1px solid ${borderColor}`, borderRadius: 20, overflow: isMobile ? "auto" : "hidden", WebkitOverflowScrolling: "touch" }}>
+                <div style={{ minWidth: isMobile ? 720 : undefined }}>
                 {/* Table header */}
                 <div style={{ display: "grid", gridTemplateColumns: "36px 56px 1fr 1fr 1fr 90px 100px 36px", gap: 0, background: "#f9fafb", borderBottom: `1px solid ${borderColor}`, padding: "10px 14px", fontSize: 11, fontWeight: 900, letterSpacing: "0.08em", textTransform: "uppercase", color: textMuted }}>
                   <div><button type="button" onClick={() => toggleSelectAll(combinedRows)} style={{ background: "none", border: "none", cursor: "pointer", padding: 0, color: textMuted, display: "flex" }}>{selectedKeys.size === combinedRows.length ? <CheckSquare size={14} color="#cc0000" /> : <Square size={14} />}</button></div>
@@ -1562,6 +1568,7 @@ export default function OrdersPage() {
                     </div>
                   );
                 })}
+                </div>
               </div>
 
             /* ── LIST VIEW (default) ────────────────────────────── */
@@ -1821,16 +1828,16 @@ export default function OrdersPage() {
           {selected ? (
             <div
               style={{
-                width: 420,
-                flexShrink: 0,
-                position: "sticky",
-                top: 96,
-                maxHeight: "calc(100vh - 120px)",
-                overflowY: "auto",
+                width: isMobile ? "100%" : 420,
+                flexShrink: isMobile ? 1 : 0,
+                position: isMobile ? "static" : "sticky",
+                top: isMobile ? undefined : 96,
+                maxHeight: isMobile ? undefined : "calc(100vh - 120px)",
+                overflowY: isMobile ? "visible" : "auto",
                 background: cardBg,
                 border: `1px solid ${borderColor}`,
-                borderRadius: 28,
-                padding: 20,
+                borderRadius: isMobile ? 20 : 28,
+                padding: isMobile ? 14 : 20,
                 boxShadow: "0 14px 40px rgba(15,23,42,0.08)",
               }}
             >

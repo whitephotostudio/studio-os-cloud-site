@@ -6,6 +6,7 @@ import { useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { Logo } from "@/components/logo";
 import { StudioAssistant } from "@/components/studio-assistant/studio-assistant";
+import { useIsMobile } from "@/lib/use-is-mobile";
 import {
   getFreeTrialDaysRemaining,
   isFreeTrialActive,
@@ -307,6 +308,7 @@ function QuickStat({
 function DashboardPageContent() {
   const supabase = useMemo(() => createClient(), []);
   const searchParams = useSearchParams();
+  const isMobile = useIsMobile();
   const [userEmail, setUserEmail] = useState("");
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -760,7 +762,7 @@ function DashboardPageContent() {
         </div>
       ) : null}
 
-      <main style={{ flex: 1, padding: 32 }}>
+      <main style={{ flex: 1, padding: isMobile ? 14 : 32 }}>
         <div style={{ maxWidth: 1320, margin: "0 auto" }}>
 
           {/* ── Header ──────────────────────────────────────────────────── */}
@@ -892,7 +894,7 @@ function DashboardPageContent() {
           ) : null}
 
           {/* ── Top stat cards ────────────────────────────────────────── */}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(4,minmax(0,1fr))", gap: 18, marginBottom: 24 }}>
+          <div style={{ display: "grid", gridTemplateColumns: isMobile ? "repeat(2,minmax(0,1fr))" : "repeat(4,minmax(0,1fr))", gap: isMobile ? 12 : 18, marginBottom: 24 }}>
             <OverviewLinkCard href="/dashboard/schools" icon={<GraduationCap size={20} />} label="SCHOOLS" value={schools.length} description="Synced school jobs available from the desktop app." />
             <OverviewLinkCard href="/dashboard/projects/events" icon={<FolderOpen size={20} />} label="EVENT PROJECTS" value={eventProjects.length} description="Weddings, baptisms, engagements, and private events." />
             <OverviewLinkCard href="/dashboard/orders" icon={<ShoppingBag size={20} />} label="ORDERS" value={orders.length} description="Total orders received across all schools and events." />
@@ -917,7 +919,7 @@ function DashboardPageContent() {
           </div>
 
           {/* ── Bottom panels ─────────────────────────────────────────── */}
-          <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1.2fr 0.9fr", gap: 18 }}>
+          <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1.2fr 1.2fr 0.9fr", gap: isMobile ? 14 : 18 }}>
 
             {/* Notifications */}
             <div style={{ background: cardBg, borderRadius: 24, border: `1px solid ${borderSoft}`, padding: 24 }}>
