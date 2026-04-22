@@ -29,14 +29,13 @@ async function photographerOwnsFolder(
     return !!data?.id;
   }
 
+  // backdrops/{photographerId}/...  — authorize purely on the path shape; the
+  // frontend always writes uploads under the photographer's own id, and the
+  // previous DB lookup targeted a non-existent `backdrops` table, which
+  // silently rejected every folder list and made the desktop app bail before
+  // ever attempting an upload.
   if (first === "backdrops") {
-    const { data } = await service
-      .from("backdrops")
-      .select("id")
-      .eq("photographer_id", photographerId)
-      .limit(1)
-      .maybeSingle();
-    return !!data?.id;
+    return second === photographerId;
   }
 
   const { data } = await service
