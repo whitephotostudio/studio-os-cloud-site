@@ -7185,9 +7185,15 @@ export default function ParentGalleryPage() {
             display: isEventLanding ? "none" : "flex",
             alignItems: "center",
             justifyContent: "space-between",
-            gap: 18,
+            gap: isMobileViewport ? 8 : 18,
             flexWrap: "wrap",
-            padding: isEventImageStage ? "12px 22px" : "0 20px",
+            padding: isMobileViewport
+              ? isEventImageStage
+                ? "10px 12px"
+                : "0 12px"
+              : isEventImageStage
+                ? "12px 22px"
+                : "0 20px",
             borderBottom: isEventImageStage ? "1px solid rgba(17,17,17,0.08)" : `1px solid ${galleryTone.border}`,
             position: "relative",
             zIndex: 20,
@@ -7308,11 +7314,16 @@ export default function ParentGalleryPage() {
                 style={{
                   display: "flex",
                   gap: 4,
-                  position: "absolute",
-                  left: "50%",
-                  transform: "translateX(-50%)",
+                  position: isMobileViewport ? "static" : "absolute",
+                  left: isMobileViewport ? undefined : "50%",
+                  transform: isMobileViewport ? undefined : "translateX(-50%)",
                   zIndex: 5,
                   pointerEvents: "auto",
+                  order: isMobileViewport ? 99 : undefined,
+                  width: isMobileViewport ? "100%" : undefined,
+                  justifyContent: isMobileViewport ? "center" : undefined,
+                  borderTop: isMobileViewport ? `1px solid ${galleryTone.border}` : undefined,
+                  marginTop: isMobileViewport ? 6 : undefined,
                 }}
               >
                 {galleryNavTabs.map((tab) => {
@@ -7335,7 +7346,7 @@ export default function ParentGalleryPage() {
                         color: isActive ? galleryTone.text : galleryTone.mutedText,
                         fontSize: 13,
                         fontWeight: 600,
-                        padding: "14px 16px",
+                        padding: isMobileViewport ? "10px 12px" : "14px 16px",
                         cursor: "pointer",
                         transition: "color 0.15s",
                         letterSpacing: "0.01em",
@@ -7355,12 +7366,13 @@ export default function ParentGalleryPage() {
               <button
                 type="button"
                 onClick={handleShareGallery}
+                aria-label={galleryCopy.share}
                 style={{
                   background: "transparent",
                   color: isEventImageStage ? "#7a6f63" : galleryTone.text,
                   border: isEventImageStage ? "none" : `1px solid ${galleryTone.border}`,
                   borderRadius: 999,
-                  padding: isEventImageStage ? 0 : "8px 16px",
+                  padding: isMobileViewport ? "8px 10px" : isEventImageStage ? 0 : "8px 16px",
                   fontSize: 12,
                   fontWeight: isEventImageStage ? 500 : 700,
                   cursor: "pointer",
@@ -7370,7 +7382,7 @@ export default function ParentGalleryPage() {
                 }}
               >
                 <Share2 size={14} />
-                {galleryCopy.share}
+                {isMobileViewport ? null : galleryCopy.share}
               </button>
             ) : null}
 
@@ -7495,7 +7507,7 @@ export default function ParentGalleryPage() {
                       favorites.size > 0 ? "rgba(220,38,38,0.24)" : galleryTone.border
                     }`,
                 borderRadius: 999,
-                padding: isEventImageStage ? 0 : "8px 16px",
+                padding: isMobileViewport ? "8px 10px" : isEventImageStage ? 0 : "8px 16px",
                 fontSize: 12,
                 fontWeight: isEventImageStage ? 500 : 700,
                 cursor: "pointer",
@@ -7503,11 +7515,16 @@ export default function ParentGalleryPage() {
                 alignItems: "center",
                 gap: 6,
               }}
+              aria-label={galleryCopy.favorites}
             >
               <Heart size={14} fill={favorites.size > 0 ? "currentColor" : "none"} />
-              {favorites.size > 0
-                ? `${galleryCopy.favorites} (${favorites.size})`
-                : galleryCopy.favorites}
+              {isMobileViewport
+                ? favorites.size > 0
+                  ? ` (${favorites.size})`
+                  : null
+                : favorites.size > 0
+                  ? `${galleryCopy.favorites} (${favorites.size})`
+                  : galleryCopy.favorites}
             </button>
 
             <button
@@ -8319,7 +8336,13 @@ export default function ParentGalleryPage() {
           <div
             style={{
               flex: 1,
-              display: "flex",
+              // On mobile, when the backdrop picker is open, hide the photo area
+              // entirely so the picker can take the full viewport instead of
+              // fighting for a 520px panel next to a shrunken photo.
+              display:
+                isMobileViewport && backdropPickerOpen && !drawerOpen
+                  ? "none"
+                  : "flex",
               flexDirection: "column",
               overflow: "hidden",
               minWidth: 0,
@@ -10489,7 +10512,8 @@ export default function ParentGalleryPage() {
           {backdropPickerOpen && hasBackdrops && !drawerOpen && (
             <div
               style={{
-                width: 520,
+                width: isMobileViewport ? "100%" : 520,
+                maxWidth: "100vw",
                 display: "flex",
                 flexDirection: "column",
                 background: "#111",
