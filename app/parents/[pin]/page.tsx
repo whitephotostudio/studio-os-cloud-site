@@ -10641,7 +10641,17 @@ export default function ParentGalleryPage() {
                   return null;
                 }
                 const blurPreviewActive = selectedBlurBackground;
-                const panelBlurAmount = blurPreviewActive ? selectedBlurAmount : 0;
+                // CSS `filter: blur(Npx)` is an absolute-pixel blur, so the same
+                // `selectedBlurAmount` applied to this 142px thumbnail looks ~5–6×
+                // more intense than on the main viewer (which renders ~700–800px
+                // tall). Scale the preview blur proportionally so the thumbnail
+                // matches the big photo's *visual* blur. Main view is untouched.
+                const PREVIEW_HEIGHT_PX = 142;
+                const MAIN_REFERENCE_HEIGHT_PX = 780;
+                const panelBlurScale = PREVIEW_HEIGHT_PX / MAIN_REFERENCE_HEIGHT_PX;
+                const panelBlurAmount = blurPreviewActive
+                  ? selectedBlurAmount * panelBlurScale
+                  : 0;
                 return (
                   <div style={{
                     padding: "16px 18px 12px",
