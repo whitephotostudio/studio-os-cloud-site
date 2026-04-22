@@ -1,8 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
+import { parseJson } from "@/lib/api-validation";
 
 export const dynamic = "force-dynamic";
+
+const MfaBodySchema = z.object({
+  action: z.string().max(32).optional(),
+  factorId: z.string().max(128).optional(),
+  code: z.string().max(16).optional(),
+});
 
 function env(name: string) {
   const value = process.env[name];
@@ -105,11 +113,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const body = (await request.json().catch(() => ({}))) as {
-      action?: string;
-      factorId?: string;
-      code?: string;
-    };
+    const parsed = await parseJson(request, MfaBodySchema);
+    if (!parsed.ok) return parsed.response;
+    const body = parsed.data;
 
     const action = (body.action ?? "").trim().toLowerCase();
 

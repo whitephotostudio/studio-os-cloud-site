@@ -1,7 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import { createDashboardServiceClient, resolveDashboardAuth } from "@/lib/dashboard-auth";
+import { parseJson } from "@/lib/api-validation";
 
 export const dynamic = "force-dynamic";
+
+const CreateEventBodySchema = z.object({
+  title: z.string().max(500).nullable().optional(),
+  clientName: z.string().max(500).nullable().optional(),
+  eventDate: z.string().max(64).nullable().optional(),
+  accessMode: z.string().max(32).nullable().optional(),
+  accessPin: z.string().max(64).nullable().optional(),
+});
 
 type ProjectRow = {
   id: string;
@@ -42,13 +52,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const body = (await request.json().catch(() => ({}))) as {
-      title?: string | null;
-      clientName?: string | null;
-      eventDate?: string | null;
-      accessMode?: string | null;
-      accessPin?: string | null;
-    };
+    const parsed = await parseJson(request, CreateEventBodySchema);
+    if (!parsed.ok) return parsed.response;
+    const body = parsed.data;
 
     const title = clean(body.title);
     if (!title) {

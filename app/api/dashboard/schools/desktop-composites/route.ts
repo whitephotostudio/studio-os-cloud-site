@@ -1,22 +1,31 @@
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import {
   createDashboardServiceClient,
   resolveDashboardAuth,
 } from "@/lib/dashboard-auth";
+import { parseJson } from "@/lib/api-validation";
 import { ensureSchoolCollectionId } from "@/lib/school-sync";
 import { normalizeStorageUrl } from "@/lib/storage-images";
 
 export const dynamic = "force-dynamic";
 
-type CompositeItemPayload = {
-  class_name?: string | null;
-  storage_path?: string | null;
-  filename?: string | null;
-  mime_type?: string | null;
-  preview_url?: string | null;
-  thumbnail_url?: string | null;
-  is_cover?: boolean | null;
-};
+const CompositeItemPayloadSchema = z.object({
+  class_name: z.string().max(500).nullable().optional(),
+  storage_path: z.string().max(2000).nullable().optional(),
+  filename: z.string().max(500).nullable().optional(),
+  mime_type: z.string().max(128).nullable().optional(),
+  preview_url: z.string().max(2000).nullable().optional(),
+  thumbnail_url: z.string().max(2000).nullable().optional(),
+  is_cover: z.boolean().nullable().optional(),
+});
+
+const DesktopCompositesBodySchema = z.object({
+  schoolId: z.string().min(1).max(128).nullable().optional(),
+  items: z.array(CompositeItemPayloadSchema).max(5000).nullable().optional(),
+});
+
+type CompositeItemPayload = z.infer<typeof CompositeItemPayloadSchema>;
 
 type SchoolRow = {
   id: string;
@@ -52,10 +61,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const body = (await request.json().catch(() => ({}))) as {
-      schoolId?: string | null;
-      items?: CompositeItemPayload[] | null;
-    };
+    const parsed = await parseJson(request, DesktopCompositesBodySchema);
+    if (!parsed.ok) return parsed.response;
+    const body = parsed.data;
 
     const schoolId = clean(body.schoolId);
     if (!schoolId) {

@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import { createDashboardServiceClient, resolveDashboardAuth } from "@/lib/dashboard-auth";
+import { parseJson } from "@/lib/api-validation";
 import { normalizeEventGallerySettings } from "@/lib/event-gallery-settings";
 import {
   buildGalleryShareEmail,
@@ -23,28 +25,30 @@ type StudentRow = {
   role: string | null;
 };
 
-type ProjectUpdateBody = {
-  cover_photo_url?: string | null;
-  cover_focal_x?: number;
-  cover_focal_y?: number;
-  project_name?: string | null;
-  name?: string | null;
-  title?: string | null;
-  portal_status?: string | null;
-  shoot_date?: string | null;
-  order_due_date?: string | null;
-  expiration_date?: string | null;
-  package_profile_id?: string | null;
-  email_required?: boolean;
-  checkout_contact_required?: boolean;
-  internal_notes?: string | null;
-  access_mode?: string | null;
-  access_pin?: string | null;
-  access_updated_at?: string | null;
-  access_updated_source?: string | null;
-  gallery_settings?: unknown;
-  gallery_slug?: string | null;
-};
+const ProjectUpdateBodySchema = z.object({
+  cover_photo_url: z.string().max(2000).nullable().optional(),
+  cover_focal_x: z.number().optional(),
+  cover_focal_y: z.number().optional(),
+  project_name: z.string().max(500).nullable().optional(),
+  name: z.string().max(500).nullable().optional(),
+  title: z.string().max(500).nullable().optional(),
+  portal_status: z.string().max(64).nullable().optional(),
+  shoot_date: z.string().max(64).nullable().optional(),
+  order_due_date: z.string().max(64).nullable().optional(),
+  expiration_date: z.string().max(64).nullable().optional(),
+  package_profile_id: z.string().max(128).nullable().optional(),
+  email_required: z.boolean().optional(),
+  checkout_contact_required: z.boolean().optional(),
+  internal_notes: z.string().max(10_000).nullable().optional(),
+  access_mode: z.string().max(32).nullable().optional(),
+  access_pin: z.string().max(64).nullable().optional(),
+  access_updated_at: z.string().max(64).nullable().optional(),
+  access_updated_source: z.string().max(64).nullable().optional(),
+  gallery_settings: z.unknown().optional(),
+  gallery_slug: z.string().max(200).nullable().optional(),
+});
+
+type ProjectUpdateBody = z.infer<typeof ProjectUpdateBodySchema>;
 
 function clean(value: string | null | undefined) {
   return (value ?? "").trim();
@@ -558,7 +562,9 @@ export async function PATCH(
     }
 
     const { id: projectId } = await context.params;
-    const body = (await request.json().catch(() => ({}))) as ProjectUpdateBody;
+    const parsed = await parseJson(request, ProjectUpdateBodySchema);
+    if (!parsed.ok) return parsed.response;
+    const body = parsed.data;
 
     const service = createDashboardServiceClient();
     const origin = new URL(request.url).origin;

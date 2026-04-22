@@ -1,9 +1,22 @@
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import { createDashboardServiceClient, resolveDashboardAuth } from "@/lib/dashboard-auth";
+import { parseJson } from "@/lib/api-validation";
 import { buildStoredMediaUrls } from "@/lib/storage-images";
 import { r2DeleteWithVariantsBestEffort } from "@/lib/r2";
 
 export const dynamic = "force-dynamic";
+
+const AlbumPatchBodySchema = z.object({
+  title: z.string().max(500).nullable().optional(),
+  cover_photo_url: z.string().max(2000).nullable().optional(),
+  access_mode: z.string().max(32).nullable().optional(),
+  access_pin: z.string().max(64).nullable().optional(),
+});
+
+const AlbumDeleteBodySchema = z.object({
+  ids: z.array(z.string().max(128)).max(5000).optional(),
+});
 
 type CollectionRow = {
   id: string;
@@ -186,12 +199,9 @@ export async function PATCH(
       );
     }
 
-    const body = (await request.json().catch(() => ({}))) as {
-      title?: string | null;
-      cover_photo_url?: string | null;
-      access_mode?: string | null;
-      access_pin?: string | null;
-    };
+    const parsed = await parseJson(request, AlbumPatchBodySchema);
+    if (!parsed.ok) return parsed.response;
+    const body = parsed.data;
 
     const updatePayload: Record<string, string | null> = {
       updated_at: new Date().toISOString(),
@@ -332,7 +342,9 @@ export async function DELETE(
       );
     }
 
-    const body = (await request.json().catch(() => ({}))) as { ids?: string[] };
+    const parsed = await parseJson(request, AlbumDeleteBodySchema);
+    if (!parsed.ok) return parsed.response;
+    const body = parsed.data;
     const deleteIds = Array.isArray(body.ids)
       ? body.ids.map((value) => clean(String(value))).filter(Boolean)
       : [];

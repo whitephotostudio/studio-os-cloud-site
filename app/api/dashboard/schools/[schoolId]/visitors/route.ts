@@ -1,10 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import {
   createDashboardServiceClient,
   resolveDashboardAuth,
 } from "@/lib/dashboard-auth";
+import { parseJson } from "@/lib/api-validation";
 
 export const dynamic = "force-dynamic";
+
+const VisitorPatchBodySchema = z.object({
+  visitorId: z.string().min(1).max(128),
+  newEmail: z.string().email().max(320),
+});
 
 /**
  * GET /api/dashboard/schools/[schoolId]/visitors
@@ -222,12 +229,9 @@ export async function PATCH(
     return NextResponse.json({ error: "School not found" }, { status: 404 });
   }
 
-  const body = await request.json();
-  const { visitorId, newEmail } = body as { visitorId: string; newEmail: string };
-
-  if (!visitorId || !newEmail) {
-    return NextResponse.json({ error: "Missing visitorId or newEmail" }, { status: 400 });
-  }
+  const parsed = await parseJson(request, VisitorPatchBodySchema);
+  if (!parsed.ok) return parsed.response;
+  const { visitorId, newEmail } = parsed.data;
 
   // ✅ Pre-release registrant IDs are returned from GET prefixed with `pre_`
   // so we can distinguish them from school_gallery_visitors rows. Route the

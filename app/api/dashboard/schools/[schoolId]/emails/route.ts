@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import {
   createDashboardServiceClient,
   resolveDashboardAuth,
 } from "@/lib/dashboard-auth";
+import { parseJson } from "@/lib/api-validation";
 import {
   buildSchoolShareEmail,
   eventFromName,
@@ -15,14 +17,16 @@ import { collectSchoolRecipientEmails } from "@/lib/school-email-recipients";
 
 export const dynamic = "force-dynamic";
 
-type SendCampaignBody = {
-  recipientMode?: "visitors" | "others";
-  recipients?: string[] | string;
-  subject?: string;
-  headline?: string;
-  buttonLabel?: string;
-  message?: string;
-};
+const SendCampaignBodySchema = z.object({
+  recipientMode: z.enum(["visitors", "others"]).optional(),
+  recipients: z.union([z.array(z.string().max(320)), z.string().max(20_000)]).optional(),
+  subject: z.string().max(500).optional(),
+  headline: z.string().max(500).optional(),
+  buttonLabel: z.string().max(200).optional(),
+  message: z.string().max(10_000).optional(),
+});
+
+type SendCampaignBody = z.infer<typeof SendCampaignBodySchema>;
 
 type SchoolRow = {
   id: string;
@@ -76,7 +80,9 @@ export async function POST(
     }
 
     const { schoolId } = await context.params;
-    const body = (await request.json().catch(() => ({}))) as SendCampaignBody;
+    const parsed = await parseJson(request, SendCampaignBodySchema);
+    if (!parsed.ok) return parsed.response;
+    const body = parsed.data;
     const service = createDashboardServiceClient();
 
     const { data: photographerRow, error: photographerError } = await service

@@ -1,10 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import {
   createDashboardServiceClient,
   resolveDashboardAuth,
 } from "@/lib/dashboard-auth";
+import { parseJson } from "@/lib/api-validation";
 
 export const dynamic = "force-dynamic";
+
+const CreateSchoolBodySchema = z.object({
+  school_name: z.string().max(500).nullable().optional(),
+});
 
 export async function POST(request: NextRequest) {
   try {
@@ -16,9 +22,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const body = (await request.json().catch(() => ({}))) as {
-      school_name?: string | null;
-    };
+    const parsed = await parseJson(request, CreateSchoolBodySchema);
+    if (!parsed.ok) return parsed.response;
+    const body = parsed.data;
 
     const schoolName = (body.school_name ?? "").trim();
     if (!schoolName) {

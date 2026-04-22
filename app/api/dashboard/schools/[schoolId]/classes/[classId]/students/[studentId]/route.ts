@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import {
   createDashboardServiceClient,
   resolveDashboardAuth,
 } from "@/lib/dashboard-auth";
+import { parseJson } from "@/lib/api-validation";
 import {
   DashboardStudentRow,
   loadOwnedSchool,
@@ -11,6 +13,11 @@ import {
 } from "@/lib/dashboard-school-students";
 
 export const dynamic = "force-dynamic";
+
+const StudentPatchBodySchema = z.object({
+  studentName: z.string().max(500).optional(),
+  studentPin: z.string().max(64).optional(),
+});
 
 function clean(value: string | null | undefined) {
   return (value ?? "").trim();
@@ -32,10 +39,9 @@ export async function PATCH(
     }
 
     const { schoolId, studentId } = await context.params;
-    const body = (await request.json().catch(() => ({}))) as {
-      studentName?: string;
-      studentPin?: string;
-    };
+    const parsed = await parseJson(request, StudentPatchBodySchema);
+    if (!parsed.ok) return parsed.response;
+    const body = parsed.data;
 
     const service = createDashboardServiceClient();
     const { data: photographerRow, error: photographerError } = await service

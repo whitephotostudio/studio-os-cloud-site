@@ -1,21 +1,30 @@
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import {
   createDashboardServiceClient,
   resolveDashboardAuth,
 } from "@/lib/dashboard-auth";
+import { parseJson } from "@/lib/api-validation";
 
 export const dynamic = "force-dynamic";
 
-type StudentPayload = {
-  first_name?: string | null;
-  last_name?: string | null;
-  pin?: string | null;
-  class_name?: string | null;
-  role?: string | null;
-  external_student_id?: string | null;
-  photo_url?: string | null;
-  folder_name?: string | null;
-};
+const StudentPayloadSchema = z.object({
+  first_name: z.string().max(200).nullable().optional(),
+  last_name: z.string().max(200).nullable().optional(),
+  pin: z.string().max(64).nullable().optional(),
+  class_name: z.string().max(200).nullable().optional(),
+  role: z.string().max(64).nullable().optional(),
+  external_student_id: z.string().max(200).nullable().optional(),
+  photo_url: z.string().max(2000).nullable().optional(),
+  folder_name: z.string().max(500).nullable().optional(),
+});
+
+const DesktopSyncBodySchema = z.object({
+  schoolId: z.string().min(1).max(128).nullable().optional(),
+  students: z.array(StudentPayloadSchema).max(10_000).nullable().optional(),
+});
+
+type StudentPayload = z.infer<typeof StudentPayloadSchema>;
 
 type StudentRow = {
   id: string;
@@ -153,10 +162,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const body = (await request.json().catch(() => ({}))) as {
-      schoolId?: string | null;
-      students?: StudentPayload[] | null;
-    };
+    const parsed = await parseJson(request, DesktopSyncBodySchema);
+    if (!parsed.ok) return parsed.response;
+    const body = parsed.data;
 
     const schoolId = clean(body.schoolId);
     if (!schoolId) {

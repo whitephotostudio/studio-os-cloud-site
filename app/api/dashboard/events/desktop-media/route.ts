@@ -1,23 +1,32 @@
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import {
   createDashboardServiceClient,
   resolveDashboardAuth,
 } from "@/lib/dashboard-auth";
+import { parseJson } from "@/lib/api-validation";
 import { normalizeEventGallerySettings } from "@/lib/event-gallery-settings";
 import { listR2FolderImages } from "@/lib/r2";
 import { normalizeStorageUrl } from "@/lib/storage-images";
 
 export const dynamic = "force-dynamic";
 
-type MediaItemPayload = {
-  collection_id?: string | null;
-  storage_path?: string | null;
-  filename?: string | null;
-  mime_type?: string | null;
-  preview_url?: string | null;
-  thumbnail_url?: string | null;
-  is_cover?: boolean | null;
-};
+const MediaItemPayloadSchema = z.object({
+  collection_id: z.string().max(128).nullable().optional(),
+  storage_path: z.string().max(2000).nullable().optional(),
+  filename: z.string().max(500).nullable().optional(),
+  mime_type: z.string().max(128).nullable().optional(),
+  preview_url: z.string().max(2000).nullable().optional(),
+  thumbnail_url: z.string().max(2000).nullable().optional(),
+  is_cover: z.boolean().nullable().optional(),
+});
+
+const DesktopMediaBodySchema = z.object({
+  cloudProjectId: z.string().min(1).max(128).nullable().optional(),
+  items: z.array(MediaItemPayloadSchema).max(10_000).nullable().optional(),
+});
+
+type MediaItemPayload = z.infer<typeof MediaItemPayloadSchema>;
 
 function clean(value: string | null | undefined) {
   return (value ?? "").trim();
@@ -190,10 +199,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const body = (await request.json().catch(() => ({}))) as {
-      cloudProjectId?: string | null;
-      items?: MediaItemPayload[] | null;
-    };
+    const parsed = await parseJson(request, DesktopMediaBodySchema);
+    if (!parsed.ok) return parsed.response;
+    const body = parsed.data;
 
     const cloudProjectId = clean(body.cloudProjectId);
     if (!cloudProjectId) {

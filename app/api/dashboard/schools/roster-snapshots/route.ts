@@ -1,10 +1,44 @@
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import {
   createDashboardServiceClient,
   resolveDashboardAuth,
 } from "@/lib/dashboard-auth";
+import { parseJson } from "@/lib/api-validation";
 
 export const dynamic = "force-dynamic";
+
+const StudentPayloadSchema = z.object({
+  student_id: z.string().max(200).nullable().optional(),
+  first_name: z.string().max(200).nullable().optional(),
+  last_name: z.string().max(200).nullable().optional(),
+  pin: z.string().max(64).nullable().optional(),
+  class_name: z.string().max(200).nullable().optional(),
+  folder_name: z.string().max(500).nullable().optional(),
+});
+
+const TeacherPayloadSchema = z.object({
+  teacher_id: z.string().max(200).nullable().optional(),
+  first_name: z.string().max(200).nullable().optional(),
+  last_name: z.string().max(200).nullable().optional(),
+  pin: z.string().max(64).nullable().optional(),
+  role: z.string().max(200).nullable().optional(),
+  class_names: z.array(z.string().max(200)).max(500).nullable().optional(),
+  folder_name: z.string().max(500).nullable().optional(),
+});
+
+const RosterSnapshotBodySchema = z.object({
+  schoolId: z.string().max(128).nullable().optional(),
+  students: z.array(StudentPayloadSchema).max(20_000).nullable().optional(),
+  teachers: z.array(TeacherPayloadSchema).max(5000).nullable().optional(),
+  source: z
+    .enum(["auto_upload", "manual_sync", "pre_download", "restore"])
+    .nullable()
+    .optional(),
+  machine: z.string().max(200).nullable().optional(),
+  note: z.string().max(2000).nullable().optional(),
+  markCurrent: z.boolean().nullable().optional(),
+});
 
 // ─────────────────────────────────────────────────────────────────────────
 // /api/dashboard/schools/roster-snapshots
@@ -158,7 +192,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const body = (await request.json().catch(() => ({}))) as PostBody;
+    const parsed = await parseJson(request, RosterSnapshotBodySchema);
+    if (!parsed.ok) return parsed.response;
+    const body = parsed.data;
     const schoolId = clean(body.schoolId);
     if (!schoolId) {
       return NextResponse.json(

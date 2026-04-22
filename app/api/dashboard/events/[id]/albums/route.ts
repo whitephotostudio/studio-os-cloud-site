@@ -1,11 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import {
   createDashboardServiceClient,
   resolveDashboardAuth,
 } from "@/lib/dashboard-auth";
+import { parseJson } from "@/lib/api-validation";
 import { r2DeleteWithVariantsBestEffort } from "@/lib/r2";
 
 export const dynamic = "force-dynamic";
+
+const CreateAlbumBodySchema = z.object({
+  title: z.string().max(500).nullable().optional(),
+});
+
+const DeleteAlbumsBodySchema = z.object({
+  ids: z.array(z.string().max(128)).max(1000).optional(),
+});
 
 type CollectionRow = {
   id: string;
@@ -93,9 +103,9 @@ export async function POST(
     const auth = await resolveAuthorizedProject(request, projectId);
     if ("response" in auth) return auth.response;
 
-    const body = (await request.json().catch(() => ({}))) as {
-      title?: string | null;
-    };
+    const parsed = await parseJson(request, CreateAlbumBodySchema);
+    if (!parsed.ok) return parsed.response;
+    const body = parsed.data;
     const title = clean(body.title);
 
     if (!title) {
@@ -156,9 +166,9 @@ export async function DELETE(
     const auth = await resolveAuthorizedProject(request, projectId);
     if ("response" in auth) return auth.response;
 
-    const body = (await request.json().catch(() => ({}))) as {
-      ids?: string[];
-    };
+    const parsed = await parseJson(request, DeleteAlbumsBodySchema);
+    if (!parsed.ok) return parsed.response;
+    const body = parsed.data;
     const ids = Array.from(
       new Set((body.ids ?? []).map((value) => clean(value)).filter(Boolean)),
     );

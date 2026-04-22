@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import {
   createDashboardServiceClient,
   resolveDashboardAuth,
 } from "@/lib/dashboard-auth";
+import { parseJson } from "@/lib/api-validation";
 import {
   buildSchoolShareEmail,
   eventFromName,
@@ -19,23 +21,25 @@ import { ensurePackageProfile } from "@/lib/ensure-package-profile";
 
 export const dynamic = "force-dynamic";
 
-type SchoolUpdateBody = {
-  school_name?: string | null;
-  name?: string | null;
-  portal_status?: string | null;
-  status?: string | null;
-  shoot_date?: string | null;
-  order_due_date?: string | null;
-  expiration_date?: string | null;
-  package_profile_id?: string | null;
-  email_required?: boolean;
-  checkout_contact_required?: boolean;
-  internal_notes?: string | null;
-  access_mode?: string | null;
-  access_pin?: string | null;
-  gallery_settings?: unknown;
-  gallery_slug?: string | null;
-};
+const SchoolUpdateBodySchema = z.object({
+  school_name: z.string().max(500).nullable().optional(),
+  name: z.string().max(500).nullable().optional(),
+  portal_status: z.string().max(64).nullable().optional(),
+  status: z.string().max(64).nullable().optional(),
+  shoot_date: z.string().max(64).nullable().optional(),
+  order_due_date: z.string().max(64).nullable().optional(),
+  expiration_date: z.string().max(64).nullable().optional(),
+  package_profile_id: z.string().max(128).nullable().optional(),
+  email_required: z.boolean().optional(),
+  checkout_contact_required: z.boolean().optional(),
+  internal_notes: z.string().max(10_000).nullable().optional(),
+  access_mode: z.string().max(64).nullable().optional(),
+  access_pin: z.string().max(64).nullable().optional(),
+  gallery_settings: z.unknown().optional(),
+  gallery_slug: z.string().max(200).nullable().optional(),
+});
+
+type SchoolUpdateBody = z.infer<typeof SchoolUpdateBodySchema>;
 
 type SchoolRow = {
   id: string;
@@ -207,7 +211,9 @@ export async function PATCH(
     }
 
     const { schoolId } = await context.params;
-    const body = (await request.json().catch(() => ({}))) as SchoolUpdateBody;
+    const parsed = await parseJson(request, SchoolUpdateBodySchema);
+    if (!parsed.ok) return parsed.response;
+    const body = parsed.data;
     const service = createDashboardServiceClient();
 
     const { data: photographerRow, error: photographerError } = await service

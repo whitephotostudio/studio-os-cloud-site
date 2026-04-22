@@ -1,10 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import {
   createDashboardServiceClient,
   resolveDashboardAuth,
 } from "@/lib/dashboard-auth";
+import { parseJson } from "@/lib/api-validation";
 import { r2Download, r2Upload, r2PublicUrl } from "@/lib/r2";
 import sharp from "sharp";
+
+const GenerateThumbnailsBodySchema = z.object({
+  storagePath: z.string().max(2000).optional(),
+  key: z.string().max(2000).optional(),
+});
 
 function clean(value: string | null | undefined) {
   return (value ?? "").trim();
@@ -62,8 +69,9 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const body = await request.json();
-  const storageKey: string | undefined = body.storagePath || body.key;
+  const parsed = await parseJson(request, GenerateThumbnailsBodySchema);
+  if (!parsed.ok) return parsed.response;
+  const storageKey: string | undefined = parsed.data.storagePath || parsed.data.key;
 
   if (!storageKey || typeof storageKey !== "string") {
     return NextResponse.json(

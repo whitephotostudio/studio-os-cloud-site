@@ -1,10 +1,31 @@
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import {
   createDashboardServiceClient,
   resolveDashboardAuth,
 } from "@/lib/dashboard-auth";
+import { parseJson } from "@/lib/api-validation";
 
 export const dynamic = "force-dynamic";
+
+const AlbumPayloadSchema = z.object({
+  name: z.string().max(500).nullable().optional(),
+  localId: z.string().max(128).nullable().optional(),
+  accessMode: z.string().max(64).nullable().optional(),
+  accessPin: z.string().max(64).nullable().optional(),
+});
+
+const DesktopAccessBodySchema = z.object({
+  localProjectId: z.string().max(128).nullable().optional(),
+  cloudProjectId: z.string().max(128).nullable().optional(),
+  title: z.string().max(500).nullable().optional(),
+  clientName: z.string().max(500).nullable().optional(),
+  createdAt: z.string().max(64).nullable().optional(),
+  accessMode: z.string().max(64).nullable().optional(),
+  accessPin: z.string().max(64).nullable().optional(),
+  galleryStatus: z.string().max(64).nullable().optional(),
+  albums: z.array(AlbumPayloadSchema).max(1000).nullable().optional(),
+});
 
 function clean(value: string | null | undefined) {
   return (value ?? "").trim();
@@ -51,22 +72,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const body = (await request.json().catch(() => ({}))) as {
-      localProjectId?: string | null;
-      cloudProjectId?: string | null;
-      title?: string | null;
-      clientName?: string | null;
-      createdAt?: string | null;
-      accessMode?: string | null;
-      accessPin?: string | null;
-      galleryStatus?: string | null;
-      albums?: Array<{
-        name?: string | null;
-        localId?: string | null;
-        accessMode?: string | null;
-        accessPin?: string | null;
-      }> | null;
-    };
+    const parsed = await parseJson(request, DesktopAccessBodySchema);
+    if (!parsed.ok) return parsed.response;
+    const body = parsed.data;
 
     const service = createDashboardServiceClient();
 

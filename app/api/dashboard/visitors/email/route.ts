@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import {
   createDashboardServiceClient,
   resolveDashboardAuth,
 } from "@/lib/dashboard-auth";
+import { parseJson } from "@/lib/api-validation";
 import { resendConfigured, sendResendEmail } from "@/lib/resend";
 
 export const dynamic = "force-dynamic";
@@ -15,12 +17,14 @@ function escHtml(s: string) {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
-type EmailBody = {
-  recipients: string[];
-  subject: string;
-  headline: string;
-  message: string;
-};
+const EmailBodySchema = z.object({
+  recipients: z.array(z.string().email().max(320)).max(5000),
+  subject: z.string().min(1).max(500),
+  headline: z.string().min(1).max(500),
+  message: z.string().max(10_000).default(""),
+});
+
+type EmailBody = z.infer<typeof EmailBodySchema>;
 
 /**
  * POST /api/dashboard/visitors/email
@@ -34,8 +38,9 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: false, message: "Please sign in again." }, { status: 401 });
     }
 
-    const body: EmailBody = await request.json();
-    const { recipients, subject, headline, message } = body;
+    const parsed = await parseJson(request, EmailBodySchema);
+    if (!parsed.ok) return parsed.response;
+    const { recipients, subject, headline, message } = parsed.data;
 
     if (!recipients?.length || !subject || !headline) {
       return NextResponse.json({ ok: false, message: "Missing required fields." }, { status: 400 });
