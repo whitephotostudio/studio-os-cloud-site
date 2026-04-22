@@ -2,7 +2,7 @@
 
 Checkpoint for Claude so a context reset doesn't lose the thread. Update as work progresses.
 
-Last updated: 2026-04-22 (evening) — mobile-compat sweep (#57), roster strip (#58), Live Preview blur scale
+Last updated: 2026-04-22 (late evening) — mobile-compat pass #2 (committed, not pushed) + Textures-dups cleanup verified (no-op, already deleted)
 
 ---
 
@@ -10,26 +10,38 @@ Last updated: 2026-04-22 (evening) — mobile-compat sweep (#57), roster strip (
 
 Open this block first. Everything below it is historical context.
 
-### Uncommitted on disk RIGHT NOW (sandbox couldn't push — you must commit on Mac)
+### Committed in sandbox but NOT YET PUSHED (do this first on Mac)
 
-1. **`app/parents/[pin]/page.tsx`** — scaled the backdrop picker's Live Preview thumbnail blur so it visually matches the main view. Change is around line ~10644 (`panelBlurAmount` now `selectedBlurAmount * (142/780)`). Typecheck passes (`npx tsc --noEmit` → exit 0). Not yet committed because sandbox hit `.git/HEAD.lock` + `.git/index.lock`.
-
-Commands to finish the handoff on Mac:
+Commit `4133b0d` is sitting in `.git/` locally. Sandbox can't push (no SSH key) and also left stale `.git/HEAD.lock` from the commit itself. Run on Mac:
 ```bash
 cd ~/Projects/studio-os-cloud-site
 rm -f .git/HEAD.lock .git/index.lock
-git add -A
-git status --short   # should show only app/parents/[pin]/page.tsx modified
-git commit -m "fix: scale backdrop picker Live Preview blur to match main view
-
-CSS filter: blur(Npx) is absolute-pixel — same blurAmount on the 142px
-thumbnail looked ~5-6x stronger than on the ~780px main viewer. Scaled
-the panel preview's blur by (142/780) so the small thumbnail visually
-matches the large photo. Main view is unchanged."
 git push origin main
 ```
 
-Why this fix: `filter: blur(Npx)` in CSS is absolute pixels. Same slider value applied to a 142px-tall thumbnail and a ~780px-tall main viewer makes the thumbnail look ~5–6× more blurred. Only the preview thumbnail is scaled; the main canvas stays at full `selectedBlurAmount`.
+What `4133b0d` does (mobile-compat pass #2 — driven by Harout's iPhone screenshots on 2026-04-22 late evening):
+
+- **`app/dashboard/layout.tsx`** — mobile topbar background `#000` → `#fff`, hamburger `#fff on transparent` → `#111 on #fff with #e5e7eb border`. Logo now sits on a white backdrop matching the desktop sidebar's white logo area.
+- **`app/dashboard/admin/users/page.tsx`** — added `useIsMobile`. The 6-col client grid (`2fr 2fr 1fr 1fr 1fr 40px`) was chopping the Trial / Plan columns to "Stud / mo" on iPhone. Wrapped the table container in `overflow:auto` + inner `minWidth: 820` so columns keep their natural proportions and the user swipes horizontally to reach the right side. Outer padding trimmed 32→18 on mobile.
+- **`app/dashboard/orders/page.tsx`** — tapping "Open details" on mobile rendered the panel below the list off-screen, so it felt broken. Added `detailsPanelRef` + `useEffect` that calls `scrollIntoView({behavior:'smooth', block:'start'})` on `selected.id` change when `isMobile`. Also tightened the order card fonts (H3 name 20→15, order total 24→18, photo 110×138 → 72×92, Package/Originals/Export grid now 1-col stacked on mobile instead of three crushed columns, details-panel H1 28→18, `scrollMarginTop: 72` on the panel).
+- **`app/dashboard/projects/schools/[schoolId]/page.tsx`** — the 320px fixed-width aside was eating the whole ~390px viewport, hiding the classes/roles/people album grid on the right. Added `useIsMobile` and flipped the outer grid to `"1fr"` on mobile (aside above, album grid below). Also `position: sticky` → `static`, aside padding 16→12, outer padding 24→14, H1 24→20, top button row stacks vertically.
+
+Typecheck passed (`npx tsc --noEmit` → exit 0). Desktop path untouched across all four files.
+
+### Still owed to #57 mobile sweep (not yet on iPhone)
+
+User hasn't screenshot-tested these dashboard sub-pages yet. If any break in similar ways, same mobile-tuning pattern applies (useIsMobile → grid collapse, reduce padding, wrap tables in horizontal scroll):
+- `/dashboard/schools` (list)
+- `/dashboard/projects/events`
+- `/dashboard/projects/[id]` (project detail)
+- `/dashboard/projects/[id]/albums/[albumId]`
+- `/dashboard/packages`
+- `/dashboard/settings`
+- `/dashboard/membership`
+- `/dashboard/feature-requests`
+- `/dashboard/backdrops`
+
+Ask Harout to pull each up in Safari on iPhone, screenshot anything off, and tune in a third pass.
 
 ### Already landed this session (2026-04-22 evening)
 
@@ -201,7 +213,7 @@ WHERE photographer_id = 'ed6b8a99-1f38-48f3-a198-447c49b5ac34'
 Verification query confirmed: `remaining_r2_rows=0`, `image_files_missing=0`, `thumb_files_missing=0` across all 54 rows. Every referenced object exists in the `backdrops` bucket.
 
 ### Followups worth doing
-- `backdrop_catalog` has 18 **duplicated Textures names** (each appears twice — an older entry and a newer `_thumbnail.jpg` variant from 2026-04-20 22:55). Not breaking anything but the parents-portal grid will render each twice. Cleanup candidate.
+- ~~`backdrop_catalog` has 18 **duplicated Textures names**~~ **RESOLVED 2026-04-22 (late).** Verified via Supabase MCP: table is now 36 rows, zero duplicate names, every referenced image and thumbnail file exists in the `backdrops` bucket. 54 → 36 = 18 rows deleted — likely by Harout via the Backdrop Manager UI between the two checks. No SQL action needed.
 - The old R2 migration helpers (`scripts/migrate-to-r2.mjs` etc.) still exist but write to the `whitephoto-media` bucket, not `backdrops`. Leave alone for now.
 - `tmp-backdrop-probe.html` at repo root is a throwaway diagnostic — delete if you don't want it around.
 
