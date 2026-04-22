@@ -141,11 +141,35 @@ Verification query confirmed: `remaining_r2_rows=0`, `image_files_missing=0`, `t
 ## Pending task queue (picked up from prior context)
 
 - **#7** [in_progress] Design data model + workflow for both modes
-- **#47** Round 6g — cross-studio storage policy tightening (deferred after failed attempt earlier in session)
-- **#49** Round 7b — Zod coverage fan-out to remaining dashboard routes
-- **#51** Round 9 — Audit logging design + schema
-- **#52** Round 10 — Refund revalidation design + impl
-- **Cleanup:** `proxy.ts` at repo root — either rename to `middleware.ts` or delete. Currently dead code.
+- **#47** Round 6g — cross-studio storage policy tightening (DONE 2026-04-22: backdrops tightened + thumbs dedup'd; nobg-photos/thumbs tenant isolation deferred until a path → owner resolver exists)
+- **#49** Round 7b — Zod coverage fan-out to remaining dashboard routes (DONE)
+- **#51** Round 9 — Audit logging design + schema (DONE)
+- **#52** Round 10 — Refund revalidation design + impl (DONE)
+- **Cleanup:** `proxy.ts` at repo root — confirmed LIVE on Next.js 16 (NOT dead). See gotchas section.
+
+---
+
+## 2026-04-22 (evening) — Round 6g landed, narrowed scope (task #47)
+
+### What changed
+- `backdrops` bucket now has proper tenant isolation on writes. Three permissive policies (`Auth upload/update/delete backdrops` — gated only on `auth.role()='authenticated'`) were dropped and replaced with `Photographers insert/update/delete own backdrops`, each gated on `(storage.foldername(name))[1] IN (select id::text from photographers where user_id = auth.uid())`. Service-role writes bypass RLS so webhooks/scripts still work. Public SELECT policy preserved.
+- `thumbs` bucket had TWO duplicate permissive policy sets ("Authenticated users can …" + "authenticated can …"). Dropped the lowercase set; kept the "Authenticated users can …" set. No semantic tightening — just dedupe.
+
+### Why scope was narrowed
+Checked actual storage row path shapes before applying:
+- `backdrops`: 100% of rows use `{photographerId-UUID}/…` as the first folder → safe to gate on photographer ownership.
+- `nobg-photos`: MIXED path shapes (some UUID, some project slugs like `f0xb989xqhwj/…`). Gating on `foldername[1] = owned photographer_id` would lock out every project-slug path.
+- `thumbs`: even messier — literal `projects/`, `schools/`, plus short slugs.
+
+This explains why the previous Round 6g attempt (before today) was rolled back — it assumed uniform UUID paths.
+
+### Deferred follow-ups
+- Build a `public.caller_owns_storage_path(bucket, name)` helper that resolves ownership via a lookup (project slug → photographer_id, school slug → photographer_id, etc.), then tighten `nobg-photos` and `thumbs` write policies using it.
+- Normalize stray `thumbs/projects/…` and `thumbs/schools/…` legacy paths into tenant-scoped folders so a simple `foldername[1]` check becomes viable without the helper.
+
+### Files / artifacts
+- `supabase/migrations/20260422160000_round6g_tighten_backdrops_storage.sql` — the applied migration.
+- `docs/rollback/round-6g-rollback.sql` — updated to reflect the narrowed scope. Runnable if we need to revert.
 
 ---
 
