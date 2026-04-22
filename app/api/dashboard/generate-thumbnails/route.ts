@@ -32,17 +32,11 @@ async function photographerOwnsKey(
     return !!data?.id;
   }
 
+  // backdrops/{photographerId}/...  — authorize purely on path shape; the
+  // frontend always writes uploads under the photographer's own id, and the
+  // previous DB lookup targeted a non-existent `backdrops` table.
   if (first === "backdrops") {
-    const { data } = await service
-      .from("backdrops")
-      .select("id")
-      .eq("photographer_id", photographerId)
-      .or(
-        `id.eq.${second},storage_path.ilike.backdrops/${second}%,storage_path.ilike.backdrops/${second}/%`,
-      )
-      .limit(1)
-      .maybeSingle();
-    return !!data?.id;
+    return second === photographerId;
   }
 
   const { data } = await service

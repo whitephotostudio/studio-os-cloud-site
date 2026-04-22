@@ -74,21 +74,14 @@ async function assertKeyOwnedByPhotographer(
       : { ok: false, reason: "project not owned by caller" };
   }
 
-  // backdrops/...  — match by id (second segment is usually the backdrop id or
-  // an opaque object name under the photographer's backdrop library).
+  // backdrops/{photographerId}/...  — the frontend always writes uploads under
+  // the photographer's own id, so we can authorize purely on the path shape
+  // without a DB lookup. (Earlier versions of this check queried a
+  // non-existent `backdrops` table and silently rejected every upload.)
   if (first === "backdrops") {
-    const { data } = await service
-      .from("backdrops")
-      .select("id,storage_path")
-      .eq("photographer_id", photographerId)
-      .or(
-        `id.eq.${second},storage_path.ilike.backdrops/${second}%,storage_path.ilike.backdrops/${second}/%`,
-      )
-      .limit(1)
-      .maybeSingle();
-    return data?.id
+    return second === photographerId
       ? { ok: true }
-      : { ok: false, reason: "backdrop not owned by caller" };
+      : { ok: false, reason: "backdrop path does not match caller's photographer id" };
   }
 
   // Otherwise treat the first segment as a schoolId or local_school_id this
