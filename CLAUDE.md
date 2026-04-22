@@ -2,7 +2,76 @@
 
 Checkpoint for Claude so a context reset doesn't lose the thread. Update as work progresses.
 
-Last updated: 2026-04-22 (Round 7b Zod fan-out + Next.js 16 proxy.ts correction)
+Last updated: 2026-04-22 (evening) — mobile-compat sweep (#57), roster strip (#58), Live Preview blur scale
+
+---
+
+## 🔴 ACTIVE HANDOFF — resume here
+
+Open this block first. Everything below it is historical context.
+
+### Uncommitted on disk RIGHT NOW (sandbox couldn't push — you must commit on Mac)
+
+1. **`app/parents/[pin]/page.tsx`** — scaled the backdrop picker's Live Preview thumbnail blur so it visually matches the main view. Change is around line ~10644 (`panelBlurAmount` now `selectedBlurAmount * (142/780)`). Typecheck passes (`npx tsc --noEmit` → exit 0). Not yet committed because sandbox hit `.git/HEAD.lock` + `.git/index.lock`.
+
+Commands to finish the handoff on Mac:
+```bash
+cd ~/Projects/studio-os-cloud-site
+rm -f .git/HEAD.lock .git/index.lock
+git add -A
+git status --short   # should show only app/parents/[pin]/page.tsx modified
+git commit -m "fix: scale backdrop picker Live Preview blur to match main view
+
+CSS filter: blur(Npx) is absolute-pixel — same blurAmount on the 142px
+thumbnail looked ~5-6x stronger than on the ~780px main viewer. Scaled
+the panel preview's blur by (142/780) so the small thumbnail visually
+matches the large photo. Main view is unchanged."
+git push origin main
+```
+
+Why this fix: `filter: blur(Npx)` in CSS is absolute pixels. Same slider value applied to a 142px-tall thumbnail and a ~780px-tall main viewer makes the thumbnail look ~5–6× more blurred. Only the preview thumbnail is scaled; the main canvas stays at full `selectedBlurAmount`.
+
+### Already landed this session (2026-04-22 evening)
+
+- **#58 — Roster subfolders hidden in Project mode** (commit `6345bd6`, already on `origin/main`):
+  - Web: `app/dashboard/projects/[id]/page.tsx` — added `isRosterCollection()` (regex `^\s*rosters?\s*$` against title/slug, or `kind === 'roster'`). `orderedCollections` filters them out; galleries chip subtracts `rosterCount`.
+  - Desktop Flutter: `~/Downloads/Whitephoto_Studio_App_MVP_Source/lib/screens/project_admin_screen.dart` — `_filteredAlbums` getter now skips any album matching the same roster regex. **Rebuild required**: `cd ~/Downloads/Whitephoto_Studio_App_MVP_Source && flutter build macos`.
+  - Scope per user: UI filter only. Disk folders and DB `collections` rows untouched (user explicitly picked "Hide via UI filter only" via AskUserQuestion).
+
+- **#57 — Mobile compatibility sweep (Tier 3 dashboard)**:
+  - `app/dashboard/layout.tsx` — mobile path now renders a sticky black topbar with `<Logo small />` + hamburger (Menu/X from lucide-react). Drawer is a full-height black overlay that locks `document.body.style.overflow` while open and auto-closes if viewport grows past the mobile breakpoint. Desktop path unchanged.
+  - `app/dashboard/page.tsx` — `useIsMobile`; stat grid 4-col → 2-col; bottom panel grid 3-col → 1-col; main padding 32 → 14 on mobile.
+  - `app/dashboard/orders/page.tsx` — `useIsMobile`; header flex column + smaller H1 + email badge hidden on mobile; detail panel goes full-width static on mobile; stat grid 4 → 2; **orders table wrapped in horizontal-scroll container** (`overflow: auto` + inner `minWidth: 720`) so all 8 columns stay readable.
+  - `useIsMobile` hook lives at `lib/use-is-mobile.ts` (640px `window.matchMedia` breakpoint, already existed before this session).
+
+### Not yet verified on device (still owed to #57)
+
+User hasn't sent screenshots for these dashboard sub-pages on iPhone. All likely need the same mobile-tuning pass (grid → stacked, reduce padding, table → horizontal scroll):
+- `/dashboard/schools`
+- `/dashboard/projects/events`
+- `/dashboard/projects/[id]` (project detail)
+- `/dashboard/projects/[id]/albums/[albumId]`
+- `/dashboard/packages`
+- `/dashboard/settings`
+- `/dashboard/membership`
+- `/dashboard/feature-requests`
+- `/dashboard/backdrops`
+
+**Next step when resuming:** ask user to pull up each in Safari on iPhone, screenshot anything broken, and we'll tune those pages in a second pass. If no screenshots, pick the highest-traffic page (`/dashboard/projects/events` or `/dashboard/schools`) and eyeball the JSX to apply the same `useIsMobile` pattern.
+
+### Sandbox gotchas that WILL bite again
+
+- Git inside the Cowork bash sandbox CAN commit but CANNOT clear its own `.git/*.lock` files (permission denied on unlink). Harout has to run `rm -f .git/HEAD.lock .git/index.lock` on his Mac terminal between sessions when things get stuck. The sandbox also can't `git push` (no SSH key, no PAT) — every push must happen from Mac.
+- The Flutter source at `~/Downloads/Whitephoto_Studio_App_MVP_Source/` is NOT mounted in the bash sandbox, so `flutter analyze` / `dart` won't run there. Read/Write/Edit DO work on that path though, and changes are picked up on the next `flutter build macos` Harout runs.
+- Dart edits to the Flutter app are verified by **code inspection only** (no compiler feedback until Harout rebuilds). Be extra careful with types.
+
+### Quick context pointers for deep memory
+
+- `memory/glossary.md` — shorthand + acronyms ("PIN login", "backdrop", "proof", etc.)
+- `memory/people/harout.md` — user profile, communication style, studio context
+- `memory/projects/studio-os-cloud.md` — repo / stack / deploy paths
+- `memory/projects/flutter-backdrop-manager.md` — desktop app structure + build commands
+- `memory/context/supabase.md` — project id, tables, known policies, SQL gotchas
 
 ---
 
