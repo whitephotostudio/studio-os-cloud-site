@@ -188,6 +188,19 @@ function sortCollections(rows: CollectionRow[]) {
   });
 }
 
+// Project mode never shows roster albums — rosters are a School concept.
+// Some photographers have leftover `roster`/`rosters` folders on disk that
+// the desktop app faithfully scans; filter them here so Project galleries
+// stay clean without any DB mutation.
+const ROSTER_TITLE_RE = /^\s*rosters?\s*$/i;
+function isRosterCollection(row: CollectionRow) {
+  return (
+    ROSTER_TITLE_RE.test(clean(row.title)) ||
+    ROSTER_TITLE_RE.test(clean(row.slug)) ||
+    clean(row.kind).toLowerCase() === "roster"
+  );
+}
+
 function emptyFavoritesSummary(): FavoritesSummary {
   return {
     ordersCount: 0,
@@ -1031,7 +1044,10 @@ export default function ProjectDetailPage() {
     return media.filter((m) => clean(m.collection_id) === coverTarget.albumId && !!mediaUrl(m));
   }, [coverTarget, media]);
 
-  const orderedCollections = useMemo(() => sortCollections(collections), [collections]);
+  const orderedCollections = useMemo(
+    () => sortCollections(collections.filter((row) => !isRosterCollection(row))),
+    [collections],
+  );
 
   const filteredCollections = useMemo(() => {
     const q = clean(albumSearch).toLowerCase();
@@ -1379,13 +1395,19 @@ export default function ProjectDetailPage() {
             </div>
 
             <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 12 }}>
-              {[
-                `${classesCount} classes`,
-                `${rolesCount} roles`,
-                `${peopleCount} people`,
-                `${galleriesCount} galleries`,
-                `${albumsCount} albums`,
-              ].map((label) => (
+              {(() => {
+                // Subtract any roster collections from the server-supplied
+                // counts so the chip totals match the filtered grid below.
+                const rosterCount = collections.filter(isRosterCollection).length;
+                const visibleGalleries = Math.max(0, galleriesCount - rosterCount);
+                return [
+                  `${classesCount} classes`,
+                  `${rolesCount} roles`,
+                  `${peopleCount} people`,
+                  `${visibleGalleries} galleries`,
+                  `${albumsCount} albums`,
+                ];
+              })().map((label) => (
                 <div
                   key={label}
                   style={{
