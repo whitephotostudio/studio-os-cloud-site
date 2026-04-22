@@ -164,12 +164,35 @@ Checked actual storage row path shapes before applying:
 This explains why the previous Round 6g attempt (before today) was rolled back — it assumed uniform UUID paths.
 
 ### Deferred follow-ups
-- Build a `public.caller_owns_storage_path(bucket, name)` helper that resolves ownership via a lookup (project slug → photographer_id, school slug → photographer_id, etc.), then tighten `nobg-photos` and `thumbs` write policies using it.
-- Normalize stray `thumbs/projects/…` and `thumbs/schools/…` legacy paths into tenant-scoped folders so a simple `foldername[1]` check becomes viable without the helper.
+- ~~Build a `public.caller_owns_storage_path(bucket, name)` helper…~~ **Superseded by Round 6g.2 below.**
+- Normalize stray `thumbs/projects/…` and `thumbs/schools/…` legacy paths into tenant-scoped folders if we ever want to allow client-side writes to `thumbs` again.
 
 ### Files / artifacts
 - `supabase/migrations/20260422160000_round6g_tighten_backdrops_storage.sql` — the applied migration.
 - `docs/rollback/round-6g-rollback.sql` — updated to reflect the narrowed scope. Runnable if we need to revert.
+
+---
+
+## 2026-04-22 (evening) — Round 6g.2 landed, nobg-photos + thumbs locked (task #47)
+
+### What changed
+- `nobg-photos` bucket now has zero authenticated write policies. Dropped `Auth upload nobg` and `Auth update nobg`. (No DELETE policy existed to begin with.) Public SELECT policy preserved.
+- `thumbs` bucket now has zero authenticated write policies. Dropped the remaining `Authenticated users can upload/update/delete` set. Public SELECT policy preserved.
+- Writes to both buckets now require the **service-role key** (bypasses RLS) — which is how the Next.js API routes and maintenance scripts already work.
+
+### Why this is safe
+Full code audit before applying:
+- Desktop Flutter app writes to `nobg-photos` / `thumbs` are actually **R2 S3-compatible writes**, not Supabase Storage writes. The bucket name collision is incidental. Confirmed in `~/Downloads/Whitephoto_Studio_App_MVP_Source/lib/services/cloud_sync_service*.dart` — every write goes through `_r2.uploadBinary(...)`.
+- Parents-portal web code (`app/parents/[pin]/page*.tsx`) only calls `.list()` and `.getPublicUrl()` on these buckets. Zero writes.
+- Next.js API routes grep for `'nobg-photos'` / `'thumbs'` → zero hits. All writes live in `scripts/*.mjs` and `tmp_*.mjs` which use the service-role key.
+
+### Net effect on attack surface
+Before Round 6g: any authenticated photographer (any other tenant) could upload, update, or delete arbitrary files in `backdrops/`, `nobg-photos/`, and `thumbs/`. Major cross-tenant write risk.
+After Rounds 6g + 6g.2: `backdrops/` writes require photographer-id-owned-by-auth.uid; `nobg-photos/` and `thumbs/` writes require service-role. All public SELECT reads preserved. `studio-logos/` untouched (already properly isolated).
+
+### Files / artifacts
+- `supabase/migrations/20260422170000_round6g2_lock_nobg_thumbs_writes.sql` — the applied migration.
+- `docs/rollback/round-6g-rollback.sql` — updated again to cover 6g.1 + 6g.2 together.
 
 ---
 
