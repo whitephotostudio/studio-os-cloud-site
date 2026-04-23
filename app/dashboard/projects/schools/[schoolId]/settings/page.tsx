@@ -452,8 +452,8 @@ export default function SchoolSettingsPage() {
           </div>
           <div className="flex flex-wrap items-center gap-3">
             {saveNotice ? <span className="inline-flex items-center gap-2 rounded-full border border-[#fecaca] bg-[#fff5f5] px-3 py-2 text-sm font-semibold text-[#b91c1c]"><Check size={16} />{saveNotice}</span> : null}
-            <button onClick={() => router.push(`/dashboard/projects/schools/${schoolId}`)} className="rounded-2xl border border-neutral-300 bg-white px-5 py-2.5 text-sm font-semibold text-neutral-800 transition hover:border-neutral-400 hover:bg-neutral-50">Cancel</button>
-            <button onClick={saveAsPreset} className="rounded-2xl px-5 py-2.5 text-sm font-semibold text-neutral-800 transition hover:text-[#991b1b]">Save as a Preset</button>
+            <button onClick={() => router.push(`/dashboard/projects/schools/${schoolId}`)} className="rounded-2xl border border-neutral-300 bg-white px-5 py-2.5 text-sm font-semibold text-neutral-900 transition hover:border-neutral-400 hover:bg-neutral-50">Cancel</button>
+            <button onClick={saveAsPreset} className="rounded-2xl px-5 py-2.5 text-sm font-semibold text-neutral-900 transition hover:text-[#991b1b]">Save as a Preset</button>
             <button onClick={saveAll} disabled={saving} className="rounded-2xl bg-neutral-950 px-5 py-2.5 text-sm font-semibold text-white shadow-[0_10px_20px_rgba(0,0,0,0.16)] transition hover:bg-[#991b1b] disabled:opacity-60">{saving ? "Saving..." : "Save"}</button>
           </div>
         </div>
@@ -480,7 +480,7 @@ export default function SchoolSettingsPage() {
                   <Settings2 className="mx-auto mb-2" size={26} />
                   Settings
                 </button>
-                <button onClick={() => router.push(`/dashboard/projects/schools/${schoolId}`)} className="rounded-[18px] px-4 py-5 text-center text-sm font-bold text-neutral-800 transition hover:bg-neutral-100">
+                <button onClick={() => router.push(`/dashboard/projects/schools/${schoolId}`)} className="rounded-[18px] px-4 py-5 text-center text-sm font-bold text-neutral-900 transition hover:bg-neutral-100">
                   <ImageIcon className="mx-auto mb-2" size={26} />
                   Cover
                 </button>
@@ -499,7 +499,7 @@ export default function SchoolSettingsPage() {
                         "flex w-full items-center gap-3 rounded-[16px] px-4 py-3 text-left text-[15px] font-semibold transition",
                         active
                           ? "bg-neutral-950 text-white shadow-[0_10px_22px_rgba(0,0,0,0.14)]"
-                          : "text-neutral-800 hover:bg-neutral-100"
+                          : "text-neutral-900 hover:bg-neutral-100"
                       )}
                     >
                       <Icon size={18} />
