@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import {
@@ -402,7 +402,10 @@ pre{white-space:pre-wrap;line-height:1.55;font-size:12px;background:#f9fafb;bord
 </html>`;
 }
 
-export default function OrdersPage() {
+// Next.js 16 requires useSearchParams to live inside a <Suspense> boundary
+// during static prerender — otherwise the build fails.  We split the page
+// into an inner content component and a default export that wraps it.
+function OrdersPageContent() {
   const supabase = createClient();
   const isMobile = useIsMobile();
   const searchParams = useSearchParams();
@@ -2400,5 +2403,13 @@ export default function OrdersPage() {
       )}
 
     </div>
+  );
+}
+
+export default function OrdersPage() {
+  return (
+    <Suspense fallback={<div style={{ minHeight: "100vh", background: "#fafafa" }} />}>
+      <OrdersPageContent />
+    </Suspense>
   );
 }
