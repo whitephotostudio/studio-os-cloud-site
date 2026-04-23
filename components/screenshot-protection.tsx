@@ -89,6 +89,10 @@ function ScreenshotProtection({ flags, watermarkText }: Props) {
   );
   const blurTimerRef = useRef<number | null>(null);
   const idleTimerRef = useRef<number | null>(null);
+  // Direct DOM handle to the idle-blur overlay so triggerBlur can
+  // force-paint it in the SAME SYNCHRONOUS CALL as the body filter —
+  // no React render round-trip, no 60ms fade, no capture race.
+  const overlayRef = useRef<HTMLDivElement | null>(null);
 
   // Synchronous DOM apply — we paint the blur into the current frame and
   // THEN kick React state so the notice / other effects render.  Waiting
@@ -99,6 +103,17 @@ function ScreenshotProtection({ flags, watermarkText }: Props) {
       document.body.style.transition = "";
       document.body.style.filter = BODY_BLUR_FILTER;
     }
+    // Double-layer blur: body filter AND backdrop-filter overlay.
+    // The overlay has its own compositing path (backdrop-filter) which
+    // on some browsers paints a frame earlier than body-level filter.
+    // Hitting both gives us the best odds of a blurred frame by the
+    // time the OS grabs it.  Direct DOM poke (no React state update)
+    // so it lands this tick, not next render.
+    if (overlayRef.current) {
+      overlayRef.current.style.transition = "none";
+      overlayRef.current.style.opacity = "1";
+    }
+    setIdleBlur(true);
     setBlurred(true);
     if (blurTimerRef.current) window.clearTimeout(blurTimerRef.current);
     blurTimerRef.current = window.setTimeout(() => {
@@ -142,18 +157,16 @@ function ScreenshotProtection({ flags, watermarkText }: Props) {
       const meta = e.metaKey || e.ctrlKey;
       const shift = e.shiftKey;
 
-      // TARGETED PREDICTIVE TRIGGER: fire on the Command / Meta key press
-      // itself.  Every macOS screenshot shortcut starts with Cmd being
-      // held down (⌘⇧3, ⌘⇧4, ⌘⇧5, ⌘⇧6) — by blurring on the Cmd
-      // keydown we cover the typically 50-200ms gap before the Shift +
-      // digit are pressed.
+      // TARGETED PREDICTIVE TRIGGER: fire on the Command / Shift / Ctrl
+      // key press itself.  Every screenshot shortcut starts with one of
+      // these being held down (⌘⇧3, ⌘⇧4, ⌘⇧5, PrtSc).  Blurring on
+      // the modifier keydown covers the typically 50-200ms gap before
+      // the digit is pressed — crucial for ⌘⇧3 which the OS captures
+      // instantly at the frame after the digit.
       //
-      // This does also fire on ⌘C / ⌘T / ⌘R etc., producing a brief 5s
-      // blur for unrelated shortcuts.  Accepted trade — the strobing
-      // came from triggering on EVERY modifier-held keydown and from
-      // auto-repeat.  Firing once on the Cmd key press itself (with
-      // e.repeat guarded) is a single event, not a loop.
-      if (key === "Meta" || key === "Control") {
+      // Single event (e.repeat already guarded above), so no strobing.
+      // Covers the case where the user presses Shift FIRST then Cmd.
+      if (key === "Meta" || key === "Control" || key === "Shift") {
         triggerBlur(SCREENSHOT_BLUR_DURATION_MS);
       }
 
@@ -271,12 +284,11 @@ function ScreenshotProtection({ flags, watermarkText }: Props) {
     const treatAsMobile = flags.mobile && isCoarsePointer;
     const treatAsDesktop = flags.desktop && !isCoarsePointer;
 
-    // 1500ms: long enough that natural pauses while reading / choosing a
-    // photo don't strobe the blur on and off, short enough that reaching
-    // for the keyboard to press ⌘⇧4 triggers the blur before the
-    // shortcut fires (the stillness before pressing a shortcut is
-    // typically 400-800ms).
-    const IDLE_MS = 1500;
+    // 400ms: fast enough that the moment you stop moving the mouse to
+    // reach for the keyboard, the blur is already up.  Any reading
+    // pause longer than 400ms also blurs, but since clicking/tapping
+    // clears it instantly (see dismissal handler), that's fine.
+    const IDLE_MS = 400;
 
     function scheduleIdleBlur() {
       if (idleTimerRef.current) window.clearTimeout(idleTimerRef.current);
@@ -358,6 +370,38 @@ function ScreenshotProtection({ flags, watermarkText }: Props) {
     return;
   }, [flags.desktop, flags.mobile]);
 
+  // Click / tap anywhere clears the reactive blur immediately.  Once
+  // the user has acknowledged the "Screenshot protection on" notice by
+  // clicking through, there's no reason to hold the 5-second blur —
+  // they already got the message.  The idle blur will re-arm normally
+  // on the next idle timeout.
+  const clearReactiveBlur = useCallback(() => {
+    if (blurTimerRef.current) window.clearTimeout(blurTimerRef.current);
+    setBlurred(false);
+    if (typeof document !== "undefined" && document.body) {
+      document.body.style.filter = "";
+    }
+    // Restore the overlay's CSS transition so future fades feel smooth.
+    if (overlayRef.current) {
+      overlayRef.current.style.transition = "";
+      overlayRef.current.style.opacity = "";
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!blurred) return;
+    function onClick() {
+      clearReactiveBlur();
+    }
+    // pointerdown fires before click, so we dismiss as early as possible.
+    window.addEventListener("pointerdown", onClick, true);
+    window.addEventListener("touchstart", onClick, { capture: true, passive: true });
+    return () => {
+      window.removeEventListener("pointerdown", onClick, true);
+      window.removeEventListener("touchstart", onClick, { capture: true } as EventListenerOptions);
+    };
+  }, [blurred, clearReactiveBlur]);
+
   // Cleanup on unmount.
   useEffect(() => {
     return () => {
@@ -386,7 +430,7 @@ function ScreenshotProtection({ flags, watermarkText }: Props) {
         `}</style>
       ) : null}
       {(flags.desktop || flags.mobile) ? (
-        <IdleBlurOverlay active={idleBlur} />
+        <IdleBlurOverlay active={idleBlur} overlayRef={overlayRef} />
       ) : null}
       {flags.watermark ? <WatermarkOverlay text={watermarkText || ""} /> : null}
       {blurred ? <BlurNotice /> : null}
@@ -407,10 +451,17 @@ function ScreenshotProtection({ flags, watermarkText }: Props) {
  * via state), the blur is already painted and composited when any OS
  * screenshot shortcut fires — no race with the capture.
  */
-function IdleBlurOverlay({ active }: { active: boolean }) {
+function IdleBlurOverlay({
+  active,
+  overlayRef,
+}: {
+  active: boolean;
+  overlayRef?: React.RefObject<HTMLDivElement | null>;
+}) {
   return (
     <>
       <div
+        ref={overlayRef}
         aria-hidden
         style={{
           position: "fixed",
@@ -421,16 +472,18 @@ function IdleBlurOverlay({ active }: { active: boolean }) {
           // z-index 50-1000).  Stays below the watermark (99990) and
           // the blur-active notice (99999).  When active, the overlay
           // blurs UI chrome too — acceptable because the overlay only
-          // shows when the user has stopped interacting.  Any mouse
-          // movement clears it in 60ms, restoring full UI readability.
+          // shows when the user has stopped interacting.  A click
+          // clears it, restoring full UI readability.
           zIndex: 99980,
           backdropFilter: "blur(22px) saturate(0.55)",
           WebkitBackdropFilter: "blur(22px) saturate(0.55)",
           background: "rgba(5, 10, 20, 0.04)",
-          // 60ms fade: short enough that the blur is usable in the same
-          // paint frame it appears, long enough that the un-blur on
-          // interaction doesn't feel jarring.
-          transition: "opacity 60ms linear",
+          // Fade-IN = 0ms (instant, so it paints same frame a modifier
+          // is pressed — critical for ⌘⇧3).  Fade-OUT = 120ms so when
+          // the user clicks to dismiss it eases out smoothly.
+          transition: active
+            ? "opacity 0ms linear"
+            : "opacity 120ms ease-out",
           opacity: active ? 1 : 0,
           willChange: "opacity, backdrop-filter",
         }}
