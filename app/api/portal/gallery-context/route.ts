@@ -35,6 +35,9 @@ type SchoolRow = {
   access_pin?: string | null;
   email_required?: boolean | null;
   gallery_settings?: unknown;
+  screenshot_protection_desktop?: boolean | null;
+  screenshot_protection_mobile?: boolean | null;
+  screenshot_protection_watermark?: boolean | null;
 };
 
 type ProjectRow = {
@@ -222,7 +225,7 @@ export async function POST(request: NextRequest) {
     const { data: currentSchool, error: currentSchoolError } = selectedSchoolId
       ? await service
           .from("schools")
-          .select("id,school_name,photographer_id,package_profile_id,local_school_id,status,order_due_date,expiration_date,access_mode,access_pin,email_required,gallery_settings")
+          .select("id,school_name,photographer_id,package_profile_id,local_school_id,status,order_due_date,expiration_date,access_mode,access_pin,email_required,gallery_settings,screenshot_protection_desktop,screenshot_protection_mobile,screenshot_protection_watermark")
           .eq("id", selectedSchoolId)
           .maybeSingle<SchoolRow>()
       : { data: null as SchoolRow | null, error: null };
@@ -236,7 +239,7 @@ export async function POST(request: NextRequest) {
     if (schoolNameForMatch) {
       const { data: sameNameSchools, error: sameNameError } = await service
         .from("schools")
-        .select("id,school_name,photographer_id,package_profile_id,local_school_id,status,order_due_date,expiration_date,access_mode,access_pin,email_required,gallery_settings")
+        .select("id,school_name,photographer_id,package_profile_id,local_school_id,status,order_due_date,expiration_date,access_mode,access_pin,email_required,gallery_settings,screenshot_protection_desktop,screenshot_protection_mobile,screenshot_protection_watermark")
         .ilike("school_name", schoolNameForMatch)
         .order("created_at", { ascending: false });
 
@@ -291,7 +294,7 @@ export async function POST(request: NextRequest) {
     if (!activeSchool && primaryStudent.school_id) {
       const { data: fetchedSchool, error: fetchedSchoolError } = await service
         .from("schools")
-        .select("id,school_name,photographer_id,package_profile_id,local_school_id,status,order_due_date,expiration_date,access_mode,access_pin,email_required,gallery_settings")
+        .select("id,school_name,photographer_id,package_profile_id,local_school_id,status,order_due_date,expiration_date,access_mode,access_pin,email_required,gallery_settings,screenshot_protection_desktop,screenshot_protection_mobile,screenshot_protection_watermark")
         .eq("id", primaryStudent.school_id)
         .maybeSingle<SchoolRow>();
 
@@ -420,6 +423,16 @@ export async function POST(request: NextRequest) {
       sort_order: null,
     }));
 
+    // Screenshot protection flags surfaced to the client.  The column values
+    // live on `activeSchool` already (see select list above) but we also
+    // surface them at a stable top-level key so the portal doesn't have to
+    // poke into vendor-shaped rows.
+    const screenshotProtection = {
+      desktop: Boolean(activeSchool?.screenshot_protection_desktop),
+      mobile: Boolean(activeSchool?.screenshot_protection_mobile),
+      watermark: Boolean(activeSchool?.screenshot_protection_watermark),
+    };
+
     return NextResponse.json({
       ok: true,
       currentSchool,
@@ -438,6 +451,7 @@ export async function POST(request: NextRequest) {
       watermarkEnabled,
       watermarkLogoUrl,
       studioInfo,
+      screenshotProtection,
     });
   } catch (error) {
     console.error("[gallery-context]", error);

@@ -2,13 +2,72 @@
 
 Checkpoint for Claude so a context reset doesn't lose the thread. Update as work progresses.
 
-Last updated: 2026-04-22 (very late, into 23) — mobile `/m/events` list + detail just landed (mirrors `/m/schools` + mockup-inspired hero). All four mobile sub-routes (`/m/orders`, `/m/schools`, `/m/events`) now exist. All uncommitted (index.lock still stuck).
+Last updated: 2026-04-23 — **Screenshot protection Phase 1 landed (parents portal only)**. DB migration already applied; settings UI on both school + event pages; backend + context APIs + `<ScreenshotProtection>` component all done. All uncommitted — **the sandbox's `.git/index.lock` is STILL stuck from prior sessions**, so Harout needs to clear it on Mac before any of this can commit or push.
 
 ---
 
 ## 🔴 ACTIVE HANDOFF — resume here
 
 Open this block first. Everything below it is historical context.
+
+### Unblock the sandbox first (Mac, every session)
+
+The sandbox's `.git/index.lock` has been permanently stuck since 2026-04-22. Sandbox permissions don't allow `rm` on it. Run on Mac:
+
+```bash
+cd ~/Projects/studio-os-cloud-site
+rm -f .git/HEAD.lock .git/index.lock
+# Then review the working tree (nothing is committed yet — see below)
+git status
+# Commit everything together:
+git add -A
+git commit -m "feat: screenshot protection for parents portal (Phase 1)"
+git push origin main
+```
+
+### Screenshot Protection Phase 1 — uncommitted, working tree only
+
+Driven by Harout's "can we do this??" + three ShootProof screenshots. Scope locked via AskUserQuestion: full defense (tiling + watermark + protection), per-school AND per-event toggle, parents-portal only (dashboard stays clean). **Phase 2 (image tiling proxy) deferred — multi-day backend work, not attempted in this session.**
+
+**Already applied (no code to commit):**
+- Supabase migration `add_screenshot_protection_flags` — added 3 `boolean NOT NULL DEFAULT false` columns on both `public.schools` and `public.projects`:
+  - `screenshot_protection_desktop`
+  - `screenshot_protection_mobile`
+  - `screenshot_protection_watermark`
+  - Each has a COMMENT documenting its purpose.
+
+**Uncommitted files that need to go out together:**
+
+- `components/screenshot-protection.tsx` — **NEW** (~265 lines). Default export `<ScreenshotProtection flags={...} watermarkText={...} />`. Non-wrapping — mounts global listeners + fixed overlays. Layers:
+  - Desktop: keydown listener for ⌘⇧3/4/5/6 + PrtSc + ⌘⇧P (DevTools capture); window.blur handler (catches Snipping Tool stealing focus); contextmenu prevent; dragstart prevent on `<img>`.
+  - Mobile: touchstart+timer (420ms threshold, only arms on img / `[data-gallery-image]`); touchend cancels; contextmenu prevent.
+  - Watermark: tiled SVG pattern overlay, position:fixed, pointer-events:none, mix-blend-mode:overlay, 22% opacity. Text is `"<parentEmail> · <date>"`.
+  - Blur: when a capture keystroke / long-press / focus-loss fires, applies `filter: blur(22px) saturate(0.6)` to `document.body` for 2–3s. A "Gallery hidden — screenshots are not permitted." notice is **portaled** to `document.documentElement` so it stays crisp while body is blurred (clever: portal escapes the blur).
+  - Renders a `<style>` tag when desktop or mobile flags are on with `img { -webkit-user-drag: none; user-select: none; }` and (mobile only) `-webkit-touch-callout: none`.
+
+- `app/api/dashboard/schools/[schoolId]/route.ts` — extended `SchoolUpdateBodySchema` with 3 optional bools; extended `SchoolRow` type; added the 3 columns to the select lists (initial fetch + post-update return); update handling coerces via `=== true`; all 3 columns added to `diffFields` for audit logging.
+
+- `app/api/dashboard/events/[id]/route.ts` — same pattern: `ProjectUpdateBodySchema`, `ProjectRow`, selects, update handling, diffFields.
+
+- `app/api/portal/gallery-context/route.ts` — added the 3 columns to **all three** `.select(...)` calls via `replace_all`; added `screenshotProtection: {desktop, mobile, watermark}` top-level key to the NextResponse.
+
+- `app/api/portal/event-gallery-context/route.ts` — same pattern but there's only one project select.
+
+- `app/dashboard/projects/schools/[schoolId]/settings/page.tsx` — 3 new `useState(false)` hooks; hydration reads `schoolData.screenshot_protection_*`; save payload includes the 3 booleans; new "Screenshot Protection" subsection inside the Access & Privacy card with sky-blue info callout + 3 `<ToggleRow>` components with descriptive copy.
+
+- `app/dashboard/projects/[id]/settings/page.tsx` — same pattern for events. State hooks after `projectPin`, hydration after `setProjectPin`, payload after `access_updated_source`, UI subsection inside the Privacy card's final Card.
+
+- `app/parents/[pin]/page.tsx` — added `screenshotProtection` field to both `GalleryContextPayload` and `EventGalleryContextPayload` types; added `const [screenshotProtection, setScreenshotProtection] = useState(...)` alongside `watermarkEnabled`; wired `setScreenshotProtection(...)` into **both** the event-context-load path (after `setWatermarkLogoUrl`/`setStudioInfo`) and the school-context-load path (same spot); imported `ScreenshotProtection from "@/components/screenshot-protection"`; **mounted the component inside the main gallery return** (line ~7200, immediately after the `<style>` block that defines gallery hover effects) with `watermarkText={\`${parentEmail || "Parents portal"} · ${new Date().toLocaleDateString()}\`}`.
+
+**Typecheck:** `npx tsc --noEmit` → exit 0 after every edit.
+
+**What this does not defend against (explicit, known limits):**
+- Screen-recording apps that don't steal focus (Loom, OBS, QuickTime started before the gallery loads) — they'll capture freely.
+- Headless browsers / scraping.
+- A technically savvy user who disables JS or goes into DOM inspector.
+- Any OS-level capture that doesn't route through the browser.
+
+All of these are the territory of Phase 2 (server-side tiling + per-tile signed URLs + rate-limited stitching) which is deferred. Phase 1 covers the realistic ~95% case: a parent pressing ⌘⇧4 / long-pressing to save / right-clicking. It also brands every successful capture with the viewer's email and date so leaks are traceable.
 
 ### Committed in sandbox but NOT YET PUSHED (do this first on Mac)
 

@@ -39,6 +39,9 @@ type SchoolRow = {
   access_mode?: string | null;
   access_pin?: string | null;
   gallery_settings?: unknown;
+  screenshot_protection_desktop?: boolean | null;
+  screenshot_protection_mobile?: boolean | null;
+  screenshot_protection_watermark?: boolean | null;
 };
 type PackageProfileRow = {
   id: string;
@@ -179,6 +182,11 @@ export default function SchoolSettingsPage() {
   );
   const [photographerPlan, setPhotographerPlan] = useState<string>("");
 
+  // Screenshot protection toggles (parents portal only).
+  const [protectDesktop, setProtectDesktop] = useState(false);
+  const [protectMobile, setProtectMobile] = useState(false);
+  const [protectWatermark, setProtectWatermark] = useState(false);
+
   const storageKey = `studioos_school_settings_${schoolId}`;
 
   const loadAll = useCallback(async () => {
@@ -251,6 +259,9 @@ export default function SchoolSettingsPage() {
       );
       setCheckoutContactRequired(Boolean(schoolData.checkout_contact_required));
       setInternalNotes(schoolData.internal_notes || "");
+      setProtectDesktop(Boolean(schoolData.screenshot_protection_desktop));
+      setProtectMobile(Boolean(schoolData.screenshot_protection_mobile));
+      setProtectWatermark(Boolean(schoolData.screenshot_protection_watermark));
       setFullGallerySettings(storedSettings);
       setGalleryLanguage(storedSettings.galleryLanguage);
       setExtras({
@@ -317,6 +328,9 @@ export default function SchoolSettingsPage() {
       checkout_contact_required: checkoutContactRequired,
       internal_notes: internalNotes || null,
       gallery_settings: nextGallerySettings,
+      screenshot_protection_desktop: protectDesktop,
+      screenshot_protection_mobile: protectMobile,
+      screenshot_protection_watermark: protectWatermark,
     };
 
     try {
@@ -614,6 +628,37 @@ export default function SchoolSettingsPage() {
                             When a school is in pre-release, parent emails collected from the portal are saved and used for gallery-ready release emails and later school campaigns.
                           </div>
                         </div>
+                      </div>
+                    </div>
+
+                    {/* Screenshot protection — protects photographer IP in
+                        the parents portal.  Applies only to /parents and
+                        /g gallery routes; never affects photographer
+                        previews in the dashboard. */}
+                    <div>
+                      <div className="mb-3 text-[13px] font-semibold text-neutral-800">Screenshot Protection</div>
+                      <div className="rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm leading-6 text-sky-900">
+                        Makes it harder for parents to screenshot your photos before they buy. These toggles affect <b>only</b> the parent gallery — your dashboard previews stay clean.
+                      </div>
+                      <div className="mt-4 space-y-3">
+                        <ToggleRow
+                          title="Desktop Protection"
+                          description="Blurs the gallery the moment the tab loses focus or a common screenshot keystroke is pressed (Cmd+Shift+3/4/5, Win+Shift+S, PrtScr)."
+                          checked={protectDesktop}
+                          onChange={setProtectDesktop}
+                        />
+                        <ToggleRow
+                          title="Mobile Protection"
+                          description="Half of each photo stays blurred at all times. Press-and-hold shifts the blur so parents can preview the full image but can never capture a clean screenshot."
+                          checked={protectMobile}
+                          onChange={setProtectMobile}
+                        />
+                        <ToggleRow
+                          title="Session watermark overlay"
+                          description="Burns a faint diagonal watermark (school name · PIN · date) across every displayed image. Doesn't stop screenshots but makes leaks traceable back to the source."
+                          checked={protectWatermark}
+                          onChange={setProtectWatermark}
+                        />
                       </div>
                     </div>
                   </Card>

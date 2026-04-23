@@ -45,6 +45,9 @@ type ProjectRow = {
   access_pin: string | null;
   cover_photo_url: string | null;
   gallery_settings: unknown;
+  screenshot_protection_desktop?: boolean | null;
+  screenshot_protection_mobile?: boolean | null;
+  screenshot_protection_watermark?: boolean | null;
 };
 
 type CollectionRow = {
@@ -253,7 +256,7 @@ export async function POST(request: NextRequest) {
     const { data: projectRow, error: projectError } = await service
       .from("projects")
       .select(
-        "id,title,client_name,workflow_type,status,portal_status,event_date,shoot_date,order_due_date,expiration_date,email_required,photographer_id,package_profile_id,access_mode,access_pin,cover_photo_url,gallery_settings",
+        "id,title,client_name,workflow_type,status,portal_status,event_date,shoot_date,order_due_date,expiration_date,email_required,photographer_id,package_profile_id,access_mode,access_pin,cover_photo_url,gallery_settings,screenshot_protection_desktop,screenshot_protection_mobile,screenshot_protection_watermark",
       )
       .eq("id", selectedProjectId)
       .maybeSingle<ProjectRow>();
@@ -642,6 +645,15 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // Screenshot protection flags surfaced to the client. Values live on
+    // `projectRow` (see select list above); exposing them at a stable
+    // top-level key keeps the portal's parser simple.
+    const screenshotProtection = {
+      desktop: Boolean(projectRow.screenshot_protection_desktop),
+      mobile: Boolean(projectRow.screenshot_protection_mobile),
+      watermark: Boolean(projectRow.screenshot_protection_watermark),
+    };
+
     return NextResponse.json({
       ok: true,
       project: projectRow,
@@ -656,6 +668,7 @@ export async function POST(request: NextRequest) {
       watermarkEnabled,
       watermarkLogoUrl,
       studioInfo,
+      screenshotProtection,
     });
   } catch (error) {
     console.error("[event-gallery-context]", error);

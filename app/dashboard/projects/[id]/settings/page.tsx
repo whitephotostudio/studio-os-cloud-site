@@ -541,6 +541,10 @@ export default function ProjectSettingsPage() {
   const [internalNotes, setInternalNotes] = useState("");
   const [projectAccessMode, setProjectAccessMode] = useState<'public' | 'pin'>('public');
   const [projectPin, setProjectPin] = useState('');
+  // Screenshot protection toggles (parents portal only).
+  const [protectDesktop, setProtectDesktop] = useState(false);
+  const [protectMobile, setProtectMobile] = useState(false);
+  const [protectWatermark, setProtectWatermark] = useState(false);
   const [extras, setExtras] = useState<EventGalleryExtraSettings>(defaultEventGalleryExtras);
   const [branding, setBranding] = useState<EventGalleryBrandingSettings>(defaultEventGalleryBranding);
   const [linkedContacts, setLinkedContacts] = useState<EventGalleryLinkedContact[]>([]);
@@ -623,6 +627,9 @@ export default function ProjectSettingsPage() {
       setInternalNotes(projectData.internal_notes || "");
       setProjectAccessMode(projectData.access_mode === 'pin' ? 'pin' : 'public');
       setProjectPin(projectData.access_pin || '');
+      setProtectDesktop(Boolean(projectData.screenshot_protection_desktop));
+      setProtectMobile(Boolean(projectData.screenshot_protection_mobile));
+      setProtectWatermark(Boolean(projectData.screenshot_protection_watermark));
 
       const hasPersistedGallerySettings =
         projectData.gallery_settings &&
@@ -693,6 +700,9 @@ export default function ProjectSettingsPage() {
       access_pin: projectAccessMode === 'pin' ? (projectPin || null) : null,
       access_updated_at: new Date().toISOString(),
       access_updated_source: 'cloud',
+      screenshot_protection_desktop: protectDesktop,
+      screenshot_protection_mobile: protectMobile,
+      screenshot_protection_watermark: protectWatermark,
       gallery_settings: normalizeEventGallerySettings({
         galleryLanguage,
         extras: {
@@ -1458,6 +1468,33 @@ export default function ProjectSettingsPage() {
 
                     {projectAccessMode === "pin" ? <input value={projectPin} onChange={(e) => setProjectPin(e.target.value)} className="max-w-md rounded-xl border border-neutral-200 bg-white px-4 py-3 text-sm text-neutral-800 placeholder:text-neutral-400" placeholder="Project PIN" /> : null}
                     <ToggleRow title="Email required" description="Require visitors to enter their email address to view the gallery" checked={emailRequired} onChange={setEmailRequired} />
+
+                    <div>
+                      <div className="mb-3 text-[13px] font-semibold text-neutral-800">Screenshot Protection</div>
+                      <div className="mb-4 rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-800">
+                        These defenses only apply to the parents portal — your dashboard is never affected. Motivated attackers can still capture the screen, but these toggles block the casual "Cmd+Shift+3" / long-press save flow that covers the majority of real-world leaks.
+                      </div>
+                      <div className="space-y-3">
+                        <ToggleRow
+                          title="Desktop screenshot blocking"
+                          description="Disables right-click, detects Cmd+Shift+3/4/5 and PrtSc, and briefly blurs the gallery when a capture keystroke is pressed or the window loses focus."
+                          checked={protectDesktop}
+                          onChange={setProtectDesktop}
+                        />
+                        <ToggleRow
+                          title="Mobile save blocking"
+                          description="Disables long-press image save on iOS/Android and blurs the gallery while a long-press is being held so the Save Image sheet gets nothing useful."
+                          checked={protectMobile}
+                          onChange={setProtectMobile}
+                        />
+                        <ToggleRow
+                          title="Visible watermark overlay"
+                          description="Stamps a repeating diagonal watermark with the viewer's session info across every photo. Captured screenshots are branded and clearly marked."
+                          checked={protectWatermark}
+                          onChange={setProtectWatermark}
+                        />
+                      </div>
+                    </div>
                     <Field label="Client Email Capture Foundation" hint="This does not gate entry yet. It defines how this event should be prepared for future capture workflows.">
                       <div className="relative max-w-md">
                         <select value={extras.emailCaptureMode} onChange={(e) => setExtra("emailCaptureMode", e.target.value as EventGalleryExtraSettings["emailCaptureMode"])} className="w-full appearance-none rounded-xl border border-neutral-200 bg-white px-4 py-3 pr-10 text-sm text-neutral-700">

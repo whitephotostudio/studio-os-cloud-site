@@ -38,6 +38,10 @@ const SchoolUpdateBodySchema = z.object({
   access_pin: z.string().max(64).nullable().optional(),
   gallery_settings: z.unknown().optional(),
   gallery_slug: z.string().max(200).nullable().optional(),
+  // Screenshot protection flags — all default false in the DB.
+  screenshot_protection_desktop: z.boolean().optional(),
+  screenshot_protection_mobile: z.boolean().optional(),
+  screenshot_protection_watermark: z.boolean().optional(),
 });
 
 type SchoolUpdateBody = z.infer<typeof SchoolUpdateBodySchema>;
@@ -60,6 +64,9 @@ type SchoolRow = {
   cover_photo_url?: string | null;
   gallery_settings?: unknown;
   gallery_slug?: string | null;
+  screenshot_protection_desktop?: boolean | null;
+  screenshot_protection_mobile?: boolean | null;
+  screenshot_protection_watermark?: boolean | null;
 };
 
 function clean(value: string | null | undefined) {
@@ -233,7 +240,7 @@ export async function PATCH(
 
     const { data: schoolRow, error: schoolError } = await service
       .from("schools")
-      .select("id,school_name,photographer_id,local_school_id,status,shoot_date,order_due_date,expiration_date,package_profile_id,email_required,checkout_contact_required,internal_notes,access_mode,access_pin,cover_photo_url,gallery_settings,gallery_slug")
+      .select("id,school_name,photographer_id,local_school_id,status,shoot_date,order_due_date,expiration_date,package_profile_id,email_required,checkout_contact_required,internal_notes,access_mode,access_pin,cover_photo_url,gallery_settings,gallery_slug,screenshot_protection_desktop,screenshot_protection_mobile,screenshot_protection_watermark")
       .eq("id", schoolId)
       .eq("photographer_id", photographerRow.id)
       .maybeSingle<SchoolRow>();
@@ -279,6 +286,17 @@ export async function PATCH(
     if (hasOwn(body, "gallery_settings")) {
       updates.gallery_settings = normalizeEventGallerySettings(body.gallery_settings);
     }
+    // Screenshot protection flags — coerce to strict booleans so any
+    // truthy-string or null from a buggy client still stores as false.
+    if (hasOwn(body, "screenshot_protection_desktop")) {
+      updates.screenshot_protection_desktop = body.screenshot_protection_desktop === true;
+    }
+    if (hasOwn(body, "screenshot_protection_mobile")) {
+      updates.screenshot_protection_mobile = body.screenshot_protection_mobile === true;
+    }
+    if (hasOwn(body, "screenshot_protection_watermark")) {
+      updates.screenshot_protection_watermark = body.screenshot_protection_watermark === true;
+    }
     if (hasOwn(body, "gallery_slug")) {
       let rawSlug = clean(body.gallery_slug)
         .toLowerCase()
@@ -315,7 +333,7 @@ export async function PATCH(
       .update(updates)
       .eq("id", schoolId)
       .eq("photographer_id", photographerRow.id)
-      .select("id,school_name,photographer_id,local_school_id,status,shoot_date,order_due_date,expiration_date,package_profile_id,email_required,checkout_contact_required,internal_notes,access_mode,access_pin,cover_photo_url,gallery_settings,gallery_slug")
+      .select("id,school_name,photographer_id,local_school_id,status,shoot_date,order_due_date,expiration_date,package_profile_id,email_required,checkout_contact_required,internal_notes,access_mode,access_pin,cover_photo_url,gallery_settings,gallery_slug,screenshot_protection_desktop,screenshot_protection_mobile,screenshot_protection_watermark")
       .maybeSingle<SchoolRow>();
 
     if (updateError) throw updateError;
@@ -374,6 +392,9 @@ export async function PATCH(
         "checkout_contact_required",
         "internal_notes",
         "gallery_slug",
+        "screenshot_protection_desktop",
+        "screenshot_protection_mobile",
+        "screenshot_protection_watermark",
       ] as (keyof Record<string, unknown>)[],
     );
     await recordAudit({

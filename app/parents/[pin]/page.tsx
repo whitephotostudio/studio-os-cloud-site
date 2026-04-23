@@ -43,6 +43,7 @@ import {
   type EventGalleryDownloadManifest,
 } from "@/lib/event-gallery-downloads";
 import { createZipBlob } from "@/lib/zip";
+import ScreenshotProtection from "@/components/screenshot-protection";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 type StudentRow = {
@@ -170,6 +171,11 @@ type GalleryContextPayload = {
     phone: string;
     email: string;
   };
+  screenshotProtection?: {
+    desktop: boolean;
+    mobile: boolean;
+    watermark: boolean;
+  };
 };
 
 type EventGalleryContextPayload = {
@@ -192,6 +198,11 @@ type EventGalleryContextPayload = {
     address: string;
     phone: string;
     email: string;
+  };
+  screenshotProtection?: {
+    desktop: boolean;
+    mobile: boolean;
+    watermark: boolean;
   };
 };
 
@@ -3439,6 +3450,14 @@ export default function ParentGalleryPage() {
   const [watermarkEnabled, setWatermarkEnabled] = useState(true);
   const [watermarkLogoUrl, setWatermarkLogoUrl] = useState<string>("");
   const [photographerId, setPhotographerId] = useState<string | null>(null);
+  // Screenshot protection flags (parents portal only — mirrors the school /
+  // event settings).  Defaults to all-off so existing galleries behave
+  // exactly as they did before this feature shipped.
+  const [screenshotProtection, setScreenshotProtection] = useState<{
+    desktop: boolean;
+    mobile: boolean;
+    watermark: boolean;
+  }>({ desktop: false, mobile: false, watermark: false });
   const [eventCollections, setEventCollections] = useState<EventCollectionRow[]>([]);
   const [activeEventCollectionId, setActiveEventCollectionId] = useState<string | null>(null);
 
@@ -3693,6 +3712,11 @@ export default function ParentGalleryPage() {
           setWatermarkEnabled(nextWatermarkEnabled);
           setWatermarkLogoUrl(nextWatermarkLogoUrl);
           setStudioInfo(nextStudioInfo);
+          setScreenshotProtection({
+            desktop: Boolean(contextPayload.screenshotProtection?.desktop),
+            mobile: Boolean(contextPayload.screenshotProtection?.mobile),
+            watermark: Boolean(contextPayload.screenshotProtection?.watermark),
+          });
           setLoading(false);
           return;
         }
@@ -3864,6 +3888,11 @@ export default function ParentGalleryPage() {
         setWatermarkEnabled(nextWatermarkEnabled);
         setWatermarkLogoUrl(nextWatermarkLogoUrl);
         setStudioInfo(nextStudioInfo);
+        setScreenshotProtection({
+          desktop: Boolean(contextPayload?.screenshotProtection?.desktop),
+          mobile: Boolean(contextPayload?.screenshotProtection?.mobile),
+          watermark: Boolean(contextPayload?.screenshotProtection?.watermark),
+        });
         if (schoolViewerEmail) {
           setParentEmail(schoolViewerEmail);
         }
@@ -7164,6 +7193,13 @@ export default function ParentGalleryPage() {
           }
         }
       `}</style>
+
+      {/* Screenshot protection — per-school / per-event toggles applied
+          ONLY to the parents portal.  No-op when every flag is off. */}
+      <ScreenshotProtection
+        flags={screenshotProtection}
+        watermarkText={`${parentEmail || "Parents portal"} · ${new Date().toLocaleDateString()}`}
+      />
 
       <div
         style={{

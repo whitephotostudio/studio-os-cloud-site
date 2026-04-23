@@ -47,6 +47,10 @@ const ProjectUpdateBodySchema = z.object({
   access_updated_source: z.string().max(64).nullable().optional(),
   gallery_settings: z.unknown().optional(),
   gallery_slug: z.string().max(200).nullable().optional(),
+  // Screenshot protection flags — all default false in the DB.
+  screenshot_protection_desktop: z.boolean().optional(),
+  screenshot_protection_mobile: z.boolean().optional(),
+  screenshot_protection_watermark: z.boolean().optional(),
 });
 
 type ProjectUpdateBody = z.infer<typeof ProjectUpdateBodySchema>;
@@ -685,6 +689,16 @@ export async function PATCH(
 
     if (hasOwn(body, "gallery_settings")) {
       updatePayload.gallery_settings = normalizeEventGallerySettings(body.gallery_settings);
+    }
+    // Screenshot protection flags — strict boolean coercion.
+    if (hasOwn(body, "screenshot_protection_desktop")) {
+      updatePayload.screenshot_protection_desktop = body.screenshot_protection_desktop === true;
+    }
+    if (hasOwn(body, "screenshot_protection_mobile")) {
+      updatePayload.screenshot_protection_mobile = body.screenshot_protection_mobile === true;
+    }
+    if (hasOwn(body, "screenshot_protection_watermark")) {
+      updatePayload.screenshot_protection_watermark = body.screenshot_protection_watermark === true;
     }
 
     if (hasOwn(body, "project_name") && "project_name" in currentProject) {
