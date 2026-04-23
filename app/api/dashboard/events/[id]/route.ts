@@ -802,6 +802,9 @@ export async function PATCH(
         "internal_notes",
         "access_mode",
         "gallery_slug",
+        "screenshot_protection_desktop",
+        "screenshot_protection_mobile",
+        "screenshot_protection_watermark",
       ] as (keyof Record<string, unknown>)[],
     );
     await recordAudit({
