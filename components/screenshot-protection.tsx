@@ -72,12 +72,22 @@ type Props = {
 };
 
 const BLUR_DURATION_MS = 2200;
+const SCREENSHOT_BLUR_DURATION_MS = 5000;
+const BODY_BLUR_FILTER = "blur(26px) saturate(0.5)";
 
 function ScreenshotProtection({ flags, watermarkText }: Props) {
   const [blurred, setBlurred] = useState(false);
   const blurTimerRef = useRef<number | null>(null);
 
+  // Synchronous DOM apply — we paint the blur into the current frame and
+  // THEN kick React state so the notice / other effects render.  Waiting
+  // for React to flush means one frame of unblurred paint, which is the
+  // exact window macOS ⌘⇧4 needs to grab a clean image.
   const triggerBlur = useCallback((ms: number = BLUR_DURATION_MS) => {
+    if (typeof document !== "undefined" && document.body) {
+      document.body.style.transition = "";
+      document.body.style.filter = BODY_BLUR_FILTER;
+    }
     setBlurred(true);
     if (blurTimerRef.current) window.clearTimeout(blurTimerRef.current);
     blurTimerRef.current = window.setTimeout(() => {
@@ -116,22 +126,50 @@ function ScreenshotProtection({ flags, watermarkText }: Props) {
       const meta = e.metaKey || e.ctrlKey;
       const shift = e.shiftKey;
 
-      // macOS: ⌘⇧3 (full), ⌘⇧4 (region), ⌘⇧5 (capture app), ⌘⇧6 (touchbar).
-      // ⌘⇧3 is instant — OS snapshots BEFORE this listener fires, so the
-      // blur here is a best-effort stamp for any delayed second capture.
-      // ⌘⇧4 and ⌘⇧5 show a region picker first — the blur fires while the
-      // picker is active, so the actual capture lands on a blurred frame.
+      // PREDICTIVE: any keydown with Meta + Shift both held triggers the
+      // blur — including the keydown of Shift itself when Meta is already
+      // down, which fires BEFORE the user can press 3/4/5/6.  This is how
+      // we catch ⌘⇧4 (region), ⌘⇧4+Space (window), ⌘⇧3 (instant full),
+      // ⌘⇧5 (capture app), and ⌘⇧6 (touchbar) at the earliest possible
+      // moment.  Uses the long screenshot blur window so the ⌘⇧4 → Space
+      // → click-a-window flow stays blurred the whole way through.
+      //
+      // False positives (⌘⇧T, ⌘⇧R, ⌘⇧I etc.) cause a harmless 5s blur.
+      // Trade-off is acceptable — leaking one high-res photo is worse
+      // than a 5-second gallery re-render on an unrelated shortcut.
+      if (meta && shift) {
+        triggerBlur(SCREENSHOT_BLUR_DURATION_MS);
+      }
+
+      // Specific screenshot keys — duplicate of the above, but here we
+      // also preventDefault on the 3/4/5/6 keys (best-effort — most of
+      // these are consumed by macOS before the page sees them anyway).
       if (meta && shift && ["3", "4", "5", "6"].includes(key)) {
         e.preventDefault();
-        triggerBlur();
+        triggerBlur(SCREENSHOT_BLUR_DURATION_MS);
       }
-      // Windows: PrtSc — can't actually block it but can blur ASAP.
+
+      // Windows: PrtSc — can't actually block it but blur ASAP.
       if (key === "PrintScreen") {
-        triggerBlur();
+        triggerBlur(SCREENSHOT_BLUR_DURATION_MS);
       }
+
       // Chrome DevTools screenshot shortcut ⌘⇧P → Capture full-size screenshot.
+      // (Already covered by the Meta+Shift predictive rule above, but kept
+      // explicit for clarity.)
       if (meta && shift && (key === "P" || key === "p")) {
-        triggerBlur();
+        triggerBlur(SCREENSHOT_BLUR_DURATION_MS);
+      }
+    }
+
+    // Keep blur alive while modifiers are still held — covers the
+    // ⌘⇧4 → [drag] → release flow which can take several seconds,
+    // and the ⌘⇧4 → Space → click flow for window captures.
+    function onKeyUp(e: KeyboardEvent) {
+      const meta = e.metaKey || e.ctrlKey;
+      const shift = e.shiftKey;
+      if (meta || shift) {
+        triggerBlur(SCREENSHOT_BLUR_DURATION_MS);
       }
     }
 
@@ -182,7 +220,13 @@ function ScreenshotProtection({ flags, watermarkText }: Props) {
       }
     }
 
+    // Attach on BOTH window and document (capture phase) so we see the
+    // keydown as early as possible — some browsers route system shortcuts
+    // differently and we want to grab the event on its first hop.
     window.addEventListener("keydown", onKeyDown, true);
+    window.addEventListener("keyup", onKeyUp, true);
+    document.addEventListener("keydown", onKeyDown, true);
+    document.addEventListener("keyup", onKeyUp, true);
     window.addEventListener("contextmenu", onContextMenu, true);
     window.addEventListener("blur", onBlur);
     window.addEventListener("dragstart", onDragStart, true);
@@ -192,6 +236,9 @@ function ScreenshotProtection({ flags, watermarkText }: Props) {
 
     return () => {
       window.removeEventListener("keydown", onKeyDown, true);
+      window.removeEventListener("keyup", onKeyUp, true);
+      document.removeEventListener("keydown", onKeyDown, true);
+      document.removeEventListener("keyup", onKeyUp, true);
       window.removeEventListener("contextmenu", onContextMenu, true);
       window.removeEventListener("blur", onBlur);
       window.removeEventListener("dragstart", onDragStart, true);

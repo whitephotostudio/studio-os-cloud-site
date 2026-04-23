@@ -30,6 +30,11 @@ git push origin main
 After `f0c5174` landed on prod, Harout shot screenshots on macOS and the gallery came through clean. His verbatim: "ITS HAPPENING BUT ITS TOO SLOW ITS ALLREADY TOOK THE PHOTO ITS ACTING VERY SLOW". AskUserQuestion → "Harden Phase 1 now" + "Strong mobile (always half-blurred, hold to reveal)". Phase 2 (tiling proxy) still deferred.
 
 Changes, all in `components/screenshot-protection.tsx`:
+- **PREDICTIVE modifier-combo blur.** `onKeyDown` now triggers blur on ANY keydown where `metaKey && shiftKey` are both held — not just on the 3/4/5/6 keys. This means pressing Shift while Command is already down fires the blur BEFORE the user can press 4. Catches ⌘⇧3 / ⌘⇧4 / ⌘⇧4+Space (window capture) / ⌘⇧5 / ⌘⇧6. Accepted false positives: ⌘⇧T, ⌘⇧R, ⌘⇧I etc. cause a 5s blur — trade-off we accept.
+- **Synchronous DOM apply in the handler.** `triggerBlur` now sets `document.body.style.filter` directly before calling `setBlurred(true)`. No React round-trip — the blur paints in the same frame we detect the threat.
+- **Listeners on BOTH window AND document** with capture phase, so we see the keydown on its first hop regardless of browser routing.
+- **`keyup` listener** keeps the blur alive while modifiers are still held (covers the multi-second ⌘⇧4 → drag → release flow).
+- **Screenshot blur window extended to 5000ms** (was 2200ms) so the ⌘⇧4 → Space → click-window flow stays blurred end-to-end.
 - **Removed the 280ms CSS transition on the body filter.** Old code had `transition: filter 280ms ease` which meant the blur animated in over ~8 frames; OS screenshot lands in the first frame before anything is blurred. Now blur is applied synchronously in the same paint.
 - **Bumped blur strength** 22px/0.6 → 26px/0.5 so the partial captures that do slip through are more thoroughly obscured.
 - **Added 3 proactive blur triggers** (desktop only):
