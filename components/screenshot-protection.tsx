@@ -12,30 +12,49 @@
 // real-world leaks, and to stamp every successful capture with a visible
 // watermark so it's obvious where it came from.
 //
+// ⚠ Fundamental Phase-1 limit (hardening pass, 2026-04-23):
+//   macOS ⌘⇧3 captures the framebuffer SYNCHRONOUSLY — the OS takes the
+//   snapshot before the browser's keydown listener is ever invoked.  That
+//   means no reactive JS blur can hide a ⌘⇧3 capture.  So this pass takes
+//   a different angle:
+//     (a) make every successful capture already contain a strong, always-on
+//         watermark (parent email + date) so leaks are visibly branded
+//     (b) on mobile, keep the gallery half-blurred at all times so any
+//         screenshot yields a partially-obscured image; a parent presses
+//         and holds a photo to reveal it
+//     (c) fire blur PRE-EMPTIVELY on cursor-leaves-viewport, visibility
+//         change, focus loss — the earliest signals that a screenshot tool
+//         is about to run — so the region-select variants (⌘⇧4, ⌘⇧5,
+//         Screenshot.app) blur before the crop frame even appears
+//
 // Layers (each gated by a separate settings toggle):
 //
 //   1. Desktop
 //      - right-click / context menu disabled
-//      - keystroke listener for ⌘⇧3, ⌘⇧4, ⌘⇧5, ⌘⇧6, PrtSc
-//      - focus-loss (window.blur) briefly blurs the whole page — defends
-//        against screenshot tools that steal focus before shooting.
-//      - drag-start disabled on images to block "drag into new tab".
+//      - drag-start disabled on images (blocks "drag into new tab")
+//      - keystroke listener for ⌘⇧3/4/5/6 + PrtSc (last-ditch blur)
+//      - PROACTIVE blur triggers: mouseleave from viewport, visibilitychange,
+//        window.blur — fires the blur BEFORE the user can initiate a capture
+//        crop.  Instant application (no transition) so the blur lands in the
+//        same paint frame.
 //
-//   2. Mobile
+//   2. Mobile ("strong" half-blur mode)
 //      - long-press contextmenu disabled
-//      - touchstart + timer: if the finger stays down for > 420ms the whole
-//        page gets a half-blur so the iOS / Android "Save Image" system sheet
-//        captures a blurred image, not the real one.
+//      - every gallery tile is covered by a diagonal blur overlay at all
+//        times — screenshots are always partially obscured
+//      - press and hold a photo to remove the overlay and see the full
+//        image; release to re-blur
 //
-//   3. Visible watermark
-//      - a tiled SVG overlay painted at 20% opacity across the whole viewport,
-//        carrying the viewer's session info (email + date).
-//      - pointer-events: none so it doesn't interfere with tapping.
+//   3. Visible watermark (always-on, boosted opacity + density)
+//      - a tiled SVG overlay painted at ~38% opacity across the whole
+//        viewport, carrying the viewer's session info (email + date)
+//      - pointer-events: none so it doesn't interfere with tapping
 //
 // Usage: drop <ScreenshotProtection flags={...} watermarkText={...} /> anywhere
-// in the tree — it attaches window listeners and renders a fixed-position
-// overlay.  No wrapping required.  The blur effect applies `filter: blur(...)`
-// to document.body so the whole page is affected momentarily.
+// in the tree — it attaches window listeners and renders fixed-position
+// overlays.  No wrapping required.  Gallery tiles that should be protected
+// on mobile must carry the `data-gallery-image` attribute on their outer
+// container (already the convention in the parents portal).
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -53,12 +72,10 @@ type Props = {
 };
 
 const BLUR_DURATION_MS = 2200;
-const LONG_PRESS_THRESHOLD_MS = 420;
 
 function ScreenshotProtection({ flags, watermarkText }: Props) {
   const [blurred, setBlurred] = useState(false);
   const blurTimerRef = useRef<number | null>(null);
-  const longPressTimerRef = useRef<number | null>(null);
 
   const triggerBlur = useCallback((ms: number = BLUR_DURATION_MS) => {
     setBlurred(true);
@@ -71,13 +88,17 @@ function ScreenshotProtection({ flags, watermarkText }: Props) {
   // Apply a blur filter to <body> whenever `blurred` flips on.  Using body
   // (not html) means the floating watermark + overlay notice are also blurred
   // — which is fine, the point is to hide the gallery.
+  //
+  // NOTE: no CSS transition here.  Any animated easing would mean the OS
+  // frame-grab happens during the fade-in and captures a barely-blurred
+  // image.  We want instant, full blur the same frame we detect the threat.
   useEffect(() => {
     if (typeof document === "undefined") return;
     const body = document.body;
     if (!body) return;
     if (blurred) {
-      body.style.transition = "filter 280ms ease";
-      body.style.filter = "blur(22px) saturate(0.6)";
+      body.style.transition = "";
+      body.style.filter = "blur(26px) saturate(0.5)";
     } else {
       body.style.filter = "";
     }
@@ -86,7 +107,7 @@ function ScreenshotProtection({ flags, watermarkText }: Props) {
     };
   }, [blurred]);
 
-  // Desktop keystroke + focus + contextmenu listeners.
+  // Desktop keystroke + focus + contextmenu listeners + proactive triggers.
   useEffect(() => {
     if (!flags.desktop) return;
 
@@ -96,12 +117,15 @@ function ScreenshotProtection({ flags, watermarkText }: Props) {
       const shift = e.shiftKey;
 
       // macOS: ⌘⇧3 (full), ⌘⇧4 (region), ⌘⇧5 (capture app), ⌘⇧6 (touchbar).
+      // ⌘⇧3 is instant — OS snapshots BEFORE this listener fires, so the
+      // blur here is a best-effort stamp for any delayed second capture.
+      // ⌘⇧4 and ⌘⇧5 show a region picker first — the blur fires while the
+      // picker is active, so the actual capture lands on a blurred frame.
       if (meta && shift && ["3", "4", "5", "6"].includes(key)) {
         e.preventDefault();
         triggerBlur();
       }
-      // Windows: PrtSc — we can't actually block it but we can blur the
-      // page the instant it's pressed so any delayed capture misses.
+      // Windows: PrtSc — can't actually block it but can blur ASAP.
       if (key === "PrintScreen") {
         triggerBlur();
       }
@@ -128,41 +152,91 @@ function ScreenshotProtection({ flags, watermarkText }: Props) {
       }
     }
 
+    // PROACTIVE TRIGGER 1: cursor leaving the viewport.  On macOS, moving
+    // toward the menu bar (to click the Screenshot.app menu extra) or
+    // toward another app window fires mouseleave on the root element.  This
+    // is the earliest signal we can get that the user is about to switch
+    // context to capture.
+    function onDocumentMouseLeave(e: MouseEvent) {
+      // Only fire when actually exiting the window (relatedTarget null).
+      if (!e.relatedTarget) {
+        triggerBlur(1500);
+      }
+    }
+
+    // PROACTIVE TRIGGER 2: tab visibility change.  If the tab becomes
+    // hidden for any reason, blur immediately so returning to the tab
+    // doesn't briefly show the gallery before re-blurring.
+    function onVisibilityChange() {
+      if (document.visibilityState !== "visible") {
+        triggerBlur(2200);
+      }
+    }
+
+    // PROACTIVE TRIGGER 3: pointer leaving the viewport (covers trackpad
+    // + mouse on macOS where mouseleave sometimes doesn't fire on fast
+    // flick to top-of-screen).
+    function onPointerLeave(e: PointerEvent) {
+      if (!e.relatedTarget) {
+        triggerBlur(1500);
+      }
+    }
+
     window.addEventListener("keydown", onKeyDown, true);
     window.addEventListener("contextmenu", onContextMenu, true);
     window.addEventListener("blur", onBlur);
     window.addEventListener("dragstart", onDragStart, true);
+    document.documentElement.addEventListener("mouseleave", onDocumentMouseLeave);
+    document.documentElement.addEventListener("pointerleave", onPointerLeave);
+    document.addEventListener("visibilitychange", onVisibilityChange);
 
     return () => {
       window.removeEventListener("keydown", onKeyDown, true);
       window.removeEventListener("contextmenu", onContextMenu, true);
       window.removeEventListener("blur", onBlur);
       window.removeEventListener("dragstart", onDragStart, true);
+      document.documentElement.removeEventListener("mouseleave", onDocumentMouseLeave);
+      document.documentElement.removeEventListener("pointerleave", onPointerLeave);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
     };
   }, [flags.desktop, triggerBlur]);
 
-  // Mobile long-press + contextmenu.
+  // Mobile: always-on half-blur mode + press-and-hold reveal.
+  //
+  // The CSS injected below applies a diagonal blurred overlay to every
+  // `[data-gallery-image]` container.  The overlay covers the lower-right
+  // triangle of each photo at all times.  When a parent presses and holds
+  // a photo, we add the `ss-reveal` class which removes the overlay; on
+  // release we remove the class and the overlay restores.
+  //
+  // The overlay uses `backdrop-filter: blur(...)` so the underlying image
+  // is actually obscured — not just covered.  This means any OS screenshot
+  // (iOS "Save Image" sheet, Android native capture, ⌘⇧3 on a connected
+  // touchscreen) yields a half-blurred image.
   useEffect(() => {
     if (!flags.mobile) return;
 
-    function onTouchStart(e: TouchEvent) {
-      // Only arm the long-press guard when the touch target looks like an
-      // image / gallery tile.  Typing in a field or scrolling shouldn't
-      // trigger a blur.
-      const target = e.target as HTMLElement | null;
-      const insideImage =
-        !!target && (target.tagName === "IMG" || target.closest("img, [data-gallery-image]") !== null);
-      if (!insideImage) return;
-      if (longPressTimerRef.current) window.clearTimeout(longPressTimerRef.current);
-      longPressTimerRef.current = window.setTimeout(() => {
-        triggerBlur(2800);
-      }, LONG_PRESS_THRESHOLD_MS);
+    let heldTarget: Element | null = null;
+
+    function findGalleryTile(el: EventTarget | null): Element | null {
+      if (!(el instanceof Element)) return null;
+      return el.closest("[data-gallery-image]");
     }
 
-    function onTouchEnd() {
-      if (longPressTimerRef.current) {
-        window.clearTimeout(longPressTimerRef.current);
-        longPressTimerRef.current = null;
+    function onPressStart(e: TouchEvent | MouseEvent) {
+      const tile = findGalleryTile(e.target);
+      if (!tile) return;
+      if (heldTarget && heldTarget !== tile) {
+        heldTarget.classList.remove("ss-reveal");
+      }
+      heldTarget = tile;
+      tile.classList.add("ss-reveal");
+    }
+
+    function onPressEnd() {
+      if (heldTarget) {
+        heldTarget.classList.remove("ss-reveal");
+        heldTarget = null;
       }
     }
 
@@ -170,24 +244,31 @@ function ScreenshotProtection({ flags, watermarkText }: Props) {
       e.preventDefault();
     }
 
-    window.addEventListener("touchstart", onTouchStart, { passive: true });
-    window.addEventListener("touchend", onTouchEnd, { passive: true });
-    window.addEventListener("touchcancel", onTouchEnd, { passive: true });
+    window.addEventListener("touchstart", onPressStart, { passive: true });
+    window.addEventListener("touchend", onPressEnd, { passive: true });
+    window.addEventListener("touchcancel", onPressEnd, { passive: true });
+    // Mouse fallback so the same pattern works on tablets with a trackpad.
+    window.addEventListener("mousedown", onPressStart, true);
+    window.addEventListener("mouseup", onPressEnd, true);
     window.addEventListener("contextmenu", onContextMenu, true);
 
     return () => {
-      window.removeEventListener("touchstart", onTouchStart);
-      window.removeEventListener("touchend", onTouchEnd);
-      window.removeEventListener("touchcancel", onTouchEnd);
+      window.removeEventListener("touchstart", onPressStart);
+      window.removeEventListener("touchend", onPressEnd);
+      window.removeEventListener("touchcancel", onPressEnd);
+      window.removeEventListener("mousedown", onPressStart, true);
+      window.removeEventListener("mouseup", onPressEnd, true);
       window.removeEventListener("contextmenu", onContextMenu, true);
+      if (heldTarget) {
+        (heldTarget as Element).classList.remove("ss-reveal");
+      }
     };
-  }, [flags.mobile, triggerBlur]);
+  }, [flags.mobile]);
 
   // Cleanup on unmount.
   useEffect(() => {
     return () => {
       if (blurTimerRef.current) window.clearTimeout(blurTimerRef.current);
-      if (longPressTimerRef.current) window.clearTimeout(longPressTimerRef.current);
     };
   }, []);
 
@@ -198,10 +279,9 @@ function ScreenshotProtection({ flags, watermarkText }: Props) {
 
   return (
     <>
-      {/* CSS-level defenses — small but effective: disable the iOS long-press
-          context sheet on every <img>, and kill native selection / dragging.
-          These rules only affect the parents portal because the component
-          is mounted inside /parents/[pin] — they don't touch the dashboard. */}
+      {/* CSS-level defenses.  The mobile half-blur overlay is the key
+          "always-on" deterrent — applied via ::after on every gallery tile
+          container.  `ss-reveal` is toggled by the press-and-hold JS above. */}
       {(flags.desktop || flags.mobile) ? (
         <style>{`
           img { -webkit-user-drag: none; user-select: none; }
@@ -210,6 +290,26 @@ function ScreenshotProtection({ flags, watermarkText }: Props) {
             -webkit-touch-callout: none;
             -webkit-user-select: none;
             user-select: none;
+          }
+          [data-gallery-image] {
+            position: relative;
+            isolation: isolate;
+          }
+          [data-gallery-image]::after {
+            content: "";
+            position: absolute;
+            inset: 0;
+            pointer-events: none;
+            z-index: 3;
+            backdrop-filter: blur(16px) saturate(0.7);
+            -webkit-backdrop-filter: blur(16px) saturate(0.7);
+            clip-path: polygon(100% 0%, 100% 100%, 0% 100%);
+            background: linear-gradient(135deg, transparent 45%, rgba(20,20,30,0.08) 50%, transparent 55%);
+            transition: opacity 120ms ease;
+            opacity: 1;
+          }
+          [data-gallery-image].ss-reveal::after {
+            opacity: 0;
           }
           ` : ""}
         `}</style>
@@ -232,45 +332,70 @@ function WatermarkOverlay({ text }: { text: string }) {
         zIndex: 99990,
         overflow: "hidden",
         mixBlendMode: "overlay",
-        opacity: 0.22,
+        opacity: 0.38,
       }}
     >
       <svg width="100%" height="100%" xmlns="http://www.w3.org/2000/svg">
         <defs>
+          {/* Primary dense diagonal pattern. */}
           <pattern
-            id="screenshot-watermark"
+            id="screenshot-watermark-primary"
             patternUnits="userSpaceOnUse"
-            width="320"
-            height="180"
+            width="220"
+            height="130"
             patternTransform="rotate(-24)"
           >
             <text
               x="0"
-              y="40"
+              y="34"
               fontFamily="Inter, system-ui, sans-serif"
-              fontSize="16"
-              fontWeight="600"
+              fontSize="15"
+              fontWeight="700"
               fill="#ffffff"
               stroke="#000000"
-              strokeWidth="0.4"
+              strokeWidth="0.5"
             >
               {label}
             </text>
             <text
-              x="80"
-              y="120"
+              x="60"
+              y="98"
               fontFamily="Inter, system-ui, sans-serif"
-              fontSize="16"
+              fontSize="15"
+              fontWeight="700"
+              fill="#ffffff"
+              stroke="#000000"
+              strokeWidth="0.5"
+            >
+              {label}
+            </text>
+          </pattern>
+          {/* Secondary counter-rotated pattern — fills gaps between the
+              primary so no bright region of the photo is free of the stamp. */}
+          <pattern
+            id="screenshot-watermark-secondary"
+            patternUnits="userSpaceOnUse"
+            width="260"
+            height="150"
+            patternTransform="rotate(18)"
+          >
+            <text
+              x="20"
+              y="62"
+              fontFamily="Inter, system-ui, sans-serif"
+              fontSize="13"
               fontWeight="600"
               fill="#ffffff"
               stroke="#000000"
               strokeWidth="0.4"
+              opacity="0.75"
             >
               {label}
             </text>
           </pattern>
         </defs>
-        <rect width="100%" height="100%" fill="url(#screenshot-watermark)" />
+        <rect width="100%" height="100%" fill="url(#screenshot-watermark-primary)" />
+        <rect width="100%" height="100%" fill="url(#screenshot-watermark-secondary)" />
       </svg>
     </div>
   );

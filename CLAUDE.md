@@ -2,7 +2,7 @@
 
 Checkpoint for Claude so a context reset doesn't lose the thread. Update as work progresses.
 
-Last updated: 2026-04-23 — **Screenshot protection Phase 1 landed (parents portal only)**. DB migration already applied; settings UI on both school + event pages; backend + context APIs + `<ScreenshotProtection>` component all done. All uncommitted — **the sandbox's `.git/index.lock` is STILL stuck from prior sessions**, so Harout needs to clear it on Mac before any of this can commit or push.
+Last updated: 2026-04-23 — **Screenshot protection Phase 1 HARDENING PASS landed**. Initial Phase 1 landed + pushed as `f0c5174`, but Harout reported it was "too slow — the photo was already taken" (fundamental Phase 1 limit: macOS ⌘⇧3 snapshots the framebuffer before browser JS can react). This pass rewrote `components/screenshot-protection.tsx` to change tack: (a) proactive blur triggers on `mouseleave`/`pointerleave`/`visibilitychange` so the blur fires BEFORE region-pickers open; (b) instant blur (removed the 280ms CSS easing that let OS capture land mid-fade); (c) mobile now half-blurred at all times via `::after` overlay + `clip-path`, press-and-hold reveals; (d) watermark opacity 22% → 38% + denser pattern + counter-rotated second layer so every successful capture is visibly branded with viewer email + date. Typecheck clean. Uncommitted — **sandbox's `.git/index.lock` is likely stuck again**, Harout needs to clear on Mac.
 
 ---
 
@@ -25,7 +25,40 @@ git commit -m "feat: screenshot protection for parents portal (Phase 1)"
 git push origin main
 ```
 
-### Screenshot Protection Phase 1 — uncommitted, working tree only
+### Screenshot Protection Phase 1 HARDENING PASS — uncommitted
+
+After `f0c5174` landed on prod, Harout shot screenshots on macOS and the gallery came through clean. His verbatim: "ITS HAPPENING BUT ITS TOO SLOW ITS ALLREADY TOOK THE PHOTO ITS ACTING VERY SLOW". AskUserQuestion → "Harden Phase 1 now" + "Strong mobile (always half-blurred, hold to reveal)". Phase 2 (tiling proxy) still deferred.
+
+Changes, all in `components/screenshot-protection.tsx`:
+- **Removed the 280ms CSS transition on the body filter.** Old code had `transition: filter 280ms ease` which meant the blur animated in over ~8 frames; OS screenshot lands in the first frame before anything is blurred. Now blur is applied synchronously in the same paint.
+- **Bumped blur strength** 22px/0.6 → 26px/0.5 so the partial captures that do slip through are more thoroughly obscured.
+- **Added 3 proactive blur triggers** (desktop only):
+  - `document.documentElement.mouseleave` with null relatedTarget → cursor leaving viewport toward menu bar / other app fires blur with ~several hundred ms of headroom before the user can click Screenshot.app.
+  - `document.documentElement.pointerleave` → covers trackpad flicks that `mouseleave` misses.
+  - `document.visibilitychange` → tab backgrounded (switching to screenshot tool) blurs immediately.
+- **Kept the keydown + window.blur listeners** as last-ditch defense for ⌘⇧4/5/PrtSc which fire while picker is still open.
+- **Removed the 420ms long-press timer** from mobile. Replaced with always-on half-blur.
+- **Always-on mobile half-blur.** Every `[data-gallery-image]` tile gets a `::after` pseudo element with `backdrop-filter: blur(16px) saturate(0.7)` + `clip-path: polygon(100% 0%, 100% 100%, 0% 100%)` so the lower-right triangle of each photo is permanently obscured. Tap-and-hold adds `.ss-reveal` (touchstart + mousedown) which sets `opacity:0` on the overlay; release removes it. Any OS screenshot captures the half-blurred state.
+- **Watermark strengthened.** Opacity 0.22 → 0.38. Primary pattern 320x180 → 220x130 (denser). Added a second counter-rotated pattern at +18° so no bright region of the photo escapes the stamp. Font weight 600 → 700 + stroke 0.4 → 0.5.
+
+Typecheck clean (`npx tsc --noEmit` → exit 0). No other files touched this pass — the DB flags + settings UI + context APIs + `<ScreenshotProtection>` mount on parents portal are all still in place from the prior pass.
+
+**What this actually defeats:**
+- ⌘⇧4 / ⌘⇧5 (region + app pickers): blur fires while picker is active, capture lands on blurred frame. Now with mouseleave + pointerleave as pre-triggers, the blur usually applies before the user even presses the shortcut.
+- Tab-switch to Screenshot.app / third-party tool: visibilitychange triggers immediate blur.
+- iOS / Android long-press "Save Image" sheet: half-blur is already applied, so the saved image is half-blurred.
+- Any successful capture: now carries a 38% opacity tiled watermark with parent email + date, makes leaks traceable.
+
+**What this still can't defeat (Phase 1 fundamental limit):**
+- macOS ⌘⇧3 (full-screen, no picker): OS snapshot is synchronous, browser JS never runs in time. BUT the watermark burn-in guarantees the captured image is stamped, which is the real Phase 1 win.
+- Screen-recording apps started before the gallery loads (Loom/OBS/QuickTime): the rendered frames are captured freely; watermark is the only defense.
+- Technically savvy user (DOM inspector, disabled JS, headless browsers).
+
+Phase 2 (tiling proxy) remains deferred in task queue as #46 — that's the real fix for ⌘⇧3 and covers the rest too.
+
+---
+
+### Screenshot Protection Phase 1 (initial pass) — already pushed as `f0c5174`
 
 Driven by Harout's "can we do this??" + three ShootProof screenshots. Scope locked via AskUserQuestion: full defense (tiling + watermark + protection), per-school AND per-event toggle, parents-portal only (dashboard stays clean). **Phase 2 (image tiling proxy) deferred — multi-day backend work, not attempted in this session.**
 
