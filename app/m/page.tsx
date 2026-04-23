@@ -145,10 +145,14 @@ export default function MobileHomePage() {
     const handle = window.setTimeout(async () => {
       try {
         const [students, schools, projects] = await Promise.all([
+          // students has no photographer_id column — filter through the
+          // schools !inner join so ownership resolves via school_id.
           supabase
             .from("students")
-            .select("id, first_name, last_name, photo_url, school_id, schools(school_name)")
-            .eq("photographer_id", photographerId)
+            .select(
+              "id, first_name, last_name, photo_url, school_id, schools!inner(school_name, photographer_id)",
+            )
+            .eq("schools.photographer_id", photographerId)
             .or(
               `first_name.ilike.%${term}%,last_name.ilike.%${term}%`,
             )

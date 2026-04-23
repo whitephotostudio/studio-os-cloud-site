@@ -128,12 +128,18 @@ export function useSpotlight(term: string, enabled: boolean) {
         // Declaring as PromiseLike<unknown>[] lets us stack them in Promise.all
         // without extra `.then()` wrappers.
         const promises: PromiseLike<unknown>[] = [
+          // Students don't have a direct photographer_id column — ownership
+          // flows through school_id → schools.photographer_id.  Using an
+          // `!inner` join means the filter on schools.photographer_id
+          // actually prunes the students rows (otherwise it's a no-op and
+          // the whole table leaks across tenants / returns zero rows if
+          // we filter on a non-existent column).
           supabase
             .from("students")
             .select(
-              "id, first_name, last_name, photo_url, school_id, class_name, schools(school_name)",
+              "id, first_name, last_name, photo_url, school_id, class_name, schools!inner(school_name, photographer_id)",
             )
-            .eq("photographer_id", photographerId)
+            .eq("schools.photographer_id", photographerId)
             .or(
               `first_name.ilike.%${trimmed}%,last_name.ilike.%${trimmed}%`,
             )
