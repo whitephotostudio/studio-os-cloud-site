@@ -2,7 +2,7 @@
 
 Checkpoint for Claude so a context reset doesn't lose the thread. Update as work progresses.
 
-Last updated: 2026-04-22 (late evening) — mobile-compat pass #2 + #3 (events, schools lists) staged + thumbs-path normalization defer-decision + orphan-delete script staged. All uncommitted in working tree (index.lock stuck).
+Last updated: 2026-04-22 (late evening) — dashboard modernization pass (profile badge, gallery-activity card + detail page, Studio Assistant dropdown) staged on top of the mobile + thumbs work. All uncommitted (index.lock stuck).
 
 ---
 
@@ -32,6 +32,24 @@ What `4133b0d` does (mobile-compat pass #2 — driven by Harout's iPhone screens
 - **`app/dashboard/projects/schools/[schoolId]/page.tsx`** — the 320px fixed-width aside was eating the whole ~390px viewport, hiding the classes/roles/people album grid on the right. Added `useIsMobile` and flipped the outer grid to `"1fr"` on mobile (aside above, album grid below). Also `position: sticky` → `static`, aside padding 16→12, outer padding 24→14, H1 24→20, top button row stacks vertically.
 
 Typecheck passed (`npx tsc --noEmit` → exit 0). Desktop path untouched across all four files.
+
+### Dashboard modernization (uncommitted, latest addition)
+
+Driven by Harout's request to declutter `/dashboard` ("feels too busy"), have Studio Assistant offer a dropdown of pre-written commands, make every element clickable, add a profile picture + name in the header, and take inspiration from a ShootProof screenshot he shared — specifically the "Recent Gallery Activity" middle card that drills into a full detail table on "View all".
+
+Files touched:
+- `app/dashboard/page.tsx` — major rework:
+  - Header slimmed: 48px H1 dropped to 32/26 (mobile), verbose subtitle removed, "STUDIO OS OVERVIEW" eyebrow replaced with `Good morning|afternoon|evening · Wednesday, April 22`. Four-button action row collapsed to a single refresh icon + the new `ProfileBadge`.
+  - `ProfileBadge` component added (right side of header): avatar pill (photographer `logo_url` if present, else gradient initials), business name, email, with a click-to-open menu containing Studio settings / Plan & billing / Sign out. Closes on outside-click via a mousedown listener.
+  - `photographers` query now selects `logo_url`.
+  - Photo Coverage stat card (previously non-clickable) is now a `<Link>` to `/dashboard/schools` with hover-shift + "Open →" affordance, matching the other three stat cards.
+  - "Recent activity" middle panel replaced with **"Recent gallery activity"** — a 5-row mini-table styled like ShootProof's Reports view: GALLERY | PHOTOS | ORDERS | REVENUE columns, with a coloured type chip (School/Event) and a pending-orders pill. "View all →" links to `/dashboard/gallery-activity`. Each row clickable into the underlying school or project.
+  - Orders query expanded from 20 → 200 rows and now selects `school_id` / `project_id` so the activity card + detail page can aggregate correctly. Added `galleryActivityItems` useMemo that joins orders-by-school and orders-by-project, pulls photo counts from `students`, and sorts by recency.
+  - Unused imports pruned (Logo, Plus, Users).
+- `app/dashboard/gallery-activity/page.tsx` — **NEW** detail page (~620 lines). Full table: Gallery name | Type | Date | Students | Photos | Orders | Pending | Revenue. Has a search box, all/schools/events toggle, sort select (recent/orders/revenue/name). Mobile collapses to a stacked card list. Every row links to the underlying school or project. SSR-safe via `Suspense` wrapper.
+- `components/studio-assistant/command-bar.tsx` — chip strip `CommandBarExamples` replaced with a grouped `<select>` dropdown. 14 prompts in 4 optgroups (Today's overview / Orders & revenue / Schools & releases / Gallery optimization). Picking one fills the command bar so the user can hit Ask (or speak). Defaults re-reset to empty after a pick so the same prompt can be re-selected. `StudioAssistant` host component untouched — existing `onPick → setCommandValue` wiring keeps working.
+
+Typecheck clean (`npx tsc --noEmit` → exit 0) after all edits.
 
 ### Also uncommitted in the working tree (staged by `git add -A`, commit failed on index.lock)
 

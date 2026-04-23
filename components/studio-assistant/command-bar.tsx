@@ -4,7 +4,7 @@
 // Desktop-first but fluid enough to adapt to narrower widths later.
 
 import { useRef, useState } from "react";
-import { Mic, MicOff, Send, Sparkles } from "lucide-react";
+import { ChevronDown, Mic, MicOff, Send, Sparkles } from "lucide-react";
 import {
   useSpeechRecognition,
 } from "@/lib/studio-assistant/use-speech";
@@ -20,12 +20,49 @@ export type CommandBarProps = {
   placeholder?: string;
 };
 
-const HELPER_EXAMPLES = [
-  "What needs my attention?",
-  "Which digital orders are still pending?",
-  "Which schools are not ready for release?",
-  "Show today's summary",
+/**
+ * Pre-written commands grouped by theme. Picking one fills the command
+ * bar so the user can hit "Ask" immediately. This replaces the earlier
+ * chip strip and gives the user a scannable menu of what Studio
+ * Assistant can do.
+ */
+const COMMAND_GROUPS: Array<{ label: string; items: string[] }> = [
+  {
+    label: "Today's overview",
+    items: [
+      "What needs my attention?",
+      "Show today's summary",
+      "Show this week's summary",
+    ],
+  },
+  {
+    label: "Orders & revenue",
+    items: [
+      "Which digital orders are still pending?",
+      "Show order backlog",
+      "Show sales by school this month",
+      "Which package profiles perform best this month?",
+    ],
+  },
+  {
+    label: "Schools & releases",
+    items: [
+      "Which schools are not ready for release?",
+      "Which galleries expire this week?",
+      "Show unreleased schools with parent interest",
+    ],
+  },
+  {
+    label: "Gallery optimization",
+    items: [
+      "Review gallery coverage",
+      "Show the most popular images",
+      "Suggest upsell sizes",
+    ],
+  },
 ];
+
+const ALL_COMMANDS = COMMAND_GROUPS.flatMap((g) => g.items);
 
 const BORDER = "#e5e7eb";
 const TEXT_PRIMARY = "#111827";
@@ -235,7 +272,15 @@ export function CommandBar({
   );
 }
 
-/** Small helper strip shown under the command bar with example prompts. */
+/**
+ * Dropdown of pre-written commands grouped by theme. When the user
+ * picks one we call `onPick` with the text so the parent can drop it
+ * into the command bar. The parent decides whether to auto-submit or
+ * let the user confirm with the "Ask" button.
+ *
+ * Kept as a native <select> so it works on every browser without a
+ * custom popover, and because the user explicitly asked for a dropdown.
+ */
 export function CommandBarExamples({
   onPick,
 }: {
@@ -246,38 +291,88 @@ export function CommandBarExamples({
       style={{
         marginTop: 10,
         display: "flex",
-        flexWrap: "wrap",
         gap: 8,
+        alignItems: "center",
+        flexWrap: "wrap",
       }}
     >
-      {HELPER_EXAMPLES.map((example) => (
-        <button
-          key={example}
-          type="button"
-          onClick={() => onPick(example)}
+      <label
+        htmlFor="studio-assistant-command-picker"
+        style={{
+          fontSize: 11,
+          letterSpacing: "0.12em",
+          fontWeight: 800,
+          color: TEXT_MUTED,
+        }}
+      >
+        QUICK COMMAND
+      </label>
+
+      <div
+        style={{
+          position: "relative",
+          flex: "1 1 260px",
+          maxWidth: 520,
+          display: "inline-flex",
+          alignItems: "center",
+        }}
+      >
+        <select
+          id="studio-assistant-command-picker"
+          // Use key=value so picking the same option twice still fires a change.
+          // We reset to empty via the `key` below to keep the placeholder.
+          defaultValue=""
+          onChange={(e) => {
+            const v = e.target.value;
+            if (v) {
+              onPick(v);
+              // Reset so picking the same prompt again re-triggers the fill.
+              e.target.value = "";
+            }
+          }}
+          aria-label="Choose a pre-written command"
           style={{
-            background: "#f7f7f8",
+            width: "100%",
+            appearance: "none",
+            WebkitAppearance: "none",
+            background: "#fff",
             border: `1px solid ${BORDER}`,
-            color: TEXT_MUTED,
-            padding: "6px 12px",
-            borderRadius: 999,
-            fontSize: 12,
+            borderRadius: 12,
+            padding: "10px 36px 10px 14px",
+            fontSize: 13,
             fontWeight: 700,
+            color: TEXT_PRIMARY,
             cursor: "pointer",
-            transition: "border-color 0.15s ease, color 0.15s ease",
-          }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.borderColor = ACCENT;
-            e.currentTarget.style.color = TEXT_PRIMARY;
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.borderColor = BORDER;
-            e.currentTarget.style.color = TEXT_MUTED;
+            colorScheme: "light",
           }}
         >
-          {example}
-        </button>
-      ))}
+          <option value="" disabled>
+            Choose a prompt…
+          </option>
+          {COMMAND_GROUPS.map((group) => (
+            <optgroup key={group.label} label={group.label}>
+              {group.items.map((item) => (
+                <option key={item} value={item}>
+                  {item}
+                </option>
+              ))}
+            </optgroup>
+          ))}
+        </select>
+        <ChevronDown
+          size={15}
+          color={TEXT_MUTED}
+          style={{
+            position: "absolute",
+            right: 12,
+            pointerEvents: "none",
+          }}
+        />
+      </div>
+
+      <span style={{ fontSize: 11, color: TEXT_MUTED, fontWeight: 700 }}>
+        {ALL_COMMANDS.length} ready-to-go prompts · pick one, then Ask
+      </span>
     </div>
   );
 }

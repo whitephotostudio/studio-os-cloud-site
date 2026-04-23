@@ -4,7 +4,6 @@ import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
-import { Logo } from "@/components/logo";
 import { StudioAssistant } from "@/components/studio-assistant/studio-assistant";
 import { useIsMobile } from "@/lib/use-is-mobile";
 import {
@@ -19,13 +18,11 @@ import {
   LogOut,
   Package2,
   ShoppingBag,
-  Users,
   Bell,
   Activity,
   ArrowUpRight,
   X,
   RefreshCw,
-  Plus,
   CheckCircle2,
   Clock3,
   AlertCircle,
@@ -37,6 +34,7 @@ import {
 type Photographer = {
   id: string;
   business_name: string | null;
+  logo_url?: string | null;
   is_platform_admin?: boolean | null;
   subscription_status?: string | null;
   trial_starts_at?: string | null;
@@ -72,6 +70,8 @@ type OrderRow = {
   total_cents: number | null;
   created_at: string | null;
   status: string | null;
+  school_id?: string | null;
+  project_id?: string | null;
 };
 
 type EventsPayload = {
@@ -140,6 +140,21 @@ const navActive: React.CSSProperties = {
 
 function clean(value: string | null | undefined) {
   return (value ?? "").trim();
+}
+
+/** "Good morning", "Good afternoon", "Good evening" — used in the header eyebrow. */
+function greetingWord() {
+  const h = new Date().getHours();
+  if (h < 12) return "Good morning";
+  if (h < 18) return "Good afternoon";
+  return "Good evening";
+}
+
+/** Two-letter initials from business name, fallback "ST". */
+function initialsOf(name: string) {
+  const parts = name.trim().split(/\s+/).slice(0, 2);
+  const letters = parts.map((p) => p[0]?.toUpperCase() ?? "").join("");
+  return letters || "ST";
 }
 
 function dedupeSchools(rows: SchoolRow[]) {
@@ -305,6 +320,210 @@ function QuickStat({
   );
 }
 
+// ── Profile badge (avatar + name + email) with sign-out dropdown ────────────
+function ProfileBadge({
+  businessName,
+  email,
+  logoUrl,
+  onSignOut,
+}: {
+  businessName: string;
+  email: string;
+  logoUrl: string;
+  onSignOut: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const initials = initialsOf(businessName);
+
+  // Close popover when clicking outside.
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      const target = e.target as Element | null;
+      if (target && !target.closest?.("[data-profile-badge]")) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+
+  return (
+    <div data-profile-badge style={{ position: "relative" }}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        aria-label="Account menu"
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 10,
+          padding: "6px 12px 6px 6px",
+          borderRadius: 999,
+          border: `1px solid ${borderSoft}`,
+          background: "#fff",
+          cursor: "pointer",
+          color: textPrimary,
+          boxShadow: "0 6px 20px rgba(17,24,39,0.04)",
+          transition: "border-color 0.15s, box-shadow 0.15s",
+        }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.borderColor = "#cc0000";
+          e.currentTarget.style.boxShadow = "0 10px 24px rgba(204,0,0,0.10)";
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.borderColor = borderSoft;
+          e.currentTarget.style.boxShadow = "0 6px 20px rgba(17,24,39,0.04)";
+        }}
+      >
+        {/* Avatar */}
+        {logoUrl ? (
+          // Using a plain <img> — the photographer's logo_url lives on arbitrary
+          // hosts (Supabase public bucket, R2, etc.) and next/image requires
+          // explicit remotePatterns. An <img> keeps this resilient.
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={logoUrl}
+            alt={businessName}
+            style={{
+              width: 32,
+              height: 32,
+              borderRadius: 999,
+              objectFit: "cover",
+              background: "#f3f4f6",
+            }}
+          />
+        ) : (
+          <div
+            style={{
+              width: 32,
+              height: 32,
+              borderRadius: 999,
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              background: "linear-gradient(135deg,#cc0000 0%,#7f1d1d 100%)",
+              color: "#fff",
+              fontWeight: 900,
+              fontSize: 12,
+              letterSpacing: "0.04em",
+            }}
+          >
+            {initials}
+          </div>
+        )}
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", minWidth: 0 }}>
+          <span
+            style={{
+              fontSize: 13,
+              fontWeight: 800,
+              color: textPrimary,
+              lineHeight: 1.1,
+              maxWidth: 160,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {businessName}
+          </span>
+          {email ? (
+            <span
+              style={{
+                fontSize: 11,
+                color: textMuted,
+                lineHeight: 1.2,
+                marginTop: 2,
+                maxWidth: 160,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {email}
+            </span>
+          ) : null}
+        </div>
+      </button>
+
+      {open ? (
+        <div
+          role="menu"
+          style={{
+            position: "absolute",
+            top: "calc(100% + 8px)",
+            right: 0,
+            minWidth: 240,
+            background: "#fff",
+            border: `1px solid ${borderSoft}`,
+            borderRadius: 16,
+            boxShadow: "0 20px 50px rgba(17,24,39,0.12)",
+            padding: 8,
+            zIndex: 20,
+          }}
+        >
+          <Link
+            href="/dashboard/settings"
+            onClick={() => setOpen(false)}
+            style={{
+              display: "block",
+              padding: "10px 12px",
+              borderRadius: 10,
+              textDecoration: "none",
+              color: textPrimary,
+              fontSize: 13,
+              fontWeight: 700,
+            }}
+          >
+            Studio settings
+          </Link>
+          <Link
+            href="/dashboard/membership"
+            onClick={() => setOpen(false)}
+            style={{
+              display: "block",
+              padding: "10px 12px",
+              borderRadius: 10,
+              textDecoration: "none",
+              color: textPrimary,
+              fontSize: 13,
+              fontWeight: 700,
+            }}
+          >
+            Plan & billing
+          </Link>
+          <div style={{ height: 1, background: borderSoft, margin: "4px 0" }} />
+          <button
+            type="button"
+            onClick={() => {
+              setOpen(false);
+              onSignOut();
+            }}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              width: "100%",
+              padding: "10px 12px",
+              borderRadius: 10,
+              border: "none",
+              background: "transparent",
+              cursor: "pointer",
+              color: "#b91c1c",
+              fontSize: 13,
+              fontWeight: 800,
+              textAlign: "left",
+            }}
+          >
+            <LogOut size={14} /> Sign out
+          </button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function DashboardPageContent() {
   const supabase = useMemo(() => createClient(), []);
   const searchParams = useSearchParams();
@@ -356,7 +575,7 @@ function DashboardPageContent() {
 
       let { data: photographerRow, error: photographerErr } = await supabase
         .from("photographers")
-        .select("id,business_name,is_platform_admin,subscription_status,trial_starts_at,trial_ends_at,created_at")
+        .select("id,business_name,logo_url,is_platform_admin,subscription_status,trial_starts_at,trial_ends_at,created_at")
         .eq("user_id", user.id)
         .maybeSingle();
 
@@ -377,7 +596,7 @@ function DashboardPageContent() {
           });
           const retry = await supabase
             .from("photographers")
-            .select("id,business_name,is_platform_admin,subscription_status,trial_starts_at,trial_ends_at,created_at")
+            .select("id,business_name,logo_url,is_platform_admin,subscription_status,trial_starts_at,trial_ends_at,created_at")
             .eq("user_id", user.id)
             .maybeSingle();
           photographerRow = retry.data;
@@ -428,10 +647,10 @@ function DashboardPageContent() {
           .order("created_at", { ascending: false }),
         supabase
           .from("orders")
-          .select("id,customer_name,total_cents,created_at,status")
+          .select("id,customer_name,total_cents,created_at,status,school_id,project_id")
           .eq("photographer_id", photographerRow.id)
           .order("created_at", { ascending: false })
-          .limit(20),
+          .limit(200),
         fetch("/api/dashboard/events", {
           method: "GET",
           cache: "no-store",
@@ -596,22 +815,79 @@ function DashboardPageContent() {
   const visibleOrders = orders.filter((o) => !dismissed.has(o.id));
   const unreadCount = visibleOrders.length;
 
-  const recentItems = [
-    ...eventProjects.slice(0, 3).map((project) => ({
-      id: `project-${project.id}`,
-      href: `/dashboard/projects/${project.id}`,
-      title: clean(project.title) || "Untitled event",
-      subtitle: "Event project",
-      date: relativeTime(project.event_date || project.created_at),
-    })),
-    ...schools.slice(0, 3).map((school) => ({
-      id: `school-${school.id}`,
-      href: `/dashboard/projects/schools/${school.id}`,
-      title: clean(school.school_name) || "Untitled school",
-      subtitle: "School synced",
-      date: relativeTime(school.created_at),
-    })),
-  ].slice(0, 5);
+  // Build the Recent Gallery Activity rows: each school + event with its
+  // photos / orders / pending / revenue aggregates. Sorted by most recent
+  // activity (newest first) and clipped to 5 for the dashboard panel.
+  type GalleryActivityItem = {
+    key: string;
+    kind: "school" | "event";
+    name: string;
+    href: string;
+    photos: number | null;
+    orders: number;
+    pending: number;
+    revenueCents: number;
+    sortAt: number;
+  };
+
+  const galleryActivityItems: GalleryActivityItem[] = useMemo(() => {
+    const schoolOrders = new Map<string, { orders: number; pending: number; revenue: number }>();
+    const projectOrders = new Map<string, { orders: number; pending: number; revenue: number }>();
+    for (const o of orders) {
+      const bucket = o.school_id
+        ? (schoolOrders.get(o.school_id) ??
+            schoolOrders.set(o.school_id, { orders: 0, pending: 0, revenue: 0 }).get(o.school_id)!)
+        : o.project_id
+          ? (projectOrders.get(o.project_id) ??
+              projectOrders.set(o.project_id, { orders: 0, pending: 0, revenue: 0 }).get(o.project_id)!)
+          : null;
+      if (!bucket) continue;
+      bucket.orders += 1;
+      const s = clean(o.status).toLowerCase();
+      if (s === "pending" || s === "needs_attention") bucket.pending += 1;
+      bucket.revenue += o.total_cents || 0;
+    }
+
+    const photosBySchool = new Map<string, number>();
+    for (const s of students) {
+      if (!clean(s.photo_url)) continue;
+      photosBySchool.set(s.school_id, (photosBySchool.get(s.school_id) ?? 0) + 1);
+    }
+
+    const schoolItems: GalleryActivityItem[] = schools.map((s) => {
+      const agg = schoolOrders.get(s.id) ?? { orders: 0, pending: 0, revenue: 0 };
+      return {
+        key: `school:${s.id}`,
+        kind: "school",
+        name: clean(s.school_name) || "Untitled school",
+        href: `/dashboard/projects/schools/${s.id}`,
+        photos: photosBySchool.get(s.id) ?? 0,
+        orders: agg.orders,
+        pending: agg.pending,
+        revenueCents: agg.revenue,
+        sortAt: s.created_at ? new Date(s.created_at).getTime() : 0,
+      };
+    });
+
+    const eventItems: GalleryActivityItem[] = eventProjects.map((p) => {
+      const agg = projectOrders.get(p.id) ?? { orders: 0, pending: 0, revenue: 0 };
+      return {
+        key: `event:${p.id}`,
+        kind: "event",
+        name: clean(p.title) || clean(p.client_name) || "Untitled event",
+        href: `/dashboard/projects/${p.id}`,
+        photos: null,
+        orders: agg.orders,
+        pending: agg.pending,
+        revenueCents: agg.revenue,
+        sortAt: (p.event_date || p.created_at) ? new Date(p.event_date || p.created_at!).getTime() : 0,
+      };
+    });
+
+    return [...schoolItems, ...eventItems]
+      .sort((a, b) => b.sortAt - a.sortAt)
+      .slice(0, 5);
+  }, [schools, eventProjects, students, orders]);
 
   return (
     <div style={{ minHeight: "100vh", background: pageBg }}>
@@ -765,56 +1041,83 @@ function DashboardPageContent() {
       <main style={{ flex: 1, padding: isMobile ? 14 : 32 }}>
         <div style={{ maxWidth: 1320, margin: "0 auto" }}>
 
-          {/* ── Header ──────────────────────────────────────────────────── */}
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 20, marginBottom: 28 }}>
-            <div>
-              <div style={{ fontSize: 14, letterSpacing: "0.12em", fontWeight: 800, color: textMuted, marginBottom: 10 }}>
-                STUDIO OS OVERVIEW
+          {/* ── Header — modernized: greeting + compact actions + profile ─ */}
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: isMobile ? "flex-start" : "center",
+              flexDirection: isMobile ? "column" : "row",
+              gap: isMobile ? 14 : 20,
+              marginBottom: isMobile ? 18 : 24,
+            }}
+          >
+            <div style={{ minWidth: 0 }}>
+              <div
+                style={{
+                  fontSize: 12,
+                  letterSpacing: "0.12em",
+                  fontWeight: 800,
+                  color: textMuted,
+                  marginBottom: 6,
+                }}
+              >
+                {greetingWord()} · {new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}
               </div>
-              <h1 style={{ fontSize: 48, lineHeight: 1.05, margin: 0, color: textPrimary, fontWeight: 900 }}>{businessName}</h1>
-              <p style={{ margin: "12px 0 0", color: textMuted, fontSize: 15, maxWidth: 860, lineHeight: 1.8 }}>
-                High-level studio view only. Schools and event projects stay separated in the left menu, while the dashboard focuses on orders, activity, revenue, and quick access.
-              </p>
+              <h1
+                style={{
+                  fontSize: isMobile ? 26 : 32,
+                  lineHeight: 1.1,
+                  margin: 0,
+                  color: textPrimary,
+                  fontWeight: 900,
+                }}
+              >
+                {businessName}
+              </h1>
             </div>
 
-            <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
-              {/* Refresh button */}
+            <div
+              style={{
+                display: "flex",
+                gap: 10,
+                flexWrap: "wrap",
+                alignItems: "center",
+              }}
+            >
               <button
                 onClick={() => load(true)}
                 disabled={refreshing}
                 title="Refresh dashboard"
+                aria-label="Refresh dashboard"
                 style={{
                   display: "inline-flex",
                   alignItems: "center",
                   justifyContent: "center",
-                  width: 44,
-                  height: 44,
-                  borderRadius: 14,
+                  width: 40,
+                  height: 40,
+                  borderRadius: 12,
                   border: `1px solid ${borderSoft}`,
                   background: "#fff",
                   cursor: refreshing ? "default" : "pointer",
                   color: textMuted,
-                  transition: "transform 0.3s ease",
-                  transform: refreshing ? "rotate(360deg)" : "none",
+                  flexShrink: 0,
                 }}
               >
-                <RefreshCw size={17} style={{ animation: refreshing ? "spin 0.8s linear infinite" : "none" }} />
+                <RefreshCw
+                  size={16}
+                  style={{
+                    animation: refreshing ? "spin 0.8s linear infinite" : "none",
+                  }}
+                />
               </button>
 
-              {/* Quick actions */}
-              <Link href="/dashboard/schools" style={{ display: "inline-flex", alignItems: "center", gap: 8, textDecoration: "none", background: "#fff", color: textPrimary, border: `1px solid ${borderSoft}`, borderRadius: 14, padding: "10px 16px", fontWeight: 700, fontSize: 13 }}>
-                <Plus size={15} /> Add School
-              </Link>
-              <Link href="/dashboard/projects/events" style={{ display: "inline-flex", alignItems: "center", gap: 8, textDecoration: "none", background: "#fff", color: textPrimary, border: `1px solid ${borderSoft}`, borderRadius: 14, padding: "10px 16px", fontWeight: 700, fontSize: 13 }}>
-                <Plus size={15} /> New Project
-              </Link>
-
-              <Link href="/dashboard/schools" style={{ display: "inline-flex", alignItems: "center", gap: 10, textDecoration: "none", background: "#0f172a", color: "#fff", borderRadius: 16, padding: "14px 18px", fontWeight: 800 }}>
-                <GraduationCap size={16} /> Open Schools
-              </Link>
-              <Link href="/dashboard/projects/events" style={{ display: "inline-flex", alignItems: "center", gap: 10, textDecoration: "none", background: "#fff", color: textPrimary, border: `1px solid ${borderSoft}`, borderRadius: 16, padding: "14px 18px", fontWeight: 800 }}>
-                <FolderOpen size={16} /> Open Projects
-              </Link>
+              <ProfileBadge
+                businessName={businessName}
+                email={userEmail}
+                logoUrl={clean(photographer?.logo_url)}
+                onSignOut={handleSignOut}
+              />
             </div>
           </div>
 
@@ -898,7 +1201,20 @@ function DashboardPageContent() {
             <OverviewLinkCard href="/dashboard/schools" icon={<GraduationCap size={20} />} label="SCHOOLS" value={schools.length} description="Synced school jobs available from the desktop app." />
             <OverviewLinkCard href="/dashboard/projects/events" icon={<FolderOpen size={20} />} label="EVENT PROJECTS" value={eventProjects.length} description="Weddings, baptisms, engagements, and private events." />
             <OverviewLinkCard href="/dashboard/orders" icon={<ShoppingBag size={20} />} label="ORDERS" value={orders.length} description="Total orders received across all schools and events." />
-            <div style={overviewCardStyle(false)}>
+            <Link
+              href="/dashboard/schools"
+              style={overviewCardStyle(true)}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.transform = "translateY(-2px)";
+                e.currentTarget.style.boxShadow = "0 18px 40px rgba(17,24,39,0.08)";
+                e.currentTarget.style.borderColor = "#cc0000";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.transform = "translateY(0)";
+                e.currentTarget.style.boxShadow = "0 10px 30px rgba(17,24,39,0.04)";
+                e.currentTarget.style.borderColor = borderSoft;
+              }}
+            >
               <div>
                 <div style={{ width: 42, height: 42, borderRadius: 14, background: "#f5f5f5", display: "inline-flex", alignItems: "center", justifyContent: "center", color: "#cc0000", marginBottom: 16 }}>
                   <Images size={20} />
@@ -911,11 +1227,27 @@ function DashboardPageContent() {
                   {imageCount} of {students.length} subjects have at least one synced photo.
                 </div>
               </div>
-              {/* Coverage bar */}
-              <div style={{ height: 6, borderRadius: 99, background: "#e5e7eb", overflow: "hidden", marginTop: 10 }}>
-                <div style={{ height: "100%", width: `${coveragePct}%`, borderRadius: 99, background: coveragePct >= 80 ? "#22c55e" : "#cc0000", transition: "width 0.6s ease" }} />
+              {/* Coverage bar + open affordance */}
+              <div>
+                <div style={{ height: 6, borderRadius: 99, background: "#e5e7eb", overflow: "hidden", marginTop: 10 }}>
+                  <div style={{ height: "100%", width: `${coveragePct}%`, borderRadius: 99, background: coveragePct >= 80 ? "#22c55e" : "#cc0000", transition: "width 0.6s ease" }} />
+                </div>
+                <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 10 }}>
+                  <div
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 8,
+                      color: "#cc0000",
+                      fontSize: 13,
+                      fontWeight: 800,
+                    }}
+                  >
+                    Open <ArrowUpRight size={15} />
+                  </div>
+                </div>
               </div>
-            </div>
+            </Link>
           </div>
 
           {/* ── Bottom panels ─────────────────────────────────────────── */}
@@ -1026,53 +1358,143 @@ function DashboardPageContent() {
               </div>
             </div>
 
-            {/* Recent activity */}
+            {/* Recent Gallery Activity — ShootProof-style mini table.
+               Rows show the most recent school + event projects with their
+               key engagement metrics. Click any row to drill in; "View all"
+               opens the full /dashboard/gallery-activity table. */}
             <div style={{ background: cardBg, borderRadius: 24, border: `1px solid ${borderSoft}`, padding: 24 }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 18, fontWeight: 800, color: textPrimary }}>
-                  <Activity size={18} color="#cc0000" /> Recent activity
+                  <Activity size={18} color="#cc0000" /> Recent gallery activity
                 </div>
+                <Link
+                  href="/dashboard/gallery-activity"
+                  style={{
+                    color: "#cc0000",
+                    fontSize: 14,
+                    fontWeight: 700,
+                    textDecoration: "none",
+                  }}
+                >
+                  View all →
+                </Link>
               </div>
 
-              <div style={{ display: "grid", gap: 14 }}>
+              {/* Mini-table header — always visible for legibility */}
+              {!loading && galleryActivityItems.length > 0 ? (
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "1.7fr 0.7fr 0.7fr 0.9fr 20px",
+                    gap: 10,
+                    padding: "0 12px 10px",
+                    fontSize: 10,
+                    fontWeight: 800,
+                    letterSpacing: "0.08em",
+                    color: textMuted,
+                    borderBottom: `1px solid ${borderSoft}`,
+                  }}
+                >
+                  <span>GALLERY</span>
+                  <span style={{ textAlign: "right" }}>PHOTOS</span>
+                  <span style={{ textAlign: "right" }}>ORDERS</span>
+                  <span style={{ textAlign: "right" }}>REVENUE</span>
+                  <span />
+                </div>
+              ) : null}
+
+              <div style={{ display: "grid", gap: 2, marginTop: 6 }}>
                 {loading ? (
                   <>
-                    {[1, 2, 3].map((i) => (
-                      <div key={i} style={{ border: `1px solid ${borderSoft}`, borderRadius: 18, padding: 16, background: "#fff" }}>
+                    {[1, 2, 3, 4].map((i) => (
+                      <div key={i} style={{ padding: "12px", borderRadius: 12, background: "#fff" }}>
                         <div style={{ height: 12, borderRadius: 6, background: "#f3f4f6", width: "55%", marginBottom: 8 }} />
                         <div style={{ height: 10, borderRadius: 6, background: "#f3f4f6", width: "35%" }} />
                       </div>
                     ))}
                   </>
-                ) : recentItems.length === 0 ? (
+                ) : galleryActivityItems.length === 0 ? (
                   <div style={{ textAlign: "center", padding: "32px 16px" }}>
                     <Activity size={28} color="#d1d5db" style={{ marginBottom: 10 }} />
-                    <div style={{ color: textMuted, fontSize: 14 }}>No recent activity yet.</div>
+                    <div style={{ color: textMuted, fontSize: 14 }}>No gallery activity yet.</div>
                     <div style={{ color: textMuted, fontSize: 13, marginTop: 6 }}>Sync your first school or project to see activity here.</div>
                   </div>
                 ) : (
-                  recentItems.map((item) => (
+                  galleryActivityItems.map((item) => (
                     <Link
-                      key={item.id}
+                      key={item.key}
                       href={item.href}
-                      style={{ border: `1px solid ${borderSoft}`, borderRadius: 18, padding: 16, background: "#fff", display: "flex", justifyContent: "space-between", gap: 12, textDecoration: "none", color: "inherit", transition: "border-color 0.15s, background 0.15s" }}
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: "1.7fr 0.7fr 0.7fr 0.9fr 20px",
+                        gap: 10,
+                        padding: "14px 12px",
+                        borderRadius: 12,
+                        textDecoration: "none",
+                        color: "inherit",
+                        alignItems: "center",
+                        transition: "background 0.15s",
+                      }}
                       onMouseEnter={(e) => {
-                        e.currentTarget.style.borderColor = "#cc0000";
-                        e.currentTarget.style.background = "#fff9f9";
+                        e.currentTarget.style.background = "#fafafa";
                       }}
                       onMouseLeave={(e) => {
-                        e.currentTarget.style.borderColor = borderSoft;
-                        e.currentTarget.style.background = "#fff";
+                        e.currentTarget.style.background = "transparent";
                       }}
                     >
-                      <div>
-                        <div style={{ color: textPrimary, fontSize: 15, fontWeight: 800, marginBottom: 4 }}>{item.title}</div>
-                        <div style={{ color: textMuted, fontSize: 13 }}>{item.subtitle}</div>
+                      <div style={{ minWidth: 0 }}>
+                        <div
+                          style={{
+                            color: textPrimary,
+                            fontSize: 14,
+                            fontWeight: 800,
+                            marginBottom: 4,
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          {item.name}
+                        </div>
+                        <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                          <span
+                            style={{
+                              padding: "2px 8px",
+                              borderRadius: 999,
+                              fontSize: 10,
+                              fontWeight: 800,
+                              color: item.kind === "school" ? "#1d4ed8" : "#9a3412",
+                              background: item.kind === "school" ? "#eff6ff" : "#fff7ed",
+                            }}
+                          >
+                            {item.kind === "school" ? "School" : "Event"}
+                          </span>
+                          {item.pending > 0 ? (
+                            <span
+                              style={{
+                                padding: "2px 8px",
+                                borderRadius: 999,
+                                fontSize: 10,
+                                fontWeight: 800,
+                                color: "#c2410c",
+                                background: "#fff7ed",
+                              }}
+                            >
+                              {item.pending} pending
+                            </span>
+                          ) : null}
+                        </div>
                       </div>
-                      <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
-                        <div style={{ color: textMuted, fontSize: 12, fontWeight: 700, whiteSpace: "nowrap", marginTop: 2 }}>{item.date}</div>
-                        <ArrowUpRight size={14} color="#9ca3af" style={{ marginTop: 3, flexShrink: 0 }} />
+                      <div style={{ textAlign: "right", fontSize: 14, fontWeight: 700, color: textPrimary, fontVariantNumeric: "tabular-nums" }}>
+                        {item.photos != null ? item.photos : "—"}
                       </div>
+                      <div style={{ textAlign: "right", fontSize: 14, fontWeight: 700, color: item.orders > 0 ? textPrimary : textMuted, fontVariantNumeric: "tabular-nums" }}>
+                        {item.orders}
+                      </div>
+                      <div style={{ textAlign: "right", fontSize: 14, fontWeight: 800, color: item.revenueCents > 0 ? textPrimary : textMuted, fontVariantNumeric: "tabular-nums" }}>
+                        {moneyFromCents(item.revenueCents)}
+                      </div>
+                      <ArrowUpRight size={14} color="#9ca3af" />
                     </Link>
                   ))
                 )}
