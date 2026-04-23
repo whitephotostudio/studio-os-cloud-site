@@ -74,18 +74,45 @@ type Props = {
 const BLUR_DURATION_MS = 2200;
 const SCREENSHOT_BLUR_DURATION_MS = 5000;
 
+/**
+ * Strict mobile-device detection.  ALL THREE signals must be true for
+ * the always-on idle blur to activate — any one being false means we
+ * treat the device as desktop (where idle blur is theater: a motivated
+ * attacker just wiggles the mouse to bypass it, and legitimate parents
+ * get a janky flashing gallery for no real security benefit).
+ *
+ *   (pointer: coarse)   → primary input is touch, not precise mouse/trackpad
+ *   (hover: none)       → device can't hover — rules out hybrid laptops
+ *   innerWidth < 900    → actual phone/tablet form factor
+ *
+ * Only real phones and narrow tablets satisfy all three.  Mac
+ * trackpads, touchscreen monitors, and 2-in-1 laptops all fail at
+ * least one check, so the desktop gallery stays crisp.
+ */
+function detectMobileGalleryMode(): boolean {
+  if (typeof window === "undefined") return false;
+  const mm = window.matchMedia;
+  if (!mm) return false;
+  try {
+    const coarse = mm("(pointer: coarse)").matches;
+    const noHover = mm("(hover: none)").matches;
+    const narrow = window.innerWidth < 900;
+    return coarse && noHover && narrow;
+  } catch {
+    return false;
+  }
+}
+
 function ScreenshotProtection({ flags, watermarkText }: Props) {
   const [blurred, setBlurred] = useState(false);
-  // idleBlur = the always-present backdrop-filter overlay that's visible
-  // whenever the user isn't actively interacting.  This is the primary
-  // screenshot defense — by the time any capture shortcut fires, the
-  // blur is already painted (no race with OS capture).
-  const [idleBlur, setIdleBlur] = useState<boolean>(
-    // Start blurred on mobile immediately; desktop fades in on idle.
-    typeof window !== "undefined"
-      ? flags.mobile && window.matchMedia?.("(pointer: coarse)").matches
-      : false,
-  );
+  // idleBlur = the always-on half-blur overlay, active ONLY on real
+  // mobile devices (strict detection below).  Desktop never uses this —
+  // idle-blur on desktop is security theater and looks janky.
+  const [idleBlur, setIdleBlur] = useState(false);
+  // Locked-in mobile detection.  Computed on mount and on resize.  The
+  // overlay's active prop hard-gates idleBlur on this, so even if some
+  // edge case sets idleBlur=true on desktop, the overlay ignores it.
+  const [isMobileDevice, setIsMobileDevice] = useState(false);
   const blurTimerRef = useRef<number | null>(null);
   // Direct DOM handle to the idle-blur overlay so triggerBlur can
   // force-paint it synchronously in the event-handler tick — no React
@@ -131,6 +158,11 @@ function ScreenshotProtection({ flags, watermarkText }: Props) {
     if (!flags.desktop) return;
 
     function onKeyDown(e: KeyboardEvent) {
+      // Only respond to REAL hardware keystrokes.  Synthetic keydown
+      // events from browser extensions, password managers, autofill
+      // tools, accessibility software, or automation have
+      // isTrusted=false and would otherwise trigger phantom blurs.
+      if (!e.isTrusted) return;
       // Ignore auto-repeated keydowns from a held key.  Without this,
       // holding Shift/Cmd fires this handler every ~30ms, each call
       // re-triggering the 5s blur — the user sees a strobing overlay.
@@ -203,25 +235,35 @@ function ScreenshotProtection({ flags, watermarkText }: Props) {
     };
   }, [flags.desktop, triggerBlur]);
 
-  // MOBILE-ONLY idle blur.  Desktop used to have an idle-timer-based
-  // overlay too but it strobed every reading pause (~400ms pause while
-  // looking at a photo → blur appears → look away → blur goes → repeat).
-  // Desktop now relies SOLELY on the reactive Cmd/Shift keypress blur,
-  // which fires instantly via triggerBlur's synchronous DOM apply.
+  // Detect real mobile on mount + on resize.  Desktop stays false
+  // permanently, which hard-kills the idle-blur behavior on desktop —
+  // the gallery reads crisp and clean unless the viewer actually
+  // presses a screenshot key.
+  useEffect(() => {
+    function updateIsMobile() {
+      const next = detectMobileGalleryMode();
+      setIsMobileDevice((prev) => (prev === next ? prev : next));
+      if (!next) setIdleBlur(false);
+    }
+    updateIsMobile();
+    window.addEventListener("resize", updateIsMobile);
+    return () => window.removeEventListener("resize", updateIsMobile);
+  }, []);
+
+  // REAL-MOBILE-ONLY idle blur.  Gated on BOTH flags.mobile (the
+  // school enabled it) AND isMobileDevice (strict 3-signal detection).
+  // Desktop never reaches this effect, so touchstart/touchend
+  // listeners never attach on desktop — which means no
+  // mouse-synthesized touch events can ever flip the blur on a Mac.
   //
-  // Mobile: overlay is always present unless a finger is actively
-  // touching the screen.  iOS Volume+Power and Android Power+VolDown
-  // don't touch the page, so the capture lands on a blurred frame.
-  // Press to reveal; release to re-blur.
+  // On real mobile: overlay always present unless a finger is touching
+  // the screen.  iOS Volume+Power and Android Power+VolDown screenshot
+  // shortcuts don't touch the page, so the capture lands on a blurred
+  // frame.  Press to reveal; release to re-blur.
   useEffect(() => {
     if (!flags.mobile) return;
+    if (!isMobileDevice) return;
 
-    const isCoarsePointer =
-      typeof window !== "undefined" &&
-      window.matchMedia?.("(pointer: coarse)").matches;
-    if (!isCoarsePointer) return;
-
-    // Start blurred and only clear while actively touching.
     setIdleBlur(true);
 
     function onTouchStart() {
@@ -244,8 +286,9 @@ function ScreenshotProtection({ flags, watermarkText }: Props) {
       window.removeEventListener("touchend", onTouchEnd);
       window.removeEventListener("touchcancel", onTouchEnd);
       window.removeEventListener("contextmenu", onContextMenu, true);
+      setIdleBlur(false);
     };
-  }, [flags.mobile]);
+  }, [flags.mobile, isMobileDevice]);
 
   // Click / tap anywhere clears the reactive blur immediately.  Once
   // the user has acknowledged the "Screenshot protection on" notice by
@@ -304,7 +347,15 @@ function ScreenshotProtection({ flags, watermarkText }: Props) {
         `}</style>
       ) : null}
       {(flags.desktop || flags.mobile) ? (
-        <IdleBlurOverlay active={idleBlur || blurred} overlayRef={overlayRef} />
+        // HARD GATE: desktop overlay is driven PURELY by `blurred`
+        // (which only flips true on a real screenshot keystroke).
+        // idleBlur can only contribute on a strictly-detected mobile
+        // device.  Desktop gallery stays crisp until a modifier key
+        // is pressed — no phantom flashing, no phone-camera theater.
+        <IdleBlurOverlay
+          active={isMobileDevice ? (idleBlur || blurred) : blurred}
+          overlayRef={overlayRef}
+        />
       ) : null}
       {flags.watermark ? <WatermarkOverlay text={watermarkText || ""} /> : null}
       {blurred ? <BlurNotice /> : null}
