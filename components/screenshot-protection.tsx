@@ -256,35 +256,65 @@ function ScreenshotProtection({ flags, watermarkText }: Props) {
   // listeners never attach on desktop — which means no
   // mouse-synthesized touch events can ever flip the blur on a Mac.
   //
-  // On real mobile: overlay always present unless a finger is touching
-  // the screen.  iOS Volume+Power and Android Power+VolDown screenshot
-  // shortcuts don't touch the page, so the capture lands on a blurred
-  // frame.  Press to reveal; release to re-blur.
+  // UX MODEL (updated 2026-04-23 — the "press-and-hold to reveal"
+  // design we shipped first made the gallery unusable; parents tapped
+  // a photo, saw it for the duration of the tap, then it snapped back
+  // to blur the instant they lifted their finger):
+  //
+  //   - On mount: blur is ON (catches a drive-by screenshot attempt
+  //     the moment the page loads)
+  //   - First touch OR scroll anywhere: blur lifts, STAYS OFF while
+  //     the user is actively interacting
+  //   - Every touch / scroll resets a 4-second idle timer
+  //   - When the timer fires (4s of no activity): blur re-arms
+  //
+  // Net effect for a real parent: the gallery reads crisp and clean
+  // once they tap the screen.  Net effect for an iOS Power+VolUp
+  // screenshot attempt: if the attacker sets the phone down to line
+  // up the shot, blur comes back and the capture is blurred; if they
+  // screenshot while mid-swipe, the watermark is still burned in.
   useEffect(() => {
     if (!flags.mobile) return;
     if (!isMobileDevice) return;
 
     setIdleBlur(true);
+    let idleTimerId: number | null = null;
 
-    function onTouchStart() {
-      setIdleBlur(false);
+    function armIdleTimer() {
+      if (idleTimerId !== null) window.clearTimeout(idleTimerId);
+      idleTimerId = window.setTimeout(() => {
+        setIdleBlur(true);
+      }, 4000);
     }
-    function onTouchEnd() {
-      setIdleBlur(true);
+
+    function onActivity() {
+      setIdleBlur(false);
+      armIdleTimer();
     }
     function onContextMenu(e: Event) {
       e.preventDefault();
     }
 
-    window.addEventListener("touchstart", onTouchStart, { passive: true });
-    window.addEventListener("touchend", onTouchEnd, { passive: true });
-    window.addEventListener("touchcancel", onTouchEnd, { passive: true });
+    window.addEventListener("touchstart", onActivity, { passive: true });
+    window.addEventListener("touchmove", onActivity, { passive: true });
+    window.addEventListener("touchend", onActivity, { passive: true });
+    window.addEventListener("touchcancel", onActivity, { passive: true });
+    // scroll with capture:true so we catch scroll inside any nested
+    // scroll container (the parents portal has several).
+    window.addEventListener("scroll", onActivity, { capture: true, passive: true });
     window.addEventListener("contextmenu", onContextMenu, true);
 
     return () => {
-      window.removeEventListener("touchstart", onTouchStart);
-      window.removeEventListener("touchend", onTouchEnd);
-      window.removeEventListener("touchcancel", onTouchEnd);
+      if (idleTimerId !== null) window.clearTimeout(idleTimerId);
+      window.removeEventListener("touchstart", onActivity);
+      window.removeEventListener("touchmove", onActivity);
+      window.removeEventListener("touchend", onActivity);
+      window.removeEventListener("touchcancel", onActivity);
+      window.removeEventListener(
+        "scroll",
+        onActivity,
+        { capture: true } as EventListenerOptions,
+      );
       window.removeEventListener("contextmenu", onContextMenu, true);
       setIdleBlur(false);
     };

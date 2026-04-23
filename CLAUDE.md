@@ -2,11 +2,15 @@
 
 Checkpoint for Claude so a context reset doesn't lose the thread. Update as work progresses.
 
-Last updated: 2026-04-23 (latest) — **Screenshot protection FINAL PASS — Harout confirmed working**. After going through many passes (proactive triggers, idle-blur, strict mobile gate, speed fix) and Harout's sharp observation that "they can move the mouse and take photo so the idle blur can be bypassed", we landed on the honest security posture:
+Last updated: 2026-04-23 (mobile UX fix, uncommitted) — **Mobile blur switched from hold-to-reveal → tap-then-idle**. After the desktop FINAL PASS shipped and Harout tested the mobile overlay on his iPhone, the press-and-hold-to-reveal pattern made the gallery unusable: tap a photo → see it for the tap duration → blur snaps back the instant the finger lifts. Fixed in `components/screenshot-protection.tsx` (the mobile useEffect around line 253): any touch or scroll now lifts the blur and keeps it off while the user is actively browsing; a 4-second idle timer re-arms the blur. Watermark always on. Net: real parents get crisp photos once they touch the screen; iOS Power+VolUp screenshot attempts still catch the blurred state if the phone is idle when the shot is lined up, otherwise the watermark burns in the trace. Typecheck clean. Needs push from Mac.
+
+---
+
+## Screenshot protection — DESKTOP final (2026-04-23, earlier pass)
 
 **Desktop:** Gallery is fully crisp unless a real modifier key is pressed. Bare ⌘ / Ctrl / ⇧ keydown fires an instant 5s blur via GPU-composited overlay (no body filter, no re-raster). Catches ⌘⇧3 because the blur is painted the moment Cmd lands — before the OS capture synchronously fires at the digit. `e.isTrusted` guard rejects extension-synthesized keys. `e.repeat` guard prevents auto-repeat strobing.
 
-**Real mobile only (strict 3-signal detection: `pointer:coarse` + `hover:none` + `innerWidth<900`):** Always-on half-blur overlay, touch-to-reveal. Desktop never reaches this path, so no phantom touch-event loops from trackpad synthesis.
+**Real mobile only (strict 3-signal detection: `pointer:coarse` + `hover:none` + `innerWidth<900`):** Idle-model overlay (see mobile UX fix block above). Desktop never reaches this path, so no phantom touch-event loops from trackpad synthesis.
 
 **Always on everywhere:** Watermark (55% opacity tiled pattern + 3 big letterbox bands with viewer email + date), right-click blocked, drag blocked on images. Watermark is doing the heavy lifting — the threats we can't technically block (phone camera pointed at screen, screen-recording software) are addressed by making every leak traceable back to the viewer.
 
