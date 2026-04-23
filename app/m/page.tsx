@@ -26,6 +26,13 @@ import { createClient } from "@/lib/supabase/client";
 
 type SearchHit =
   | {
+      kind: "student";
+      id: string;
+      title: string;
+      subtitle: string;
+      href: string;
+    }
+  | {
       kind: "order";
       id: string;
       title: string;
@@ -131,6 +138,13 @@ export default function MobileHomePage() {
   }, [supabase]);
 
   // ── Search: debounced cross-table Spotlight ───────────────────────
+  //
+  // Matches the desktop ⌘K palette (components/spotlight-search.tsx).
+  // Every hit deep-links all the way to the object:
+  //   - student → /m/schools/<schoolId>?student=<studentId>   (highlights the student card)
+  //   - school  → /m/schools/<schoolId>
+  //   - event   → /m/events/<eventId>
+  //   - order   → /m/orders/<orderId>                         (opens the detail page)
   useEffect(() => {
     const term = search.trim();
     if (!photographerId) return;
@@ -144,18 +158,21 @@ export default function MobileHomePage() {
     setSearching(true);
     const handle = window.setTimeout(async () => {
       try {
-        const [students, schools, projects] = await Promise.all([
+        // Order-id lookup is only useful when the term looks like a
+        // uuid fragment (hex + dashes).  Skips the query for plain names
+        // like "Ethan" so we don't waste a round-trip.
+        const looksLikeOrderId = /^[0-9a-f-]{4,}$/i.test(term);
+
+        const queries: PromiseLike<unknown>[] = [
           // students has no photographer_id column — filter through the
           // schools !inner join so ownership resolves via school_id.
           supabase
             .from("students")
             .select(
-              "id, first_name, last_name, photo_url, school_id, schools!inner(school_name, photographer_id)",
+              "id, first_name, last_name, photo_url, school_id, class_id, schools!inner(school_name, photographer_id)",
             )
             .eq("schools.photographer_id", photographerId)
-            .or(
-              `first_name.ilike.%${term}%,last_name.ilike.%${term}%`,
-            )
+            .or(`first_name.ilike.%${term}%,last_name.ilike.%${term}%`)
             .limit(8),
           supabase
             .from("schools")
@@ -170,34 +187,62 @@ export default function MobileHomePage() {
             .eq("workflow_type", "event")
             .ilike("title", `%${term}%`)
             .limit(6),
-        ]);
+        ];
+
+        if (looksLikeOrderId) {
+          queries.push(
+            supabase
+              .from("orders")
+              .select(
+                "id, status, parent_name, customer_name, package_name, student:students(first_name,last_name)",
+              )
+              .eq("photographer_id", photographerId)
+              .ilike("id", `${term}%`)
+              .limit(6),
+          );
+        }
+
+        const results = (await Promise.all(queries)) as Array<{
+          data: unknown;
+          error: unknown;
+        }>;
 
         if (cancelled) return;
 
+        const [studentsRes, schoolsRes, projectsRes, ordersRes] = results;
+
         const next: SearchHit[] = [];
 
-        for (const s of (students.data ?? []) as Array<{
+        for (const s of (studentsRes.data ?? []) as Array<{
           id: string;
           first_name: string | null;
           last_name: string | null;
           school_id: string | null;
-          schools: { school_name: string | null } | { school_name: string | null }[] | null;
+          class_id: string | null;
+          schools:
+            | { school_name: string | null }
+            | { school_name: string | null }[]
+            | null;
         }>) {
           const schoolRow = Array.isArray(s.schools) ? s.schools[0] : s.schools;
+          // Mobile has no class-level page — the deepest leaf for a student
+          // is /m/schools/[id].  The `?student=` param tells that page to
+          // scroll to the student card and highlight it.
+          const href = s.school_id
+            ? `/m/schools/${s.school_id}?student=${encodeURIComponent(s.id)}`
+            : `/m/orders?student=${encodeURIComponent(s.id)}`;
           next.push({
-            kind: "order",
+            kind: "student",
             id: s.id,
             title:
               [clean(s.first_name), clean(s.last_name)]
                 .filter(Boolean)
                 .join(" ") || "Student",
             subtitle: clean(schoolRow?.school_name) || "Student",
-            href: s.school_id
-              ? `/m/schools/${s.school_id}?student=${s.id}`
-              : `/m/orders?student=${s.id}`,
+            href,
           });
         }
-        for (const school of (schools.data ?? []) as Array<{
+        for (const school of (schoolsRes.data ?? []) as Array<{
           id: string;
           school_name: string | null;
         }>) {
@@ -209,7 +254,7 @@ export default function MobileHomePage() {
             href: `/m/schools/${school.id}`,
           });
         }
-        for (const proj of (projects.data ?? []) as Array<{
+        for (const proj of (projectsRes.data ?? []) as Array<{
           id: string;
           title: string | null;
           client_name: string | null;
@@ -221,6 +266,36 @@ export default function MobileHomePage() {
             subtitle: clean(proj.client_name) || "Event",
             href: `/m/events/${proj.id}`,
           });
+        }
+        if (ordersRes) {
+          for (const o of (ordersRes.data ?? []) as Array<{
+            id: string;
+            status: string | null;
+            parent_name: string | null;
+            customer_name: string | null;
+            package_name: string | null;
+            student:
+              | { first_name: string | null; last_name: string | null }
+              | { first_name: string | null; last_name: string | null }[]
+              | null;
+          }>) {
+            const stu = Array.isArray(o.student) ? o.student[0] : o.student;
+            const who =
+              [clean(stu?.first_name), clean(stu?.last_name)]
+                .filter(Boolean)
+                .join(" ") ||
+              clean(o.parent_name) ||
+              clean(o.customer_name) ||
+              "Customer";
+            next.push({
+              kind: "order",
+              id: o.id,
+              title: `#${o.id.slice(0, 8).toUpperCase()} · ${who}`,
+              subtitle:
+                clean(o.package_name) || clean(o.status) || "Order",
+              href: `/m/orders/${o.id}`,
+            });
+          }
         }
 
         setHits(next);
@@ -576,8 +651,10 @@ function MiniStat({
 
 function kindLabel(kind: SearchHit["kind"]): string {
   switch (kind) {
-    case "order":
+    case "student":
       return "Student";
+    case "order":
+      return "Order";
     case "school":
       return "School";
     case "event":

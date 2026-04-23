@@ -137,7 +137,7 @@ export function useSpotlight(term: string, enabled: boolean) {
           supabase
             .from("students")
             .select(
-              "id, first_name, last_name, photo_url, school_id, class_name, schools!inner(school_name, photographer_id)",
+              "id, first_name, last_name, photo_url, school_id, class_id, class_name, schools!inner(school_name, photographer_id)",
             )
             .eq("schools.photographer_id", photographerId)
             .or(
@@ -207,6 +207,7 @@ export function useSpotlight(term: string, enabled: boolean) {
             first_name: string | null;
             last_name: string | null;
             school_id: string | null;
+            class_id: string | null;
             class_name: string | null;
             schools:
               | { school_name: string | null }
@@ -226,6 +227,18 @@ export function useSpotlight(term: string, enabled: boolean) {
               .join(" ") || "Student";
           matchedStudentIds.push(s.id);
           matchedStudentNames[s.id] = studentName;
+          // Deep-link priority: class page > school page > schools list.
+          // The class page can scroll to / highlight the specific student
+          // via ?student=ID. If we only have a school (no class yet),
+          // the school page scrolls to the student's class card.
+          let href: string;
+          if (s.school_id && s.class_id) {
+            href = `/dashboard/projects/schools/${s.school_id}/classes/${s.class_id}?student=${encodeURIComponent(s.id)}`;
+          } else if (s.school_id) {
+            href = `/dashboard/projects/schools/${s.school_id}?student=${encodeURIComponent(s.id)}`;
+          } else {
+            href = "/dashboard/schools";
+          }
           next.push({
             kind: "student",
             id: s.id,
@@ -236,9 +249,7 @@ export function useSpotlight(term: string, enabled: boolean) {
             ]
               .filter(Boolean)
               .join(" · "),
-            href: s.school_id
-              ? `/dashboard/projects/schools/${s.school_id}`
-              : "/dashboard/schools",
+            href,
           });
         }
 

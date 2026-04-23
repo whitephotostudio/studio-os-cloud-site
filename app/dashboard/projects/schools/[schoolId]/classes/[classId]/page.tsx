@@ -2,7 +2,7 @@
 
 import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 import {
   ArrowLeft,
   CheckSquare,
@@ -134,6 +134,14 @@ function imageFilesOnly(files: File[]) {
 export default function SchoolsSchoolClassPage() {
   const supabase = useMemo(() => createClient(), []);
   const params = useParams();
+  const searchParams = useSearchParams();
+  // Spotlight search deep-links here with ?student=<id>. When that id
+  // matches a loaded student, we scroll to the card and briefly flash
+  // a highlight ring. Tracked as state (not just the URL param) so we
+  // can clear the highlight after the flash without losing the param.
+  const focusStudentIdFromUrl = searchParams?.get("student") ?? null;
+  const focusAppliedRef = useRef(false);
+  const [focusStudentId, setFocusStudentId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const folderInputRef = useRef<HTMLInputElement | null>(null);
   const uploadTargetStudentRef = useRef<Student | null>(null);
@@ -379,6 +387,33 @@ export default function SchoolsSchoolClassPage() {
       cancelled = true;
     };
   }, [className, schoolId, supabase]);
+
+  // Deep-link from Spotlight search: when ?student=<id> matches a loaded
+  // student, scroll the card into view and flash a highlight ring.
+  // Runs once per mount — clearing the highlight doesn't re-trigger
+  // because of focusAppliedRef.
+  useEffect(() => {
+    if (!focusStudentIdFromUrl) return;
+    if (focusAppliedRef.current) return;
+    if (students.length === 0) return;
+    if (!students.some((s) => s.id === focusStudentIdFromUrl)) return;
+    focusAppliedRef.current = true;
+    setFocusStudentId(focusStudentIdFromUrl);
+    // If the student is hidden by the current search, clear it so they
+    // actually see the card.
+    setStudentSearch("");
+    const raf = requestAnimationFrame(() => {
+      const el = document.querySelector<HTMLElement>(
+        `[data-student-id="${focusStudentIdFromUrl}"]`,
+      );
+      if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
+    const clearTimer = window.setTimeout(() => setFocusStudentId(null), 2800);
+    return () => {
+      cancelAnimationFrame(raf);
+      window.clearTimeout(clearTimer);
+    };
+  }, [focusStudentIdFromUrl, students]);
 
   function getPhotoUrls(student: Student) {
     return photoUrlsMap[student.id] ?? (student.photo_url ? [student.photo_url] : []);
@@ -1005,19 +1040,28 @@ export default function SchoolsSchoolClassPage() {
                     openStudentMenuId === student.id;
                   const pinVisible = visiblePinIds.includes(student.id);
 
+                  const isFocused = focusStudentId === student.id;
                   return (
                     <div
                       key={student.id}
+                      data-student-id={student.id}
                       onMouseEnter={() => setHoveredStudentId(student.id)}
                       onMouseLeave={() => setHoveredStudentId((prev) => (prev === student.id ? null : prev))}
                       style={{
                         background: "#fff",
-                        border: selected ? "2px solid #b91c1c" : "1px solid #e5e7eb",
+                        border: isFocused
+                          ? "2px solid #2563eb"
+                          : selected
+                            ? "2px solid #b91c1c"
+                            : "1px solid #e5e7eb",
                         borderRadius: 18,
                         overflow: "visible",
-                        boxShadow: "0 8px 24px rgba(16,24,40,0.05)",
+                        boxShadow: isFocused
+                          ? "0 0 0 4px rgba(37,99,235,0.18), 0 8px 24px rgba(16,24,40,0.05)"
+                          : "0 8px 24px rgba(16,24,40,0.05)",
                         position: "relative",
                         zIndex: openStudentMenuId === student.id ? 30 : 1,
+                        transition: "box-shadow 0.25s ease, border-color 0.25s ease",
                       }}
                     >
                       <button

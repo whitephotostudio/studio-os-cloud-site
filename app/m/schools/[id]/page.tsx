@@ -11,9 +11,9 @@
 //   - Recent orders strip drilling into /m/orders/[id] or the per-school
 //     orders page
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 import {
   ArrowLeft,
   Check,
@@ -126,6 +126,14 @@ async function shareOrCopy(
 export default function MobileSchoolDetailPage() {
   const params = useParams<{ id: string }>();
   const id = params?.id ?? "";
+  // `?student=<uuid>` is passed by the /m home spotlight — we scroll to that
+  // student's card, flash a highlight ring, and auto-reveal their PIN so
+  // Harout can read it off in one tap.  Mirrors the desktop deep-link on
+  // /dashboard/projects/schools/[id]/classes/[id]?student=<id>.
+  const searchParams = useSearchParams();
+  const focusStudentIdFromUrl = searchParams?.get("student") ?? null;
+  const focusAppliedRef = useRef(false);
+
   const [supabase] = useState(() => createClient());
   const [school, setSchool] = useState<School | null>(null);
   const [students, setStudents] = useState<Student[]>([]);
@@ -136,6 +144,7 @@ export default function MobileSchoolDetailPage() {
   const [revealedPins, setRevealedPins] = useState<Record<string, boolean>>({});
   const [copied, setCopied] = useState<string>("");
   const [toast, setToast] = useState("");
+  const [focusStudentId, setFocusStudentId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!id) return;
@@ -197,6 +206,31 @@ export default function MobileSchoolDetailPage() {
       cancelled = true;
     };
   }, [id, supabase]);
+
+  // Apply the ?student= deep-link once students are loaded.
+  useEffect(() => {
+    if (!focusStudentIdFromUrl) return;
+    if (focusAppliedRef.current) return;
+    if (students.length === 0) return;
+    const target = students.find((s) => s.id === focusStudentIdFromUrl);
+    if (!target) return;
+    focusAppliedRef.current = true;
+    setSearch(""); // Clear any filter so the student is visible.
+    setFocusStudentId(target.id);
+    setRevealedPins((prev) => ({ ...prev, [target.id]: true }));
+    // Wait a frame so the card renders with data-student-id before we scroll.
+    window.setTimeout(() => {
+      const el = document.querySelector(
+        `[data-student-id="${target.id}"]`,
+      ) as HTMLElement | null;
+      if (el) {
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
+    }, 40);
+    // Let the glow fade after a moment so the UI doesn't stay "stuck".
+    const clearId = window.setTimeout(() => setFocusStudentId(null), 2800);
+    return () => window.clearTimeout(clearId);
+  }, [focusStudentIdFromUrl, students]);
 
   const cover = useMemo(() => {
     const first = students.find((s) => clean(s.photo_url));
@@ -629,6 +663,7 @@ export default function MobileSchoolDetailPage() {
             {filteredStudents.map((student) => {
               const revealed = !!revealedPins[student.id];
               const hasPin = !!clean(student.pin);
+              const isFocused = focusStudentId === student.id;
               const name =
                 [clean(student.first_name), clean(student.last_name)]
                   .filter(Boolean)
@@ -636,14 +671,23 @@ export default function MobileSchoolDetailPage() {
               return (
                 <li
                   key={student.id}
+                  data-student-id={student.id}
                   style={{
                     display: "flex",
                     gap: 10,
                     padding: 10,
                     background: "#fff",
-                    border: "1px solid #e5e7eb",
+                    border: isFocused
+                      ? "2px solid #1d4ed8"
+                      : "1px solid #e5e7eb",
                     borderRadius: 12,
                     alignItems: "center",
+                    boxShadow: isFocused
+                      ? "0 0 0 4px rgba(29,78,216,0.18)"
+                      : undefined,
+                    scrollMarginTop: 80,
+                    transition:
+                      "border-color 200ms ease, box-shadow 200ms ease",
                   }}
                 >
                   <div

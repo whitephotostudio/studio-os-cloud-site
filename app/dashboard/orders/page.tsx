@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import {
   ArrowLeft,
   Check,
@@ -404,6 +405,11 @@ pre{white-space:pre-wrap;line-height:1.55;font-size:12px;background:#f9fafb;bord
 export default function OrdersPage() {
   const supabase = createClient();
   const isMobile = useIsMobile();
+  const searchParams = useSearchParams();
+  const focusOrderId = searchParams?.get("focus") ?? null;
+  // Guard so we only auto-open the focused order once (on first matching load),
+  // otherwise toggling the selection off would immediately re-open it.
+  const focusAppliedRef = useRef(false);
   const [loading, setLoading] = useState(true);
   const [orders, setOrders] = useState<Order[]>([]);
   const [filter, setFilter] = useState<string>("new");
@@ -421,6 +427,39 @@ export default function OrdersPage() {
     });
     return () => cancelAnimationFrame(raf);
   }, [selected?.id, isMobile]);
+
+  // Deep-link support: Spotlight search sends users here with
+  // ?focus=<orderId>. When that order has loaded, auto-open it, flip the
+  // filter to "all" (otherwise the card may be hidden by the current
+  // filter), scroll it into view, and mark it seen. Runs once per order
+  // id so clicking the same Spotlight result twice doesn't break toggle
+  // behaviour.
+  useEffect(() => {
+    if (!focusOrderId) return;
+    if (focusAppliedRef.current) return;
+    if (orders.length === 0) return;
+    const target = orders.find((o) => o.id === focusOrderId);
+    if (!target) return;
+    focusAppliedRef.current = true;
+    setFilter("all");
+    setSelected(target);
+    if (!target.seen_by_photographer) {
+      void markSeen(target.id);
+    }
+    const raf = requestAnimationFrame(() => {
+      // data-order-ids is a space-separated list (group cards can bundle
+      // multiple orders); ~= matches a whole whitespace-separated word.
+      const el = document.querySelector<HTMLElement>(
+        `[data-order-ids~="${target.id}"]`,
+      );
+      if (el) {
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+      } else if (isMobile) {
+        detailsPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [focusOrderId, orders, isMobile]); // eslint-disable-line react-hooks/exhaustive-deps
   const [updatingId, setUpdatingId] = useState<string | null>(null);
   const [userEmail, setUserEmail] = useState("");
   const [pgId, setPgId] = useState<string | null>(null);
@@ -1497,6 +1536,7 @@ export default function OrdersPage() {
                   return (
                     <div
                       key={group.key}
+                      data-order-ids={group.orders.map((o) => o.id).join(" ")}
                       style={{ background: cardBg, border: isSelected ? "2px solid #cc0000" : `1px solid ${borderColor}`, borderRadius: 18, overflow: "hidden", boxShadow: isSelected ? "0 0 0 3px rgba(204,0,0,0.1)" : "0 4px 12px rgba(15,23,42,0.05)", cursor: "pointer", transition: "border-color 0.15s" }}
                       onClick={() => openOrder(order)}
                     >
@@ -1554,6 +1594,7 @@ export default function OrdersPage() {
                   return (
                     <div
                       key={group.key}
+                      data-order-ids={group.orders.map((o) => o.id).join(" ")}
                       style={{ display: "grid", gridTemplateColumns: "36px 56px 1fr 1fr 1fr 90px 100px 36px", gap: 0, alignItems: "center", padding: "10px 14px", borderTop: idx === 0 ? "none" : `1px solid #f5f5f5`, background: isSelected ? "#fff9f9" : "#fff", cursor: "pointer" }}
                       onClick={() => openOrder(order)}
                     >
@@ -1600,6 +1641,7 @@ export default function OrdersPage() {
                   return (
                     <div
                       key={group.key}
+                      data-order-ids={group.orders.map((o) => o.id).join(" ")}
                       onClick={() => openOrder(order)}
                       style={{
                         background: cardBg,

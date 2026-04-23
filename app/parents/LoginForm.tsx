@@ -7,9 +7,16 @@
 // no extra API round-trip on the client.
 
 import Image from "next/image";
-import { FormEvent, useEffect, useState } from "react";
+import {
+  FormEvent,
+  KeyboardEvent as ReactKeyboardEvent,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useRouter } from "next/navigation";
-import { Check, ChevronDown, Images, KeyRound, Mail, School } from "lucide-react";
+import { Check, ChevronDown, Images, KeyRound, Mail, School, Search, X } from "lucide-react";
 
 type SchoolRow = {
   id: string;
@@ -63,6 +70,271 @@ type EventAccessPayload = {
 
 function projectLabel(project: EventProjectRow) {
   return project.title?.trim() || project.client_name?.trim() || "Untitled Event";
+}
+
+// ── Reusable searchable combo-box ────────────────────────────────────────
+// Type-ahead input that replaces a native <select>. Data is already in
+// memory (SSR'd), so filtering is instant with no API calls. Keyboard
+// (↑/↓/Enter/Esc) + mouse + touch. Same visual language as the rest of
+// the parents portal.
+type SearchableOptionProps<T> = {
+  id: string;
+  label: string;
+  row: T;
+  subtext?: string;
+};
+
+function SearchableSelect<T>({
+  value,
+  onChange,
+  options,
+  placeholder,
+  emptyHint,
+  inputStyle,
+  ariaLabel,
+}: {
+  value: string;
+  onChange: (id: string, row: T | null) => void;
+  options: SearchableOptionProps<T>[];
+  placeholder: string;
+  emptyHint?: string;
+  inputStyle: React.CSSProperties;
+  ariaLabel?: string;
+}) {
+  const [query, setQuery] = useState("");
+  const [isOpen, setIsOpen] = useState(false);
+  const [highlightedIndex, setHighlightedIndex] = useState(0);
+  const wrapperRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const selectedOption = useMemo(
+    () => options.find((o) => o.id === value) ?? null,
+    [options, value],
+  );
+
+  // Keep the visible text in sync with the external value (e.g. prefilled
+  // state from URL params, or clearing on tab switch). Only sync when the
+  // dropdown is closed, so we don't clobber what the user is actively
+  // typing.
+  useEffect(() => {
+    if (isOpen) return;
+    setQuery(selectedOption ? selectedOption.label : "");
+  }, [selectedOption, isOpen]);
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    // When the input shows the currently-selected label (nothing typed),
+    // show the full list. That way the user can open the menu and scroll
+    // even after picking something.
+    if (!q || (selectedOption && query === selectedOption.label)) {
+      return options;
+    }
+    return options.filter((o) => o.label.toLowerCase().includes(q));
+  }, [options, query, selectedOption]);
+
+  // Close on outside click.
+  useEffect(() => {
+    if (!isOpen) return;
+    function onDocDown(e: MouseEvent | TouchEvent) {
+      if (wrapperRef.current && !wrapperRef.current.contains(e.target as Node)) {
+        setIsOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", onDocDown);
+    document.addEventListener("touchstart", onDocDown);
+    return () => {
+      document.removeEventListener("mousedown", onDocDown);
+      document.removeEventListener("touchstart", onDocDown);
+    };
+  }, [isOpen]);
+
+  // Reset highlight when the filter narrows.
+  useEffect(() => {
+    setHighlightedIndex(0);
+  }, [filtered.length]);
+
+  function select(option: SearchableOptionProps<T>) {
+    onChange(option.id, option.row);
+    setQuery(option.label);
+    setIsOpen(false);
+    // Blur so the mobile keyboard tucks away.
+    inputRef.current?.blur();
+  }
+
+  function clearSelection() {
+    onChange("", null);
+    setQuery("");
+    setIsOpen(true);
+    inputRef.current?.focus();
+  }
+
+  function onKeyDown(e: ReactKeyboardEvent<HTMLInputElement>) {
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      if (!isOpen) {
+        setIsOpen(true);
+        return;
+      }
+      setHighlightedIndex((i) => Math.min(i + 1, Math.max(filtered.length - 1, 0)));
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setHighlightedIndex((i) => Math.max(i - 1, 0));
+    } else if (e.key === "Enter") {
+      if (isOpen && filtered[highlightedIndex]) {
+        e.preventDefault();
+        select(filtered[highlightedIndex]);
+      }
+    } else if (e.key === "Escape") {
+      setIsOpen(false);
+      inputRef.current?.blur();
+    }
+  }
+
+  const showClear = Boolean(selectedOption && query === selectedOption.label);
+
+  return (
+    <div ref={wrapperRef} style={{ position: "relative" }}>
+      <Search
+        size={16}
+        color="#98a2b3"
+        style={{ position: "absolute", left: 14, top: 17, pointerEvents: "none" }}
+      />
+      <input
+        ref={inputRef}
+        type="text"
+        value={query}
+        onChange={(e) => {
+          setQuery(e.target.value);
+          setIsOpen(true);
+          // If the user starts editing after a selection, unset the
+          // external value so the form knows nothing is picked yet.
+          if (value) onChange("", null);
+        }}
+        onFocus={() => setIsOpen(true)}
+        onKeyDown={onKeyDown}
+        placeholder={placeholder}
+        aria-label={ariaLabel}
+        aria-autocomplete="list"
+        aria-expanded={isOpen}
+        autoComplete="off"
+        autoCapitalize="off"
+        autoCorrect="off"
+        spellCheck={false}
+        style={{ ...inputStyle, paddingLeft: 42, paddingRight: 42, color: "#111" }}
+      />
+      {showClear ? (
+        <button
+          type="button"
+          onClick={clearSelection}
+          aria-label="Clear selection"
+          style={{
+            position: "absolute",
+            right: 10,
+            top: 10,
+            width: 28,
+            height: 28,
+            borderRadius: 999,
+            background: "transparent",
+            border: "none",
+            cursor: "pointer",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            color: "#98a2b3",
+            padding: 0,
+          }}
+        >
+          <X size={16} />
+        </button>
+      ) : (
+        <ChevronDown
+          size={18}
+          color="#98a2b3"
+          style={{ position: "absolute", right: 14, top: 15, pointerEvents: "none" }}
+        />
+      )}
+
+      {isOpen ? (
+        <div
+          style={{
+            position: "absolute",
+            top: "calc(100% + 6px)",
+            left: 0,
+            right: 0,
+            zIndex: 50,
+            background: "#fff",
+            border: "1px solid #e1e3e8",
+            borderRadius: 12,
+            boxShadow: "0 18px 40px rgba(17,24,39,0.14)",
+            maxHeight: 280,
+            overflowY: "auto",
+            WebkitOverflowScrolling: "touch",
+          }}
+          role="listbox"
+        >
+          {filtered.length === 0 ? (
+            <div style={{ padding: "14px 16px", fontSize: 13, color: "#98a2b3" }}>
+              {emptyHint || "No matches. Try a different search."}
+            </div>
+          ) : (
+            filtered.map((option, i) => {
+              const isSelected = option.id === value;
+              const isHighlighted = i === highlightedIndex;
+              return (
+                <button
+                  key={option.id}
+                  type="button"
+                  role="option"
+                  aria-selected={isSelected}
+                  // onMouseDown fires before the input's blur, so preventDefault
+                  // here keeps focus on the input long enough for select()
+                  // to run. Works for mouse and synthesized touch.
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    select(option);
+                  }}
+                  onMouseEnter={() => setHighlightedIndex(i)}
+                  style={{
+                    display: "block",
+                    width: "100%",
+                    textAlign: "left",
+                    padding: "11px 16px",
+                    border: "none",
+                    borderBottom: i === filtered.length - 1 ? "none" : "1px solid #f1f2f4",
+                    background: isHighlighted ? "#f3f5f8" : "#fff",
+                    cursor: "pointer",
+                    fontFamily: "inherit",
+                    color: "#111",
+                  }}
+                >
+                  <div
+                    style={{
+                      fontSize: 14,
+                      fontWeight: isSelected ? 700 : 500,
+                      lineHeight: 1.35,
+                    }}
+                  >
+                    {option.label}
+                  </div>
+                  {option.subtext ? (
+                    <div
+                      style={{
+                        fontSize: 12,
+                        color: "#98a2b3",
+                        marginTop: 2,
+                      }}
+                    >
+                      {option.subtext}
+                    </div>
+                  ) : null}
+                </button>
+              );
+            })
+          )}
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 export default function LoginForm({
@@ -525,31 +797,23 @@ export default function LoginForm({
             <form onSubmit={handleSchoolLogin} style={{ display: "flex", flexDirection: "column", gap: 16 }}>
               <div>
                 <label style={labelStyle}>School</label>
-                <div style={{ position: "relative" }}>
-                  <select
-                    value={selectedSchoolId}
-                    onChange={(e) => {
-                      const nextSchool = schools.find((s) => s.id === e.target.value) ?? null;
-                      setSelectedSchoolId(e.target.value);
-                      setSelectedSchool(nextSchool);
-                      resetErrors();
-                    }}
-                    required
-                    style={{
-                      ...inputStyle,
-                      appearance: "none",
-                      paddingRight: 42,
-                      cursor: "pointer",
-                      color: selectedSchoolId ? "#111" : "#98a2b3",
-                    }}
-                  >
-                    <option value="" disabled>Select your school…</option>
-                    {schools.map((row) => (
-                      <option key={row.id} value={row.id}>{row.school_name}</option>
-                    ))}
-                  </select>
-                  <ChevronDown size={18} color="#98a2b3" style={{ position: "absolute", right: 14, top: 15, pointerEvents: "none" }} />
-                </div>
+                <SearchableSelect<SchoolRow>
+                  value={selectedSchoolId}
+                  onChange={(id, row) => {
+                    setSelectedSchoolId(id);
+                    setSelectedSchool(row);
+                    resetErrors();
+                  }}
+                  options={schools.map((row) => ({
+                    id: row.id,
+                    label: row.school_name,
+                    row,
+                  }))}
+                  placeholder="Search your school…"
+                  emptyHint="No schools match that search."
+                  inputStyle={inputStyle}
+                  ariaLabel="School"
+                />
               </div>
 
               <div>
@@ -612,24 +876,38 @@ export default function LoginForm({
             <form onSubmit={handleEventLogin} style={{ display: "flex", flexDirection: "column", gap: 16 }}>
               <div>
                 <label style={labelStyle}>Event</label>
-                <div style={{ position: "relative" }}>
-                  <select
-                    value={selectedEventId}
-                    onChange={(e) => {
-                      setSelectedEventId(e.target.value);
-                      setSelectedEvent(eventProjects.find((row) => row.id === e.target.value) ?? null);
-                      resetErrors();
-                    }}
-                    required
-                    style={{ ...inputStyle, appearance: "none", paddingRight: 42, cursor: "pointer", color: selectedEventId ? "#111" : "#98a2b3" }}
-                  >
-                    <option value="" disabled>Select your event…</option>
-                    {eventProjects.map((row) => (
-                      <option key={row.id} value={row.id}>{projectLabel(row)}</option>
-                    ))}
-                  </select>
-                  <ChevronDown size={18} color="#98a2b3" style={{ position: "absolute", right: 14, top: 15, pointerEvents: "none" }} />
-                </div>
+                <SearchableSelect<EventProjectRow>
+                  value={selectedEventId}
+                  onChange={(id, row) => {
+                    setSelectedEventId(id);
+                    setSelectedEvent(row);
+                    resetErrors();
+                  }}
+                  options={eventProjects.map((row) => {
+                    const dateStr = row.event_date
+                      ? new Date(row.event_date).toLocaleDateString(undefined, {
+                          year: "numeric",
+                          month: "short",
+                          day: "numeric",
+                        })
+                      : null;
+                    const subParts: string[] = [];
+                    if (dateStr) subParts.push(dateStr);
+                    if (row.client_name && row.title && row.title.trim() !== row.client_name.trim()) {
+                      subParts.push(row.client_name.trim());
+                    }
+                    return {
+                      id: row.id,
+                      label: projectLabel(row),
+                      row,
+                      subtext: subParts.length ? subParts.join(" · ") : undefined,
+                    };
+                  })}
+                  placeholder="Search your event…"
+                  emptyHint="No events match that search."
+                  inputStyle={inputStyle}
+                  ariaLabel="Event"
+                />
               </div>
 
               <div>
