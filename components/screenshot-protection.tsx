@@ -498,7 +498,9 @@ function IdleBlurOverlay({
           top: 22,
           left: "50%",
           transform: "translateX(-50%)",
-          zIndex: 99985,
+          // Above watermark (99990) so the pill text reads clearly.
+          // Still below the centered BlurNotice (99999) for layering.
+          zIndex: 99995,
           pointerEvents: "none",
           opacity: active ? 1 : 0,
           transition: "opacity 60ms linear",
