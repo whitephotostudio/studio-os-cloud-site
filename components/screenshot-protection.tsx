@@ -77,7 +77,18 @@ const BODY_BLUR_FILTER = "blur(26px) saturate(0.5)";
 
 function ScreenshotProtection({ flags, watermarkText }: Props) {
   const [blurred, setBlurred] = useState(false);
+  // idleBlur = the always-present backdrop-filter overlay that's visible
+  // whenever the user isn't actively interacting.  This is the primary
+  // screenshot defense — by the time any capture shortcut fires, the
+  // blur is already painted (no race with OS capture).
+  const [idleBlur, setIdleBlur] = useState<boolean>(
+    // Start blurred on mobile immediately; desktop fades in on idle.
+    typeof window !== "undefined"
+      ? flags.mobile && window.matchMedia?.("(pointer: coarse)").matches
+      : false,
+  );
   const blurTimerRef = useRef<number | null>(null);
+  const idleTimerRef = useRef<number | null>(null);
 
   // Synchronous DOM apply — we paint the blur into the current frame and
   // THEN kick React state so the notice / other effects render.  Waiting
@@ -274,69 +285,116 @@ function ScreenshotProtection({ flags, watermarkText }: Props) {
     };
   }, [flags.desktop, triggerBlur]);
 
-  // Mobile: always-on half-blur mode + press-and-hold reveal.
+  // IDLE-BLUR: the core screenshot defense.  A fixed overlay with
+  // backdrop-filter:blur is present whenever the user isn't actively
+  // interacting.  This means by the time ANY screenshot shortcut fires
+  // (⌘⇧3/4/5, iOS Volume+Power, third-party capture apps, ⌘⇧3 on
+  // touchscreen Macs), the blur is ALREADY painted — there's no race
+  // with the OS capture.
   //
-  // The CSS injected below applies a diagonal blurred overlay to every
-  // `[data-gallery-image]` container.  The overlay covers the lower-right
-  // triangle of each photo at all times.  When a parent presses and holds
-  // a photo, we add the `ss-reveal` class which removes the overlay; on
-  // release we remove the class and the overlay restores.
+  // - Desktop: overlay appears after 150ms of no mouse / wheel / keydown.
+  //   Moving the mouse or scrolling clears it instantly.  The assumption
+  //   is that to take a screenshot you must stop moving to press keys —
+  //   those ~200-500ms of stillness are long enough to trigger the blur.
   //
-  // The overlay uses `backdrop-filter: blur(...)` so the underlying image
-  // is actually obscured — not just covered.  This means any OS screenshot
-  // (iOS "Save Image" sheet, Android native capture, ⌘⇧3 on a connected
-  // touchscreen) yields a half-blurred image.
+  // - Mobile: overlay is always present unless a finger is actively
+  //   touching the screen.  iOS Volume+Power and Android Power+VolDown
+  //   don't touch the page, so the capture lands on a blurred frame.
+  //   Press to reveal; release to re-blur.
+  //
+  // The overlay sits at z-index 8 — above gallery images (default stacking
+  // context), below sticky UI chrome (which usually uses z-index 20+).
+  // UI buttons stay crisp so the parent can still operate the portal.
   useEffect(() => {
-    if (!flags.mobile) return;
+    if (!flags.desktop && !flags.mobile) return;
 
-    let heldTarget: Element | null = null;
+    const isCoarsePointer =
+      typeof window !== "undefined" &&
+      window.matchMedia?.("(pointer: coarse)").matches;
+    const treatAsMobile = flags.mobile && isCoarsePointer;
+    const treatAsDesktop = flags.desktop && !isCoarsePointer;
 
-    function findGalleryTile(el: EventTarget | null): Element | null {
-      if (!(el instanceof Element)) return null;
-      return el.closest("[data-gallery-image]");
+    const IDLE_MS = 150;
+
+    function scheduleIdleBlur() {
+      if (idleTimerRef.current) window.clearTimeout(idleTimerRef.current);
+      idleTimerRef.current = window.setTimeout(() => {
+        setIdleBlur(true);
+      }, IDLE_MS);
     }
 
-    function onPressStart(e: TouchEvent | MouseEvent) {
-      const tile = findGalleryTile(e.target);
-      if (!tile) return;
-      if (heldTarget && heldTarget !== tile) {
-        heldTarget.classList.remove("ss-reveal");
+    function markActive() {
+      setIdleBlur(false);
+      if (idleTimerRef.current) window.clearTimeout(idleTimerRef.current);
+      if (treatAsDesktop) {
+        // Re-arm idle timer — blur reappears shortly after movement stops.
+        scheduleIdleBlur();
       }
-      heldTarget = tile;
-      tile.classList.add("ss-reveal");
+      // On mobile: stay cleared while actively touching; touchend re-blurs.
     }
 
-    function onPressEnd() {
-      if (heldTarget) {
-        heldTarget.classList.remove("ss-reveal");
-        heldTarget = null;
+    function markIdleImmediate() {
+      if (idleTimerRef.current) window.clearTimeout(idleTimerRef.current);
+      setIdleBlur(true);
+    }
+
+    if (treatAsDesktop) {
+      // Start un-blurred; blur appears ~150ms after mouse stops.
+      scheduleIdleBlur();
+
+      window.addEventListener("mousemove", markActive, { passive: true });
+      window.addEventListener("wheel", markActive, { passive: true });
+      window.addEventListener("mousedown", markActive, { passive: true });
+      window.addEventListener("scroll", markActive, { capture: true, passive: true });
+      window.addEventListener("keydown", markActive, true);
+
+      // Aggressive triggers — blur immediately without waiting for idle:
+      document.documentElement.addEventListener("mouseleave", markIdleImmediate);
+      document.addEventListener("visibilitychange", markIdleImmediate);
+      window.addEventListener("blur", markIdleImmediate);
+
+      return () => {
+        if (idleTimerRef.current) window.clearTimeout(idleTimerRef.current);
+        window.removeEventListener("mousemove", markActive);
+        window.removeEventListener("wheel", markActive);
+        window.removeEventListener("mousedown", markActive);
+        window.removeEventListener("scroll", markActive, { capture: true } as EventListenerOptions);
+        window.removeEventListener("keydown", markActive, true);
+        document.documentElement.removeEventListener("mouseleave", markIdleImmediate);
+        document.removeEventListener("visibilitychange", markIdleImmediate);
+        window.removeEventListener("blur", markIdleImmediate);
+      };
+    }
+
+    if (treatAsMobile) {
+      // Start blurred and only clear while actively touching.
+      setIdleBlur(true);
+
+      function onTouchStart() {
+        setIdleBlur(false);
       }
-    }
-
-    function onContextMenu(e: Event) {
-      e.preventDefault();
-    }
-
-    window.addEventListener("touchstart", onPressStart, { passive: true });
-    window.addEventListener("touchend", onPressEnd, { passive: true });
-    window.addEventListener("touchcancel", onPressEnd, { passive: true });
-    // Mouse fallback so the same pattern works on tablets with a trackpad.
-    window.addEventListener("mousedown", onPressStart, true);
-    window.addEventListener("mouseup", onPressEnd, true);
-    window.addEventListener("contextmenu", onContextMenu, true);
-
-    return () => {
-      window.removeEventListener("touchstart", onPressStart);
-      window.removeEventListener("touchend", onPressEnd);
-      window.removeEventListener("touchcancel", onPressEnd);
-      window.removeEventListener("mousedown", onPressStart, true);
-      window.removeEventListener("mouseup", onPressEnd, true);
-      window.removeEventListener("contextmenu", onContextMenu, true);
-      if (heldTarget) {
-        (heldTarget as Element).classList.remove("ss-reveal");
+      function onTouchEnd() {
+        setIdleBlur(true);
       }
-    };
-  }, [flags.mobile]);
+      function onContextMenu(e: Event) {
+        e.preventDefault();
+      }
+
+      window.addEventListener("touchstart", onTouchStart, { passive: true });
+      window.addEventListener("touchend", onTouchEnd, { passive: true });
+      window.addEventListener("touchcancel", onTouchEnd, { passive: true });
+      window.addEventListener("contextmenu", onContextMenu, true);
+
+      return () => {
+        window.removeEventListener("touchstart", onTouchStart);
+        window.removeEventListener("touchend", onTouchEnd);
+        window.removeEventListener("touchcancel", onTouchEnd);
+        window.removeEventListener("contextmenu", onContextMenu, true);
+      };
+    }
+
+    return;
+  }, [flags.desktop, flags.mobile]);
 
   // Cleanup on unmount.
   useEffect(() => {
@@ -352,44 +410,61 @@ function ScreenshotProtection({ flags, watermarkText }: Props) {
 
   return (
     <>
-      {/* CSS-level defenses.  The mobile half-blur overlay is the key
-          "always-on" deterrent — applied via ::after on every gallery tile
-          container.  `ss-reveal` is toggled by the press-and-hold JS above. */}
+      {/* CSS-level defenses: block native drag + selection on all images. */}
       {(flags.desktop || flags.mobile) ? (
         <style>{`
           img { -webkit-user-drag: none; user-select: none; }
           ${flags.mobile ? `
-          img, [data-gallery-image] {
+          img {
             -webkit-touch-callout: none;
             -webkit-user-select: none;
             user-select: none;
           }
-          [data-gallery-image] {
-            position: relative;
-            isolation: isolate;
-          }
-          [data-gallery-image]::after {
-            content: "";
-            position: absolute;
-            inset: 0;
-            pointer-events: none;
-            z-index: 3;
-            backdrop-filter: blur(16px) saturate(0.7);
-            -webkit-backdrop-filter: blur(16px) saturate(0.7);
-            clip-path: polygon(100% 0%, 100% 100%, 0% 100%);
-            background: linear-gradient(135deg, transparent 45%, rgba(20,20,30,0.08) 50%, transparent 55%);
-            transition: opacity 120ms ease;
-            opacity: 1;
-          }
-          [data-gallery-image].ss-reveal::after {
-            opacity: 0;
-          }
           ` : ""}
         `}</style>
+      ) : null}
+      {(flags.desktop || flags.mobile) ? (
+        <IdleBlurOverlay active={idleBlur} />
       ) : null}
       {flags.watermark ? <WatermarkOverlay text={watermarkText || ""} /> : null}
       {blurred ? <BlurNotice /> : null}
     </>
+  );
+}
+
+/**
+ * The primary screenshot defense.  A fixed-position overlay with
+ * `backdrop-filter: blur` that sits ABOVE gallery content but BELOW
+ * UI chrome (z-index 8 vs typical sticky-header z-index of 20-50).
+ *
+ * When active=true, gallery images behind this overlay appear blurred.
+ * Buttons, headers, tabs rendered at higher z-index stay crisp so the
+ * parent can still operate the portal.
+ *
+ * Because the overlay is ALWAYS in the DOM (just with opacity toggled
+ * via state), the blur is already painted and composited when any OS
+ * screenshot shortcut fires — no race with the capture.
+ */
+function IdleBlurOverlay({ active }: { active: boolean }) {
+  return (
+    <div
+      aria-hidden
+      style={{
+        position: "fixed",
+        inset: 0,
+        pointerEvents: "none",
+        zIndex: 8,
+        backdropFilter: "blur(22px) saturate(0.55)",
+        WebkitBackdropFilter: "blur(22px) saturate(0.55)",
+        background: "rgba(5, 10, 20, 0.04)",
+        // 60ms fade: short enough that the blur is usable in the same
+        // paint frame it appears, long enough that the un-blur on
+        // interaction doesn't feel jarring.
+        transition: "opacity 60ms linear",
+        opacity: active ? 1 : 0,
+        willChange: "opacity, backdrop-filter",
+      }}
+    />
   );
 }
 
