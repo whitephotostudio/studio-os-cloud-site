@@ -88,7 +88,6 @@ function ScreenshotProtection({ flags, watermarkText }: Props) {
       : false,
   );
   const blurTimerRef = useRef<number | null>(null);
-  const idleTimerRef = useRef<number | null>(null);
   // Direct DOM handle to the idle-blur overlay so triggerBlur can
   // force-paint it in the SAME SYNCHRONOUS CALL as the body filter —
   // no React render round-trip, no 60ms fade, no capture race.
@@ -104,16 +103,17 @@ function ScreenshotProtection({ flags, watermarkText }: Props) {
       document.body.style.filter = BODY_BLUR_FILTER;
     }
     // Double-layer blur: body filter AND backdrop-filter overlay.
-    // The overlay has its own compositing path (backdrop-filter) which
-    // on some browsers paints a frame earlier than body-level filter.
-    // Hitting both gives us the best odds of a blurred frame by the
-    // time the OS grabs it.  Direct DOM poke (no React state update)
-    // so it lands this tick, not next render.
+    // Direct DOM poke (no React state update) so it lands this tick,
+    // not next render — beats macOS ⌘⇧4's crop frame.
+    //
+    // IMPORTANT: we do NOT setIdleBlur here.  idleBlur is mobile-only
+    // now (always-on unless touching).  The overlay's visibility on
+    // desktop is driven purely by the reactive `blurred` flag —
+    // otherwise the overlay got stuck on after the 5s timer fired.
     if (overlayRef.current) {
       overlayRef.current.style.transition = "none";
       overlayRef.current.style.opacity = "1";
     }
-    setIdleBlur(true);
     setBlurred(true);
     if (blurTimerRef.current) window.clearTimeout(blurTimerRef.current);
     blurTimerRef.current = window.setTimeout(() => {
@@ -255,120 +255,49 @@ function ScreenshotProtection({ flags, watermarkText }: Props) {
     };
   }, [flags.desktop, triggerBlur]);
 
-  // IDLE-BLUR: the core screenshot defense.  A fixed overlay with
-  // backdrop-filter:blur is present whenever the user isn't actively
-  // interacting.  This means by the time ANY screenshot shortcut fires
-  // (⌘⇧3/4/5, iOS Volume+Power, third-party capture apps, ⌘⇧3 on
-  // touchscreen Macs), the blur is ALREADY painted — there's no race
-  // with the OS capture.
+  // MOBILE-ONLY idle blur.  Desktop used to have an idle-timer-based
+  // overlay too but it strobed every reading pause (~400ms pause while
+  // looking at a photo → blur appears → look away → blur goes → repeat).
+  // Desktop now relies SOLELY on the reactive Cmd/Shift keypress blur,
+  // which fires instantly via triggerBlur's synchronous DOM apply.
   //
-  // - Desktop: overlay appears after 150ms of no mouse / wheel / keydown.
-  //   Moving the mouse or scrolling clears it instantly.  The assumption
-  //   is that to take a screenshot you must stop moving to press keys —
-  //   those ~200-500ms of stillness are long enough to trigger the blur.
-  //
-  // - Mobile: overlay is always present unless a finger is actively
-  //   touching the screen.  iOS Volume+Power and Android Power+VolDown
-  //   don't touch the page, so the capture lands on a blurred frame.
-  //   Press to reveal; release to re-blur.
-  //
-  // The overlay sits at z-index 8 — above gallery images (default stacking
-  // context), below sticky UI chrome (which usually uses z-index 20+).
-  // UI buttons stay crisp so the parent can still operate the portal.
+  // Mobile: overlay is always present unless a finger is actively
+  // touching the screen.  iOS Volume+Power and Android Power+VolDown
+  // don't touch the page, so the capture lands on a blurred frame.
+  // Press to reveal; release to re-blur.
   useEffect(() => {
-    if (!flags.desktop && !flags.mobile) return;
+    if (!flags.mobile) return;
 
     const isCoarsePointer =
       typeof window !== "undefined" &&
       window.matchMedia?.("(pointer: coarse)").matches;
-    const treatAsMobile = flags.mobile && isCoarsePointer;
-    const treatAsDesktop = flags.desktop && !isCoarsePointer;
+    if (!isCoarsePointer) return;
 
-    // 400ms: fast enough that the moment you stop moving the mouse to
-    // reach for the keyboard, the blur is already up.  Any reading
-    // pause longer than 400ms also blurs, but since clicking/tapping
-    // clears it instantly (see dismissal handler), that's fine.
-    const IDLE_MS = 400;
+    // Start blurred and only clear while actively touching.
+    setIdleBlur(true);
 
-    function scheduleIdleBlur() {
-      if (idleTimerRef.current) window.clearTimeout(idleTimerRef.current);
-      idleTimerRef.current = window.setTimeout(() => {
-        setIdleBlur(true);
-      }, IDLE_MS);
-    }
-
-    function markActive() {
+    function onTouchStart() {
       setIdleBlur(false);
-      if (idleTimerRef.current) window.clearTimeout(idleTimerRef.current);
-      if (treatAsDesktop) {
-        // Re-arm idle timer — blur reappears shortly after movement stops.
-        scheduleIdleBlur();
-      }
-      // On mobile: stay cleared while actively touching; touchend re-blurs.
     }
-
-    function markIdleImmediate() {
-      if (idleTimerRef.current) window.clearTimeout(idleTimerRef.current);
+    function onTouchEnd() {
       setIdleBlur(true);
     }
-
-    if (treatAsDesktop) {
-      // Start un-blurred; blur appears ~150ms after mouse stops.
-      scheduleIdleBlur();
-
-      window.addEventListener("mousemove", markActive, { passive: true });
-      window.addEventListener("wheel", markActive, { passive: true });
-      window.addEventListener("mousedown", markActive, { passive: true });
-      window.addEventListener("scroll", markActive, { capture: true, passive: true });
-      window.addEventListener("keydown", markActive, true);
-
-      // Aggressive triggers — blur immediately without waiting for idle:
-      document.documentElement.addEventListener("mouseleave", markIdleImmediate);
-      document.addEventListener("visibilitychange", markIdleImmediate);
-      window.addEventListener("blur", markIdleImmediate);
-
-      return () => {
-        if (idleTimerRef.current) window.clearTimeout(idleTimerRef.current);
-        window.removeEventListener("mousemove", markActive);
-        window.removeEventListener("wheel", markActive);
-        window.removeEventListener("mousedown", markActive);
-        window.removeEventListener("scroll", markActive, { capture: true } as EventListenerOptions);
-        window.removeEventListener("keydown", markActive, true);
-        document.documentElement.removeEventListener("mouseleave", markIdleImmediate);
-        document.removeEventListener("visibilitychange", markIdleImmediate);
-        window.removeEventListener("blur", markIdleImmediate);
-      };
+    function onContextMenu(e: Event) {
+      e.preventDefault();
     }
 
-    if (treatAsMobile) {
-      // Start blurred and only clear while actively touching.
-      setIdleBlur(true);
+    window.addEventListener("touchstart", onTouchStart, { passive: true });
+    window.addEventListener("touchend", onTouchEnd, { passive: true });
+    window.addEventListener("touchcancel", onTouchEnd, { passive: true });
+    window.addEventListener("contextmenu", onContextMenu, true);
 
-      function onTouchStart() {
-        setIdleBlur(false);
-      }
-      function onTouchEnd() {
-        setIdleBlur(true);
-      }
-      function onContextMenu(e: Event) {
-        e.preventDefault();
-      }
-
-      window.addEventListener("touchstart", onTouchStart, { passive: true });
-      window.addEventListener("touchend", onTouchEnd, { passive: true });
-      window.addEventListener("touchcancel", onTouchEnd, { passive: true });
-      window.addEventListener("contextmenu", onContextMenu, true);
-
-      return () => {
-        window.removeEventListener("touchstart", onTouchStart);
-        window.removeEventListener("touchend", onTouchEnd);
-        window.removeEventListener("touchcancel", onTouchEnd);
-        window.removeEventListener("contextmenu", onContextMenu, true);
-      };
-    }
-
-    return;
-  }, [flags.desktop, flags.mobile]);
+    return () => {
+      window.removeEventListener("touchstart", onTouchStart);
+      window.removeEventListener("touchend", onTouchEnd);
+      window.removeEventListener("touchcancel", onTouchEnd);
+      window.removeEventListener("contextmenu", onContextMenu, true);
+    };
+  }, [flags.mobile]);
 
   // Click / tap anywhere clears the reactive blur immediately.  Once
   // the user has acknowledged the "Screenshot protection on" notice by
@@ -430,7 +359,7 @@ function ScreenshotProtection({ flags, watermarkText }: Props) {
         `}</style>
       ) : null}
       {(flags.desktop || flags.mobile) ? (
-        <IdleBlurOverlay active={idleBlur} overlayRef={overlayRef} />
+        <IdleBlurOverlay active={idleBlur || blurred} overlayRef={overlayRef} />
       ) : null}
       {flags.watermark ? <WatermarkOverlay text={watermarkText || ""} /> : null}
       {blurred ? <BlurNotice /> : null}
