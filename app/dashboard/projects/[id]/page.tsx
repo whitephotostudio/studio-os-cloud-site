@@ -1200,7 +1200,9 @@ export default function ProjectDetailPage() {
                   label: "Orders",
                   value: favoritesSummary.ordersCount,
                   onClick: () => {
-                    window.location.href = "/dashboard/orders";
+                    // Route to per-event orders page (was global /dashboard/orders
+                    // before — Harout specifically wanted scoped-to-event views).
+                    window.location.href = `/dashboard/projects/${projectId}/orders`;
                   },
                 },
                 {

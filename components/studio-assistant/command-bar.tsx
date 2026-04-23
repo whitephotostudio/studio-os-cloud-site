@@ -343,16 +343,41 @@ export function CommandBarExamples({
             fontWeight: 700,
             color: TEXT_PRIMARY,
             cursor: "pointer",
+            // Force light-mode rendering so Safari doesn't paint the
+            // open dropdown with dark system chrome.
             colorScheme: "light",
           }}
         >
-          <option value="" disabled>
+          {/*
+            Inline `color` + `background` on every <option>/<optgroup> is
+            deliberate: Safari (and some Chromium builds) ignore the parent
+            select's `color` / `colorScheme` when painting the native
+            popup, producing the washed-out grey-on-grey look Harout flagged.
+            Explicit per-option styling guarantees readable text.
+          */}
+          <option
+            value=""
+            disabled
+            style={{ color: TEXT_MUTED, background: "#fff" }}
+          >
             Choose a prompt…
           </option>
           {COMMAND_GROUPS.map((group) => (
-            <optgroup key={group.label} label={group.label}>
+            <optgroup
+              key={group.label}
+              label={group.label}
+              style={{
+                color: TEXT_PRIMARY,
+                background: "#f7f7f8",
+                fontWeight: 800,
+              }}
+            >
               {group.items.map((item) => (
-                <option key={item} value={item}>
+                <option
+                  key={item}
+                  value={item}
+                  style={{ color: TEXT_PRIMARY, background: "#fff" }}
+                >
                   {item}
                 </option>
               ))}

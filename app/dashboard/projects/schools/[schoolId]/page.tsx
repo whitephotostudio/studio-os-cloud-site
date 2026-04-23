@@ -20,6 +20,7 @@ import {
   Copy,
   ExternalLink,
   Heart,
+  ShoppingBag,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { useIsMobile } from "@/lib/use-is-mobile";
@@ -1503,6 +1504,29 @@ export default function SchoolsSchoolDetailPage() {
                   ) : null}
                 </div>
               </div>
+
+              <Link
+                href={`/dashboard/projects/schools/${schoolId}/orders`}
+                style={{
+                  marginTop: 10,
+                  width: "100%",
+                  boxSizing: "border-box",
+                  borderRadius: 10,
+                  border: "1px solid #fecaca",
+                  background: "#fff5f5",
+                  color: "#cc0000",
+                  padding: "12px 14px",
+                  fontWeight: 800,
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: 8,
+                  textDecoration: "none",
+                  fontSize: 14,
+                }}
+              >
+                <ShoppingBag size={16} /> View Orders
+              </Link>
 
               <div style={{ marginTop: 18 }}>
                 <div style={{ fontSize: 13, fontWeight: 800, color: "#111111", marginBottom: 8 }}>Contact</div>

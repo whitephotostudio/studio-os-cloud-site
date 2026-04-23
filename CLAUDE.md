@@ -2,7 +2,7 @@
 
 Checkpoint for Claude so a context reset doesn't lose the thread. Update as work progresses.
 
-Last updated: 2026-04-22 (late evening) — dashboard modernization pass (profile badge, gallery-activity card + detail page, Studio Assistant dropdown) staged on top of the mobile + thumbs work. All uncommitted (index.lock stuck).
+Last updated: 2026-04-22 (very late, into 23) — mobile `/m/events` list + detail just landed (mirrors `/m/schools` + mockup-inspired hero). All four mobile sub-routes (`/m/orders`, `/m/schools`, `/m/events`) now exist. All uncommitted (index.lock still stuck).
 
 ---
 
@@ -32,6 +32,64 @@ What `4133b0d` does (mobile-compat pass #2 — driven by Harout's iPhone screens
 - **`app/dashboard/projects/schools/[schoolId]/page.tsx`** — the 320px fixed-width aside was eating the whole ~390px viewport, hiding the classes/roles/people album grid on the right. Added `useIsMobile` and flipped the outer grid to `"1fr"` on mobile (aside above, album grid below). Also `position: sticky` → `static`, aside padding 16→12, outer padding 24→14, H1 24→20, top button row stacks vertically.
 
 Typecheck passed (`npx tsc --noEmit` → exit 0). Desktop path untouched across all four files.
+
+### Spotlight search + mobile `/m` surface (uncommitted, latest addition)
+
+Driven by three Harout asks late on 2026-04-22:
+1. "make sure everything mobile compatible so it easy to a photographer to login and view and send information maybe we should create small app stand alone to see orders notification view schools or events where he can just view and see the passwords and share the gallery or share the pin with the client" → scope via AskUserQuestion = a dedicated `/m/*` route (not a full PWA). v1 = orders list + new-order badge + spotlight search + tap-to-call/email + schools/events with PIN+share. Push notifications deferred to v2.
+2. "Spotlight-style global search — type 'Ethan' or '3e92' and instantly see matching students, orders, or schools across everything … needs to be on the main dashboard too on the desktop" → build the palette **once** as a shared component and drop it into both surfaces.
+
+Files added:
+- **`components/spotlight-search.tsx`** — NEW. Exports `<SpotlightModal>` (dialog) and `<SpotlightLauncher>` (visible search button + ⌘K/Ctrl+K global shortcut). `useSpotlight(term, enabled)` hook fetches photographer id, debounces 180 ms, runs 3–4 parallel Supabase queries in parallel: students (first/last ILIKE), schools (name ILIKE), projects (title/client_name ILIKE with workflow_type=event), orders (only when term matches `/^[0-9a-f-]{4,}$/i` — uses ILIKE prefix on `id`). Color-coded hit types (indigo student / blue school / orange event / red order). Keyboard: ↑↓ navigate, ↵ open, esc close. Routes hits into `/dashboard/projects/schools/[id]`, `/dashboard/projects/[id]`, `/dashboard/orders`. Button uses `width:100%` when non-compact so it fills whatever flex wrapper you drop it in.
+  - TS gotcha: Supabase query builders are `PromiseLike`, not `Promise`. The queue array is typed `PromiseLike<unknown>[]` so `Promise.all(...)` accepts them directly.
+- **`app/m/layout.tsx`** — mobile-only shell. Sticky top header (SO logo + bell with unread-orders badge). Sticky bottom tab bar: Home / Orders / Schools / Events. Session guard mirrors `app/dashboard/layout.tsx` (transient-session flag + `supabase.auth.getUser` → bounce to `/sign-in?redirect=…`). Unread count: `.from("orders").select("id", {count:"exact", head:true}).eq("photographer_id", pg.id).eq("seen_by_photographer", false)`. Max-width 480px centered on desktop so `/m` degrades sanely.
+- **`app/m/page.tsx`** — mobile home. Greeting + first-name, 3-stat strip (New today / Unread / Schools), prominent Spotlight input with debounced cross-table search (inline results, type labels), 4-tile quick-nav (Orders / Schools / Events / Full desktop). Own inline spotlight implementation — will eventually share with `<SpotlightLauncher>` but works today.
+
+Files edited:
+- **`app/dashboard/page.tsx`** — imported `SpotlightLauncher` from `@/components/spotlight-search`. Inserted into the header action row, to the left of the refresh button and `ProfileBadge`. Wrapped in `<div style={{ flex: isMobile ? 1 : "0 1 320px" }}>` so on desktop it claims ~320 px beside the actions, on mobile it stretches full-width under the greeting. The ⌘K global shortcut fires from anywhere inside `/dashboard`.
+
+Typecheck passed (`npx tsc --noEmit` → exit 0) after the PromiseLike fix.
+
+Still owed on the mobile sweep (task #35 in the queue):
+- `/m/orders` list + `/m/orders/[id]` detail — DONE (tap-to-call, tap-to-email, seen_by_photographer flip on view).
+- `/m/schools` list + `/m/schools/[id]` detail — DONE (mockup-inspired hero cover, status pill, per-student PIN reveal + share).
+- `/m/events` list + `/m/events/[id]` detail — DONE (same hero pattern, single project-level PIN card, photo-count stat, orders strip). Both files typecheck clean.
+- **Remaining:** iPhone render verification pass on all three `/m/*` routes, then finalize this handoff and commit everything under one `git commit` once Harout clears the `.git/index.lock` on his Mac.
+
+#### `/m/events` implementation notes (just landed)
+
+- `app/m/events/page.tsx` — queries `projects` filtered by `photographer_id` + `workflow_type='event'`, ordered by `event_date DESC nullsFirst:false`. In parallel pulls order counts and media (`media.project_id`) counts per event so the card can show "X photos · Orders: N" and pick its status pill. Cover comes straight from `projects.cover_photo_url` (no student-photo join needed for events). Status pill logic mirrors schools: no media → Setup, has media + `gallery_slug` → Gallery Released, else Pending Delivery. Share shortcut builds `/g/{slug}` if slug present, else `/parents?mode=event&project={id}`.
+- `app/m/events/[id]/page.tsx` — single PIN card (unlike schools, which have a PIN per student). Access is gated when `access_mode='pin'` AND `access_pin` is non-empty — displays dotted placeholder + Eye/EyeOff reveal toggle, Copy PIN, and "Share link + PIN" which composes a full access message for clients. `photoCount` comes from `media` with `{count:'exact', head:true}`. Recent orders strip (5 latest) drills into `/m/orders/[id]` and the "View all" link goes to the per-event orders page at `/dashboard/projects/{id}/orders`. "Open full project page" footer link goes to the desktop project detail.
+
+Both pages reuse the exact `shareOrCopy` / `single<T>` / `money` / `relativeTime` / `shortId` helpers already in `/m/schools/[id]` so visuals and behaviour stay parallel across the two surfaces.
+
+### Per-school & per-event orders pages (uncommitted, latest addition)
+
+Driven by Harout's request: "add in each event and school its own order page so when you go to the school you can see the photos and you can see the orders of that school and you can search a student order or order number". Grounded in a real-world case — a parent called claiming she'd ordered digital images and hadn't received them; Harout searched ShootProof by student and found she'd actually ordered **digital retouching**, not digitals. Screenshotted that and emailed it as proof. This feature replicates that workflow natively.
+
+Scope this slice (per AskUserQuestion): **per-school orders tab + search + line-item breakdown only**. Source-badge ("Printed in-studio") and one-click email-summary-to-parent deferred to the next round.
+
+Files touched:
+- `components/gallery-orders/gallery-orders-panel.tsx` — **NEW** (~660 lines). Shared client component that accepts `{schoolId}` OR `{projectId}`, fetches orders scoped to it (`.eq("school_id"|"project_id", …)`), renders:
+  - 4-stat strip (Total / Revenue / Pending / Completed) — mobile collapses 4→2.
+  - Search box over student name, short order # (first 8 chars of uuid), full uuid, parent email, package name.
+  - Order cards with student photo + name + status chip + class + order # + timestamp + package + parent email/phone, right-aligned total on desktop (stacked on mobile).
+  - Expandable line items: "Show 5 items" button reveals a mini-table with Qty / Unit / Line total columns, plus Client note row if `special_notes` is set.
+  - "Open full details" escape hatch → `/dashboard/orders?focus=${order.id}` (query param unused today; left in place for future deep-link).
+  - Status chip colors / `STATUS_COLORS` kept in lockstep with `/dashboard/orders` for visual consistency.
+  - Empty states: zero orders ("No orders yet — they'll appear here the moment parents place one"), no-search-match, no-scope-set dev guard.
+- `app/dashboard/projects/schools/[schoolId]/orders/page.tsx` — **NEW** thin wrapper (~130 lines). Fetches `{id, school_name}` from `schools` for the header, renders `<GalleryOrdersPanel schoolId={schoolId} />`. Back-link to the school detail page.
+- `app/dashboard/projects/[id]/orders/page.tsx` — **NEW** same pattern for events (~140 lines). Fetches `{id, title, client_name}` from `projects`.
+- `app/dashboard/projects/schools/[schoolId]/page.tsx` — added `ShoppingBag` to lucide-react imports; inserted a full-width red-on-pink "View Orders" Link button in the aside between the Settings/Visitors button row and the Contact section.
+- `app/dashboard/projects/[id]/page.tsx` — the existing "Orders" row in the Visitor Activity panel used to `window.location.href = "/dashboard/orders"` (global orders list). Now routes to `/dashboard/projects/${projectId}/orders` (per-event scoped). Comment added explaining the change.
+
+Query shape used by the panel is a subset of what `/dashboard/orders` uses, filtered by `school_id` / `project_id`. RLS on `orders` + an explicit `supabase.auth.getUser()` check provide tenant isolation.
+
+Typecheck clean (`npx tsc --noEmit` → exit 0) after all edits.
+
+What's **NOT** in this slice (deferred to next round, per user's phased choice):
+- "Printed in-studio" source badge for orders pushed from the desktop Flutter app. User chose the label "Printed in-studio" (over "Studio App / Cloud" or "Already fulfilled / Pending").
+- One-click "Email order summary to parent" button. User confirmed an existing email setup is available — need to grep for `resend|sendgrid|postmark|transactional` and reuse when we build this.
 
 ### Dashboard modernization (uncommitted, latest addition)
 

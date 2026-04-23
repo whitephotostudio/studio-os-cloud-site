@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { StudioAssistant } from "@/components/studio-assistant/studio-assistant";
+import { SpotlightLauncher } from "@/components/spotlight-search";
 import { useIsMobile } from "@/lib/use-is-mobile";
 import {
   getFreeTrialDaysRemaining,
@@ -1083,8 +1084,17 @@ function DashboardPageContent() {
                 gap: 10,
                 flexWrap: "wrap",
                 alignItems: "center",
+                // On mobile the action row stacks under the greeting; let the
+                // Spotlight launcher stretch full-width so ⌘K is reachable.
+                width: isMobile ? "100%" : "auto",
               }}
             >
+              {/* Spotlight — type "Ethan" or "3e92" to jump to any student,
+                  school, event, or order.  Cmd/Ctrl+K opens from anywhere. */}
+              <div style={{ flex: isMobile ? 1 : "0 1 320px", minWidth: 0 }}>
+                <SpotlightLauncher />
+              </div>
+
               <button
                 onClick={() => load(true)}
                 disabled={refreshing}
