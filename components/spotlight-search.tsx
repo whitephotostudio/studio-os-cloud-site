@@ -187,15 +187,22 @@ function useSpotlight(term: string, enabled: boolean) {
               | null;
           }> | null;
         };
+        // Remember which students matched so we can pull their orders too —
+        // typing "Ethan" should surface Ethan AND Ethan's orders.
+        const matchedStudentIds: string[] = [];
+        const matchedStudentNames: Record<string, string> = {};
         for (const s of students.data ?? []) {
           const schoolRow = Array.isArray(s.schools) ? s.schools[0] : s.schools;
+          const studentName =
+            [clean(s.first_name), clean(s.last_name)]
+              .filter(Boolean)
+              .join(" ") || "Student";
+          matchedStudentIds.push(s.id);
+          matchedStudentNames[s.id] = studentName;
           next.push({
             kind: "student",
             id: s.id,
-            title:
-              [clean(s.first_name), clean(s.last_name)]
-                .filter(Boolean)
-                .join(" ") || "Student",
+            title: studentName,
             subtitle: [
               clean(schoolRow?.school_name) || "Student",
               clean(s.class_name),
@@ -238,6 +245,49 @@ function useSpotlight(term: string, enabled: boolean) {
           });
         }
 
+        // Orders attached to matched students.  Deduped by order.id so we
+        // don't double-count if the short-id branch below also matched.
+        const seenOrderIds = new Set<string>();
+        if (matchedStudentIds.length > 0) {
+          const { data: studentOrders } = await supabase
+            .from("orders")
+            .select(
+              "id, package_name, total_cents, total_amount, currency, student_id, created_at, school:schools(school_name)",
+            )
+            .eq("photographer_id", photographerId)
+            .in("student_id", matchedStudentIds)
+            .order("created_at", { ascending: false })
+            .limit(8);
+          if (!cancelled && studentOrders) {
+            for (const order of studentOrders as Array<{
+              id: string;
+              package_name: string | null;
+              student_id: string | null;
+              school:
+                | { school_name: string | null }
+                | { school_name: string | null }[]
+                | null;
+            }>) {
+              if (seenOrderIds.has(order.id)) continue;
+              seenOrderIds.add(order.id);
+              const school = Array.isArray(order.school)
+                ? order.school[0]
+                : order.school;
+              const name = matchedStudentNames[clean(order.student_id)] || "Student";
+              next.push({
+                kind: "order",
+                id: order.id,
+                title: `Order ${order.id.slice(0, 8)} · ${name}`,
+                subtitle:
+                  [clean(order.package_name), clean(school?.school_name)]
+                    .filter(Boolean)
+                    .join(" · ") || "Order",
+                href: `/dashboard/orders?focus=${order.id}`,
+              });
+            }
+          }
+        }
+
         if (isShortOrderId(trimmed) && results[3]) {
           const ordersResult = results[3] as {
             data?: Array<{
@@ -257,6 +307,8 @@ function useSpotlight(term: string, enabled: boolean) {
             }> | null;
           };
           for (const order of ordersResult.data ?? []) {
+            if (seenOrderIds.has(order.id)) continue;
+            seenOrderIds.add(order.id);
             const student = Array.isArray(order.student)
               ? order.student[0]
               : order.student;
@@ -275,7 +327,7 @@ function useSpotlight(term: string, enabled: boolean) {
                 [clean(order.package_name), clean(school?.school_name)]
                   .filter(Boolean)
                   .join(" · ") || "Order",
-              href: `/dashboard/orders`,
+              href: `/dashboard/orders?focus=${order.id}`,
             });
           }
         }
