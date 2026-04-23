@@ -2,9 +2,19 @@
 
 Checkpoint for Claude so a context reset doesn't lose the thread. Update as work progresses.
 
-Last updated: 2026-04-23 (late) — **Screenshot protection SPEED PASS on top of the hardening pass**. Harout repeatedly complained "ITS NOT ACTING VERY FAST IT HAS A DELAY" even after the hardening + idle-overlay passes. Diagnosed the culprit: `document.body.style.filter = "blur(26px) saturate(0.5)"` was forcing the browser to re-raster the entire page through a blur shader every frame — visibly laggy on content-heavy galleries. This pass rips the body filter out entirely; the GPU-accelerated backdrop-filter overlay does all the blurring now. Added GPU-compositing hints (`transform: translateZ(0)` + `willChange: "opacity, backdrop-filter, transform"`) so the compositor pre-warms the layer and keeps the backdrop-filter shader hot. First-paint stall eliminated. Typecheck clean (`npx tsc --noEmit` → exit 0). Uncommitted — **sandbox's `.git/index.lock` is likely stuck again**, Harout needs to clear on Mac.
+Last updated: 2026-04-23 (latest) — **Screenshot protection FINAL PASS — Harout confirmed working**. After going through many passes (proactive triggers, idle-blur, strict mobile gate, speed fix) and Harout's sharp observation that "they can move the mouse and take photo so the idle blur can be bypassed", we landed on the honest security posture:
 
-Stacked below the speed pass — the Phase 1 HARDENING PASS (same day): (a) proactive blur triggers on `mouseleave`/`pointerleave`/`visibilitychange`; (b) predictive Meta/Control/Shift keydown trigger with `e.repeat` guard to stop strobing; (c) direct-DOM overlay poke in triggerBlur so paint lands in the same tick as the event handler; (d) mobile always half-blurred via overlay, press-and-hold reveals; (e) watermark opacity 22% → 55% + dense diagonal pattern + three big letterbox bands; (f) click-to-dismiss blur via pointerdown; (g) overlay z-index 99980 covers lightbox viewer; (h) pill z-index 99995 above watermark.
+**Desktop:** Gallery is fully crisp unless a real modifier key is pressed. Bare ⌘ / Ctrl / ⇧ keydown fires an instant 5s blur via GPU-composited overlay (no body filter, no re-raster). Catches ⌘⇧3 because the blur is painted the moment Cmd lands — before the OS capture synchronously fires at the digit. `e.isTrusted` guard rejects extension-synthesized keys. `e.repeat` guard prevents auto-repeat strobing.
+
+**Real mobile only (strict 3-signal detection: `pointer:coarse` + `hover:none` + `innerWidth<900`):** Always-on half-blur overlay, touch-to-reveal. Desktop never reaches this path, so no phantom touch-event loops from trackpad synthesis.
+
+**Always on everywhere:** Watermark (55% opacity tiled pattern + 3 big letterbox bands with viewer email + date), right-click blocked, drag blocked on images. Watermark is doing the heavy lifting — the threats we can't technically block (phone camera pointed at screen, screen-recording software) are addressed by making every leak traceable back to the viewer.
+
+**Removed as theater:** desktop idle-blur (attacker just wiggles mouse), proactive triggers on mouseleave/pointerleave/visibilitychange/window.blur (fired phantom blurs + bypassable), body filter (GPU-slow re-raster).
+
+Final file: `components/screenshot-protection.tsx` (~700 lines). Typecheck clean. Harout confirmed live behavior on Mac: "THE LAST ONE YOU DID IS AMAZING ITS WORKING GREAT".
+
+Trade-off accepted: Cmd+R / Cmd+T / Cmd+L / bare Shift also blur the gallery for 5s. Acceptable because parents portal has no text inputs, and a click dismisses the blur instantly.
 
 ---
 
