@@ -142,13 +142,20 @@ function ScreenshotProtection({ flags, watermarkText }: Props) {
       const meta = e.metaKey || e.ctrlKey;
       const shift = e.shiftKey;
 
-      // The always-on idle-blur overlay is now the PRIMARY defense — it's
-      // already painted whenever the user isn't actively interacting, so
-      // we no longer need to reactively blur on every modifier press.
-      // Doing so caused the overlay to flash in/out for unrelated
-      // shortcuts (⌘T, ⌘R, Shift-click, etc.) — that was the "repeating
-      // blur" bug.  Keep only the narrow, targeted handlers below as
-      // belt-and-suspenders.
+      // TARGETED PREDICTIVE TRIGGER: fire on the Command / Meta key press
+      // itself.  Every macOS screenshot shortcut starts with Cmd being
+      // held down (⌘⇧3, ⌘⇧4, ⌘⇧5, ⌘⇧6) — by blurring on the Cmd
+      // keydown we cover the typically 50-200ms gap before the Shift +
+      // digit are pressed.
+      //
+      // This does also fire on ⌘C / ⌘T / ⌘R etc., producing a brief 5s
+      // blur for unrelated shortcuts.  Accepted trade — the strobing
+      // came from triggering on EVERY modifier-held keydown and from
+      // auto-repeat.  Firing once on the Cmd key press itself (with
+      // e.repeat guarded) is a single event, not a loop.
+      if (key === "Meta" || key === "Control") {
+        triggerBlur(SCREENSHOT_BLUR_DURATION_MS);
+      }
 
       // Specific screenshot key combos — preventDefault is a no-op on
       // macOS (OS consumes it) but the blur gives a 5s buffer in case
@@ -409,7 +416,14 @@ function IdleBlurOverlay({ active }: { active: boolean }) {
           position: "fixed",
           inset: 0,
           pointerEvents: "none",
-          zIndex: 8,
+          // High z-index so the overlay covers gallery tiles AND the
+          // photo lightbox / modal viewers (which typically stack at
+          // z-index 50-1000).  Stays below the watermark (99990) and
+          // the blur-active notice (99999).  When active, the overlay
+          // blurs UI chrome too — acceptable because the overlay only
+          // shows when the user has stopped interacting.  Any mouse
+          // movement clears it in 60ms, restoring full UI readability.
+          zIndex: 99980,
           backdropFilter: "blur(22px) saturate(0.55)",
           WebkitBackdropFilter: "blur(22px) saturate(0.55)",
           background: "rgba(5, 10, 20, 0.04)",
@@ -422,7 +436,6 @@ function IdleBlurOverlay({ active }: { active: boolean }) {
         }}
       />
       {/* Small status pill shown whenever the idle blur is active.
-          Sits above the blur overlay (z > 8) so it stays crisp.
           Same 60ms fade as the blur so they appear/disappear together. */}
       <div
         role="status"
@@ -432,7 +445,7 @@ function IdleBlurOverlay({ active }: { active: boolean }) {
           top: 14,
           left: "50%",
           transform: "translateX(-50%)",
-          zIndex: 9,
+          zIndex: 99985,
           pointerEvents: "none",
           opacity: active ? 1 : 0,
           transition: "opacity 60ms linear",
