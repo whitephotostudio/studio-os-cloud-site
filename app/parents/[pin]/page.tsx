@@ -2983,12 +2983,23 @@ function CompositeCanvas({
     return () => { cancelled = true; };
   }, [useDomBlurLayer, backdropUrl, backdropFallbackUrl, nobgUrl, fallbackUrl, width, height, renderKey, trimTransparentForeground, preserveForegroundAlignment, effectiveBackdropBlurPx]);
 
+  // 2026-04-23 fix: on narrow mobile viewports the previous rules
+  // (`width: auto; height: min(100%, ${h}px); aspectRatio`) left BOTH
+  // axes constrained — `maxWidth: 100%` clamped width to the parent,
+  // height stayed locked at 100% of parent, and `aspect-ratio` was
+  // ignored because CSS won't override an explicitly-set height.  The
+  // canvas filled the stretched wrapper and portraits looked
+  // vertically-elongated.  New rule: drive width from parent (100%,
+  // capped at natural image width), let `aspect-ratio` derive height,
+  // and fall back to `maxHeight: 100%` if the derived height would
+  // overflow (in which case aspect-ratio scales width back down
+  // proportionally, preserving the ratio).  Works identically on
+  // desktop because wide parents never trigger the max-width clamp.
   const wrapperStyle: React.CSSProperties = responsive
     ? {
         position: "relative",
-        width: width > height ? `min(100%, ${width}px)` : "auto",
-        height: height >= width ? `min(100%, ${height}px)` : "auto",
-        maxWidth: "100%",
+        width: "100%",
+        maxWidth: `${width}px`,
         maxHeight: "100%",
         aspectRatio: `${width} / ${height}`,
         flexShrink: 0,
