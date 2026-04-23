@@ -121,29 +121,56 @@ function ScreenshotProtection({ flags, watermarkText }: Props) {
   useEffect(() => {
     if (!flags.desktop) return;
 
+    // Skip modifier-triggered blur when the user is typing in a real input
+    // so typing Shift-H for a capital H etc. doesn't strobe the gallery.
+    function targetIsInput(t: EventTarget | null): boolean {
+      if (!(t instanceof Element)) return false;
+      const tag = t.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return true;
+      if (t instanceof HTMLElement && t.isContentEditable) return true;
+      return false;
+    }
+
     function onKeyDown(e: KeyboardEvent) {
       const key = e.key;
       const meta = e.metaKey || e.ctrlKey;
       const shift = e.shiftKey;
+      const inInput = targetIsInput(e.target);
 
-      // PREDICTIVE: any keydown with Meta + Shift both held triggers the
-      // blur — including the keydown of Shift itself when Meta is already
-      // down, which fires BEFORE the user can press 3/4/5/6.  This is how
-      // we catch ⌘⇧4 (region), ⌘⇧4+Space (window), ⌘⇧3 (instant full),
-      // ⌘⇧5 (capture app), and ⌘⇧6 (touchbar) at the earliest possible
-      // moment.  Uses the long screenshot blur window so the ⌘⇧4 → Space
-      // → click-a-window flow stays blurred the whole way through.
+      // MAX-AGGRESSIVE PREDICTIVE TRIGGER (desktop only, outside inputs):
+      // Blur on ANY modifier-key activity.  The goal is to beat macOS
+      // consuming ⌘⇧3/4/5 before the browser ever sees those specific
+      // keydowns.  By firing on the Command/Shift/Control press itself —
+      // BEFORE the user can press the digit — we guarantee the blur is
+      // already painted by the time the capture shortcut runs.
       //
-      // False positives (⌘⇧T, ⌘⇧R, ⌘⇧I etc.) cause a harmless 5s blur.
-      // Trade-off is acceptable — leaking one high-res photo is worse
-      // than a 5-second gallery re-render on an unrelated shortcut.
-      if (meta && shift) {
-        triggerBlur(SCREENSHOT_BLUR_DURATION_MS);
+      // What fires:
+      //   - Command / Meta press alone (user is starting a keyboard shortcut)
+      //   - Shift press alone (user is starting ⌘⇧x or a shift-shortcut)
+      //   - Any Meta-held or Shift-held keydown
+      //
+      // What's excluded:
+      //   - Anything typed in an <input>, <textarea>, <select>, or
+      //     contenteditable element (so text entry still works).
+      //
+      // Cost: pressing ⌘R / ⌘T / ⌘W etc. while the gallery has focus
+      // briefly blurs for 5s.  Trade accepted — one leaked photo is
+      // worse than a 5-second re-render on an unrelated shortcut.
+      if (!inInput) {
+        // Modifier press alone (Meta / Control / Shift)
+        if (key === "Meta" || key === "Control" || key === "Shift") {
+          triggerBlur(SCREENSHOT_BLUR_DURATION_MS);
+        }
+        // Any keydown while a modifier is held (catches the printable
+        // keys of combos, including ⌘⇧4 keydown on browsers that still
+        // deliver it).
+        if (meta || shift) {
+          triggerBlur(SCREENSHOT_BLUR_DURATION_MS);
+        }
       }
 
-      // Specific screenshot keys — duplicate of the above, but here we
-      // also preventDefault on the 3/4/5/6 keys (best-effort — most of
-      // these are consumed by macOS before the page sees them anyway).
+      // Specific screenshot keys — try to preventDefault even though
+      // macOS will consume them at the OS level before this runs.
       if (meta && shift && ["3", "4", "5", "6"].includes(key)) {
         e.preventDefault();
         triggerBlur(SCREENSHOT_BLUR_DURATION_MS);
@@ -153,22 +180,21 @@ function ScreenshotProtection({ flags, watermarkText }: Props) {
       if (key === "PrintScreen") {
         triggerBlur(SCREENSHOT_BLUR_DURATION_MS);
       }
-
-      // Chrome DevTools screenshot shortcut ⌘⇧P → Capture full-size screenshot.
-      // (Already covered by the Meta+Shift predictive rule above, but kept
-      // explicit for clarity.)
-      if (meta && shift && (key === "P" || key === "p")) {
-        triggerBlur(SCREENSHOT_BLUR_DURATION_MS);
-      }
     }
 
-    // Keep blur alive while modifiers are still held — covers the
-    // ⌘⇧4 → [drag] → release flow which can take several seconds,
-    // and the ⌘⇧4 → Space → click flow for window captures.
+    // Keep blur alive while ANY modifier is still held.  For ⌘⇧4 the
+    // user presses keys and then drags with the mouse — by the time they
+    // release, we've had seconds of modifier-down events firing this.
     function onKeyUp(e: KeyboardEvent) {
+      if (targetIsInput(e.target)) return;
       const meta = e.metaKey || e.ctrlKey;
       const shift = e.shiftKey;
-      if (meta || shift) {
+      const wasModifier =
+        e.key === "Meta" ||
+        e.key === "Control" ||
+        e.key === "Shift" ||
+        e.key === "Alt";
+      if (meta || shift || wasModifier) {
         triggerBlur(SCREENSHOT_BLUR_DURATION_MS);
       }
     }
@@ -369,6 +395,7 @@ function ScreenshotProtection({ flags, watermarkText }: Props) {
 
 function WatermarkOverlay({ text }: { text: string }) {
   const label = text?.trim() || "Do not copy";
+  const bigLabel = `${label}  ·  DO NOT SHARE`;
   return (
     <div
       aria-hidden
@@ -378,41 +405,44 @@ function WatermarkOverlay({ text }: { text: string }) {
         pointerEvents: "none",
         zIndex: 99990,
         overflow: "hidden",
-        mixBlendMode: "overlay",
-        opacity: 0.38,
+        mixBlendMode: "normal",
+        opacity: 0.55,
       }}
     >
       <svg width="100%" height="100%" xmlns="http://www.w3.org/2000/svg">
         <defs>
-          {/* Primary dense diagonal pattern. */}
+          {/* Primary dense diagonal pattern at higher opacity — visible over
+              bright backgrounds like skin tones / white shirts. */}
           <pattern
             id="screenshot-watermark-primary"
             patternUnits="userSpaceOnUse"
-            width="220"
-            height="130"
+            width="160"
+            height="92"
             patternTransform="rotate(-24)"
           >
             <text
               x="0"
-              y="34"
+              y="26"
               fontFamily="Inter, system-ui, sans-serif"
-              fontSize="15"
-              fontWeight="700"
+              fontSize="14"
+              fontWeight="800"
               fill="#ffffff"
               stroke="#000000"
-              strokeWidth="0.5"
+              strokeWidth="0.6"
+              opacity="0.9"
             >
               {label}
             </text>
             <text
-              x="60"
-              y="98"
+              x="46"
+              y="72"
               fontFamily="Inter, system-ui, sans-serif"
-              fontSize="15"
-              fontWeight="700"
+              fontSize="14"
+              fontWeight="800"
               fill="#ffffff"
               stroke="#000000"
-              strokeWidth="0.5"
+              strokeWidth="0.6"
+              opacity="0.9"
             >
               {label}
             </text>
@@ -422,20 +452,20 @@ function WatermarkOverlay({ text }: { text: string }) {
           <pattern
             id="screenshot-watermark-secondary"
             patternUnits="userSpaceOnUse"
-            width="260"
-            height="150"
+            width="200"
+            height="110"
             patternTransform="rotate(18)"
           >
             <text
-              x="20"
-              y="62"
+              x="16"
+              y="52"
               fontFamily="Inter, system-ui, sans-serif"
-              fontSize="13"
-              fontWeight="600"
+              fontSize="12"
+              fontWeight="700"
               fill="#ffffff"
               stroke="#000000"
-              strokeWidth="0.4"
-              opacity="0.75"
+              strokeWidth="0.5"
+              opacity="0.85"
             >
               {label}
             </text>
@@ -443,6 +473,60 @@ function WatermarkOverlay({ text }: { text: string }) {
         </defs>
         <rect width="100%" height="100%" fill="url(#screenshot-watermark-primary)" />
         <rect width="100%" height="100%" fill="url(#screenshot-watermark-secondary)" />
+
+        {/* Three BIG diagonal bands across the middle third of the screen
+            carrying the viewer's email + DO NOT SHARE.  Can't be missed
+            in any screenshot — the band crosses the subject's face / body. */}
+        <g style={{ mixBlendMode: "normal" }}>
+          <text
+            x="50%"
+            y="30%"
+            textAnchor="middle"
+            fontFamily="Inter, system-ui, sans-serif"
+            fontSize="42"
+            fontWeight="900"
+            fill="#ffffff"
+            stroke="#000000"
+            strokeWidth="1.2"
+            opacity="0.45"
+            transform="rotate(-22 500 300)"
+            style={{ letterSpacing: "4px" }}
+          >
+            {bigLabel}
+          </text>
+          <text
+            x="50%"
+            y="58%"
+            textAnchor="middle"
+            fontFamily="Inter, system-ui, sans-serif"
+            fontSize="42"
+            fontWeight="900"
+            fill="#ffffff"
+            stroke="#000000"
+            strokeWidth="1.2"
+            opacity="0.45"
+            transform="rotate(-22 500 500)"
+            style={{ letterSpacing: "4px" }}
+          >
+            {bigLabel}
+          </text>
+          <text
+            x="50%"
+            y="86%"
+            textAnchor="middle"
+            fontFamily="Inter, system-ui, sans-serif"
+            fontSize="42"
+            fontWeight="900"
+            fill="#ffffff"
+            stroke="#000000"
+            strokeWidth="1.2"
+            opacity="0.45"
+            transform="rotate(-22 500 700)"
+            style={{ letterSpacing: "4px" }}
+          >
+            {bigLabel}
+          </text>
+        </g>
       </svg>
     </div>
   );
