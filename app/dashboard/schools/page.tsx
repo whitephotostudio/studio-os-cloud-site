@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { Logo } from "@/components/logo";
+import { useIsMobile } from "@/lib/use-is-mobile";
 import { Check, GraduationCap, Images, LogOut, MoreHorizontal, Plus, School, Search, Settings, Trash2, Users, X } from "lucide-react";
 
 type SchoolRow = {
@@ -122,6 +123,7 @@ function gradientForSchool(title: string) {
 export default function SchoolsPage() {
   const supabase = createClient();
   const router = useRouter();
+  const isMobile = useIsMobile();
   const [schools, setSchools] = useState<SchoolCard[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -428,23 +430,40 @@ export default function SchoolsPage() {
 
   return (
     <div style={{ minHeight: "100vh", background: "#ffffff" }}>
-      <div style={{ padding: "40px" }}>
-        <div style={{ marginBottom: 24, display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16 }}>
+      <div style={{ padding: isMobile ? "14px" : "40px" }}>
+        <div
+          style={{
+            marginBottom: isMobile ? 16 : 24,
+            display: "flex",
+            flexDirection: isMobile ? "column" : "row",
+            alignItems: isMobile ? "stretch" : "flex-start",
+            justifyContent: isMobile ? "flex-start" : "space-between",
+            gap: isMobile ? 12 : 16,
+          }}
+        >
           <div>
-            <h1 style={{ fontSize: 26, fontWeight: 700, margin: 0, color: "#111" }}>Schools</h1>
-            <p style={{ margin: "8px 0 0", color: "#6b7280", fontSize: 15 }}>
+            <h1 style={{ fontSize: isMobile ? 22 : 26, fontWeight: 700, margin: 0, color: "#111" }}>Schools</h1>
+            <p style={{ margin: "8px 0 0", color: "#6b7280", fontSize: isMobile ? 13 : 15 }}>
               All synced schools live here. Open a school to view classes, roles, and images.
             </p>
           </div>
           <button
             onClick={openCreateModal}
-            style={{ display: "inline-flex", alignItems: "center", gap: 8, background: "#111", color: "#fff", border: "none", borderRadius: 12, padding: "11px 18px", fontSize: 14, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap", flexShrink: 0 }}
+            style={{ display: "inline-flex", alignItems: "center", gap: 8, background: "#111", color: "#fff", border: "none", borderRadius: 12, padding: "11px 18px", fontSize: 14, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap", flexShrink: 0, alignSelf: isMobile ? "flex-start" : undefined }}
           >
             <Plus size={16} /> Create School
           </button>
         </div>
 
-        <div style={{ marginBottom: 24, display: "flex", alignItems: "center", gap: 12 }}>
+        <div
+          style={{
+            marginBottom: isMobile ? 16 : 24,
+            display: "flex",
+            flexDirection: isMobile ? "column" : "row",
+            alignItems: isMobile ? "stretch" : "center",
+            gap: 12,
+          }}
+        >
           <div style={{ position: "relative", maxWidth: 460, flex: 1 }}>
             <Search
               size={16}
@@ -522,7 +541,7 @@ export default function SchoolsPage() {
             <p style={{ color: "#666", margin: 0 }}>No schools match that search.</p>
           </div>
         ) : (
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(240px,1fr))", gap: 20 }}>
+          <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fill,minmax(${isMobile ? 160 : 240}px,1fr))`, gap: isMobile ? 12 : 20 }}>
             {filteredSchools.map((school) => {
               const href = `/dashboard/projects/schools/${school.id}`;
               const hovered = hoveredSchoolId === school.id;
@@ -661,8 +680,17 @@ export default function SchoolsPage() {
         <div
           style={{
             position: "fixed",
-            top: contextMenuPos.y,
-            left: contextMenuPos.x,
+            top: Math.min(
+              contextMenuPos.y,
+              (typeof window !== "undefined" ? window.innerHeight : 800) - 180,
+            ),
+            left: Math.max(
+              8,
+              Math.min(
+                contextMenuPos.x,
+                (typeof window !== "undefined" ? window.innerWidth : 1200) - 172,
+              ),
+            ),
             background: "#fff",
             borderRadius: 10,
             boxShadow: "0 8px 30px rgba(0,0,0,0.18)",
@@ -719,36 +747,42 @@ export default function SchoolsPage() {
         <div
           style={{
             position: "fixed",
-            bottom: 28,
-            left: "50%",
-            transform: "translateX(-50%)",
+            bottom: isMobile ? 14 : 28,
+            left: isMobile ? 14 : "50%",
+            right: isMobile ? 14 : "auto",
+            transform: isMobile ? "none" : "translateX(-50%)",
             background: "#111827",
             borderRadius: 16,
-            padding: "12px 24px",
+            padding: isMobile ? "10px 14px" : "12px 24px",
             display: "flex",
             alignItems: "center",
-            gap: 20,
+            gap: isMobile ? 10 : 20,
             boxShadow: "0 12px 40px rgba(0,0,0,0.3)",
             zIndex: 900,
             color: "#fff",
+            justifyContent: isMobile ? "space-between" : "flex-start",
           }}
         >
-          <span style={{ fontSize: 14, fontWeight: 700 }}>
+          <span style={{ fontSize: isMobile ? 12 : 14, fontWeight: 700 }}>
             {selectedIds.size} {selectedIds.size === 1 ? "school" : "schools"} selected
           </span>
-          <div style={{ width: 1, height: 24, background: "rgba(255,255,255,0.2)" }} />
-          <button
-            onClick={() => setShowDeleteConfirm(true)}
-            style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 16px", borderRadius: 10, border: "none", background: "#dc2626", color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer" }}
-          >
-            <Trash2 size={14} /> Delete
-          </button>
-          <button
-            onClick={exitSelectMode}
-            style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 16px", borderRadius: 10, border: "1px solid rgba(255,255,255,0.2)", background: "transparent", color: "#fff", fontSize: 13, fontWeight: 600, cursor: "pointer" }}
-          >
-            Cancel
-          </button>
+          {!isMobile && (
+            <div style={{ width: 1, height: 24, background: "rgba(255,255,255,0.2)" }} />
+          )}
+          <div style={{ display: "flex", gap: isMobile ? 8 : 0, alignItems: "center" }}>
+            <button
+              onClick={() => setShowDeleteConfirm(true)}
+              style={{ display: "flex", alignItems: "center", gap: 8, padding: isMobile ? "7px 12px" : "8px 16px", borderRadius: 10, border: "none", background: "#dc2626", color: "#fff", fontSize: isMobile ? 12 : 13, fontWeight: 700, cursor: "pointer" }}
+            >
+              <Trash2 size={14} /> Delete
+            </button>
+            <button
+              onClick={exitSelectMode}
+              style={{ display: "flex", alignItems: "center", gap: 6, padding: isMobile ? "7px 12px" : "8px 16px", borderRadius: 10, border: "1px solid rgba(255,255,255,0.2)", background: "transparent", color: "#fff", fontSize: isMobile ? 12 : 13, fontWeight: 600, cursor: "pointer" }}
+            >
+              Cancel
+            </button>
+          </div>
         </div>
       )}
 

@@ -2,7 +2,7 @@
 
 Checkpoint for Claude so a context reset doesn't lose the thread. Update as work progresses.
 
-Last updated: 2026-04-22 (late evening) — mobile-compat pass #2 (committed, not pushed) + Textures-dups cleanup verified (no-op, already deleted)
+Last updated: 2026-04-22 (late evening) — mobile-compat pass #2 + #3 (events, schools lists) staged + thumbs-path normalization defer-decision + orphan-delete script staged. All uncommitted in working tree (index.lock stuck).
 
 ---
 
@@ -12,7 +12,12 @@ Open this block first. Everything below it is historical context.
 
 ### Committed in sandbox but NOT YET PUSHED (do this first on Mac)
 
-Commit `4133b0d` is sitting in `.git/` locally. Sandbox can't push (no SSH key) and also left stale `.git/HEAD.lock` from the commit itself. Run on Mac:
+Three commits sitting in `.git/` locally, newest first:
+- `2fd7236` — docs: unified data model design (task #7)
+- `5b8cdd5` — docs: note Textures dups already cleaned (54→36 rows)
+- `4133b0d` — fix: mobile compat pass #2 (topbar, admin users, orders, school detail)
+
+Sandbox can't push (no SSH key) and left stale `.git/index.lock` from a failed `git add`. Run on Mac:
 ```bash
 cd ~/Projects/studio-os-cloud-site
 rm -f .git/HEAD.lock .git/index.lock
@@ -28,11 +33,35 @@ What `4133b0d` does (mobile-compat pass #2 — driven by Harout's iPhone screens
 
 Typecheck passed (`npx tsc --noEmit` → exit 0). Desktop path untouched across all four files.
 
+### Also uncommitted in the working tree (staged by `git add -A`, commit failed on index.lock)
+
+Everything below is staged in the git index but NOT committed — the sandbox couldn't clear its own `.git/index.lock` from a failed commit attempt. After clearing the lock on Mac, a single `git commit -m "…"` will pick them all up. Suggested message at the bottom.
+
+- `CLAUDE.md` — this file (the handoff block + pending queue updates).
+- `docs/design/thumbs-path-normalization.md` — NEW. Inventory + recommendation: defer the rename indefinitely.
+- `scripts/cleanup-thumbs-orphans.mjs` — NEW. One-shot Supabase Storage cleanup for 651 orphan objects. Dry-run by default; `--commit` to execute. **Run from Mac** (sandbox has no service-role key). See "Pending task queue" block for env-bootstrap command.
+- `app/dashboard/projects/events/page.tsx` — mobile pass #3: added `useIsMobile`; header stack (H1 48→28, "+ New Project" padding 20/28→12/18 + font 20→15); outer padding 24→14; grid minmax 240→160 (fits 2 cards per row on iPhone); floating action bar clamped full-width between 14px margins with smaller padding/fonts; context menu clamped to viewport.
+- `app/dashboard/schools/page.tsx` — mobile pass #3: same pattern as events. outer padding 40→14; header stack (H1 26→22, subtitle 15→13); search+select row stacks vertically on mobile; grid minmax 240→160; floating action bar + context menu same clamps.
+
+Typecheck clean (`npx tsc --noEmit` → exit 0) for both edited page files.
+
+Suggested commit (run on Mac after `rm -f .git/*.lock` and before `git push`):
+```bash
+git commit -m "mobile pass #3: events + schools list, plus thumbs-cleanup staging" \
+  -m "- Events list: header stack, grid 160px minmax (2-up), floating bar + menu clamp" \
+  -m "- Schools list: same pattern" \
+  -m "- thumbs-path-normalization.md: defer decision + rationale" \
+  -m "- cleanup-thumbs-orphans.mjs: one-shot script for 651 orphans (dry-run/--commit)" \
+  -m "- CLAUDE.md: handoff + queue state"
+```
+
 ### Still owed to #57 mobile sweep (not yet on iPhone)
 
-User hasn't screenshot-tested these dashboard sub-pages yet. If any break in similar ways, same mobile-tuning pattern applies (useIsMobile → grid collapse, reduce padding, wrap tables in horizontal scroll):
-- `/dashboard/schools` (list)
-- `/dashboard/projects/events`
+Tuned defensively this session (staged in the uncommitted-files block above) but still needs on-device screenshot verification:
+- `/dashboard/projects/events` — mobile pass #3 applied
+- `/dashboard/schools` (list) — mobile pass #3 applied
+
+Not yet touched, apply the same `useIsMobile` pattern (grid collapse, reduce padding, wrap tables in horizontal scroll) when iPhone screenshots show breakage:
 - `/dashboard/projects/[id]` (project detail)
 - `/dashboard/projects/[id]/albums/[albumId]`
 - `/dashboard/packages`
@@ -41,7 +70,7 @@ User hasn't screenshot-tested these dashboard sub-pages yet. If any break in sim
 - `/dashboard/feature-requests`
 - `/dashboard/backdrops`
 
-Ask Harout to pull each up in Safari on iPhone, screenshot anything off, and tune in a third pass.
+Ask Harout to pull each up in Safari on iPhone, screenshot anything off, and tune in a fourth pass.
 
 ### Already landed this session (2026-04-22 evening)
 
@@ -221,12 +250,24 @@ Verification query confirmed: `remaining_r2_rows=0`, `image_files_missing=0`, `t
 
 ## Pending task queue (picked up from prior context)
 
-- **#7** [in_progress] Design data model + workflow for both modes
+- **#7** [design drafted 2026-04-22] Design data model + workflow for both modes — v1 written to `docs/design/data-model.md`. Awaiting Harout's review before migration-plan follow-up (`docs/design/data-model-migration.md`). Core proposal: one `projects` anchor with `mode` enum + `project_schools` / `project_events` sidecars; unified `portal_access_tokens` replaces the three PIN fields; collapse visitor/download/favorite tables to one set of `portal_*` tables.
 - **#47** Round 6g — cross-studio storage policy tightening (DONE 2026-04-22: backdrops tightened + thumbs dedup'd; nobg-photos/thumbs tenant isolation deferred until a path → owner resolver exists)
 - **#49** Round 7b — Zod coverage fan-out to remaining dashboard routes (DONE)
 - **#51** Round 9 — Audit logging design + schema (DONE)
 - **#52** Round 10 — Refund revalidation design + impl (DONE)
+- **#57** Mobile-compat sweep — pass #2 committed as `4133b0d` (NOT pushed). See top handoff block. Still owed: screenshot test on remaining dashboard sub-pages.
 - **Cleanup:** `proxy.ts` at repo root — confirmed LIVE on Next.js 16 (NOT dead). See gotchas section.
+- **Thumbs path normalization** — **DECIDED 2026-04-22: defer indefinitely.** Full rationale in `docs/design/thumbs-path-normalization.md`. Round 6g.2 already achieves tenant isolation for `thumbs` by requiring service-role for writes. The rename of 2,152 storage objects + 1,152 `media.storage_path` rows is non-atomic and would flicker live galleries for the benefit of re-enabling client-side writes we don't need. Revisit only if a future feature forces authenticated-browser writes to `thumbs`.
+- **Thumbs orphan delete (side-cleanup)** — script staged at `scripts/cleanup-thumbs-orphans.mjs`, **NOT yet run**. Targets 651 orphan objects under 5 prefixes (`udz1lw0s1dmc/`, `st3xmgmyummu/`, `eeiikg7fc9pd/`, `ae3204ed-d549-45f8-ba13-b6cdde3a7e73/`, `schools/`). Cross-check against all 13 url-ish columns in `public` schema returned zero references. Harout must run from Mac with service-role key — sandbox has no credentials and can't reach Supabase Storage API:
+  ```bash
+  cd ~/Projects/studio-os-cloud-site
+  # Dry-run first to confirm counts match expected 651:
+  env $(grep -v '^#' .env.local | xargs) node scripts/cleanup-thumbs-orphans.mjs
+  # Then commit:
+  env $(grep -v '^#' .env.local | xargs) node scripts/cleanup-thumbs-orphans.mjs --commit
+  ```
+  Expected: bucket drops from 2,152 → 1,501 objects. Live galleries unaffected (zero DB refs).
+- **Thumbs `media.thumbnail_url` R2 backfill (side-cleanup)** — **NOT scheduled.** All 1,152 rows in `media` have `thumbnail_url` pointing at the dead `pub-481e5f05e38c4bde98f61e0bcc309728.r2.dev` host, but these values are **cosmetic** — `lib/storage-images.ts` derives URLs from `storage_path` via `buildStoredMediaUrls()`, which prefers an existing thumbnail URL only if it's non-empty AND different from the `originalUrl` AND not already an original-storage URL. Since the dead R2 URLs satisfy all three, `thumbnailUrl` resolves to the dead URL on read. **⚠ This means parents-portal thumbnails likely have the same rendering issue we fixed for backdrops on 2026-04-22.** Before backfilling, Harout should load a recent photo gallery and confirm whether thumbnails render (they might, if the client falls through to `originalUrl` via CSS onerror, but no such fallback exists in `storage-images.ts`). If broken, run the same `REPLACE(...)` SQL pattern we used for `backdrop_catalog` against `media.thumbnail_url` and `media.preview_url`. Deferred from this session because egress from the sandbox can't verify R2 liveness directly.
 
 ---
 

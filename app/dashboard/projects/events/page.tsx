@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { Logo } from "@/components/logo";
+import { useIsMobile } from "@/lib/use-is-mobile";
 import { ArrowLeft, CalendarDays, Check, ImagePlus, LogOut, MoreHorizontal, Search, Settings, Trash2, Users, X } from "lucide-react";
 
 type ProjectRow = {
@@ -119,6 +120,7 @@ function bgStyle(project: ProjectRow) {
 export default function EventsPage() {
   const supabase = createClient();
   const router = useRouter();
+  const isMobile = useIsMobile();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [projects, setProjects] = useState<ProjectRow[]>([]);
@@ -289,20 +291,50 @@ export default function EventsPage() {
 
   return (
     <div style={{ minHeight: "100vh", background: "#ffffff" }}>
-      <div className="flex-1 px-6 py-6 text-[#13234a] lg:px-10">
+      <div
+        className="flex-1 text-[#13234a] lg:px-10"
+        style={{ padding: isMobile ? "14px" : "24px" }}
+      >
         <div className="mx-auto max-w-[1480px]">
-        <div className="mb-8 flex items-start justify-between gap-4">
+        <div
+          className="mb-8"
+          style={{
+            display: "flex",
+            flexDirection: isMobile ? "column" : "row",
+            alignItems: isMobile ? "stretch" : "flex-start",
+            justifyContent: isMobile ? "flex-start" : "space-between",
+            gap: isMobile ? 14 : 16,
+          }}
+        >
           <div>
             <Link href="/dashboard" className="mb-4 inline-flex items-center gap-2 text-sm font-semibold text-[#667085] transition hover:text-[#13234a]">
               <ArrowLeft size={16} />
               Back to dashboard
             </Link>
-            <h1 className="text-5xl font-bold tracking-[-0.04em] text-[#13234a]">Events</h1>
-            <p className="mt-4 text-xl text-[#667085]">Weddings, baptisms, engagements, private events, and client galleries.</p>
+            <h1
+              className="font-bold tracking-[-0.04em] text-[#13234a]"
+              style={{ fontSize: isMobile ? 28 : 48, lineHeight: 1.1 }}
+            >
+              Events
+            </h1>
+            <p
+              className="text-[#667085]"
+              style={{ fontSize: isMobile ? 14 : 20, marginTop: isMobile ? 8 : 16 }}
+            >
+              Weddings, baptisms, engagements, private events, and client galleries.
+            </p>
           </div>
 
-          <Link href="/dashboard/projects/new" className="inline-flex items-center gap-3 rounded-[22px] bg-[#0c1633] px-7 py-5 text-xl font-semibold text-white shadow-sm transition hover:-translate-y-0.5">
-            <span className="text-2xl leading-none">+</span>
+          <Link
+            href="/dashboard/projects/new"
+            className="inline-flex items-center gap-3 rounded-[22px] bg-[#0c1633] font-semibold text-white shadow-sm transition hover:-translate-y-0.5"
+            style={{
+              padding: isMobile ? "12px 18px" : "20px 28px",
+              fontSize: isMobile ? 15 : 20,
+              alignSelf: isMobile ? "flex-start" : undefined,
+            }}
+          >
+            <span style={{ fontSize: isMobile ? 18 : 24, lineHeight: 1 }}>+</span>
             New Project
           </Link>
         </div>
@@ -356,8 +388,11 @@ export default function EventsPage() {
           <div className="rounded-[28px] border border-[#d9dfeb] bg-white p-10 text-lg text-[#667085]">No events found.</div>
         ) : (
           <div
-            className="grid gap-5"
-            style={{ gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))" }}
+            className="grid"
+            style={{
+              gridTemplateColumns: `repeat(auto-fill, minmax(${isMobile ? 160 : 240}px, 1fr))`,
+              gap: isMobile ? 12 : 20,
+            }}
           >
             {filteredProjects.map((project) => {
               const href = `/dashboard/projects/${project.id}`;
@@ -507,8 +542,17 @@ export default function EventsPage() {
           <div
             style={{
               position: "fixed",
-              top: contextMenuPos.y,
-              left: contextMenuPos.x,
+              top: Math.min(
+                contextMenuPos.y,
+                (typeof window !== "undefined" ? window.innerHeight : 800) - 180,
+              ),
+              left: Math.max(
+                8,
+                Math.min(
+                  contextMenuPos.x,
+                  (typeof window !== "undefined" ? window.innerWidth : 1200) - 172,
+                ),
+              ),
               background: "#fff",
               borderRadius: 10,
               boxShadow: "0 8px 30px rgba(0,0,0,0.18)",
@@ -565,36 +609,42 @@ export default function EventsPage() {
           <div
             style={{
               position: "fixed",
-              bottom: 28,
-              left: "50%",
-              transform: "translateX(-50%)",
+              bottom: isMobile ? 14 : 28,
+              left: isMobile ? 14 : "50%",
+              right: isMobile ? 14 : "auto",
+              transform: isMobile ? "none" : "translateX(-50%)",
               background: "#111827",
               borderRadius: 16,
-              padding: "12px 24px",
+              padding: isMobile ? "10px 14px" : "12px 24px",
               display: "flex",
               alignItems: "center",
-              gap: 20,
+              gap: isMobile ? 10 : 20,
               boxShadow: "0 12px 40px rgba(0,0,0,0.3)",
               zIndex: 900,
               color: "#fff",
+              justifyContent: isMobile ? "space-between" : "flex-start",
             }}
           >
-            <span style={{ fontSize: 14, fontWeight: 700 }}>
+            <span style={{ fontSize: isMobile ? 12 : 14, fontWeight: 700 }}>
               {selectedIds.size} {selectedIds.size === 1 ? "event" : "events"} selected
             </span>
-            <div style={{ width: 1, height: 24, background: "rgba(255,255,255,0.2)" }} />
-            <button
-              onClick={() => setShowDeleteConfirm(true)}
-              style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 16px", borderRadius: 10, border: "none", background: "#dc2626", color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer" }}
-            >
-              <Trash2 size={14} /> Delete
-            </button>
-            <button
-              onClick={exitSelectMode}
-              style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 16px", borderRadius: 10, border: "1px solid rgba(255,255,255,0.2)", background: "transparent", color: "#fff", fontSize: 13, fontWeight: 600, cursor: "pointer" }}
-            >
-              Cancel
-            </button>
+            {!isMobile && (
+              <div style={{ width: 1, height: 24, background: "rgba(255,255,255,0.2)" }} />
+            )}
+            <div style={{ display: "flex", gap: isMobile ? 8 : 0, alignItems: "center" }}>
+              <button
+                onClick={() => setShowDeleteConfirm(true)}
+                style={{ display: "flex", alignItems: "center", gap: 8, padding: isMobile ? "7px 12px" : "8px 16px", borderRadius: 10, border: "none", background: "#dc2626", color: "#fff", fontSize: isMobile ? 12 : 13, fontWeight: 700, cursor: "pointer" }}
+              >
+                <Trash2 size={14} /> Delete
+              </button>
+              <button
+                onClick={exitSelectMode}
+                style={{ display: "flex", alignItems: "center", gap: 6, padding: isMobile ? "7px 12px" : "8px 16px", borderRadius: 10, border: "1px solid rgba(255,255,255,0.2)", background: "transparent", color: "#fff", fontSize: isMobile ? 12 : 13, fontWeight: 600, cursor: "pointer" }}
+              >
+                Cancel
+              </button>
+            </div>
           </div>
         )}
 
