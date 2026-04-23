@@ -140,21 +140,25 @@ function ScreenshotProtection({ flags, watermarkText }: Props) {
       const meta = e.metaKey || e.ctrlKey;
       const shift = e.shiftKey;
 
-      // PRE-TRIGGER: only fire the "modifier-alone" blur when the OTHER
-      // modifier is ALREADY held.  ⌘⇧ / ⌃⇧ is the universal prefix for
-      // macOS + Windows screenshots.  We used to fire on bare Shift or
-      // bare Cmd — but the user types Shift to capitalize, presses Cmd
-      // to open menus, etc.  That blurred the gallery constantly.
+      // AGGRESSIVE PRE-TRIGGER (2026-04-23 pass #3): blur on the FIRST
+      // modifier keydown — bare Cmd, bare Ctrl, or bare Shift.  We don't
+      // wait for the second modifier because macOS ⌘⇧3 captures the
+      // framebuffer as SOON as "3" is pressed, and on a fast typist the
+      // gap between Shift and 3 is <20ms — not enough time to paint a
+      // blur if we only start blurring on Shift.
       //
-      // Now: press Shift alone → nothing.  Press Cmd alone → nothing.
-      // Press Shift while Cmd is already down (or Cmd while Shift is
-      // already down) → blur.  This catches ⌘⇧3 in the ~50ms gap
-      // between the second modifier landing and the digit being pressed.
-      const isScreenshotPrefix =
-        (key === "Meta" && shift) ||
-        (key === "Control" && shift) ||
-        (key === "Shift" && (e.metaKey || e.ctrlKey));
-      if (isScreenshotPrefix) {
+      // Press Cmd → blur for 5s.  Press Shift → blur for 5s.  Press
+      // Ctrl → blur for 5s.  This catches every screenshot shortcut on
+      // macOS + Windows + Linux the moment the first qualifying key
+      // goes down, which is several hundred ms before the digit.
+      //
+      // Trade-off: Cmd+R to reload, Cmd+T for new tab, Cmd+L for URL
+      // bar, bare Shift to type a capital letter will also blur the
+      // gallery for 5s.  Acceptable because (a) the parents portal
+      // has no text inputs to capitalize in, (b) a click dismisses the
+      // blur instantly, (c) the ⌘⇧3 defense only works if we fire on
+      // the FIRST modifier.  Gallery > minor UX friction on Cmd-combos.
+      if (key === "Meta" || key === "Control" || key === "Shift") {
         triggerBlur(SCREENSHOT_BLUR_DURATION_MS);
       }
 
