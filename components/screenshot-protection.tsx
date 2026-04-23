@@ -470,20 +470,20 @@ function IdleBlurOverlay({
           // High z-index so the overlay covers gallery tiles AND the
           // photo lightbox / modal viewers (which typically stack at
           // z-index 50-1000).  Stays below the watermark (99990) and
-          // the blur-active notice (99999).  When active, the overlay
-          // blurs UI chrome too — acceptable because the overlay only
-          // shows when the user has stopped interacting.  A click
-          // clears it, restoring full UI readability.
+          // the blur-active notice (99999).
           zIndex: 99980,
-          backdropFilter: "blur(22px) saturate(0.55)",
-          WebkitBackdropFilter: "blur(22px) saturate(0.55)",
-          background: "rgba(5, 10, 20, 0.04)",
+          backdropFilter: "blur(32px) saturate(0.4)",
+          WebkitBackdropFilter: "blur(32px) saturate(0.4)",
+          // Visible dark tint so the user can clearly SEE the blur
+          // kicked in — a barely-visible 4% tint let them think
+          // nothing was happening even though the blur was firing.
+          background: "rgba(10, 15, 30, 0.55)",
           // Fade-IN = 0ms (instant, so it paints same frame a modifier
-          // is pressed — critical for ⌘⇧3).  Fade-OUT = 120ms so when
+          // is pressed — critical for ⌘⇧3).  Fade-OUT = 140ms so when
           // the user clicks to dismiss it eases out smoothly.
           transition: active
             ? "opacity 0ms linear"
-            : "opacity 120ms ease-out",
+            : "opacity 140ms ease-out",
           opacity: active ? 1 : 0,
           willChange: "opacity, backdrop-filter",
         }}
@@ -495,7 +495,7 @@ function IdleBlurOverlay({
         aria-live="polite"
         style={{
           position: "fixed",
-          top: 14,
+          top: 22,
           left: "50%",
           transform: "translateX(-50%)",
           zIndex: 99985,
@@ -504,28 +504,30 @@ function IdleBlurOverlay({
           transition: "opacity 60ms linear",
           display: "flex",
           alignItems: "center",
-          gap: 7,
-          padding: "6px 12px",
+          gap: 10,
+          padding: "12px 22px",
           borderRadius: 999,
-          background: "rgba(15, 23, 42, 0.78)",
+          background: "rgba(15, 23, 42, 0.92)",
           color: "#f8fafc",
           fontFamily: "Inter, system-ui, sans-serif",
-          fontSize: 11,
-          fontWeight: 600,
-          letterSpacing: 0.3,
-          boxShadow: "0 4px 14px rgba(0,0,0,0.28)",
-          backdropFilter: "blur(4px)",
-          WebkitBackdropFilter: "blur(4px)",
+          fontSize: 15,
+          fontWeight: 700,
+          letterSpacing: 0.4,
+          boxShadow: "0 10px 30px rgba(0,0,0,0.45)",
+          border: "1px solid rgba(255,255,255,0.12)",
+          backdropFilter: "blur(6px)",
+          WebkitBackdropFilter: "blur(6px)",
+          textTransform: "uppercase",
         }}
       >
         <span
           aria-hidden
           style={{
-            width: 6,
-            height: 6,
+            width: 9,
+            height: 9,
             borderRadius: 999,
             background: "#22c55e",
-            boxShadow: "0 0 6px rgba(34,197,94,0.9)",
+            boxShadow: "0 0 10px rgba(34,197,94,0.95)",
           }}
         />
         Screenshot protection on
