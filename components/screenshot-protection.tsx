@@ -132,56 +132,27 @@ function ScreenshotProtection({ flags, watermarkText }: Props) {
   useEffect(() => {
     if (!flags.desktop) return;
 
-    // Skip modifier-triggered blur when the user is typing in a real input
-    // so typing Shift-H for a capital H etc. doesn't strobe the gallery.
-    function targetIsInput(t: EventTarget | null): boolean {
-      if (!(t instanceof Element)) return false;
-      const tag = t.tagName;
-      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return true;
-      if (t instanceof HTMLElement && t.isContentEditable) return true;
-      return false;
-    }
-
     function onKeyDown(e: KeyboardEvent) {
+      // Ignore auto-repeated keydowns from a held key.  Without this,
+      // holding Shift/Cmd fires this handler every ~30ms, each call
+      // re-triggering the 5s blur — the user sees a strobing overlay.
+      if (e.repeat) return;
+
       const key = e.key;
       const meta = e.metaKey || e.ctrlKey;
       const shift = e.shiftKey;
-      const inInput = targetIsInput(e.target);
 
-      // MAX-AGGRESSIVE PREDICTIVE TRIGGER (desktop only, outside inputs):
-      // Blur on ANY modifier-key activity.  The goal is to beat macOS
-      // consuming ⌘⇧3/4/5 before the browser ever sees those specific
-      // keydowns.  By firing on the Command/Shift/Control press itself —
-      // BEFORE the user can press the digit — we guarantee the blur is
-      // already painted by the time the capture shortcut runs.
-      //
-      // What fires:
-      //   - Command / Meta press alone (user is starting a keyboard shortcut)
-      //   - Shift press alone (user is starting ⌘⇧x or a shift-shortcut)
-      //   - Any Meta-held or Shift-held keydown
-      //
-      // What's excluded:
-      //   - Anything typed in an <input>, <textarea>, <select>, or
-      //     contenteditable element (so text entry still works).
-      //
-      // Cost: pressing ⌘R / ⌘T / ⌘W etc. while the gallery has focus
-      // briefly blurs for 5s.  Trade accepted — one leaked photo is
-      // worse than a 5-second re-render on an unrelated shortcut.
-      if (!inInput) {
-        // Modifier press alone (Meta / Control / Shift)
-        if (key === "Meta" || key === "Control" || key === "Shift") {
-          triggerBlur(SCREENSHOT_BLUR_DURATION_MS);
-        }
-        // Any keydown while a modifier is held (catches the printable
-        // keys of combos, including ⌘⇧4 keydown on browsers that still
-        // deliver it).
-        if (meta || shift) {
-          triggerBlur(SCREENSHOT_BLUR_DURATION_MS);
-        }
-      }
+      // The always-on idle-blur overlay is now the PRIMARY defense — it's
+      // already painted whenever the user isn't actively interacting, so
+      // we no longer need to reactively blur on every modifier press.
+      // Doing so caused the overlay to flash in/out for unrelated
+      // shortcuts (⌘T, ⌘R, Shift-click, etc.) — that was the "repeating
+      // blur" bug.  Keep only the narrow, targeted handlers below as
+      // belt-and-suspenders.
 
-      // Specific screenshot keys — try to preventDefault even though
-      // macOS will consume them at the OS level before this runs.
+      // Specific screenshot key combos — preventDefault is a no-op on
+      // macOS (OS consumes it) but the blur gives a 5s buffer in case
+      // anything slips through on other platforms.
       if (meta && shift && ["3", "4", "5", "6"].includes(key)) {
         e.preventDefault();
         triggerBlur(SCREENSHOT_BLUR_DURATION_MS);
@@ -189,23 +160,6 @@ function ScreenshotProtection({ flags, watermarkText }: Props) {
 
       // Windows: PrtSc — can't actually block it but blur ASAP.
       if (key === "PrintScreen") {
-        triggerBlur(SCREENSHOT_BLUR_DURATION_MS);
-      }
-    }
-
-    // Keep blur alive while ANY modifier is still held.  For ⌘⇧4 the
-    // user presses keys and then drags with the mouse — by the time they
-    // release, we've had seconds of modifier-down events firing this.
-    function onKeyUp(e: KeyboardEvent) {
-      if (targetIsInput(e.target)) return;
-      const meta = e.metaKey || e.ctrlKey;
-      const shift = e.shiftKey;
-      const wasModifier =
-        e.key === "Meta" ||
-        e.key === "Control" ||
-        e.key === "Shift" ||
-        e.key === "Alt";
-      if (meta || shift || wasModifier) {
         triggerBlur(SCREENSHOT_BLUR_DURATION_MS);
       }
     }
@@ -261,9 +215,7 @@ function ScreenshotProtection({ flags, watermarkText }: Props) {
     // keydown as early as possible — some browsers route system shortcuts
     // differently and we want to grab the event on its first hop.
     window.addEventListener("keydown", onKeyDown, true);
-    window.addEventListener("keyup", onKeyUp, true);
     document.addEventListener("keydown", onKeyDown, true);
-    document.addEventListener("keyup", onKeyUp, true);
     window.addEventListener("contextmenu", onContextMenu, true);
     window.addEventListener("blur", onBlur);
     window.addEventListener("dragstart", onDragStart, true);
@@ -273,9 +225,7 @@ function ScreenshotProtection({ flags, watermarkText }: Props) {
 
     return () => {
       window.removeEventListener("keydown", onKeyDown, true);
-      window.removeEventListener("keyup", onKeyUp, true);
       document.removeEventListener("keydown", onKeyDown, true);
-      document.removeEventListener("keyup", onKeyUp, true);
       window.removeEventListener("contextmenu", onContextMenu, true);
       window.removeEventListener("blur", onBlur);
       window.removeEventListener("dragstart", onDragStart, true);
@@ -314,7 +264,12 @@ function ScreenshotProtection({ flags, watermarkText }: Props) {
     const treatAsMobile = flags.mobile && isCoarsePointer;
     const treatAsDesktop = flags.desktop && !isCoarsePointer;
 
-    const IDLE_MS = 150;
+    // 1500ms: long enough that natural pauses while reading / choosing a
+    // photo don't strobe the blur on and off, short enough that reaching
+    // for the keyboard to press ⌘⇧4 triggers the blur before the
+    // shortcut fires (the stillness before pressing a shortcut is
+    // typically 400-800ms).
+    const IDLE_MS = 1500;
 
     function scheduleIdleBlur() {
       if (idleTimerRef.current) window.clearTimeout(idleTimerRef.current);
@@ -447,24 +402,69 @@ function ScreenshotProtection({ flags, watermarkText }: Props) {
  */
 function IdleBlurOverlay({ active }: { active: boolean }) {
   return (
-    <div
-      aria-hidden
-      style={{
-        position: "fixed",
-        inset: 0,
-        pointerEvents: "none",
-        zIndex: 8,
-        backdropFilter: "blur(22px) saturate(0.55)",
-        WebkitBackdropFilter: "blur(22px) saturate(0.55)",
-        background: "rgba(5, 10, 20, 0.04)",
-        // 60ms fade: short enough that the blur is usable in the same
-        // paint frame it appears, long enough that the un-blur on
-        // interaction doesn't feel jarring.
-        transition: "opacity 60ms linear",
-        opacity: active ? 1 : 0,
-        willChange: "opacity, backdrop-filter",
-      }}
-    />
+    <>
+      <div
+        aria-hidden
+        style={{
+          position: "fixed",
+          inset: 0,
+          pointerEvents: "none",
+          zIndex: 8,
+          backdropFilter: "blur(22px) saturate(0.55)",
+          WebkitBackdropFilter: "blur(22px) saturate(0.55)",
+          background: "rgba(5, 10, 20, 0.04)",
+          // 60ms fade: short enough that the blur is usable in the same
+          // paint frame it appears, long enough that the un-blur on
+          // interaction doesn't feel jarring.
+          transition: "opacity 60ms linear",
+          opacity: active ? 1 : 0,
+          willChange: "opacity, backdrop-filter",
+        }}
+      />
+      {/* Small status pill shown whenever the idle blur is active.
+          Sits above the blur overlay (z > 8) so it stays crisp.
+          Same 60ms fade as the blur so they appear/disappear together. */}
+      <div
+        role="status"
+        aria-live="polite"
+        style={{
+          position: "fixed",
+          top: 14,
+          left: "50%",
+          transform: "translateX(-50%)",
+          zIndex: 9,
+          pointerEvents: "none",
+          opacity: active ? 1 : 0,
+          transition: "opacity 60ms linear",
+          display: "flex",
+          alignItems: "center",
+          gap: 7,
+          padding: "6px 12px",
+          borderRadius: 999,
+          background: "rgba(15, 23, 42, 0.78)",
+          color: "#f8fafc",
+          fontFamily: "Inter, system-ui, sans-serif",
+          fontSize: 11,
+          fontWeight: 600,
+          letterSpacing: 0.3,
+          boxShadow: "0 4px 14px rgba(0,0,0,0.28)",
+          backdropFilter: "blur(4px)",
+          WebkitBackdropFilter: "blur(4px)",
+        }}
+      >
+        <span
+          aria-hidden
+          style={{
+            width: 6,
+            height: 6,
+            borderRadius: 999,
+            background: "#22c55e",
+            boxShadow: "0 0 6px rgba(34,197,94,0.9)",
+          }}
+        />
+        Screenshot protection on
+      </div>
+    </>
   );
 }
 
