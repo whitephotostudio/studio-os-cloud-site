@@ -3,7 +3,7 @@
 // Studio Assistant — premium command bar with inline mic button.
 // Desktop-first but fluid enough to adapt to narrower widths later.
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ChevronDown, Mic, MicOff, Send, Sparkles } from "lucide-react";
 import {
   useSpeechRecognition,
@@ -12,6 +12,8 @@ import {
 export type CommandBarProps = {
   /** Called when the user presses Enter or clicks the submit button. */
   onSubmit: (text: string) => void;
+  /** Fires on every keystroke — lets the host show live Spotlight results. */
+  onChange?: (text: string) => void;
   /** Initial text; useful when the panel pre-populates edits. */
   initialValue?: string;
   /** Hide the mic button entirely (respects user settings). */
@@ -71,9 +73,10 @@ const ACCENT = "#cc0000";
 
 export function CommandBar({
   onSubmit,
+  onChange,
   initialValue = "",
   showMic = true,
-  placeholder = "Ask Studio OS to create, update, release, or organize…",
+  placeholder = "Ask Studio OS, or search students, schools, events, orders…",
 }: CommandBarProps) {
   const [value, setValue] = useState(initialValue);
   const [focused, setFocused] = useState(false);
@@ -173,7 +176,10 @@ export function CommandBar({
           id="studio-assistant-input"
           ref={inputRef}
           value={value}
-          onChange={(e) => setValue(e.target.value)}
+          onChange={(e) => {
+            setValue(e.target.value);
+            onChange?.(e.target.value);
+          }}
           onFocus={() => setFocused(true)}
           onBlur={() => setFocused(false)}
           onKeyDown={(e) => {
@@ -275,17 +281,40 @@ export function CommandBar({
 /**
  * Dropdown of pre-written commands grouped by theme. When the user
  * picks one we call `onPick` with the text so the parent can drop it
- * into the command bar. The parent decides whether to auto-submit or
- * let the user confirm with the "Ask" button.
+ * into the command bar.
  *
- * Kept as a native <select> so it works on every browser without a
- * custom popover, and because the user explicitly asked for a dropdown.
+ * Implemented as a custom popover rather than a native <select>.
+ * Safari was painting the native popup with a dark translucent backdrop
+ * that ignored our inline color + colorScheme styles, making every
+ * option look like grey-on-grey.  A plain <div> popover gives us full
+ * control over contrast so the text is readable everywhere.
  */
 export function CommandBarExamples({
   onPick,
 }: {
   onPick: (example: string) => void;
 }) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+
+  // Close on outside click or escape.
+  useEffect(() => {
+    if (!open) return;
+    function onDocClick(e: MouseEvent) {
+      if (!rootRef.current) return;
+      if (!rootRef.current.contains(e.target as Node)) setOpen(false);
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setOpen(false);
+    }
+    document.addEventListener("mousedown", onDocClick);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDocClick);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
   return (
     <div
       style={{
@@ -297,7 +326,6 @@ export function CommandBarExamples({
       }}
     >
       <label
-        htmlFor="studio-assistant-command-picker"
         style={{
           fontSize: 11,
           letterSpacing: "0.12em",
@@ -309,90 +337,112 @@ export function CommandBarExamples({
       </label>
 
       <div
+        ref={rootRef}
         style={{
           position: "relative",
           flex: "1 1 260px",
           maxWidth: 520,
-          display: "inline-flex",
-          alignItems: "center",
         }}
       >
-        <select
-          id="studio-assistant-command-picker"
-          // Use key=value so picking the same option twice still fires a change.
-          // We reset to empty via the `key` below to keep the placeholder.
-          defaultValue=""
-          onChange={(e) => {
-            const v = e.target.value;
-            if (v) {
-              onPick(v);
-              // Reset so picking the same prompt again re-triggers the fill.
-              e.target.value = "";
-            }
-          }}
-          aria-label="Choose a pre-written command"
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          aria-haspopup="listbox"
+          aria-expanded={open}
           style={{
             width: "100%",
-            appearance: "none",
-            WebkitAppearance: "none",
-            background: "#fff",
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            background: "#ffffff",
             border: `1px solid ${BORDER}`,
             borderRadius: 12,
-            padding: "10px 36px 10px 14px",
+            padding: "10px 14px",
             fontSize: 13,
             fontWeight: 700,
             color: TEXT_PRIMARY,
             cursor: "pointer",
-            // Force light-mode rendering so Safari doesn't paint the
-            // open dropdown with dark system chrome.
-            colorScheme: "light",
+            textAlign: "left",
           }}
         >
-          {/*
-            Inline `color` + `background` on every <option>/<optgroup> is
-            deliberate: Safari (and some Chromium builds) ignore the parent
-            select's `color` / `colorScheme` when painting the native
-            popup, producing the washed-out grey-on-grey look Harout flagged.
-            Explicit per-option styling guarantees readable text.
-          */}
-          <option
-            value=""
-            disabled
-            style={{ color: TEXT_MUTED, background: "#fff" }}
+          <span style={{ color: TEXT_MUTED }}>Choose a prompt…</span>
+          <ChevronDown size={15} color={TEXT_MUTED} />
+        </button>
+
+        {open ? (
+          <div
+            role="listbox"
+            aria-label="Pre-written commands"
+            style={{
+              position: "absolute",
+              top: "calc(100% + 6px)",
+              left: 0,
+              right: 0,
+              maxHeight: 340,
+              overflowY: "auto",
+              background: "#ffffff", // solid, opaque
+              border: `1px solid ${BORDER}`,
+              borderRadius: 14,
+              boxShadow: "0 20px 50px rgba(15,23,42,0.18)",
+              padding: 6,
+              zIndex: 60,
+              // Force light-mode scrollbar/colours so Safari doesn't
+              // re-tint anything on dark-mode systems.
+              colorScheme: "light",
+            }}
           >
-            Choose a prompt…
-          </option>
-          {COMMAND_GROUPS.map((group) => (
-            <optgroup
-              key={group.label}
-              label={group.label}
-              style={{
-                color: TEXT_PRIMARY,
-                background: "#f7f7f8",
-                fontWeight: 800,
-              }}
-            >
-              {group.items.map((item) => (
-                <option
-                  key={item}
-                  value={item}
-                  style={{ color: TEXT_PRIMARY, background: "#fff" }}
+            {COMMAND_GROUPS.map((group, gi) => (
+              <div key={group.label}>
+                <div
+                  style={{
+                    padding: "8px 10px 4px",
+                    fontSize: 10,
+                    letterSpacing: "0.14em",
+                    fontWeight: 800,
+                    color: "#6b7280", // mid-grey, explicit
+                    textTransform: "uppercase",
+                    borderTop: gi === 0 ? "none" : "1px solid #f3f4f6",
+                    marginTop: gi === 0 ? 0 : 4,
+                  }}
                 >
-                  {item}
-                </option>
-              ))}
-            </optgroup>
-          ))}
-        </select>
-        <ChevronDown
-          size={15}
-          color={TEXT_MUTED}
-          style={{
-            position: "absolute",
-            right: 12,
-            pointerEvents: "none",
-          }}
-        />
+                  {group.label}
+                </div>
+                {group.items.map((item) => (
+                  <button
+                    key={item}
+                    type="button"
+                    role="option"
+                    onClick={() => {
+                      onPick(item);
+                      setOpen(false);
+                    }}
+                    style={{
+                      display: "block",
+                      width: "100%",
+                      textAlign: "left",
+                      padding: "8px 10px",
+                      background: "#ffffff",
+                      border: "none",
+                      borderRadius: 8,
+                      color: TEXT_PRIMARY, // explicit near-black
+                      fontSize: 13,
+                      fontWeight: 600,
+                      cursor: "pointer",
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.background = "#f9fafb";
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.background = "#ffffff";
+                    }}
+                  >
+                    {item}
+                  </button>
+                ))}
+              </div>
+            ))}
+          </div>
+        ) : null}
       </div>
 
       <span style={{ fontSize: 11, color: TEXT_MUTED, fontWeight: 700 }}>

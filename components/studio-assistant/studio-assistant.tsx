@@ -34,6 +34,7 @@ import { AssistantExecutionPlan } from "@/lib/studio-assistant/plan-types";
 import { CommandBar, CommandBarExamples } from "./command-bar";
 import { AssistantPanel, RunOutcome } from "./assistant-panel";
 import { PlanPreview } from "./plan-preview";
+import { InlineSpotlightResults } from "./assistant-spotlight";
 import { createClient } from "@/lib/supabase/client";
 
 const BORDER = "#e5e7eb";
@@ -147,6 +148,12 @@ export function StudioAssistant({ greetingName }: StudioAssistantProps) {
   );
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [commandValue, setCommandValue] = useState("");
+  // Live-search mirror of what the user is typing in the command bar.
+  // Drives the inline Spotlight results card below.  Kept separate from
+  // commandValue (which is only set on "pick example" + "edit" actions)
+  // so the user's direct typing in the input doesn't loop through prop
+  // reassignment on every keystroke.
+  const [liveQuery, setLiveQuery] = useState("");
   const [parsed, setParsed] = useState<ParsedAssistantCommand | null>(null);
   const [panelOpen, setPanelOpen] = useState(false);
   // Phase 3 — session memory.  Kept as state so we can set it during a
@@ -359,6 +366,10 @@ export function StudioAssistant({ greetingName }: StudioAssistantProps) {
 
   const handlePickExample = useCallback((example: string) => {
     setCommandValue(example);
+    // Examples are full commands, not search terms — collapse the
+    // inline Spotlight card so it doesn't try to search "What needs my
+    // attention?".
+    setLiveQuery("");
   }, []);
 
   const handleEdit = useCallback((original: string) => {
@@ -388,8 +399,20 @@ export function StudioAssistant({ greetingName }: StudioAssistantProps) {
         <div style={{ flex: 1, minWidth: 0 }}>
           <CommandBar
             onSubmit={handleSubmit}
+            onChange={setLiveQuery}
             initialValue={initialValue}
             showMic={settings.micEnabled}
+          />
+          {/*
+            Inline Spotlight — as the photographer types, match across
+            students / schools / events / orders.  Click any row to jump
+            there directly; this does NOT consume the command, so Ask
+            still runs the intent parser for phrases like "release
+            Maple Creek gallery tomorrow".
+          */}
+          <InlineSpotlightResults
+            term={liveQuery}
+            onSelect={() => setLiveQuery("")}
           />
           <CommandBarExamples onPick={handlePickExample} />
         </div>

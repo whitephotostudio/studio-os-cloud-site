@@ -39,7 +39,7 @@ import { createClient } from "@/lib/supabase/client";
 
 // ── Types ────────────────────────────────────────────────────────────
 
-type SpotlightHit =
+export type SpotlightHit =
   | {
       kind: "student";
       id: string;
@@ -80,7 +80,7 @@ function isShortOrderId(term: string): boolean {
 
 // ── Shared hook: cross-table search ──────────────────────────────────
 
-function useSpotlight(term: string, enabled: boolean) {
+export function useSpotlight(term: string, enabled: boolean) {
   const [supabase] = useState(() => createClient());
   const [photographerId, setPhotographerId] = useState<string | null>(null);
   const [hits, setHits] = useState<SpotlightHit[]>([]);
@@ -841,7 +841,7 @@ export function SpotlightLauncher({ compact = false }: SpotlightLauncherProps) {
 
 // ── Kind styling helpers ────────────────────────────────────────────
 
-function kindLabel(kind: SpotlightHit["kind"]): string {
+export function kindLabel(kind: SpotlightHit["kind"]): string {
   switch (kind) {
     case "student":
       return "Student";
@@ -854,7 +854,7 @@ function kindLabel(kind: SpotlightHit["kind"]): string {
   }
 }
 
-function kindBg(kind: SpotlightHit["kind"]): string {
+export function kindBg(kind: SpotlightHit["kind"]): string {
   switch (kind) {
     case "student":
       return "#eef2ff";
@@ -867,7 +867,7 @@ function kindBg(kind: SpotlightHit["kind"]): string {
   }
 }
 
-function kindFg(kind: SpotlightHit["kind"]): string {
+export function kindFg(kind: SpotlightHit["kind"]): string {
   switch (kind) {
     case "student":
       return "#4338ca";
@@ -936,7 +936,7 @@ function FilterPill({
   );
 }
 
-function kindIcon(kind: SpotlightHit["kind"]): React.ReactNode {
+export function kindIcon(kind: SpotlightHit["kind"]): React.ReactNode {
   switch (kind) {
     case "student":
       return <UserRound size={16} />;
