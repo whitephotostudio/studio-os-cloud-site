@@ -117,7 +117,16 @@ function ScreenshotProtection({ flags, watermarkText }: Props) {
     }, ms);
   }, []);
 
-  // Desktop keystroke + focus + contextmenu listeners + proactive triggers.
+  // Desktop keystroke + contextmenu + dragstart listeners.
+  //
+  // PROACTIVE TRIGGERS REMOVED (2026-04-23): mouseleave / pointerleave /
+  // window.blur / visibilitychange were firing phantom blurs every time
+  // the cursor left the viewport or the user clicked on another window
+  // (switching tabs, clicking the URL bar, reaching for the dock, even
+  // moving toward the browser's own close button).  The result was
+  // near-constant blur-on-blur-off cycling that had NOTHING to do with a
+  // screenshot being taken.  Now we only blur on real screenshot
+  // keystrokes (⌘⇧3/4/5/6 + modifier pre-triggers + PrtSc).
   useEffect(() => {
     if (!flags.desktop) return;
 
@@ -131,16 +140,21 @@ function ScreenshotProtection({ flags, watermarkText }: Props) {
       const meta = e.metaKey || e.ctrlKey;
       const shift = e.shiftKey;
 
-      // TARGETED PREDICTIVE TRIGGER: fire on the Command / Shift / Ctrl
-      // key press itself.  Every screenshot shortcut starts with one of
-      // these being held down (⌘⇧3, ⌘⇧4, ⌘⇧5, PrtSc).  Blurring on
-      // the modifier keydown covers the typically 50-200ms gap before
-      // the digit is pressed — crucial for ⌘⇧3 which the OS captures
-      // instantly at the frame after the digit.
+      // PRE-TRIGGER: only fire the "modifier-alone" blur when the OTHER
+      // modifier is ALREADY held.  ⌘⇧ / ⌃⇧ is the universal prefix for
+      // macOS + Windows screenshots.  We used to fire on bare Shift or
+      // bare Cmd — but the user types Shift to capitalize, presses Cmd
+      // to open menus, etc.  That blurred the gallery constantly.
       //
-      // Single event (e.repeat already guarded above), so no strobing.
-      // Covers the case where the user presses Shift FIRST then Cmd.
-      if (key === "Meta" || key === "Control" || key === "Shift") {
+      // Now: press Shift alone → nothing.  Press Cmd alone → nothing.
+      // Press Shift while Cmd is already down (or Cmd while Shift is
+      // already down) → blur.  This catches ⌘⇧3 in the ~50ms gap
+      // between the second modifier landing and the digit being pressed.
+      const isScreenshotPrefix =
+        (key === "Meta" && shift) ||
+        (key === "Control" && shift) ||
+        (key === "Shift" && (e.metaKey || e.ctrlKey));
+      if (isScreenshotPrefix) {
         triggerBlur(SCREENSHOT_BLUR_DURATION_MS);
       }
 
@@ -162,46 +176,10 @@ function ScreenshotProtection({ flags, watermarkText }: Props) {
       e.preventDefault();
     }
 
-    function onBlur() {
-      // Most screenshot tools briefly steal focus. Blur the page while
-      // focus is gone so the capture lands on a blurred frame.
-      triggerBlur(1800);
-    }
-
     function onDragStart(e: DragEvent) {
       const target = e.target as HTMLElement | null;
       if (target?.tagName === "IMG") {
         e.preventDefault();
-      }
-    }
-
-    // PROACTIVE TRIGGER 1: cursor leaving the viewport.  On macOS, moving
-    // toward the menu bar (to click the Screenshot.app menu extra) or
-    // toward another app window fires mouseleave on the root element.  This
-    // is the earliest signal we can get that the user is about to switch
-    // context to capture.
-    function onDocumentMouseLeave(e: MouseEvent) {
-      // Only fire when actually exiting the window (relatedTarget null).
-      if (!e.relatedTarget) {
-        triggerBlur(1500);
-      }
-    }
-
-    // PROACTIVE TRIGGER 2: tab visibility change.  If the tab becomes
-    // hidden for any reason, blur immediately so returning to the tab
-    // doesn't briefly show the gallery before re-blurring.
-    function onVisibilityChange() {
-      if (document.visibilityState !== "visible") {
-        triggerBlur(2200);
-      }
-    }
-
-    // PROACTIVE TRIGGER 3: pointer leaving the viewport (covers trackpad
-    // + mouse on macOS where mouseleave sometimes doesn't fire on fast
-    // flick to top-of-screen).
-    function onPointerLeave(e: PointerEvent) {
-      if (!e.relatedTarget) {
-        triggerBlur(1500);
       }
     }
 
@@ -211,21 +189,13 @@ function ScreenshotProtection({ flags, watermarkText }: Props) {
     window.addEventListener("keydown", onKeyDown, true);
     document.addEventListener("keydown", onKeyDown, true);
     window.addEventListener("contextmenu", onContextMenu, true);
-    window.addEventListener("blur", onBlur);
     window.addEventListener("dragstart", onDragStart, true);
-    document.documentElement.addEventListener("mouseleave", onDocumentMouseLeave);
-    document.documentElement.addEventListener("pointerleave", onPointerLeave);
-    document.addEventListener("visibilitychange", onVisibilityChange);
 
     return () => {
       window.removeEventListener("keydown", onKeyDown, true);
       document.removeEventListener("keydown", onKeyDown, true);
       window.removeEventListener("contextmenu", onContextMenu, true);
-      window.removeEventListener("blur", onBlur);
       window.removeEventListener("dragstart", onDragStart, true);
-      document.documentElement.removeEventListener("mouseleave", onDocumentMouseLeave);
-      document.documentElement.removeEventListener("pointerleave", onPointerLeave);
-      document.removeEventListener("visibilitychange", onVisibilityChange);
     };
   }, [flags.desktop, triggerBlur]);
 
