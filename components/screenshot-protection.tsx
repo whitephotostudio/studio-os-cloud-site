@@ -73,7 +73,6 @@ type Props = {
 
 const BLUR_DURATION_MS = 2200;
 const SCREENSHOT_BLUR_DURATION_MS = 5000;
-const BODY_BLUR_FILTER = "blur(26px) saturate(0.5)";
 
 function ScreenshotProtection({ flags, watermarkText }: Props) {
   const [blurred, setBlurred] = useState(false);
@@ -89,27 +88,24 @@ function ScreenshotProtection({ flags, watermarkText }: Props) {
   );
   const blurTimerRef = useRef<number | null>(null);
   // Direct DOM handle to the idle-blur overlay so triggerBlur can
-  // force-paint it in the SAME SYNCHRONOUS CALL as the body filter —
-  // no React render round-trip, no 60ms fade, no capture race.
+  // force-paint it synchronously in the event-handler tick — no React
+  // render round-trip, no 60ms fade, no capture race with ⌘⇧3.
   const overlayRef = useRef<HTMLDivElement | null>(null);
 
   // Synchronous DOM apply — we paint the blur into the current frame and
   // THEN kick React state so the notice / other effects render.  Waiting
   // for React to flush means one frame of unblurred paint, which is the
   // exact window macOS ⌘⇧4 needs to grab a clean image.
+  //
+  // SPEED NOTE (2026-04-23): earlier versions also set
+  // `document.body.style.filter = "blur(26px)"` as a second layer.  That
+  // forced the browser to re-raster the ENTIRE page through a blur
+  // shader every frame — visibly laggy on content-heavy galleries.  Now
+  // we rely solely on the overlay's `backdrop-filter`, which is
+  // GPU-composited over an already-rendered page.  Paint is 1-frame.
   const triggerBlur = useCallback((ms: number = BLUR_DURATION_MS) => {
-    if (typeof document !== "undefined" && document.body) {
-      document.body.style.transition = "";
-      document.body.style.filter = BODY_BLUR_FILTER;
-    }
-    // Double-layer blur: body filter AND backdrop-filter overlay.
-    // Direct DOM poke (no React state update) so it lands this tick,
-    // not next render — beats macOS ⌘⇧4's crop frame.
-    //
-    // IMPORTANT: we do NOT setIdleBlur here.  idleBlur is mobile-only
-    // now (always-on unless touching).  The overlay's visibility on
-    // desktop is driven purely by the reactive `blurred` flag —
-    // otherwise the overlay got stuck on after the 5s timer fired.
+    // Direct DOM poke on the overlay (no React round-trip) so the blur
+    // lands in the same tick the event handler runs.
     if (overlayRef.current) {
       overlayRef.current.style.transition = "none";
       overlayRef.current.style.opacity = "1";
@@ -120,28 +116,6 @@ function ScreenshotProtection({ flags, watermarkText }: Props) {
       setBlurred(false);
     }, ms);
   }, []);
-
-  // Apply a blur filter to <body> whenever `blurred` flips on.  Using body
-  // (not html) means the floating watermark + overlay notice are also blurred
-  // — which is fine, the point is to hide the gallery.
-  //
-  // NOTE: no CSS transition here.  Any animated easing would mean the OS
-  // frame-grab happens during the fade-in and captures a barely-blurred
-  // image.  We want instant, full blur the same frame we detect the threat.
-  useEffect(() => {
-    if (typeof document === "undefined") return;
-    const body = document.body;
-    if (!body) return;
-    if (blurred) {
-      body.style.transition = "";
-      body.style.filter = "blur(26px) saturate(0.5)";
-    } else {
-      body.style.filter = "";
-    }
-    return () => {
-      body.style.filter = "";
-    };
-  }, [blurred]);
 
   // Desktop keystroke + focus + contextmenu listeners + proactive triggers.
   useEffect(() => {
@@ -307,9 +281,6 @@ function ScreenshotProtection({ flags, watermarkText }: Props) {
   const clearReactiveBlur = useCallback(() => {
     if (blurTimerRef.current) window.clearTimeout(blurTimerRef.current);
     setBlurred(false);
-    if (typeof document !== "undefined" && document.body) {
-      document.body.style.filter = "";
-    }
     // Restore the overlay's CSS transition so future fades feel smooth.
     if (overlayRef.current) {
       overlayRef.current.style.transition = "";
@@ -414,7 +385,14 @@ function IdleBlurOverlay({
             ? "opacity 0ms linear"
             : "opacity 140ms ease-out",
           opacity: active ? 1 : 0,
-          willChange: "opacity, backdrop-filter",
+          // GPU-compositing hints.  `translateZ(0)` promotes the overlay
+          // to its own compositor layer so flipping opacity doesn't
+          // trigger a repaint of any ancestor.  `willChange` tells the
+          // browser to keep the layer warm and the backdrop-filter
+          // shader pre-compiled, eliminating the first-paint stall that
+          // was causing the "hit Cmd → wait ~100ms → see blur" lag.
+          transform: "translateZ(0)",
+          willChange: "opacity, backdrop-filter, transform",
         }}
       />
       {/* Small status pill shown whenever the idle blur is active.
@@ -607,10 +585,10 @@ function WatermarkOverlay({ text }: { text: string }) {
 }
 
 function BlurNotice() {
-  // Portal the notice up to <html> so it sits outside <body>.  Since we
-  // apply `filter: blur(...)` to <body>, anything inside body inherits the
-  // blur.  Hoisting the notice out of body keeps its text crisp while the
-  // rest of the page is blurred.
+  // Portal the notice up to <html> so it renders above every other
+  // stacking context on the page — the parents-portal lightbox /
+  // modal uses its own container with transform, which traps
+  // fixed-position children.  Hoisting out to <html> sidesteps that.
   const [mounted, setMounted] = useState(false);
   useEffect(() => {
     setMounted(true);
