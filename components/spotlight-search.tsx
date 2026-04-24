@@ -137,11 +137,15 @@ export function useSpotlight(term: string, enabled: boolean) {
           supabase
             .from("students")
             .select(
-              "id, first_name, last_name, photo_url, school_id, class_id, class_name, schools!inner(school_name, photographer_id)",
+              "id, first_name, last_name, photo_url, school_id, class_id, class_name, role, schools!inner(school_name, photographer_id)",
             )
             .eq("schools.photographer_id", photographerId)
+            // Match on name OR role, so typing "coach" surfaces every
+            // coach in the account, and typing a partial name still works.
+            // The `students` table doubles as the people table — teachers
+            // and coaches live here with a non-null `role` value.
             .or(
-              `first_name.ilike.%${trimmed}%,last_name.ilike.%${trimmed}%`,
+              `first_name.ilike.%${trimmed}%,last_name.ilike.%${trimmed}%,role.ilike.%${trimmed}%`,
             )
             .limit(8),
           supabase
@@ -209,6 +213,7 @@ export function useSpotlight(term: string, enabled: boolean) {
             school_id: string | null;
             class_id: string | null;
             class_name: string | null;
+            role: string | null;
             schools:
               | { school_name: string | null }
               | { school_name: string | null }[]
@@ -227,25 +232,27 @@ export function useSpotlight(term: string, enabled: boolean) {
               .join(" ") || "Student";
           matchedStudentIds.push(s.id);
           matchedStudentNames[s.id] = studentName;
-          // Deep-link priority: class page > school page > schools list.
-          // The class page can scroll to / highlight the specific student
-          // via ?student=ID. If we only have a school (no class yet),
-          // the school page scrolls to the student's class card.
-          let href: string;
-          if (s.school_id && s.class_id) {
-            href = `/dashboard/projects/schools/${s.school_id}/classes/${s.class_id}?student=${encodeURIComponent(s.id)}`;
-          } else if (s.school_id) {
-            href = `/dashboard/projects/schools/${s.school_id}?student=${encodeURIComponent(s.id)}`;
-          } else {
-            href = "/dashboard/schools";
-          }
+          // Deep-link: always through the school page with ?student=ID.
+          // The school page's students rows carry `class_name` (not a UUID —
+          // the `/classes/[classId]` segment is the URL-encoded class name),
+          // so the school page does the redirect to
+          // /classes/<encodeURIComponent(class_name)>?student=<id> on its
+          // own.  This covers the case where `students.class_id` is null in
+          // the DB (which otherwise dead-ends on the school overview).
+          const href = s.school_id
+            ? `/dashboard/projects/schools/${s.school_id}?student=${encodeURIComponent(s.id)}`
+            : "/dashboard/schools";
+          // Subtitle prefers class (for students) and falls back to role
+          // (for teachers, coaches, staff etc).  The visible "School ·
+          // Teacher" line tells Harout at a glance who he's looking at.
+          const classOrRole = clean(s.class_name) || clean(s.role);
           next.push({
             kind: "student",
             id: s.id,
             title: studentName,
             subtitle: [
-              clean(schoolRow?.school_name) || "Student",
-              clean(s.class_name),
+              clean(schoolRow?.school_name) || "School",
+              classOrRole,
             ]
               .filter(Boolean)
               .join(" · "),

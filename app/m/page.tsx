@@ -169,10 +169,15 @@ export default function MobileHomePage() {
           supabase
             .from("students")
             .select(
-              "id, first_name, last_name, photo_url, school_id, class_id, schools!inner(school_name, photographer_id)",
+              "id, first_name, last_name, photo_url, school_id, class_id, class_name, role, schools!inner(school_name, photographer_id)",
             )
             .eq("schools.photographer_id", photographerId)
-            .or(`first_name.ilike.%${term}%,last_name.ilike.%${term}%`)
+            // Match name OR role so typing "coach" surfaces every coach.
+            // Teachers + coaches live in the same students table with a
+            // non-null role value.
+            .or(
+              `first_name.ilike.%${term}%,last_name.ilike.%${term}%,role.ilike.%${term}%`,
+            )
             .limit(8),
           supabase
             .from("schools")
@@ -219,6 +224,8 @@ export default function MobileHomePage() {
           last_name: string | null;
           school_id: string | null;
           class_id: string | null;
+          class_name: string | null;
+          role: string | null;
           schools:
             | { school_name: string | null }
             | { school_name: string | null }[]
@@ -231,14 +238,24 @@ export default function MobileHomePage() {
           const href = s.school_id
             ? `/m/schools/${s.school_id}?student=${encodeURIComponent(s.id)}`
             : `/m/orders?student=${encodeURIComponent(s.id)}`;
+          const name =
+            [clean(s.first_name), clean(s.last_name)]
+              .filter(Boolean)
+              .join(" ") || "Person";
+          // Subtitle prefers school · class; falls back to school · role
+          // for teachers / coaches so the hit row says what they are.
+          const context = clean(s.class_name) || clean(s.role);
+          const subtitle = [
+            clean(schoolRow?.school_name) || "School",
+            context,
+          ]
+            .filter(Boolean)
+            .join(" · ");
           next.push({
             kind: "student",
             id: s.id,
-            title:
-              [clean(s.first_name), clean(s.last_name)]
-                .filter(Boolean)
-                .join(" ") || "Student",
-            subtitle: clean(schoolRow?.school_name) || "Student",
+            title: name,
+            subtitle,
             href,
           });
         }

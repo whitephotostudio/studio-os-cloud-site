@@ -2,10 +2,11 @@
 
 import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import {
   ArrowLeft,
   Briefcase,
+  ChevronRight,
   Shield,
   Star,
   UserCog,
@@ -309,6 +310,14 @@ export default function SchoolsSchoolDetailPage() {
   const [supabase] = useState(() => createClient());
   const isMobile = useIsMobile();
   const params = useParams();
+  const router = useRouter();
+  // Spotlight deep-link: `?student=<id>` — we look the student up in `rows`
+  // after they load, then jump into their class page (where the student card,
+  // PIN reveal, and photo live) preserving the param so that page can
+  // highlight + scroll to the right row.
+  const searchParams = useSearchParams();
+  const focusStudentIdFromUrl = searchParams?.get("student") ?? null;
+  const studentRedirectAppliedRef = useRef(false);
   const schoolCoverInputRef = useRef<HTMLInputElement | null>(null);
   const coverFolderCacheRef = useRef<Map<string, FolderCoverAsset[]>>(new Map());
 
@@ -494,6 +503,29 @@ export default function SchoolsSchoolDetailPage() {
       cancelled = true;
     };
   }, [schoolId, supabase]);
+
+  // Spotlight deep-link handler: when we arrive with `?student=<id>`, find the
+  // student in the people rows and bounce into their class page so the user
+  // lands on the student card (with PIN reveal + photo) instead of this
+  // school-overview screen.  Runs once per mount to avoid fighting the user
+  // if they later hit Back.
+  useEffect(() => {
+    if (!focusStudentIdFromUrl) return;
+    if (studentRedirectAppliedRef.current) return;
+    if (loading) return;
+    if (rows.length === 0) return;
+    const student = rows.find((r) => r.id === focusStudentIdFromUrl);
+    if (!student) return;
+    const className = clean(student.class_name);
+    if (!className) return; // Without a class we can't drill deeper.
+    studentRedirectAppliedRef.current = true;
+    const encoded = encodeURIComponent(className);
+    router.replace(
+      `/dashboard/projects/schools/${schoolId}/classes/${encoded}?student=${encodeURIComponent(
+        student.id,
+      )}`,
+    );
+  }, [focusStudentIdFromUrl, rows, loading, schoolId, router]);
 
   async function loadCoverAssets(folderPath: string) {
     const cached = coverFolderCacheRef.current.get(folderPath);
@@ -1315,7 +1347,40 @@ export default function SchoolsSchoolDetailPage() {
     });
   }, [classSearch, orderedClasses]);
 
-  const classSearchCountLabel = `${filteredClasses.length} of ${orderedClasses.length}`;
+  // Role gallery cards (Teacher, Coach, Staff…) also filter by search — so
+  // typing "coach" narrows the Role Galleries grid to the matching card.
+  const filteredRoles = useMemo(() => {
+    const q = clean(classSearch).toLowerCase();
+    if (!q) return orderedRoles;
+    return orderedRoles.filter((row) =>
+      clean(row.label).toLowerCase().includes(q),
+    );
+  }, [classSearch, orderedRoles]);
+
+  // Matching people (students + role-holders) for the search box.  This is
+  // what makes "Ethan" or "Ms. Thompson" or "coach" actually useful — you
+  // can find a person directly instead of guessing which class tile they
+  // live inside.  Hits cap at 30 to keep the grid readable.
+  const filteredPeople = useMemo(() => {
+    const q = clean(classSearch).toLowerCase();
+    if (!q) return [];
+    const hits = rows.filter((row) => {
+      const name = [clean(row.first_name), clean(row.last_name)]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+      const role = clean(row.role).toLowerCase();
+      const className = clean(row.class_name).toLowerCase();
+      return (
+        name.includes(q) || role.includes(q) || className.includes(q)
+      );
+    });
+    return hits.slice(0, 30);
+  }, [classSearch, rows]);
+
+  const classSearchCountLabel = classSearch
+    ? `${filteredClasses.length} classes · ${filteredPeople.length} people`
+    : `${filteredClasses.length} of ${orderedClasses.length}`;
 
   return (
     <div style={{ minHeight: "100vh", background: "#faf7f7", padding: isMobile ? 14 : 24 }}>
@@ -1612,7 +1677,7 @@ export default function SchoolsSchoolDetailPage() {
                     <input
                       value={classSearch}
                       onChange={(e) => setClassSearch(e.target.value)}
-                      placeholder="Search classes..."
+                      placeholder="Search classes, students, teachers…"
                       style={{ width: "100%", boxSizing: "border-box", borderRadius: 10, border: "1px solid #d0d5dd", background: "#fff", color: "#111111", padding: "10px 12px 10px 38px", fontWeight: 600, outline: "none" }}
                     />
                   </div>
@@ -1628,10 +1693,110 @@ export default function SchoolsSchoolDetailPage() {
                 {grouped.classCards.length} classes • {grouped.totalRoles} roles • {grouped.totalPeople} people
               </div>
 
-              {filteredClasses.length === 0 ? (
-                <div style={{ border: "1px dashed #d0d5dd", borderRadius: 18, padding: 24, color: "#4b5563" }}>{classSearch ? "No classes found." : "No classes yet."}</div>
+              {filteredClasses.length === 0 && filteredPeople.length === 0 ? (
+                <div style={{ border: "1px dashed #d0d5dd", borderRadius: 18, padding: 24, color: "#4b5563" }}>{classSearch ? "No matches for that search." : "No classes yet."}</div>
               ) : (
                 <>
+                  {/* Matching people — only visible when a search term is
+                      active.  Clicking a person routes to their class (or
+                      role gallery) with ?student=<id> so the downstream
+                      page can scroll to and highlight them. */}
+                  {classSearch && filteredPeople.length > 0 && (
+                    <div style={{ marginBottom: 24 }}>
+                      <h2 style={{ fontSize: 15, fontWeight: 800, color: "#b91c1c", margin: "0 0 12px 0" }}>
+                        Matching people ({filteredPeople.length})
+                      </h2>
+                      <div
+                        style={{
+                          display: "grid",
+                          gridTemplateColumns: "repeat(auto-fill,minmax(220px,1fr))",
+                          gap: 10,
+                        }}
+                      >
+                        {filteredPeople.map((person) => {
+                          const fullName =
+                            [clean(person.first_name), clean(person.last_name)]
+                              .filter(Boolean)
+                              .join(" ") || "Person";
+                          const className = clean(person.class_name);
+                          const role = normalizeRole(person.role);
+                          const isStudent = isStudentLike(role, className);
+                          const href = isStudent && className
+                            ? `/dashboard/projects/schools/${schoolId}/classes/${encodeURIComponent(className)}?student=${encodeURIComponent(person.id)}`
+                            : `/dashboard/projects/schools/${schoolId}/roles/${encodeURIComponent(role)}?student=${encodeURIComponent(person.id)}`;
+                          const subline = isStudent
+                            ? className || "Student"
+                            : role;
+                          return (
+                            <Link
+                              key={person.id}
+                              href={href}
+                              style={{
+                                display: "flex",
+                                alignItems: "center",
+                                gap: 10,
+                                padding: 10,
+                                background: "#fff",
+                                border: "1px solid #e5e7eb",
+                                borderRadius: 12,
+                                textDecoration: "none",
+                                color: "inherit",
+                                boxShadow: "0 2px 6px rgba(15,23,42,0.04)",
+                              }}
+                            >
+                              <div
+                                style={{
+                                  width: 40,
+                                  height: 48,
+                                  borderRadius: 8,
+                                  background: "#f3f4f6",
+                                  overflow: "hidden",
+                                  flexShrink: 0,
+                                }}
+                              >
+                                {person.photo_url ? (
+                                  // eslint-disable-next-line @next/next/no-img-element
+                                  <img
+                                    src={person.photo_url}
+                                    alt=""
+                                    style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                                  />
+                                ) : null}
+                              </div>
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <div
+                                  style={{
+                                    fontSize: 14,
+                                    fontWeight: 800,
+                                    color: "#111827",
+                                    overflow: "hidden",
+                                    textOverflow: "ellipsis",
+                                    whiteSpace: "nowrap",
+                                  }}
+                                >
+                                  {fullName}
+                                </div>
+                                <div
+                                  style={{
+                                    fontSize: 11,
+                                    color: isStudent ? "#1d4ed8" : "#b45309",
+                                    fontWeight: 800,
+                                    marginTop: 2,
+                                    textTransform: "uppercase",
+                                    letterSpacing: "0.04em",
+                                  }}
+                                >
+                                  {isStudent ? "Student" : role} · {subline}
+                                </div>
+                              </div>
+                              <ChevronRight size={15} color="#9ca3af" />
+                            </Link>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
                   {/* Classes grid */}
                   {filteredClasses.length > 0 && (
                     <div style={{ marginBottom: 24 }}>
