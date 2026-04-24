@@ -48,6 +48,11 @@ export default function SignInPage() {
   const [resendBusy, setResendBusy] = useState(false);
   const [resendNotice, setResendNotice] = useState("");
 
+  // `?declined=1` is set by the AgreementGate when the user clicks
+  // "I do not agree — sign me out".  We show a short banner so they know
+  // why they landed here instead of on the dashboard.
+  const [agreementDeclined, setAgreementDeclined] = useState(false);
+
   // Focus the TOTP code input when MFA challenge appears
   useEffect(() => {
     if (mfaRequired && codeInputRef.current) {
@@ -57,6 +62,11 @@ export default function SignInPage() {
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
+    // Banner when the user declined the Studio OS Cloud agreement — the
+    // AgreementGate redirects here with ?declined=1 after signing them out.
+    if (params.get("declined") === "1") {
+      setAgreementDeclined(true);
+    }
     const prefilledEmail = params.get("email");
     if (prefilledEmail) {
       setEmail(prefilledEmail);
@@ -283,6 +293,23 @@ export default function SignInPage() {
 
           <div className="flex items-center justify-center">
             <div className="w-full max-w-md rounded-3xl border border-black/5 bg-white p-8 shadow-[0_20px_60px_rgba(0,0,0,0.08)]">
+              {agreementDeclined ? (
+                <div
+                  role="alert"
+                  className="mb-6 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold leading-6 text-red-900"
+                >
+                  You were signed out because you declined the Studio OS
+                  Cloud agreement. You can sign in again and accept the
+                  agreement to keep using the dashboard, or{" "}
+                  <Link
+                    href="/terms"
+                    className="font-bold text-red-700 underline"
+                  >
+                    review the terms first
+                  </Link>
+                  .
+                </div>
+              ) : null}
               {needsVerification ? (
                 <>
                   <div className="mb-2 flex h-12 w-12 items-center justify-center rounded-2xl bg-amber-100">

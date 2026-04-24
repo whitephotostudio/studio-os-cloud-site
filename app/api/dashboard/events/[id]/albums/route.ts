@@ -7,6 +7,7 @@ import {
 import { parseJson } from "@/lib/api-validation";
 import { recordAudit } from "@/lib/audit";
 import { r2DeleteWithVariantsBestEffort } from "@/lib/r2";
+import { guardAgreement } from "@/lib/require-agreement";
 
 export const dynamic = "force-dynamic";
 
@@ -58,6 +59,18 @@ async function resolveAuthorizedProject(
   }
 
   const service = createDashboardServiceClient();
+
+  // Agreement gate — refuse to act for users who haven't accepted the
+  // Studio OS Cloud legal agreement. Defense in depth behind the client
+  // modal. Same pattern as upload-to-r2 / generate-thumbnails.
+  {
+    const guard = await guardAgreement({ service, userId: user.id });
+    if (!guard.ok) {
+      return {
+        response: NextResponse.json(guard.body, { status: guard.status }),
+      };
+    }
+  }
 
   const { data: photographerRow, error: photographerError } = await service
     .from("photographers")

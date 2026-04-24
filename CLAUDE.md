@@ -2,7 +2,31 @@
 
 Checkpoint for Claude so a context reset doesn't lose the thread. Update as work progresses.
 
-Last updated: 2026-04-23 (mobile UX fix, uncommitted) — **Mobile blur switched from hold-to-reveal → tap-then-idle**. After the desktop FINAL PASS shipped and Harout tested the mobile overlay on his iPhone, the press-and-hold-to-reveal pattern made the gallery unusable: tap a photo → see it for the tap duration → blur snaps back the instant the finger lifts. Fixed in `components/screenshot-protection.tsx` (the mobile useEffect around line 253): any touch or scroll now lifts the blur and keeps it off while the user is actively browsing; a 4-second idle timer re-arms the blur. Watermark always on. Net: real parents get crisp photos once they touch the screen; iOS Power+VolUp screenshot attempts still catch the blurred state if the phone is idle when the shot is lined up, otherwise the watermark burns in the trace. Typecheck clean. Needs push from Mac.
+Last updated: 2026-04-24 (agreement gate + spotlight polish, uncommitted on top of the mobile-blur fix) — **Blocking legal-agreement gate landed** (v 2026-04-v1). After photographers sign in, if they haven't accepted the current Studio OS Cloud Agreement a full-screen modal covers `/dashboard`, `/m`, and `/studio-os/download` until they check the box and click Agree. "I do not agree" signs them out and bounces to `/sign-in?declined=1` with a banner. Version string lives in `lib/agreement.ts` (`CURRENT_AGREEMENT_VERSION`); bump it to force every photographer to re-accept on next load.
+
+- **DB:** `photographer_agreements` table applied live (`supabase/migrations/20260423120000_add_photographer_agreements.sql`). Append-only audit rows: photographer_id, user_id, agreement_version, terms_version, privacy_version, accepted_at, ip_address, user_agent. RLS: SELECT + INSERT scoped to `user_id = auth.uid()`, no UPDATE/DELETE policy.
+- **UI:** `components/agreement-gate.tsx` wraps both dashboard layouts + studio-os/download. Checkbox unchecked by default, Agree disabled until ticked, ESC intercepted, body scroll locked.
+- **API:** `GET /api/dashboard/agreement/status`, `POST /api/dashboard/agreement/accept` (captures ip/ua from headers).
+- **Server-side defense in depth:** `lib/require-agreement.ts` → `guardAgreement({service, userId})` wired into ~25 write handlers across schools, schools/[id], visitors/emails/classes/students/photos, roster-snapshots, desktop-sync, desktop-composites, events, events/[id]+albums+visitors+emails+favorites, desktop-access, desktop-media, visitors/email, orders/notify, upload-to-r2, generate-thumbnails, storage-folder. Not gated: `agreement/*` (deadlock), `admin/*`, `voice-access`, GET-only reads.
+- **Admin audit:** `/dashboard/admin/agreements` + `/api/dashboard/admin/agreements` — platform-admin-only. Shows acceptance rate, outstanding photographers, 200 most-recent rows with IP + UA.
+- **Legal pages:** real content at `/terms`, `/privacy`, `/data-responsibility-agreement`. Contact harout@me.com.
+- **Flutter desktop:** `~/Downloads/Whitephoto_Studio_App_MVP_Source/lib/services/cloud_sync_service.dart` + `cloud_screen.dart` detect `403 + code:"agreement_required"` and pop an AlertDialog with an "Open Studio OS Cloud" button. Harout must rebuild: `cd ~/Downloads/Whitephoto_Studio_App_MVP_Source && flutter build macos`.
+- **Sign-in:** reads `?declined=1` and shows a red banner above the form.
+
+Also landed in the same working-tree batch (smaller changes before the agreement gate):
+
+- **Spotlight deep-links:** clicking a student in Spotlight now lands on the student card. Class page reads `?student=<id>`, scrolls, highlights blue glow for 2.8s. Orders deep-link via `?focus=<id>`. Applied on both desktop (components/spotlight-search.tsx) and mobile home (app/m/page.tsx).
+- **Spotlight people search:** students table query now also matches `role`, so typing "coach" or "teacher" surfaces staff. Subtitle shows class for students, role for staff.
+- **Per-school search box:** placeholder now "Search classes, students, teachers…". New Matching People grid renders above Classes when typing — photo + name + role/class, clicks drill into class/role pages with `?student=<id>`.
+- **Parents portal login:** searchable combo boxes replaced native `<select>` for schools + events (parent can type 3 letters to filter long lists).
+
+Typecheck clean. Everything is uncommitted — push block below.
+
+---
+
+## Mobile blur hold-to-reveal → tap-then-idle (2026-04-23, in the same uncommitted batch)
+
+After the desktop FINAL PASS shipped and Harout tested the mobile overlay on his iPhone, the press-and-hold-to-reveal pattern made the gallery unusable: tap a photo → see it for the tap duration → blur snaps back the instant the finger lifts. Fixed in `components/screenshot-protection.tsx` (the mobile useEffect around line 253): any touch or scroll now lifts the blur and keeps it off while the user is actively browsing; a 4-second idle timer re-arms the blur. Watermark always on. Net: real parents get crisp photos once they touch the screen; iOS Power+VolUp screenshot attempts still catch the blurred state if the phone is idle when the shot is lined up, otherwise the watermark burns in the trace.
 
 ---
 

@@ -104,7 +104,7 @@ export default function DataResponsibilityPage() {
             <h2 className="text-xl font-black text-neutral-950">6. Data breaches</h2>
             <p className="mt-2">
               If you discover that your photographer account has been
-              compromised, notify us at harout@whitephotostudios.ca right
+              compromised, notify us at harout@me.com right
               away. If an incident affects multiple studios or the platform
               itself, we&rsquo;ll notify affected photographers without
               undue delay.
@@ -146,10 +146,10 @@ export default function DataResponsibilityPage() {
             <p className="mt-2">
               Questions about this agreement? Reach us at{" "}
               <a
-                href="mailto:harout@whitephotostudios.ca"
+                href="mailto:harout@me.com"
                 className="font-bold text-red-600 underline"
               >
-                harout@whitephotostudios.ca
+                harout@me.com
               </a>
               .
             </p>

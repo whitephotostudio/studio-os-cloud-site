@@ -96,7 +96,7 @@ export default function PrivacyPage() {
               so one photographer cannot read another&rsquo;s data, and
               optional two-factor authentication on your account. No system
               is perfectly secure — if you suspect unauthorized access, email
-              us at harout@whitephotostudios.ca so we can investigate.
+              us at harout@me.com so we can investigate.
             </p>
           </section>
 
@@ -104,7 +104,7 @@ export default function PrivacyPage() {
             <h2 className="text-xl font-black text-neutral-950">7. Your rights</h2>
             <p className="mt-2">
               You can request a copy of the data we hold about you, correct
-              it, or ask us to delete it. Email harout@whitephotostudios.ca.
+              it, or ask us to delete it. Email harout@me.com.
               For parent/client data in a gallery, contact the photographer
               who invited you — they control that gallery.
             </p>
@@ -133,10 +133,10 @@ export default function PrivacyPage() {
             <p className="mt-2">
               Privacy questions or deletion requests:{" "}
               <a
-                href="mailto:harout@whitephotostudios.ca"
+                href="mailto:harout@me.com"
                 className="font-bold text-red-600 underline"
               >
-                harout@whitephotostudios.ca
+                harout@me.com
               </a>
               .
             </p>

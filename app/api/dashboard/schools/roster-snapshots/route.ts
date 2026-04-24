@@ -6,6 +6,7 @@ import {
 } from "@/lib/dashboard-auth";
 import { parseJson } from "@/lib/api-validation";
 import { recordAudit } from "@/lib/audit";
+import { guardAgreement } from "@/lib/require-agreement";
 
 export const dynamic = "force-dynamic";
 
@@ -214,6 +215,15 @@ export async function POST(request: NextRequest) {
     }
 
     const service = createDashboardServiceClient();
+
+    // Agreement gate — refuse to act for users who haven't accepted the
+    // Studio OS Cloud legal agreement. Defense in depth behind the client
+    // modal. Same pattern as upload-to-r2 / generate-thumbnails.
+    {
+      const guard = await guardAgreement({ service, userId: user.id });
+      if (!guard.ok) return NextResponse.json(guard.body, { status: guard.status });
+    }
+
     const ownership = await resolveSchoolOwnership(service, user.id, schoolId);
     if ("error" in ownership) {
       return NextResponse.json(

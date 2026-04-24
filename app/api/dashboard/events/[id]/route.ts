@@ -17,6 +17,7 @@ import { resendConfigured, sendResendEmail } from "@/lib/resend";
 import { ensurePackageProfile } from "@/lib/ensure-package-profile";
 import { buildStoredMediaUrls } from "@/lib/storage-images";
 import { r2DeletePrefix } from "@/lib/r2";
+import { guardAgreement } from "@/lib/require-agreement";
 
 export const dynamic = "force-dynamic";
 
@@ -574,6 +575,14 @@ export async function PATCH(
     const service = createDashboardServiceClient();
     const origin = new URL(request.url).origin;
 
+    // Agreement gate — refuse to act for users who haven't accepted the
+    // Studio OS Cloud legal agreement. Defense in depth behind the client
+    // modal. Same pattern as upload-to-r2 / generate-thumbnails.
+    {
+      const guard = await guardAgreement({ service, userId: user.id });
+      if (!guard.ok) return NextResponse.json(guard.body, { status: guard.status });
+    }
+
     const { data: photographerRow, error: photographerError } = await service
       .from("photographers")
       .select("id,business_name,studio_email")
@@ -866,6 +875,14 @@ export async function DELETE(
 
     const { id: projectId } = await context.params;
     const service = createDashboardServiceClient();
+
+    // Agreement gate — refuse to act for users who haven't accepted the
+    // Studio OS Cloud legal agreement. Defense in depth behind the client
+    // modal. Same pattern as upload-to-r2 / generate-thumbnails.
+    {
+      const guard = await guardAgreement({ service, userId: user.id });
+      if (!guard.ok) return NextResponse.json(guard.body, { status: guard.status });
+    }
 
     const { data: photographerRow, error: photographerError } = await service
       .from("photographers")

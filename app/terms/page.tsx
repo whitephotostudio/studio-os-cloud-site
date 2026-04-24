@@ -57,7 +57,7 @@ export default function TermsPage() {
               You are responsible for keeping your email and password
               confidential. You are responsible for everything that happens
               under your account. Notify us immediately at
-              harout@whitephotostudios.ca if you suspect unauthorized access.
+              harout@me.com if you suspect unauthorized access.
             </p>
           </section>
 
@@ -153,10 +153,10 @@ export default function TermsPage() {
             <p className="mt-2">
               Questions? Reach us at{" "}
               <a
-                href="mailto:harout@whitephotostudios.ca"
+                href="mailto:harout@me.com"
                 className="font-bold text-red-600 underline"
               >
-                harout@whitephotostudios.ca
+                harout@me.com
               </a>
               .
             </p>

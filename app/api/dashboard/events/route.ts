@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { createDashboardServiceClient, resolveDashboardAuth } from "@/lib/dashboard-auth";
 import { parseJson } from "@/lib/api-validation";
+import { guardAgreement } from "@/lib/require-agreement";
 
 export const dynamic = "force-dynamic";
 
@@ -65,6 +66,14 @@ export async function POST(request: NextRequest) {
     }
 
     const service = createDashboardServiceClient();
+
+    // Agreement gate — refuse to act for users who haven't accepted the
+    // Studio OS Cloud legal agreement. Defense in depth behind the client
+    // modal. Same pattern as upload-to-r2 / generate-thumbnails.
+    {
+      const guard = await guardAgreement({ service, userId: user.id });
+      if (!guard.ok) return NextResponse.json(guard.body, { status: guard.status });
+    }
 
     const { data: photographerRow, error: photographerError } = await service
       .from("photographers")
