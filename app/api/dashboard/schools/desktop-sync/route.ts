@@ -5,6 +5,7 @@ import {
   resolveDashboardAuth,
 } from "@/lib/dashboard-auth";
 import { parseJson } from "@/lib/api-validation";
+import { guardAgreement } from "@/lib/require-agreement";
 
 export const dynamic = "force-dynamic";
 
@@ -160,6 +161,14 @@ export async function POST(request: NextRequest) {
         { ok: false, message: "Please sign in again." },
         { status: 401 },
       );
+    }
+    // Agreement gate — the desktop app syncs through here, so this stops
+    // a user from syncing rosters before accepting the Studio OS Cloud
+    // legal agreement on the web.
+    {
+      const service = createDashboardServiceClient();
+      const guard = await guardAgreement({ service, userId: user.id });
+      if (!guard.ok) return NextResponse.json(guard.body, { status: guard.status });
     }
 
     const parsed = await parseJson(request, DesktopSyncBodySchema);

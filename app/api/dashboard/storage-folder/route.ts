@@ -4,6 +4,7 @@ import {
   resolveDashboardAuth,
 } from "@/lib/dashboard-auth";
 import { listR2FolderImages } from "@/lib/r2";
+import { guardAgreement } from "@/lib/require-agreement";
 
 function clean(value: string | null | undefined) {
   return (value ?? "").trim();
@@ -52,6 +53,13 @@ export async function GET(request: NextRequest) {
   const auth = await resolveDashboardAuth(request);
   if (!auth.user) {
     return NextResponse.json({ ok: false, message: "Please sign in again." }, { status: 401 });
+  }
+  // Agreement gate — refuse to expose storage contents to users who
+  // haven't accepted the current Studio OS Cloud legal agreement.
+  {
+    const service = createDashboardServiceClient();
+    const guard = await guardAgreement({ service, userId: auth.user.id });
+    if (!guard.ok) return NextResponse.json(guard.body, { status: guard.status });
   }
 
   const folderPath = clean(request.nextUrl.searchParams.get("path"));

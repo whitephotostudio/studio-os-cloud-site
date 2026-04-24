@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Menu, X } from "lucide-react";
+import { AgreementGate } from "@/components/agreement-gate";
 import { DashboardSidebar } from "@/components/dashboard-sidebar";
 import { Logo } from "@/components/logo";
 import { createClient } from "@/lib/supabase/client";
@@ -71,6 +72,7 @@ export default function DashboardLayout({
   // --- Mobile: topbar + slide-in drawer, no fixed sidebar ---
   if (isMobile) {
     return (
+      <AgreementGate>
       <div
         style={{
           display: "flex",
@@ -159,14 +161,17 @@ export default function DashboardLayout({
           </div>
         )}
       </div>
+      </AgreementGate>
     );
   }
 
   // --- Desktop: unchanged from before. ---
   return (
-    <div style={{ display: "flex", minHeight: "100vh", background: "#f0f0f0" }}>
-      <DashboardSidebar />
-      <div style={{ flex: 1 }}>{children}</div>
-    </div>
+    <AgreementGate>
+      <div style={{ display: "flex", minHeight: "100vh", background: "#f0f0f0" }}>
+        <DashboardSidebar />
+        <div style={{ flex: 1 }}>{children}</div>
+      </div>
+    </AgreementGate>
   );
 }

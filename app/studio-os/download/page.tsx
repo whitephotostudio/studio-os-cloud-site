@@ -12,6 +12,7 @@ export const metadata: Metadata = {
     canonical: "https://studiooscloud.com/studio-os/download",
   },
 };
+import { AgreementGate } from "@/components/agreement-gate";
 import { StudioOSDownloadAccess } from "@/components/studio-os-download-access";
 import { createDashboardServiceClient } from "@/lib/dashboard-auth";
 import {
@@ -29,6 +30,7 @@ export default async function StudioOSDownloadPage() {
   const windowsReady = Boolean(release.windows_download_url);
 
   return (
+    <AgreementGate>
     <div className="min-h-screen bg-white text-neutral-950">
       <SiteHeader />
 
@@ -59,5 +61,6 @@ export default async function StudioOSDownloadPage() {
 
       <SiteFooter />
     </div>
+    </AgreementGate>
   );
 }

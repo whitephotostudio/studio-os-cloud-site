@@ -5,6 +5,7 @@ import {
   resolveDashboardAuth,
 } from "@/lib/dashboard-auth";
 import { parseJson } from "@/lib/api-validation";
+import { guardAgreement } from "@/lib/require-agreement";
 import { r2Download, r2Upload, r2PublicUrl } from "@/lib/r2";
 import sharp from "sharp";
 
@@ -67,6 +68,13 @@ export async function POST(request: NextRequest) {
   const auth = await resolveDashboardAuth(request);
   if (!auth.user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  // Block thumbnail gen for photographers who haven't accepted the legal
+  // agreement — defense in depth behind the UI modal.
+  {
+    const service = createDashboardServiceClient();
+    const guard = await guardAgreement({ service, userId: auth.user.id });
+    if (!guard.ok) return NextResponse.json(guard.body, { status: guard.status });
   }
 
   const parsed = await parseJson(request, GenerateThumbnailsBodySchema);

@@ -4,6 +4,7 @@ import {
   resolveDashboardAuth,
 } from "@/lib/dashboard-auth";
 import { r2Upload } from "@/lib/r2";
+import { guardAgreement } from "@/lib/require-agreement";
 import sharp from "sharp";
 
 type ServiceClient = ReturnType<typeof createDashboardServiceClient>;
@@ -127,6 +128,15 @@ export async function POST(request: NextRequest) {
   const auth = await resolveDashboardAuth(request);
   if (!auth.user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  // Refuse uploads if the photographer hasn't accepted the current legal
+  // agreement.  Stops a savvy user from bypassing the client-side modal
+  // by calling the API directly with their session token.
+  {
+    const service = createDashboardServiceClient();
+    const guard = await guardAgreement({ service, userId: auth.user.id });
+    if (!guard.ok) return NextResponse.json(guard.body, { status: guard.status });
   }
 
   const formData = await request.formData();

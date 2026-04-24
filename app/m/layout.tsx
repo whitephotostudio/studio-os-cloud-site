@@ -19,6 +19,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Bell, CalendarDays, GraduationCap, Home, ShoppingBag } from "lucide-react";
+import { AgreementGate } from "@/components/agreement-gate";
 import { createClient } from "@/lib/supabase/client";
 
 const TRANSIENT_SESSION_FLAG = "studio-os-transient-session";
@@ -131,6 +132,7 @@ export default function MobileLayout({
   }, [pathname]);
 
   return (
+    <AgreementGate>
     <div
       style={{
         minHeight: "100vh",
@@ -316,5 +318,6 @@ export default function MobileLayout({
         </nav>
       </div>
     </div>
+    </AgreementGate>
   );
 }
