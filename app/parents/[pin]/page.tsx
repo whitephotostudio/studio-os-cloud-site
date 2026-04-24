@@ -1887,9 +1887,14 @@ function getEffectiveBackdropBlurPx(blurPx?: number | null) {
 }
 
 function getBackdropCompositeSize(imageAspectRatio?: number | null) {
+  // Earlier versions clamped aspect to [0.62, 1.45] which squashed narrow
+  // portrait crops (9:16 = 0.56, tight vertical crops ~0.55) to a fatter
+  // box, making the subject look horizontally stretched in the viewer.
+  // Loosen the window to [0.5, 1.8] so normal phone-portrait and DSLR
+  // vertical crops render at their true aspect.
   const safeAspect =
     imageAspectRatio && Number.isFinite(imageAspectRatio)
-      ? clampNumber(imageAspectRatio, 0.62, 1.45)
+      ? clampNumber(imageAspectRatio, 0.5, 1.8)
       : 0.78;
   const height = safeAspect < 0.98 ? 1280 : 1120;
   return {
@@ -2995,16 +3000,31 @@ function CompositeCanvas({
   // overflow (in which case aspect-ratio scales width back down
   // proportionally, preserving the ratio).  Works identically on
   // desktop because wide parents never trigger the max-width clamp.
+  // Responsive mode: we want the wrapper to respect BOTH the parent's
+  // width (up to the photo's natural width) AND the photo's aspect
+  // ratio, AND not overflow the parent's height.  The old version
+  // combined `width:100%` with `aspectRatio` but did not set `height`,
+  // which left the browser to infer height from the flex parent —
+  // sometimes producing a landscape box for a portrait photo, which
+  // forced `object-fit:cover` on the foreground cutout to crop/stretch.
+  //
+  // New rule: use `aspect-ratio` as the single source of truth for the
+  // wrapper's shape, and let BOTH max-width and max-height shrink us
+  // down.  We set `height: "auto"` explicitly so aspect-ratio actually
+  // drives the derived dimension, and `width: auto` so height can
+  // instead drive the derived width when the parent is too short.
   const wrapperStyle: React.CSSProperties = responsive
     ? {
         position: "relative",
-        width: "100%",
-        maxWidth: `${width}px`,
+        width: "auto",
+        height: "auto",
+        maxWidth: `min(100%, ${width}px)`,
         maxHeight: "100%",
         aspectRatio: `${width} / ${height}`,
         flexShrink: 0,
         display: "block",
         alignSelf: "center",
+        margin: "auto",
         ...style,
       }
     : { position: "relative", width, height, ...style };
