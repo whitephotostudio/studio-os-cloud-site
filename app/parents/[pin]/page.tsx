@@ -48,6 +48,18 @@ import {
   CombineOrdersDrawer,
   type CombineDrawerSchoolOption,
 } from "@/components/parents/combine-orders-drawer";
+import {
+  clearCombineCart,
+  groupCartByLane,
+  isMultiLane,
+  laneKeyFor,
+  loadCombineCart,
+  saveCombineCart,
+  upsertLane,
+  type CombineCart,
+  type CombineLane,
+  type PersistedCartItem,
+} from "@/lib/combine-cart-storage";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 type StudentRow = {
@@ -287,6 +299,20 @@ type CartLineItem = {
   isCompositeOrder: boolean;
   compositeTitle: string | null;
   backdrop: CartBackdropSelection | null;
+  // ── Combine-cart tagging (Phase 1d) ────────────────────────────────
+  // When this item was added on a sibling/past-year gallery (and the
+  // parent has hopped between galleries via the CombineOrdersDrawer)
+  // these fields capture which lane it belongs to so checkout can split
+  // a multi-student cart into N grouped orders.  Optional — single-
+  // student carts leave them undefined and the legacy /orders/create
+  // endpoint handles them unchanged.
+  laneKey?: string;
+  laneSchoolId?: string;
+  laneStudentId?: string;
+  lanePin?: string;
+  laneEmail?: string;
+  laneSchoolName?: string;
+  laneStudentName?: string;
 };
 type GalleryView = "photos" | "store" | "favorites" | "about";
 type EventPhotoStage = "albums" | "grid" | "viewer";
@@ -3458,6 +3484,55 @@ export default function ParentGalleryPage() {
   const [packages, setPackages] = useState<PackageRow[]>([]);
   const [selectedPkg, setSelectedPkg] = useState<PackageRow | null>(null);
   const [cartItems, setCartItems] = useState<CartLineItem[]>([]);
+
+  // ── Combine-cart sessionStorage sync (Phase 1d) ──────────────────────────
+  //
+  // The cart needs to survive in-tab navigation between sibling/past-year
+  // galleries.  We mirror cartItems into sessionStorage keyed by
+  // photographerId + reload them on mount.  Lanes (auth tokens for each
+  // gallery the parent has visited this session) are tracked alongside.
+  // The actual hooks live FURTHER down (after photographerId + parentEmail
+  // are declared) — search for "[Phase 1d block]" to find them.
+  const combineHydratedRef = useRef(false);
+  const lastPersistedSignatureRef = useRef<string>("");
+  const [combineLanes, setCombineLanes] = useState<CombineLane[]>([]);
+
+  // Convert the in-memory CartLineItem[] into the flat persisted shape.
+  // Stable across renders so we don't rewrite sessionStorage every render.
+  const persistedItems = useMemo<PersistedCartItem[]>(() => {
+    return cartItems
+      .filter((item) => !!item.laneKey) // only persist tagged items
+      .map((item) => ({
+        id: item.id,
+        laneKey: item.laneKey as string,
+        packageId: item.packageId,
+        packageName: item.packageName,
+        category: item.category,
+        quantity: item.quantity,
+        packageSubtotalCents: item.packageSubtotalCents,
+        backdropAddOnCents: item.backdropAddOnCents,
+        lineTotalCents: item.lineTotalCents,
+        selectedImageUrl: item.selectedImageUrl,
+        isCompositeOrder: item.isCompositeOrder,
+        compositeTitle: item.compositeTitle,
+        slots: item.slots.map((s) => ({
+          label: s.label,
+          assignedImageUrl: s.assignedImageUrl ?? null,
+        })),
+        backdrop: item.backdrop
+          ? {
+              id: item.backdrop.id,
+              name: item.backdrop.name ?? "Backdrop",
+              imageUrl: item.backdrop.image_url ?? null,
+              blurred: !!item.backdrop.blurred,
+              blurAmount: item.backdrop.blurAmount ?? DEFAULT_BACKDROP_BLUR_PX,
+              tier: item.backdrop.tier ?? null,
+              priceCents: item.backdrop.price_cents ?? 0,
+            }
+          : null,
+      }));
+  }, [cartItems]);
+
   const [selectedOrderQty, setSelectedOrderQty] = useState(1);
   const [packageQuantities, setPackageQuantities] = useState<Record<string, number>>({});
   const [cardPreviewVariant, setCardPreviewVariant] = useState<Record<string, number>>({});
@@ -3515,6 +3590,121 @@ export default function ParentGalleryPage() {
   const [watermarkEnabled, setWatermarkEnabled] = useState(true);
   const [watermarkLogoUrl, setWatermarkLogoUrl] = useState<string>("");
   const [photographerId, setPhotographerId] = useState<string | null>(null);
+
+  // [Phase 1d block] Combine-cart effects — placed AFTER photographerId,
+  // student, schoolName, parentEmail are all in scope so we don't TDZ them.
+  // The hooks themselves (combineHydratedRef, combineLanes, persistedItems)
+  // are declared up by the cartItems state so the dependent UI further
+  // down the file can read them.
+  const currentLane = useMemo<CombineLane | null>(() => {
+    if (!photographerId) return null;
+    const sId = student?.id ?? null;
+    const schId = student?.school_id ?? null;
+    if (!sId || !schId) return null;
+    const studentName =
+      [
+        clean((student as unknown as { first_name?: string | null })?.first_name),
+        clean((student as unknown as { last_name?: string | null })?.last_name),
+      ]
+        .filter(Boolean)
+        .join(" ") || "Student";
+    return {
+      laneKey: laneKeyFor(schId, sId),
+      schoolId: schId,
+      studentId: sId,
+      pin: clean(pin),
+      email: clean(parentEmail),
+      schoolName: clean(schoolName) || "School",
+      studentName,
+      className:
+        ((student as unknown as { class_name?: string | null })?.class_name as string | null) ?? null,
+    };
+  }, [photographerId, student, pin, parentEmail, schoolName]);
+
+  // Hydrate from sessionStorage once photographerId is known.
+  useEffect(() => {
+    if (combineHydratedRef.current) return;
+    if (!photographerId) return;
+    const persisted = loadCombineCart(photographerId);
+    combineHydratedRef.current = true;
+    if (persisted.lanes.length > 0) setCombineLanes(persisted.lanes);
+    if (persisted.items.length > 0) {
+      setCartItems((existing) => {
+        const existingIds = new Set(existing.map((i) => i.id));
+        const restored: CartLineItem[] = persisted.items
+          .filter((i) => !existingIds.has(i.id))
+          .map((i) => ({
+            id: i.id,
+            packageId: i.packageId,
+            packageName: i.packageName,
+            category: i.category,
+            quantity: i.quantity,
+            packageSubtotalCents: i.packageSubtotalCents,
+            backdropAddOnCents: i.backdropAddOnCents,
+            lineTotalCents: i.lineTotalCents,
+            slots: i.slots.map((s) => ({
+              label: s.label,
+              assignedImageUrl: s.assignedImageUrl,
+            })) as ItemSlot[],
+            selectedImageUrl: i.selectedImageUrl,
+            isCompositeOrder: i.isCompositeOrder,
+            compositeTitle: i.compositeTitle,
+            backdrop: i.backdrop
+              ? ({
+                  id: i.backdrop.id,
+                  name: i.backdrop.name,
+                  image_url: i.backdrop.imageUrl ?? "",
+                  tier: (i.backdrop.tier as "free" | "premium" | null) ?? "free",
+                  price_cents: i.backdrop.priceCents,
+                  blurred: i.backdrop.blurred,
+                  blurAmount: i.backdrop.blurAmount,
+                } as unknown as CartBackdropSelection)
+              : null,
+            laneKey: i.laneKey,
+            laneSchoolId: persisted.lanes.find((l) => l.laneKey === i.laneKey)?.schoolId,
+            laneStudentId: persisted.lanes.find((l) => l.laneKey === i.laneKey)?.studentId,
+            lanePin: persisted.lanes.find((l) => l.laneKey === i.laneKey)?.pin,
+            laneEmail: persisted.lanes.find((l) => l.laneKey === i.laneKey)?.email,
+            laneSchoolName: persisted.lanes.find((l) => l.laneKey === i.laneKey)?.schoolName,
+            laneStudentName: persisted.lanes.find((l) => l.laneKey === i.laneKey)?.studentName,
+          }));
+        return [...existing, ...restored];
+      });
+    }
+  }, [photographerId]);
+
+  // Auto-register the CURRENT gallery as a lane.
+  useEffect(() => {
+    if (!currentLane || !photographerId) return;
+    setCombineLanes((prev) => {
+      const next = upsertLane(
+        { version: 1, photographerId, lanes: prev, items: [] },
+        currentLane,
+      ).lanes;
+      return next;
+    });
+  }, [currentLane, photographerId]);
+
+  // Persist whenever cart items or lanes change (after hydration done).
+  useEffect(() => {
+    if (!combineHydratedRef.current) return;
+    if (!photographerId) return;
+    const cart: CombineCart = {
+      version: 1,
+      photographerId,
+      lanes: combineLanes,
+      items: persistedItems,
+    };
+    const sig = JSON.stringify({
+      l: cart.lanes.length,
+      i: cart.items.length,
+      ids: cart.items.map((i) => i.id),
+    });
+    if (sig === lastPersistedSignatureRef.current) return;
+    lastPersistedSignatureRef.current = sig;
+    saveCombineCart(cart);
+  }, [persistedItems, combineLanes, photographerId]);
+
   // Screenshot protection flags (parents portal only — mirrors the school /
   // event settings).  Defaults to all-off so existing galleries behave
   // exactly as they did before this feature shipped.
@@ -6233,6 +6423,17 @@ export default function ParentGalleryPage() {
           typeof crypto !== "undefined" && "randomUUID" in crypto
             ? crypto.randomUUID()
             : `cart_${Date.now()}_${prev.length + 1}`,
+        // Tag with the current gallery's lane so persistence + checkout
+        // can later split this cart into N grouped orders. When we don't
+        // have a lane yet (very early mount) the item just stays untagged
+        // and the legacy single-order checkout handles it normally.
+        laneKey: currentLane?.laneKey,
+        laneSchoolId: currentLane?.schoolId,
+        laneStudentId: currentLane?.studentId,
+        lanePin: currentLane?.pin,
+        laneEmail: currentLane?.email,
+        laneSchoolName: currentLane?.schoolName,
+        laneStudentName: currentLane?.studentName,
       },
     ]);
     resetCurrentSelection();
@@ -6253,6 +6454,18 @@ export default function ParentGalleryPage() {
     resetCurrentSelection();
     setDrawerOpen(false);
     setBackdropPickerOpen(false);
+    // Phase 1d: wipe the cross-gallery combine cart now that the order
+    // has been placed.  Lanes + items both go.  Without this, hitting the
+    // browser back button after checkout would resurrect the just-paid
+    // items in a fresh cart.
+    if (photographerId) {
+      try {
+        clearCombineCart(photographerId);
+        setCombineLanes([]);
+      } catch {
+        // ignore
+      }
+    }
 
     const nextUrl = new URL(window.location.href);
     nextUrl.searchParams.delete("checkout");
@@ -6518,24 +6731,92 @@ export default function ParentGalleryPage() {
           entries: entriesPayload,
         };
 
+    // ── Combined-checkout routing (Phase 1d) ────────────────────────
+    // If the cart contains tagged items spanning multiple sibling/past-
+    // year galleries, route to /api/portal/orders/create-combined which
+    // splits into N orders sharing one order_group_id + applies the
+    // sibling discount.  Otherwise stay on the legacy single-order path.
+    const taggedCart: CombineCart = {
+      version: 1,
+      photographerId: photographerId ?? "",
+      lanes: combineLanes,
+      items: persistedItems,
+    };
+    const useCombinedEndpoint =
+      isSchoolMode && photographerId && isMultiLane(taggedCart);
+
     let createdOrderId: string;
     try {
-      const createRes = await fetch("/api/portal/orders/create", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(createBody),
-      });
-      const createJson = (await createRes.json()) as {
-        ok: boolean;
-        message?: string;
-        orderId?: string;
-      };
-      if (!createRes.ok || !createJson.ok || !createJson.orderId) {
-        setOrderError(createJson.message || "Failed to create order draft.");
-        setPlacing(false);
-        return;
+      if (useCombinedEndpoint) {
+        // Build the combined payload from the per-lane groups.  Each
+        // lane carries its own pin/email/schoolId; entries are the cart
+        // items belonging to that lane converted into the common entry
+        // shape the server expects.
+        const grouped = groupCartByLane(taggedCart);
+        const groupsPayload = grouped.map((g) => ({
+          pin: g.lane.pin,
+          schoolId: g.lane.schoolId,
+          email: g.lane.email,
+          entries: g.items.map((entry) => ({
+            packageId: entry.packageId,
+            quantity: entry.quantity,
+            backdrop: entry.backdrop
+              ? {
+                  id: entry.backdrop.id,
+                  blurred: !!entry.backdrop.blurred,
+                  blurAmount: entry.backdrop.blurAmount ?? DEFAULT_BACKDROP_BLUR_PX,
+                }
+              : null,
+            slots: entry.slots.map((slot) => ({
+              label: slot.label,
+              assignedImageUrl: slot.assignedImageUrl ?? null,
+            })),
+            selectedImageUrl: entry.selectedImageUrl ?? null,
+            isComposite: !!entry.isCompositeOrder,
+            compositeTitle: entry.compositeTitle ?? null,
+          })),
+        }));
+        const combinedRes = await fetch("/api/portal/orders/create-combined", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            groups: groupsPayload,
+            parent: parentPayload,
+            delivery: deliveryPayload,
+            notes: notesPayload,
+          }),
+        });
+        const combinedJson = (await combinedRes.json()) as {
+          ok: boolean;
+          message?: string;
+          primaryOrderId?: string;
+          orderGroupId?: string;
+          orderIds?: string[];
+        };
+        if (!combinedRes.ok || !combinedJson.ok || !combinedJson.primaryOrderId) {
+          setOrderError(combinedJson.message || "Failed to create combined order.");
+          setPlacing(false);
+          return;
+        }
+        createdOrderId = combinedJson.primaryOrderId;
+      } else {
+        const createRes = await fetch("/api/portal/orders/create", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(createBody),
+        });
+        const createJson = (await createRes.json()) as {
+          ok: boolean;
+          message?: string;
+          orderId?: string;
+        };
+        if (!createRes.ok || !createJson.ok || !createJson.orderId) {
+          setOrderError(createJson.message || "Failed to create order draft.");
+          setPlacing(false);
+          return;
+        }
+        createdOrderId = createJson.orderId;
       }
-      createdOrderId = createJson.orderId;
     } catch (err) {
       setOrderError(
         err instanceof Error ? err.message : "Failed to create order draft.",
@@ -7330,19 +7611,44 @@ export default function ParentGalleryPage() {
           })),
         }}
         onAddedSibling={(payload) => {
-          // Show a quick acknowledgement toast and then navigate the
-          // parent into the sibling's gallery so they can actually shop
-          // there (browse photos, pick poses/backdrops/packages).  Full
-          // cross-gallery cart merge is Phase 1d; this gets them to the
-          // photos so the sibling/past-year flow stops feeling like a
-          // dead end at the drawer.
+          // Phase 1d: register the new lane in sessionStorage BEFORE we
+          // navigate so the sibling's gallery hydrates with both lanes
+          // already present.  We pre-create a partial lane (we don't yet
+          // know the studentId — that resolves once the sibling gallery's
+          // gallery-context call returns).  We use the schoolId twice as
+          // a placeholder lane key so the lane survives the nav; the
+          // destination gallery's currentLane effect will upsert the
+          // real lane (correct studentId) and the placeholder either
+          // gets replaced on key-collision or hangs around harmlessly
+          // until checkout filters it out.
+          if (photographerId) {
+            const placeholderLaneKey = laneKeyFor(payload.schoolId, payload.schoolId);
+            const placeholderLane: CombineLane = {
+              laneKey: placeholderLaneKey,
+              schoolId: payload.schoolId,
+              studentId: payload.schoolId,
+              pin: payload.pin,
+              email: payload.email,
+              schoolName: payload.label.split(" · ")[1] ?? payload.label,
+              studentName: payload.label.split(" · ")[0] ?? payload.label,
+            };
+            const cart: CombineCart = {
+              version: 1,
+              photographerId,
+              lanes: upsertLane(
+                { version: 1, photographerId, lanes: combineLanes, items: [] },
+                placeholderLane,
+              ).lanes,
+              items: persistedItems,
+            };
+            saveCombineCart(cart);
+          }
           setCombineToast(`${payload.label} — opening gallery…`);
           window.setTimeout(() => {
             try {
               const target = `/parents/${encodeURIComponent(payload.pin)}?school=${encodeURIComponent(payload.schoolId)}&email=${encodeURIComponent(payload.email)}`;
               window.location.href = target;
             } catch {
-              // Last-resort: clear the toast so the parent isn't stuck.
               setCombineToast("");
             }
           }, 700);
