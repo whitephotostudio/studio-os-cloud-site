@@ -286,6 +286,26 @@ export default function BackdropsPage() {
     setBackdrops((prev) => prev.map((row) => (idSet.has(row.id) ? { ...row, active } : row)));
     setSelectedIds(new Set());
   }
+  // 2026-04-25: bulk landscape opt-in / opt-out.  Lets photographer flip
+  // every selected backdrop's supports_landscape flag in one click instead
+  // of editing each row individually.
+  async function bulkLandscape(supports: boolean) {
+    const ids = Array.from(selectedIds);
+    if (!ids.length) return;
+    const { error } = await supabase
+      .from("backdrop_catalog")
+      .update({ supports_landscape: supports })
+      .in("id", ids);
+    if (error) {
+      console.error(error);
+      return;
+    }
+    const idSet = new Set(ids);
+    setBackdrops((prev) =>
+      prev.map((row) => (idSet.has(row.id) ? { ...row, supports_landscape: supports } : row)),
+    );
+    setSelectedIds(new Set());
+  }
   async function delOne(id: string) {
     if (!confirm("Delete?")) return;
     const { error } = await supabase.from("backdrop_catalog").delete().eq("id", id);
@@ -438,6 +458,24 @@ export default function BackdropsPage() {
             <button onClick={() => bulkTier("premium", 499)} style={{ background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: "5px 12px", cursor: "pointer", fontSize: 12, fontWeight: 600, color: "#d97706" }}>Premium $4.99</button>
             <button onClick={() => bulkTier("premium", 799)} style={{ background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: "5px 12px", cursor: "pointer", fontSize: 12, fontWeight: 600, color: "#d97706" }}>Premium $7.99</button>
             <div style={{ width: 1, height: 20, background: "#ccc" }} />
+            {/* 2026-04-25: bulk Portrait/Landscape toggle.  Lets photographer
+                opt-in/out a whole folder (Holiday, Scenic, etc.) in one
+                click instead of editing each row. */}
+            <button
+              onClick={() => bulkLandscape(true)}
+              title="Allow these backdrops to render in landscape on the parents portal"
+              style={{ background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: 8, padding: "5px 12px", cursor: "pointer", fontSize: 12, fontWeight: 600, color: "#1d4ed8" }}
+            >
+              ↔ Landscape on
+            </button>
+            <button
+              onClick={() => bulkLandscape(false)}
+              title="Restrict these backdrops to portrait only"
+              style={{ background: "#f5f5f5", border: "1px solid #ddd", borderRadius: 8, padding: "5px 12px", cursor: "pointer", fontSize: 12, fontWeight: 600, color: "#555" }}
+            >
+              Portrait only
+            </button>
+            <div style={{ width: 1, height: 20, background: "#ccc" }} />
             {CATS.map(c => <button key={c.key} onClick={() => bulkCat(c.key)} style={{ background: c.bg, border: `1px solid ${c.color}30`, borderRadius: 8, padding: "5px 10px", cursor: "pointer", fontSize: 11, fontWeight: 600, color: c.color }}>{c.icon} {c.label}</button>)}
             <div style={{ flex: 1 }} />
             <button onClick={() => bulkVis(true)} style={{ background: "#f0fdf4", border: "1px solid #a7f3d0", borderRadius: 8, padding: "5px 12px", cursor: "pointer", fontSize: 12, color: "#059669" }}><Eye size={12} style={{ marginRight: 4 }} />Show</button>
@@ -513,6 +551,13 @@ export default function BackdropsPage() {
                         <img loading="lazy" src={bd.image_url} alt={bd.name} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
                         {/* Selection */}
                         <div style={{ position: "absolute", top: 6, left: 6, width: 22, height: 22, borderRadius: "50%", background: sel ? "#6366f1" : "rgba(255,255,255,0.85)", border: sel ? "none" : "1.5px solid #ccc", display: "flex", alignItems: "center", justifyContent: "center" }}>{sel && <Check size={13} color="#fff" strokeWidth={3} />}</div>
+                        {/* 2026-04-25: tiny landscape badge so photographer can
+                            see at a glance which backdrops are opted in to
+                            landscape on the parents portal, without opening
+                            the editor. */}
+                        {bd.supports_landscape && (
+                          <div title="Supports landscape on parents portal" style={{ position: "absolute", top: 6, left: 32, background: "#1d4ed8", color: "#fff", fontSize: 9, fontWeight: 800, padding: "2px 6px", borderRadius: 5, letterSpacing: "0.04em" }}>↔ LANDSCAPE</div>
+                        )}
                         {/* Tier badge */}
                         <button onClick={e => { e.stopPropagation(); quickTier(bd); }} style={{ position: "absolute", top: 6, right: 6, background: bd.tier === "premium" ? "#f59e0b" : "#22c55e", color: bd.tier === "premium" ? "#000" : "#fff", fontSize: 9, fontWeight: 800, padding: "3px 7px", borderRadius: 6, border: "none", cursor: "pointer" }}>{bd.tier === "premium" ? `★ $${(bd.price_cents / 100).toFixed(2)}` : "FREE"}</button>
                         {/* Hidden overlay */}

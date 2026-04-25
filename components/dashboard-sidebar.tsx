@@ -36,6 +36,10 @@ const NAV_ITEMS = [
   { href: "/dashboard/projects/events", label: "Projects", match: /^\/dashboard\/projects/ },
   { href: "/dashboard/orders", label: "Orders", match: /^\/dashboard\/orders/ },
   { href: "/dashboard/packages", label: "Packages", match: /^\/dashboard\/packages/ },
+  // 2026-04-25: Backdrops was reachable only by typing the URL.  Surface it
+  // between Packages and Settings so photographers can always find their
+  // backdrop catalog + the new Supports landscape tickbox.
+  { href: "/dashboard/backdrops", label: "Backdrops", match: /^\/dashboard\/backdrops/ },
   { href: "/dashboard/settings", label: "Settings", match: /^\/dashboard\/settings/ },
   { href: "/dashboard/membership", label: "Membership", match: /^\/dashboard\/membership/ },
   { href: "/dashboard/feature-requests", label: "Feature Requests", match: /^\/dashboard\/feature-requests/ },

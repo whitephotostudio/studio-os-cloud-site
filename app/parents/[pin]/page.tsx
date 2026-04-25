@@ -11600,58 +11600,77 @@ export default function ParentGalleryPage() {
                           <RotateCcw size={13} strokeWidth={2.2} /> Reset
                         </button>
                       </div>
-                      {/* Orientation toggle.  Only renders when the active
-                          backdrop has been opted-in to landscape by the
-                          photographer (backdrop_catalog.supports_landscape).
-                          For everything else we show a quiet info note and
-                          force portrait so the parent never gets a broken
-                          composite. */}
-                      {panelPreviewBackdrop.supports_landscape ? (
-                        <div
-                          role="radiogroup"
-                          aria-label="Backdrop orientation"
-                          style={{
-                            marginTop: 12,
-                            display: "inline-flex",
-                            background: "rgba(255,255,255,0.06)",
-                            border: "1px solid rgba(255,255,255,0.1)",
-                            borderRadius: 999,
-                            padding: 3,
-                            gap: 2,
-                          }}
-                        >
-                          {(["portrait", "landscape"] as const).map((o) => {
-                            const active = selectedOrientation === o;
-                            return (
-                              <button
-                                key={o}
-                                type="button"
-                                role="radio"
-                                aria-checked={active}
-                                onClick={() => {
-                                  setSelectedOrientation(o);
-                                  setOrientationNotice(null);
-                                }}
-                                style={{
-                                  background: active ? "#fff" : "transparent",
-                                  color: active ? "#000" : "#d4d4d8",
-                                  border: "none",
-                                  borderRadius: 999,
-                                  padding: "6px 14px",
-                                  fontSize: 11,
-                                  fontWeight: active ? 800 : 600,
-                                  cursor: "pointer",
-                                  letterSpacing: "0.02em",
-                                  textTransform: "capitalize",
-                                  transition: "all 0.15s ease",
-                                }}
-                              >
-                                {o}
-                              </button>
-                            );
-                          })}
-                        </div>
-                      ) : null}
+                      {/* Orientation toggle — ALWAYS rendered so parents
+                          discover the feature exists.  When the active
+                          backdrop wasn't opted-in to landscape by the
+                          photographer (supports_landscape=false), the pill
+                          fades to ~45% opacity, becomes non-interactive, and
+                          a tooltip explains why.  This is the "you might be
+                          able to turn me on" affordance — switch to a
+                          landscape-capable backdrop and the pill pops back to
+                          full opacity.  Default is always portrait. */}
+                      {(() => {
+                        const canLandscape = !!panelPreviewBackdrop.supports_landscape;
+                        return (
+                          <div
+                            role="radiogroup"
+                            aria-label="Backdrop orientation"
+                            title={
+                              canLandscape
+                                ? "Switch this photo between portrait and landscape"
+                                : "This backdrop is portrait only — pick a wide scenic backdrop to enable landscape"
+                            }
+                            style={{
+                              marginTop: 12,
+                              display: "inline-flex",
+                              background: "rgba(255,255,255,0.06)",
+                              border: "1px solid rgba(255,255,255,0.1)",
+                              borderRadius: 999,
+                              padding: 3,
+                              gap: 2,
+                              opacity: canLandscape ? 1 : 0.45,
+                              cursor: canLandscape ? "pointer" : "not-allowed",
+                              transition: "opacity 0.2s ease",
+                            }}
+                          >
+                            {(["portrait", "landscape"] as const).map((o) => {
+                              const active = selectedOrientation === o;
+                              const disabled = !canLandscape && o === "landscape";
+                              return (
+                                <button
+                                  key={o}
+                                  type="button"
+                                  role="radio"
+                                  aria-checked={active}
+                                  aria-disabled={disabled}
+                                  disabled={disabled}
+                                  onClick={() => {
+                                    if (disabled) return;
+                                    setSelectedOrientation(o);
+                                    setOrientationNotice(null);
+                                  }}
+                                  style={{
+                                    background: active ? "#fff" : "transparent",
+                                    color: active ? "#000" : "#d4d4d8",
+                                    border: "none",
+                                    borderRadius: 999,
+                                    padding: "6px 14px",
+                                    fontSize: 11,
+                                    fontWeight: active ? 800 : 600,
+                                    cursor: disabled ? "not-allowed" : "pointer",
+                                    letterSpacing: "0.02em",
+                                    textTransform: "capitalize",
+                                    transition: "all 0.15s ease",
+                                    pointerEvents: disabled ? "none" : "auto",
+                                  }}
+                                >
+                                  {o}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        );
+                      })()}
                       {orientationNotice ? (
                         <div
                           style={{
