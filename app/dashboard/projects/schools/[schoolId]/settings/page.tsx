@@ -24,6 +24,7 @@ import {
   type EventGalleryExtraSettings,
 } from "@/lib/event-gallery-settings";
 import { resolvePackageProfileId } from "@/lib/package-profile-selection";
+import { WhatsNewDot } from "@/components/whats-new-dot";
 
 type SchoolRow = {
   school_name?: string | null;
@@ -124,7 +125,7 @@ function Card({ title, children, description }: { title: string; description?: s
   );
 }
 
-function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
+function Field({ label, hint, children }: { label: React.ReactNode; hint?: string; children: React.ReactNode }) {
   return (
     <label className="block">
       <div className="text-[13px] font-semibold text-neutral-800">{label}</div>
@@ -535,7 +536,21 @@ export default function SchoolSettingsPage() {
                       <Field label="Gallery Expiration Date" hint="Optional date the gallery becomes inactive">
                         <input type="date" value={expirationDate} onChange={(e) => setExpirationDate(e.target.value)} className={fieldClass} />
                       </Field>
-                      <Field label="Archive Date" hint='Optional. Surfaces "last chance" copy on the parents Older photos tab.'>
+                      <Field
+                        label={
+                          <span style={{ position: "relative", display: "inline-block", paddingRight: 14 }}>
+                            Archive Date
+                            <WhatsNewDot
+                              featureId="combine-orders-school-archive-date-v1"
+                              asBareDot
+                              top={-2}
+                              right={-2}
+                              size={9}
+                            />
+                          </span>
+                        }
+                        hint='Optional. Surfaces "last chance" copy on the parents Older photos tab.'
+                      >
                         <input type="date" value={archiveDate} onChange={(e) => setArchiveDate(e.target.value)} className={fieldClass} />
                       </Field>
                     </div>

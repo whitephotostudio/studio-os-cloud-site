@@ -135,6 +135,44 @@ export async function GET(request: NextRequest) {
       }
     }
 
+    // Per-photographer agreement acceptance for the CURRENT version.
+    // Used by the admin/users expanded card to show whether each studio
+    // has accepted the current Studio OS Cloud agreement.  Includes the
+    // most-recent acceptance row's metadata (date, IP) when available.
+    const agreementByPhotographer = new Map<
+      string,
+      {
+        accepted: boolean;
+        acceptedAt: string | null;
+        ipAddress: string | null;
+        userAgent: string | null;
+        agreementVersion: string | null;
+      }
+    >();
+    if (photographerIds.length > 0) {
+      const { CURRENT_AGREEMENT_VERSION } = await import("@/lib/agreement");
+      const { data: agreementRows } = await service
+        .from("photographer_agreements")
+        .select(
+          "photographer_id, agreement_version, accepted_at, ip_address, user_agent",
+        )
+        .in("photographer_id", photographerIds)
+        .eq("agreement_version", CURRENT_AGREEMENT_VERSION)
+        .order("accepted_at", { ascending: false });
+      // Take the most-recent acceptance per photographer (rows are sorted desc).
+      for (const row of agreementRows ?? []) {
+        const pid = row.photographer_id as string;
+        if (!pid || agreementByPhotographer.has(pid)) continue;
+        agreementByPhotographer.set(pid, {
+          accepted: true,
+          acceptedAt: (row.accepted_at as string | null) ?? null,
+          ipAddress: (row.ip_address as string | null) ?? null,
+          userAgent: (row.user_agent as string | null) ?? null,
+          agreementVersion: (row.agreement_version as string | null) ?? null,
+        });
+      }
+    }
+
     // Pull auth metadata (full_name, phone) for each user via the admin auth API.
     // We batch with service.auth.admin.listUsers() to be efficient.
     const userIds = (users ?? []).map((u) => u.user_id as string).filter(Boolean);
@@ -201,6 +239,7 @@ export async function GET(request: NextRequest) {
         totalUsed: 0,
       };
       const totalSpentCents = spentByPhotographer.get(u.id as string) ?? 0;
+      const agreement = agreementByPhotographer.get(u.id as string) ?? null;
 
       // Roll the monthly window forward in the response if we've crossed
       // a month boundary, so the UI shows "0 used" cleanly without waiting
@@ -246,6 +285,15 @@ export async function GET(request: NextRequest) {
         voicePremiumEnabled: Boolean(u.voice_premium_enabled),
         voiceMonthlyCharLimit: Number(u.voice_monthly_char_limit ?? 0),
         voiceCharsUsedThisMonth: voiceUsedThisMonth,
+        agreement: agreement
+          ? {
+              accepted: true,
+              acceptedAt: agreement.acceptedAt,
+              ipAddress: agreement.ipAddress,
+              userAgent: agreement.userAgent,
+              agreementVersion: agreement.agreementVersion,
+            }
+          : { accepted: false, acceptedAt: null, ipAddress: null, userAgent: null, agreementVersion: null },
       };
     });
 
@@ -270,11 +318,13 @@ export async function GET(request: NextRequest) {
       .update({ admin_seen_users_at: now.toISOString() })
       .eq("id", photographer.id);
 
+    const { CURRENT_AGREEMENT_VERSION } = await import("@/lib/agreement");
     return NextResponse.json({
       ok: true,
       users: enriched,
       newSinceLastVisit,
       previousSeenAt: seenAt ? seenAt.toISOString() : null,
+      currentAgreementVersion: CURRENT_AGREEMENT_VERSION,
     });
   } catch (error) {
     console.error("[dashboard:admin:users:GET]", error);

@@ -53,6 +53,13 @@ type UserRow = {
   voicePremiumEnabled?: boolean;
   voiceMonthlyCharLimit?: number;
   voiceCharsUsedThisMonth?: number;
+  agreement?: {
+    accepted: boolean;
+    acceptedAt: string | null;
+    ipAddress: string | null;
+    userAgent: string | null;
+    agreementVersion: string | null;
+  };
 };
 
 const NEW_SIGNUP_WINDOW_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
@@ -1169,6 +1176,91 @@ export default function AdminUsersPage() {
                             Subscription charges (monthly/yearly plan fees) are billed by Stripe and not summarized here.
                           </div>
                         </div>
+                      </div>
+
+                      {/* Agreement acceptance — surfaces the current Studio OS Cloud
+                          legal agreement status for this photographer.  Replaces the
+                          old standalone /dashboard/admin/agreements page.  Shows a
+                          green pill + accepted timestamp + IP when accepted, an
+                          orange "Outstanding" pill otherwise. */}
+                      <div
+                        style={{
+                          marginTop: 16,
+                          background: u.agreement?.accepted ? "#f0fdf4" : "#fff7ed",
+                          border: u.agreement?.accepted ? "1px solid #bbf7d0" : "1px solid #fed7aa",
+                          borderRadius: 14,
+                          padding: "14px 18px",
+                          fontSize: 13,
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "space-between",
+                          gap: 14,
+                          flexWrap: "wrap",
+                        }}
+                      >
+                        <div>
+                          <div
+                            style={{
+                              fontWeight: 700,
+                              fontSize: 13,
+                              color: u.agreement?.accepted ? "#166534" : "#9a3412",
+                              display: "inline-flex",
+                              alignItems: "center",
+                              gap: 6,
+                            }}
+                          >
+                            <span style={{ fontSize: 14 }}>
+                              {u.agreement?.accepted ? "✓" : "⚠"}
+                            </span>
+                            Studio OS Cloud Agreement
+                            {u.agreement?.agreementVersion ? (
+                              <span
+                                style={{
+                                  marginLeft: 6,
+                                  fontFamily: "ui-monospace, monospace",
+                                  fontSize: 11,
+                                  fontWeight: 700,
+                                  color: u.agreement?.accepted ? "#166534" : "#9a3412",
+                                  opacity: 0.8,
+                                }}
+                              >
+                                {u.agreement.agreementVersion}
+                              </span>
+                            ) : null}
+                          </div>
+                          <div style={{ marginTop: 4, fontSize: 12, color: u.agreement?.accepted ? "#15803d" : "#9a3412" }}>
+                            {u.agreement?.accepted
+                              ? `Accepted ${u.agreement.acceptedAt ? new Date(u.agreement.acceptedAt).toLocaleString() : ""}`
+                              : "Outstanding — this photographer has not accepted the current agreement yet."}
+                          </div>
+                          {u.agreement?.accepted && u.agreement.ipAddress ? (
+                            <div
+                              style={{
+                                marginTop: 4,
+                                fontSize: 11,
+                                fontFamily: "ui-monospace, monospace",
+                                color: "#6b7280",
+                              }}
+                              title={u.agreement.userAgent ?? undefined}
+                            >
+                              From {u.agreement.ipAddress}
+                            </div>
+                          ) : null}
+                        </div>
+                        <span
+                          style={{
+                            padding: "6px 12px",
+                            borderRadius: 999,
+                            fontSize: 11,
+                            fontWeight: 800,
+                            letterSpacing: "0.06em",
+                            textTransform: "uppercase",
+                            background: u.agreement?.accepted ? "#bbf7d0" : "#fed7aa",
+                            color: u.agreement?.accepted ? "#14532d" : "#7c2d12",
+                          }}
+                        >
+                          {u.agreement?.accepted ? "Accepted" : "Outstanding"}
+                        </span>
                       </div>
 
                       {/* Voice access control — admin-only, not shown for self */}

@@ -26,6 +26,7 @@ import {
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import type { BillingInterval } from "@/lib/studio-pricing";
+import { WhatsNewDot, useIsFeatureNew } from "@/components/whats-new-dot";
 
 type StripeStatus = {
   ok: boolean;
@@ -359,6 +360,14 @@ export default function SettingsPage() {
   const [siblingTier3Percent, setSiblingTier3Percent] = useState<number>(10);
   const [shippingFeeCents, setShippingFeeCents] = useState<number>(0);
   const [lateHandlingFeePercent, setLateHandlingFeePercent] = useState<number>(10);
+
+  // Dismissal hook for the "what's new" blue dot on the commerce card.
+  // The dot disappears the first time the photographer interacts with
+  // anywhere inside the card.
+  const commerceCardDot = useIsFeatureNew("combine-orders-commerce-settings-v1");
+  const dismissCommerceCardDot = useCallback(() => {
+    if (commerceCardDot.isNew) commerceCardDot.dismiss();
+  }, [commerceCardDot]);
 
   const [stripeAccountId, setStripeAccountId] = useState<string | null>(null);
   const [detailsSubmitted, setDetailsSubmitted] = useState(false);
@@ -1311,7 +1320,17 @@ export default function SettingsPage() {
             flat shipping fee, and late-handling % (applied automatically
             when a parent orders after the school's order_due_date).
             Spec: docs/design/combine-orders-and-recovery.md. */}
-        <div style={{ marginTop: 20 }}>
+        <div
+          style={{ marginTop: 20, position: "relative" }}
+          onClickCapture={() => dismissCommerceCardDot()}
+        >
+          <WhatsNewDot
+            featureId="combine-orders-commerce-settings-v1"
+            asBareDot
+            top={12}
+            right={16}
+            size={12}
+          />
           <div style={cardStyle}>
             <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 16 }}>
               <div style={{ width: 54, height: 54, borderRadius: 16, background: "#fff5f5", display: "grid", placeItems: "center" }}>
