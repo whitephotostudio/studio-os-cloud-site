@@ -8030,8 +8030,16 @@ export default function ParentGalleryPage() {
       `}</style>
 
       {/* Screenshot protection — per-school / per-event toggles applied
-          ONLY to the parents portal.  No-op when every flag is off. */}
+          ONLY to the parents portal.  No-op when every flag is off.
+          2026-04-26: keyed by the flag values so the component fully
+          remounts when the gallery-context response lands.  Without the
+          key, the internal useEffects sometimes didn't re-run after the
+          API arrival flipped flags from default-false → true (especially
+          on Safari first load).  Symptom Harout flagged: "screen
+          protection doesn't work till I refresh Safari."  Forcing a
+          remount guarantees fresh listener attachment. */}
       <ScreenshotProtection
+        key={`ssp:${screenshotProtection.desktop ? 1 : 0}:${screenshotProtection.mobile ? 1 : 0}:${screenshotProtection.watermark ? 1 : 0}`}
         flags={screenshotProtection}
         watermarkText={`${parentEmail || "Parents portal"} · ${new Date().toLocaleDateString()}`}
       />
@@ -9545,9 +9553,16 @@ export default function ParentGalleryPage() {
                     const previewBlurAmount = previewBlurBackground
                       ? (backdropPickerOpen ? selectedBlurAmount : confirmedBlurAmount)
                       : 0;
-                    const activeBackdrop = backdropPickerOpen
+                    // 2026-04-26: re-resolve from the live backdrops array
+                    // by id so we always have the freshest fields (e.g.
+                    // supports_landscape) — see comment in panel preview
+                    // block for full rationale.
+                    const cachedActive = backdropPickerOpen
                       ? (selectedBackdrop ?? confirmedBackdrop)
                       : confirmedBackdrop;
+                    const activeBackdrop = cachedActive
+                      ? backdrops.find((b) => b.id === cachedActive.id) ?? cachedActive
+                      : null;
                     // 2026-04-25: which orientation the big viewer paints.
                     // Picker open → preview the user's pending pick.  Closed
                     // → use the committed orientation.  Defensive: portrait if
@@ -11785,7 +11800,21 @@ export default function ParentGalleryPage() {
 
               {/* Live preview */}
               {(() => {
-                const panelPreviewBackdrop = selectedBackdrop ?? confirmedBackdrop;
+                // 2026-04-26: Re-resolve the active backdrop from the live
+                // `backdrops` array by id every render.  Previously we used
+                // the cached `selectedBackdrop` snapshot directly — that
+                // snapshot is taken when the parent first picks a backdrop,
+                // and never refreshes if the gallery-context response
+                // arrives later with updated fields (e.g. supports_landscape).
+                // Symptom Harout flagged: "the toggle is grey, no matter
+                // where you click unless I refresh Safari."  Looking up the
+                // freshest copy from `backdrops` by id removes the stale
+                // closure and the toggle reads the right flag on first
+                // open without a refresh.
+                const cachedActive = selectedBackdrop ?? confirmedBackdrop;
+                const panelPreviewBackdrop = cachedActive
+                  ? backdrops.find((b) => b.id === cachedActive.id) ?? cachedActive
+                  : null;
                 if (!panelPreviewBackdrop || !selectedImage || !currentNobgUrl) {
                   return null;
                 }
