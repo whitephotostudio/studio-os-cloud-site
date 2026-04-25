@@ -7330,10 +7330,22 @@ export default function ParentGalleryPage() {
           })),
         }}
         onAddedSibling={(payload) => {
-          setCombineToast(payload.label);
-          window.setTimeout(() => setCombineToast(""), 4000);
-          // Full cart-merge integration is Phase 1d.  For now, the parent
-          // can copy the PIN and continue as a separate browser tab.
+          // Show a quick acknowledgement toast and then navigate the
+          // parent into the sibling's gallery so they can actually shop
+          // there (browse photos, pick poses/backdrops/packages).  Full
+          // cross-gallery cart merge is Phase 1d; this gets them to the
+          // photos so the sibling/past-year flow stops feeling like a
+          // dead end at the drawer.
+          setCombineToast(`${payload.label} — opening gallery…`);
+          window.setTimeout(() => {
+            try {
+              const target = `/parents/${encodeURIComponent(payload.pin)}?school=${encodeURIComponent(payload.schoolId)}&email=${encodeURIComponent(payload.email)}`;
+              window.location.href = target;
+            } catch {
+              // Last-resort: clear the toast so the parent isn't stuck.
+              setCombineToast("");
+            }
+          }, 700);
         }}
       />
 
@@ -7556,6 +7568,32 @@ export default function ParentGalleryPage() {
 
           {/* Right: cart */}
           <div style={{ display: "flex", alignItems: "center", gap: isEventImageStage ? 16 : 10, flexWrap: "wrap", justifyContent: "flex-end" }}>
+            {/* Save-with-Combine pill — always visible in the gallery top
+                bar so parents see the combine/recover entry without having
+                to open the cart drawer first.  Spec: combine-orders-and-recovery.md. */}
+            <button
+              type="button"
+              onClick={openCombineDrawer}
+              aria-label="Combine sibling orders or recover a lost PIN"
+              style={{
+                background: "linear-gradient(180deg,#cc0000 0%,#a30000 100%)",
+                color: "#ffffff",
+                border: "none",
+                borderRadius: 999,
+                padding: isMobileViewport ? "8px 12px" : "8px 16px",
+                fontSize: 12,
+                fontWeight: 800,
+                cursor: "pointer",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+                boxShadow: "0 4px 12px rgba(204,0,0,0.25)",
+                letterSpacing: "0.02em",
+              }}
+            >
+              <span aria-hidden style={{ fontSize: 13 }}>✨</span>
+              <span>{isMobileViewport ? "Combine" : "Save with combine"}</span>
+            </button>
             {currentGalleryExtras.allowSocialSharing ? (
               <button
                 type="button"

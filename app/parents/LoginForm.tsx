@@ -986,6 +986,14 @@ export default function LoginForm({
                 </button>
               )}
 
+              {/* Login-side PIN recovery — small text link that expands the
+                  4-question recovery form right inside the login card.  Same
+                  endpoint as the in-gallery drawer.  Anonymous; works without
+                  an existing session. */}
+              <LostPinSection
+                schools={schools}
+                defaultEmail={schoolEmail}
+              />
             </form>
           ) : (
             <form onSubmit={handleEventLogin} style={{ display: "flex", flexDirection: "column", gap: 16 }}>
@@ -1205,3 +1213,204 @@ export default function LoginForm({
     </div>
   );
 }
+
+/**
+ * Login-side PIN recovery panel.  Collapsible by default — parents see a
+ * small text link (Lost the PIN?) under the school sign-in form, click to
+ * expand.  Calls /api/portal/recovery/request with name + school + email.
+ * Server returns the same generic response either way (anti-enumeration).
+ */
+function LostPinSection({
+  schools,
+  defaultEmail,
+}: {
+  schools: SchoolRow[];
+  defaultEmail: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [firstName, setFirstName] = useState("");
+  const [lastName, setLastName] = useState("");
+  const [schoolId, setSchoolId] = useState("");
+  const [email, setEmail] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [response, setResponse] = useState("");
+
+  useEffect(() => {
+    if (open && !email && defaultEmail) {
+      setEmail(defaultEmail);
+    }
+  }, [open, defaultEmail, email]);
+
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!firstName.trim() || !lastName.trim() || !schoolId || !email.trim()) {
+      setResponse("Please fill out all four fields.");
+      return;
+    }
+    setSubmitting(true);
+    setResponse("");
+    try {
+      const res = await fetch("/api/portal/recovery/request", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          firstName: firstName.trim(),
+          lastName: lastName.trim(),
+          schoolId,
+          email: email.trim().toLowerCase(),
+        }),
+      });
+      const body = (await res.json().catch(() => ({}))) as { message?: string };
+      setResponse(
+        body.message ||
+          "If we found a match, we've emailed a recovery link. Check your inbox.",
+      );
+    } catch {
+      setResponse("Network problem. Please try again.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div style={{ marginTop: 4 }}>
+      {!open ? (
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          style={{
+            background: "transparent",
+            border: "none",
+            color: "#cc0000",
+            fontWeight: 800,
+            fontSize: 13,
+            cursor: "pointer",
+            padding: "6px 0",
+            textAlign: "center",
+            width: "100%",
+          }}
+        >
+          Lost the PIN? Recover it →
+        </button>
+      ) : (
+        <div
+          style={{
+            marginTop: 6,
+            padding: "14px 14px 12px",
+            background: "#f9fafb",
+            border: "1px solid #e5e7eb",
+            borderRadius: 14,
+          }}
+        >
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+            <span style={{ fontSize: 13, fontWeight: 800, color: "#111827" }}>
+              Recover your gallery PIN
+            </span>
+            <button
+              type="button"
+              onClick={() => setOpen(false)}
+              aria-label="Close"
+              style={{
+                background: "transparent",
+                border: "none",
+                color: "#9ca3af",
+                cursor: "pointer",
+                fontSize: 16,
+                lineHeight: 1,
+              }}
+            >
+              ×
+            </button>
+          </div>
+          <p style={{ margin: "0 0 10px 0", fontSize: 12, color: "#475569", lineHeight: 1.5 }}>
+            Answer 4 quick questions and we&rsquo;ll email a one-time access link
+            to the address on file. The link expires in 24 hours.
+          </p>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+            <input
+              value={firstName}
+              onChange={(e) => setFirstName(e.target.value)}
+              placeholder="First name"
+              style={miniInputStyle}
+            />
+            <input
+              value={lastName}
+              onChange={(e) => setLastName(e.target.value)}
+              placeholder="Last name"
+              style={miniInputStyle}
+            />
+          </div>
+          <select
+            value={schoolId}
+            onChange={(e) => setSchoolId(e.target.value)}
+            style={{ ...miniInputStyle, marginTop: 8, width: "100%" }}
+          >
+            <option value="">Pick a school…</option>
+            {schools.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.school_name}
+              </option>
+            ))}
+          </select>
+          <input
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder="parent@example.com"
+            style={{ ...miniInputStyle, marginTop: 8, width: "100%" }}
+          />
+          <button
+            type="button"
+            onClick={(e) => void submit(e)}
+            disabled={submitting}
+            style={{
+              marginTop: 10,
+              width: "100%",
+              padding: "11px 14px",
+              borderRadius: 12,
+              border: "none",
+              background: submitting ? "#94a3b8" : "#0f172a",
+              color: "#fff",
+              fontWeight: 800,
+              fontSize: 13,
+              cursor: submitting ? "wait" : "pointer",
+            }}
+          >
+            {submitting ? "Checking…" : "Email me the link"}
+          </button>
+          {response ? (
+            <div
+              role="status"
+              style={{
+                marginTop: 10,
+                padding: "10px 12px",
+                background: "#f0f9ff",
+                border: "1px solid #bae6fd",
+                borderRadius: 10,
+                color: "#075985",
+                fontSize: 12,
+                fontWeight: 600,
+                lineHeight: 1.4,
+              }}
+            >
+              {response}
+            </div>
+          ) : null}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const miniInputStyle: React.CSSProperties = {
+  borderRadius: 10,
+  border: "1px solid #d1d5db",
+  background: "#ffffff",
+  padding: "9px 12px",
+  fontSize: 13,
+  fontWeight: 600,
+  color: "#111827",
+  outline: "none",
+  boxSizing: "border-box",
+};
