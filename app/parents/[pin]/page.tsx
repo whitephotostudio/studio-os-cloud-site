@@ -2009,8 +2009,20 @@ function renderPremiumMockup(
   imageFilter?: string,
   imageAspectRatio?: number | null,
   isCompositeArtwork = false,
+  // 2026-04-25: optional orientation override.  When the parent has flipped
+  // a backdrop into landscape via the Portrait/Landscape toggle, we want the
+  // Wall / Desk / Close-up print mockups to also show the print as a wide
+  // frame.  Passing "landscape" here forces `isLandscapePhoto` regardless
+  // of the source photo's natural aspect; passing "portrait" forces the
+  // opposite; undefined falls back to the photo's natural aspect.
+  orientationOverride?: "portrait" | "landscape",
 ) {
-  const isLandscapePhoto = (imageAspectRatio ?? 0) > 1.04;
+  const isLandscapePhoto =
+    orientationOverride === "landscape"
+      ? true
+      : orientationOverride === "portrait"
+        ? false
+        : (imageAspectRatio ?? 0) > 1.04;
   const sizeMatch = (sizeLabel ?? "").match(/(\d+(?:\.\d+)?)\s*[x×]\s*(\d+(?:\.\d+)?)/i);
   const sizeArea = sizeMatch ? Number(sizeMatch[1]) * Number(sizeMatch[2]) : 80;
   const ratio = parsePrintRatio(sizeLabel, isLandscapePhoto ? "landscape" : "portrait");
@@ -2492,6 +2504,7 @@ function renderMockupStrip(
   imageFilter?: string,
   imageAspectRatio?: number | null,
   isCompositeArtwork = false,
+  orientationOverride?: "portrait" | "landscape",
 ) {
   return (
     <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 12, marginTop: 14 }}>
@@ -2522,6 +2535,7 @@ function renderMockupStrip(
                 imageFilter,
                 imageAspectRatio,
                 isCompositeArtwork,
+                orientationOverride,
               )}
             </div>
             <div style={{ marginTop: 8, fontSize: 11, fontWeight: 700, color: active ? "#fff" : "#9a9a9a" }}>
@@ -3009,7 +3023,7 @@ function CompositeCanvas({
         }
         bufferCtx.drawImage(fgImg, fgSx, fgSy, fgSw, fgSh, 0, 0, width, height);
       } else {
-        // Draw foreground (contain, centered)
+        // Draw foreground (contain, centered).
       const sourceWidth = fgCrop?.sw ?? fgImg.naturalWidth;
       const sourceHeight = fgCrop?.sh ?? fgImg.naturalHeight;
       const fgRatio = sourceWidth / sourceHeight;
@@ -3024,13 +3038,25 @@ function CompositeCanvas({
       dw *= foregroundScale;
       dh *= foregroundScale;
       const dx = (width - dw) / 2;
-      const maxDy = height - dh + height * 0.035;
-      const minDy = -height * 0.02;
-      const dy = clampNumber(
-        (height - dh) / 2 + height * foregroundVerticalOffset,
-        minDy,
-        maxDy,
-      );
+      // 2026-04-25: keep parity with the DOM-blur path's foreground placement.
+      // The DOM path renders the foreground via a sized <img object-fit:contain>
+      // and applies translateY(foregroundVerticalOffset%) directly with NO clamp.
+      // The canvas path used to clamp `dy` so the foreground stayed inside the
+      // canvas frame, which worked for portrait (foreground smaller than canvas)
+      // but in landscape mode the foreground is taller than the canvas
+      // (foregroundScale >1 makes dh > height), and the clamp was forcing dy
+      // upward — clipping the top of the head off.  When dh > height, skip the
+      // upward clamp so the foreground sits where the offset says it should
+      // (matching DOM blur mode exactly).  Keep the portrait-mode clamp
+      // because there it bounds the natural alignment correctly.
+      const naturalDy = (height - dh) / 2 + height * foregroundVerticalOffset;
+      const dy = dh <= height
+        ? clampNumber(
+            naturalDy,
+            -height * 0.02,
+            height - dh + height * 0.035,
+          )
+        : naturalDy;
       if (fgCrop) {
         bufferCtx.drawImage(fgImg, fgCrop.sx, fgCrop.sy, fgCrop.sw, fgCrop.sh, dx, dy, dw, dh);
       } else {
@@ -10020,6 +10046,7 @@ export default function ParentGalleryPage() {
                             galleryImageFilter,
                             effectiveImageAspectRatio,
                             isCompositeSelection,
+                            confirmedOrientation,
                           )}
 
                               <div
@@ -10136,6 +10163,7 @@ export default function ParentGalleryPage() {
                                     galleryImageFilter,
                                     effectiveImageAspectRatio,
                                     isCompositeSelection,
+                                    confirmedOrientation,
                                   )}
                                 </div>
                                 <div
@@ -10259,6 +10287,7 @@ export default function ParentGalleryPage() {
                             galleryImageFilter,
                             effectiveImageAspectRatio,
                             isCompositeSelection,
+                            confirmedOrientation,
                           )}
                           <div
                             style={{
