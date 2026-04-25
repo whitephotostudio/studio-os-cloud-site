@@ -2356,14 +2356,76 @@ export default function SettingsPage() {
             <StatusRow label="Total allowed keys" value={String(studioApp.entitlement.totalAllowedKeys)} ok={studioApp.entitlement.totalAllowedKeys > 0} />
             <StatusRow label="Downloads ready" value={studioAppDownloadsReady ? "Yes" : "Pending"} ok={studioAppDownloadsReady} />
 
-            <div style={{ marginTop: 14, borderRadius: 18, border: "1px solid #d6dfef", background: "#fff", padding: "16px 18px" }}>
-              <div style={{ fontWeight: 900, color: "#0f172a" }}>Plan rules</div>
-              <div style={{ marginTop: 10, color: "#334155", lineHeight: 1.8 }}>
-                <div>$49 Web Gallery: no app access</div>
-                <div>$99 App Plan: app eligible, 1 key</div>
-                <div>$199 Studio: app eligible, 2 keys</div>
-                <div>Extra keys: $55 each, Studio only</div>
-                <div>$99 must upgrade to Studio for a second key</div>
+            {/* ── Plan comparison grid ────────────────────────────────────
+                Replaces a dense bullet list of pricing rules with a clean
+                3-column grid. Each column shows monthly + yearly (with
+                10% annual savings already calculated), what the plan
+                includes for the desktop app, and how many photography
+                keys are bundled. The bottom note carries the upgrade
+                rule that doesn't fit cleanly inside a column. */}
+            <div style={{ marginTop: 14 }}>
+              <div
+                style={{
+                  fontSize: 11,
+                  fontWeight: 800,
+                  letterSpacing: "0.14em",
+                  textTransform: "uppercase",
+                  color: "#64748b",
+                  marginBottom: 10,
+                }}
+              >
+                Plan comparison
+              </div>
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+                  gap: 10,
+                }}
+              >
+                <PlanCompareCard
+                  name="Web Gallery"
+                  monthly={49}
+                  yearly={Math.round(49 * 12 * 0.9)}
+                  yearlySavings="Save ~10%"
+                  appAccess={false}
+                  keysIncluded={0}
+                  extras={null}
+                  highlight={false}
+                />
+                <PlanCompareCard
+                  name="App Plan"
+                  monthly={99}
+                  yearly={Math.round(99 * 12 * 0.9)}
+                  yearlySavings="Save ~10%"
+                  appAccess
+                  keysIncluded={1}
+                  extras="Upgrade to Studio for a 2nd key"
+                  highlight={false}
+                />
+                <PlanCompareCard
+                  name="Studio"
+                  monthly={199}
+                  yearly={Math.round(199 * 12 * 0.9)}
+                  yearlySavings="Save ~10%"
+                  appAccess
+                  keysIncluded={2}
+                  extras="$55 each extra key"
+                  highlight
+                />
+              </div>
+              <div
+                style={{
+                  marginTop: 10,
+                  fontSize: 12,
+                  color: "#64748b",
+                  fontWeight: 600,
+                  lineHeight: 1.55,
+                }}
+              >
+                Yearly billing applies the 10% discount automatically at
+                checkout. Photography Keys are bundled with App Plan and
+                Studio subscriptions; extra keys are Studio-only.
               </div>
             </div>
 
@@ -3098,6 +3160,120 @@ function NumberField({
         <div style={{ marginTop: 6, fontSize: 11, color: "#94a3b8", fontWeight: 600 }}>{helper}</div>
       ) : null}
     </label>
+  );
+}
+
+/**
+ * Plan-comparison card used in the Studio OS App rollout sidebar.  Shows
+ * monthly + yearly pricing with the 10% annual savings, app access flag,
+ * and key allowance.  When `highlight` is true the card carries the
+ * "most popular" pill — set on the Studio plan by convention.
+ */
+function PlanCompareCard({
+  name,
+  monthly,
+  yearly,
+  yearlySavings,
+  appAccess,
+  keysIncluded,
+  extras,
+  highlight,
+}: {
+  name: string;
+  monthly: number;
+  yearly: number;
+  yearlySavings: string;
+  appAccess: boolean;
+  keysIncluded: number;
+  extras: string | null;
+  highlight: boolean;
+}) {
+  return (
+    <div
+      style={{
+        position: "relative",
+        borderRadius: 14,
+        border: highlight ? "2px solid #cc0000" : "1px solid #d6dfef",
+        background: highlight ? "linear-gradient(180deg,#fff5f5 0%,#fff 60%)" : "#fff",
+        padding: "16px 14px 14px",
+        display: "flex",
+        flexDirection: "column",
+        gap: 8,
+        boxShadow: highlight ? "0 8px 18px rgba(204,0,0,0.08)" : "none",
+      }}
+    >
+      {highlight ? (
+        <span
+          style={{
+            position: "absolute",
+            top: -10,
+            right: 12,
+            background: "#cc0000",
+            color: "#fff",
+            padding: "3px 10px",
+            borderRadius: 999,
+            fontSize: 10,
+            fontWeight: 800,
+            letterSpacing: "0.12em",
+            textTransform: "uppercase",
+          }}
+        >
+          Most popular
+        </span>
+      ) : null}
+      <div style={{ fontSize: 14, fontWeight: 900, color: "#0f172a" }}>{name}</div>
+      <div>
+        <div style={{ fontSize: 22, fontWeight: 900, color: "#0f172a", lineHeight: 1.1 }}>
+          ${monthly}
+          <span style={{ fontSize: 12, fontWeight: 700, color: "#64748b", marginLeft: 4 }}>/mo</span>
+        </div>
+        <div style={{ marginTop: 4, fontSize: 12, fontWeight: 700, color: "#15803d" }}>
+          ${yearly}/yr · {yearlySavings}
+        </div>
+      </div>
+      <div style={{ height: 1, background: "#e5e7eb", margin: "4px 0" }} />
+      <div style={{ display: "flex", flexDirection: "column", gap: 6, fontSize: 12, color: "#334155" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <span
+            style={{
+              fontSize: 12,
+              fontWeight: 800,
+              color: appAccess ? "#15803d" : "#94a3b8",
+              minWidth: 14,
+              display: "inline-block",
+            }}
+          >
+            {appAccess ? "✓" : "✕"}
+          </span>
+          <span style={{ fontWeight: 700, color: appAccess ? "#0f172a" : "#94a3b8" }}>
+            {appAccess ? "Studio OS App access" : "No app access"}
+          </span>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <span
+            style={{
+              fontSize: 12,
+              fontWeight: 800,
+              color: keysIncluded > 0 ? "#15803d" : "#94a3b8",
+              minWidth: 14,
+              display: "inline-block",
+            }}
+          >
+            {keysIncluded > 0 ? "✓" : "—"}
+          </span>
+          <span style={{ fontWeight: 700, color: keysIncluded > 0 ? "#0f172a" : "#94a3b8" }}>
+            {keysIncluded === 0
+              ? "0 photography keys"
+              : `${keysIncluded} photography key${keysIncluded === 1 ? "" : "s"}`}
+          </span>
+        </div>
+        {extras ? (
+          <div style={{ marginTop: 2, fontSize: 11, color: "#64748b", lineHeight: 1.4 }}>
+            {extras}
+          </div>
+        ) : null}
+      </div>
+    </div>
   );
 }
 

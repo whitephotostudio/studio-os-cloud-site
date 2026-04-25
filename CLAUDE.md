@@ -2,7 +2,39 @@
 
 Checkpoint for Claude so a context reset doesn't lose the thread. Update as work progresses.
 
-Last updated: 2026-04-24 (agreement gate + spotlight polish, uncommitted on top of the mobile-blur fix) — **Blocking legal-agreement gate landed** (v 2026-04-v1). After photographers sign in, if they haven't accepted the current Studio OS Cloud Agreement a full-screen modal covers `/dashboard`, `/m`, and `/studio-os/download` until they check the box and click Agree. "I do not agree" signs them out and bounces to `/sign-in?declined=1` with a banner. Version string lives in `lib/agreement.ts` (`CURRENT_AGREEMENT_VERSION`); bump it to force every photographer to re-accept on next load.
+Last updated: 2026-04-25 (backdrop orientation toggle landed, on top of agreement gate + spotlight polish + mobile-blur fix — all still uncommitted).
+
+## Backdrop orientation toggle — Portrait / Landscape (2026-04-25)
+
+Photographer can opt-in any backdrop to landscape mode in `/dashboard/backdrops` (Edit modal → "Supports landscape" tickbox).  Parents see a Portrait/Landscape pill inside the CHOOSE BACKDROP panel ONLY for backdrops where `supports_landscape === true`.  Switching to a portrait-only backdrop while landscape is active auto-snaps back to portrait and shows a yellow toast: "Landscape mode isn't available for this backdrop — switched back to Portrait."
+
+- **DB:** `backdrop_catalog.supports_landscape boolean NOT NULL DEFAULT false` applied via `supabase/migrations/20260424200000_add_backdrop_supports_landscape.sql`.  Default false → every existing backdrop stays portrait-only.
+- **Photographer UI:** `app/dashboard/backdrops/page.tsx` — added field to `BackdropRow`, `editSupportsLandscape` state, hydrate in `openEditor`, included in `saveEditor` payload, copies in `duplicateOne`, new tickbox in editor modal between pricing and action buttons.
+- **Portal context:** `app/api/portal/gallery-context/route.ts` — added `supports_landscape` to the BackdropRow type + select list. The field flows through `backdrops: backdropRows` directly.
+- **Parent UI:** `app/parents/[pin]/page.tsx`:
+  - `BackdropRow.supports_landscape?: boolean` extends the type
+  - `selectedOrientation` / `confirmedOrientation` / `orientationNotice` state mirror the existing selected/confirmed/blur state
+  - `getLandscapeBackdropCompositeSize` (4:3 wrapper), `getLandscapeForegroundScale` (slightly larger to anchor subject), `getLandscapeForegroundVerticalOffset` (centered with small downward bias)
+  - `handleBackdropClick` auto-snaps to portrait + sets notice when picking a portrait-only backdrop in landscape mode
+  - `handleConfirmBackdrop` defensively forces portrait when active backdrop doesn't support landscape, then commits orientation
+  - `handleClearBackdrop` resets to portrait
+  - Composite-selection useEffect resets orientation
+  - Big viewer call site: `previewOrientation` derived from picker-open vs closed; `previewSize` / `previewFgScale` / `previewFgOffset` swap to landscape variants when active; `preserveForegroundAlignment` set false in landscape (cover math would crop the head out — contain math is correct here)
+  - Live preview thumbnail: width 110→184 in landscape, scale + offset swap, `preserveForegroundAlignment={false}` in landscape
+  - `isPreview` chip lights up when `selectedOrientation !== confirmedOrientation` so parents see "Preview" while looking at landscape before they confirm
+  - New segmented control inline in the picker preview action row, only visible when `panelPreviewBackdrop.supports_landscape === true`
+- **Cart line item:** `CartLineItem.orientation?: "portrait" | "landscape"` added; `currentDraftCartItem` snapshots the committed orientation; persisted cart `PersistedCartItem.orientation` field added in `lib/combine-cart-storage.ts`; rehydration restores it; `groupCartByLane` items carry it through.
+- **Combined-orders endpoint:** `app/api/portal/orders/create-combined/route.ts` — `EntrySchema.orientation` (default portrait), `ResolvedEntry.orientation`, product names suffixed `(Landscape)` when applicable.
+- **Legacy single-order endpoint:** `app/api/portal/orders/create/route.ts` — same orientation parsing + product-name suffix.
+- **Server contract:** server doesn't enforce that `backdrop.supports_landscape === true` at order-create time.  The desktop lab will see "Landscape" inline on order summary regardless — defensive logic on the client guarantees we never confirm landscape on a portrait-only backdrop, and even if a malformed request arrived the lab would just see the orientation tag and could ignore it.
+
+Typecheck clean (`npx tsc --noEmit` → exit 0) after all edits.
+
+---
+
+## Earlier (2026-04-24)
+
+Agreement gate + spotlight polish landed — **Blocking legal-agreement gate** (v 2026-04-v1). After photographers sign in, if they haven't accepted the current Studio OS Cloud Agreement a full-screen modal covers `/dashboard`, `/m`, and `/studio-os/download` until they check the box and click Agree. "I do not agree" signs them out and bounces to `/sign-in?declined=1` with a banner. Version string lives in `lib/agreement.ts` (`CURRENT_AGREEMENT_VERSION`); bump it to force every photographer to re-accept on next load.
 
 - **DB:** `photographer_agreements` table applied live (`supabase/migrations/20260423120000_add_photographer_agreements.sql`). Append-only audit rows: photographer_id, user_id, agreement_version, terms_version, privacy_version, accepted_at, ip_address, user_agent. RLS: SELECT + INSERT scoped to `user_id = auth.uid()`, no UPDATE/DELETE policy.
 - **UI:** `components/agreement-gate.tsx` wraps both dashboard layouts + studio-os/download. Checkbox unchecked by default, Agree disabled until ticked, ESC intercepted, body scroll locked.

@@ -98,6 +98,11 @@ const EntrySchema = z.object({
   selectedImageUrl: z.string().trim().max(MAX_IMAGE_URL_LENGTH).nullable().optional(),
   isComposite: z.boolean().optional().default(false),
   compositeTitle: z.string().trim().max(MAX_COMPOSITE_TITLE_LENGTH).nullable().optional(),
+  // 2026-04-25: backdrop orientation chosen by the parent.  Server doesn't
+  // enforce that the picked backdrop's catalog row has supports_landscape
+  // === true (the desktop lab will see "Landscape" in the order summary
+  // and produce the wide print regardless).  Default "portrait".
+  orientation: z.enum(["portrait", "landscape"]).optional().default("portrait"),
 });
 
 const GroupSchema = z.object({
@@ -434,6 +439,9 @@ export async function POST(request: NextRequest) {
         blurred: boolean;
         blurAmount: number;
       } | null;
+      /** 2026-04-25: portrait/landscape — surfaces in order_items product
+       *  names so the lab knows which way to print this entry. */
+      orientation: "portrait" | "landscape";
     };
 
     const resolvedEntries: ResolvedEntry[] = [];
@@ -493,6 +501,7 @@ export async function POST(request: NextRequest) {
           })),
           selectedImageUrl: entry.selectedImageUrl ?? null,
           backdrop,
+          orientation: entry.orientation ?? "portrait",
         });
       }
     }
@@ -722,12 +731,18 @@ export async function POST(request: NextRequest) {
       };
       const itemsToInsert: ItemInsert[] = [];
       for (const entry of groupEntries) {
+        // 2026-04-25: tag every product name with the orientation when the
+        // parent flipped this entry into landscape mode so the lab/sees
+        // "Landscape" inline with each line.  Portrait stays unannotated to
+        // keep existing receipts visually unchanged.
+        const orientationSuffix =
+          entry.orientation === "landscape" ? " (Landscape)" : "";
         if (entry.isDigital) {
           itemsToInsert.push({
             order_id: orderRow.id as string,
-            product_name: entry.isComposite
+            product_name: (entry.isComposite
               ? `Composite • ${entry.packageName}`
-              : entry.packageName,
+              : entry.packageName) + orientationSuffix,
             quantity: entry.quantity,
             price: entry.packageSubtotalCents / 100,
             unit_price_cents: Math.round(
@@ -743,7 +758,7 @@ export async function POST(request: NextRequest) {
             );
             itemsToInsert.push({
               order_id: orderRow.id as string,
-              product_name: slot.label || "Item",
+              product_name: (slot.label || "Item") + orientationSuffix,
               quantity: 1,
               price: perSlot / 100,
               unit_price_cents: perSlot,
@@ -754,7 +769,7 @@ export async function POST(request: NextRequest) {
         } else {
           itemsToInsert.push({
             order_id: orderRow.id as string,
-            product_name: entry.packageName,
+            product_name: entry.packageName + orientationSuffix,
             quantity: entry.quantity,
             price: entry.packageSubtotalCents / 100,
             unit_price_cents: Math.round(

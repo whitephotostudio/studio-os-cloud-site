@@ -75,6 +75,10 @@ export type PersistedCartItem = {
     tier: string | null;
     priceCents: number;
   } | null;
+  /** 2026-04-25: portrait/landscape — always defined on new items, but
+   *  marked optional so older persisted carts (pre-feature) round-trip
+   *  cleanly without their items getting silently dropped. */
+  orientation?: "portrait" | "landscape";
 };
 
 export type CombineCart = {

@@ -266,6 +266,10 @@ type BackdropRow = {
   category: string | null;
   tags: string[] | null;
   sort_order: number;
+  /** When true the backdrop scenery looks right rotated wide.  Drives the
+   *  Portrait/Landscape toggle in the CHOOSE BACKDROP panel.  Defaults to
+   *  false on read so a missing column never accidentally enables landscape. */
+  supports_landscape?: boolean;
 };
 type DrawerView =
   | "product-select"
@@ -299,6 +303,11 @@ type CartLineItem = {
   isCompositeOrder: boolean;
   compositeTitle: string | null;
   backdrop: CartBackdropSelection | null;
+  // 2026-04-25: which orientation the backdrop was committed in.  Defaults to
+  // "portrait" — the lab cuts every print to the size & orientation here so
+  // a 5x7 in landscape mode means a 7x5 print on the order.  Carries through
+  // to the persisted combine cart and surfaces on receipts/order_items.
+  orientation?: "portrait" | "landscape";
   // ── Combine-cart tagging (Phase 1d) ────────────────────────────────
   // When this item was added on a sibling/past-year gallery (and the
   // parent has hopped between galleries via the CombineOrdersDrawer)
@@ -1949,6 +1958,48 @@ function getBackdropForegroundVerticalOffset(imageAspectRatio?: number | null) {
   return 0.058;
 }
 
+// 2026-04-25: Landscape-mode siblings of the portrait helpers above.
+// When the parent flips a backdrop into landscape, the canvas wrapper rotates
+// to a wide aspect (4:3) and the portrait-shaped subject sits centered on the
+// scenic backdrop (the existing `contain` math in CompositeCanvas handles the
+// horizontal letterboxing — backdrop fills the width, subject fits to height).
+function getLandscapeBackdropCompositeSize(imageAspectRatio?: number | null) {
+  // 4:3 reads naturally for school portraits on scenic backdrops; wider
+  // (16:9) cropped the subject too aggressively in side-by-side tests.
+  const LANDSCAPE_RATIO = 4 / 3;
+  // Use the portrait safe-aspect to scale resolution so taller crops still
+  // get a tall enough canvas to keep the cutout sharp.
+  const safeAspect =
+    imageAspectRatio && Number.isFinite(imageAspectRatio)
+      ? clampNumber(imageAspectRatio, 0.5, 1.8)
+      : 0.78;
+  const height = safeAspect < 0.98 ? 1080 : 960;
+  return {
+    width: Math.round(height * LANDSCAPE_RATIO),
+    height,
+  };
+}
+
+function getLandscapeForegroundScale(imageAspectRatio?: number | null) {
+  // Slightly larger than portrait — when a portrait subject is centered in a
+  // landscape canvas, the contain math leaves wide horizontal margins.
+  // Bumping scale ~5% keeps the subject visually anchored without clipping.
+  if (!imageAspectRatio || !Number.isFinite(imageAspectRatio)) return 1.05;
+  if (imageAspectRatio < 0.7) return 1.08;
+  if (imageAspectRatio < 0.85) return 1.06;
+  if (imageAspectRatio < 1.05) return 1.04;
+  return 1.02;
+}
+
+function getLandscapeForegroundVerticalOffset(imageAspectRatio?: number | null) {
+  // Center the subject (small downward bias to keep eyes near the scene's
+  // visual midline rather than dead-centered, which can feel high).
+  if (!imageAspectRatio || !Number.isFinite(imageAspectRatio)) return 0.04;
+  if (imageAspectRatio < 0.7) return 0.06;
+  if (imageAspectRatio < 0.85) return 0.05;
+  return 0.03;
+}
+
 function renderPremiumMockup(
   kind: PreviewKind,
   imageUrl?: string | null,
@@ -3563,6 +3614,7 @@ export default function ParentGalleryPage() {
               priceCents: item.backdrop.price_cents ?? 0,
             }
           : null,
+        orientation: item.orientation ?? "portrait",
       }));
   }, [cartItems]);
 
@@ -3614,6 +3666,17 @@ export default function ParentGalleryPage() {
   const [confirmedBlurBackground, setConfirmedBlurBackground] = useState(false);
   const [selectedBlurAmount, setSelectedBlurAmount] = useState(DEFAULT_BACKDROP_BLUR_PX);
   const [confirmedBlurAmount, setConfirmedBlurAmount] = useState(DEFAULT_BACKDROP_BLUR_PX);
+  // 2026-04-25: Backdrop orientation toggle.  Only meaningful when the
+  // active backdrop has `supports_landscape === true`.  When the parent
+  // picks a portrait-only backdrop while landscape was active, we auto-snap
+  // back to portrait and surface a small toast (see `orientationNotice`).
+  // Mirror state shape used everywhere else in this picker (selected = preview,
+  // confirmed = committed).
+  const [selectedOrientation, setSelectedOrientation] =
+    useState<"portrait" | "landscape">("portrait");
+  const [confirmedOrientation, setConfirmedOrientation] =
+    useState<"portrait" | "landscape">("portrait");
+  const [orientationNotice, setOrientationNotice] = useState<string | null>(null);
   const [backdropCategory, setBackdropCategory] = useState("all");
   const [nobgUrls, setNobgUrls] = useState<Record<string, string>>({});
   const [nobgStatus, setNobgStatus] = useState<"idle" | "loading" | "ready">("idle");
@@ -3700,6 +3763,7 @@ export default function ParentGalleryPage() {
             laneEmail: persisted.lanes.find((l) => l.laneKey === i.laneKey)?.email,
             laneSchoolName: persisted.lanes.find((l) => l.laneKey === i.laneKey)?.schoolName,
             laneStudentName: persisted.lanes.find((l) => l.laneKey === i.laneKey)?.studentName,
+            orientation: i.orientation ?? "portrait",
           }));
         return [...existing, ...restored];
       });
@@ -4385,6 +4449,13 @@ export default function ParentGalleryPage() {
   const backdropCompositeSize = getBackdropCompositeSize(selectedImageAspectRatio);
   const backdropForegroundScale = getBackdropForegroundScale(selectedImageAspectRatio);
   const backdropForegroundVerticalOffset = getBackdropForegroundVerticalOffset(selectedImageAspectRatio);
+  // 2026-04-25: pre-computed landscape variant so call sites can pick the right
+  // dimensions without re-deriving inside JSX. For portrait, the existing
+  // `backdropCompositeSize`/`backdropForegroundScale`/`backdropForegroundVerticalOffset`
+  // are still authoritative — landscape is opt-in per backdrop + per-photo.
+  const backdropCompositeSizeLandscape = getLandscapeBackdropCompositeSize(selectedImageAspectRatio);
+  const backdropForegroundScaleLandscape = getLandscapeForegroundScale(selectedImageAspectRatio);
+  const backdropForegroundVerticalOffsetLandscape = getLandscapeForegroundVerticalOffset(selectedImageAspectRatio);
   const currentGalleryExtras = gallerySettings.extras;
   const showProofWatermark =
     watermarkEnabled && currentGalleryExtras.showProofWatermark !== false;
@@ -4635,6 +4706,9 @@ export default function ParentGalleryPage() {
     if (confirmedBlurBackground) setConfirmedBlurBackground(false);
     if (selectedBlurAmount !== DEFAULT_BACKDROP_BLUR_PX) setSelectedBlurAmount(DEFAULT_BACKDROP_BLUR_PX);
     if (confirmedBlurAmount !== DEFAULT_BACKDROP_BLUR_PX) setConfirmedBlurAmount(DEFAULT_BACKDROP_BLUR_PX);
+    if (selectedOrientation !== "portrait") setSelectedOrientation("portrait");
+    if (confirmedOrientation !== "portrait") setConfirmedOrientation("portrait");
+    if (orientationNotice) setOrientationNotice(null);
     if (compositeDataUrl) setCompositeDataUrl(null);
   }, [
     backdropPickerOpen,
@@ -4642,10 +4716,13 @@ export default function ParentGalleryPage() {
     confirmedBackdrop,
     confirmedBlurBackground,
     confirmedBlurAmount,
+    confirmedOrientation,
     isCompositeSelection,
+    orientationNotice,
     selectedBackdrop,
     selectedBlurBackground,
     selectedBlurAmount,
+    selectedOrientation,
   ]);
 
   useEffect(() => {
@@ -6387,6 +6464,15 @@ export default function ParentGalleryPage() {
         }
       : null;
 
+    // 2026-04-25: capture orientation alongside the backdrop snapshot so
+    // checkout + receipts know which way the lab should print.  Force
+    // portrait for backdrops that don't actually support landscape — the
+    // toggle UI shouldn't have allowed it through, but defense in depth.
+    const lineOrientation: "portrait" | "landscape" =
+      confirmedBackdrop?.supports_landscape && confirmedOrientation === "landscape"
+        ? "landscape"
+        : "portrait";
+
     return {
       id: "__draft__",
       packageId: selectedPkg.id,
@@ -6401,11 +6487,13 @@ export default function ParentGalleryPage() {
       isCompositeOrder: isSchoolMode && isCompositeSelection,
       compositeTitle: selectedImage?.title || student?.class_name || null,
       backdrop: backdropSnapshot,
+      orientation: lineOrientation,
     };
   }, [
     confirmedBackdrop,
     confirmedBlurAmount,
     confirmedBlurBackground,
+    confirmedOrientation,
     isCompositeSelection,
     isSchoolMode,
     premiumBackdropCents,
@@ -6569,6 +6657,17 @@ export default function ParentGalleryPage() {
       setShowPremiumModal(true);
     } else {
       setSelectedBackdrop(backdrop);
+      // 2026-04-25: if the parent had Landscape mode active and they've now
+      // picked a portrait-only backdrop, snap back to portrait and surface
+      // a friendly notice so they know why the toggle disappeared.
+      if (selectedOrientation === "landscape" && !backdrop.supports_landscape) {
+        setSelectedOrientation("portrait");
+        setOrientationNotice(
+          "Landscape mode isn't available for this backdrop — switched back to Portrait.",
+        );
+      } else {
+        setOrientationNotice(null);
+      }
     }
   }
 
@@ -6577,7 +6676,17 @@ export default function ParentGalleryPage() {
     setConfirmedBackdrop(selectedBackdrop);
     setConfirmedBlurBackground(selectedBlurBackground);
     setConfirmedBlurAmount(selectedBlurAmount);
+    // Defensive: never confirm Landscape on a backdrop that doesn't support it
+    // — the auto-snap above should have caught this, but a stale state could
+    // theoretically slip through.  Force portrait when the active backdrop
+    // can't render landscape so the cart never carries an invalid orientation.
+    const finalOrientation = selectedBackdrop.supports_landscape
+      ? selectedOrientation
+      : "portrait";
+    setSelectedOrientation(finalOrientation);
+    setConfirmedOrientation(finalOrientation);
     setBackdropPickerOpen(false);
+    setOrientationNotice(null);
   }
 
   function handleConfirmBlurBackground() {
@@ -6595,6 +6704,9 @@ export default function ParentGalleryPage() {
     setSelectedBackdrop(null);
     setSelectedBlurBackground(false);
     setSelectedBlurAmount(DEFAULT_BACKDROP_BLUR_PX);
+    setSelectedOrientation("portrait");
+    setConfirmedOrientation("portrait");
+    setOrientationNotice(null);
     setCompositeDataUrl(null);
   }
 
@@ -6720,6 +6832,7 @@ export default function ParentGalleryPage() {
       selectedImageUrl: entry.selectedImageUrl ?? null,
       isComposite: !!entry.isCompositeOrder,
       compositeTitle: entry.compositeTitle ?? null,
+      orientation: entry.orientation ?? "portrait",
     }));
 
     const deliveryPayload =
@@ -6807,6 +6920,7 @@ export default function ParentGalleryPage() {
             selectedImageUrl: entry.selectedImageUrl ?? null,
             isComposite: !!entry.isCompositeOrder,
             compositeTitle: entry.compositeTitle ?? null,
+            orientation: entry.orientation ?? "portrait",
           })),
         }));
         const combinedRes = await fetch("/api/portal/orders/create-combined", {
@@ -9091,12 +9205,36 @@ export default function ParentGalleryPage() {
                     const activeBackdrop = backdropPickerOpen
                       ? (selectedBackdrop ?? confirmedBackdrop)
                       : confirmedBackdrop;
+                    // 2026-04-25: which orientation the big viewer paints.
+                    // Picker open → preview the user's pending pick.  Closed
+                    // → use the committed orientation.  Defensive: portrait if
+                    // the active backdrop doesn't actually support landscape.
+                    const previewOrientationRaw = backdropPickerOpen
+                      ? selectedOrientation
+                      : confirmedOrientation;
+                    const previewOrientation: "portrait" | "landscape" =
+                      previewOrientationRaw === "landscape" && activeBackdrop?.supports_landscape
+                        ? "landscape"
+                        : "portrait";
+                    const previewSize =
+                      previewOrientation === "landscape"
+                        ? backdropCompositeSizeLandscape
+                        : backdropCompositeSize;
+                    const previewFgScale =
+                      previewOrientation === "landscape"
+                        ? backdropForegroundScaleLandscape
+                        : backdropForegroundScale;
+                    const previewFgOffset =
+                      previewOrientation === "landscape"
+                        ? backdropForegroundVerticalOffsetLandscape
+                        : backdropForegroundVerticalOffset;
                     const backdropControlsVisible =
                       backdropPickerOpen && currentNobgUrl && (selectedBackdrop || confirmedBackdrop);
                     const isPreview =
                       backdropPickerOpen && (
                         (selectedBlurBackground !== confirmedBlurBackground) ||
-                        (!!selectedBackdrop && selectedBackdrop.id !== confirmedBackdrop?.id)
+                        (!!selectedBackdrop && selectedBackdrop.id !== confirmedBackdrop?.id) ||
+                        (selectedOrientation !== confirmedOrientation)
                       );
                     const viewerImageCandidates = buildGalleryImageCandidates(selectedImage, "viewer-main");
                     // Mirror the Live Preview card's URL chain (thumbnail_url first, then image_url)
@@ -9138,10 +9276,10 @@ export default function ParentGalleryPage() {
                             backdropFallbackUrl={activeBackdrop.image_url}
                             nobgUrl={currentNobgUrl}
                             fallbackUrl={selectedImage.url}
-                            width={backdropCompositeSize.width}
-                            height={backdropCompositeSize.height}
-                            foregroundScale={backdropForegroundScale}
-                            foregroundVerticalOffset={backdropForegroundVerticalOffset}
+                            width={previewSize.width}
+                            height={previewSize.height}
+                            foregroundScale={previewFgScale}
+                            foregroundVerticalOffset={previewFgOffset}
                             trimTransparentForeground
                             responsive
                             style={{ borderRadius: 6 }}
@@ -9150,7 +9288,7 @@ export default function ParentGalleryPage() {
                             watermarkLogoUrl={effectiveWatermarkLogoUrl}
                             watermarkVariant="viewer"
                             backdropBlurPx={previewBlurAmount}
-                            preserveForegroundAlignment
+                            preserveForegroundAlignment={previewOrientation === "portrait"}
                           />
                         </div>
                         {confirmedBackdrop && (
@@ -11291,13 +11429,31 @@ export default function ParentGalleryPage() {
                         backdropFallbackUrl={panelPreviewBackdrop.image_url}
                         nobgUrl={currentNobgUrl}
                         fallbackUrl={selectedImage.url}
-                        width={110}
-                        height={142}
-                        foregroundScale={backdropForegroundScale}
-                        foregroundVerticalOffset={backdropForegroundVerticalOffset}
+                        width={
+                          panelPreviewBackdrop.supports_landscape && selectedOrientation === "landscape"
+                            ? 184
+                            : 110
+                        }
+                        height={
+                          panelPreviewBackdrop.supports_landscape && selectedOrientation === "landscape"
+                            ? 142
+                            : 142
+                        }
+                        foregroundScale={
+                          panelPreviewBackdrop.supports_landscape && selectedOrientation === "landscape"
+                            ? backdropForegroundScaleLandscape
+                            : backdropForegroundScale
+                        }
+                        foregroundVerticalOffset={
+                          panelPreviewBackdrop.supports_landscape && selectedOrientation === "landscape"
+                            ? backdropForegroundVerticalOffsetLandscape
+                            : backdropForegroundVerticalOffset
+                        }
                         trimTransparentForeground
                         backdropBlurPx={panelBlurAmount}
-                        preserveForegroundAlignment
+                        preserveForegroundAlignment={
+                          !(panelPreviewBackdrop.supports_landscape && selectedOrientation === "landscape")
+                        }
                       />
                     </div>
                     <div style={{ flex: 1, minWidth: 0 }}>
@@ -11397,6 +11553,74 @@ export default function ParentGalleryPage() {
                           <RotateCcw size={13} strokeWidth={2.2} /> Reset
                         </button>
                       </div>
+                      {/* Orientation toggle.  Only renders when the active
+                          backdrop has been opted-in to landscape by the
+                          photographer (backdrop_catalog.supports_landscape).
+                          For everything else we show a quiet info note and
+                          force portrait so the parent never gets a broken
+                          composite. */}
+                      {panelPreviewBackdrop.supports_landscape ? (
+                        <div
+                          role="radiogroup"
+                          aria-label="Backdrop orientation"
+                          style={{
+                            marginTop: 12,
+                            display: "inline-flex",
+                            background: "rgba(255,255,255,0.06)",
+                            border: "1px solid rgba(255,255,255,0.1)",
+                            borderRadius: 999,
+                            padding: 3,
+                            gap: 2,
+                          }}
+                        >
+                          {(["portrait", "landscape"] as const).map((o) => {
+                            const active = selectedOrientation === o;
+                            return (
+                              <button
+                                key={o}
+                                type="button"
+                                role="radio"
+                                aria-checked={active}
+                                onClick={() => {
+                                  setSelectedOrientation(o);
+                                  setOrientationNotice(null);
+                                }}
+                                style={{
+                                  background: active ? "#fff" : "transparent",
+                                  color: active ? "#000" : "#d4d4d8",
+                                  border: "none",
+                                  borderRadius: 999,
+                                  padding: "6px 14px",
+                                  fontSize: 11,
+                                  fontWeight: active ? 800 : 600,
+                                  cursor: "pointer",
+                                  letterSpacing: "0.02em",
+                                  textTransform: "capitalize",
+                                  transition: "all 0.15s ease",
+                                }}
+                              >
+                                {o}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      ) : null}
+                      {orientationNotice ? (
+                        <div
+                          style={{
+                            marginTop: 10,
+                            fontSize: 11,
+                            color: "#fbbf24",
+                            background: "rgba(251, 191, 36, 0.08)",
+                            border: "1px solid rgba(251, 191, 36, 0.2)",
+                            borderRadius: 8,
+                            padding: "7px 10px",
+                            lineHeight: 1.5,
+                          }}
+                        >
+                          {orientationNotice}
+                        </div>
+                      ) : null}
                       {blurPreviewActive && (
                         <div style={{ marginTop: 12 }}>
                           <div

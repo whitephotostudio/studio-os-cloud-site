@@ -80,6 +80,10 @@ type BackdropRow = {
   category: string | null;
   tags: string[] | null;
   sort_order: number;
+  /** When true the parents-portal exposes a Portrait/Landscape toggle on
+   *  this backdrop.  Default false — every backdrop is portrait-only unless
+   *  the photographer has explicitly opted in. */
+  supports_landscape: boolean;
 };
 
 type CompositeMediaRow = {
@@ -347,7 +351,7 @@ export async function POST(request: NextRequest) {
           .order("price_cents", { ascending: true }),
         service
           .from("backdrop_catalog")
-          .select("id,name,image_url,thumbnail_url,tier,price_cents,category,tags,sort_order")
+          .select("id,name,image_url,thumbnail_url,tier,price_cents,category,tags,sort_order,supports_landscape")
           .eq("photographer_id", activeSchool.photographer_id)
           .eq("active", true)
           .order("sort_order", { ascending: true }),

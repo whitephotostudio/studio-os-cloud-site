@@ -66,6 +66,10 @@ type EntryPayload = {
   selectedImageUrl: string | null;
   isComposite: boolean;
   compositeTitle: string | null;
+  /** 2026-04-25: parent's portrait/landscape pick.  Defaults to portrait
+   *  when the client doesn't send it (older clients, single-student flow
+   *  where the toggle wasn't shown for a portrait-only backdrop). */
+  orientation?: "portrait" | "landscape";
 };
 
 type DeliveryPayload =
@@ -349,6 +353,10 @@ function validateEntries(
       selectedImageUrl: selectedImage.value || null,
       isComposite: entry.isComposite === true,
       compositeTitle: compositeTitle.value || null,
+      orientation:
+        (entry as { orientation?: unknown }).orientation === "landscape"
+          ? "landscape"
+          : "portrait",
     });
   }
   return { ok: true, value: out };
@@ -799,10 +807,16 @@ export async function POST(request: NextRequest) {
     const itemsToInsert: OrderItemInsert[] = [];
     for (const entry of resolved) {
       const pkgName = clean(entry.pkg.name) || "Package";
+      // 2026-04-25: tag landscape entries inline so the lab sees the
+      // orientation on the order summary.
+      const orientationSuffix =
+        (entry as { orientation?: "portrait" | "landscape" }).orientation === "landscape"
+          ? " (Landscape)"
+          : "";
       if (entry.isDigital) {
         itemsToInsert.push({
           order_id: orderId,
-          product_name: entry.isComposite ? `Composite • ${pkgName}` : pkgName,
+          product_name: (entry.isComposite ? `Composite • ${pkgName}` : pkgName) + orientationSuffix,
           quantity: entry.quantity,
           price: entry.packageSubtotalCents / 100,
           unit_price_cents: Math.round(
@@ -818,7 +832,7 @@ export async function POST(request: NextRequest) {
           );
           itemsToInsert.push({
             order_id: orderId,
-            product_name: slot.label || "Item",
+            product_name: (slot.label || "Item") + orientationSuffix,
             quantity: 1,
             price: perSlot / 100,
             unit_price_cents: perSlot,
@@ -831,7 +845,7 @@ export async function POST(request: NextRequest) {
         // client but don't let it silently drop a charge).
         itemsToInsert.push({
           order_id: orderId,
-          product_name: pkgName,
+          product_name: pkgName + orientationSuffix,
           quantity: entry.quantity,
           price: entry.packageSubtotalCents / 100,
           unit_price_cents: Math.round(

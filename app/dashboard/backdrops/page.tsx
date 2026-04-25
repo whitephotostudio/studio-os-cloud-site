@@ -15,6 +15,10 @@ type BackdropRow = {
   image_url: string; thumbnail_url: string; tier: "free" | "premium";
   price_cents: number; category: string; tags: string[]; sort_order: number;
   active: boolean; created_at: string;
+  /** When true, parents can flip this backdrop into landscape orientation in
+   *  the parents-portal CHOOSE BACKDROP panel.  Default false → portrait only,
+   *  matching every existing backdrop's behavior pre-2026-04-25. */
+  supports_landscape: boolean;
 };
 
 const SUPABASE_URL = "https://bwqhzczxoevouiondjak.supabase.co";
@@ -63,6 +67,7 @@ export default function BackdropsPage() {
   const [editTier, setEditTier] = useState<"free" | "premium">("free");
   const [editPrice, setEditPrice] = useState("0");
   const [editUrl, setEditUrl] = useState("");
+  const [editSupportsLandscape, setEditSupportsLandscape] = useState(false);
   const [saving, setSaving] = useState(false);
 
   // Upload
@@ -183,14 +188,14 @@ export default function BackdropsPage() {
 
   // ── CRUD ──
   function openEditor(bd?: BackdropRow) {
-    if (bd) { setEditBd(bd); setEditName(bd.name); setEditDesc(bd.description||""); setEditCat(bd.category||"solid"); setEditTier(bd.tier); setEditPrice((bd.price_cents/100).toFixed(2)); setEditUrl(bd.image_url); }
-    else { setEditBd(null); setEditName(""); setEditDesc(""); setEditCat(activeCat||"solid"); setEditTier("free"); setEditPrice("0"); setEditUrl(""); }
+    if (bd) { setEditBd(bd); setEditName(bd.name); setEditDesc(bd.description||""); setEditCat(bd.category||"solid"); setEditTier(bd.tier); setEditPrice((bd.price_cents/100).toFixed(2)); setEditUrl(bd.image_url); setEditSupportsLandscape(Boolean(bd.supports_landscape)); }
+    else { setEditBd(null); setEditName(""); setEditDesc(""); setEditCat(activeCat||"solid"); setEditTier("free"); setEditPrice("0"); setEditUrl(""); setEditSupportsLandscape(false); }
     setEditorOpen(true);
   }
 
   async function saveEditor() {
     if (!pgId || !editName.trim()) return; setSaving(true);
-    const payload = { photographer_id: pgId, name: editName.trim(), description: editDesc.trim(), image_url: editUrl, thumbnail_url: editUrl, category: editCat, tier: editTier, price_cents: editTier === "premium" ? Math.round(parseFloat(editPrice||"0")*100) : 0, active: true };
+    const payload = { photographer_id: pgId, name: editName.trim(), description: editDesc.trim(), image_url: editUrl, thumbnail_url: editUrl, category: editCat, tier: editTier, price_cents: editTier === "premium" ? Math.round(parseFloat(editPrice||"0")*100) : 0, active: true, supports_landscape: editSupportsLandscape };
     try {
       if (editBd) {
         const { error } = await supabase.from("backdrop_catalog").update(payload).eq("id", editBd.id);
@@ -218,7 +223,7 @@ export default function BackdropsPage() {
       photographer_id: pgId, name: `${bd.name} (copy)`, description: bd.description,
       image_url: bd.image_url, thumbnail_url: bd.thumbnail_url,
       category: bd.category, tier: bd.tier, price_cents: bd.price_cents,
-      sort_order: o, active: bd.active,
+      sort_order: o, active: bd.active, supports_landscape: bd.supports_landscape ?? false,
     }).select("*").single();
     if (error) {
       console.error(error);
@@ -619,6 +624,43 @@ export default function BackdropsPage() {
                   <input type="number" min="0" step="0.01" value={editPrice} onChange={e => setEditPrice(e.target.value)} style={{ width: "100%", border: "1.5px solid #e1e3e8", borderRadius: 10, padding: "10px 14px", fontSize: 14, outline: "none", boxSizing: "border-box" }} />
                 </div>
               )}
+              {/* Orientation: scenic / wide backdrops can opt in to landscape mode.
+                  Default off so existing portrait-only backdrops behave exactly
+                  as before.  Parent UI flips a Portrait/Landscape toggle on
+                  these in the CHOOSE BACKDROP panel. */}
+              <div>
+                <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#666", marginBottom: 5, textTransform: "uppercase" }}>Orientation</label>
+                <button
+                  type="button"
+                  onClick={() => setEditSupportsLandscape((v) => !v)}
+                  style={{
+                    width: "100%", display: "flex", alignItems: "center", gap: 12,
+                    padding: 14, borderRadius: 12, cursor: "pointer", textAlign: "left",
+                    border: editSupportsLandscape ? "2px solid #2563eb" : "1.5px solid #e1e3e8",
+                    background: editSupportsLandscape ? "#eff6ff" : "#fff",
+                  }}
+                >
+                  <span style={{
+                    width: 22, height: 22, borderRadius: 6,
+                    border: editSupportsLandscape ? "none" : "1.5px solid #ccc",
+                    background: editSupportsLandscape ? "#2563eb" : "#fff",
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    flexShrink: 0,
+                  }}>
+                    {editSupportsLandscape && <Check size={14} color="#fff" strokeWidth={3} />}
+                  </span>
+                  <span style={{ flex: 1 }}>
+                    <span style={{ display: "block", fontSize: 13, fontWeight: 700, color: editSupportsLandscape ? "#1d4ed8" : "#333" }}>
+                      Supports landscape
+                    </span>
+                    <span style={{ display: "block", fontSize: 11, color: "#888", marginTop: 2, lineHeight: 1.5 }}>
+                      Tick if this scenery looks right rotated wide. Parents will
+                      see a Portrait/Landscape toggle in the CHOOSE BACKDROP panel.
+                      Leave off for tight or vertical-only backdrops.
+                    </span>
+                  </span>
+                </button>
+              </div>
               <div style={{ display: "flex", gap: 10, marginTop: 8 }}>
                 <button onClick={() => setEditorOpen(false)} style={{ flex: 1, background: "#fff", border: "1.5px solid #ddd", borderRadius: 10, padding: 11, fontSize: 13, fontWeight: 600, cursor: "pointer", color: "#333" }}>Cancel</button>
                 <button onClick={saveEditor} disabled={saving || !editName.trim()} style={{ flex: 1, background: "#111", color: "#fff", border: "none", borderRadius: 10, padding: 11, fontSize: 13, fontWeight: 700, cursor: "pointer", opacity: saving ? 0.5 : 1 }}>{saving ? "Saving…" : editBd ? "Save" : "Add"}</button>
