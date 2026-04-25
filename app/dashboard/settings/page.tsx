@@ -1373,6 +1373,31 @@ export default function SettingsPage() {
                 helper="Added when ordering past due date"
               />
             </div>
+
+            {/* Dedicated save button so the action is obvious without
+                scrolling back up to the top-of-page Save settings pill.
+                Calls the same saveBranding() — the commerce knobs are
+                wired into the same photographers update. */}
+            <div style={{ marginTop: 18, display: "flex", justifyContent: "flex-end" }}>
+              <button
+                type="button"
+                onClick={saveBranding}
+                disabled={saving}
+                style={{
+                  borderRadius: 12,
+                  background: saving ? "#94a3b8" : "#0f172a",
+                  color: "#fff",
+                  border: "none",
+                  padding: "12px 22px",
+                  fontWeight: 800,
+                  fontSize: 14,
+                  cursor: saving ? "wait" : "pointer",
+                  letterSpacing: "0.02em",
+                }}
+              >
+                {saving ? "Saving…" : "Save commerce settings"}
+              </button>
+            </div>
           </div>
         </div>
 
