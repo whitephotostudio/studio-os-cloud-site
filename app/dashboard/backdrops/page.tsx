@@ -2,11 +2,10 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { uploadToR2 } from "@/lib/upload-to-r2-client";
 import {
-  LogOut, Plus, Trash2, Pencil, Eye, EyeOff, Upload, X, Star, Check, Palette,
+  Plus, Trash2, Pencil, Eye, EyeOff, Upload, X, Star, Check, Palette,
   ChevronRight, Grid3X3, Images, CheckCircle2, Copy, Flame, FolderOpen,
 } from "lucide-react";
 
@@ -34,9 +33,6 @@ const CATS: CatCfg[] = [
   { key: "custom", label: "Custom", color: "#7c3aed", bg: "#faf5ff", icon: "✦" },
 ];
 
-const sidebar: React.CSSProperties = { width: 220, minHeight: "100vh", background: "#000", color: "#fff", display: "flex", flexDirection: "column", flexShrink: 0 };
-const navItem: React.CSSProperties = { padding: "12px 24px", cursor: "pointer", fontSize: 14, color: "#ccc", textDecoration: "none", display: "block" };
-const navActive: React.CSSProperties = { ...navItem, color: "#fff", background: "#1a1a1a" };
 
 export default function BackdropsPage() {
   const supabase = useMemo(() => createClient(), []);
@@ -338,7 +334,6 @@ export default function BackdropsPage() {
   }
   function toggleSel(id: string) { setSelectedIds(p => { const n = new Set(p); if(n.has(id)) n.delete(id); else n.add(id); return n; }); }
   function selAll() { const ids = filtered.map(b=>b.id); setSelectedIds(p => { if(ids.every(id=>p.has(id))) return new Set(); return new Set(ids); }); }
-  async function signOut() { await supabase.auth.signOut(); window.location.href="/sign-in"; }
 
   // ── Derived ──
   let filtered = backdrops.slice();
@@ -377,21 +372,11 @@ export default function BackdropsPage() {
   }
 
   return (
-    <div style={{ display: "flex", minHeight: "100vh", background: "#fafafa" }}>
-      <div style={sidebar}>
-        <div style={{ background: "#fff", padding: "20px 24px" }}><span style={{ fontWeight: 800, fontSize: 16, color: "#000" }}>Studio OS</span></div>
-        <nav style={{ flex: 1, paddingTop: 16 }}>
-          <Link href="/dashboard" style={navItem}>Dashboard</Link>
-          <Link href="/dashboard/schools" style={navItem}>Schools</Link>
-          <Link href="/dashboard/orders" style={navItem}>Orders</Link>
-          <Link href="/dashboard/packages" style={navItem}>Packages</Link>
-          <Link href="/dashboard/backdrops" style={navActive}><span style={{ display:"flex",alignItems:"center",gap:8 }}><Palette size={15}/> Backdrops</span></Link>
-          <Link href="/dashboard/settings" style={navItem}>Settings</Link>
-          <Link href="/dashboard/membership" style={navItem}>Membership</Link>
-        </nav>
-        <button onClick={signOut} style={{ margin:16, padding:"10px", background:"transparent", border:"1px solid #333", borderRadius:8, color:"#ccc", cursor:"pointer", display:"flex", alignItems:"center", gap:8, fontSize:13 }}><LogOut size={14}/> Sign Out</button>
-      </div>
-
+    // 2026-04-25: removed the page-level black sidebar that was rendering
+    // inside the DashboardLayout's outer sidebar (components/dashboard-sidebar.tsx),
+    // producing two stacked navigation columns.  Backdrops nav now lives in
+    // DashboardSidebar's NAV_ITEMS array.
+    <div style={{ minHeight: "100vh", background: "#fafafa", display: "flex", flexDirection: "column" }}>
       <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
         {/* Header */}
         <div style={{ padding: "28px 32px 0", background: "#fff", borderBottom: "1px solid #eee" }}>

@@ -3123,13 +3123,32 @@ function CompositeCanvas({
       }
     : {};
 
+  // 2026-04-25: drive width from height + aspect-ratio so the wrapper
+  // ALWAYS preserves the photo's aspect.  Previously we had width:100% +
+  // height:auto + aspect-ratio + max-height — which works UNTIL the
+  // parent's available height is shorter than what aspect-ratio would
+  // require.  In that case the height clamp fires but width stays at
+  // 100% of parent, and the aspect-ratio constraint is silently
+  // violated — portrait photos end up rendering with landscape-shaped
+  // wrappers (the visible bug Harout flagged: "see it should show
+  // portrait till i toggle on").
+  //
+  // The fix: anchor height to 100% of the parent (which has its own
+  // explicit min(68vh, …) cap from the call site), let aspect-ratio
+  // drive width.  If width derived from aspect-ratio overflows the
+  // parent, max-width:100% pulls it back AND because height is the
+  // anchored axis, aspect-ratio re-derives height down to keep the
+  // ratio.  This cleanly fits the wrapper inside the parent box like
+  // an `<img>` with `object-fit:contain`, but works on a div with
+  // absolute children (which would otherwise collapse to 0×0 if both
+  // width and height were `auto`).
   const wrapperStyle: React.CSSProperties = responsive
     ? {
         position: "relative",
-        width: "100%",
-        height: "auto",
-        maxWidth: `${width}px`,
-        maxHeight: "100%",
+        height: "100%",
+        width: "auto",
+        maxWidth: "100%",
+        maxHeight: `${height}px`,
         aspectRatio: `${width} / ${height}`,
         flexShrink: 0,
         display: "block",
