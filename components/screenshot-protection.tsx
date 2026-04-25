@@ -413,7 +413,17 @@ function IdleBlurOverlay({
   active: boolean;
   overlayRef?: React.RefObject<HTMLDivElement | null>;
 }) {
-  return (
+  // 2026-04-26: portal to document.body so the blur overlay always sits
+  // at the document root.  Without this, modal-style sibling panels
+  // (cart drawer, etc.) can outpaint the overlay even though it's at
+  // z-index 99980, because they live in the same parent stacking
+  // context.  Same fix as WatermarkOverlay below.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+  if (!mounted || typeof document === "undefined") return null;
+  return createPortal(
     <>
       <div
         ref={overlayRef}
@@ -496,14 +506,28 @@ function IdleBlurOverlay({
         />
         Screenshot protection on
       </div>
-    </>
+    </>,
+    document.body,
   );
 }
 
 function WatermarkOverlay({ text }: { text: string }) {
   const label = text?.trim() || "Do not copy";
   const bigLabel = `${label}  ·  DO NOT SHARE`;
-  return (
+  // 2026-04-26: portal the watermark to document.body so it ALWAYS sits
+  // at the document root, outside any parent stacking context.  Without
+  // the portal, the watermark gets trapped inside whichever parent has a
+  // transform/filter/contain rule — and modal-style sibling panels
+  // (e.g. the cart drawer at flex-row right side) paint OVER it even
+  // though the watermark's z-index is 99990.  Symptom Harout flagged:
+  // "I just did a screenshot of the basket panel" — drawer thumbnails
+  // showed clean.  Portaling escapes the stacking trap.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+  if (!mounted || typeof document === "undefined") return null;
+  return createPortal(
     <div
       aria-hidden
       style={{
@@ -635,7 +659,8 @@ function WatermarkOverlay({ text }: { text: string }) {
           </text>
         </g>
       </svg>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
