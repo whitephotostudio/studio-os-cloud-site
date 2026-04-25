@@ -3024,8 +3024,18 @@ function CompositeCanvas({
         bufferCtx.drawImage(fgImg, fgSx, fgSy, fgSw, fgSh, 0, 0, width, height);
       } else {
         // Draw foreground (contain, centered).
-      const sourceWidth = fgCrop?.sw ?? fgImg.naturalWidth;
-      const sourceHeight = fgCrop?.sh ?? fgImg.naturalHeight;
+        // 2026-04-25: in this branch (used by landscape mode), explicitly
+        // skip fgCrop and use the foreground's NATURAL dimensions.  The
+        // DOM blur path renders the foreground via a sized <img
+        // object-fit:contain> on the full image — it doesn't trim
+        // transparent margins.  Previously the canvas trimmed via fgCrop,
+        // which produced different visible content (e.g. a parent's hand
+        // sitting near the top of the source got pulled in as part of the
+        // trimmed bbox) and shifted the kid downward.  By using natural
+        // dimensions here we render the same content the DOM does,
+        // keeping landscape blur-on and blur-off visually identical.
+      const sourceWidth = fgImg.naturalWidth;
+      const sourceHeight = fgImg.naturalHeight;
       const fgRatio = sourceWidth / sourceHeight;
       let dw: number, dh: number;
       if (fgRatio > canvasRatio) {
@@ -3038,17 +3048,13 @@ function CompositeCanvas({
       dw *= foregroundScale;
       dh *= foregroundScale;
       const dx = (width - dw) / 2;
-      // 2026-04-25: keep parity with the DOM-blur path's foreground placement.
-      // The DOM path renders the foreground via a sized <img object-fit:contain>
-      // and applies translateY(foregroundVerticalOffset%) directly with NO clamp.
-      // The canvas path used to clamp `dy` so the foreground stayed inside the
-      // canvas frame, which worked for portrait (foreground smaller than canvas)
-      // but in landscape mode the foreground is taller than the canvas
-      // (foregroundScale >1 makes dh > height), and the clamp was forcing dy
-      // upward — clipping the top of the head off.  When dh > height, skip the
-      // upward clamp so the foreground sits where the offset says it should
-      // (matching DOM blur mode exactly).  Keep the portrait-mode clamp
-      // because there it bounds the natural alignment correctly.
+      // Keep parity with the DOM-blur path's foreground placement.
+      // The DOM path applies translateY(foregroundVerticalOffset%) directly
+      // with NO clamp.  Canvas matches: when the cutout is taller than the
+      // canvas (landscape mode where foregroundScale > 1 makes dh > height),
+      // skip the upward clamp so the head stays where the offset says it
+      // should be (matching DOM blur mode exactly).  Keep the portrait-mode
+      // clamp because there it bounds the natural alignment correctly.
       const naturalDy = (height - dh) / 2 + height * foregroundVerticalOffset;
       const dy = dh <= height
         ? clampNumber(
@@ -3057,11 +3063,7 @@ function CompositeCanvas({
             height - dh + height * 0.035,
           )
         : naturalDy;
-      if (fgCrop) {
-        bufferCtx.drawImage(fgImg, fgCrop.sx, fgCrop.sy, fgCrop.sw, fgCrop.sh, dx, dy, dw, dh);
-      } else {
-        bufferCtx.drawImage(fgImg, dx, dy, dw, dh);
-      }
+      bufferCtx.drawImage(fgImg, dx, dy, dw, dh);
       }
 
       const displayCtx = displayCanvas.getContext("2d");
