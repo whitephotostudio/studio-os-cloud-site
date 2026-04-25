@@ -677,6 +677,19 @@ export async function POST(request: NextRequest) {
         : 0;
       const orderTotalCents = productAfterDiscountCents + shippingPortion;
 
+      // 2026-04-25: cart_snapshot — full entry payload for this lane,
+      // captured for the parents-portal one-click reorder.
+      const laneCartSnapshot = grp.input.entries.map((entry) => ({
+        packageId: entry.packageId,
+        quantity: entry.quantity,
+        backdrop: entry.backdrop ?? null,
+        slots: entry.slots ?? [],
+        selectedImageUrl: entry.selectedImageUrl ?? null,
+        isComposite: !!entry.isComposite,
+        compositeTitle: entry.compositeTitle ?? null,
+        orientation: entry.orientation ?? "portrait",
+      }));
+
       const { data: orderRow, error: orderErr } = await sb
         .from("orders")
         .insert({
@@ -703,6 +716,7 @@ export async function POST(request: NextRequest) {
           student_id: grp.studentId,
           project_id: null,
           order_group_id: orderGroupId,
+          cart_snapshot: laneCartSnapshot,
         })
         .select("id")
         .single();

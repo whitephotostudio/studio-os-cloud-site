@@ -2,6 +2,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { createDashboardServiceClient } from "@/lib/dashboard-auth";
 import { syncPhotographyKeysByPhotographerId } from "@/lib/studio-os-app";
 import { buildOrderNotificationEmail } from "@/lib/order-notification-email";
+import { buildOrderReceiptEmail } from "@/lib/order-receipt-email";
 import { resendConfigured, sendResendEmail, resolveReplyTo } from "@/lib/resend";
 import {
   ANNUAL_DISCOUNT_PERCENT,
@@ -1964,10 +1965,11 @@ export async function finalizePaidOrder(
           .from("orders")
           .select(`
             id,package_name,total_cents,total_amount,subtotal_cents,tax_cents,currency,
-            parent_email,customer_email,special_notes,created_at,paid_at,status,
-            project:projects(title),
+            parent_name,parent_email,customer_email,special_notes,created_at,paid_at,status,
+            school_id,project_id,student_id,
+            project:projects(title,access_pin),
             school:schools(school_name),
-            student:students(first_name,last_name)
+            student:students(first_name,last_name,pin)
           `)
           .eq("id", input.orderId)
           .maybeSingle();
@@ -2024,6 +2026,96 @@ export async function finalizePaidOrder(
           tags: [{ name: "type", value: "order-notification" }],
           idempotencyKey: `order-notify-${input.orderId}`,
         });
+
+        // 2026-04-25: Parent-facing receipt email.  Sent to the buyer's
+        // email address (parent_email / customer_email) with order
+        // number, line items + thumbnails, sizes, totals — acts as
+        // proof of purchase.  Idempotent via key so a webhook retry
+        // doesn't double-send.
+        const buyerEmailAddress = clean(
+          (fullOrder.data as Record<string, unknown> | null)?.customer_email as string,
+        ) ||
+          clean(
+            (fullOrder.data as Record<string, unknown> | null)?.parent_email as string,
+          );
+        if (buyerEmailAddress) {
+          const studentFullName = [
+            clean((student as Record<string, unknown> | null)?.first_name as string),
+            clean((student as Record<string, unknown> | null)?.last_name as string),
+          ].filter(Boolean).join(" ") || null;
+
+          // Build a deep-link to the parent's Orders tab in the portal.
+          // School mode: PIN comes from students.pin (per-student gate).
+          // Event mode: PIN comes from projects.access_pin (project gate).
+          let ordersHistoryUrl: string | null = null;
+          const studentPin = clean(
+            (student as Record<string, unknown> | null)?.pin as string,
+          );
+          const projectPin = clean(
+            (project as Record<string, unknown> | null)?.access_pin as string,
+          );
+          const projectId = clean(
+            (fullOrder.data as Record<string, unknown> | null)?.project_id as string,
+          );
+          if (studentPin) {
+            const params = new URLSearchParams({
+              email: buyerEmailAddress,
+              tab: "orders",
+            });
+            ordersHistoryUrl = `https://studiooscloud.com/parents/${encodeURIComponent(studentPin)}?${params.toString()}`;
+          } else if (projectPin && projectId) {
+            const params = new URLSearchParams({
+              mode: "event",
+              project: projectId,
+              email: buyerEmailAddress,
+              tab: "orders",
+            });
+            ordersHistoryUrl = `https://studiooscloud.com/parents/${encodeURIComponent(projectPin)}?${params.toString()}`;
+          }
+
+          const receiptEmail = buildOrderReceiptEmail({
+            order: fullOrder.data ?? {
+              ...order,
+              paid_at: paidAt,
+              status: nextStatus,
+            },
+            items: (itemRows ?? []) as Array<{
+              product_name?: string | null;
+              quantity?: number | null;
+              unit_price_cents?: number | null;
+              line_total_cents?: number | null;
+              sku?: string | null;
+            }>,
+            photographer: {
+              business_name: (photographer as Record<string, unknown>).business_name as string,
+              studio_email: (photographer as Record<string, unknown>).studio_email as string,
+              studio_phone: (photographer as Record<string, unknown>).studio_phone as string,
+              studio_address: (photographer as Record<string, unknown>).studio_address as string,
+              logo_url: (photographer as Record<string, unknown>).logo_url as string,
+            },
+            context: {
+              project_title: (project as Record<string, unknown>)?.title as string ?? null,
+              school_name: (school as Record<string, unknown>)?.school_name as string ?? null,
+              student_name: studentFullName,
+            },
+            ordersHistoryUrl,
+          });
+
+          await sendResendEmail({
+            to: buyerEmailAddress,
+            subject: receiptEmail.subject,
+            html: receiptEmail.html,
+            text: receiptEmail.text,
+            fromName: clean(
+              (photographer as Record<string, unknown>).business_name as string,
+            ) || "Studio OS Cloud",
+            replyTo: clean(
+              (photographer as Record<string, unknown>).studio_email as string,
+            ) || resolveReplyTo(buyerEmailAddress),
+            tags: [{ name: "type", value: "order-receipt" }],
+            idempotencyKey: `order-receipt-${input.orderId}`,
+          });
+        }
       }
     }
   } catch (emailError) {

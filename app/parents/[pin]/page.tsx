@@ -60,6 +60,7 @@ import {
   type CombineLane,
   type PersistedCartItem,
 } from "@/lib/combine-cart-storage";
+import OrdersHistoryPanel from "@/components/parents/orders-history-panel";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 type StudentRow = {
@@ -323,7 +324,7 @@ type CartLineItem = {
   laneSchoolName?: string;
   laneStudentName?: string;
 };
-type GalleryView = "photos" | "store" | "favorites" | "about";
+type GalleryView = "photos" | "store" | "favorites" | "orders" | "about";
 type EventPhotoStage = "albums" | "grid" | "viewer";
 
 type GalleryLocale = "en-US" | "en-CA" | "fr-CA";
@@ -3606,6 +3607,9 @@ export default function ParentGalleryPage() {
   const sessionId = searchParams.get("session_id") ?? "";
   const mode = searchParams.get("mode") ?? "school";
   const isSchoolMode = mode !== "event";
+  // 2026-04-25: Optional ?tab=orders deep-link from the receipt email.
+  // Drops the parent straight onto their Orders tab once the gallery loads.
+  const initialTabHint = searchParams.get("tab") ?? "";
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -4579,6 +4583,9 @@ export default function ParentGalleryPage() {
           ? (["store"] as GalleryView[])
           : []),
         "favorites",
+        // 2026-04-25: Orders tab — parent's history of placed orders for
+        // this gallery, with thumbnails + one-click reorder.
+        "orders",
         "about",
       ] satisfies GalleryView[],
     [currentGalleryExtras.enableStore, orderingDisabled],
@@ -4789,6 +4796,18 @@ export default function ParentGalleryPage() {
       setActiveView("photos");
     }
   }, [activeView, galleryTabs]);
+
+  // 2026-04-25: ?tab=orders deep-link from receipt email.  Run once when
+  // the gallery is ready, then fall through.  We use a ref instead of
+  // state so it doesn't re-trigger on every render.
+  const orderTabHintConsumedRef = useRef(false);
+  useEffect(() => {
+    if (orderTabHintConsumedRef.current) return;
+    if (initialTabHint !== "orders") return;
+    if (!galleryTabs.includes("orders")) return;
+    orderTabHintConsumedRef.current = true;
+    setActiveView("orders");
+  }, [initialTabHint, galleryTabs]);
 
   useEffect(() => {
     if (!blackWhiteFilteringAllowed && blackWhitePreviewEnabled) {
@@ -6396,7 +6415,24 @@ export default function ParentGalleryPage() {
   const hasBackdrops = isSchoolMode && !isCompositeSelection && backdrops.length > 0;
   const currentNobgUrl = selectedImage ? (nobgUrls[selectedImage.id] ?? null) : null;
   const confirmedBackdropVerticalOffset = getBackdropForegroundVerticalOffset(selectedImageAspectRatio);
-  // Generate a composite data URL for use in buy section mockups
+  // Generate a composite data URL for use in buy section mockups.
+  //
+  // 2026-04-25: now honors `confirmedOrientation`.  Previously the canvas
+  // was hardcoded to 600×800 portrait + cover math for the foreground,
+  // which meant: when the parent flipped to Landscape, the print mockups
+  // (Wall / Desk / Close-up) STILL got a portrait composite — and the
+  // landscape print frame then cover-cropped that portrait composite
+  // horizontally, chopping the kid's head/sides off.  Visible bug Harout
+  // flagged: "the wall and the desk photos are way off".
+  //
+  // Fix:
+  //   • Pick canvas dimensions based on confirmed orientation:
+  //     portrait → 600×800 (3:4) | landscape → 1067×800 (4:3)
+  //   • Foreground placement matches CompositeCanvas's draw logic for
+  //     each orientation: portrait uses cover math (preserves original
+  //     framing), landscape uses contain math + foregroundScale +
+  //     foregroundVerticalOffset (centers the portrait subject inside
+  //     the landscape frame, scenery flanks naturally).
   useEffect(() => {
     const activeConfirmedBackdrop = confirmedBackdrop;
     if (!activeConfirmedBackdrop || !currentNobgUrl || !selectedImage) {
@@ -6409,7 +6445,14 @@ export default function ParentGalleryPage() {
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    const W = 600, H = 800;
+    const isLandscape =
+      confirmedOrientation === "landscape" &&
+      activeConfirmedBackdrop.supports_landscape === true;
+    // Portrait 3:4, landscape 4:3.  The print mockups cover-crop these
+    // into the print's exact ratio (5x7 portrait = 5/7 ≈ 0.71, landscape
+    // = 7/5 = 1.4).  Both fit cleanly into the matching frame ratio.
+    const W = isLandscape ? 1067 : 600;
+    const H = isLandscape ? 800 : 800;
     canvas.width = W;
     canvas.height = H;
 
@@ -6439,20 +6482,47 @@ export default function ParentGalleryPage() {
       if (effectiveBackdropBlurPx > 0) {
         ctx!.filter = "none";
       }
-      // FG preserve original photo framing so the subject does not look zoomed.
+      // Foreground placement
       const fgRatio = fgImg.naturalWidth / fgImg.naturalHeight;
-      let fgSx = 0;
-      let fgSy = 0;
-      let fgSw = fgImg.naturalWidth;
-      let fgSh = fgImg.naturalHeight;
-      if (fgRatio > cR) {
-        fgSw = fgImg.naturalHeight * cR;
-        fgSx = (fgImg.naturalWidth - fgSw) / 2;
+      if (isLandscape) {
+        // Landscape composite: contain math.  Portrait subject fits to
+        // canvas height, gets centered horizontally with backdrop scenery
+        // visible on either side.  Apply the landscape foreground scale +
+        // vertical offset to anchor the subject the way the live preview
+        // CompositeCanvas does.
+        const fgScale = getLandscapeForegroundScale(selectedImageAspectRatio);
+        const fgVOffset = getLandscapeForegroundVerticalOffset(
+          selectedImageAspectRatio,
+        );
+        let dw: number, dh: number;
+        if (fgRatio > cR) {
+          dw = W;
+          dh = W / fgRatio;
+        } else {
+          dh = H;
+          dw = H * fgRatio;
+        }
+        dw *= fgScale;
+        dh *= fgScale;
+        const dx = (W - dw) / 2;
+        const dy = (H - dh) / 2 + H * fgVOffset;
+        ctx!.drawImage(fgImg, dx, dy, dw, dh);
       } else {
-        fgSh = fgImg.naturalWidth / cR;
-        fgSy = (fgImg.naturalHeight - fgSh) / 2;
+        // Portrait composite: cover math (preserves original photo
+        // framing so the subject doesn't look zoomed).
+        let fgSx = 0;
+        let fgSy = 0;
+        let fgSw = fgImg.naturalWidth;
+        let fgSh = fgImg.naturalHeight;
+        if (fgRatio > cR) {
+          fgSw = fgImg.naturalHeight * cR;
+          fgSx = (fgImg.naturalWidth - fgSw) / 2;
+        } else {
+          fgSh = fgImg.naturalWidth / cR;
+          fgSy = (fgImg.naturalHeight - fgSh) / 2;
+        }
+        ctx!.drawImage(fgImg, fgSx, fgSy, fgSw, fgSh, 0, 0, W, H);
       }
-      ctx!.drawImage(fgImg, fgSx, fgSy, fgSw, fgSh, 0, 0, W, H);
       if (!cancelled) {
         setCompositeDataUrl(canvas.toDataURL("image/png"));
       }
@@ -6488,8 +6558,10 @@ export default function ParentGalleryPage() {
     confirmedBackdropVerticalOffset,
     confirmedBlurAmount,
     confirmedBlurBackground,
+    confirmedOrientation,
     currentNobgUrl,
     selectedImage,
+    selectedImageAspectRatio,
   ]);
 
   // Use composite in buy section when backdrop is confirmed
@@ -8051,7 +8123,9 @@ export default function ParentGalleryPage() {
                       ? galleryCopy.photos
                       : tab === "favorites"
                           ? `${galleryCopy.favorites}${favorites.size > 0 ? ` (${favorites.size})` : ""}`
-                          : galleryCopy.about;
+                          : tab === "orders"
+                              ? "Orders"
+                              : galleryCopy.about;
                   return (
                     <button
                       key={tab}
@@ -8763,6 +8837,50 @@ export default function ParentGalleryPage() {
               ) : null}
             </div>
           </div>
+        )}
+
+        {/* ── Orders view ───────────────────────────────────────────── */}
+        {/* 2026-04-25: Parent's order history for THIS gallery, with
+            thumbnails + sizes + Reorder button on each row.  Powered by
+            POST /api/portal/orders/history (validates pin+email, returns
+            up to 50 most-recent orders with cart_snapshot intact). */}
+        {activeView === "orders" && (
+          <OrdersHistoryPanel
+            pin={pin}
+            email={parentEmail || eventEmail || ""}
+            schoolId={isSchoolMode ? student?.school_id ?? null : null}
+            projectId={!isSchoolMode ? project?.id || projectId || null : null}
+            tone={{
+              text: galleryTone.text,
+              mutedText: galleryTone.mutedText,
+              accent: galleryTone.text,
+              border: galleryTone.border,
+              surface: galleryTone.surface,
+            }}
+            onReorder={(snapshot, sourceOrderId) => {
+              // Stash the snapshot in sessionStorage so the gallery view
+              // can pick it up after switching tabs.  Then bounce back to
+              // photos so the parent sees the cart drawer pop with the
+              // restored items.  (Full hydration logic is wired in the
+              // photos view's effect — see the "reorderPayload" pickup.)
+              try {
+                sessionStorage.setItem(
+                  `studio-os-reorder:${sourceOrderId}`,
+                  JSON.stringify(snapshot),
+                );
+                sessionStorage.setItem(
+                  "studio-os-reorder-pending",
+                  sourceOrderId,
+                );
+              } catch {
+                // sessionStorage locked — fall back to a toast hint.
+              }
+              setActiveView("photos");
+              setOrderError(
+                "Reorder is in beta — open the same poses + sizes in the cart from your last order. Adjust as needed before checkout.",
+              );
+            }}
+          />
         )}
 
         {/* ── About view ────────────────────────────────────────────── */}

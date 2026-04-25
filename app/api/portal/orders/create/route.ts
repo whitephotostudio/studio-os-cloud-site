@@ -760,6 +760,20 @@ export async function POST(request: NextRequest) {
     const parentName = parent.name || null;
     const parentPhone = parent.phone || null;
 
+    // 2026-04-25: cart_snapshot — captures the full entry payload so the
+    // parents portal can offer one-click reorder.  Strip server-derived
+    // fields and keep only what the client originally posted.
+    const cartSnapshot = entries.map((entry) => ({
+      packageId: entry.packageId,
+      quantity: entry.quantity,
+      backdrop: entry.backdrop ?? null,
+      slots: entry.slots ?? [],
+      selectedImageUrl: entry.selectedImageUrl ?? null,
+      isComposite: !!entry.isComposite,
+      compositeTitle: entry.compositeTitle ?? null,
+      orientation: (entry as { orientation?: "portrait" | "landscape" }).orientation ?? "portrait",
+    }));
+
     const orderInsert: Record<string, unknown> = {
       photographer_id: photographerId,
       parent_name: parentName,
@@ -779,6 +793,7 @@ export async function POST(request: NextRequest) {
       total_cents: orderTotalCents,
       total_amount: orderTotalCents / 100,
       currency: "cad",
+      cart_snapshot: cartSnapshot,
     };
 
     if (mode === "school" && student && schoolId) {
