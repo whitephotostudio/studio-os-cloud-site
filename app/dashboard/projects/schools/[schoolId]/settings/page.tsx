@@ -32,6 +32,7 @@ type SchoolRow = {
   shoot_date?: string | null;
   order_due_date?: string | null;
   expiration_date?: string | null;
+  archive_date?: string | null;
   package_profile_id?: string | null;
   email_required?: boolean | null;
   checkout_contact_required?: boolean | null;
@@ -171,6 +172,9 @@ export default function SchoolSettingsPage() {
   const [portalStatus, setPortalStatus] = useState("inactive");
   const [shootDate, setShootDate] = useState("");
   const [orderDueDate, setOrderDueDate] = useState("");
+  // archive_date — when set, the parents-portal "Older photos" tab shows
+  // urgency copy ("Archived May 31 — last chance") for this school.
+  const [archiveDate, setArchiveDate] = useState("");
   const [expirationDate, setExpirationDate] = useState("");
   const [galleryLanguage, setGalleryLanguage] = useState("English (US)");
   const [packageProfileId, setPackageProfileId] = useState("");
@@ -248,6 +252,7 @@ export default function SchoolSettingsPage() {
       setPortalStatus(schoolData.status || "inactive");
       setShootDate(schoolData.shoot_date || "");
       setOrderDueDate(schoolData.order_due_date || "");
+      setArchiveDate(((schoolData as { archive_date?: string | null }).archive_date as string | null) || "");
       setExpirationDate(schoolData.expiration_date || "");
       setPackageProfileId(
         resolvePackageProfileId({
@@ -322,6 +327,7 @@ export default function SchoolSettingsPage() {
       status: portalStatus || null,
       shoot_date: shootDate || null,
       order_due_date: orderDueDate || null,
+      archive_date: archiveDate || null,
       expiration_date: expirationDate || null,
       package_profile_id: packageProfileId || null,
       email_required: true,
@@ -523,11 +529,14 @@ export default function SchoolSettingsPage() {
                       <Field label="School Name">
                         <input value={schoolName} onChange={(e) => setSchoolName(e.target.value)} className={fieldClass} />
                       </Field>
-                      <Field label="Order Due Date" hint="Optional date on which client orders are due">
+                      <Field label="Order Due Date" hint="School pickup closes after this date — late orders ship with handling fee">
                         <input type="date" value={orderDueDate} onChange={(e) => setOrderDueDate(e.target.value)} className={fieldClass} />
                       </Field>
                       <Field label="Gallery Expiration Date" hint="Optional date the gallery becomes inactive">
                         <input type="date" value={expirationDate} onChange={(e) => setExpirationDate(e.target.value)} className={fieldClass} />
+                      </Field>
+                      <Field label="Archive Date" hint='Optional. Surfaces "last chance" copy on the parents Older photos tab.'>
+                        <input type="date" value={archiveDate} onChange={(e) => setArchiveDate(e.target.value)} className={fieldClass} />
                       </Field>
                     </div>
                     <Field label="Price Sheet">

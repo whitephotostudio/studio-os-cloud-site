@@ -6,12 +6,12 @@ import { r2DeletePrefix } from "@/lib/r2";
 import { recordAudit } from "@/lib/audit";
 import {
   asIsoTimestamp,
-  finalizePaidOrder,
+  finalizePaidOrderOrGroup,
   getConnectedAccountId,
   handleCreditChargeRefunded,
   handleCreditPackCheckoutCompleted,
-  markOrderPaymentFailure,
-  markOrderRefunded,
+  markOrderOrGroupPaymentFailure,
+  markOrderOrGroupRefunded,
   normalizeBillingInterval,
   normalizePlanCode,
   type PhotographerBillingRow,
@@ -595,7 +595,10 @@ export async function POST(req: NextRequest) {
 
         if (event.account && (billingFlow === "customer_order" || session.metadata?.order_id)) {
           if (session.payment_status === "paid" || session.payment_status === "no_payment_required") {
-            await finalizePaidOrder(service, {
+            // finalizePaidOrderOrGroup fans out across every order sharing
+            // an order_group_id, so combined sibling/cross-year orders all
+            // flip to paid in one shot.  Single orders are unaffected.
+            await finalizePaidOrderOrGroup(service, {
               orderId: session.metadata?.order_id ?? "",
               checkoutSessionId: session.id,
               paymentIntentId: session.payment_intent ?? null,
@@ -611,7 +614,7 @@ export async function POST(req: NextRequest) {
       case "payment_intent.succeeded": {
         const paymentIntent = object as unknown as StripePaymentIntent;
         if (event.account && paymentIntent.metadata?.order_id) {
-          await finalizePaidOrder(service, {
+          await finalizePaidOrderOrGroup(service, {
             orderId: paymentIntent.metadata.order_id,
             paymentIntentId: paymentIntent.id,
             paymentStatus: paymentIntent.status ?? "succeeded",
@@ -625,7 +628,7 @@ export async function POST(req: NextRequest) {
       case "payment_intent.payment_failed": {
         const paymentIntent = object as unknown as StripePaymentIntent;
         if (event.account && paymentIntent.metadata?.order_id) {
-          await markOrderPaymentFailure(service, {
+          await markOrderOrGroupPaymentFailure(service, {
             paymentIntentId: paymentIntent.id,
             orderId: paymentIntent.metadata.order_id,
             note: `[Stripe payment intent ${paymentIntent.id}] payment failed`,
@@ -640,7 +643,7 @@ export async function POST(req: NextRequest) {
           await handleCreditChargeRefunded(service, charge);
         } else if (event.account && (charge.metadata?.order_id || charge.payment_intent)) {
           const partial = charge.amount_refunded < charge.amount;
-          const refundResult = await markOrderRefunded(service, {
+          const refundResult = await markOrderOrGroupRefunded(service, {
             paymentIntentId: charge.payment_intent ?? null,
             orderId: charge.metadata?.order_id ?? null,
             partial,

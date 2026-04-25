@@ -31,6 +31,7 @@ const SchoolUpdateBodySchema = z.object({
   shoot_date: z.string().max(64).nullable().optional(),
   order_due_date: z.string().max(64).nullable().optional(),
   expiration_date: z.string().max(64).nullable().optional(),
+  archive_date: z.string().max(64).nullable().optional(),
   package_profile_id: z.string().max(128).nullable().optional(),
   email_required: z.boolean().optional(),
   checkout_contact_required: z.boolean().optional(),
@@ -278,6 +279,7 @@ export async function PATCH(
 
     if (hasOwn(body, "shoot_date")) updates.shoot_date = clean(body.shoot_date) || null;
     if (hasOwn(body, "order_due_date")) updates.order_due_date = clean(body.order_due_date) || null;
+    if (hasOwn(body, "archive_date")) updates.archive_date = clean(body.archive_date) || null;
     if (hasOwn(body, "expiration_date")) updates.expiration_date = clean(body.expiration_date) || null;
     if (hasOwn(body, "package_profile_id")) {
       updates.package_profile_id = await ensurePackageProfile({

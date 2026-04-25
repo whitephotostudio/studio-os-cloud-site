@@ -295,6 +295,36 @@ function planDisplayLabel(value: string | null | undefined) {
   return humanizeStatus(value);
 }
 
+// ── Combine-orders + shipping helpers ─────────────────────────────────
+//
+// The photographers row stores tiers as a jsonb object so we can grow
+// beyond 2/3 kids in future. The settings UI keeps it simple — just two
+// percentages — and these helpers convert between the two shapes.
+
+function buildSiblingTiersJson(
+  tier2Percent: number,
+  tier3Percent: number,
+): Record<string, number> {
+  const out: Record<string, number> = {};
+  if (Number.isFinite(tier2Percent) && tier2Percent > 0) {
+    out["2"] = clampPercent(tier2Percent);
+  }
+  if (Number.isFinite(tier3Percent) && tier3Percent > 0) {
+    out["3"] = clampPercent(tier3Percent);
+  }
+  return out;
+}
+
+function clampPercent(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(100, Math.round(value * 100) / 100));
+}
+
+function clampShippingFeeCents(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.round(value));
+}
+
 export default function SettingsPage() {
   const supabase = useMemo(() => createClient(), []);
   const logoInputRef = useRef<HTMLInputElement>(null);
@@ -320,6 +350,15 @@ export default function SettingsPage() {
   const [studioAddress, setStudioAddress] = useState("");
   const [studioPhone, setStudioPhone] = useState("");
   const [studioEmail, setStudioEmail] = useState("");
+
+  // Combine-orders + shipping commerce knobs (added 2026-04-24).
+  // Tiers are stored as a JSON object on the photographers row but the UI
+  // exposes them as two simple percentages — most studios stop at "3+ kids".
+  // Spec: docs/design/combine-orders-and-recovery.md.
+  const [siblingTier2Percent, setSiblingTier2Percent] = useState<number>(5);
+  const [siblingTier3Percent, setSiblingTier3Percent] = useState<number>(10);
+  const [shippingFeeCents, setShippingFeeCents] = useState<number>(0);
+  const [lateHandlingFeePercent, setLateHandlingFeePercent] = useState<number>(10);
 
   const [stripeAccountId, setStripeAccountId] = useState<string | null>(null);
   const [detailsSubmitted, setDetailsSubmitted] = useState(false);
@@ -484,6 +523,34 @@ export default function SettingsPage() {
       setStudioAddress(json.studioAddress || "");
       setStudioPhone(json.studioPhone || "");
       setStudioEmail(json.studioEmail || "");
+
+      // Combine-orders + shipping commerce knobs.  Direct Supabase fetch so
+      // we don't have to extend the StripeStatus API surface.  Defaults
+      // applied below match the photographers DB defaults.
+      try {
+        if (session?.user?.id) {
+          const { data: commerceRow } = await supabase
+            .from("photographers")
+            .select(
+              "sibling_discount_tiers, shipping_fee_cents, late_handling_fee_percent",
+            )
+            .eq("user_id", session.user.id)
+            .maybeSingle();
+          if (commerceRow) {
+            const tiers = (commerceRow.sibling_discount_tiers ?? {}) as Record<string, number>;
+            setSiblingTier2Percent(typeof tiers["2"] === "number" ? tiers["2"] : 5);
+            setSiblingTier3Percent(typeof tiers["3"] === "number" ? tiers["3"] : 10);
+            const fee = Number(commerceRow.shipping_fee_cents);
+            setShippingFeeCents(Number.isFinite(fee) && fee >= 0 ? fee : 0);
+            const handling = Number(commerceRow.late_handling_fee_percent);
+            setLateHandlingFeePercent(
+              Number.isFinite(handling) && handling >= 0 ? handling : 10,
+            );
+          }
+        }
+      } catch {
+        // Fall back to defaults — never block settings load on this.
+      }
       setBillingEmail(json.billingEmail || "");
       setBillingCurrency((json.billingCurrency || "cad").toLowerCase());
       setDefaultPaymentMethod(json.defaultPaymentMethod || null);
@@ -667,6 +734,12 @@ export default function SettingsPage() {
             studio_email: studioEmail,
             billing_email: billingEmail || studioEmail || user.email || null,
             billing_currency: billingCurrency || "cad",
+            sibling_discount_tiers: buildSiblingTiersJson(
+              siblingTier2Percent,
+              siblingTier3Percent,
+            ),
+            shipping_fee_cents: clampShippingFeeCents(shippingFeeCents),
+            late_handling_fee_percent: clampPercent(lateHandlingFeePercent),
           })
           .select("id, studio_id")
           .single();
@@ -689,6 +762,12 @@ export default function SettingsPage() {
             studio_email: studioEmail,
             billing_email: billingEmail || studioEmail || user.email || null,
             billing_currency: billingCurrency || "cad",
+            sibling_discount_tiers: buildSiblingTiersJson(
+              siblingTier2Percent,
+              siblingTier3Percent,
+            ),
+            shipping_fee_cents: clampShippingFeeCents(shippingFeeCents),
+            late_handling_fee_percent: clampPercent(lateHandlingFeePercent),
           })
           .eq("id", nextPhotographerId);
 
@@ -1224,6 +1303,76 @@ export default function SettingsPage() {
             >
               {connecting ? "Opening Stripe..." : connectButtonLabel}
             </button>
+          </div>
+        </div>
+
+        {/* ── Row 1.5: Combine orders & shipping commerce knobs ─────────
+            Per-studio config for the sibling-combine discount tiers,
+            flat shipping fee, and late-handling % (applied automatically
+            when a parent orders after the school's order_due_date).
+            Spec: docs/design/combine-orders-and-recovery.md. */}
+        <div style={{ marginTop: 20 }}>
+          <div style={cardStyle}>
+            <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 16 }}>
+              <div style={{ width: 54, height: 54, borderRadius: 16, background: "#fff5f5", display: "grid", placeItems: "center" }}>
+                <span style={{ fontSize: 22 }}>🤝</span>
+              </div>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 800, letterSpacing: "0.14em", textTransform: "uppercase", color: "#64748b" }}>
+                  Commerce
+                </div>
+                <div style={{ fontSize: 20, fontWeight: 900, color: "#0f172a", marginTop: 2 }}>Combine orders &amp; shipping</div>
+              </div>
+            </div>
+            <p style={{ fontSize: 13, color: "#475569", margin: "0 0 18px 0", lineHeight: 1.55 }}>
+              Discounts apply to the second sibling onward — the primary kid pays full price.
+              Shipping is charged once per combined order (never multiplied by sibling count).
+              When a parent orders after a school&rsquo;s due date, school pickup is disabled and
+              the late handling fee is added automatically.
+            </p>
+
+            <div style={{ display: "grid", gap: 16, gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))" }}>
+              <NumberField
+                label="2-kid sibling discount"
+                suffix="%"
+                value={siblingTier2Percent}
+                onChange={setSiblingTier2Percent}
+                min={0}
+                max={50}
+                step={1}
+                helper="Applied to the 2nd kid"
+              />
+              <NumberField
+                label="3+ kid sibling discount"
+                suffix="%"
+                value={siblingTier3Percent}
+                onChange={setSiblingTier3Percent}
+                min={0}
+                max={50}
+                step={1}
+                helper="Applied to each additional kid (3+)"
+              />
+              <NumberField
+                label="Shipping fee"
+                prefix="$"
+                value={Math.round(shippingFeeCents) / 100}
+                onChange={(v) => setShippingFeeCents(Math.round(v * 100))}
+                min={0}
+                max={200}
+                step={0.5}
+                helper="Per combined order; never free"
+              />
+              <NumberField
+                label="Late handling fee"
+                suffix="%"
+                value={lateHandlingFeePercent}
+                onChange={setLateHandlingFeePercent}
+                min={0}
+                max={50}
+                step={1}
+                helper="Added when ordering past due date"
+              />
+            </div>
           </div>
         </div>
 
@@ -2830,6 +2979,80 @@ function Field({
           }}
         />
       </div>
+    </label>
+  );
+}
+
+/**
+ * Numeric input with optional prefix (e.g. "$") or suffix (e.g. "%") and a
+ * helper line below.  Used by the Combine orders & shipping settings card.
+ */
+function NumberField({
+  label,
+  value,
+  onChange,
+  prefix,
+  suffix,
+  min,
+  max,
+  step,
+  helper,
+}: {
+  label: string;
+  value: number;
+  onChange: (value: number) => void;
+  prefix?: string;
+  suffix?: string;
+  min?: number;
+  max?: number;
+  step?: number;
+  helper?: string;
+}) {
+  return (
+    <label style={{ display: "block" }}>
+      <div style={{ marginBottom: 6, fontSize: 13, fontWeight: 700, color: "#475569" }}>{label}</div>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          background: "#fff",
+          border: "1px solid #d6dfef",
+          borderRadius: 14,
+          padding: "10px 12px",
+          gap: 6,
+        }}
+      >
+        {prefix ? (
+          <span style={{ color: "#94a3b8", fontWeight: 700, fontSize: 14 }}>{prefix}</span>
+        ) : null}
+        <input
+          type="number"
+          value={Number.isFinite(value) ? value : 0}
+          onChange={(e) => {
+            const next = Number(e.target.value);
+            onChange(Number.isFinite(next) ? next : 0);
+          }}
+          min={min}
+          max={max}
+          step={step ?? 1}
+          style={{
+            flex: 1,
+            border: "none",
+            outline: "none",
+            background: "transparent",
+            fontSize: 15,
+            fontWeight: 700,
+            color: "#0f172a",
+            minWidth: 60,
+          }}
+        />
+        {suffix ? (
+          <span style={{ color: "#94a3b8", fontWeight: 700, fontSize: 14 }}>{suffix}</span>
+        ) : null}
+      </div>
+      {helper ? (
+        <div style={{ marginTop: 6, fontSize: 11, color: "#94a3b8", fontWeight: 600 }}>{helper}</div>
+      ) : null}
     </label>
   );
 }

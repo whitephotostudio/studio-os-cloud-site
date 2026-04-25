@@ -393,6 +393,43 @@ export default function LoginForm({
     }
   }, [initialEventProjects, prefilledEventEmail, prefilledEventId, prefilledMode]);
 
+  // ── PIN-recovery magic-link landing ────────────────────────────────
+  //
+  // The /api/portal/recovery/claim endpoint redirects here with
+  // ?recovery=ok&pin=...&school=... after consuming the token.  We use
+  // those params to:
+  //   · auto-select the school in the dropdown
+  //   · auto-fill the PIN field
+  //   · surface a friendly green banner explaining what just happened
+  // The parent still has to type their email (security: even after the
+  // magic link, we never reveal the PIN without one more parent action).
+  const [recoveryBanner, setRecoveryBanner] = useState<
+    "ok" | "expired" | "used" | "invalid" | null
+  >(null);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const status = params.get("recovery");
+    if (!status) return;
+    if (status === "expired" || status === "used" || status === "invalid") {
+      setRecoveryBanner(status);
+      return;
+    }
+    if (status !== "ok") return;
+    const pin = (params.get("pin") || "").trim();
+    const schoolId = (params.get("school") || "").trim();
+    if (pin) setSchoolPin(pin);
+    if (schoolId) {
+      const match = initialSchools.find((row) => row.id === schoolId);
+      if (match) {
+        setMode("school");
+        setSelectedSchoolId(match.id);
+        setSelectedSchool(match);
+      }
+    }
+    setRecoveryBanner("ok");
+  }, [initialSchools]);
+
   function isSchoolPreRelease(school: SchoolRow | null) {
     return school?.status?.toLowerCase().replaceAll("-", "_") === "pre_release";
   }
@@ -785,6 +822,84 @@ export default function LoginForm({
           <h1 style={{ fontSize: 28, fontWeight: 800, color: "#111", margin: "0 0 8px", textAlign: "center" }}>
             Client Panel
           </h1>
+
+          {recoveryBanner === "ok" ? (
+            <div
+              role="status"
+              style={{
+                margin: "0 0 16px",
+                padding: "12px 14px",
+                background: "#dcfce7",
+                border: "1px solid #86efac",
+                borderRadius: 12,
+                color: "#166534",
+                fontSize: 13,
+                fontWeight: 700,
+                lineHeight: 1.5,
+                textAlign: "center",
+              }}
+            >
+              We found your gallery and pre-filled the PIN. Enter your email below to continue.
+            </div>
+          ) : null}
+          {recoveryBanner === "expired" ? (
+            <div
+              role="alert"
+              style={{
+                margin: "0 0 16px",
+                padding: "12px 14px",
+                background: "#fff7ed",
+                border: "1px solid #fed7aa",
+                borderRadius: 12,
+                color: "#9a3412",
+                fontSize: 13,
+                fontWeight: 700,
+                lineHeight: 1.5,
+                textAlign: "center",
+              }}
+            >
+              That recovery link expired. Try the I-lost-the-PIN form again — you&rsquo;ll get a fresh link.
+            </div>
+          ) : null}
+          {recoveryBanner === "used" ? (
+            <div
+              role="alert"
+              style={{
+                margin: "0 0 16px",
+                padding: "12px 14px",
+                background: "#fef2f2",
+                border: "1px solid #fecaca",
+                borderRadius: 12,
+                color: "#991b1b",
+                fontSize: 13,
+                fontWeight: 700,
+                lineHeight: 1.5,
+                textAlign: "center",
+              }}
+            >
+              That recovery link has already been used. If you need another, request a new one.
+            </div>
+          ) : null}
+          {recoveryBanner === "invalid" ? (
+            <div
+              role="alert"
+              style={{
+                margin: "0 0 16px",
+                padding: "12px 14px",
+                background: "#fef2f2",
+                border: "1px solid #fecaca",
+                borderRadius: 12,
+                color: "#991b1b",
+                fontSize: 13,
+                fontWeight: 700,
+                lineHeight: 1.5,
+                textAlign: "center",
+              }}
+            >
+              That recovery link isn&rsquo;t valid. Please request a new one.
+            </div>
+          ) : null}
+
           <p style={{ fontSize: 14, color: "#667085", margin: "0 0 28px", lineHeight: 1.7, textAlign: "center" }}>
             {mode === "school"
               ? "Choose your school, then enter your email and the PIN from your child's photo envelope."

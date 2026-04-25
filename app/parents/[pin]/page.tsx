@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, SyntheticEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, SyntheticEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import {
   ArrowLeft,
@@ -44,6 +44,10 @@ import {
 } from "@/lib/event-gallery-downloads";
 import { createZipBlob } from "@/lib/zip";
 import ScreenshotProtection from "@/components/screenshot-protection";
+import {
+  CombineOrdersDrawer,
+  type CombineDrawerSchoolOption,
+} from "@/components/parents/combine-orders-drawer";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 type StudentRow = {
@@ -2736,11 +2740,20 @@ function CompositeCanvas({
   const [domForegroundSrc, setDomForegroundSrc] = useState(nextForegroundSrc);
   const [domBackdropLoaded, setDomBackdropLoaded] = useState(false);
   const [domForegroundLoaded, setDomForegroundLoaded] = useState(false);
+  // Only treat a loaded image as "rendered" if the state src matches the
+  // src we currently WANT to display.  Without this check, switching from
+  // canvas mode → blur mode → a different backdrop can leave us with stale
+  // true flags from a previous render, which hides the fallback photo and
+  // reveals the empty-image black container behind the blur layer.
+  const backdropLoadedForCurrentSrc =
+    domBackdropLoaded && domBackdropSrc === nextBackdropSrc;
+  const foregroundLoadedForCurrentSrc =
+    domForegroundLoaded && domForegroundSrc === nextForegroundSrc;
   const ready = useDomBlurLayer
-    ? domBackdropLoaded && domForegroundLoaded
+    ? backdropLoadedForCurrentSrc && foregroundLoadedForCurrentSrc
     : loadedKey === renderKey;
   const hasRenderedFrame = useDomBlurLayer
-    ? domBackdropLoaded || domForegroundLoaded
+    ? backdropLoadedForCurrentSrc || foregroundLoadedForCurrentSrc
     : loadedKey.length > 0;
 
   useEffect(() => {
@@ -3039,7 +3052,18 @@ function CompositeCanvas({
         so later backdrop swaps stay seamless (old composite stays visible
         until the new one draws, because the canvas updates atomically).
       */}
-      {!hasRenderedFrame && fallbackUrl ? (
+      {/*
+        Fallback original photo — rendered as a BASE LAYER underneath the
+        canvas/DOM blur layer.  Previously we hid this the instant the
+        composite layer "finished", but in blur mode a stale src mismatch
+        could leave the blur layer showing its #000 background BEFORE the
+        new images loaded, producing a blank viewer.  Keep the fallback
+        present while the composite isn't truly `ready` so the user
+        always sees at least the original photo (letterboxed).  Once the
+        composite is fully rendered it covers this base layer anyway,
+        so there's no visual regression when everything's healthy.
+      */}
+      {fallbackUrl && !ready ? (
         <img
           src={fallbackUrl}
           alt=""
@@ -3067,9 +3091,19 @@ function CompositeCanvas({
             inset: 0,
             overflow: "hidden",
             borderRadius: 6,
-            opacity: ready || hasRenderedFrame ? 1 : 0,
+            // Only fade in the blur layer when BOTH DOM images are loaded
+            // for the current src.  Using the looser `hasRenderedFrame`
+            // here meant a stale-loaded flag (from a previous render with
+            // a different backdrop) could force this to opacity 1 over the
+            // #000 background before the new images arrived — giving
+            // parents a black viewer for a beat.  Strict gating is safer
+            // because the fallback image underneath carries us through.
+            opacity: ready ? 1 : 0,
             transition: "opacity 0.3s ease",
-            background: "#000",
+            // Transparent background — if the images hiccup, the fallback
+            // image layer under us still shows through rather than being
+            // hidden by a solid black fill.
+            background: "transparent",
           }}
         >
           <img
@@ -3520,6 +3554,52 @@ export default function ParentGalleryPage() {
     phone: string;
     email: string;
   }>({ businessName: "", logoUrl: "", address: "", phone: "", email: "" });
+
+  // ── Combine-orders drawer state (Phase 1 chunk 3d) ──────────────────────
+  // Opened when the parent clicks the "Unlock another gallery" pill.  The
+  // drawer needs the studio's full school list (so the parent can pick a
+  // sibling's school or a past-year school) — we lazily fetch it the first
+  // time the drawer opens.  Recovery + sibling/past-year flows all live
+  // inside the drawer; the parents page only mounts it.
+  const [combineDrawerOpen, setCombineDrawerOpen] = useState(false);
+  const [combineDrawerSchools, setCombineDrawerSchools] = useState<
+    CombineDrawerSchoolOption[]
+  >([]);
+  const [combineToast, setCombineToast] = useState<string>("");
+  const combineSchoolsFetchedRef = useRef(false);
+
+  /**
+   * Lazy-load the studio's full school list the first time the parent
+   * opens the combine drawer.  Cached after the first call.
+   */
+  const ensureCombineSchoolsLoaded = useCallback(async () => {
+    if (combineSchoolsFetchedRef.current) return;
+    if (!photographerId) return;
+    combineSchoolsFetchedRef.current = true;
+    try {
+      const res = await fetch(
+        `/api/portal/studio-schools?photographerId=${encodeURIComponent(photographerId)}`,
+        { cache: "no-store" },
+      );
+      const body = (await res.json().catch(() => ({}))) as {
+        ok?: boolean;
+        schools?: CombineDrawerSchoolOption[];
+      };
+      if (res.ok && body.ok && Array.isArray(body.schools)) {
+        setCombineDrawerSchools(body.schools);
+      }
+    } catch {
+      // Swallow — drawer still works with whatever we managed to load
+      // (or zero schools, in which case the parent gets a friendly
+      // "No matches" empty state).
+      combineSchoolsFetchedRef.current = false;
+    }
+  }, [photographerId]);
+
+  const openCombineDrawer = useCallback(() => {
+    setCombineDrawerOpen(true);
+    void ensureCombineSchoolsLoaded();
+  }, [ensureCombineSchoolsLoaded]);
   const displayStudioLogoUrl = looksLikeImageAssetUrl(studioInfo.logoUrl)
     ? clean(studioInfo.logoUrl)
     : "";
@@ -7232,6 +7312,53 @@ export default function ParentGalleryPage() {
         watermarkText={`${parentEmail || "Parents portal"} · ${new Date().toLocaleDateString()}`}
       />
 
+      {/* Combine-orders drawer (Phase 1) — mounted always so the Cmd-style
+          opener button can pop it.  Lazy-loads the studio's school list the
+          first time it opens so we don't spin up a fetch for parents who
+          never use the drawer. */}
+      <CombineOrdersDrawer
+        open={combineDrawerOpen}
+        onClose={() => setCombineDrawerOpen(false)}
+        studio={{
+          photographerId: photographerId ?? "",
+          businessName: clean(studioInfo.businessName) || null,
+          contactEmail: clean(studioInfo.email) || null,
+          contactPhone: clean(studioInfo.phone) || null,
+          schools: combineDrawerSchools.map((s) => ({
+            ...s,
+            isCurrent: s.id === schoolId,
+          })),
+        }}
+        onAddedSibling={(payload) => {
+          setCombineToast(payload.label);
+          window.setTimeout(() => setCombineToast(""), 4000);
+          // Full cart-merge integration is Phase 1d.  For now, the parent
+          // can copy the PIN and continue as a separate browser tab.
+        }}
+      />
+
+      {combineToast ? (
+        <div
+          role="status"
+          style={{
+            position: "fixed",
+            bottom: 24,
+            left: "50%",
+            transform: "translateX(-50%)",
+            padding: "12px 20px",
+            background: "#0f172a",
+            color: "#fff",
+            borderRadius: 999,
+            fontSize: 14,
+            fontWeight: 800,
+            boxShadow: "0 10px 30px rgba(15,23,42,0.40)",
+            zIndex: 9500,
+          }}
+        >
+          ✓ {combineToast}
+        </div>
+      ) : null}
+
       <div
         style={{
           position: "fixed",
@@ -9195,6 +9322,53 @@ export default function ParentGalleryPage() {
 
               {/* Drawer content */}
               <div style={{ flex: 1, overflowY: "auto", padding: 18 }}>
+                {/* "Unlock another gallery" entry pill — opens the
+                    CombineOrdersDrawer for sibling combine, past-year
+                    orders, and lost-PIN recovery.  Visible whenever the
+                    cart drawer is open.  Spec: combine-orders-and-recovery.md. */}
+                {drawerView !== "checkout" ? (
+                  <button
+                    type="button"
+                    onClick={openCombineDrawer}
+                    style={{
+                      width: "100%",
+                      marginBottom: 14,
+                      padding: "12px 14px",
+                      borderRadius: 14,
+                      border: "1px solid rgba(255,255,255,0.18)",
+                      background: "linear-gradient(180deg, rgba(204,0,0,0.18) 0%, rgba(204,0,0,0.08) 100%)",
+                      color: "#fff",
+                      fontWeight: 800,
+                      fontSize: 13,
+                      cursor: "pointer",
+                      textAlign: "left",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 10,
+                    }}
+                  >
+                    <span aria-hidden style={{ fontSize: 16 }}>✨</span>
+                    <span style={{ flex: 1 }}>
+                      <span
+                        style={{
+                          display: "block",
+                          fontSize: 12,
+                          fontWeight: 800,
+                          letterSpacing: "0.08em",
+                          textTransform: "uppercase",
+                          opacity: 0.85,
+                        }}
+                      >
+                        Save with combine
+                      </span>
+                      <span style={{ display: "block", marginTop: 2 }}>
+                        Add a sibling, older photos, or recover a lost PIN
+                      </span>
+                    </span>
+                    <span aria-hidden style={{ fontSize: 18, opacity: 0.7 }}>→</span>
+                  </button>
+                ) : null}
+
                 {drawerView !== "checkout" && cartItems.length > 0 && (
                   <div
                     style={{

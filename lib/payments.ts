@@ -2212,6 +2212,12 @@ export async function createDirectOrderCheckoutSession(input: {
   description: string;
   successUrl: string;
   cancelUrl: string;
+  /**
+   * When this checkout represents a combined sibling/cross-year order, this
+   * carries the shared group id so the webhook can fan out the "paid" status
+   * to every member order. Single-order checkouts leave it null/undefined.
+   */
+  orderGroupId?: string | null;
 }) {
   const params = new URLSearchParams();
   params.set("mode", "payment");
@@ -2238,6 +2244,13 @@ export async function createDirectOrderCheckoutSession(input: {
   if (input.schoolId) params.set("payment_intent_data[metadata][school_id]", input.schoolId);
   if (input.projectId) params.set("payment_intent_data[metadata][project_id]", input.projectId);
   if (input.studentId) params.set("payment_intent_data[metadata][student_id]", input.studentId);
+  // Combined-order grouping: when present, the webhook can flip every order
+  // in the group to paid in one shot.  The `order_id` above is just the
+  // primary (first) order in the group; downstream lookups will fan out.
+  if (input.orderGroupId) {
+    params.set("metadata[order_group_id]", input.orderGroupId);
+    params.set("payment_intent_data[metadata][order_group_id]", input.orderGroupId);
+  }
 
   return stripeRequest<StripeCheckoutSession>("checkout/sessions", {
     method: "POST",
@@ -2363,4 +2376,196 @@ export async function getDefaultPaymentMethod(
   } catch {
     return null;
   }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Group-aware webhook helpers
+// ──────────────────────────────────────────────────────────────────────────
+//
+// A combined sibling / cross-year checkout creates N orders that share one
+// `order_group_id`. Stripe metadata carries the FIRST order's id (so
+// pre-existing single-order webhook code paths still work), plus the
+// `order_group_id` so we can fan out the paid/refunded/failed event to
+// every member of the group.
+//
+// These three wrappers each:
+//   1. Look up the order referenced by `orderId` (or by `paymentIntentId`).
+//   2. Read its `order_group_id`.
+//   3. If non-null, fetch every sibling order's id and apply the per-order
+//      function to all of them. Otherwise, just apply it once.
+//
+// Failures of individual member updates do NOT abort the group — we collect
+// errors and re-throw the first one only after every member has been
+// attempted, so a single transient failure can be retried by Stripe without
+// leaving half a group stuck. (Stripe retries the same webhook, and our
+// per-order finalizer is idempotent.)
+
+async function expandOrderIdsForGroup(
+  service: ServiceClient,
+  args: { orderId?: string | null; paymentIntentId?: string | null },
+): Promise<string[]> {
+  // Resolve the seed order from either the orderId metadata or the payment
+  // intent id (refund flows often only have the latter).
+  let seedOrderId: string | null = null;
+  let groupId: string | null = null;
+
+  if (args.orderId) {
+    seedOrderId = args.orderId;
+    const { data } = await service
+      .from("orders")
+      .select("id, order_group_id")
+      .eq("id", args.orderId)
+      .maybeSingle();
+    if (data) {
+      seedOrderId = data.id as string;
+      groupId = (data.order_group_id as string | null) ?? null;
+    }
+  } else if (args.paymentIntentId) {
+    const { data } = await service
+      .from("orders")
+      .select("id, order_group_id")
+      .eq("stripe_payment_intent_id", args.paymentIntentId)
+      .limit(1)
+      .maybeSingle();
+    if (data) {
+      seedOrderId = data.id as string;
+      groupId = (data.order_group_id as string | null) ?? null;
+    }
+  }
+
+  if (!seedOrderId) return [];
+  if (!groupId) return [seedOrderId];
+
+  // Fan out to every member of the group.
+  const { data: groupMembers } = await service
+    .from("orders")
+    .select("id")
+    .eq("order_group_id", groupId);
+
+  const ids = (groupMembers ?? []).map((row) => row.id as string);
+  return ids.length > 0 ? ids : [seedOrderId];
+}
+
+/**
+ * Group-aware wrapper around `finalizePaidOrder`. When the resolved order
+ * belongs to a combined-checkout group, every sibling is finalized too.
+ */
+export async function finalizePaidOrderOrGroup(
+  service: ServiceClient,
+  input: {
+    orderId: string;
+    checkoutSessionId?: string | null;
+    paymentIntentId?: string | null;
+    paymentStatus?: string | null;
+    note: string;
+    paidAt?: string | null;
+  },
+) {
+  const ids = await expandOrderIdsForGroup(service, {
+    orderId: input.orderId,
+    paymentIntentId: input.paymentIntentId,
+  });
+  if (ids.length === 0) {
+    // Fall back to the single-order behavior — finalize will no-op on miss.
+    return finalizePaidOrder(service, input);
+  }
+
+  let firstResult: Awaited<ReturnType<typeof finalizePaidOrder>> = null;
+  let firstError: unknown = null;
+  for (const id of ids) {
+    try {
+      const result = await finalizePaidOrder(service, {
+        ...input,
+        orderId: id,
+      });
+      if (id === input.orderId) firstResult = result;
+    } catch (err) {
+      if (!firstError) firstError = err;
+    }
+  }
+  if (firstError) throw firstError;
+  return firstResult;
+}
+
+/**
+ * Group-aware wrapper around `markOrderPaymentFailure`.
+ */
+export async function markOrderOrGroupPaymentFailure(
+  service: ServiceClient,
+  input: {
+    paymentIntentId?: string | null;
+    orderId?: string | null;
+    note: string;
+  },
+) {
+  const ids = await expandOrderIdsForGroup(service, {
+    orderId: input.orderId,
+    paymentIntentId: input.paymentIntentId,
+  });
+  if (ids.length === 0) {
+    return markOrderPaymentFailure(service, input);
+  }
+
+  let firstId: string | null = null;
+  let firstError: unknown = null;
+  for (const id of ids) {
+    try {
+      const result = await markOrderPaymentFailure(service, {
+        orderId: id,
+        // Don't pass paymentIntentId for the iteration — we already
+        // scoped to orders sharing the same payment intent's group.
+        paymentIntentId: null,
+        note: input.note,
+      });
+      if (!firstId && result) firstId = result;
+    } catch (err) {
+      if (!firstError) firstError = err;
+    }
+  }
+  if (firstError) throw firstError;
+  return firstId;
+}
+
+/**
+ * Group-aware wrapper around `markOrderRefunded`. Returns the result for the
+ * primary (seed) order — refund-amount semantics for partial refunds across
+ * a group are non-trivial; for v1 we simply mark every sibling refunded with
+ * the same flag.  Phase 2 can split per-line.
+ */
+export async function markOrderOrGroupRefunded(
+  service: ServiceClient,
+  input: {
+    paymentIntentId?: string | null;
+    orderId?: string | null;
+    partial: boolean;
+    note: string;
+    refundAmountCents?: number | null;
+  },
+): Promise<MarkOrderRefundedResult | null> {
+  const ids = await expandOrderIdsForGroup(service, {
+    orderId: input.orderId,
+    paymentIntentId: input.paymentIntentId,
+  });
+  if (ids.length === 0) {
+    return markOrderRefunded(service, input);
+  }
+
+  let primaryResult: MarkOrderRefundedResult | null = null;
+  let firstError: unknown = null;
+  for (const id of ids) {
+    try {
+      const result = await markOrderRefunded(service, {
+        orderId: id,
+        paymentIntentId: null,
+        partial: input.partial,
+        note: input.note,
+        refundAmountCents: input.refundAmountCents ?? null,
+      });
+      if (!primaryResult && result) primaryResult = result;
+    } catch (err) {
+      if (!firstError) firstError = err;
+    }
+  }
+  if (firstError) throw firstError;
+  return primaryResult;
 }
