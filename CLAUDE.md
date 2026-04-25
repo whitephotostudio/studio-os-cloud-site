@@ -2,7 +2,39 @@
 
 Checkpoint for Claude so a context reset doesn't lose the thread. Update as work progresses.
 
-Last updated: 2026-04-26 afternoon (retouching upsell modal added on top of the morning bundle — still one big uncommitted/partially-pushed batch).
+Last updated: 2026-04-26 evening (retouching upsell modal + Flutter "Reveal hidden buttons" kid-proof toggle + per-school group label "Class / Faculty / Grade" — still one big uncommitted/partially-pushed batch on the web side, plus a Flutter rebuild required).
+
+## 🔧 FLUTTER REBUILD REQUIRED
+
+A separate change landed in the desktop app source at `~/Downloads/Whitephoto_Studio_App_MVP_Source/lib/screens/admin_screen.dart` — kid-proof "Reveal hidden buttons" toggle (see "Flutter: kid-proof admin screen" below).  This file is NOT in the git repo, so the web push script doesn't pick it up.  To activate:
+
+```
+cd ~/Downloads/Whitephoto_Studio_App_MVP_Source
+flutter build macos
+```
+
+Then relaunch Studio OS.app from `~/Downloads/Whitephoto_Studio_App_MVP_Source/build/macos/Build/Products/Release/Studio OS.app`.
+
+### Flutter: kid-proof admin screen ("Reveal hidden buttons")
+
+Real-world driver: photographers shoot with kids around the workstation.  Small fingers had been accidentally pressing Delete / Print / Cloud-sync icons, causing real data loss (deleted students, accidental cloud overwrites).  Fix: hide the destructive buttons by default and gate them behind an explicit "Reveal hidden buttons" eye toggle.
+
+- **State:** `_hiddenButtonsRevealed: bool = false` + `_revealAutoHideTimer: Timer?`.  Default state every launch is HIDDEN — no persistence, kids can't find it left revealed from yesterday.
+- **Auto-relock:** 3-minute inactivity timer fires `_autoHideRevealedButtons()` which flips the flag back + shows a snackbar.  Timer cancelled in `dispose()`.
+- **Hidden in the school header row** (sidebar): Delete school, Sync to Cloud, Pull from Cloud, Refresh local list.  Add school + Rename school stay visible.
+- **Hidden per class** (sidebar class list): the small "Rename class" pencil next to each class row — kids were tapping it mid-shoot.  Long-press menu still works for intentional renames.
+- **Hidden in the students DataTable:** Edit + Print + Delete columns (and their cells) — column count and cell count both gate on the same flag, so DataTable never throws.
+- **Hidden in the roles DataTable:** Edit + Delete columns.
+- **Prominent reveal button:** full-width labeled button below the school header row, in the sidebar.  When locked it's a red-outlined "Reveal hidden buttons" button (eye icon) — high-visibility, can't miss it.  When unlocked it flips to an amber-filled "Hide buttons" button (lock icon).
+- **Amber banner:** when revealed, a slim yellow strip appears below the reveal button reading "Dangerous buttons revealed — auto-locks in 3 min" with a lock-open icon.
+- **No SQL / API changes** — purely a Dart UI change.
+
+Verified by code inspection (no `flutter analyze` available in the Cowork sandbox).  Harout to rebuild + smoke-test:
+1. Launch Studio OS → Admin tab → confirm Edit / Print / Delete columns are NOT visible by default; sidebar destructive icons (trash / cloud / refresh) are also NOT visible.  A red "Reveal hidden buttons" button is sitting prominently below the "School" header.
+2. Click "Reveal hidden buttons" → confirm Edit + Print + Delete columns appear in the students table, all destructive sidebar icons appear, button flips to amber "Hide buttons", amber banner shows below.
+3. Wait 3 minutes (or click "Hide buttons") → confirm everything disappears again with the snackbar.
+
+### Web side (unchanged below)
 
 ## 🚀 PUSH SCRIPT (run from Mac)
 
@@ -10,7 +42,7 @@ Last updated: 2026-04-26 afternoon (retouching upsell modal added on top of the 
 cd ~/Projects/studio-os-cloud-site
 rm -f .git/HEAD.lock .git/index.lock
 git add -A
-git commit -m "feat: retouching upsell modal + order receipts + history + reorder + landscape mockup fix + flash kill + year-aware search + prefetch payload fix"
+git commit -m "feat: per-school group label (Class/Faculty/Grade) + retouching upsell modal + order receipts + history + reorder + landscape mockup fix + flash kill + year-aware search + prefetch payload fix"
 git push origin main
 ```
 
@@ -23,7 +55,27 @@ After Vercel redeploys (~2 min):
 
 ---
 
-## What's in the bundle (2026-04-26 morning + afternoon)
+## What's in the bundle (2026-04-26 morning + afternoon + evening)
+
+### Per-school group label — "Class / Faculty / Grade / Department" (evening addition)
+
+Real-world driver: Harout shoots universities sometimes; "Class" is wrong terminology — universities call them "Faculties," elementary calls them "Grades," corporate calls them "Departments."  Now configurable per school, defaults to Class / Classes for K-12.
+
+- **DB:** migration `supabase/migrations/20260425020000_add_schools_group_label.sql` (NEW) — adds `schools.group_label_singular text NOT NULL DEFAULT 'Class'` and `group_label_plural text NOT NULL DEFAULT 'Classes'`.  Already applied live to `bwqhzczxoevouiondjak`.  Defaults preserve every existing K-12 school's behavior.
+- **API surface:** the dashboard schools route + the 2 portal context routes wire up the new fields.
+  - `app/api/dashboard/schools/[schoolId]/route.ts` — added to `SchoolUpdateBodySchema`, the row type, both selects, the update handler (with default-fallback so blank input doesn't write empty), and the audit `diffFields` list.
+  - `app/api/portal/gallery-context/route.ts` — added to the `SchoolRow` type + all 3 selects + new `groupLabel` top-level key in the response payload.
+  - `app/api/portal/school-access/route.ts` — same pattern for the LoginForm prefetch (so the labels land on first paint, no refresh required).
+- **Settings UI:** `app/dashboard/projects/schools/[schoolId]/settings/page.tsx` — new "Grouping Label" subsection in the Access & Privacy card, just above Screenshot Protection.  Two inputs (Singular + Plural) with placeholder text and example hints (Class / Faculty / Grade / Department).  Hydrates from `schoolData.group_label_*`, saves with default fallback so blanks don't break.
+- **Dashboard school detail (`app/dashboard/projects/schools/[schoolId]/page.tsx`):** extracted `groupLabelSingular` / `groupLabelPlural` from the school row and threaded through 7 user-facing strings — "Add Class" button → "Add Faculty"; sidebar "Classes" header + "All Classes" → dynamic; per-card class label fallback; stats line "{N} classes"; "No classes yet" empty state; search placeholder; modal headline + name field label.
+- **Parents portal (`app/parents/[pin]/page.tsx`):** added `groupLabel?: { singular, plural }` to `GalleryContextPayload` type; new state `groupLabel` defaulting to `Class / Classes`; hydrated from contextPayload in the school-context-load path.  Threaded through "Class Composite" fallback (uses `groupLabel.singular`), "Class photo (auto-included)" slot label, and "Class composites cannot be used inside package photo slots" error.
+- **Schools list page** intentionally untouched — it shows mixed-type schools (K-12 + university together), so a generic "23 classes" subtitle is fine.  Per-school labels surface once you click into the specific school.
+
+Typecheck clean (`npx tsc --noEmit` → exit 0) after all edits.
+
+Followups:
+1. **Flutter app — explicitly NOT changing.** Harout's call (2026-04-26 evening): the photographer-facing desktop tool can keep saying "Class" because the underlying `className` field is just free-text. For a university shoot, photographer types "York University" as the school, then creates per-faculty entries by typing "Engineering" / "Sciences" / "Business" into the Class field. The workflow is identical, only the column header label differs. Photographer mentally substitutes "Class = Faculty"; parents see "Faculty" via the web portal because that's where the per-school label is read. No Flutter rebuild required for this feature.
+2. Spotlight search subtitle text could surface the per-school label on student hits ("Mary · Engineering Faculty · 2024" instead of "Mary · Engineering Faculty · Class"). Low priority.
 
 ### Retouching upsell modal at checkout (afternoon addition)
 

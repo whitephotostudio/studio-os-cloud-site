@@ -199,6 +199,12 @@ type GalleryContextPayload = {
     mobile: boolean;
     watermark: boolean;
   };
+  // 2026-04-26: per-school grouping label (Class / Faculty / Grade /
+  // Department).  Defaults to Class / Classes when null.
+  groupLabel?: {
+    singular: string;
+    plural: string;
+  };
 };
 
 type EventGalleryContextPayload = {
@@ -4055,6 +4061,17 @@ export default function ParentGalleryPage() {
     mobile: boolean;
     watermark: boolean;
   }>({ desktop: false, mobile: false, watermark: false });
+
+  // 2026-04-26: per-school grouping label.  School mode reads this from
+  // the gallery-context payload; event mode never reads it (events don't
+  // have a per-school label, the project carries its own naming).  We
+  // keep "Class" / "Classes" as the default so existing K-12 galleries
+  // behave exactly as they did before.
+  const [groupLabel, setGroupLabel] = useState<{
+    singular: string;
+    plural: string;
+  }>({ singular: "Class", plural: "Classes" });
+
   const [eventCollections, setEventCollections] = useState<EventCollectionRow[]>([]);
   const [activeEventCollectionId, setActiveEventCollectionId] = useState<string | null>(null);
 
@@ -4478,7 +4495,8 @@ export default function ParentGalleryPage() {
             thumbnailUrl: composite.thumbnail_url ?? composite.preview_url ?? null,
             title: compositeImageTitle(
               composite.filename,
-              composite.collection_title ?? "Class Composite",
+              composite.collection_title ??
+                `${(contextPayload?.groupLabel?.singular || "Class").trim() || "Class"} Composite`,
             ),
             source: "composite",
           });
@@ -4535,6 +4553,15 @@ export default function ParentGalleryPage() {
           desktop: Boolean(contextPayload?.screenshotProtection?.desktop),
           mobile: Boolean(contextPayload?.screenshotProtection?.mobile),
           watermark: Boolean(contextPayload?.screenshotProtection?.watermark),
+        });
+        // 2026-04-26: school's per-grouping label (Class / Faculty / Grade).
+        // Falls back to Class / Classes when the API returns null or the
+        // school hasn't been customized yet.
+        setGroupLabel({
+          singular:
+            (contextPayload?.groupLabel?.singular || "").trim() || "Class",
+          plural:
+            (contextPayload?.groupLabel?.plural || "").trim() || "Classes",
         });
         if (schoolViewerEmail) {
           setParentEmail(schoolViewerEmail);
@@ -11095,7 +11122,7 @@ export default function ParentGalleryPage() {
                                     }}
                                   >
                                     {isCompositeSlot
-                                      ? "Class photo (auto-included)"
+                                      ? `${groupLabel.singular} photo (auto-included)`
                                       : isActive
                                       ? `Selected for slot ${i + 1} of ${slots.length}`
                                       : `Assigned to slot ${i + 1} of ${slots.length}`}
@@ -11215,7 +11242,7 @@ export default function ParentGalleryPage() {
                               padding: "8px 0 18px",
                             }}
                           >
-                            Class composites cannot be used inside package photo slots.
+                            {groupLabel.singular} composites cannot be used inside package photo slots.
                           </div>
                         )}
                       </>

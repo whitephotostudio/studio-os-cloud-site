@@ -38,6 +38,8 @@ type SchoolRow = {
   screenshot_protection_desktop?: boolean | null;
   screenshot_protection_mobile?: boolean | null;
   screenshot_protection_watermark?: boolean | null;
+  group_label_singular?: string | null;
+  group_label_plural?: string | null;
 };
 
 type ProjectRow = {
@@ -229,7 +231,7 @@ export async function POST(request: NextRequest) {
     const { data: currentSchool, error: currentSchoolError } = selectedSchoolId
       ? await service
           .from("schools")
-          .select("id,school_name,photographer_id,package_profile_id,local_school_id,status,order_due_date,expiration_date,access_mode,access_pin,email_required,gallery_settings,screenshot_protection_desktop,screenshot_protection_mobile,screenshot_protection_watermark")
+          .select("id,school_name,photographer_id,package_profile_id,local_school_id,status,order_due_date,expiration_date,access_mode,access_pin,email_required,gallery_settings,screenshot_protection_desktop,screenshot_protection_mobile,screenshot_protection_watermark,group_label_singular,group_label_plural")
           .eq("id", selectedSchoolId)
           .maybeSingle<SchoolRow>()
       : { data: null as SchoolRow | null, error: null };
@@ -243,7 +245,7 @@ export async function POST(request: NextRequest) {
     if (schoolNameForMatch) {
       const { data: sameNameSchools, error: sameNameError } = await service
         .from("schools")
-        .select("id,school_name,photographer_id,package_profile_id,local_school_id,status,order_due_date,expiration_date,access_mode,access_pin,email_required,gallery_settings,screenshot_protection_desktop,screenshot_protection_mobile,screenshot_protection_watermark")
+        .select("id,school_name,photographer_id,package_profile_id,local_school_id,status,order_due_date,expiration_date,access_mode,access_pin,email_required,gallery_settings,screenshot_protection_desktop,screenshot_protection_mobile,screenshot_protection_watermark,group_label_singular,group_label_plural")
         .ilike("school_name", schoolNameForMatch)
         .order("created_at", { ascending: false });
 
@@ -298,7 +300,7 @@ export async function POST(request: NextRequest) {
     if (!activeSchool && primaryStudent.school_id) {
       const { data: fetchedSchool, error: fetchedSchoolError } = await service
         .from("schools")
-        .select("id,school_name,photographer_id,package_profile_id,local_school_id,status,order_due_date,expiration_date,access_mode,access_pin,email_required,gallery_settings,screenshot_protection_desktop,screenshot_protection_mobile,screenshot_protection_watermark")
+        .select("id,school_name,photographer_id,package_profile_id,local_school_id,status,order_due_date,expiration_date,access_mode,access_pin,email_required,gallery_settings,screenshot_protection_desktop,screenshot_protection_mobile,screenshot_protection_watermark,group_label_singular,group_label_plural")
         .eq("id", primaryStudent.school_id)
         .maybeSingle<SchoolRow>();
 
@@ -437,6 +439,20 @@ export async function POST(request: NextRequest) {
       watermark: Boolean(activeSchool?.screenshot_protection_watermark),
     };
 
+    // 2026-04-26: per-school grouping label (Class / Faculty / Grade /
+    // Department).  Surfaced at a stable top-level key so the portal
+    // can swap "Class:" → "Faculty:" without re-running the school join.
+    const groupLabel = {
+      singular:
+        (typeof activeSchool?.group_label_singular === "string" &&
+          activeSchool.group_label_singular.trim()) ||
+        "Class",
+      plural:
+        (typeof activeSchool?.group_label_plural === "string" &&
+          activeSchool.group_label_plural.trim()) ||
+        "Classes",
+    };
+
     return NextResponse.json({
       ok: true,
       currentSchool,
@@ -456,6 +472,7 @@ export async function POST(request: NextRequest) {
       watermarkLogoUrl,
       studioInfo,
       screenshotProtection,
+      groupLabel,
     });
   } catch (error) {
     console.error("[gallery-context]", error);

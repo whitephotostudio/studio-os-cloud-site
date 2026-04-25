@@ -44,6 +44,11 @@ const SchoolUpdateBodySchema = z.object({
   screenshot_protection_desktop: z.boolean().optional(),
   screenshot_protection_mobile: z.boolean().optional(),
   screenshot_protection_watermark: z.boolean().optional(),
+  // 2026-04-26: per-school configurable grouping label (Class / Faculty
+  // / Grade / Department).  Defaults to Class / Classes — see migration
+  // 20260425020000_add_schools_group_label.sql.
+  group_label_singular: z.string().min(1).max(64).optional(),
+  group_label_plural: z.string().min(1).max(64).optional(),
 });
 
 type SchoolUpdateBody = z.infer<typeof SchoolUpdateBodySchema>;
@@ -69,6 +74,8 @@ type SchoolRow = {
   screenshot_protection_desktop?: boolean | null;
   screenshot_protection_mobile?: boolean | null;
   screenshot_protection_watermark?: boolean | null;
+  group_label_singular?: string | null;
+  group_label_plural?: string | null;
 };
 
 function clean(value: string | null | undefined) {
@@ -250,7 +257,7 @@ export async function PATCH(
 
     const { data: schoolRow, error: schoolError } = await service
       .from("schools")
-      .select("id,school_name,photographer_id,local_school_id,status,shoot_date,order_due_date,expiration_date,package_profile_id,email_required,checkout_contact_required,internal_notes,access_mode,access_pin,cover_photo_url,gallery_settings,gallery_slug,screenshot_protection_desktop,screenshot_protection_mobile,screenshot_protection_watermark")
+      .select("id,school_name,photographer_id,local_school_id,status,shoot_date,order_due_date,expiration_date,package_profile_id,email_required,checkout_contact_required,internal_notes,access_mode,access_pin,cover_photo_url,gallery_settings,gallery_slug,screenshot_protection_desktop,screenshot_protection_mobile,screenshot_protection_watermark,group_label_singular,group_label_plural")
       .eq("id", schoolId)
       .eq("photographer_id", photographerRow.id)
       .maybeSingle<SchoolRow>();
@@ -305,6 +312,15 @@ export async function PATCH(
     if (hasOwn(body, "screenshot_protection_watermark")) {
       updates.screenshot_protection_watermark = body.screenshot_protection_watermark === true;
     }
+    // Per-school grouping label — trim, fall back to default if empty.
+    if (hasOwn(body, "group_label_singular")) {
+      const v = clean(body.group_label_singular);
+      updates.group_label_singular = v || "Class";
+    }
+    if (hasOwn(body, "group_label_plural")) {
+      const v = clean(body.group_label_plural);
+      updates.group_label_plural = v || "Classes";
+    }
     if (hasOwn(body, "gallery_slug")) {
       let rawSlug = clean(body.gallery_slug)
         .toLowerCase()
@@ -341,7 +357,7 @@ export async function PATCH(
       .update(updates)
       .eq("id", schoolId)
       .eq("photographer_id", photographerRow.id)
-      .select("id,school_name,photographer_id,local_school_id,status,shoot_date,order_due_date,expiration_date,package_profile_id,email_required,checkout_contact_required,internal_notes,access_mode,access_pin,cover_photo_url,gallery_settings,gallery_slug,screenshot_protection_desktop,screenshot_protection_mobile,screenshot_protection_watermark")
+      .select("id,school_name,photographer_id,local_school_id,status,shoot_date,order_due_date,expiration_date,package_profile_id,email_required,checkout_contact_required,internal_notes,access_mode,access_pin,cover_photo_url,gallery_settings,gallery_slug,screenshot_protection_desktop,screenshot_protection_mobile,screenshot_protection_watermark,group_label_singular,group_label_plural")
       .maybeSingle<SchoolRow>();
 
     if (updateError) throw updateError;
@@ -402,6 +418,8 @@ export async function PATCH(
         "screenshot_protection_desktop",
         "screenshot_protection_mobile",
         "screenshot_protection_watermark",
+        "group_label_singular",
+        "group_label_plural",
       ] as (keyof Record<string, unknown>)[],
     );
     await recordAudit({

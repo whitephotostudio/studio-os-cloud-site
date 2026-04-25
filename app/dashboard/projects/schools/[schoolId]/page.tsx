@@ -43,6 +43,9 @@ type School = {
   access?: string | null;
   password_protected?: boolean | null;
   gallery_slug?: string | null;
+  // 2026-04-26: per-school configurable grouping label.
+  group_label_singular?: string | null;
+  group_label_plural?: string | null;
 };
 
 type PersonRow = {
@@ -1335,6 +1338,12 @@ export default function SchoolsSchoolDetailPage() {
     Boolean(school?.password_protected) ||
     clean(school?.access).toLowerCase() === "private";
 
+  // 2026-04-26: per-school grouping label.  Defaults to "Class" / "Classes"
+  // for K-12; universities flip to "Faculty" / "Faculties" via the school
+  // settings page.  Used everywhere this page would otherwise hardcode "Class".
+  const groupLabelSingular = clean(school?.group_label_singular) || "Class";
+  const groupLabelPlural = clean(school?.group_label_plural) || "Classes";
+
   const orderedClasses = useMemo(() => grouped.classCards, [grouped.classCards]);
   const orderedRoles = useMemo(() => grouped.roleCards, [grouped.roleCards]);
 
@@ -1398,7 +1407,7 @@ export default function SchoolsSchoolDetailPage() {
             <div style={{ color: "#b91c1c", fontWeight: 800, marginTop: 2, fontSize: isMobile ? 12 : undefined }}>{schoolStatus}</div>
           </div>
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap", justifyContent: isMobile ? "stretch" : "flex-end" }}>
-            <button onClick={() => { setError(""); setCreateGalleryKind("class"); setCreateGalleryName(""); }} style={{ borderRadius: 10, border: "1px solid #111111", background: "#fff", color: "#111111", padding: "12px 16px", fontWeight: 800, cursor: "pointer" }}>Add Class</button>
+            <button onClick={() => { setError(""); setCreateGalleryKind("class"); setCreateGalleryName(""); }} style={{ borderRadius: 10, border: "1px solid #111111", background: "#fff", color: "#111111", padding: "12px 16px", fontWeight: 800, cursor: "pointer" }}>Add {groupLabelSingular}</button>
             <button onClick={() => { setError(""); setCreateGalleryKind("role"); setCreateGalleryName(""); }} style={{ borderRadius: 10, border: "1px solid #111111", background: "#fff", color: "#111111", padding: "12px 16px", fontWeight: 800, cursor: "pointer" }}>Add Role Gallery</button>
             <button onClick={() => setShareModalOpen(true)} style={{ borderRadius: 10, border: "1px solid #111111", background: "#111111", color: "#fff", padding: "12px 16px", fontWeight: 800, cursor: "pointer" }}>Share Gallery</button>
             <a
@@ -1617,7 +1626,7 @@ export default function SchoolsSchoolDetailPage() {
                   <div style={{ fontSize: 12, color: "#4b5563", marginTop: 4 }}>Last Sync View: {new Date().toLocaleDateString("en-US", { month: "2-digit", year: "numeric" })}</div>
                 </div>
                 {[
-                  ["Classes", grouped.totalClasses],
+                  [groupLabelPlural, grouped.totalClasses],
                   ["Role Galleries", grouped.totalRoles],
                   ["Synced Photos", grouped.totalSyncedPhotos],
                 ].map(([label, value]) => (
@@ -1629,10 +1638,10 @@ export default function SchoolsSchoolDetailPage() {
               </div>
 
               <div style={{ marginTop: 18 }}>
-                <div style={{ fontSize: 13, fontWeight: 800, color: "#111111", marginBottom: 8 }}>Classes</div>
+                <div style={{ fontSize: 13, fontWeight: 800, color: "#111111", marginBottom: 8 }}>{groupLabelPlural}</div>
                 <div style={{ borderRadius: 12, overflow: "hidden", border: "1px solid #e5e7eb" }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "11px 14px", background: "#fff5f5", borderBottom: "1px solid #eef2f7", color: "#111111", fontWeight: 800, fontSize: 13 }}>
-                    <span>All Classes</span>
+                    <span>All {groupLabelPlural}</span>
                     <span>{grouped.classCards.length}</span>
                   </div>
                   <div style={{ maxHeight: 360, overflow: "auto" }}>
@@ -1641,7 +1650,7 @@ export default function SchoolsSchoolDetailPage() {
                       return (
                         <Link key={classCard.key} href={classCard.href} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, padding: "10px 12px", borderTop: "1px solid #eef2f7", background: active ? "#fff1f2" : "#fff", textDecoration: "none", color: "#111111", fontSize: 13, fontWeight: 700 }}>
                           <span style={{ display: "inline-flex", alignItems: "center", gap: 6, overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis", maxWidth: "100%" }}>
-                            <span style={{ overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis" }}>{clean(classCard.label) || "Class"}</span>
+                            <span style={{ overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis" }}>{clean(classCard.label) || groupLabelSingular}</span>
                           </span>
                           <span style={{ color: active ? "#b91c1c" : "#111111" }}>{classCard.count}</span>
                         </Link>
@@ -1677,7 +1686,7 @@ export default function SchoolsSchoolDetailPage() {
                     <input
                       value={classSearch}
                       onChange={(e) => setClassSearch(e.target.value)}
-                      placeholder="Search classes, students, teachers…"
+                      placeholder={`Search ${groupLabelPlural.toLowerCase()}, students, teachers…`}
                       style={{ width: "100%", boxSizing: "border-box", borderRadius: 10, border: "1px solid #d0d5dd", background: "#fff", color: "#111111", padding: "10px 12px 10px 38px", fontWeight: 600, outline: "none" }}
                     />
                   </div>
@@ -1690,11 +1699,11 @@ export default function SchoolsSchoolDetailPage() {
 
               {/* Stats line */}
               <div style={{ color: "#111111", marginBottom: 16, fontWeight: 700 }}>
-                {grouped.classCards.length} classes • {grouped.totalRoles} roles • {grouped.totalPeople} people
+                {grouped.classCards.length} {groupLabelPlural.toLowerCase()} • {grouped.totalRoles} roles • {grouped.totalPeople} people
               </div>
 
               {filteredClasses.length === 0 && filteredPeople.length === 0 ? (
-                <div style={{ border: "1px dashed #d0d5dd", borderRadius: 18, padding: 24, color: "#4b5563" }}>{classSearch ? "No matches for that search." : "No classes yet."}</div>
+                <div style={{ border: "1px dashed #d0d5dd", borderRadius: 18, padding: 24, color: "#4b5563" }}>{classSearch ? "No matches for that search." : `No ${groupLabelPlural.toLowerCase()} yet.`}</div>
               ) : (
                 <>
                   {/* Matching people — only visible when a search term is
@@ -1828,7 +1837,7 @@ export default function SchoolsSchoolDetailPage() {
                                 <div>
                                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                                     <button style={{ border: 0, background: "transparent", padding: 0, color: "#111111", fontSize: 12, fontWeight: 900, textTransform: "uppercase", letterSpacing: 0.3, cursor: "text", textAlign: "left" }}>
-                                      {clean(classCard.label) || "Class"}
+                                      {clean(classCard.label) || groupLabelSingular}
                                     </button>
                                   </div>
                                   <div style={{ color: "#4b5563", fontSize: 12, marginTop: 3 }}>{studentCount} Student{studentCount !== 1 ? "s" : ""}</div>
@@ -2175,16 +2184,16 @@ export default function SchoolsSchoolDetailPage() {
         <div style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.55)", display: "grid", placeItems: "center", zIndex: 72, padding: 24 }}>
           <div style={{ width: "100%", maxWidth: 520, background: "#fff", borderRadius: 24, border: "1px solid #e5e7eb", boxShadow: "0 30px 60px rgba(15,23,42,0.25)", overflow: "hidden" }}>
             <div style={{ padding: "20px 22px", borderBottom: "1px solid #eef2f7" }}>
-              <div style={{ fontSize: 24, fontWeight: 900, color: "#111111" }}>{createGalleryKind === "class" ? "Add Class" : "Add Role Gallery"}</div>
+              <div style={{ fontSize: 24, fontWeight: 900, color: "#111111" }}>{createGalleryKind === "class" ? `Add ${groupLabelSingular}` : "Add Role Gallery"}</div>
               <div style={{ color: "#4b5563", marginTop: 4 }}>
                 {createGalleryKind === "class"
-                  ? "Create an empty class first, then open it to add students and photos."
+                  ? `Create an empty ${groupLabelSingular.toLowerCase()} first, then open it to add students and photos.`
                   : "Create an empty role gallery first, then open it to add people and photos."}
               </div>
             </div>
             <div style={{ padding: 22 }}>
               <div style={{ fontSize: 14, fontWeight: 700, color: "#111111", marginBottom: 8 }}>
-                {createGalleryKind === "class" ? "Class name" : "Role gallery name"}
+                {createGalleryKind === "class" ? `${groupLabelSingular} name` : "Role gallery name"}
               </div>
               <input
                 value={createGalleryName}
@@ -2201,7 +2210,7 @@ export default function SchoolsSchoolDetailPage() {
             </div>
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 12, padding: "18px 22px", borderTop: "1px solid #eef2f7" }}>
               <button onClick={() => { setCreateGalleryKind(null); setCreateGalleryName(""); }} style={{ borderRadius: 14, border: "1px solid #d0d5dd", background: "#fff", color: "#111111", padding: "12px 16px", fontWeight: 800, cursor: "pointer" }}>Cancel</button>
-              <button onClick={() => void createGallery(createGalleryKind)} disabled={!clean(createGalleryName) || creatingGallery} style={{ borderRadius: 14, border: 0, background: !clean(createGalleryName) || creatingGallery ? "#d1d5db" : "#111111", color: "#fff", padding: "12px 16px", fontWeight: 800, cursor: !clean(createGalleryName) || creatingGallery ? "not-allowed" : "pointer" }}>{creatingGallery ? "Saving..." : createGalleryKind === "class" ? "Add Class" : "Add Role Gallery"}</button>
+              <button onClick={() => void createGallery(createGalleryKind)} disabled={!clean(createGalleryName) || creatingGallery} style={{ borderRadius: 14, border: 0, background: !clean(createGalleryName) || creatingGallery ? "#d1d5db" : "#111111", color: "#fff", padding: "12px 16px", fontWeight: 800, cursor: !clean(createGalleryName) || creatingGallery ? "not-allowed" : "pointer" }}>{creatingGallery ? "Saving..." : createGalleryKind === "class" ? `Add ${groupLabelSingular}` : "Add Role Gallery"}</button>
             </div>
           </div>
         </div>
@@ -2258,15 +2267,15 @@ export default function SchoolsSchoolDetailPage() {
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "18px 22px", borderBottom: "1px solid #eef2f7" }}>
               <div>
                 <div style={{ fontSize: 24, fontWeight: 900, color: "#111111" }}>Choose Cover Photo</div>
-                <div style={{ color: "#4b5563", marginTop: 4 }}>Pick one synced photo for {coverPickerClassLabel || "this class"}.</div>
+                <div style={{ color: "#4b5563", marginTop: 4 }}>Pick one synced photo for {coverPickerClassLabel || `this ${groupLabelSingular.toLowerCase()}`}.</div>
               </div>
               <button onClick={() => setClassCoverPickerOpen(false)} style={{ border: 0, background: "#fff", cursor: "pointer", color: "#475467", fontSize: 22, lineHeight: 1 }}>×</button>
             </div>
             <div style={{ padding: 22, flex: 1, minHeight: 0, overflow: "auto" }}>
               {classCoverPickerLoading ? (
-                <div style={{ border: "1px dashed #d0d5dd", borderRadius: 16, padding: 24, color: "#4b5563" }}>Loading class photos...</div>
+                <div style={{ border: "1px dashed #d0d5dd", borderRadius: 16, padding: 24, color: "#4b5563" }}>Loading {groupLabelSingular.toLowerCase()} photos...</div>
               ) : classCoverOptions.length === 0 ? (
-                <div style={{ border: "1px dashed #d0d5dd", borderRadius: 16, padding: 24, color: "#4b5563" }}>No synced photos available for class cover selection.</div>
+                <div style={{ border: "1px dashed #d0d5dd", borderRadius: 16, padding: 24, color: "#4b5563" }}>No synced photos available for {groupLabelSingular.toLowerCase()} cover selection.</div>
               ) : (
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(180px,1fr))", gap: 16 }}>
                   {classCoverOptions.map((item) => {

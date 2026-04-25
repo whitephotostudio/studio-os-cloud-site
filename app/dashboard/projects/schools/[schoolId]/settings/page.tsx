@@ -44,6 +44,8 @@ type SchoolRow = {
   screenshot_protection_desktop?: boolean | null;
   screenshot_protection_mobile?: boolean | null;
   screenshot_protection_watermark?: boolean | null;
+  group_label_singular?: string | null;
+  group_label_plural?: string | null;
 };
 type PackageProfileRow = {
   id: string;
@@ -192,6 +194,12 @@ export default function SchoolSettingsPage() {
   const [protectMobile, setProtectMobile] = useState(false);
   const [protectWatermark, setProtectWatermark] = useState(false);
 
+  // 2026-04-26: Per-school grouping label.  Some studios shoot
+  // universities ("Faculty"), elementary ("Grade"), or corporate
+  // ("Department") — defaults to Class / Classes for K-12.
+  const [groupLabelSingular, setGroupLabelSingular] = useState("Class");
+  const [groupLabelPlural, setGroupLabelPlural] = useState("Classes");
+
   const storageKey = `studioos_school_settings_${schoolId}`;
 
   const loadAll = useCallback(async () => {
@@ -268,6 +276,12 @@ export default function SchoolSettingsPage() {
       setProtectDesktop(Boolean(schoolData.screenshot_protection_desktop));
       setProtectMobile(Boolean(schoolData.screenshot_protection_mobile));
       setProtectWatermark(Boolean(schoolData.screenshot_protection_watermark));
+      setGroupLabelSingular(
+        (schoolData.group_label_singular || "").trim() || "Class",
+      );
+      setGroupLabelPlural(
+        (schoolData.group_label_plural || "").trim() || "Classes",
+      );
       setFullGallerySettings(storedSettings);
       setGalleryLanguage(storedSettings.galleryLanguage);
       setExtras({
@@ -338,6 +352,8 @@ export default function SchoolSettingsPage() {
       screenshot_protection_desktop: protectDesktop,
       screenshot_protection_mobile: protectMobile,
       screenshot_protection_watermark: protectWatermark,
+      group_label_singular: groupLabelSingular.trim() || "Class",
+      group_label_plural: groupLabelPlural.trim() || "Classes",
     };
 
     try {
@@ -652,6 +668,51 @@ export default function SchoolSettingsPage() {
                             When a school is in pre-release, parent emails collected from the portal are saved and used for gallery-ready release emails and later school campaigns.
                           </div>
                         </div>
+                      </div>
+                    </div>
+
+                    {/* 2026-04-26: Per-school grouping label.  Universities
+                        call them Faculties, elementary schools call them
+                        Grades, corporate shoots call them Departments.
+                        Defaults to Class / Classes for the K-12 case. */}
+                    <div>
+                      <div className="mb-3 text-[13px] font-semibold text-neutral-800">Grouping Label</div>
+                      <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm leading-6 text-emerald-900">
+                        Tell the system what to call the per-school grouping. Use <b>Faculty / Faculties</b> for universities, <b>Grade / Grades</b> for elementary, or anything that fits — it shows up everywhere a parent or photographer would otherwise see &quot;Class&quot;.
+                      </div>
+                      <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                        <label className="flex flex-col gap-1.5">
+                          <span className="text-xs font-semibold uppercase tracking-[0.08em] text-neutral-600">
+                            Singular
+                          </span>
+                          <input
+                            type="text"
+                            value={groupLabelSingular}
+                            onChange={(e) => setGroupLabelSingular(e.target.value)}
+                            placeholder="Class"
+                            maxLength={64}
+                            className="w-full rounded-xl border border-neutral-200 bg-white px-3.5 py-2.5 text-sm text-neutral-900 outline-none focus:border-neutral-400"
+                          />
+                          <span className="text-[11px] text-neutral-500">
+                            Examples: Class, Faculty, Grade, Department
+                          </span>
+                        </label>
+                        <label className="flex flex-col gap-1.5">
+                          <span className="text-xs font-semibold uppercase tracking-[0.08em] text-neutral-600">
+                            Plural
+                          </span>
+                          <input
+                            type="text"
+                            value={groupLabelPlural}
+                            onChange={(e) => setGroupLabelPlural(e.target.value)}
+                            placeholder="Classes"
+                            maxLength={64}
+                            className="w-full rounded-xl border border-neutral-200 bg-white px-3.5 py-2.5 text-sm text-neutral-900 outline-none focus:border-neutral-400"
+                          />
+                          <span className="text-[11px] text-neutral-500">
+                            Examples: Classes, Faculties, Grades, Departments
+                          </span>
+                        </label>
                       </div>
                     </div>
 

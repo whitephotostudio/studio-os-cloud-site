@@ -24,6 +24,11 @@ type SchoolRow = {
   access_pin?: string | null;
   email_required?: boolean | null;
   gallery_settings?: unknown;
+  screenshot_protection_desktop?: boolean | null;
+  screenshot_protection_mobile?: boolean | null;
+  screenshot_protection_watermark?: boolean | null;
+  group_label_singular?: string | null;
+  group_label_plural?: string | null;
 };
 
 type PackageRow = {
@@ -238,7 +243,7 @@ export async function POST(request: NextRequest) {
     // Step 1: Validate school
     const { data: schoolRow, error: schoolError } = await service
       .from("schools")
-      .select("id,school_name,status,expiration_date,photographer_id,package_profile_id,local_school_id,order_due_date,access_mode,access_pin,email_required,gallery_settings,screenshot_protection_desktop,screenshot_protection_mobile,screenshot_protection_watermark")
+      .select("id,school_name,status,expiration_date,photographer_id,package_profile_id,local_school_id,order_due_date,access_mode,access_pin,email_required,gallery_settings,screenshot_protection_desktop,screenshot_protection_mobile,screenshot_protection_watermark,group_label_singular,group_label_plural")
       .eq("id", selectedSchoolId)
       .maybeSingle();
 
@@ -447,7 +452,7 @@ export async function POST(request: NextRequest) {
         // Resolve the set of school rows needed by gallery-context consumers
         const { data: sameNameFull } = await service
           .from("schools")
-          .select("id,school_name,photographer_id,package_profile_id,local_school_id,status,order_due_date,expiration_date,access_mode,access_pin,email_required,gallery_settings")
+          .select("id,school_name,photographer_id,package_profile_id,local_school_id,status,order_due_date,expiration_date,access_mode,access_pin,email_required,gallery_settings,group_label_singular,group_label_plural")
           .ilike("school_name", selectedSchoolName)
           .order("created_at", { ascending: false });
 
@@ -472,6 +477,20 @@ export async function POST(request: NextRequest) {
           ),
         };
 
+        // 2026-04-26: per-school grouping label, mirrored from gallery-
+        // context so the prefetch cache lands fresh on the parents page.
+        const schoolForLabel = selectedSchool as Record<string, unknown>;
+        const groupLabel = {
+          singular:
+            (typeof schoolForLabel.group_label_singular === "string" &&
+              (schoolForLabel.group_label_singular as string).trim()) ||
+            "Class",
+          plural:
+            (typeof schoolForLabel.group_label_plural === "string" &&
+              (schoolForLabel.group_label_plural as string).trim()) ||
+            "Classes",
+        };
+
         galleryContext = {
           ok: true,
           currentSchool: selectedSchool,
@@ -491,6 +510,7 @@ export async function POST(request: NextRequest) {
           watermarkLogoUrl,
           studioInfo,
           screenshotProtection,
+          groupLabel,
         };
       } catch (prefetchErr) {
         // Prefetch failure is non-fatal — gallery page will fetch on its own
