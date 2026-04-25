@@ -3185,7 +3185,17 @@ function CompositeCanvas({
                     inset: 0,
                     width: "100%",
                     height: "100%",
-                    objectFit: "cover",
+                    // contain (not cover) so the person cutout is always
+                    // shown at their true aspect ratio.  cover would
+                    // distort when the wrapper's aspect doesn't perfectly
+                    // match the source photo (e.g. when max-height clamps
+                    // a portrait wrapper into a wider-than-tall box).
+                    // The backdrop above still uses cover to fill the
+                    // background; the foreground only fills the bit it
+                    // actually covers, with transparent margin where
+                    // there's no person — exactly what the alpha cutout
+                    // implies anyway.
+                    objectFit: "contain",
                     display: "block",
                     userSelect: "none",
                     pointerEvents: "none",
