@@ -3047,23 +3047,25 @@ function CompositeCanvas({
   // sometimes producing a landscape box for a portrait photo, which
   // forced `object-fit:cover` on the foreground cutout to crop/stretch.
   //
-  // New rule: use `aspect-ratio` as the single source of truth for the
-  // wrapper's shape, and let BOTH max-width and max-height shrink us
-  // down.  We set `height: "auto"` explicitly so aspect-ratio actually
-  // drives the derived dimension, and `width: auto` so height can
-  // instead drive the derived width when the parent is too short.
+  // Wrapper sizing: keep width:100% so the box always has a defined
+  // dimension (without it, the absolute-positioned children inside
+  // collapse the wrapper to 0×0, which is what produced the "viewer
+  // goes black" regression).  height:auto + aspect-ratio derives the
+  // height from the photo's natural ratio.  maxWidth caps so we never
+  // upscale beyond the source resolution, and maxHeight is a soft clamp
+  // — when the viewport is too short the wrapper just gets letterboxed
+  // shorter and the inner img/canvas uses object-fit:contain to fit.
   const wrapperStyle: React.CSSProperties = responsive
     ? {
         position: "relative",
-        width: "auto",
+        width: "100%",
         height: "auto",
-        maxWidth: `min(100%, ${width}px)`,
+        maxWidth: `${width}px`,
         maxHeight: "100%",
         aspectRatio: `${width} / ${height}`,
         flexShrink: 0,
         display: "block",
         alignSelf: "center",
-        margin: "auto",
         ...style,
       }
     : { position: "relative", width, height, ...style };
