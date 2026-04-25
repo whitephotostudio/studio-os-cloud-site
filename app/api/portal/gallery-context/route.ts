@@ -345,7 +345,7 @@ export async function POST(request: NextRequest) {
       const [packagesResult, backdropsResult, photographerResult] = await Promise.all([
         service
           .from("packages")
-          .select("id,name,description,price_cents,items,profile_id,category")
+          .select("id,name,description,price_cents,items,profile_id,category,is_retouch_addon")
           .eq("photographer_id", activeSchool.photographer_id)
           .eq("active", true)
           .order("price_cents", { ascending: true }),

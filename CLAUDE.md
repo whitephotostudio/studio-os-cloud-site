@@ -2,7 +2,7 @@
 
 Checkpoint for Claude so a context reset doesn't lose the thread. Update as work progresses.
 
-Last updated: 2026-04-26 morning (everything below is one big uncommitted bundle).
+Last updated: 2026-04-26 afternoon (retouching upsell modal added on top of the morning bundle — still one big uncommitted/partially-pushed batch).
 
 ## 🚀 PUSH SCRIPT (run from Mac)
 
@@ -10,18 +10,44 @@ Last updated: 2026-04-26 morning (everything below is one big uncommitted bundle
 cd ~/Projects/studio-os-cloud-site
 rm -f .git/HEAD.lock .git/index.lock
 git add -A
-git commit -m "feat: order receipts + history tab + reorder + landscape mockup fix + flash kill + year-aware search + prefetch payload fix"
+git commit -m "feat: retouching upsell modal + order receipts + history + reorder + landscape mockup fix + flash kill + year-aware search + prefetch payload fix"
 git push origin main
 ```
 
 After Vercel redeploys (~2 min):
 - Hard-refresh (Cmd+Shift+R) once to bust the JS bundle cache
+- Test retouch upsell: open any gallery → add anything to cart (digital, prints, package, canvas — all of them) → click "Continue to Secure Checkout" → modal pops with retouching add-on cards explicitly clarifying "retouching is an optional service, not a digital file delivery" → click "No thanks" → ends up on Stripe; OR click an add-on card → cart adds the line → click "Continue to Secure Checkout" again → goes straight to Stripe (modal does NOT re-pop)
+- Confirm retouching packages have disappeared from the main grid (Specialty tab) — they only surface via the modal now
 - Test order flow: place order in Landscape → confirm Wall/Desk previews are wide → receipt email arrives with thumbnails → click "View my orders" in email → lands on Orders tab → click Reorder → drawer pops at checkout with same items
 - Test on a fresh PIN session (incognito or sign-out): toggle should be active immediately, screenshot protection should engage immediately, no refresh required
 
 ---
 
-## What's in the bundle (2026-04-26 morning)
+## What's in the bundle (2026-04-26 morning + afternoon)
+
+### Retouching upsell modal at checkout (afternoon addition)
+
+Real-world driver: a parent called the studio claiming she'd ordered "digital photo files" but only got a retouching invoice — she'd actually clicked the "Digital Retouching" specialty package thinking it was a digital download.  Same shape happened multiple times.  Fix: HIDE retouch packages from the main grid entirely, surface them ONLY via an upsell modal that pops up on every "Continue to Secure Checkout" click — with explicit copy clarifying retouching is a SERVICE, not digital files.
+
+- **DB:** migration `supabase/migrations/20260425010000_add_packages_is_retouch_addon.sql` (NEW) — adds `packages.is_retouch_addon boolean NOT NULL DEFAULT false`.  An auto-flag UPDATE at the end marks existing `Retouching - 1 Image` ($10.67) and `Retouching - Multi Image` ($35.67) packages.  Future retouch packages get the flag set via the dashboard tickbox (still TODO — for now it's a SQL UPDATE).  Already applied live to `bwqhzczxoevouiondjak`.
+- **API surface:** the 3 portal context routes now include `is_retouch_addon` in their package SELECTs:
+  - `app/api/portal/gallery-context/route.ts`
+  - `app/api/portal/school-access/route.ts` (the LoginForm prefetch — important; without this, parents on first session would see retouching in the grid until they refreshed)
+  - `app/api/portal/event-gallery-context/route.ts`
+- **Type extended:** `PackageRow.is_retouch_addon?: boolean` in `app/parents/[pin]/page.tsx`.
+- **Grid filter:** `storefrontPackages` (the memo that backs the gallery's product grid) now filters out `pkg.is_retouch_addon === true`.  Retouching disappears from Specialty entirely on the main grid.
+- **Add-on memo:** `retouchAddonPackages = packages.filter(pkg => pkg.is_retouch_addon === true)` — the modal renders exclusively from this list.
+- **Intercept in `handlePlaceOrder`:** before the form goes to Stripe, if (a) at least one retouch addon exists, (b) the parent hasn't already shown/dismissed the modal this submit cycle, and (c) no retouch line is already in the cart, we `setRetouchUpsellOpen(true)` and `return` — preventing the Stripe redirect.  After parent picks Add or No-thanks, `retouchUpsellShown` is true, so a second click on Continue goes straight through.
+- **Modal component:** `RetouchUpsellModal` (defined inline at the bottom of `app/parents/[pin]/page.tsx`).  Portaled to `document.body` at zIndex 100000 so it sits above the cart drawer + watermark overlay.  Backdrop click + Escape key + close-X all dismiss.  Body scroll locked while open.  Headline "Want Professional Retouching?" + Sparkles icon.  Yellow callout banner explicitly clarifies retouching is "an optional service" and "*not* a digital file delivery."  One card per retouch addon package showing name + description + price + green Add badge.  Bottom button: "No thanks, continue to payment."
+- **Add-to-cart helper:** `addRetouchAddonToCart(pkg)` builds a `CartLineItem` with `slots: []`, no backdrop, qty 1, lane-tagged from `currentLane`, then closes the modal.  Server-side: empty-slots path in both `app/api/portal/orders/create/route.ts` (line ~858 "Physical package with no slots yet") and `app/api/portal/orders/create-combined/route.ts` (line ~768) handles this fallback by inserting a single charge line.
+- **Reset:** `continueShoppingAfterCheckout` now also resets `retouchUpsellOpen` and `retouchUpsellShown` so a parent who comes back to place a brand-new order after paying gets the upsell again.
+
+Typecheck clean (`npx tsc --noEmit` → exit 0) after all edits.
+
+Followups:
+1. Add a "Retouching add-on" tickbox to `/dashboard/packages` so photographers can flag/unflag without SQL.  Today they can manually `UPDATE packages SET is_retouch_addon = true WHERE name ILIKE 'retouch%'`.
+2. Consider an A/B variant: pre-select one of the retouch options as a "recommended" add-on with subtle highlighting.  Skip for v1 — bare two-button modal is least pushy.
+3. The modal currently doesn't re-pop after parent dismisses; that's intentional to avoid annoying them mid-checkout, but could be revisited if data shows attach rates are low.
 
 ### Order receipts + Orders tab + reorder
 

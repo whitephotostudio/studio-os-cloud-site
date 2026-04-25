@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, SyntheticEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import {
   ArrowLeft,
@@ -148,6 +149,11 @@ type PackageRow = {
   items?: PackageItemValue[] | null;
   profile_id?: string | null;
   category?: string | null;
+  /** 2026-04-26: when true, this package is a retouching ADD-ON.  It's
+   *  hidden from the main package grid and only surfaced via the upsell
+   *  modal at checkout — explicit clarification that retouching is a
+   *  service, not digital photo files. */
+  is_retouch_addon?: boolean;
 };
 
 type CompositeMediaRow = {
@@ -3714,6 +3720,17 @@ export default function ParentGalleryPage() {
   const [orderId, setOrderId] = useState("");
   const [placed, setPlaced] = useState(false);
 
+  // 2026-04-26: Retouching upsell modal.  Pops up on every "Continue to
+  // Secure Checkout" click — explicitly clarifies retouching is a SERVICE
+  // (not digital files).  Parents had been buying "Digital Retouching"
+  // thinking they were buying digital photo files.  See migration
+  // 20260425010000_add_packages_is_retouch_addon.sql.
+  const [retouchUpsellOpen, setRetouchUpsellOpen] = useState(false);
+  // Once the modal has been shown OR a retouch addon is in the cart, we
+  // don't pester the parent again on subsequent submit clicks.  Reset on
+  // cart clear / continueShoppingAfterCheckout.
+  const [retouchUpsellShown, setRetouchUpsellShown] = useState(false);
+
   // Pre-release capture
   const [captureEmail, setCaptureEmail] = useState("");
   const [captureBusy, setCaptureBusy] = useState(false);
@@ -6506,9 +6523,21 @@ export default function ParentGalleryPage() {
     [compositeSelectedImage, visibleImages],
   );
   const storefrontPackages = useMemo(
-    () =>
-      isCompositeSelection ? packages.filter((pkg) => isCompositeEligiblePackage(pkg)) : packages,
+    () => {
+      // 2026-04-26: hide retouching add-on packages from the main grid.
+      // They only surface via the upsell modal at checkout, with explicit
+      // copy clarifying that retouching is a SERVICE, not digital files.
+      const visible = packages.filter((pkg) => !pkg.is_retouch_addon);
+      return isCompositeSelection
+        ? visible.filter((pkg) => isCompositeEligiblePackage(pkg))
+        : visible;
+    },
     [isCompositeSelection, packages],
+  );
+  // The retouching add-on packages, surfaced ONLY via the upsell modal.
+  const retouchAddonPackages = useMemo(
+    () => packages.filter((pkg) => pkg.is_retouch_addon === true),
+    [packages],
   );
   const packagesInCategory = storefrontPackages.filter(
     (p) => getCategory(p) === activeCategoryKey
@@ -6862,6 +6891,52 @@ export default function ParentGalleryPage() {
     setCartItems((prev) => prev.filter((item) => item.id !== cartItemId));
   }
 
+  // 2026-04-26: Retouching upsell modal — add a retouch add-on package to
+  // the cart as a service line item.  No slots, no backdrop, no image —
+  // it's a SERVICE.  We use packageSubtotalCents = price_cents (qty 1)
+  // so the receipt + checkout math line up with everything else.
+  function addRetouchAddonToCart(pkg: PackageRow) {
+    const itemId =
+      typeof crypto !== "undefined" && "randomUUID" in crypto
+        ? crypto.randomUUID()
+        : `retouch_${Date.now()}_${cartItems.length + 1}`;
+    const line: CartLineItem = {
+      id: itemId,
+      packageId: pkg.id,
+      packageName: pkg.name,
+      category: getCategory(pkg) || "specialty",
+      quantity: 1,
+      packageSubtotalCents: pkg.price_cents,
+      backdropAddOnCents: 0,
+      lineTotalCents: pkg.price_cents,
+      slots: [],
+      selectedImageUrl: null,
+      isCompositeOrder: false,
+      compositeTitle: null,
+      backdrop: null,
+      orientation: "portrait",
+      laneKey: currentLane?.laneKey,
+      laneSchoolId: currentLane?.schoolId,
+      laneStudentId: currentLane?.studentId,
+      lanePin: currentLane?.pin,
+      laneEmail: currentLane?.email,
+      laneSchoolName: currentLane?.schoolName,
+      laneStudentName: currentLane?.studentName,
+    };
+    setCartItems((prev) => [...prev, line]);
+    setRetouchUpsellShown(true);
+    setRetouchUpsellOpen(false);
+  }
+
+  // Parent picked "No thanks, continue to payment" — record that we've
+  // shown the upsell so we don't pester them again on the next click,
+  // close the modal, and re-fire the form's submit handler so they end up
+  // on Stripe.
+  function dismissRetouchUpsell() {
+    setRetouchUpsellShown(true);
+    setRetouchUpsellOpen(false);
+  }
+
   function continueShoppingAfterCheckout() {
     setPlaced(false);
     setOrderId("");
@@ -6871,6 +6946,10 @@ export default function ParentGalleryPage() {
     resetCurrentSelection();
     setDrawerOpen(false);
     setBackdropPickerOpen(false);
+    // Reset the upsell state so a parent who returns to the gallery to
+    // place a brand-new order gets shown the retouching upsell again.
+    setRetouchUpsellOpen(false);
+    setRetouchUpsellShown(false);
     // Phase 1d: wipe the cross-gallery combine cart now that the order
     // has been placed.  Lanes + items both go.  Without this, hitting the
     // browser back button after checkout would resurrect the just-paid
@@ -7055,6 +7134,31 @@ export default function ParentGalleryPage() {
     }
     if (!parentEmail.trim()) {
       setOrderError("Email is required.");
+      return;
+    }
+
+    // 2026-04-26: Retouching upsell intercept.  Before we send the parent
+    // to Stripe, surface the retouching add-on modal — UNLESS we've already
+    // shown it on this submit cycle, OR a retouch line is already in the
+    // cart, OR the studio has no retouch addons configured.  This is the
+    // explicit clarification step that retouching is a SERVICE, not digital
+    // files (parents kept buying "Digital Retouching" thinking they were
+    // getting digital photos).
+    const hasRetouchInCart =
+      cartItems.some((item) =>
+        retouchAddonPackages.some((rp) => rp.id === item.packageId),
+      ) ||
+      (currentDraftCartItem
+        ? retouchAddonPackages.some(
+            (rp) => rp.id === currentDraftCartItem.packageId,
+          )
+        : false);
+    if (
+      retouchAddonPackages.length > 0 &&
+      !retouchUpsellShown &&
+      !hasRetouchInCart
+    ) {
+      setRetouchUpsellOpen(true);
       return;
     }
 
@@ -8173,6 +8277,19 @@ export default function ParentGalleryPage() {
           ✓ {combineToast}
         </div>
       ) : null}
+
+      {/* 2026-04-26: Retouching upsell modal.
+          Pops up on every "Continue to Secure Checkout" click — explicitly
+          clarifies retouching is a SERVICE (not digital files).  Parents
+          had been buying "Digital Retouching" thinking they were buying
+          digital photo files.  Portaled to document.body so it sits above
+          the cart drawer + screenshot watermark overlays. */}
+      <RetouchUpsellModal
+        open={retouchUpsellOpen && retouchAddonPackages.length > 0}
+        packages={retouchAddonPackages}
+        onAdd={addRetouchAddonToCart}
+        onSkip={dismissRetouchUpsell}
+      />
 
       <div
         style={{
@@ -12715,5 +12832,280 @@ export default function ParentGalleryPage() {
         )}
       </div>
     </>
+  );
+}
+
+// 2026-04-26: Retouching upsell modal.  Surfaces the studio's retouching
+// add-on packages with EXPLICIT clarification that they're a SERVICE, not
+// digital files.  Rendered via createPortal so it stacks above the cart
+// drawer and screenshot watermark overlays.  Closes on backdrop click,
+// Escape key, or any of the action buttons.
+function RetouchUpsellModal({
+  open,
+  packages,
+  onAdd,
+  onSkip,
+}: {
+  open: boolean;
+  packages: PackageRow[];
+  onAdd: (pkg: PackageRow) => void;
+  onSkip: () => void;
+}) {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  // Body scroll lock + Escape key dismiss while the modal is open.
+  useEffect(() => {
+    if (!open) return;
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onSkip();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => {
+      document.body.style.overflow = previous;
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [open, onSkip]);
+
+  if (!mounted || typeof document === "undefined") return null;
+  if (!open) return null;
+  if (packages.length === 0) return null;
+
+  return createPortal(
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="retouch-upsell-title"
+      onClick={onSkip}
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(7, 9, 14, 0.78)",
+        backdropFilter: "blur(6px)",
+        WebkitBackdropFilter: "blur(6px)",
+        zIndex: 100000,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: 20,
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          width: "100%",
+          maxWidth: 520,
+          background: "linear-gradient(180deg, #161616 0%, #0d0d0d 100%)",
+          color: "#fff",
+          borderRadius: 22,
+          border: "1px solid #2a2a2a",
+          boxShadow: "0 24px 80px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.03) inset",
+          padding: "26px 26px 22px",
+          maxHeight: "90vh",
+          overflowY: "auto",
+        }}
+      >
+        {/* Close (top right) */}
+        <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 4 }}>
+          <button
+            type="button"
+            onClick={onSkip}
+            aria-label="Close retouching upsell"
+            style={{
+              background: "transparent",
+              border: "none",
+              color: "#9ca3af",
+              cursor: "pointer",
+              padding: 4,
+              lineHeight: 1,
+              display: "flex",
+            }}
+          >
+            <X size={20} />
+          </button>
+        </div>
+
+        <div style={{ textAlign: "center", marginBottom: 18 }}>
+          <div
+            aria-hidden
+            style={{
+              fontSize: 38,
+              lineHeight: 1,
+              marginBottom: 10,
+            }}
+          >
+            <Sparkles size={42} color="#facc15" strokeWidth={2.4} />
+          </div>
+          <h2
+            id="retouch-upsell-title"
+            style={{
+              margin: 0,
+              fontSize: 22,
+              fontWeight: 800,
+              letterSpacing: "-0.01em",
+              color: "#fff",
+            }}
+          >
+            Want Professional Retouching?
+          </h2>
+          <p
+            style={{
+              margin: "10px auto 0",
+              fontSize: 13.5,
+              lineHeight: 1.55,
+              color: "#bdbdbd",
+              maxWidth: 420,
+            }}
+          >
+            Smooth skin, brighten eyes, and remove blemishes — done by hand
+            by our retouching team.
+          </p>
+        </div>
+
+        {/* Important clarification banner — retouching is a SERVICE */}
+        <div
+          role="note"
+          style={{
+            background: "rgba(250, 204, 21, 0.10)",
+            border: "1px solid rgba(250, 204, 21, 0.35)",
+            borderRadius: 12,
+            padding: "12px 14px",
+            marginBottom: 16,
+            fontSize: 12.5,
+            lineHeight: 1.55,
+            color: "#fde68a",
+            textAlign: "center",
+          }}
+        >
+          <strong style={{ color: "#fff8e0" }}>Heads up:</strong>{" "}
+          retouching is an{" "}
+          <strong style={{ color: "#fff8e0" }}>optional service</strong>{" "}
+          our team performs on the photos you ordered. It’s{" "}
+          <em>not</em> a digital file delivery.
+        </div>
+
+        {/* Add-on cards */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 14 }}>
+          {packages.map((pkg) => (
+            <button
+              key={pkg.id}
+              type="button"
+              onClick={() => onAdd(pkg)}
+              style={{
+                width: "100%",
+                textAlign: "left",
+                background: "#1d1d1d",
+                border: "1px solid #2f2f2f",
+                borderRadius: 14,
+                padding: "14px 16px",
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: 14,
+                color: "#fff",
+                transition: "background 0.15s, border-color 0.15s, transform 0.05s",
+              }}
+              onMouseDown={(e) => {
+                (e.currentTarget as HTMLButtonElement).style.transform = "scale(0.99)";
+              }}
+              onMouseUp={(e) => {
+                (e.currentTarget as HTMLButtonElement).style.transform = "scale(1)";
+              }}
+              onMouseEnter={(e) => {
+                (e.currentTarget as HTMLButtonElement).style.background = "#252525";
+                (e.currentTarget as HTMLButtonElement).style.borderColor = "#3a3a3a";
+              }}
+              onMouseLeave={(e) => {
+                (e.currentTarget as HTMLButtonElement).style.background = "#1d1d1d";
+                (e.currentTarget as HTMLButtonElement).style.borderColor = "#2f2f2f";
+              }}
+            >
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <div
+                  style={{
+                    fontSize: 14,
+                    fontWeight: 800,
+                    color: "#fff",
+                    marginBottom: 3,
+                  }}
+                >
+                  {pkg.name}
+                </div>
+                {pkg.description ? (
+                  <div
+                    style={{
+                      fontSize: 12,
+                      color: "#9ca3af",
+                      lineHeight: 1.5,
+                      maxWidth: 320,
+                    }}
+                  >
+                    {pkg.description}
+                  </div>
+                ) : null}
+              </div>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 10,
+                  flexShrink: 0,
+                }}
+              >
+                <div
+                  style={{
+                    fontSize: 16,
+                    fontWeight: 800,
+                    color: "#fff",
+                  }}
+                >
+                  ${(pkg.price_cents / 100).toFixed(2)}
+                </div>
+                <div
+                  aria-hidden
+                  style={{
+                    background: "#22c55e",
+                    color: "#04130a",
+                    fontSize: 11,
+                    fontWeight: 800,
+                    letterSpacing: "0.04em",
+                    textTransform: "uppercase",
+                    padding: "6px 10px",
+                    borderRadius: 999,
+                  }}
+                >
+                  Add
+                </div>
+              </div>
+            </button>
+          ))}
+        </div>
+
+        {/* No thanks */}
+        <button
+          type="button"
+          onClick={onSkip}
+          style={{
+            width: "100%",
+            background: "transparent",
+            color: "#9ca3af",
+            border: "1px solid #2f2f2f",
+            borderRadius: 999,
+            padding: "12px 14px",
+            fontSize: 13,
+            fontWeight: 700,
+            cursor: "pointer",
+          }}
+        >
+          No thanks, continue to payment
+        </button>
+      </div>
+    </div>,
+    document.body,
   );
 }

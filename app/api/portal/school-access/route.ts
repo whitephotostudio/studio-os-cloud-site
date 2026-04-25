@@ -359,7 +359,7 @@ export async function POST(request: NextRequest) {
               .in("school_id", candidateSchoolIds),
             service
               .from("packages")
-              .select("id,name,description,price_cents,items,profile_id,category")
+              .select("id,name,description,price_cents,items,profile_id,category,is_retouch_addon")
               .eq("photographer_id", selectedSchool.photographer_id)
               .eq("active", true)
               .order("price_cents", { ascending: true }),
