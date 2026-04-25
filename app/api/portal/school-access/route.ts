@@ -238,7 +238,7 @@ export async function POST(request: NextRequest) {
     // Step 1: Validate school
     const { data: schoolRow, error: schoolError } = await service
       .from("schools")
-      .select("id,school_name,status,expiration_date,photographer_id,package_profile_id,local_school_id,order_due_date,access_mode,access_pin,email_required,gallery_settings")
+      .select("id,school_name,status,expiration_date,photographer_id,package_profile_id,local_school_id,order_due_date,access_mode,access_pin,email_required,gallery_settings,screenshot_protection_desktop,screenshot_protection_mobile,screenshot_protection_watermark")
       .eq("id", selectedSchoolId)
       .maybeSingle();
 
@@ -365,7 +365,7 @@ export async function POST(request: NextRequest) {
               .order("price_cents", { ascending: true }),
             service
               .from("backdrop_catalog")
-              .select("id,name,image_url,thumbnail_url,tier,price_cents,category,tags,sort_order")
+              .select("id,name,image_url,thumbnail_url,tier,price_cents,category,tags,sort_order,supports_landscape")
               .eq("photographer_id", selectedSchool.photographer_id)
               .eq("active", true)
               .order("sort_order", { ascending: true }),
@@ -451,6 +451,27 @@ export async function POST(request: NextRequest) {
           .ilike("school_name", selectedSchoolName)
           .order("created_at", { ascending: false });
 
+        // 2026-04-26: Mirror gallery-context's response shape for the
+        // screenshot protection flags.  Without this the prefetch
+        // payload would be missing them, and the parents page (which
+        // reads from the cache before falling through to its own
+        // gallery-context call) would default the flags to all-false.
+        // Symptom Harout flagged: "screen protection doesn't work till
+        // I refresh Safari" — refresh consumed the cache and forced a
+        // fresh fetch that DID include the flags.  Same root cause as
+        // the missing supports_landscape on backdrops above.
+        const screenshotProtection = {
+          desktop: Boolean(
+            (selectedSchool as Record<string, unknown>).screenshot_protection_desktop,
+          ),
+          mobile: Boolean(
+            (selectedSchool as Record<string, unknown>).screenshot_protection_mobile,
+          ),
+          watermark: Boolean(
+            (selectedSchool as Record<string, unknown>).screenshot_protection_watermark,
+          ),
+        };
+
         galleryContext = {
           ok: true,
           currentSchool: selectedSchool,
@@ -469,6 +490,7 @@ export async function POST(request: NextRequest) {
           watermarkEnabled,
           watermarkLogoUrl,
           studioInfo,
+          screenshotProtection,
         };
       } catch (prefetchErr) {
         // Prefetch failure is non-fatal — gallery page will fetch on its own
