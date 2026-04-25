@@ -3055,6 +3055,23 @@ function CompositeCanvas({
   // upscale beyond the source resolution, and maxHeight is a soft clamp
   // — when the viewport is too short the wrapper just gets letterboxed
   // shorter and the inner img/canvas uses object-fit:contain to fit.
+  // When we have a backdrop, paint it as the wrapper background — when
+  // the canvas/DOM layer object-fit:contains a portrait composite into a
+  // wider wrapper, we'd otherwise get black bars on the sides.  Painting
+  // the backdrop image behind makes those side strips show the SAME
+  // backdrop scenery the composite uses, so the visual reads as one
+  // seamless backdrop edge-to-edge (matching what blur mode already
+  // achieves via its DOM layer).  Only applies in canvas mode — the DOM
+  // blur path renders its own backdrop layer over this anyway.
+  const wrapperBackdropFill = responsive && nextBackdropSrc && !useDomBlurLayer
+    ? {
+        backgroundImage: `url(${nextBackdropSrc})`,
+        backgroundSize: "cover",
+        backgroundPosition: "center",
+        backgroundRepeat: "no-repeat",
+      }
+    : {};
+
   const wrapperStyle: React.CSSProperties = responsive
     ? {
         position: "relative",
@@ -3066,6 +3083,9 @@ function CompositeCanvas({
         flexShrink: 0,
         display: "block",
         alignSelf: "center",
+        borderRadius: 6,
+        overflow: "hidden",
+        ...wrapperBackdropFill,
         ...style,
       }
     : { position: "relative", width, height, ...style };
