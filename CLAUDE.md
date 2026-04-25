@@ -2,7 +2,7 @@
 
 Checkpoint for Claude so a context reset doesn't lose the thread. Update as work progresses.
 
-Last updated: 2026-04-26 evening (retouching upsell modal + Flutter "Reveal hidden buttons" kid-proof toggle + per-school group label "Class / Faculty / Grade" — still one big uncommitted/partially-pushed batch on the web side, plus a Flutter rebuild required).
+Last updated: 2026-04-26 late evening (retouching upsell modal + Flutter "Reveal hidden buttons" kid-proof toggle + per-school group label "Class / Faculty / Grade" + Flutter Import Hub for selective fresh-computer pull — still one big uncommitted/partially-pushed batch on the web side, plus a Flutter rebuild required).
 
 ## 🔧 FLUTTER REBUILD REQUIRED
 
@@ -14,6 +14,38 @@ flutter build macos
 ```
 
 Then relaunch Studio OS.app from `~/Downloads/Whitephoto_Studio_App_MVP_Source/build/macos/Build/Products/Release/Studio OS.app`.
+
+### Flutter: Import Hub — selective fresh-computer pull (NEW, 2026-04-26 evening)
+
+Real-world driver: photographer buys a new computer, signs in, and wants to continue working on schools/projects that were uploaded from another machine.  The old "Pull from Cloud" only pulled school metadata (no roster, no photos).  Now there's a full **Import Hub** screen with three tabs (Cloud / SD Card / Folder).  Cloud tab is fully wired this session; SD + Folder are scaffolded with "coming soon" states for next session.
+
+- **New file:** `lib/screens/import_hub_screen.dart` — modern, elegant tabbed UI.  Header pill, search bar, filter chips (All / Schools / Projects / Not local / Already local), clean inventory cards with checkbox + type badge + roster count + photo count, sticky bottom action bar showing N selected and a Pull button.  During pull the bottom bar flips to a dark progress strip with the current school name + phase + photo counter.
+- **New methods on `CloudSyncService`** (in `lib/services/cloud_sync_service.dart` after `pullAllFromCloud`):
+  - `fetchCloudInventory()` — single round-trip that returns the photographer's full schools + projects list with roster counts (students.school_id + teachers.school_id) and photo counts (students.photo_url for schools, media.project_id for projects).  Resolves "is this already local?" against `LocalStore.getCloudSchoolId` for cheap hydration of the "Already local" badge.
+  - `pullSchoolCompletePackage({cloudSchoolId, existingLocalSchoolId, onProgress})` — orchestrates the per-school pull pipeline: school metadata → latest roster snapshot via `restoreCloudRosterSnapshot` → student photos via `_downloadSchoolStudentPhotos`.  Skips photos already on disk so partial pulls resume cleanly.  Calls `onProgress(phase, done, total)` so the UI shows a live photo counter.
+  - `_downloadSchoolStudentPhotos(...)` — iterates `students` rows for the school, downloads each `photo_url` via HttpClient, writes to `~/CaptureBase/{schoolName}/{className}/{Last_First_ExtId}/{filename}`.  Defensive — empty URLs, missing class names, duplicates all skip cleanly.
+  - `_downloadSchoolMediaToLocal(...)` — stub for now (the `media` table doesn't have a `school_id` column; school-level extras like class composites get regenerated locally by the composite builder).
+- **Conflict prompt:** when a ticked item already exists locally (`row.localExists == true`), the pull pauses and shows a 3-button modal — Cancel pull / Skip this one / Overwrite local.  Default behavior chosen by Harout: "Ask me each time" so unpushed local edits are never silently destroyed.
+- **Hookup:** `lib/screens/cloud_screen.dart` — added a prominent dark "Import Hub" `FilledButton.icon` in the top toolbar, next to Upload + Refresh.  Opens the new screen as a fullscreen dialog (with route).  On dismiss the cloud screen reloads so any newly-pulled schools surface in the grid.
+- **What ships unblocked:** photographer signs into a fresh Mac, hits Studio OS → Cloud → Import Hub → ticks "York University" → pull runs (metadata, then roster, then photos) with live progress, ends with a summary dialog showing what succeeded.  Composites + order edits work right after.
+- **Design doc:** `docs/design/flutter-cloud-browser.md` (renamed in spirit to "Import Hub" — covers the SD + Folder spec for next session).
+
+Followups for next session (already scoped in design doc):
+1. **SD Card tab:** auto-detect plugged-in volumes (`/Volumes/` on macOS, drive letter scan on Windows, `/media/<user>/` on Linux), show a card per detected card with photo count + size, "Import to school..." action that copies into the chosen school+class folder.
+2. **Folder tab:** `file_picker` invocation for any folder, recursive photo scan, preview thumbnails, same target picker as SD.
+3. **nobg PNG download:** today the school photo download brings originals only — composites built on a fresh computer still need a re-run of background removal.  Optional polish: when pulling a school, also fetch any `nobg-photos/...` keys associated with the student photo paths.
+4. **Conflict merge mode:** today the 3-button prompt offers Overwrite / Skip / Cancel.  A 4th option ("Merge: cloud wins on new rows, keep local rows that exist") would preserve unpushed local edits while still pulling new students added on the other computer.
+
+Build to activate (Flutter source isn't in the git repo, so the web push won't pick this up):
+
+```
+cd ~/Downloads/Whitephoto_Studio_App_MVP_Source
+flutter build macos
+```
+
+Then relaunch Studio OS.app from `~/Downloads/Whitephoto_Studio_App_MVP_Source/build/macos/Build/Products/Release/Studio OS.app`.
+
+Smoke test: open Studio OS → bottom tab "Cloud" → click the new dark "Import Hub" button in the top toolbar → confirm tabbed screen appears with "From Cloud / From SD Card / From Folder" tabs.  Cloud tab should load schools + projects.  SD Card + Folder tabs show the "coming soon" panel.
 
 ### Flutter: kid-proof admin screen ("Reveal hidden buttons")
 
