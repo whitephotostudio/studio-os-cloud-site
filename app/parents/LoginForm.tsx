@@ -1341,18 +1341,25 @@ function LostPinSection({
               style={miniInputStyle}
             />
           </div>
-          <select
-            value={schoolId}
-            onChange={(e) => setSchoolId(e.target.value)}
-            style={{ ...miniInputStyle, marginTop: 8, width: "100%" }}
-          >
-            <option value="">Pick a school…</option>
-            {schools.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.school_name}
-              </option>
-            ))}
-          </select>
+          {/* Same type-ahead combobox the main school login uses, so a
+              parent staring at 80 schools can type 3 letters to find theirs
+              instead of scrolling.  Mounts in compact mode (smaller padding,
+              smaller font) so it fits the dense recovery card. */}
+          <div style={{ marginTop: 8 }}>
+            <SearchableSelect<SchoolRow>
+              value={schoolId}
+              onChange={(id) => setSchoolId(id)}
+              options={schools.map((s) => ({
+                id: s.id,
+                label: s.school_name,
+                row: s,
+              }))}
+              placeholder="Search your school…"
+              emptyHint="No schools match that search."
+              inputStyle={miniInputStyle}
+              ariaLabel="School"
+            />
+          </div>
           <input
             type="email"
             value={email}
