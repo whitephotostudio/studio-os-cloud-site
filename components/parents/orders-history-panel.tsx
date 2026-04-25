@@ -24,6 +24,8 @@ export type OrderHistoryRow = {
   paidAt: string | null;
   status: string;
   totalCents: number;
+  subtotalCents?: number | null;
+  taxCents?: number | null;
   currency: string;
   packageName: string | null;
   items: OrderHistoryItem[];
@@ -33,6 +35,10 @@ export type OrderHistoryRow = {
   studentId: string | null;
   orderGroupId: string | null;
   studentName: string | null;
+  parentName?: string | null;
+  parentEmail?: string | null;
+  parentPhone?: string | null;
+  specialNotes?: string | null;
 };
 
 type Props = {
@@ -48,6 +54,11 @@ type Props = {
     border: string;
     surface: string;
   };
+  /** Compact viewport flag from the parent page's useIsMobile hook. */
+  compact?: boolean;
+  /** Called when the panel discovers how many orders this parent has,
+   *  so the parent page can render an "(N)" badge on the tab label. */
+  onCountChange?: (count: number) => void;
   /** Called when a parent clicks Reorder on a row.  Parent page
    *  re-hydrates the cart from the cart_snapshot JSON and switches to
    *  the checkout drawer. */
@@ -92,11 +103,16 @@ export default function OrdersHistoryPanel({
   schoolId,
   projectId,
   tone,
+  compact = false,
+  onCountChange,
   onReorder,
 }: Props) {
   const [orders, setOrders] = useState<OrderHistoryRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Track which order card the parent has expanded.  Single-select so the
+  // panel doesn't bloat into 6 expanded sheets at once.
+  const [expandedId, setExpandedId] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -141,6 +157,12 @@ export default function OrdersHistoryPanel({
     };
   }, [pin, email, schoolId, projectId]);
 
+  // 2026-04-26: Tell the parent page how many orders we have so it can
+  // render an "(N)" count badge on the Orders tab label.
+  useEffect(() => {
+    if (onCountChange) onCountChange(orders.length);
+  }, [orders.length, onCountChange]);
+
   const totalSpend = useMemo(
     () =>
       orders
@@ -156,7 +178,7 @@ export default function OrdersHistoryPanel({
     overflow: "auto",
     display: "flex",
     justifyContent: "center",
-    padding: "32px 20px 80px",
+    padding: compact ? "20px 14px 60px" : "32px 20px 80px",
   };
 
   if (loading) {
@@ -244,21 +266,37 @@ export default function OrdersHistoryPanel({
           >
             Your Orders
           </div>
-          <h2 style={{ margin: 0, color: tone.text, fontSize: 26, fontWeight: 800 }}>
+          <h2
+            style={{
+              margin: 0,
+              color: tone.text,
+              fontSize: compact ? 22 : 26,
+              fontWeight: 800,
+            }}
+          >
             {orders.length} order{orders.length === 1 ? "" : "s"}
             {totalSpend > 0 && (
-              <span style={{ color: tone.mutedText, fontSize: 14, fontWeight: 500, marginLeft: 10 }}>
+              <span
+                style={{
+                  color: tone.mutedText,
+                  fontSize: compact ? 12 : 14,
+                  fontWeight: 500,
+                  marginLeft: 10,
+                }}
+              >
                 · {formatCurrency(totalSpend, orders[0]?.currency || "cad")} total
               </span>
             )}
           </h2>
         </div>
 
-        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: compact ? 12 : 14 }}>
           {orders.map((order) => {
             const pill = statusPill(order.status);
             const visibleItems = order.items.filter((i) => i.lineTotalCents >= 0);
+            const discountItems = order.items.filter((i) => i.lineTotalCents < 0);
             const reorderable = !!order.cartSnapshot;
+            const expanded = expandedId === order.id;
             return (
               <div
                 key={order.id}
@@ -266,7 +304,7 @@ export default function OrdersHistoryPanel({
                   background: tone.surface,
                   border: `1px solid ${tone.border}`,
                   borderRadius: 14,
-                  padding: 18,
+                  padding: compact ? 14 : 18,
                 }}
               >
                 <div
@@ -276,10 +314,10 @@ export default function OrdersHistoryPanel({
                     alignItems: "flex-start",
                     flexWrap: "wrap",
                     gap: 10,
-                    marginBottom: 14,
+                    marginBottom: compact ? 10 : 14,
                   }}
                 >
-                  <div style={{ minWidth: 0 }}>
+                  <div style={{ minWidth: 0, flex: 1 }}>
                     <div
                       style={{
                         display: "flex",
@@ -291,7 +329,7 @@ export default function OrdersHistoryPanel({
                     >
                       <span
                         style={{
-                          fontSize: 16,
+                          fontSize: compact ? 14 : 16,
                           fontWeight: 800,
                           color: tone.text,
                           fontFamily: "'SF Mono', Menlo, monospace",
@@ -315,14 +353,14 @@ export default function OrdersHistoryPanel({
                         {pill.label}
                       </span>
                     </div>
-                    <div style={{ fontSize: 12, color: tone.mutedText }}>
+                    <div style={{ fontSize: compact ? 11 : 12, color: tone.mutedText }}>
                       {formatDate(order.paidAt || order.createdAt)}
                       {order.studentName ? ` · ${order.studentName}` : ""}
                     </div>
                   </div>
                   <div
                     style={{
-                      fontSize: 18,
+                      fontSize: compact ? 16 : 18,
                       fontWeight: 800,
                       color: tone.text,
                       whiteSpace: "nowrap",
@@ -340,7 +378,7 @@ export default function OrdersHistoryPanel({
                         display: "flex",
                         alignItems: "center",
                         gap: 12,
-                        padding: "10px 12px",
+                        padding: compact ? "8px 10px" : "10px 12px",
                         background: "rgba(255,255,255,0.04)",
                         borderRadius: 10,
                       }}
@@ -350,8 +388,8 @@ export default function OrdersHistoryPanel({
                           src={item.sku}
                           alt=""
                           style={{
-                            width: 44,
-                            height: 56,
+                            width: compact ? 38 : 44,
+                            height: compact ? 48 : 56,
                             objectFit: "cover",
                             borderRadius: 6,
                             background: "#0a0a0a",
@@ -362,8 +400,8 @@ export default function OrdersHistoryPanel({
                       ) : (
                         <div
                           style={{
-                            width: 44,
-                            height: 56,
+                            width: compact ? 38 : 44,
+                            height: compact ? 48 : 56,
                             borderRadius: 6,
                             background: "#0a0a0a",
                             flexShrink: 0,
@@ -374,7 +412,7 @@ export default function OrdersHistoryPanel({
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div
                           style={{
-                            fontSize: 13,
+                            fontSize: compact ? 12 : 13,
                             fontWeight: 700,
                             color: tone.text,
                             overflow: "hidden",
@@ -401,27 +439,165 @@ export default function OrdersHistoryPanel({
                   ))}
                 </div>
 
-                {reorderable && onReorder && (
+                {/* Click-to-expand: shipping + notes + subtotal/tax/total breakdown.
+                    Hidden by default to keep the card scannable; one-tap reveal. */}
+                <div style={{ marginTop: compact ? 12 : 14, display: "flex", flexDirection: "column", gap: 10 }}>
                   <button
                     type="button"
-                    onClick={() => onReorder(order.cartSnapshot, order.id)}
+                    onClick={() => setExpandedId(expanded ? null : order.id)}
                     style={{
-                      marginTop: 14,
-                      width: "100%",
-                      padding: "10px 16px",
-                      background: tone.text,
-                      color: tone.surface,
-                      border: "none",
+                      background: "transparent",
+                      border: `1px solid ${tone.border}`,
+                      color: tone.mutedText,
                       borderRadius: 999,
-                      fontSize: 13,
-                      fontWeight: 800,
+                      padding: "7px 14px",
+                      fontSize: 11,
+                      fontWeight: 700,
                       cursor: "pointer",
-                      letterSpacing: "0.02em",
+                      letterSpacing: "0.04em",
+                      textTransform: "uppercase",
+                      alignSelf: "flex-start",
                     }}
                   >
-                    Reorder these items
+                    {expanded ? "Hide details" : "View details"}
                   </button>
-                )}
+
+                  {expanded && (
+                    <div
+                      style={{
+                        background: "rgba(0,0,0,0.18)",
+                        border: `1px solid ${tone.border}`,
+                        borderRadius: 10,
+                        padding: compact ? "10px 12px" : "12px 14px",
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: 8,
+                        fontSize: 12,
+                        color: tone.mutedText,
+                      }}
+                    >
+                      {(typeof order.subtotalCents === "number" || discountItems.length > 0) && (
+                        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                          {typeof order.subtotalCents === "number" && (
+                            <div style={{ display: "flex", justifyContent: "space-between" }}>
+                              <span>Subtotal</span>
+                              <span style={{ color: tone.text }}>
+                                {formatCurrency(order.subtotalCents, order.currency)}
+                              </span>
+                            </div>
+                          )}
+                          {discountItems.map((item, idx) => (
+                            <div key={`d:${order.id}:${idx}`} style={{ display: "flex", justifyContent: "space-between", color: "#4ade80" }}>
+                              <span>{item.productName}</span>
+                              <span>−{formatCurrency(Math.abs(item.lineTotalCents), order.currency)}</span>
+                            </div>
+                          ))}
+                          {typeof order.taxCents === "number" && order.taxCents > 0 && (
+                            <div style={{ display: "flex", justifyContent: "space-between" }}>
+                              <span>Tax</span>
+                              <span style={{ color: tone.text }}>
+                                {formatCurrency(order.taxCents, order.currency)}
+                              </span>
+                            </div>
+                          )}
+                          <div
+                            style={{
+                              display: "flex",
+                              justifyContent: "space-between",
+                              borderTop: `1px solid ${tone.border}`,
+                              paddingTop: 6,
+                              marginTop: 4,
+                              color: tone.text,
+                              fontWeight: 700,
+                            }}
+                          >
+                            <span>Total paid</span>
+                            <span>{formatCurrency(order.totalCents, order.currency)}</span>
+                          </div>
+                        </div>
+                      )}
+
+                      {(order.parentName || order.parentEmail || order.parentPhone) && (
+                        <div style={{ display: "flex", flexDirection: "column", gap: 2, paddingTop: 4 }}>
+                          <div
+                            style={{
+                              fontSize: 10,
+                              fontWeight: 800,
+                              color: tone.mutedText,
+                              letterSpacing: "0.08em",
+                              textTransform: "uppercase",
+                              marginBottom: 2,
+                            }}
+                          >
+                            Contact
+                          </div>
+                          {order.parentName ? <div style={{ color: tone.text }}>{order.parentName}</div> : null}
+                          {order.parentEmail ? <div>{order.parentEmail}</div> : null}
+                          {order.parentPhone ? <div>{order.parentPhone}</div> : null}
+                        </div>
+                      )}
+
+                      {order.specialNotes ? (
+                        <div style={{ paddingTop: 4 }}>
+                          <div
+                            style={{
+                              fontSize: 10,
+                              fontWeight: 800,
+                              color: tone.mutedText,
+                              letterSpacing: "0.08em",
+                              textTransform: "uppercase",
+                              marginBottom: 4,
+                            }}
+                          >
+                            Notes
+                          </div>
+                          <div
+                            style={{
+                              color: tone.text,
+                              whiteSpace: "pre-line",
+                              fontSize: 12,
+                              lineHeight: 1.6,
+                            }}
+                          >
+                            {order.specialNotes}
+                          </div>
+                        </div>
+                      ) : null}
+
+                      <div
+                        style={{
+                          paddingTop: 4,
+                          fontSize: 10,
+                          color: tone.mutedText,
+                          fontFamily: "'SF Mono', Menlo, monospace",
+                        }}
+                      >
+                        Reference: {order.id}
+                      </div>
+                    </div>
+                  )}
+
+                  {reorderable && onReorder && (
+                    <button
+                      type="button"
+                      onClick={() => onReorder(order.cartSnapshot, order.id)}
+                      style={{
+                        width: "100%",
+                        padding: compact ? "10px 14px" : "12px 18px",
+                        background: tone.text,
+                        color: tone.surface,
+                        border: "none",
+                        borderRadius: 999,
+                        fontSize: compact ? 12 : 13,
+                        fontWeight: 800,
+                        cursor: "pointer",
+                        letterSpacing: "0.02em",
+                      }}
+                    >
+                      Reorder these items
+                    </button>
+                  )}
+                </div>
               </div>
             );
           })}

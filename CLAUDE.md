@@ -2,7 +2,23 @@
 
 Checkpoint for Claude so a context reset doesn't lose the thread. Update as work progresses.
 
-Last updated: 2026-04-25 (backdrop orientation toggle landed, on top of agreement gate + spotlight polish + mobile-blur fix — all still uncommitted).
+Last updated: 2026-04-26 (orders history + receipt email + reorder, all uncommitted).
+
+## Orders history + receipt email + reorder (2026-04-25 → 2026-04-26)
+
+Parent gets a real receipt email on payment, can browse their order history inside the gallery, and can one-click reorder past items.
+
+- **DB:** `orders.cart_snapshot jsonb` applied via `supabase/migrations/20260424220000_add_orders_cart_snapshot_for_reorder.sql`. Captures the full cart entry payload at order-create time so reorder can rebuild line items.  Both `app/api/portal/orders/create/route.ts` and `app/api/portal/orders/create-combined/route.ts` populate it.
+- **Receipt email:** `lib/order-receipt-email.ts` (NEW). Studio-branded HTML+text template — order number, date, item table with 48×60 thumbnails (sku → photo URL), qty, totals; sibling discount as separate green row; "View my orders" CTA button → deep-links to `/parents/<pin>?tab=orders&email=…`. Sent from `finalizePaidOrderOrGroup` in `lib/payments.ts`, idempotency-keyed `order-receipt-<orderId>` so webhook retries don't duplicate. Reply-to set to studio email.
+- **Orders history API:** `app/api/portal/orders/history/route.ts` (NEW). POST endpoint validates pin+email against the school/project, returns the parent's last 50 orders with items + thumbnails + cart_snapshot + parent contact + special_notes + subtotal/tax. Rate-limited 5/min per IP.
+- **Orders panel component:** `components/parents/orders-history-panel.tsx` (NEW). Renders order cards with status pills, thumbnail + size + qty per item, click-to-expand details (subtotal/tax/total breakdown, contact, notes, full reference id), and a "Reorder these items" button. Accepts `compact` for mobile and `onCountChange` to push the badge count up.
+- **Tab integration:** `GalleryView` extended with `"orders"`. Tab label renders as `Orders (N)` when there are past orders. New view in `app/parents/[pin]/page.tsx` mounts the panel. URL `?tab=orders` deep-link consumed once on mount via `orderTabHintConsumedRef`.
+- **Reorder hydration:** New effect runs once `photographerId + packages + backdrops` are all loaded; reads sessionStorage `studio-os-reorder-pending` + `studio-os-reorder:<id>`, reconstructs each entry as a `CartLineItem` (recomputing prices from live `packages`/`backdrops` so stale prices don't sneak through), pushes onto `cartItems`, opens drawer at the checkout step, clears sessionStorage. Defended via `reorderHydratedRef` so it doesn't double-fire.
+- **Status:** typecheck clean. All uncommitted as of 2026-04-26 morning.
+
+---
+
+## Backdrop orientation toggle — Portrait / Landscape (2026-04-25)
 
 ## Backdrop orientation toggle — Portrait / Landscape (2026-04-25)
 

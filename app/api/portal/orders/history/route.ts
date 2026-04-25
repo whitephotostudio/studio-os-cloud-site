@@ -56,10 +56,16 @@ type OrderRow = {
   paid_at: string | null;
   status: string | null;
   total_cents: number | null;
+  subtotal_cents: number | null;
+  tax_cents: number | null;
   currency: string | null;
   package_name: string | null;
+  parent_name: string | null;
   parent_email: string | null;
+  parent_phone: string | null;
   customer_email: string | null;
+  special_notes: string | null;
+  notes: string | null;
   cart_snapshot: unknown;
   photographer_id: string;
   school_id: string | null;
@@ -157,8 +163,9 @@ export async function POST(request: NextRequest) {
     const { data: orders, error } = await sb
       .from("orders")
       .select(
-        `id,created_at,paid_at,status,total_cents,currency,package_name,
-         parent_email,customer_email,cart_snapshot,photographer_id,
+        `id,created_at,paid_at,status,total_cents,subtotal_cents,tax_cents,currency,package_name,
+         parent_name,parent_email,parent_phone,customer_email,special_notes,notes,
+         cart_snapshot,photographer_id,
          school_id,project_id,student_id,order_group_id,
          order_items(product_name,quantity,line_total_cents,unit_price_cents,sku)`,
       )
@@ -251,6 +258,8 @@ function formatOrder(
     paidAt: row.paid_at,
     status: row.status ?? "pending",
     totalCents: row.total_cents ?? 0,
+    subtotalCents: row.subtotal_cents ?? null,
+    taxCents: row.tax_cents ?? null,
     currency: row.currency ?? "cad",
     packageName: row.package_name ?? null,
     items,
@@ -260,5 +269,9 @@ function formatOrder(
     studentId: row.student_id,
     orderGroupId: row.order_group_id,
     studentName: ctx.student_name,
+    parentName: row.parent_name ?? null,
+    parentEmail: row.parent_email ?? row.customer_email ?? null,
+    parentPhone: row.parent_phone ?? null,
+    specialNotes: row.special_notes ?? row.notes ?? null,
   };
 }

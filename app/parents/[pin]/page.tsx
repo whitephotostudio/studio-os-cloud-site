@@ -3723,6 +3723,11 @@ export default function ParentGalleryPage() {
   // ── Backdrop selector (school mode only) ────────────────────────────────
   const [backdropPickerOpen, setBackdropPickerOpen] = useState(false);
   const [backdrops, setBackdrops] = useState<BackdropRow[]>([]);
+  // 2026-04-26: Tracks how many orders this parent has on this gallery,
+  // pushed up from OrdersHistoryPanel via onCountChange.  Used to render
+  // an "(N)" badge on the Orders tab label so the parent can see the
+  // count without opening the tab.
+  const [ordersHistoryCount, setOrdersHistoryCount] = useState(0);
   const [selectedBackdrop, setSelectedBackdrop] = useState<BackdropRow | null>(null);
   const [confirmedBackdrop, setConfirmedBackdrop] = useState<BackdropRow | null>(null);
   const [selectedBlurBackground, setSelectedBlurBackground] = useState(false);
@@ -3832,6 +3837,166 @@ export default function ParentGalleryPage() {
       });
     }
   }, [photographerId]);
+
+  // 2026-04-26: Reorder hydration.
+  //
+  // When a parent clicks the "Reorder these items" button on the Orders
+  // tab, OrdersHistoryPanel stashes the source order's `cart_snapshot`
+  // (the JSON we save at order-create time) into sessionStorage and
+  // bounces back to the photos view.  This effect picks that up and
+  // reconstructs each saved entry as a live CartLineItem — pulling
+  // package + backdrop metadata from the loaded gallery so the cart
+  // shows the right names, prices, and tier add-ons.
+  //
+  // Wait conditions: photographerId AND packages AND backdrops must all
+  // be loaded so we have lookups available.  If any are missing we keep
+  // the sessionStorage flag and try again on the next render.
+  const reorderHydratedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!photographerId) return;
+    if (typeof window === "undefined") return;
+    let pendingId: string | null = null;
+    try {
+      pendingId = window.sessionStorage.getItem("studio-os-reorder-pending");
+    } catch {
+      return;
+    }
+    if (!pendingId) return;
+    if (reorderHydratedRef.current === pendingId) return;
+    if (packages.length === 0) return;
+    // Backdrops only matter for school mode; skip the wait in event mode
+    // where there are no backdrops loaded by design.
+    if (isSchoolMode && backdrops.length === 0) return;
+
+    let snapshotRaw: string | null = null;
+    try {
+      snapshotRaw = window.sessionStorage.getItem(
+        `studio-os-reorder:${pendingId}`,
+      );
+    } catch {
+      // ignore
+    }
+    if (!snapshotRaw) {
+      try {
+        window.sessionStorage.removeItem("studio-os-reorder-pending");
+      } catch {
+        // ignore
+      }
+      reorderHydratedRef.current = pendingId;
+      return;
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(snapshotRaw);
+    } catch {
+      parsed = null;
+    }
+    if (!Array.isArray(parsed) || parsed.length === 0) {
+      try {
+        window.sessionStorage.removeItem("studio-os-reorder-pending");
+        window.sessionStorage.removeItem(`studio-os-reorder:${pendingId}`);
+      } catch {
+        // ignore
+      }
+      reorderHydratedRef.current = pendingId;
+      return;
+    }
+
+    type SnapshotEntry = {
+      packageId?: string;
+      quantity?: number;
+      backdrop?: { id?: string; blurred?: boolean; blurAmount?: number } | null;
+      slots?: Array<{ label?: string; assignedImageUrl?: string | null }>;
+      selectedImageUrl?: string | null;
+      isComposite?: boolean;
+      compositeTitle?: string | null;
+      orientation?: "portrait" | "landscape";
+    };
+
+    const restored: CartLineItem[] = [];
+    for (const raw of parsed as SnapshotEntry[]) {
+      const pkg = packages.find((p) => p.id === raw.packageId);
+      if (!pkg) continue; // package was removed since the order — skip
+      const qty = Math.max(1, Math.round(Number(raw.quantity) || 1));
+      const packageSubtotalCents = Math.round(pkg.price_cents) * qty;
+
+      let backdropSelection: CartBackdropSelection | null = null;
+      let backdropAddOnCents = 0;
+      if (raw.backdrop?.id) {
+        const bd = backdrops.find((b) => b.id === raw.backdrop?.id);
+        if (bd) {
+          if (bd.tier === "premium") {
+            backdropAddOnCents = Math.round(bd.price_cents);
+          }
+          backdropSelection = {
+            id: bd.id,
+            name: bd.name,
+            image_url: bd.image_url,
+            tier: bd.tier,
+            price_cents: bd.price_cents,
+            blurred: !!raw.backdrop.blurred,
+            blurAmount:
+              typeof raw.backdrop.blurAmount === "number"
+                ? raw.backdrop.blurAmount
+                : DEFAULT_BACKDROP_BLUR_PX,
+          };
+        }
+      }
+
+      const itemId =
+        typeof crypto !== "undefined" && "randomUUID" in crypto
+          ? crypto.randomUUID()
+          : `reorder_${Date.now()}_${restored.length}`;
+
+      restored.push({
+        id: itemId,
+        packageId: pkg.id,
+        packageName: pkg.name,
+        category: getCategory(pkg),
+        quantity: qty,
+        packageSubtotalCents,
+        backdropAddOnCents,
+        lineTotalCents: packageSubtotalCents + backdropAddOnCents,
+        slots: (raw.slots ?? []).map((s) => ({
+          label: s.label ?? "Item",
+          assignedImageUrl: s.assignedImageUrl ?? null,
+        })) as ItemSlot[],
+        selectedImageUrl: raw.selectedImageUrl ?? null,
+        isCompositeOrder: !!raw.isComposite,
+        compositeTitle: raw.compositeTitle ?? null,
+        backdrop: backdropSelection,
+        orientation: raw.orientation ?? "portrait",
+        // Tag with the current gallery's lane (best-effort — combine
+        // hydration runs separately and re-tags as needed).
+        laneKey: currentLane?.laneKey,
+        laneSchoolId: currentLane?.schoolId,
+        laneStudentId: currentLane?.studentId,
+        lanePin: currentLane?.pin,
+        laneEmail: currentLane?.email,
+        laneSchoolName: currentLane?.schoolName,
+        laneStudentName: currentLane?.studentName,
+      });
+    }
+
+    if (restored.length > 0) {
+      setCartItems((prev) => [...prev, ...restored]);
+      // Drop straight into the cart drawer at the checkout step so the
+      // parent confirms what got reloaded before paying again.
+      setBackdropPickerOpen(false);
+      setDrawerOpen(true);
+      setDrawerView("checkout");
+      setActiveSlotIndex(null);
+    }
+
+    try {
+      window.sessionStorage.removeItem("studio-os-reorder-pending");
+      window.sessionStorage.removeItem(`studio-os-reorder:${pendingId}`);
+    } catch {
+      // ignore
+    }
+    reorderHydratedRef.current = pendingId;
+  }, [photographerId, packages, backdrops, isSchoolMode, currentLane]);
 
   // Auto-register the CURRENT gallery as a lane.
   useEffect(() => {
@@ -8124,7 +8289,7 @@ export default function ParentGalleryPage() {
                       : tab === "favorites"
                           ? `${galleryCopy.favorites}${favorites.size > 0 ? ` (${favorites.size})` : ""}`
                           : tab === "orders"
-                              ? "Orders"
+                              ? `Orders${ordersHistoryCount > 0 ? ` (${ordersHistoryCount})` : ""}`
                               : galleryCopy.about;
                   return (
                     <button
@@ -8850,6 +9015,8 @@ export default function ParentGalleryPage() {
             email={parentEmail || eventEmail || ""}
             schoolId={isSchoolMode ? student?.school_id ?? null : null}
             projectId={!isSchoolMode ? project?.id || projectId || null : null}
+            compact={isMobileViewport}
+            onCountChange={setOrdersHistoryCount}
             tone={{
               text: galleryTone.text,
               mutedText: galleryTone.mutedText,
@@ -8858,11 +9025,12 @@ export default function ParentGalleryPage() {
               surface: galleryTone.surface,
             }}
             onReorder={(snapshot, sourceOrderId) => {
-              // Stash the snapshot in sessionStorage so the gallery view
-              // can pick it up after switching tabs.  Then bounce back to
-              // photos so the parent sees the cart drawer pop with the
-              // restored items.  (Full hydration logic is wired in the
-              // photos view's effect — see the "reorderPayload" pickup.)
+              // Stash the snapshot in sessionStorage and switch back to
+              // the photos view.  The reorder-hydration effect (declared
+              // up by the combine-cart hydration) reads the snapshot,
+              // reconstructs each entry as a CartLineItem using the live
+              // packages + backdrops lookups, pushes them onto cartItems,
+              // and opens the cart drawer at the checkout step.
               try {
                 sessionStorage.setItem(
                   `studio-os-reorder:${sourceOrderId}`,
@@ -8873,12 +9041,10 @@ export default function ParentGalleryPage() {
                   sourceOrderId,
                 );
               } catch {
-                // sessionStorage locked — fall back to a toast hint.
+                // sessionStorage locked — drop them onto photos so they can
+                // re-add manually.
               }
               setActiveView("photos");
-              setOrderError(
-                "Reorder is in beta — open the same poses + sizes in the cart from your last order. Adjust as needed before checkout.",
-              );
             }}
           />
         )}
