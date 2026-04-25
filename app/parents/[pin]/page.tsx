@@ -3127,27 +3127,19 @@ function CompositeCanvas({
   // Wrapper sizing: keep width:100% so the box always has a defined
   // dimension (without it, the absolute-positioned children inside
   // collapse the wrapper to 0×0, which is what produced the "viewer
-  // goes black" regression).  height:auto + aspect-ratio derives the
-  // height from the photo's natural ratio.  maxWidth caps so we never
-  // upscale beyond the source resolution, and maxHeight is a soft clamp
-  // — when the viewport is too short the wrapper just gets letterboxed
-  // shorter and the inner img/canvas uses object-fit:contain to fit.
-  // When we have a backdrop, paint it as the wrapper background — when
-  // the canvas/DOM layer object-fit:contains a portrait composite into a
-  // wider wrapper, we'd otherwise get black bars on the sides.  Painting
-  // the backdrop image behind makes those side strips show the SAME
-  // backdrop scenery the composite uses, so the visual reads as one
-  // seamless backdrop edge-to-edge (matching what blur mode already
-  // achieves via its DOM layer).  Only applies in canvas mode — the DOM
-  // blur path renders its own backdrop layer over this anyway.
-  const wrapperBackdropFill = responsive && nextBackdropSrc && !useDomBlurLayer
-    ? {
-        backgroundImage: `url(${nextBackdropSrc})`,
-        backgroundSize: "cover",
-        backgroundPosition: "center",
-        backgroundRepeat: "no-repeat",
-      }
-    : {};
+  // 2026-04-25: removed the wrapper `backgroundImage: url(backdrop) cover`
+  // fill that previously painted the backdrop behind the canvas to mask
+  // letterbox bars.  The new aspect-ratio sizing (height-anchored, width
+  // derived) keeps the wrapper exactly the same shape as the canvas, so
+  // there's no letterbox to mask in normal viewports.  Worse, that fill
+  // was the source of the "blue flashlight" flash Harout reported — when
+  // changing pose or toggling blur, the canvas opacity briefly drops to 0
+  // during the redraw, and the wrapper's bare backdrop image painted
+  // through for a frame before the new composite drew over it.  Removing
+  // it eliminates the flash entirely; if a very narrow viewport ever
+  // letterboxes the canvas (max-width clamp without aspect re-derive),
+  // we'll see thin black bars instead of bare backdrop — acceptable trade.
+  const wrapperBackdropFill: React.CSSProperties = {};
 
   // 2026-04-25: drive width from height + aspect-ratio so the wrapper
   // ALWAYS preserves the photo's aspect.  Previously we had width:100% +
