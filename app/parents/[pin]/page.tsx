@@ -3221,13 +3221,14 @@ function CompositeCanvas({
           style={{
             width: "100%",
             height: "100%",
+            // object-fit: contain preserves the canvas's intrinsic aspect
+            // (set from the photo's natural width/height) even when the
+            // wrapper has been clamped to a different shape by max-height.
+            // Without this, the browser stretched the bitmap to fill the
+            // wrapper and the subject got squeezed.
+            objectFit: "contain",
             display: "block",
             borderRadius: 6,
-            // ✅ PERF: Snap in the moment the composite is drawn. The
-            // base-layer <img> above shows the original photo until this
-            // canvas has content, so we don't need a fade to mask loading.
-            // Removing the 0.3s transition avoids a dark flash during the
-            // base-img → canvas handoff.
             opacity: ready || hasRenderedFrame ? 1 : 0,
           }}
         />
