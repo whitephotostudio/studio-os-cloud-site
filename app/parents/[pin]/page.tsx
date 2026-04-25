@@ -10773,7 +10773,22 @@ export default function ParentGalleryPage() {
                         </div>
 
                         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                          {cartItems.map((item) => (
+                          {cartItems.map((item) => {
+                            // 2026-04-25: surface a tiny thumbnail before each
+                            // saved-in-basket line so a parent combining 2+
+                            // siblings can tell at a glance which kid + which
+                            // size.  Prefer the first assigned slot image
+                            // (each line is a single photo for prints), then
+                            // fall back to the line's selected image, then the
+                            // backdrop preview as a last resort for digital
+                            // composites that didn't capture a photo URL.
+                            const thumbSrc =
+                              item.slots.find((s) => !!s.assignedImageUrl)?.assignedImageUrl ||
+                              item.selectedImageUrl ||
+                              item.backdrop?.image_url ||
+                              null;
+                            const isLandscape = item.orientation === "landscape";
+                            return (
                             <div
                               key={item.id}
                               style={{
@@ -10787,23 +10802,54 @@ export default function ParentGalleryPage() {
                                 padding: "10px 12px",
                               }}
                             >
-                              <div style={{ minWidth: 0 }}>
-                                <div
-                                  style={{
-                                    fontSize: 13,
-                                    fontWeight: 700,
-                                    color: "#fff",
-                                    marginBottom: 3,
-                                  }}
-                                >
-                                  {item.isCompositeOrder ? `Composite • ${item.packageName}` : item.packageName}
-                                </div>
-                                <div style={{ fontSize: 11, color: "#8a8a8a", lineHeight: 1.6 }}>
-                                  {item.category === "digital"
-                                    ? `${item.quantity} digital download${item.quantity === 1 ? "" : "s"}`
-                                    : `${item.slots.length} print slot${item.slots.length === 1 ? "" : "s"}`}
-                                  {item.compositeTitle ? ` • ${item.compositeTitle}` : ""}
-                                  {item.backdrop ? ` • ${item.backdrop.name}` : ""}
+                              <div style={{ display: "flex", gap: 10, minWidth: 0, flex: 1 }}>
+                                {thumbSrc ? (
+                                  <img
+                                    src={thumbSrc}
+                                    alt=""
+                                    aria-hidden
+                                    style={{
+                                      width: isLandscape ? 64 : 48,
+                                      height: 56,
+                                      objectFit: "cover",
+                                      borderRadius: 6,
+                                      border: "1px solid #2f2f2f",
+                                      flexShrink: 0,
+                                      background: "#0d0d0d",
+                                    }}
+                                  />
+                                ) : (
+                                  <div
+                                    style={{
+                                      width: 48,
+                                      height: 56,
+                                      borderRadius: 6,
+                                      border: "1px solid #2f2f2f",
+                                      background: "#0d0d0d",
+                                      flexShrink: 0,
+                                    }}
+                                  />
+                                )}
+                                <div style={{ minWidth: 0, flex: 1 }}>
+                                  <div
+                                    style={{
+                                      fontSize: 13,
+                                      fontWeight: 700,
+                                      color: "#fff",
+                                      marginBottom: 3,
+                                    }}
+                                  >
+                                    {item.isCompositeOrder ? `Composite • ${item.packageName}` : item.packageName}
+                                  </div>
+                                  <div style={{ fontSize: 11, color: "#8a8a8a", lineHeight: 1.6 }}>
+                                    {item.category === "digital"
+                                      ? `${item.quantity} digital download${item.quantity === 1 ? "" : "s"}`
+                                      : `${item.slots.length} print slot${item.slots.length === 1 ? "" : "s"}`}
+                                    {item.laneStudentName ? ` • ${item.laneStudentName}` : ""}
+                                    {item.compositeTitle ? ` • ${item.compositeTitle}` : ""}
+                                    {item.backdrop ? ` • ${item.backdrop.name}` : ""}
+                                    {isLandscape ? " • Landscape" : ""}
+                                  </div>
                                 </div>
                               </div>
                               <div
@@ -10844,7 +10890,8 @@ export default function ParentGalleryPage() {
                                 </button>
                               </div>
                             </div>
-                          ))}
+                            );
+                          })}
                         </div>
                       </div>
                     )}
