@@ -2,7 +2,88 @@
 
 Checkpoint for Claude so a context reset doesn't lose the thread. Update as work progresses.
 
-Last updated: 2026-04-26 (orders history + receipt email + reorder, all uncommitted).
+Last updated: 2026-04-26 morning (everything below is one big uncommitted bundle).
+
+## 🚀 PUSH SCRIPT (run from Mac)
+
+```
+cd ~/Projects/studio-os-cloud-site
+rm -f .git/HEAD.lock .git/index.lock
+git add -A
+git commit -m "feat: order receipts + history tab + reorder + landscape mockup fix + flash kill + year-aware search + prefetch payload fix"
+git push origin main
+```
+
+After Vercel redeploys (~2 min):
+- Hard-refresh (Cmd+Shift+R) once to bust the JS bundle cache
+- Test order flow: place order in Landscape → confirm Wall/Desk previews are wide → receipt email arrives with thumbnails → click "View my orders" in email → lands on Orders tab → click Reorder → drawer pops at checkout with same items
+- Test on a fresh PIN session (incognito or sign-out): toggle should be active immediately, screenshot protection should engage immediately, no refresh required
+
+---
+
+## What's in the bundle (2026-04-26 morning)
+
+### Order receipts + Orders tab + reorder
+
+- **DB:** `orders.cart_snapshot jsonb` (migration `20260424220000_add_orders_cart_snapshot_for_reorder.sql`) — captures full cart entry payload at order create time so reorder rebuilds line items.  Both `app/api/portal/orders/create/route.ts` and `app/api/portal/orders/create-combined/route.ts` populate it.
+- **Receipt email:** `lib/order-receipt-email.ts` (NEW) — studio-branded HTML+text template; order #, date, item table with 48×60 thumbnails (sku → photo URL), qty, totals; sibling discount as separate green row; "View my orders" CTA → deep-links to `/parents/<pin>?tab=orders&email=…`.  Sent from `finalizePaidOrderOrGroup` in `lib/payments.ts`, idempotency-keyed `order-receipt-<orderId>`.  Reply-to set to studio email.
+- **Orders history API:** `app/api/portal/orders/history/route.ts` (NEW) — POST endpoint validates pin+email against school/project, returns last 50 orders with items + thumbnails + cart_snapshot + parent contact + special_notes + subtotal/tax.  Rate-limited 5/min per IP.
+- **Orders panel component:** `components/parents/orders-history-panel.tsx` (NEW) — order cards with status pills, thumbnail+size+qty per item, click-to-expand details (subtotal/tax/total breakdown, contact, notes, full reference id), "Reorder these items" button.  Accepts `compact` for mobile and `onCountChange` to push the badge count up.
+- **Tab integration:** `GalleryView` extended with `"orders"`.  Tab label renders as `Orders (N)` when count > 0.  New view in `app/parents/[pin]/page.tsx` mounts the panel.  URL `?tab=orders` deep-link consumed once on mount via `orderTabHintConsumedRef`.
+- **Reorder hydration:** Effect runs once `photographerId + packages + backdrops` are loaded — reads `studio-os-reorder-pending` + `studio-os-reorder:<id>` from sessionStorage, reconstructs each entry as a `CartLineItem` (recomputes prices from live `packages`/`backdrops` so stale prices don't sneak through), pushes onto `cartItems`, opens drawer at the checkout step, clears sessionStorage.  Defended via `reorderHydratedRef` so it doesn't double-fire.
+- **Thank-you polish:** Post-Stripe success screen now leads with **"View my orders"** as the primary CTA (lands on Orders tab); Continue Shopping is secondary.
+
+### Wall/Desk/Close-up landscape print mockup fix
+
+- **Bug:** When a parent picked Landscape orientation, the live big viewer rendered correctly, BUT the print mockups (Wall / Desk / Close-up) showed a butchered portrait composite.  Root cause: `compositeDataUrl` generator was hardcoded to a 600×800 portrait canvas with cover math.  The print frame was correctly landscape-shaped, but `objectFit: cover` cropped the portrait composite horizontally, chopping the kid.
+- **Fix in `app/parents/[pin]/page.tsx`:** `compositeDataUrl` effect now picks 1067×800 (4:3 landscape) when `confirmedOrientation === "landscape" && supports_landscape === true`, else 600×800 portrait.  In landscape mode, foreground uses `getLandscapeForegroundScale()` + `getLandscapeForegroundVerticalOffset()` contain math (matches the live viewer).
+
+### Blue-flash + canvas/blur sync fixes
+
+- **Sticky-visible flag (`hasEverRenderedRef`)** in `CompositeCanvas` — once any frame has been rendered, the canvas + DOM-blur layer stay at opacity 1.  Browser image cache keeps OLD `<img>` content visible while new srcs load → atomic swap, no glimpse of the underlying fallback photo's blue chroma.
+- **Removed wrapper `backgroundImage: url(backdrop) cover`** — was the actual flash trigger when canvas opacity dipped during state changes.  No longer needed since the wrapper aspect-ratio now matches the canvas exactly.
+- **Canvas landscape head-clip fix:** when `dh > height` (landscape mode), skip the upward `clampNumber` that was forcing the foreground up and clipping the head.  Use natural offset, matching DOM blur behavior.
+- **Skip `fgCrop` in canvas landscape:** was using auto-trimmed bounding box, which surfaced parts of the source (parent's hand etc.) the DOM path doesn't show.  Now uses natural dimensions to match DOM exactly.
+
+### "Have to refresh for it to work" prefetch fix (real root cause)
+
+- **Bug:** `app/api/portal/school-access/route.ts` (the prefetch endpoint LoginForm calls and caches in sessionStorage) was missing `supports_landscape` on backdrops AND the entire `screenshotProtection` object.  Parents page consumed the cached payload on first mount → toggle stayed gray, screenshot protection didn't activate.  Refreshing consumed the cache and forced a fresh fetch from `/api/portal/gallery-context` which DID have the fields.
+- **Fix:** added `supports_landscape` to the backdrop_catalog `.select()`; added `screenshot_protection_desktop/mobile/watermark` to the schools `.select()`; added the `screenshotProtection` object to the returned `galleryContext` payload — mirroring exactly what `gallery-context/route.ts` returns.
+
+### Defensive fixes (still good even after the prefetch root-cause fix)
+
+- **Stale backdrop snapshot:** parents page re-resolves the active backdrop from the live `backdrops` array by id every render in both the panel preview and the main viewer — protects against future schema drift.
+- **Screenshot protection remount key:** `<ScreenshotProtection key={…flags…}>` forces a full remount whenever flags change → all useEffect listeners re-attach fresh.
+
+### Year-aware Spotlight search
+
+- Type "**mary 2002**" → parses out the year, filters schools/students/events to that year only.  Year filter uses `shoot_date` first, falls back to `created_at`.  Year shown in subtitle of every hit ("Riverside Prep · Grade 8A · 2002").  Helper: `parseYearToken()` + `yearLabel()` in `components/spotlight-search.tsx`.  Placeholder updated to teach the feature.
+
+### Combine drawer year filter chips
+
+- `components/parents/combine-orders-drawer.tsx` school dropdown — when there are 2+ year groups, year chips appear above the search box (All years · 2026 · 2025 · ... · Year unknown).  Click a chip → school list filters to that year.  Search input placeholder updates to "Search schools in 2026…".
+
+### Other polish
+
+- **Backdrops nav link** added to dashboard sidebar (`components/dashboard-sidebar.tsx`).
+- **Duplicate sidebar removed** from `/dashboard/backdrops`.
+- **Bulk Portrait/Landscape toggle** in backdrop manager — select multiple → "↔ Landscape on / Portrait only" buttons in bulk action bar.
+- **`set_orders_photographer_id` trigger patched** (migration `20260424210000_fix_orders_photographer_id_trigger_for_service_role.sql`) — was blocking parents-portal combined-orders endpoint with "No photographer profile for this user".  Now branches on `auth.uid()` — authenticated dashboard inserts force tenant binding, service-role inserts trust the explicit `photographer_id`.
+
+---
+
+## ⏭️ Tomorrow's pickup (post-push)
+
+1. Smoke-test the bundle: place a landscape order, verify receipt email + Orders tab + reorder.
+2. iPhone render verification of `/m/orders` and remaining mobile sub-pages (task #35).
+3. The sub-pixel landscape jitter (deferred — may have resolved with the flash fix).
+4. Phase 2 screenshot tiling proxy (task #46) — bigger, multi-day backend work.
+5. Per-school search box could get year filter chips like the combine drawer (small lift).
+6. Photographer dashboard: "View as parent receipt" preview button on order detail.
+
+---
+
+## Earlier (2026-04-25)
 
 ## Orders history + receipt email + reorder (2026-04-25 → 2026-04-26)
 

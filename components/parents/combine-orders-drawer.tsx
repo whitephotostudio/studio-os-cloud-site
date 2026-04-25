@@ -882,6 +882,11 @@ function SchoolPicker({
 }) {
   const [open, setOpen] = useState(false);
   const [filter, setFilter] = useState("");
+  // 2026-04-26: Year filter chips.  null = all years.  When set, the
+  // dropdown shows only schools whose shootYear matches.  Lets a parent
+  // narrow long lists by year first, then search within the year —
+  // exactly what Harout asked for: "choose the year and then search".
+  const [selectedYear, setSelectedYear] = useState<number | "unknown" | null>(null);
   const rootRef = useRef<HTMLDivElement | null>(null);
 
   // Close on outside click.
@@ -897,11 +902,37 @@ function SchoolPicker({
 
   const selected = options.find((o) => o.id === value) ?? null;
 
+  // Derive year chips.  Preserve descending order for known years; append
+  // a "Year unknown" chip when at least one school has no shootYear.
+  const yearChips = useMemo(() => {
+    const years = new Set<number>();
+    let hasUnknown = false;
+    for (const opt of options) {
+      if (typeof opt.shootYear === "number" && Number.isFinite(opt.shootYear)) {
+        years.add(opt.shootYear);
+      } else {
+        hasUnknown = true;
+      }
+    }
+    const sorted: Array<{ key: number | "unknown"; label: string }> = [...years]
+      .sort((a, b) => b - a)
+      .map((y) => ({ key: y, label: String(y) }));
+    if (hasUnknown) sorted.push({ key: "unknown", label: "Year unknown" });
+    return sorted;
+  }, [options]);
+
   const filtered = useMemo(() => {
     const f = filter.trim().toLowerCase();
-    if (!f) return options;
-    return options.filter((o) => o.schoolName.toLowerCase().includes(f));
-  }, [options, filter]);
+    let pool = options;
+    if (selectedYear !== null) {
+      pool = pool.filter((o) => {
+        if (selectedYear === "unknown") return o.shootYear == null;
+        return o.shootYear === selectedYear;
+      });
+    }
+    if (!f) return pool;
+    return pool.filter((o) => o.schoolName.toLowerCase().includes(f));
+  }, [options, filter, selectedYear]);
 
   // Group by shoot year for the dropdown UI.
   const grouped = useMemo(() => {
@@ -968,6 +999,62 @@ function SchoolPicker({
           }}
         >
           <div style={{ position: "sticky", top: 0, background: "#fff", padding: 8, borderBottom: "1px solid #f3f4f6" }}>
+            {/* 2026-04-26: Year filter chips.  Only render when there are
+                at least 2 distinct year groups — for a one-year studio
+                they're noise. */}
+            {yearChips.length >= 2 ? (
+              <div
+                style={{
+                  display: "flex",
+                  flexWrap: "wrap",
+                  gap: 6,
+                  marginBottom: 8,
+                }}
+              >
+                <button
+                  type="button"
+                  onClick={() => setSelectedYear(null)}
+                  style={{
+                    background: selectedYear === null ? "#111827" : "#f3f4f6",
+                    color: selectedYear === null ? "#fff" : "#374151",
+                    border: "none",
+                    borderRadius: 999,
+                    padding: "5px 12px",
+                    fontSize: 11,
+                    fontWeight: 800,
+                    letterSpacing: "0.04em",
+                    cursor: "pointer",
+                  }}
+                >
+                  All years
+                </button>
+                {yearChips.map((chip) => {
+                  const active = selectedYear === chip.key;
+                  return (
+                    <button
+                      key={String(chip.key)}
+                      type="button"
+                      onClick={() =>
+                        setSelectedYear(active ? null : chip.key)
+                      }
+                      style={{
+                        background: active ? "#111827" : "#f3f4f6",
+                        color: active ? "#fff" : "#374151",
+                        border: "none",
+                        borderRadius: 999,
+                        padding: "5px 12px",
+                        fontSize: 11,
+                        fontWeight: 800,
+                        letterSpacing: "0.04em",
+                        cursor: "pointer",
+                      }}
+                    >
+                      {chip.label}
+                    </button>
+                  );
+                })}
+              </div>
+            ) : null}
             <div
               style={{
                 display: "flex",
@@ -983,7 +1070,13 @@ function SchoolPicker({
               <input
                 value={filter}
                 onChange={(e) => setFilter(e.target.value)}
-                placeholder="Search…"
+                placeholder={
+                  selectedYear === null
+                    ? "Search…"
+                    : selectedYear === "unknown"
+                    ? "Search schools (year unknown)…"
+                    : `Search schools in ${selectedYear}…`
+                }
                 style={{
                   flex: 1,
                   border: "none",

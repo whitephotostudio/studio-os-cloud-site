@@ -7636,9 +7636,36 @@ export default function ParentGalleryPage() {
               alignItems: "center",
             }}
           >
+            {/* 2026-04-26: primary CTA points the parent at the new
+                Orders tab — that's where they'll find the receipt
+                they just got via email, and one-click reorder later. */}
             <button
               type="button"
-              onClick={continueShoppingAfterCheckout}
+              onClick={() => {
+                // Mirror continueShoppingAfterCheckout's URL cleanup but
+                // land on the Orders tab instead of resetting to photos.
+                setPlaced(false);
+                setOrderId("");
+                setOrderError("");
+                setPlacing(false);
+                setCartItems([]);
+                resetCurrentSelection();
+                setDrawerOpen(false);
+                setBackdropPickerOpen(false);
+                if (photographerId) {
+                  try {
+                    clearCombineCart(photographerId);
+                    setCombineLanes([]);
+                  } catch {
+                    // ignore
+                  }
+                }
+                const nextUrl = new URL(window.location.href);
+                nextUrl.searchParams.delete("checkout");
+                nextUrl.searchParams.delete("session_id");
+                router.replace(`${nextUrl.pathname}${nextUrl.search}`);
+                setActiveView("orders");
+              }}
               style={{
                 background: "#fff",
                 color: "#000",
@@ -7646,6 +7673,24 @@ export default function ParentGalleryPage() {
                 borderRadius: 999,
                 padding: "13px 32px",
                 fontSize: 14,
+                fontWeight: 700,
+                cursor: "pointer",
+                minWidth: isMobileViewport ? 0 : 220,
+                width: isMobileViewport ? "100%" : undefined,
+              }}
+            >
+              View my orders
+            </button>
+            <button
+              type="button"
+              onClick={continueShoppingAfterCheckout}
+              style={{
+                background: "transparent",
+                color: "#bbb",
+                border: "1px solid #2a2a2a",
+                borderRadius: 999,
+                padding: "11px 28px",
+                fontSize: 13,
                 fontWeight: 700,
                 cursor: "pointer",
                 minWidth: isMobileViewport ? 0 : 220,
@@ -7660,12 +7705,13 @@ export default function ParentGalleryPage() {
               style={{
                 background: "transparent",
                 color: "#777",
-                border: "1px solid #2a2a2a",
-                borderRadius: 999,
-                padding: "11px 24px",
-                fontSize: 13,
+                border: "none",
+                padding: "8px 16px",
+                fontSize: 12,
                 fontWeight: 700,
                 cursor: "pointer",
+                textDecoration: "underline",
+                textUnderlineOffset: 4,
               }}
             >
               {galleryCopy.done}

@@ -195,7 +195,31 @@ export async function POST(request: NextRequest) {
     });
   }
 
-  // Event mode — same idea, scoped to project_id.
+  // Event mode — validate the PIN matches the project's access_pin
+  // (same gating as school-mode's PIN-on-students check).  Without this,
+  // someone holding only a parent's email + projectId could pull their
+  // order history without ever proving they have the PIN.
+  const { data: projectRow } = await sb
+    .from("projects")
+    .select("id,access_pin")
+    .eq("id", body.projectId!)
+    .maybeSingle();
+
+  if (!projectRow) {
+    return NextResponse.json(
+      { ok: false, message: "Invalid event." },
+      { status: 404 },
+    );
+  }
+
+  const projectPin = clean((projectRow as { access_pin?: string }).access_pin);
+  if (projectPin && projectPin !== body.pin) {
+    return NextResponse.json(
+      { ok: false, message: "Invalid PIN for this event." },
+      { status: 404 },
+    );
+  }
+
   const { data: visitorRow } = await sb
     .from("event_gallery_visitors")
     .select("viewer_email")
@@ -213,8 +237,9 @@ export async function POST(request: NextRequest) {
   const { data: orders, error } = await sb
     .from("orders")
     .select(
-      `id,created_at,paid_at,status,total_cents,currency,package_name,
-       parent_email,customer_email,cart_snapshot,photographer_id,
+      `id,created_at,paid_at,status,total_cents,subtotal_cents,tax_cents,currency,package_name,
+       parent_name,parent_email,parent_phone,customer_email,special_notes,notes,
+       cart_snapshot,photographer_id,
        school_id,project_id,student_id,order_group_id,
        order_items(product_name,quantity,line_total_cents,unit_price_cents,sku)`,
     )

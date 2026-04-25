@@ -78,6 +78,41 @@ function isShortOrderId(term: string): boolean {
   return /^[0-9a-f-]{4,}$/i.test(term);
 }
 
+// 2026-04-26: Year-aware search.
+//
+// Harout's idea: type "mary 2002" → only see Marys from the 2002 school
+// year.  The DB already auto-stamps `created_at` on every schools / projects
+// / students row, plus `shoot_date` / `event_date` on schools and projects.
+// We parse a 4-digit year out of the search term and use it to narrow
+// which schools/projects the matches come from.  The "name" portion (term
+// minus the year token) is what we ilike-match against.
+function parseYearToken(term: string): { name: string; year: number | null } {
+  const yearMatch = term.match(/\b(19|20)\d{2}\b/);
+  if (!yearMatch) return { name: term.trim(), year: null };
+  const year = Number(yearMatch[0]);
+  const name = term.replace(yearMatch[0], "").replace(/\s+/g, " ").trim();
+  return { name, year };
+}
+
+/** Returns the 4-digit year of a timestamp string, or null. */
+function yearOf(iso: string | null | undefined): number | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.getFullYear();
+}
+
+/** Pick the most useful "year" for a row — prefer the photoshoot/event
+ *  date if set (that's what the photographer cares about), fall back to
+ *  the auto-stamped created_at. */
+function yearLabel(...candidates: Array<string | null | undefined>): number | null {
+  for (const candidate of candidates) {
+    const y = yearOf(candidate);
+    if (y) return y;
+  }
+  return null;
+}
+
 // ── Shared hook: cross-table search ──────────────────────────────────
 
 export function useSpotlight(term: string, enabled: boolean) {
@@ -114,11 +149,20 @@ export function useSpotlight(term: string, enabled: boolean) {
       return;
     }
     const trimmed = term.trim();
-    if (trimmed.length < 2) {
+    // Allow shorter "name" portion when a year token is present —
+    // typing just "2002" is a valid search ("show me everyone from 2002").
+    const { name: nameTerm, year } = parseYearToken(trimmed);
+    if (nameTerm.length < 2 && year === null) {
       setHits([]);
       setLoading(false);
       return;
     }
+
+    // Year window — closed on both sides because PostgREST gte/lte
+    // are inclusive in different ways across data types.  Using
+    // YYYY-01-01 .. (YYYY+1)-01-01 with gte/lt covers the full year.
+    const yearStart = year !== null ? `${year}-01-01` : null;
+    const yearEnd = year !== null ? `${year + 1}-01-01` : null;
 
     let cancelled = false;
     setLoading(true);
@@ -127,42 +171,73 @@ export function useSpotlight(term: string, enabled: boolean) {
         // Supabase query builders are PromiseLike (thenable), not real Promises.
         // Declaring as PromiseLike<unknown>[] lets us stack them in Promise.all
         // without extra `.then()` wrappers.
+        // Build query bodies separately so we can apply the year window
+        // (or skip it) without re-stating the joins/filters.  Year filter
+        // narrows by the school's / project's most relevant date column:
+        //   - schools : shoot_date when set, else created_at
+        //   - projects: event_date when set, else created_at
+        // PostgREST's `or` lets us express "(shoot_date in window) OR
+        // (shoot_date is null AND created_at in window)" cleanly enough.
+        const nameOrEmpty = nameTerm.length > 0 ? nameTerm : "";
+
+        let studentsQuery = supabase
+          .from("students")
+          .select(
+            // Pull schools.shoot_date + created_at so we can show a year
+            // tag on each student hit ("Mary Smith · 2002 · Riverside Prep").
+            "id, first_name, last_name, photo_url, school_id, class_id, class_name, role, schools!inner(school_name, photographer_id, shoot_date, created_at)",
+          )
+          .eq("schools.photographer_id", photographerId);
+        if (nameOrEmpty.length >= 2) {
+          studentsQuery = studentsQuery.or(
+            `first_name.ilike.%${nameOrEmpty}%,last_name.ilike.%${nameOrEmpty}%,role.ilike.%${nameOrEmpty}%`,
+          );
+        }
+        if (yearStart && yearEnd) {
+          // Filter via the joined schools row's date — Supabase respects
+          // dotted column paths in or() when the relation is inner-joined.
+          studentsQuery = studentsQuery.or(
+            `and(shoot_date.gte.${yearStart},shoot_date.lt.${yearEnd}),and(shoot_date.is.null,created_at.gte.${yearStart},created_at.lt.${yearEnd})`,
+            { foreignTable: "schools" },
+          );
+        }
+        studentsQuery = studentsQuery.limit(8);
+
+        let schoolsQuery = supabase
+          .from("schools")
+          .select("id, school_name, shoot_date, created_at")
+          .eq("photographer_id", photographerId);
+        if (nameOrEmpty.length >= 2) {
+          schoolsQuery = schoolsQuery.ilike("school_name", `%${nameOrEmpty}%`);
+        }
+        if (yearStart && yearEnd) {
+          schoolsQuery = schoolsQuery.or(
+            `and(shoot_date.gte.${yearStart},shoot_date.lt.${yearEnd}),and(shoot_date.is.null,created_at.gte.${yearStart},created_at.lt.${yearEnd})`,
+          );
+        }
+        schoolsQuery = schoolsQuery.limit(6);
+
+        let projectsQuery = supabase
+          .from("projects")
+          .select("id, title, client_name, workflow_type, event_date, created_at")
+          .eq("photographer_id", photographerId)
+          .eq("workflow_type", "event");
+        if (nameOrEmpty.length >= 2) {
+          projectsQuery = projectsQuery.or(
+            `title.ilike.%${nameOrEmpty}%,client_name.ilike.%${nameOrEmpty}%`,
+          );
+        }
+        if (yearStart && yearEnd) {
+          projectsQuery = projectsQuery.or(
+            `and(event_date.gte.${yearStart},event_date.lt.${yearEnd}),and(event_date.is.null,created_at.gte.${yearStart},created_at.lt.${yearEnd})`,
+          );
+        }
+        projectsQuery = projectsQuery.limit(6);
+
         const promises: PromiseLike<unknown>[] = [
-          // Students don't have a direct photographer_id column — ownership
-          // flows through school_id → schools.photographer_id.  Using an
-          // `!inner` join means the filter on schools.photographer_id
-          // actually prunes the students rows (otherwise it's a no-op and
-          // the whole table leaks across tenants / returns zero rows if
-          // we filter on a non-existent column).
-          supabase
-            .from("students")
-            .select(
-              "id, first_name, last_name, photo_url, school_id, class_id, class_name, role, schools!inner(school_name, photographer_id)",
-            )
-            .eq("schools.photographer_id", photographerId)
-            // Match on name OR role, so typing "coach" surfaces every
-            // coach in the account, and typing a partial name still works.
-            // The `students` table doubles as the people table — teachers
-            // and coaches live here with a non-null `role` value.
-            .or(
-              `first_name.ilike.%${trimmed}%,last_name.ilike.%${trimmed}%,role.ilike.%${trimmed}%`,
-            )
-            .limit(8),
-          supabase
-            .from("schools")
-            .select("id, school_name")
-            .eq("photographer_id", photographerId)
-            .ilike("school_name", `%${trimmed}%`)
-            .limit(6),
-          supabase
-            .from("projects")
-            .select("id, title, client_name, workflow_type")
-            .eq("photographer_id", photographerId)
-            .eq("workflow_type", "event")
-            .or(
-              `title.ilike.%${trimmed}%,client_name.ilike.%${trimmed}%`,
-            )
-            .limit(6),
+          studentsQuery,
+          schoolsQuery,
+          projectsQuery,
         ];
 
         // Orders by customer name / parent name / parent email — catches
@@ -215,8 +290,16 @@ export function useSpotlight(term: string, enabled: boolean) {
             class_name: string | null;
             role: string | null;
             schools:
-              | { school_name: string | null }
-              | { school_name: string | null }[]
+              | {
+                  school_name: string | null;
+                  shoot_date?: string | null;
+                  created_at?: string | null;
+                }
+              | Array<{
+                  school_name: string | null;
+                  shoot_date?: string | null;
+                  created_at?: string | null;
+                }>
               | null;
           }> | null;
         };
@@ -245,7 +328,13 @@ export function useSpotlight(term: string, enabled: boolean) {
           // Subtitle prefers class (for students) and falls back to role
           // (for teachers, coaches, staff etc).  The visible "School ·
           // Teacher" line tells Harout at a glance who he's looking at.
+          // 2026-04-26: include the year so duplicates ("Mary 2002" vs
+          // "Mary 2024") are disambiguated at a glance.
           const classOrRole = clean(s.class_name) || clean(s.role);
+          const studentYear = yearLabel(
+            schoolRow?.shoot_date,
+            schoolRow?.created_at,
+          );
           next.push({
             kind: "student",
             id: s.id,
@@ -253,6 +342,7 @@ export function useSpotlight(term: string, enabled: boolean) {
             subtitle: [
               clean(schoolRow?.school_name) || "School",
               classOrRole,
+              studentYear ? String(studentYear) : "",
             ]
               .filter(Boolean)
               .join(" · "),
@@ -261,14 +351,20 @@ export function useSpotlight(term: string, enabled: boolean) {
         }
 
         const schools = results[1] as {
-          data?: Array<{ id: string; school_name: string | null }> | null;
+          data?: Array<{
+            id: string;
+            school_name: string | null;
+            shoot_date?: string | null;
+            created_at?: string | null;
+          }> | null;
         };
         for (const school of schools.data ?? []) {
+          const schoolYear = yearLabel(school.shoot_date, school.created_at);
           next.push({
             kind: "school",
             id: school.id,
             title: clean(school.school_name) || "School",
-            subtitle: "School",
+            subtitle: schoolYear ? `School · ${schoolYear}` : "School",
             href: `/dashboard/projects/schools/${school.id}`,
           });
         }
@@ -278,14 +374,24 @@ export function useSpotlight(term: string, enabled: boolean) {
             id: string;
             title: string | null;
             client_name: string | null;
+            event_date?: string | null;
+            created_at?: string | null;
           }> | null;
         };
         for (const proj of projects.data ?? []) {
+          // 2026-04-26: surface year on event hits.  event_date is the
+          // photographer-set "when did this happen", so it wins over
+          // created_at when filled in.
+          const projectYear = yearLabel(proj.event_date, proj.created_at);
+          const eventSubtitleParts = [
+            clean(proj.client_name) || "Event",
+            projectYear ? String(projectYear) : "",
+          ].filter(Boolean);
           next.push({
             kind: "event",
             id: proj.id,
             title: clean(proj.title) || "Event",
-            subtitle: clean(proj.client_name) || "Event",
+            subtitle: eventSubtitleParts.join(" · "),
             href: `/dashboard/projects/${proj.id}`,
           });
         }
@@ -577,7 +683,7 @@ export function SpotlightModal({ open, onClose }: SpotlightModalProps) {
             value={term}
             onChange={(e) => setTerm(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder='Search students, schools, events, or order "3e92dbe3"…'
+            placeholder='Search students, schools, events… add a year ("Mary 2024") to narrow'
             aria-label="Search everything"
             style={{
               flex: 1,
