@@ -2846,6 +2846,19 @@ function CompositeCanvas({
   const hasRenderedFrame = useDomBlurLayer
     ? backdropLoadedForCurrentSrc || foregroundLoadedForCurrentSrc
     : loadedKey.length > 0;
+  // 2026-04-25: Sticky "we've shown at least one frame" flag.  Stays true
+  // forever once we've ever been ready.  Used to keep the canvas / DOM
+  // blur layer at opacity 1 across state changes so the user never sees
+  // the underlying fallback photo (with its blue/gray studio chroma
+  // background) flash through during a re-render — that was the source
+  // of the "blue flashlight" Harout reported when toggling blur or
+  // changing pose.  Browser image caching keeps the OLD <img> content
+  // visible while new srcs load, so atomic swap is seamless.
+  const hasEverRenderedRef = useRef(false);
+  if (ready && !hasEverRenderedRef.current) {
+    hasEverRenderedRef.current = true;
+  }
+  const stickyVisible = ready || hasEverRenderedRef.current;
 
   useEffect(() => {
     if (!useDomBlurLayer) return;
@@ -3201,7 +3214,13 @@ function CompositeCanvas({
         composite is fully rendered it covers this base layer anyway,
         so there's no visual regression when everything's healthy.
       */}
-      {fallbackUrl && !ready ? (
+      {/* 2026-04-25: only render the fallback original photo BEFORE the
+          first composite frame has been drawn.  Once we've ever rendered,
+          the canvas/blur layer (kept sticky-opaque above) shows the
+          composite — re-mounting the fallback during a re-render would
+          flash the original photo's chroma backdrop through, which was
+          the source of the "blue flashlight" Harout reported. */}
+      {fallbackUrl && !ready && !hasEverRenderedRef.current ? (
         <img
           src={fallbackUrl}
           alt=""
@@ -3229,15 +3248,12 @@ function CompositeCanvas({
             inset: 0,
             overflow: "hidden",
             borderRadius: 6,
-            // Only fade in the blur layer when BOTH DOM images are loaded
-            // for the current src.  Using the looser `hasRenderedFrame`
-            // here meant a stale-loaded flag (from a previous render with
-            // a different backdrop) could force this to opacity 1 over the
-            // #000 background before the new images arrived — giving
-            // parents a black viewer for a beat.  Strict gating is safer
-            // because the fallback image underneath carries us through.
-            opacity: ready ? 1 : 0,
-            transition: "opacity 0.3s ease",
+            // 2026-04-25: stay opaque once we've ever rendered.  Browser
+            // image caching keeps the OLD <img> content visible while new
+            // srcs load, so atomic swap is seamless and we don't expose
+            // the fallback photo's chroma backdrop during a transition.
+            // No fade transition — instant opacity prevents the blue flash.
+            opacity: stickyVisible ? 1 : 0,
             // Transparent background — if the images hiccup, the fallback
             // image layer under us still shows through rather than being
             // hidden by a solid black fill.
@@ -3339,7 +3355,11 @@ function CompositeCanvas({
             objectFit: "contain",
             display: "block",
             borderRadius: 6,
-            opacity: ready || hasRenderedFrame ? 1 : 0,
+            // 2026-04-25: same sticky-visible logic as DOM blur layer.
+            // Once we've ever drawn a frame, stay opaque — the canvas
+            // bitmap holds the last-drawn content while a new draw is
+            // in flight, so atomic swap is seamless without a fade.
+            opacity: stickyVisible ? 1 : 0,
           }}
         />
       )}
