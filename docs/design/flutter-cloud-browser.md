@@ -1,13 +1,13 @@
 # Flutter Import Hub — Cloud + SD Card + Folder
 
-**Status:** Cloud tab implemented 2026-04-26 evening (task #127). SD Card + Folder tabs are scaffolded in the same screen but NOT wired up yet. Task #127 covers the shell + Cloud tab; SD + Folder ship next session.
+**Status:** Cloud tab + Folder tab implemented 2026-04-26 evening (tasks #127 + #128). SD Card tab is still scaffolded with a "coming soon" panel. SD ships next session.
 
 ## Architecture overview — three tabs in one screen
 
 The screen is `lib/screens/import_hub_screen.dart`. Top-bar tabs:
-- **From Cloud** — pull selected schools/projects from Supabase + R2 (this session)
+- **From Cloud** — pull selected schools/projects from Supabase + R2 (✅ shipped)
 - **From SD Card** — auto-detect plugged-in volumes, show photos, import into a school (next session)
-- **From Folder** — manual folder picker, same import flow as SD (next session)
+- **From Folder** — manual folder picker, recursive scan, copy into a school's CaptureBase (✅ shipped)
 
 All three tabs share the same destination flow: photographer picks a target school + class, photos copy in, AI/bg-removal kicks off if enabled. Only the source differs.
 
