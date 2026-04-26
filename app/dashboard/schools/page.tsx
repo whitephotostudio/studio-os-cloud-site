@@ -567,14 +567,33 @@ export default function SchoolsPage() {
                   position: "relative",
                 }}
               >
-                {/* Thumbnail area */}
-                <div style={{ position: "relative", paddingBottom: "65%", background: school.coverUrl ? "#f3f4f6" : gradientForSchool(school.school_name), overflow: "hidden" }}>
+                {/* Thumbnail area
+                    2026-04-26 — Fix face-cropping on portrait covers:
+                    - The cover area is wider than tall (paddingBottom 65%).
+                    - Portrait shots used objectFit:cover which chops
+                      heads off the top of the photo.
+                    - We now layer a BLURRED copy of the photo as the
+                      backdrop fill, then the same photo on top with
+                      objectFit:contain — full photo visible, never
+                      cropped, gradient bands on the sides feel
+                      tasteful (Apple TV / Netflix pattern).  The
+                      saved focal point still positions the contained
+                      photo within the card. */}
+                <div style={{ position: "relative", paddingBottom: "65%", background: school.coverUrl ? "#0f172a" : gradientForSchool(school.school_name), overflow: "hidden" }}>
                   {school.coverUrl ? (
-                    <img
-                      src={school.coverUrl}
-                      alt={school.school_name}
-                      style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", objectPosition: `${Math.round(school.coverFocalX * 100)}% ${Math.round(school.coverFocalY * 100)}%` }}
-                    />
+                    <>
+                      <img
+                        src={school.coverUrl}
+                        alt=""
+                        aria-hidden
+                        style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", filter: "blur(28px) brightness(0.55) saturate(1.15)", transform: "scale(1.15)" }}
+                      />
+                      <img
+                        src={school.coverUrl}
+                        alt={school.school_name}
+                        style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "contain", objectPosition: `${Math.round(school.coverFocalX * 100)}% ${Math.round(school.coverFocalY * 100)}%` }}
+                      />
+                    </>
                   ) : (
                     <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
                       <School size={40} color="rgba(255,255,255,0.3)" />

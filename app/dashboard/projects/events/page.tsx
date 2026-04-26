@@ -426,14 +426,24 @@ export default function EventsPage() {
                     position: "relative",
                   }}
                 >
-                  {/* Thumbnail */}
-                  <div style={{ position: "relative", paddingBottom: "75%", background: "#f3f4f6", overflow: "hidden" }}>
+                  {/* Thumbnail — 2026-04-26: blurred backdrop fill +
+                      objectFit:contain so portrait covers don't get
+                      heads chopped off (was objectFit:cover). */}
+                  <div style={{ position: "relative", paddingBottom: "75%", background: cover ? "#0f172a" : "#f3f4f6", overflow: "hidden" }}>
                     {cover ? (
-                      <img
-                        src={cover}
-                        alt={projectNameOf(project)}
-                        style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", objectPosition: `${Math.round((Number(project.cover_focal_x) || 0.5) * 100)}% ${Math.round((Number(project.cover_focal_y) || 0.5) * 100)}%` }}
-                      />
+                      <>
+                        <img
+                          src={cover}
+                          alt=""
+                          aria-hidden
+                          style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", filter: "blur(28px) brightness(0.55) saturate(1.15)", transform: "scale(1.15)" }}
+                        />
+                        <img
+                          src={cover}
+                          alt={projectNameOf(project)}
+                          style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "contain", objectPosition: `${Math.round((Number(project.cover_focal_x) || 0.5) * 100)}% ${Math.round((Number(project.cover_focal_y) || 0.5) * 100)}%` }}
+                        />
+                      </>
                     ) : (
                       <div style={{ position: "absolute", inset: 0, ...bgStyle(project), display: "flex", alignItems: "center", justifyContent: "center" }}>
                         <ImagePlus size={32} color="rgba(255,255,255,0.5)" />
