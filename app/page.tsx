@@ -1,7 +1,11 @@
 import type { ReactNode } from "react";
 import type { Metadata } from "next";
 import { SiteHeader } from "../components/site-header";
-import { Hero } from "../components/hero";
+// Editorial-tier refinement of the original Hero. Same copy, same CTAs, same
+// links, same dashboard preview card — only typography + spacing + motion are
+// upgraded. Revert to the original by switching this import back to `Hero`
+// from "../components/hero" (file is left in place untouched).
+import { HeroRefined as Hero } from "../components/hero-refined";
 import { GalleryBrandingShowcase } from "../components/gallery-branding-showcase";
 import { BeyondWorkflowSection } from "../components/beyond-workflow-section";
 import { PlatformComparisonSection } from "../components/platform-comparison-section";

@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Geist, Geist_Mono, Fraunces } from "next/font/google";
 import "./globals.css";
 import { OrganizationJsonLd, WebSiteJsonLd } from "@/components/json-ld";
 
@@ -12,6 +12,15 @@ export const viewport: Viewport = {
 
 const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
 const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] });
+// Editorial serif for refined headlines — opt-in via `--font-serif` / `font-serif` utility.
+// Existing components don't reference this variable, so they continue to render unchanged.
+const fraunces = Fraunces({
+  variable: "--font-serif",
+  subsets: ["latin"],
+  weight: ["300", "400", "500", "600"],
+  style: ["normal", "italic"],
+  display: "swap",
+});
 
 const baseUrl = "https://studiooscloud.com";
 
@@ -104,7 +113,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
         <OrganizationJsonLd />
         <WebSiteJsonLd />
       </head>
-      <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
+      <body className={`${geistSans.variable} ${geistMono.variable} ${fraunces.variable} antialiased`}>
         {children}
       </body>
     </html>
