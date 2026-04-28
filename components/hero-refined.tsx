@@ -11,7 +11,6 @@
 // reverting the import in `app/page.tsx`.
 
 import Link from "next/link";
-import { Logo } from "./logo";
 
 export function HeroRefined() {
   return (
@@ -29,34 +28,28 @@ export function HeroRefined() {
       <div className="relative mx-auto max-w-7xl px-4 pt-14 pb-10 sm:px-6 lg:px-8 lg:pt-28 lg:pb-16">
         <div className="grid items-start gap-10 lg:grid-cols-2">
           <div className="hero-fade-in">
-            {/* Brand mark above the headline. Uses the same `<Logo />` that
-                lives in the SiteHeader so the editorial hero stays brand-true.
-                Small red pulse + a confidence tag sit beside it for rhythm. */}
-            <div className="mb-7 flex items-center gap-4">
-              <div className="flex items-start">
-                <Logo />
-              </div>
-              <div className="h-7 w-px bg-neutral-300/80" />
-              <div className="inline-flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.22em] text-neutral-700">
-                <span className="relative flex h-2 w-2">
-                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#df2b2f] opacity-60" />
-                  <span className="relative inline-flex h-2 w-2 rounded-full bg-[#df2b2f]" />
-                </span>
-                2026 Edition
-              </div>
+            {/* Editorial confidence marker above the headline — small,
+                clean, no logo (the SiteHeader already carries the brand). */}
+            <div className="mb-6 inline-flex items-center gap-3 text-[10px] font-medium uppercase tracking-[0.22em] text-neutral-700 sm:mb-8 sm:text-[11px]">
+              <span className="relative flex h-2 w-2">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#df2b2f] opacity-60" />
+                <span className="relative inline-flex h-2 w-2 rounded-full bg-[#df2b2f]" />
+              </span>
+              Studio OS Cloud · 2026 Edition
             </div>
 
-            {/* H1 — preserves the original three-line copy, restyled in
-                Fraunces serif with selective italic + red ampersand-style accent.
-                Original was: "Great Galleries for / Every Photographer /
-                Deeper Workflow When You Need More" */}
+            {/* H1 — preserves the original three-line copy verbatim. Sizes
+                tuned for mobile-first: matches the original 36/48/60 mobile
+                progression but adds editorial serif treatment. The third line
+                drops to a clearly subordinate scale so it reads as a
+                supporting tagline, not a co-equal headline. */}
             <h1
-              className="font-serif text-[44px] font-light leading-[0.98] tracking-[-0.025em] text-neutral-950 sm:text-[60px] lg:text-[78px]"
+              className="font-serif text-[36px] font-light leading-[1.02] tracking-[-0.022em] text-neutral-950 sm:text-[52px] lg:text-[68px]"
               style={{ fontFamily: "var(--font-serif), 'Times New Roman', serif" }}
             >
               Great Galleries for
               <span className="block italic text-neutral-900">Every Photographer</span>
-              <span className="block text-[36px] sm:text-[44px] lg:text-[54px] font-light text-neutral-700 mt-2">
+              <span className="mt-3 block text-[20px] font-light leading-[1.18] text-neutral-600 sm:mt-4 sm:text-[26px] lg:text-[32px]">
                 Deeper Workflow When You Need More
               </span>
             </h1>
