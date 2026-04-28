@@ -2,7 +2,58 @@
 
 Checkpoint for Claude so a context reset doesn't lose the thread. Update as work progresses.
 
-Last updated: 2026-04-26 late evening (retouching upsell modal + Flutter "Reveal hidden buttons" kid-proof toggle + per-school group label "Class / Faculty / Grade" + Flutter Import Hub for selective fresh-computer pull — still one big uncommitted/partially-pushed batch on the web side, plus a Flutter rebuild required).
+Last updated: 2026-04-27 — **Develop mode overhaul + RAW pipeline shipped end-to-end** (fullscreen Develop, Core Image platform channel, raws/ folder convention, customizable export dialog, tone curve / HSL / lens corrections / detail v2 panels, RAW/JPG filter pills, expanded crop presets, sync-now button, Apple auto-enhance integration).  Full writeup at `docs/design/develop-mode-overhaul.md`.  **Flutter rebuild required.**
+
+## 🆕 2026-04-27 — Develop module overhaul (Flutter — REBUILD REQUIRED)
+
+Massive Flutter-side delivery this session.  Goal per Harout: replace Lightroom for school-portrait workflow.
+
+**Rebuild before testing:**
+```
+cd ~/Downloads/Whitephoto_Studio_App_MVP_Source
+flutter build macos
+open ./build/macos/Build/Products/Release/Studio\ OS.app
+```
+
+**What shipped (full per-file changelog in `docs/design/develop-mode-overhaul.md`):**
+
+- **Swift Core Image RAW processor** — `macos/Runner/RawProcessor.swift` registers MethodChannel `studio_os/raw_processor` with `extractPreview`, `renderRaw`, `renderJpg`, `getMetadata`, `autoEnhance`.  Uses `CIRAWFilter` for native demosaic + `CIFilter` chain for adjustments + `CIContext.writeJPEGRepresentation` for output.  GPU-accelerated.  Wired into `AppDelegate.swift` `applicationDidFinishLaunching`.
+- **Dart wrapper** — `lib/services/raw_processor_service.dart` exposes the channel + RAW format detection.  Falls back to legacy Dart pipeline if channel missing.
+- **Folder convention** — RAW files imported via Import Hub (Folder + SD tabs) now route to `<destination>/raws/<basename>`.  JPGs stay at root.  Cloud sync (`lib/services/cloud_sync_service.dart`) skips any path containing a `raws/` segment via `_isImagePath` guard.
+- **Fullscreen Develop** — `lib/editor/develop_mode_fullscreen.dart` wraps the existing `DevelopModeView` in a `Navigator.push(PageRouteBuilder(fullscreenDialog: true))`.  ESC + Cmd+W close.  New "Fullscreen" button added to both `lib/screens/sorter_screen.dart` (school sort) and `lib/screens/project_sorter_screen.dart` (event sort) right next to the existing "Develop" toggle.  Auto-includes RAW siblings (walks `<photo>.parent / raws/`).
+- **Customizable export dialog** — `lib/editor/export_dialog.dart`.  Resize mode (Long edge / Short edge / Width / Height / Percentage / Original), unit (px/in/cm), DPI, "don't enlarge", JPG quality + size estimate, color space (sRGB / AdobeRGB / Display P3), output sharpening (None / Screen / Matte / Glossy), watermark toggle + custom text, filename pattern.  7 built-in presets (Web small/large, Print 4×6/5×7/8×10/11×14, Full original) + custom presets persisted in `LocalStore.appPrefs['export_presets_v1']`.
+- **Develop UI extensions** — `lib/editor/develop_mode_view.dart` got new tabs (Curve / HSL / Detail v2 / Lens), expanded crop preset list (4×6, 5×7, 8×10, 11×14, 16×20, Wallet, plus 4:3 / 3:2 / 5:4), RAW/JPG/All filter pills in filmstrip header, "Sync N" one-shot button (visible when multi-selecting), Auto button now calls `RawProcessorService.autoEnhance` first.  `_exportPhotos` rewritten to show the new dialog and route through Core Image (with Dart fallback).
+- **New panel widgets** — `lib/editor/tone_curve_widget.dart`, `lib/editor/hsl_panel.dart`, `lib/editor/lens_corrections_panel.dart`, `lib/editor/detail_v2_panel.dart`.  All exported via `lib/editor/editor.dart`.
+- **PhotoAdjustments** — extended with 16 new fields: sharpenRadius, sharpenMasking, NR luminance/color, lens distortion/vignetting/CA red+blue, tone curve (5 control points), HSL hue/sat/lum (8 colors each), split-tone fields.  copy/reset/isDefault/toJson/fromJson all updated.
+- **photo_utils.dart** — added `kRawSubfolderName`, `isRawPhotoPath`, `isInsideRawSubfolder`, expanded `kAllSourcePhotoExtensions` with the long-tail RAW list (CRW, NRW, SRF, SR2, RW2, PEF, RWL, 3FR, FFF, IIQ, MEF, MOS, X3F, RAW).
+
+**Smoke test sequence:**
+
+1. Launch Studio OS → Cloud → Import Hub → From Folder → pick a folder containing CR3/NEF + JPGs → confirm thumbnails render → import.  Open Finder at student folder; RAWs should be in `raws/`, JPGs at root.
+2. Push to Cloud → confirm upload count matches JPGs only (no RAWs uploaded).
+3. Sort screen → click "Fullscreen" button → develop opens fullscreen → ESC closes.
+4. In Develop, click any RAW → tab through Curve / HSL / Detail / Lens → drag sliders → click Export Photo → customizable dialog appears → pick "Web large (2048px, q85)" → Export → JPG appears at student folder root.
+5. Cmd-click multiple photos in filmstrip → "Sync N" button appears in apply row → click → snackbar confirms.
+6. Click "Auto" → Core Image suggested adjustments land on sliders.
+
+**Future work (deferred):**
+
+1. Local masking (radial / linear / brush) — Phase 2.
+2. AI subject mask via Vision framework — Phase 3.
+3. Face-aware skin smoothing — Phase 3 (perfect for portraits).
+4. AI denoise via bundled Core ML model — Phase 3.
+5. Sky replacement — Phase 3.
+6. Auto-tone matching across a series — Phase 2.
+7. Spot heal / clone — Phase 2.
+8. Push edit metadata to cloud (mirror sidecar JSON to Supabase) — Phase 2.
+9. Color grading wheels — fields exist, UI not yet wired.
+10. HSL per-color live-preview GPU shader (today applied at export only).
+
+**Web side: nothing changed this session.**  No Vercel push needed.
+
+---
+
+# Earlier checkpoint (2026-04-26 late evening) — preserved below
 
 ## 🔧 FLUTTER REBUILD REQUIRED
 
@@ -24,6 +75,8 @@ Real-world driver: photographer buys a new computer, signs in, and wants to cont
   - `fetchCloudInventory()` — single round-trip that returns the photographer's full schools + projects list with roster counts (students.school_id + teachers.school_id) and photo counts (students.photo_url for schools, media.project_id for projects).  Resolves "is this already local?" against `LocalStore.getCloudSchoolId` for cheap hydration of the "Already local" badge.
   - `pullSchoolCompletePackage({cloudSchoolId, existingLocalSchoolId, onProgress})` — orchestrates the per-school pull pipeline: school metadata → latest roster snapshot via `restoreCloudRosterSnapshot` → student photos via `_downloadSchoolStudentPhotos`.  Skips photos already on disk so partial pulls resume cleanly.  Calls `onProgress(phase, done, total)` so the UI shows a live photo counter.
   - `_downloadSchoolStudentPhotos(...)` — iterates `students` rows for the school, downloads each `photo_url` via HttpClient, writes to `~/CaptureBase/{schoolName}/{className}/{Last First Pin}/{filename}`.  **Important folder convention** (fixed 2026-04-26 after Harout reported "Photographer screen shows 0 photos but Sorter shows 1 per kid"): the photographer.dart `_folderNameFor` builds student folders as `'$last $first $pin'` with literal SPACES and pin5 — the pull writes to that EXACT pattern so the Photographer view finds the photos.  Empty class falls back to `Unassigned` to match `_classFolderFor`.  Defensive — empty URLs, missing class names, duplicates all skip cleanly.
+
+    **Multi-photo enumeration (2026-04-26 late evening)** — after downloading the primary `photo_url` (which is the ONE selected best preview), the loop ALSO calls `R2StorageService.listKeys(prefix)` against the same R2 directory the URL points into and downloads every original `.jpg` it finds.  The push side already uploads ALL session shots per student — they're all in R2 at `<localSchoolId>/<classDir>/<studentFolder>/<basename>.jpg` (originals) plus `_preview.jpg` and `_thumbnail.jpg` derivatives — but the Supabase `students.photo_url` only points to the FIRST preview.  New `R2StorageService.listKeys()` does an S3 ListObjectsV2 with SigV4-signed query params, paginates via `continuation-token`, parses XML via the `xml` package, returns the full key list.  `_r2KeyPrefixFromUrl(url)` parses the stored photo_url to extract the directory prefix (handles both path-style `r2.cloudflarestorage.com/<bucket>/<key>` and subdomain-style `pub-xxx.r2.dev/<key>` URL shapes).  Filters out `_preview.jpg`, `_thumbnail.jpg`, and `_cutout.png` so only originals download.  Skips files already on disk so re-runs are safe.  This is what unblocks "fresh computer can do composites" — a student with 8 session shots now lands all 8 on the new Mac, not just one.
   - `_downloadSchoolMediaToLocal(...)` — stub for now (the `media` table doesn't have a `school_id` column; school-level extras like class composites get regenerated locally by the composite builder).
 - **Conflict prompt:** when a ticked item already exists locally (`row.localExists == true`), the pull pauses and shows a 3-button modal — Cancel pull / Skip this one / Overwrite local.  Default behavior chosen by Harout: "Ask me each time" so unpushed local edits are never silently destroyed.
 - **Hookup:** `lib/screens/cloud_screen.dart` — added a prominent dark "Import Hub" `FilledButton.icon` in the top toolbar, next to Upload + Refresh.  Opens the new screen as a fullscreen dialog (with route).  On dismiss the cloud screen reloads so any newly-pulled schools surface in the grid.
@@ -72,7 +125,9 @@ SD Card tab also shipped this session — `_SdCardTabState` auto-detects volumes
 
 **Phase B — Teacher/Role mode within School** also shipped this session.  Inside the School path the picker now shows a `Class / Grade / Faculty` vs `Teacher / Staff / Role` sub-toggle.  In Role mode the dropdown lists existing teachers from `LocalStore.loadTeachersForSchool` formatted as `Last First Pin` (matching the Photographer screen's `_folderNameFor` convention).  `+ New role` lets the photographer type a fresh `Last First Pin` inline.  Photos imported in role mode go to `<captureBase>/Roles/<Last First Pin>/` so the existing Photographer/Sorter screens find them outside the per-class folder layout.  `subType` ('class' | 'role') is persisted alongside mode/school/sub in app prefs so the next import remembers it.
 
-Phase C (Reorganize / Move-to action) inherits from this picker — TBD next session.
+Phase C (Reorganize / Move-to action) inherits from this picker — TBD next session.  Note: the Photographer screen ALREADY has a within-school "Move to subject" action (photographer.dart line ~4082); the Phase C delta is moving across schools / events / role-vs-class.
+
+**Cloud tab thumbnail grid (also same session)** — switched the From Cloud picker from a thin list of icons to a proper thumbnail grid (`SliverGridDelegateWithMaxCrossAxisExtent` w/ 240 max + 4:3 thumbnails).  When a school's `cover_photo_url` is empty, `fetchCloudInventory` now samples the FIRST `student.photo_url` for that school and uses it as the cover — so every school with at least one synced photo shows a real face for visual ID instead of a graduation-cap icon.  Cards layer a blurred fill behind a `BoxFit.contain` foreground so portrait covers don't crop heads.  Type chip ("School" / "Project") and "Already local" badge sit in the top-right of the thumbnail; checkbox overlays the top-left.
 
 **SD Card tab also shipped this session** — `_SdCardTabState` auto-detects volumes on macOS (`/Volumes/` excluding `Macintosh HD` and `com.apple.*`), Windows (drive letters D:..Z:), and Linux (`/media/$USER`, `/run/media/$USER`, `/mnt`).  Initial pass counts photos + sums bytes per volume (capped at 2,000 per volume for speed) so each card shows useful stats before the photographer commits.  Tap a card → fullscreen scan + grid + per-photo selection + duplicate-detection + target picker (school + class) + import with cancel.  Uses the same `_PhotoTile` and `_PhotoLightbox` widgets as Folder tab so the visual language stays consistent.  Auto-defaults: newest-first sort (camera files come off the card with most-recent timestamps), pre-fills last-used school+class from `import_hub_last_*` prefs.  Assisted Culling sidebar isn't wired to SD tab yet — same architecture as Folder tab, just deferred to keep this session's scope honest; ~30min of work next session to mount it.
 
