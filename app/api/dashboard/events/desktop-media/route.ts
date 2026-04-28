@@ -276,13 +276,49 @@ export async function POST(request: NextRequest) {
       new Set(normalizedItems.map((item) => item.collection_id)),
     );
 
-    const { data: collectionRows, error: collectionError } = await service
+    let { data: collectionRows, error: collectionError } = await service
       .from("collections")
       .select("id,project_id,cover_photo_url")
       .eq("project_id", cloudProjectId)
       .in("id", collectionIds);
 
     if (collectionError) throw collectionError;
+
+    // 2026-04-28 — Salvage path: if NONE of the desktop-supplied
+    // collection_ids exist for this project, fall back to ANY active
+    // gallery collection on the project and re-route every incoming
+    // item there.  This rescues uploads that otherwise vanish into
+    // "0 inserted, 489 skipped" when the desktop's local mapping
+    // points at a stale UUID.  The failure mode is "photos land in
+    // the wrong album", which is recoverable; the previous failure
+    // was "photos vanish entirely", which wasn't.
+    if ((collectionRows ?? []).length === 0) {
+      const { data: anyCollection, error: anyErr } = await service
+        .from("collections")
+        .select("id,project_id,cover_photo_url")
+        .eq("project_id", cloudProjectId)
+        .eq("kind", "gallery")
+        .order("sort_order", { ascending: true })
+        .limit(1);
+      if (anyErr) throw anyErr;
+      if ((anyCollection ?? []).length > 0) {
+        const fallbackId = clean((anyCollection![0] as { id?: string | null }).id);
+        console.warn(
+          "[desktop-media POST] no collection_ids matched for project %s. " +
+            "Salvaging by routing all %d items to fallback collection %s. " +
+            "The desktop's album mapping is stale — re-sync project shell to refresh.",
+          cloudProjectId,
+          normalizedItems.length,
+          fallbackId,
+        );
+        // Rewrite every item's collection_id to the fallback so the
+        // downstream filter passes.
+        for (const item of normalizedItems) {
+          item.collection_id = fallbackId;
+        }
+        collectionRows = anyCollection;
+      }
+    }
 
     const validCollectionIds = new Set(
       (collectionRows ?? []).map((row) => clean((row as { id?: string | null }).id)),
@@ -292,8 +328,44 @@ export async function POST(request: NextRequest) {
       validCollectionIds.has(item.collection_id),
     );
 
+    // 2026-04-28 — Diagnostic: when items get dropped because of an
+    // unknown collection_id, log loudly so the next Vercel log reveals
+    // exactly what the desktop sent vs what exists in the DB.  Also
+    // include the dropped rows in the response so the desktop's
+    // "verify after upload" step can surface the mismatch instead of
+    // silently reporting success.
+    const droppedItems = normalizedItems.filter(
+      (item) => !validCollectionIds.has(item.collection_id),
+    );
+    if (droppedItems.length > 0) {
+      console.warn(
+        "[desktop-media POST] dropped %d item(s) with unknown collection_id. " +
+          "received collection_ids=%j, valid=%j, project=%s",
+        droppedItems.length,
+        Array.from(new Set(droppedItems.map((d) => d.collection_id))),
+        Array.from(validCollectionIds),
+        cloudProjectId,
+      );
+    }
+
     if (filteredItems.length === 0) {
-      return NextResponse.json({ ok: true, inserted: 0, skipped: normalizedItems.length, items: [] });
+      return NextResponse.json({
+        ok: true,
+        inserted: 0,
+        skipped: normalizedItems.length,
+        items: [],
+        diagnostic: {
+          reason: "no_matching_collections",
+          message:
+            "All items had collection_ids that don't match any collection on this project. " +
+            "The desktop's saved album→collection mapping is stale. Re-sync the project shell first.",
+          received_collection_ids: Array.from(
+            new Set(normalizedItems.map((item) => item.collection_id)),
+          ),
+          valid_collection_ids: Array.from(validCollectionIds),
+          project_id: cloudProjectId,
+        },
+      });
     }
 
     const folderKeyCache = new Map<string, Promise<Set<string>>>();
