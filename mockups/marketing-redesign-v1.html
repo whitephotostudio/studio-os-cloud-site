@@ -1,0 +1,1335 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Studio OS Cloud — Redesign Mockup v1</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,400;9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --ink: #0a0a0a;
+    --ink-soft: #1a1a1a;
+    --paper: #f7f3ec;       /* warm cream */
+    --paper-deep: #efe9df;
+    --cream: #faf6ef;
+    --line: #e6dfd1;
+    --muted: #6b6358;
+    --red: #df2b2f;          /* WHITE PHOTO signature red */
+    --red-deep: #b81c21;
+    --serif: 'Fraunces', 'Times New Roman', serif;
+    --sans: 'Inter', system-ui, -apple-system, sans-serif;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+  body {
+    font-family: var(--sans);
+    background: var(--paper);
+    color: var(--ink);
+    -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
+  }
+  img { max-width: 100%; display: block; }
+  a { color: inherit; text-decoration: none; }
+  button { font: inherit; cursor: pointer; border: 0; background: none; }
+
+  .serif { font-family: var(--serif); font-feature-settings: 'ss01', 'ss02'; }
+  .container { max-width: 1320px; margin: 0 auto; padding: 0 32px; }
+  @media (max-width: 640px) { .container { padding: 0 20px; } }
+
+  /* ─── Header ───────────────────────────────────────────── */
+  header.site-header {
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    z-index: 50;
+    transition: background 240ms ease, border-color 240ms ease, backdrop-filter 240ms ease;
+    border-bottom: 1px solid transparent;
+  }
+  header.site-header.scrolled {
+    background: rgba(247, 243, 236, 0.86);
+    backdrop-filter: blur(18px) saturate(1.1);
+    -webkit-backdrop-filter: blur(18px) saturate(1.1);
+    border-bottom-color: var(--line);
+  }
+  .site-header .row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 22px 0;
+  }
+  .wordmark {
+    display: flex; align-items: center; gap: 12px;
+  }
+  .wordmark .mark {
+    width: 32px; height: 32px;
+    background: var(--ink);
+    color: #fff;
+    display: flex; align-items: center; justify-content: center;
+    border-radius: 6px;
+    font-family: var(--serif); font-weight: 600;
+    font-size: 16px; letter-spacing: -0.02em;
+  }
+  .wordmark .mark .dot { color: var(--red); margin-left: 1px; }
+  .wordmark .name {
+    font-family: var(--serif);
+    font-weight: 500;
+    font-size: 18px;
+    letter-spacing: -0.01em;
+    line-height: 1;
+  }
+  .wordmark .name span { color: var(--muted); font-style: italic; font-weight: 400; }
+  nav.primary { display: flex; gap: 36px; }
+  nav.primary a {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--ink-soft);
+    transition: opacity 160ms ease;
+  }
+  nav.primary a:hover { opacity: 0.55; }
+  .header-cta {
+    display: flex; gap: 8px; align-items: center;
+  }
+  .btn {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 11px 18px;
+    border-radius: 999px;
+    font-size: 14px; font-weight: 600;
+    transition: transform 200ms ease, background 200ms ease, color 200ms ease, border-color 200ms ease;
+  }
+  .btn-ghost { color: var(--ink); }
+  .btn-ghost:hover { background: rgba(10,10,10,0.05); }
+  .btn-dark {
+    background: var(--ink); color: #fff;
+    box-shadow: 0 8px 24px rgba(10,10,10,0.18);
+  }
+  .btn-dark:hover { transform: translateY(-1px); }
+  .btn-red {
+    background: var(--red); color: #fff;
+    box-shadow: 0 10px 30px rgba(223,43,47,0.28);
+  }
+  .btn-red:hover { background: var(--red-deep); transform: translateY(-1px); }
+
+  @media (max-width: 900px) {
+    nav.primary, .header-cta .btn-ghost { display: none; }
+  }
+
+  /* ─── Hero ─────────────────────────────────────────────── */
+  .hero {
+    position: relative;
+    min-height: 100vh;
+    overflow: hidden;
+    background: var(--paper);
+  }
+  .hero-photo {
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+  }
+  .hero-photo::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background:
+      linear-gradient(180deg, rgba(10,10,10,0.30) 0%, rgba(10,10,10,0.08) 38%, rgba(10,10,10,0.55) 100%);
+    z-index: 1;
+  }
+  .hero-photo img {
+    width: 100%; height: 100%;
+    object-fit: cover;
+    animation: kenburns 24s ease-out infinite alternate;
+  }
+  @keyframes kenburns {
+    0%   { transform: scale(1.04) translate(0, 0); }
+    100% { transform: scale(1.12) translate(-1.2%, -0.8%); }
+  }
+  .hero-content {
+    position: relative;
+    z-index: 2;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    padding-bottom: 110px;
+    padding-top: 140px;
+    color: #fff;
+  }
+  .eyebrow {
+    display: inline-flex; align-items: center; gap: 10px;
+    font-size: 12px; font-weight: 500;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: rgba(255,255,255,0.78);
+    margin-bottom: 26px;
+  }
+  .eyebrow .pulse {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--red);
+    box-shadow: 0 0 0 0 var(--red);
+    animation: pulse 2.4s ease-out infinite;
+  }
+  @keyframes pulse {
+    0%   { box-shadow: 0 0 0 0 rgba(223,43,47,0.55); }
+    100% { box-shadow: 0 0 0 14px rgba(223,43,47,0); }
+  }
+  .hero h1 {
+    font-family: var(--serif);
+    font-weight: 400;
+    font-size: clamp(48px, 8.6vw, 130px);
+    line-height: 0.94;
+    letter-spacing: -0.035em;
+    max-width: 16ch;
+    margin-bottom: 24px;
+  }
+  .hero h1 em {
+    font-style: italic;
+    font-weight: 300;
+    color: rgba(255,255,255,0.92);
+  }
+  .hero-sub {
+    max-width: 560px;
+    font-size: 18px;
+    line-height: 1.55;
+    color: rgba(255,255,255,0.84);
+    margin-bottom: 36px;
+  }
+  .hero-cta {
+    display: flex;
+    gap: 14px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .btn-hero {
+    padding: 16px 26px;
+    font-size: 15px;
+    background: #fff;
+    color: var(--ink);
+    border-radius: 999px;
+    font-weight: 600;
+    box-shadow: 0 14px 40px rgba(0,0,0,0.32);
+    transition: transform 220ms ease, box-shadow 220ms ease;
+  }
+  .btn-hero:hover { transform: translateY(-2px); box-shadow: 0 20px 50px rgba(0,0,0,0.4); }
+  .hero-second {
+    color: rgba(255,255,255,0.86);
+    font-size: 14px;
+    font-weight: 500;
+    padding: 14px 18px;
+    transition: color 180ms ease;
+  }
+  .hero-second:hover { color: #fff; }
+  .hero-second .arrow { display: inline-block; transition: transform 220ms ease; }
+  .hero-second:hover .arrow { transform: translateX(4px); }
+
+  .hero-scroll-tag {
+    position: absolute;
+    bottom: 42px; right: 0;
+    z-index: 3;
+    color: rgba(255,255,255,0.65);
+    font-size: 11px;
+    letter-spacing: 0.24em;
+    text-transform: uppercase;
+    writing-mode: vertical-rl;
+    padding-right: 32px;
+  }
+
+  /* ─── Section: Manifesto ───────────────────────────────── */
+  .manifesto {
+    background: var(--paper);
+    padding: 140px 0 120px;
+    position: relative;
+  }
+  .manifesto-eyebrow {
+    font-size: 12px;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 32px;
+    display: flex; align-items: center; gap: 14px;
+  }
+  .manifesto-eyebrow::before {
+    content: ''; display: inline-block;
+    width: 32px; height: 1px;
+    background: var(--ink);
+  }
+  .manifesto h2 {
+    font-family: var(--serif);
+    font-weight: 300;
+    font-size: clamp(36px, 5.6vw, 78px);
+    line-height: 1.05;
+    letter-spacing: -0.025em;
+    max-width: 22ch;
+    color: var(--ink);
+  }
+  .manifesto h2 em {
+    font-style: italic;
+    color: var(--red);
+    font-weight: 400;
+  }
+  .manifesto-foot {
+    margin-top: 64px;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 40px;
+    border-top: 1px solid var(--line);
+    padding-top: 36px;
+  }
+  .manifesto-foot .item .num {
+    font-family: var(--serif);
+    font-style: italic;
+    color: var(--red);
+    font-size: 16px;
+    margin-bottom: 8px;
+  }
+  .manifesto-foot .item h4 {
+    font-family: var(--serif);
+    font-weight: 500;
+    font-size: 22px;
+    margin-bottom: 6px;
+    letter-spacing: -0.01em;
+  }
+  .manifesto-foot .item p { color: var(--muted); font-size: 14.5px; line-height: 1.55; }
+  @media (max-width: 800px) {
+    .manifesto { padding: 90px 0 70px; }
+    .manifesto-foot { grid-template-columns: 1fr; gap: 28px; }
+  }
+
+  /* ─── Section: Live Gallery Marquee ─────────────────────── */
+  .marquee-section {
+    padding: 100px 0 120px;
+    background: var(--ink);
+    color: #fff;
+    overflow: hidden;
+  }
+  .marquee-head {
+    display: flex; align-items: end; justify-content: space-between;
+    padding: 0 32px;
+    margin-bottom: 56px;
+    flex-wrap: wrap; gap: 24px;
+  }
+  .marquee-head h3 {
+    font-family: var(--serif);
+    font-weight: 300;
+    font-size: clamp(32px, 4.6vw, 64px);
+    line-height: 1.02;
+    letter-spacing: -0.022em;
+    max-width: 16ch;
+  }
+  .marquee-head h3 em { font-style: italic; color: rgba(255,255,255,0.6); font-weight: 300; }
+  .marquee-head .filters {
+    display: flex; gap: 6px;
+    background: rgba(255,255,255,0.06);
+    padding: 6px;
+    border-radius: 999px;
+  }
+  .marquee-head .filters button {
+    padding: 9px 16px;
+    font-size: 13px;
+    font-weight: 500;
+    color: rgba(255,255,255,0.72);
+    border-radius: 999px;
+    transition: background 200ms ease, color 200ms ease;
+  }
+  .marquee-head .filters button:hover { color: #fff; }
+  .marquee-head .filters button.active {
+    background: #fff;
+    color: var(--ink);
+  }
+
+  .marquee-track {
+    display: flex;
+    gap: 18px;
+    animation: marquee 50s linear infinite;
+    width: max-content;
+  }
+  .marquee-section:hover .marquee-track { animation-play-state: paused; }
+  @keyframes marquee {
+    0%   { transform: translateX(0); }
+    100% { transform: translateX(-50%); }
+  }
+  .gallery-card {
+    flex-shrink: 0;
+    width: 320px;
+    height: 420px;
+    border-radius: 10px;
+    overflow: hidden;
+    position: relative;
+    transition: transform 320ms ease;
+  }
+  .gallery-card:hover { transform: scale(1.02); }
+  .gallery-card img {
+    width: 100%; height: 100%;
+    object-fit: cover;
+    transition: transform 1s ease;
+  }
+  .gallery-card:hover img { transform: scale(1.06); }
+  .gallery-card .meta {
+    position: absolute;
+    bottom: 0; left: 0; right: 0;
+    padding: 22px;
+    background: linear-gradient(0deg, rgba(0,0,0,0.78) 0%, transparent 100%);
+    color: #fff;
+  }
+  .gallery-card .meta .genre {
+    font-size: 10.5px;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: rgba(255,255,255,0.7);
+    margin-bottom: 6px;
+  }
+  .gallery-card .meta .name {
+    font-family: var(--serif);
+    font-weight: 400;
+    font-size: 22px;
+    letter-spacing: -0.01em;
+    line-height: 1.1;
+  }
+
+  /* ─── Section: Wall Preview Teaser ─────────────────────── */
+  .wallprev {
+    background: var(--cream);
+    padding: 140px 0;
+    position: relative;
+  }
+  .wallprev-grid {
+    display: grid;
+    grid-template-columns: 1fr 1.1fr;
+    gap: 80px;
+    align-items: center;
+  }
+  .wallprev-text .badge {
+    display: inline-block;
+    font-family: var(--serif);
+    font-style: italic;
+    font-weight: 400;
+    color: var(--red);
+    font-size: 14px;
+    margin-bottom: 28px;
+  }
+  .wallprev-text h3 {
+    font-family: var(--serif);
+    font-weight: 300;
+    font-size: clamp(36px, 5vw, 72px);
+    line-height: 1.04;
+    letter-spacing: -0.025em;
+    margin-bottom: 26px;
+  }
+  .wallprev-text h3 em { font-style: italic; }
+  .wallprev-text p {
+    color: var(--muted);
+    font-size: 17px;
+    line-height: 1.65;
+    max-width: 46ch;
+    margin-bottom: 18px;
+  }
+  .wallprev-text .size-list {
+    margin-top: 36px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .size-chip {
+    padding: 10px 16px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--ink);
+    background: #fff;
+    transition: all 220ms ease;
+  }
+  .size-chip:hover { border-color: var(--ink); }
+  .size-chip.active {
+    background: var(--ink);
+    color: #fff;
+    border-color: var(--ink);
+  }
+
+  /* The mock "wall preview" composition */
+  .wallprev-mock {
+    position: relative;
+    aspect-ratio: 4/3;
+    border-radius: 4px;
+    overflow: hidden;
+    box-shadow: 0 30px 80px rgba(20,18,14,0.18);
+  }
+  .wallprev-mock .room {
+    position: absolute; inset: 0;
+    background-image: url('https://images.pexels.com/photos/1571460/pexels-photo-1571460.jpeg?auto=compress&cs=tinysrgb&w=1600');
+    background-size: cover;
+    background-position: center;
+  }
+  .wallprev-mock .frame {
+    position: absolute;
+    top: 24%;
+    left: 38%;
+    width: 22%;
+    aspect-ratio: 4/5;
+    background: #fff;
+    padding: 4%;
+    box-shadow:
+      0 18px 30px rgba(0,0,0,0.32),
+      0 4px 8px rgba(0,0,0,0.18);
+    transition: width 320ms ease, top 320ms ease, left 320ms ease;
+  }
+  .wallprev-mock .frame img {
+    width: 100%; height: 100%; object-fit: cover;
+  }
+  .wallprev-mock .scale-bar {
+    position: absolute;
+    bottom: 18px; left: 18px;
+    background: rgba(255,255,255,0.92);
+    backdrop-filter: blur(10px);
+    padding: 10px 14px;
+    border-radius: 8px;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--ink);
+    box-shadow: 0 6px 18px rgba(0,0,0,0.12);
+  }
+  .wallprev-mock .scale-bar .num { color: var(--red); font-weight: 700; }
+
+  @media (max-width: 900px) {
+    .wallprev { padding: 90px 0; }
+    .wallprev-grid { grid-template-columns: 1fr; gap: 50px; }
+  }
+
+  /* ─── Section: Workflow Connect ─────────────────────────── */
+  .workflow {
+    background: var(--paper);
+    padding: 140px 0 120px;
+  }
+  .workflow-head {
+    text-align: center;
+    margin-bottom: 80px;
+  }
+  .workflow-head .eyebrow { justify-content: center; color: var(--muted); }
+  .workflow-head h3 {
+    font-family: var(--serif);
+    font-weight: 300;
+    font-size: clamp(36px, 5.4vw, 76px);
+    line-height: 1.04;
+    letter-spacing: -0.025em;
+    max-width: 22ch;
+    margin: 28px auto 0;
+  }
+  .workflow-head h3 em { font-style: italic; color: var(--red); font-weight: 400; }
+
+  .workflow-grid {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    gap: 40px;
+    align-items: center;
+  }
+  .workflow-card {
+    background: #fff;
+    border: 1px solid var(--line);
+    border-radius: 18px;
+    padding: 42px;
+    box-shadow: 0 20px 50px rgba(20,18,14,0.06);
+  }
+  .workflow-card .label {
+    font-size: 11px;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 14px;
+  }
+  .workflow-card h4 {
+    font-family: var(--serif);
+    font-weight: 500;
+    font-size: 30px;
+    letter-spacing: -0.02em;
+    margin-bottom: 14px;
+    line-height: 1.1;
+  }
+  .workflow-card h4 .tag {
+    display: inline-block;
+    background: var(--ink);
+    color: #fff;
+    font-family: var(--sans);
+    font-weight: 600;
+    font-size: 10px;
+    letter-spacing: 0.16em;
+    padding: 4px 8px;
+    border-radius: 4px;
+    margin-left: 8px;
+    vertical-align: middle;
+  }
+  .workflow-card p {
+    color: var(--muted);
+    font-size: 15.5px;
+    line-height: 1.62;
+    margin-bottom: 22px;
+  }
+  .workflow-card ul { list-style: none; }
+  .workflow-card ul li {
+    display: flex; gap: 10px; align-items: center;
+    font-size: 14px;
+    color: var(--ink-soft);
+    padding: 9px 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .workflow-card ul li:last-child { border-bottom: 0; }
+  .workflow-card ul li::before {
+    content: ''; width: 5px; height: 5px;
+    background: var(--red); border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .workflow-connector {
+    width: 60px;
+    height: 60px;
+    border-radius: 50%;
+    background: var(--ink);
+    color: #fff;
+    display: flex; align-items: center; justify-content: center;
+    font-family: var(--serif);
+    font-style: italic;
+    font-size: 22px;
+    box-shadow: 0 12px 30px rgba(0,0,0,0.22);
+  }
+  @media (max-width: 900px) {
+    .workflow { padding: 90px 0 70px; }
+    .workflow-grid { grid-template-columns: 1fr; gap: 24px; }
+    .workflow-connector { transform: rotate(90deg); margin: 0 auto; }
+  }
+
+  /* ─── Section: For Schools ─────────────────────────────── */
+  .schools {
+    background: var(--ink);
+    color: #fff;
+    padding: 140px 0;
+    position: relative;
+    overflow: hidden;
+  }
+  .schools::before {
+    content: '';
+    position: absolute;
+    top: -200px; right: -200px;
+    width: 600px; height: 600px;
+    background: radial-gradient(circle, rgba(223,43,47,0.18) 0%, transparent 60%);
+    pointer-events: none;
+  }
+  .schools-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 80px;
+    align-items: center;
+    position: relative;
+  }
+  .schools-text .eyebrow { color: rgba(255,255,255,0.6); }
+  .schools-text h3 {
+    font-family: var(--serif);
+    font-weight: 300;
+    font-size: clamp(36px, 5vw, 70px);
+    line-height: 1.04;
+    letter-spacing: -0.025em;
+    margin: 28px 0;
+  }
+  .schools-text h3 em { font-style: italic; color: var(--red); font-weight: 400; }
+  .schools-text p {
+    color: rgba(255,255,255,0.7);
+    font-size: 17px;
+    line-height: 1.65;
+    max-width: 50ch;
+    margin-bottom: 32px;
+  }
+  .schools-features { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; }
+  .schools-features .item h5 {
+    font-family: var(--serif);
+    font-weight: 500;
+    font-size: 19px;
+    margin-bottom: 8px;
+  }
+  .schools-features .item p {
+    color: rgba(255,255,255,0.55);
+    font-size: 14px;
+    line-height: 1.55;
+    margin: 0;
+  }
+  .schools-photo {
+    aspect-ratio: 3/4;
+    border-radius: 8px;
+    overflow: hidden;
+    box-shadow: 0 30px 80px rgba(0,0,0,0.4);
+  }
+  .schools-photo img { width: 100%; height: 100%; object-fit: cover; }
+  @media (max-width: 900px) {
+    .schools { padding: 90px 0; }
+    .schools-grid { grid-template-columns: 1fr; gap: 50px; }
+    .schools-features { grid-template-columns: 1fr; gap: 18px; }
+  }
+
+  /* ─── Section: Quote / Photographer ─────────────────────── */
+  .quote {
+    background: var(--paper);
+    padding: 140px 0;
+  }
+  .quote-block {
+    max-width: 980px;
+    margin: 0 auto;
+    text-align: center;
+  }
+  .quote-block .mark {
+    font-family: var(--serif);
+    font-style: italic;
+    font-size: 80px;
+    color: var(--red);
+    line-height: 0.4;
+    margin-bottom: 14px;
+  }
+  .quote-block blockquote {
+    font-family: var(--serif);
+    font-weight: 300;
+    font-size: clamp(28px, 3.6vw, 50px);
+    line-height: 1.18;
+    letter-spacing: -0.018em;
+    color: var(--ink);
+    margin-bottom: 38px;
+  }
+  .quote-block blockquote em { font-style: italic; }
+  .quote-attr {
+    display: inline-flex; align-items: center; gap: 16px;
+  }
+  .quote-attr .face {
+    width: 52px; height: 52px;
+    border-radius: 50%;
+    background-image: url('https://images.pexels.com/photos/1239288/pexels-photo-1239288.jpeg?auto=compress&cs=tinysrgb&w=400');
+    background-size: cover;
+    background-position: center;
+  }
+  .quote-attr .name {
+    font-family: var(--serif);
+    font-weight: 500;
+    font-size: 17px;
+    letter-spacing: -0.005em;
+    line-height: 1.3;
+  }
+  .quote-attr .role {
+    font-size: 13px;
+    color: var(--muted);
+    line-height: 1.3;
+  }
+
+  /* ─── Section: Pricing ──────────────────────────────────── */
+  .pricing {
+    background: var(--cream);
+    padding: 140px 0;
+  }
+  .pricing-head { text-align: center; margin-bottom: 64px; }
+  .pricing-head h3 {
+    font-family: var(--serif);
+    font-weight: 300;
+    font-size: clamp(36px, 5vw, 70px);
+    line-height: 1.04;
+    letter-spacing: -0.025em;
+    margin: 26px 0 14px;
+  }
+  .pricing-head h3 em { font-style: italic; color: var(--red); font-weight: 400; }
+  .pricing-head p {
+    color: var(--muted);
+    font-size: 16px;
+    max-width: 50ch;
+    margin: 0 auto;
+  }
+  .pricing-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 22px;
+  }
+  .price-card {
+    background: #fff;
+    border: 1px solid var(--line);
+    border-radius: 20px;
+    padding: 38px;
+    transition: transform 320ms ease, box-shadow 320ms ease;
+  }
+  .price-card:hover {
+    transform: translateY(-6px);
+    box-shadow: 0 30px 60px rgba(20,18,14,0.1);
+  }
+  .price-card.featured {
+    background: var(--ink);
+    color: #fff;
+    border-color: var(--ink);
+    transform: translateY(-12px);
+  }
+  .price-card .pkg {
+    font-family: var(--serif);
+    font-weight: 500;
+    font-size: 22px;
+    margin-bottom: 6px;
+    letter-spacing: -0.01em;
+  }
+  .price-card .desc {
+    color: var(--muted);
+    font-size: 13.5px;
+    margin-bottom: 24px;
+    line-height: 1.55;
+  }
+  .price-card.featured .desc { color: rgba(255,255,255,0.6); }
+  .price-card .num {
+    font-family: var(--serif);
+    font-weight: 300;
+    font-size: 64px;
+    letter-spacing: -0.04em;
+    line-height: 1;
+    margin-bottom: 4px;
+  }
+  .price-card .num sup { font-size: 22px; vertical-align: top; margin-right: 4px; color: var(--muted); }
+  .price-card .per {
+    font-size: 13px;
+    color: var(--muted);
+    margin-bottom: 30px;
+  }
+  .price-card.featured .per { color: rgba(255,255,255,0.55); }
+  .price-card ul { list-style: none; margin-bottom: 28px; }
+  .price-card ul li {
+    padding: 10px 0;
+    font-size: 14px;
+    color: var(--ink-soft);
+    display: flex; gap: 10px;
+    border-top: 1px solid var(--line);
+  }
+  .price-card.featured ul li { color: rgba(255,255,255,0.86); border-top-color: rgba(255,255,255,0.1); }
+  .price-card ul li::before {
+    content: '';
+    width: 16px; height: 16px;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23df2b2f' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E");
+    background-size: contain;
+    flex-shrink: 0;
+    margin-top: 2px;
+  }
+  .price-card .pick {
+    width: 100%;
+    padding: 14px;
+    border-radius: 999px;
+    font-weight: 600;
+    font-size: 14px;
+    background: var(--paper);
+    color: var(--ink);
+    transition: background 220ms ease;
+  }
+  .price-card .pick:hover { background: var(--paper-deep); }
+  .price-card.featured .pick {
+    background: var(--red);
+    color: #fff;
+  }
+  .price-card.featured .pick:hover { background: var(--red-deep); }
+  .featured-tag {
+    display: inline-block;
+    font-family: var(--serif);
+    font-style: italic;
+    font-size: 12px;
+    color: var(--red);
+    margin-bottom: 8px;
+  }
+  @media (max-width: 900px) {
+    .pricing { padding: 90px 0; }
+    .pricing-grid { grid-template-columns: 1fr; }
+    .price-card.featured { transform: none; }
+  }
+
+  /* ─── Final CTA ─────────────────────────────────────────── */
+  .final-cta {
+    padding: 160px 0;
+    background: var(--paper);
+    text-align: center;
+    border-top: 1px solid var(--line);
+  }
+  .final-cta h3 {
+    font-family: var(--serif);
+    font-weight: 300;
+    font-size: clamp(48px, 8vw, 130px);
+    line-height: 0.98;
+    letter-spacing: -0.035em;
+    max-width: 14ch;
+    margin: 0 auto 36px;
+  }
+  .final-cta h3 em { font-style: italic; }
+  .final-cta .ctas {
+    display: inline-flex; gap: 14px; flex-wrap: wrap;
+    justify-content: center;
+  }
+
+  /* ─── Footer ────────────────────────────────────────────── */
+  footer.site-footer {
+    background: var(--ink);
+    color: rgba(255,255,255,0.7);
+    padding: 80px 0 50px;
+  }
+  .footer-grid {
+    display: grid;
+    grid-template-columns: 2fr repeat(3, 1fr);
+    gap: 60px;
+    margin-bottom: 60px;
+  }
+  .footer-brand {
+    font-family: var(--serif);
+    font-weight: 400;
+    font-size: 28px;
+    letter-spacing: -0.02em;
+    color: #fff;
+    margin-bottom: 14px;
+  }
+  .footer-brand em { font-style: italic; color: rgba(255,255,255,0.55); }
+  .footer-bio {
+    font-size: 14px;
+    line-height: 1.6;
+    max-width: 36ch;
+    color: rgba(255,255,255,0.55);
+  }
+  .footer-col h6 {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.22em;
+    color: rgba(255,255,255,0.5);
+    margin-bottom: 18px;
+  }
+  .footer-col ul { list-style: none; }
+  .footer-col ul li { margin-bottom: 10px; }
+  .footer-col ul li a {
+    font-size: 14.5px;
+    color: rgba(255,255,255,0.78);
+    transition: color 180ms ease;
+  }
+  .footer-col ul li a:hover { color: #fff; }
+  .footer-bottom {
+    border-top: 1px solid rgba(255,255,255,0.08);
+    padding-top: 28px;
+    display: flex; justify-content: space-between; gap: 14px;
+    flex-wrap: wrap;
+    font-size: 13px;
+    color: rgba(255,255,255,0.45);
+  }
+  @media (max-width: 800px) {
+    .footer-grid { grid-template-columns: 1fr 1fr; gap: 40px; }
+  }
+
+  /* Reveal-on-scroll */
+  .reveal { opacity: 0; transform: translateY(28px); transition: opacity 760ms cubic-bezier(.2,.7,.3,1), transform 760ms cubic-bezier(.2,.7,.3,1); }
+  .reveal.in { opacity: 1; transform: translateY(0); }
+</style>
+</head>
+<body>
+
+<!-- Header ─────────────────────────────────────────────── -->
+<header class="site-header" id="siteHeader">
+  <div class="container">
+    <div class="row">
+      <a href="#" class="wordmark">
+        <span class="mark">SO<span class="dot">.</span></span>
+        <span class="name">Studio OS <span>cloud</span></span>
+      </a>
+
+      <nav class="primary">
+        <a href="#galleries">Galleries</a>
+        <a href="#prints">Print Shop</a>
+        <a href="#workflow">Workflow</a>
+        <a href="#schools">Schools</a>
+        <a href="#pricing">Pricing</a>
+      </nav>
+
+      <div class="header-cta">
+        <a href="#" class="btn btn-ghost">Sign In</a>
+        <a href="#" class="btn btn-red">Try Free →</a>
+      </div>
+    </div>
+  </div>
+</header>
+
+<!-- Hero ────────────────────────────────────────────────── -->
+<section class="hero">
+  <div class="hero-photo">
+    <img src="https://images.pexels.com/photos/265856/pexels-photo-265856.jpeg?auto=compress&cs=tinysrgb&w=2400" alt="">
+  </div>
+  <div class="container hero-content">
+    <span class="eyebrow"><span class="pulse"></span>Studio OS Cloud · 2026</span>
+    <h1>Galleries that <em>sell</em><br>themselves.</h1>
+    <p class="hero-sub">
+      A premium client gallery and print shop built for photographers who care about how their work
+      is presented. Cinematic covers. True-to-scale wall previews. Connected desktop + cloud workflow.
+    </p>
+    <div class="hero-cta">
+      <a href="#" class="btn-hero">Start Free Trial →</a>
+      <a href="#" class="hero-second">Watch the demo <span class="arrow">→</span></a>
+    </div>
+  </div>
+  <div class="hero-scroll-tag">Scroll to explore</div>
+</section>
+
+<!-- Manifesto ───────────────────────────────────────────── -->
+<section class="manifesto">
+  <div class="container">
+    <div class="manifesto-eyebrow reveal">A note to photographers</div>
+    <h2 class="serif reveal">
+      Your clients aren't browsing a Dropbox folder.
+      They're <em>making decisions</em> about prints they'll hang for twenty years.
+    </h2>
+    <div class="manifesto-foot">
+      <div class="item reveal">
+        <div class="num">— 01</div>
+        <h4>Editorial covers</h4>
+        <p>Cinematic, multi-image, motion. Each gallery feels published.</p>
+      </div>
+      <div class="item reveal">
+        <div class="num">— 02</div>
+        <h4>True-to-scale prints</h4>
+        <p>Show clients exactly how 24×36 looks above their couch. Before they buy.</p>
+      </div>
+      <div class="item reveal">
+        <div class="num">— 03</div>
+        <h4>Connected workflow</h4>
+        <p>Desktop capture, AI culling, cloud delivery. One system, no exports.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Marquee ─────────────────────────────────────────────── -->
+<section class="marquee-section" id="galleries">
+  <div class="marquee-head">
+    <h3 class="serif">Real galleries.<br><em>Real photographers.</em></h3>
+    <div class="filters">
+      <button class="active">All</button>
+      <button>Weddings</button>
+      <button>Schools</button>
+      <button>Events</button>
+      <button>Portraits</button>
+    </div>
+  </div>
+  <div class="marquee-track" id="marqueeTrack">
+    <!-- 12 cards × 2 (looped) = 24 in DOM -->
+  </div>
+</section>
+
+<!-- Wall Preview Teaser ────────────────────────────────── -->
+<section class="wallprev" id="prints">
+  <div class="container">
+    <div class="wallprev-grid">
+      <div class="wallprev-text">
+        <span class="badge serif">— Print Shop</span>
+        <h3 class="serif">See it on the <em>wall</em><br>before they buy.</h3>
+        <p>
+          Every print size renders at correct scale inside a real room. Frame, finish, mat —
+          all swappable in real time. The 24×36 conversation that used to take a 30-minute
+          consultation now happens in 30 seconds, on their phone.
+        </p>
+        <div class="size-list">
+          <button class="size-chip">8×10</button>
+          <button class="size-chip">11×14</button>
+          <button class="size-chip active">16×20</button>
+          <button class="size-chip">24×36</button>
+          <button class="size-chip">30×40</button>
+          <button class="size-chip">Triptych</button>
+        </div>
+      </div>
+      <div class="wallprev-mock">
+        <div class="room"></div>
+        <div class="frame">
+          <img src="https://images.pexels.com/photos/1024960/pexels-photo-1024960.jpeg?auto=compress&cs=tinysrgb&w=600" alt="">
+        </div>
+        <div class="scale-bar">16×20 · <span class="num">true scale</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Workflow ────────────────────────────────────────────── -->
+<section class="workflow" id="workflow">
+  <div class="container">
+    <div class="workflow-head">
+      <span class="eyebrow">— The full system</span>
+      <h3 class="serif">Capture, deliver, <em>sell.</em></h3>
+    </div>
+    <div class="workflow-grid">
+      <div class="workflow-card reveal">
+        <div class="label">— Desktop</div>
+        <h4 class="serif">Studio OS App <span class="tag">macOS</span></h4>
+        <p>Tethered capture, AI-assisted culling, RAW develop, project organization. The shoot day stays organized.</p>
+        <ul>
+          <li>Tethered capture & live preview</li>
+          <li>Assisted culling (subject focus, exposure)</li>
+          <li>RAW develop with Core Image</li>
+          <li>Auto-routes to roster folders</li>
+        </ul>
+      </div>
+      <div class="workflow-connector serif">↔</div>
+      <div class="workflow-card reveal">
+        <div class="label">— Cloud</div>
+        <h4 class="serif">Studio OS Cloud</h4>
+        <p>Premium client galleries, ordering, downloads, portal access. The delivery experience that closes sales.</p>
+        <ul>
+          <li>Cinematic covers & themes</li>
+          <li>Wall-preview print shop</li>
+          <li>PIN access for parents & clients</li>
+          <li>Stripe checkout, lab fulfillment</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Schools ─────────────────────────────────────────────── -->
+<section class="schools" id="schools">
+  <div class="container">
+    <div class="schools-grid">
+      <div class="schools-text">
+        <span class="eyebrow">— Built for</span>
+        <h3 class="serif">High-volume <em>school</em><br>photography.</h3>
+        <p>
+          Most gallery platforms break at 200 students. Studio OS was built around a working school
+          photographer's actual day — roster import, PIN-per-student access, parent-facing composites,
+          and orders flowing back to the print lab without exporting CSVs.
+        </p>
+        <div class="schools-features">
+          <div class="item">
+            <h5 class="serif">Roster + PIN</h5>
+            <p>One PIN per student. Parents see only their child.</p>
+          </div>
+          <div class="item">
+            <h5 class="serif">Class composites</h5>
+            <p>Auto-generated. Auto-included in package slots.</p>
+          </div>
+          <div class="item">
+            <h5 class="serif">Per-school branding</h5>
+            <p>Each school's gallery looks like the school's brand.</p>
+          </div>
+          <div class="item">
+            <h5 class="serif">Lab handoff</h5>
+            <p>Orders push directly to print fulfillment. No exports.</p>
+          </div>
+        </div>
+      </div>
+      <div class="schools-photo">
+        <img src="https://images.pexels.com/photos/8466111/pexels-photo-8466111.jpeg?auto=compress&cs=tinysrgb&w=1200" alt="">
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Quote ───────────────────────────────────────────────── -->
+<section class="quote">
+  <div class="container">
+    <div class="quote-block">
+      <div class="mark">"</div>
+      <blockquote class="serif">
+        Studio OS replaced four tools at my studio. The wall preview alone <em>doubled my print sales</em> the
+        first weekend my clients used it.
+      </blockquote>
+      <div class="quote-attr">
+        <span class="face"></span>
+        <div>
+          <div class="name serif">Maya Holland</div>
+          <div class="role">Wedding & Portrait Photographer · Toronto</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Pricing ────────────────────────────────────────────── -->
+<section class="pricing" id="pricing">
+  <div class="container">
+    <div class="pricing-head">
+      <span class="eyebrow">— Pricing</span>
+      <h3 class="serif">Pick a plan. <em>Grow into it.</em></h3>
+      <p>Every plan includes premium galleries, print shop, and connected workflow. No transaction fees on prints.</p>
+    </div>
+    <div class="pricing-grid">
+      <div class="price-card">
+        <div class="pkg serif">Starter</div>
+        <div class="desc">For solo photographers running a tight book of clients.</div>
+        <div class="num"><sup>$</sup>19</div>
+        <div class="per">per month, billed annually</div>
+        <ul>
+          <li>10 active galleries</li>
+          <li>50GB storage</li>
+          <li>Premium covers</li>
+          <li>Print shop with wall preview</li>
+          <li>Stripe checkout</li>
+        </ul>
+        <button class="pick">Start Starter</button>
+      </div>
+      <div class="price-card featured">
+        <div class="featured-tag serif">— Most popular</div>
+        <div class="pkg serif">Studio</div>
+        <div class="desc">For working studios that ship volume and want every conversion lever.</div>
+        <div class="num"><sup>$</sup>49</div>
+        <div class="per">per month, billed annually</div>
+        <ul>
+          <li>Unlimited galleries</li>
+          <li>500GB storage</li>
+          <li>Connected desktop app</li>
+          <li>Schools + Events workflow</li>
+          <li>AI culling & develop</li>
+          <li>Lab fulfillment integration</li>
+        </ul>
+        <button class="pick">Start Studio</button>
+      </div>
+      <div class="price-card">
+        <div class="pkg serif">Atelier</div>
+        <div class="desc">High-volume operations. Custom domain, dedicated support, white-label.</div>
+        <div class="num"><sup>$</sup>149</div>
+        <div class="per">per month, billed annually</div>
+        <ul>
+          <li>Everything in Studio</li>
+          <li>2TB storage</li>
+          <li>Custom domain</li>
+          <li>White-label galleries</li>
+          <li>Priority support</li>
+          <li>Multi-user accounts</li>
+        </ul>
+        <button class="pick">Talk to us</button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Final CTA ──────────────────────────────────────────── -->
+<section class="final-cta">
+  <div class="container">
+    <h3 class="serif reveal">Make every gallery <em>memorable.</em></h3>
+    <div class="ctas">
+      <a href="#" class="btn btn-red" style="padding: 16px 28px; font-size: 15px;">Start Free Trial →</a>
+      <a href="#" class="btn btn-ghost">Watch the platform demo</a>
+    </div>
+  </div>
+</section>
+
+<!-- Footer ──────────────────────────────────────────────── -->
+<footer class="site-footer">
+  <div class="container">
+    <div class="footer-grid">
+      <div>
+        <div class="footer-brand">Studio OS <em>cloud</em></div>
+        <p class="footer-bio">
+          Premium gallery and workflow platform built for working photographers — portraits,
+          weddings, schools, sports, events.
+        </p>
+      </div>
+      <div class="footer-col">
+        <h6>Product</h6>
+        <ul>
+          <li><a href="#">Galleries</a></li>
+          <li><a href="#">Print shop</a></li>
+          <li><a href="#">Schools workflow</a></li>
+          <li><a href="#">Studio OS App</a></li>
+          <li><a href="#">Pricing</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h6>Compare</h6>
+        <ul>
+          <li><a href="#">vs. Pic-Time</a></li>
+          <li><a href="#">vs. Pixieset</a></li>
+          <li><a href="#">vs. ShootProof</a></li>
+          <li><a href="#">vs. PhotoDay</a></li>
+          <li><a href="#">vs. GotPhoto</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h6>Company</h6>
+        <ul>
+          <li><a href="#">About</a></li>
+          <li><a href="#">Photographer stories</a></li>
+          <li><a href="#">Help & support</a></li>
+          <li><a href="#">Terms</a></li>
+          <li><a href="#">Privacy</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <div>© 2026 Studio OS Cloud · Built by photographers, for photographers</div>
+      <div>Mockup v1 · April 2026</div>
+    </div>
+  </div>
+</footer>
+
+<script>
+  // Header background on scroll
+  const header = document.getElementById('siteHeader');
+  const onScroll = () => {
+    if (window.scrollY > 40) header.classList.add('scrolled');
+    else header.classList.remove('scrolled');
+  };
+  window.addEventListener('scroll', onScroll, { passive: true });
+  onScroll();
+
+  // Reveal on scroll
+  const io = new IntersectionObserver((entries) => {
+    entries.forEach(e => {
+      if (e.isIntersecting) {
+        e.target.classList.add('in');
+        io.unobserve(e.target);
+      }
+    });
+  }, { threshold: 0.18 });
+  document.querySelectorAll('.reveal').forEach(el => io.observe(el));
+
+  // Build the marquee
+  const photos = [
+    { url: 'https://images.pexels.com/photos/1444442/pexels-photo-1444442.jpeg?auto=compress&cs=tinysrgb&w=900', genre: 'Wedding', name: 'Aisle & Alder' },
+    { url: 'https://images.pexels.com/photos/3779487/pexels-photo-3779487.jpeg?auto=compress&cs=tinysrgb&w=900', genre: 'School', name: 'Hartwell K-8' },
+    { url: 'https://images.pexels.com/photos/1444220/pexels-photo-1444220.jpeg?auto=compress&cs=tinysrgb&w=900', genre: 'Portrait', name: 'Studio Ren' },
+    { url: 'https://images.pexels.com/photos/2253870/pexels-photo-2253870.jpeg?auto=compress&cs=tinysrgb&w=900', genre: 'Event', name: 'Vol. III Gala' },
+    { url: 'https://images.pexels.com/photos/1820770/pexels-photo-1820770.jpeg?auto=compress&cs=tinysrgb&w=900', genre: 'Wedding', name: 'Marais & Co.' },
+    { url: 'https://images.pexels.com/photos/3812944/pexels-photo-3812944.jpeg?auto=compress&cs=tinysrgb&w=900', genre: 'Sports', name: 'Riverside FC' },
+    { url: 'https://images.pexels.com/photos/1684187/pexels-photo-1684187.jpeg?auto=compress&cs=tinysrgb&w=900', genre: 'Portrait', name: 'Atelier Quinn' },
+    { url: 'https://images.pexels.com/photos/3014019/pexels-photo-3014019.jpeg?auto=compress&cs=tinysrgb&w=900', genre: 'Wedding', name: 'House of June' },
+    { url: 'https://images.pexels.com/photos/2422281/pexels-photo-2422281.jpeg?auto=compress&cs=tinysrgb&w=900', genre: 'Event', name: 'Avant 2026' },
+    { url: 'https://images.pexels.com/photos/3692748/pexels-photo-3692748.jpeg?auto=compress&cs=tinysrgb&w=900', genre: 'School', name: 'Belmont Prep' },
+    { url: 'https://images.pexels.com/photos/2774556/pexels-photo-2774556.jpeg?auto=compress&cs=tinysrgb&w=900', genre: 'Portrait', name: 'Maison Rouge' },
+    { url: 'https://images.pexels.com/photos/1729797/pexels-photo-1729797.jpeg?auto=compress&cs=tinysrgb&w=900', genre: 'Wedding', name: 'The Olive Year' },
+  ];
+  const track = document.getElementById('marqueeTrack');
+  const all = [...photos, ...photos]; // duplicate for seamless loop
+  all.forEach(p => {
+    const card = document.createElement('div');
+    card.className = 'gallery-card';
+    card.innerHTML = `
+      <img src="${p.url}" alt="">
+      <div class="meta">
+        <div class="genre">${p.genre}</div>
+        <div class="name">${p.name}</div>
+      </div>
+    `;
+    track.appendChild(card);
+  });
+
+  // Filter chip toggle (cosmetic for mockup)
+  document.querySelectorAll('.marquee-head .filters button').forEach(b => {
+    b.addEventListener('click', () => {
+      document.querySelectorAll('.marquee-head .filters button').forEach(x => x.classList.remove('active'));
+      b.classList.add('active');
+    });
+  });
+
+  // Size chip + wall preview frame swap (cosmetic)
+  const frame = document.querySelector('.wallprev-mock .frame');
+  const scale = document.querySelector('.wallprev-mock .scale-bar');
+  const sizes = {
+    '8×10':   { w: 12, top: 32, left: 44 },
+    '11×14':  { w: 18, top: 28, left: 40 },
+    '16×20':  { w: 22, top: 24, left: 38 },
+    '24×36':  { w: 32, top: 18, left: 33 },
+    '30×40':  { w: 38, top: 14, left: 30 },
+    'Triptych': { w: 46, top: 22, left: 26 },
+  };
+  document.querySelectorAll('.size-chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      document.querySelectorAll('.size-chip').forEach(c => c.classList.remove('active'));
+      chip.classList.add('active');
+      const s = sizes[chip.textContent];
+      if (!s) return;
+      frame.style.width = s.w + '%';
+      frame.style.top = s.top + '%';
+      frame.style.left = s.left + '%';
+      scale.innerHTML = `${chip.textContent} · <span class="num">true scale</span>`;
+    });
+  });
+</script>
+
+</body>
+</html>

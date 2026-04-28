@@ -1,0 +1,1082 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Sarah & James · A Wedding — Studio OS Cloud</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,400;9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --ink: #0a0a0a;
+    --ink-soft: #1a1a1a;
+    --paper: #f6f1ea;
+    --paper-deep: #ede5d8;
+    --cream: #faf6ef;
+    --line: #e6dfd1;
+    --muted: #6b6358;
+    --red: #df2b2f;
+    --serif: 'Fraunces', 'Times New Roman', serif;
+    --sans: 'Inter', system-ui, -apple-system, sans-serif;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+  body {
+    font-family: var(--sans);
+    background: var(--paper);
+    color: var(--ink);
+    -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
+  }
+  img { max-width: 100%; display: block; }
+  a { color: inherit; text-decoration: none; }
+  button { font: inherit; cursor: pointer; border: 0; background: none; }
+
+  .serif { font-family: var(--serif); font-feature-settings: 'ss01'; }
+  .container { max-width: 1480px; margin: 0 auto; padding: 0 40px; }
+  .narrow { max-width: 920px; margin: 0 auto; padding: 0 32px; }
+  @media (max-width: 700px) {
+    .container { padding: 0 20px; }
+    .narrow { padding: 0 24px; }
+  }
+
+  /* ─── Top Bar ───────────────────────────────────────────── */
+  .gallery-bar {
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    z-index: 50;
+    transition: background 240ms ease, backdrop-filter 240ms ease, border-color 240ms ease;
+    border-bottom: 1px solid transparent;
+  }
+  .gallery-bar.scrolled {
+    background: rgba(246, 241, 234, 0.86);
+    backdrop-filter: blur(16px) saturate(1.1);
+    -webkit-backdrop-filter: blur(16px) saturate(1.1);
+    border-bottom-color: var(--line);
+  }
+  .gallery-bar .row {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    align-items: center;
+    padding: 22px 0;
+    gap: 24px;
+  }
+  .photographer-mark { font-family: var(--serif); font-size: 16px; letter-spacing: -0.005em; color: #fff; transition: color 240ms ease; }
+  .gallery-bar.scrolled .photographer-mark { color: var(--ink); }
+  .photographer-mark em { font-style: italic; opacity: .7; font-weight: 400; }
+
+  .scene-nav {
+    display: flex;
+    gap: 28px;
+    justify-content: center;
+    color: rgba(255,255,255,0.78);
+    transition: color 240ms ease;
+  }
+  .gallery-bar.scrolled .scene-nav { color: var(--muted); }
+  .scene-nav a {
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    transition: color 200ms ease;
+    position: relative;
+  }
+  .scene-nav a.active::after {
+    content: '';
+    position: absolute;
+    left: 50%; bottom: -10px;
+    width: 16px; height: 1px;
+    background: var(--red);
+    transform: translateX(-50%);
+  }
+  .scene-nav a:hover { color: #fff; }
+  .gallery-bar.scrolled .scene-nav a:hover { color: var(--ink); }
+
+  .right-tools {
+    display: flex; gap: 10px; justify-content: end; align-items: center;
+  }
+  .tool-pill {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 9px 14px;
+    border: 1px solid rgba(255,255,255,0.32);
+    background: rgba(255,255,255,0.08);
+    backdrop-filter: blur(8px);
+    color: #fff;
+    font-size: 12.5px;
+    font-weight: 500;
+    border-radius: 999px;
+    transition: all 240ms ease;
+  }
+  .tool-pill:hover { background: rgba(255,255,255,0.16); }
+  .gallery-bar.scrolled .tool-pill {
+    color: var(--ink);
+    border-color: var(--line);
+    background: #fff;
+  }
+  .tool-pill .heart { font-size: 12px; color: var(--red); }
+  .tool-pill .badge {
+    background: var(--red);
+    color: #fff;
+    font-size: 10.5px;
+    font-weight: 700;
+    padding: 1px 6px;
+    border-radius: 8px;
+    margin-left: 2px;
+  }
+  .tool-pill.cart {
+    background: var(--red);
+    border-color: var(--red);
+    color: #fff;
+  }
+  .gallery-bar.scrolled .tool-pill.cart { background: var(--red); border-color: var(--red); color: #fff; }
+
+  @media (max-width: 800px) {
+    .scene-nav { display: none; }
+    .gallery-bar .row { grid-template-columns: 1fr 1fr; gap: 12px; }
+    .tool-pill { padding: 8px 12px; font-size: 11.5px; }
+  }
+
+  /* ─── Hero / Cover ──────────────────────────────────────── */
+  .cover {
+    position: relative;
+    height: 100vh;
+    min-height: 720px;
+    overflow: hidden;
+    background: var(--ink);
+    color: #fff;
+  }
+  .cover-image {
+    position: absolute; inset: 0;
+    z-index: 0;
+  }
+  .cover-image img {
+    width: 100%; height: 100%;
+    object-fit: cover;
+    animation: kenburnsCover 22s ease-out infinite alternate;
+  }
+  .cover-image::after {
+    content: '';
+    position: absolute; inset: 0;
+    background:
+      linear-gradient(180deg, rgba(0,0,0,0.42) 0%, rgba(0,0,0,0.05) 30%, rgba(0,0,0,0.45) 100%);
+    z-index: 1;
+  }
+  @keyframes kenburnsCover {
+    0%   { transform: scale(1.04) translate(0, 0); }
+    100% { transform: scale(1.15) translate(-1.2%, -1.2%); }
+  }
+  .cover-content {
+    position: relative;
+    z-index: 2;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    padding-bottom: 90px;
+  }
+  .cover-eyebrow {
+    font-size: 11.5px;
+    letter-spacing: 0.32em;
+    text-transform: uppercase;
+    color: rgba(255,255,255,0.72);
+    margin-bottom: 28px;
+    display: flex; align-items: center; gap: 14px;
+  }
+  .cover-eyebrow::before {
+    content: ''; display: inline-block;
+    width: 28px; height: 1px;
+    background: rgba(255,255,255,0.6);
+  }
+  .cover h1 {
+    font-family: var(--serif);
+    font-weight: 300;
+    font-size: clamp(56px, 11vw, 180px);
+    line-height: 0.92;
+    letter-spacing: -0.045em;
+    margin-bottom: 28px;
+  }
+  .cover h1 em { font-style: italic; font-weight: 300; }
+  .cover h1 .amp {
+    font-family: var(--serif);
+    font-style: italic;
+    color: var(--red);
+    margin: 0 8px;
+    font-weight: 300;
+  }
+  .cover-meta {
+    display: flex; gap: 40px; flex-wrap: wrap;
+    font-size: 13px;
+    letter-spacing: 0.06em;
+    color: rgba(255,255,255,0.86);
+  }
+  .cover-meta .label { color: rgba(255,255,255,0.55); margin-right: 8px; text-transform: uppercase; font-size: 11px; letter-spacing: 0.18em; }
+  .cover-meta strong { font-weight: 500; }
+
+  .cover-scroll {
+    position: absolute;
+    bottom: 32px; left: 50%; transform: translateX(-50%);
+    z-index: 3;
+    color: rgba(255,255,255,0.7);
+    font-size: 11px;
+    letter-spacing: 0.28em;
+    text-transform: uppercase;
+    text-align: center;
+  }
+  .cover-scroll::after {
+    content: '';
+    display: block;
+    width: 1px;
+    height: 36px;
+    background: linear-gradient(180deg, rgba(255,255,255,0.7) 0%, rgba(255,255,255,0) 100%);
+    margin: 12px auto 0;
+    animation: pulseLine 2.4s ease-in-out infinite;
+  }
+  @keyframes pulseLine {
+    0%, 100% { opacity: 0.5; transform: scaleY(0.7); }
+    50% { opacity: 1; transform: scaleY(1); }
+  }
+
+  /* ─── Photographer's Note ───────────────────────────────── */
+  .note {
+    padding: 140px 0 110px;
+    background: var(--paper);
+    position: relative;
+  }
+  .note .narrow {
+    text-align: center;
+  }
+  .note .eyebrow {
+    font-size: 11.5px;
+    letter-spacing: 0.28em;
+    text-transform: uppercase;
+    color: var(--red);
+    font-family: var(--serif);
+    font-style: italic;
+    font-weight: 400;
+    margin-bottom: 32px;
+  }
+  .note p {
+    font-family: var(--serif);
+    font-weight: 300;
+    font-size: clamp(22px, 2.6vw, 36px);
+    line-height: 1.42;
+    letter-spacing: -0.012em;
+    color: var(--ink-soft);
+    margin-bottom: 36px;
+  }
+  .note p em { font-style: italic; }
+  .note .signature {
+    font-family: var(--serif);
+    font-style: italic;
+    font-size: 17px;
+    color: var(--muted);
+  }
+  .note .signature strong {
+    display: block;
+    color: var(--ink);
+    font-style: normal;
+    font-weight: 500;
+    margin-top: 4px;
+    letter-spacing: 0.04em;
+    font-size: 13px;
+    text-transform: uppercase;
+    font-family: var(--sans);
+  }
+
+  /* ─── Album Index (chapters overview) ──────────────────── */
+  .album-index {
+    padding: 60px 0 140px;
+    background: var(--paper);
+  }
+  .album-head {
+    text-align: center;
+    margin-bottom: 80px;
+  }
+  .album-head .eyebrow {
+    font-size: 11.5px;
+    letter-spacing: 0.28em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 24px;
+  }
+  .album-head h2 {
+    font-family: var(--serif);
+    font-weight: 300;
+    font-size: clamp(40px, 5.6vw, 80px);
+    line-height: 1;
+    letter-spacing: -0.025em;
+  }
+  .album-head h2 em { font-style: italic; }
+
+  .album-grid {
+    display: grid;
+    grid-template-columns: repeat(12, 1fr);
+    gap: 28px;
+  }
+  .album-card {
+    position: relative;
+    aspect-ratio: 4/5;
+    border-radius: 4px;
+    overflow: hidden;
+    cursor: pointer;
+    transition: transform 600ms cubic-bezier(.2,.7,.3,1);
+  }
+  .album-card.card-hero { grid-column: span 7; aspect-ratio: 16/11; }
+  .album-card.card-tall { grid-column: span 5; aspect-ratio: 4/5; }
+  .album-card.card-wide { grid-column: span 8; aspect-ratio: 16/9; }
+  .album-card.card-square { grid-column: span 4; aspect-ratio: 1/1; }
+  .album-card.card-half { grid-column: span 6; aspect-ratio: 4/3; }
+  .album-card:hover { transform: translateY(-4px); }
+  .album-card img {
+    width: 100%; height: 100%;
+    object-fit: cover;
+    transition: transform 1.2s ease;
+  }
+  .album-card:hover img { transform: scale(1.06); }
+  .album-card::before {
+    content: '';
+    position: absolute; inset: 0; z-index: 1;
+    background: linear-gradient(180deg, rgba(0,0,0,0.0) 30%, rgba(0,0,0,0.55) 100%);
+    transition: opacity 400ms ease;
+  }
+  .album-card .meta {
+    position: absolute;
+    bottom: 30px; left: 32px; right: 32px;
+    z-index: 2;
+    color: #fff;
+  }
+  .album-card .ch-num {
+    font-family: var(--serif);
+    font-style: italic;
+    font-size: 13px;
+    color: rgba(255,255,255,0.78);
+    margin-bottom: 8px;
+  }
+  .album-card .ch-name {
+    font-family: var(--serif);
+    font-weight: 400;
+    font-size: clamp(24px, 2.4vw, 38px);
+    line-height: 1.04;
+    letter-spacing: -0.015em;
+    margin-bottom: 8px;
+  }
+  .album-card .ch-count {
+    font-size: 12px;
+    color: rgba(255,255,255,0.7);
+    letter-spacing: 0.05em;
+  }
+  .album-card .arrow {
+    position: absolute;
+    top: 24px; right: 24px;
+    z-index: 2;
+    width: 38px; height: 38px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.18);
+    backdrop-filter: blur(8px);
+    color: #fff;
+    display: flex; align-items: center; justify-content: center;
+    transition: background 300ms ease, transform 300ms ease;
+    font-size: 14px;
+  }
+  .album-card:hover .arrow {
+    background: var(--red);
+    transform: rotate(-45deg);
+  }
+  @media (max-width: 900px) {
+    .album-grid { grid-template-columns: 1fr; gap: 20px; }
+    .album-card.card-hero, .album-card.card-tall, .album-card.card-wide,
+    .album-card.card-square, .album-card.card-half { grid-column: span 1; aspect-ratio: 4/5; }
+  }
+
+  /* ─── Chapter Sections ─────────────────────────────────── */
+  .chapter {
+    padding: 140px 0;
+    position: relative;
+  }
+  .chapter:nth-of-type(even) { background: var(--cream); }
+  .chapter-intro {
+    text-align: center;
+    max-width: 880px;
+    margin: 0 auto 90px;
+    padding: 0 24px;
+  }
+  .chapter-num {
+    font-family: var(--serif);
+    font-style: italic;
+    font-size: 14px;
+    color: var(--red);
+    letter-spacing: 0.16em;
+    margin-bottom: 24px;
+    display: flex; align-items: center; justify-content: center; gap: 14px;
+  }
+  .chapter-num::before, .chapter-num::after {
+    content: ''; display: inline-block;
+    width: 32px; height: 1px;
+    background: var(--red);
+    opacity: 0.5;
+  }
+  .chapter-intro h3 {
+    font-family: var(--serif);
+    font-weight: 300;
+    font-size: clamp(40px, 6vw, 90px);
+    line-height: 1;
+    letter-spacing: -0.03em;
+    margin-bottom: 26px;
+  }
+  .chapter-intro h3 em { font-style: italic; }
+  .chapter-intro p {
+    font-size: 16.5px;
+    color: var(--muted);
+    line-height: 1.65;
+    max-width: 540px;
+    margin: 0 auto;
+  }
+
+  /* The editorial photo wall — ACTUALLY varied */
+  .wall {
+    display: grid;
+    grid-template-columns: repeat(12, 1fr);
+    gap: 18px;
+  }
+  .wall .tile {
+    overflow: hidden;
+    position: relative;
+    border-radius: 2px;
+    background: var(--paper-deep);
+  }
+  .wall .tile img {
+    width: 100%; height: 100%;
+    object-fit: cover;
+    transition: transform 1.4s ease, opacity 600ms ease;
+  }
+  .wall .tile:hover img { transform: scale(1.04); }
+  .wall .tile .fave {
+    position: absolute; top: 14px; right: 14px;
+    width: 36px; height: 36px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.9);
+    backdrop-filter: blur(8px);
+    display: flex; align-items: center; justify-content: center;
+    opacity: 0;
+    transition: opacity 280ms ease, background 280ms ease;
+    font-size: 14px;
+    color: var(--ink);
+  }
+  .wall .tile:hover .fave { opacity: 1; }
+  .wall .tile .fave:hover { background: var(--red); color: #fff; }
+  .wall .tile.faved .fave { opacity: 1; background: var(--red); color: #fff; }
+
+  /* Editorial layout patterns */
+  .wall .t-hero    { grid-column: span 12; aspect-ratio: 21/9; }
+  .wall .t-half    { grid-column: span 6;  aspect-ratio: 4/3; }
+  .wall .t-third   { grid-column: span 4;  aspect-ratio: 4/5; }
+  .wall .t-twothird{ grid-column: span 8;  aspect-ratio: 16/10; }
+  .wall .t-quarter { grid-column: span 3;  aspect-ratio: 4/5; }
+  .wall .t-square  { grid-column: span 4;  aspect-ratio: 1/1; }
+  .wall .t-tall    { grid-column: span 4;  aspect-ratio: 3/4; }
+  .wall .t-portrait{ grid-column: span 4;  aspect-ratio: 2/3; }
+  .wall .t-wide    { grid-column: span 8;  aspect-ratio: 3/2; }
+  .wall .t-six     { grid-column: span 6;  aspect-ratio: 3/2; }
+
+  @media (max-width: 900px) {
+    .chapter { padding: 90px 0; }
+    .wall { grid-template-columns: repeat(6, 1fr); gap: 10px; }
+    .wall .t-hero { grid-column: span 6; aspect-ratio: 16/10; }
+    .wall .t-half, .wall .t-twothird, .wall .t-six, .wall .t-wide { grid-column: span 6; aspect-ratio: 4/3; }
+    .wall .t-third, .wall .t-quarter, .wall .t-square, .wall .t-tall, .wall .t-portrait { grid-column: span 3; aspect-ratio: 4/5; }
+  }
+
+  /* Pull quote between chapters */
+  .pull-quote {
+    text-align: center;
+    padding: 0 32px;
+    margin: 110px auto 0;
+    max-width: 920px;
+  }
+  .pull-quote .mark {
+    font-family: var(--serif);
+    font-style: italic;
+    color: var(--red);
+    font-size: 64px;
+    line-height: 0.4;
+    margin-bottom: 22px;
+  }
+  .pull-quote blockquote {
+    font-family: var(--serif);
+    font-weight: 300;
+    font-style: italic;
+    font-size: clamp(24px, 3vw, 44px);
+    line-height: 1.28;
+    letter-spacing: -0.012em;
+    color: var(--ink-soft);
+  }
+
+  /* ─── Print Shop Teaser ─────────────────────────────────── */
+  .shop-teaser {
+    padding: 140px 0;
+    background: var(--ink);
+    color: #fff;
+    overflow: hidden;
+    position: relative;
+  }
+  .shop-grid {
+    display: grid;
+    grid-template-columns: 1.1fr 1fr;
+    gap: 80px;
+    align-items: center;
+  }
+  .shop-text .eyebrow {
+    font-size: 11.5px;
+    letter-spacing: 0.28em;
+    text-transform: uppercase;
+    color: rgba(255,255,255,0.5);
+    margin-bottom: 28px;
+  }
+  .shop-text h3 {
+    font-family: var(--serif);
+    font-weight: 300;
+    font-size: clamp(40px, 5.4vw, 80px);
+    line-height: 1.02;
+    letter-spacing: -0.028em;
+    margin-bottom: 28px;
+  }
+  .shop-text h3 em { font-style: italic; color: var(--red); font-weight: 400; }
+  .shop-text p {
+    color: rgba(255,255,255,0.7);
+    font-size: 17px;
+    line-height: 1.65;
+    max-width: 50ch;
+    margin-bottom: 36px;
+  }
+  .shop-cta {
+    display: inline-flex; align-items: center; gap: 14px;
+    padding: 18px 28px;
+    border-radius: 999px;
+    background: var(--red);
+    color: #fff;
+    font-weight: 600;
+    font-size: 15px;
+    box-shadow: 0 16px 40px rgba(223,43,47,0.35);
+    transition: transform 240ms ease;
+  }
+  .shop-cta:hover { transform: translateY(-2px); }
+  .shop-mock {
+    aspect-ratio: 4/3;
+    border-radius: 4px;
+    overflow: hidden;
+    position: relative;
+    box-shadow: 0 30px 80px rgba(0,0,0,0.5);
+  }
+  .shop-mock .room {
+    position: absolute; inset: 0;
+    background-image: url('https://images.pexels.com/photos/1571460/pexels-photo-1571460.jpeg?auto=compress&cs=tinysrgb&w=1600');
+    background-size: cover;
+    background-position: center;
+  }
+  .shop-mock .frame {
+    position: absolute;
+    top: 22%; left: 38%;
+    width: 24%;
+    aspect-ratio: 4/5;
+    background: #fff;
+    padding: 4%;
+    box-shadow: 0 18px 30px rgba(0,0,0,0.32), 0 4px 8px rgba(0,0,0,0.18);
+  }
+  .shop-mock .frame img { width: 100%; height: 100%; object-fit: cover; }
+  .shop-mock .scale-tag {
+    position: absolute;
+    bottom: 18px; left: 18px;
+    background: rgba(255,255,255,0.94);
+    backdrop-filter: blur(10px);
+    padding: 8px 12px;
+    border-radius: 6px;
+    font-size: 11px;
+    color: var(--ink);
+    font-weight: 500;
+    letter-spacing: 0.04em;
+  }
+  .shop-mock .scale-tag .red { color: var(--red); font-weight: 700; }
+  @media (max-width: 900px) {
+    .shop-teaser { padding: 90px 0; }
+    .shop-grid { grid-template-columns: 1fr; gap: 50px; }
+  }
+
+  /* ─── Footer / End Card ─────────────────────────────────── */
+  .end-card {
+    padding: 140px 0;
+    background: var(--paper);
+    text-align: center;
+  }
+  .end-card .eyebrow {
+    font-size: 11.5px;
+    letter-spacing: 0.28em;
+    text-transform: uppercase;
+    color: var(--muted);
+    font-family: var(--serif);
+    font-style: italic;
+    font-weight: 400;
+    margin-bottom: 32px;
+  }
+  .end-card h3 {
+    font-family: var(--serif);
+    font-weight: 300;
+    font-size: clamp(48px, 8vw, 130px);
+    line-height: 0.96;
+    letter-spacing: -0.04em;
+    max-width: 14ch;
+    margin: 0 auto 36px;
+  }
+  .end-card h3 em { font-style: italic; }
+
+  footer.gallery-footer {
+    background: var(--ink);
+    color: rgba(255,255,255,0.6);
+    padding: 60px 0 40px;
+    text-align: center;
+    font-size: 13px;
+  }
+  footer.gallery-footer .credit {
+    font-family: var(--serif);
+    font-size: 18px;
+    color: #fff;
+    margin-bottom: 6px;
+    letter-spacing: -0.005em;
+  }
+  footer.gallery-footer .credit em { font-style: italic; color: rgba(255,255,255,0.6); font-weight: 400; }
+  footer.gallery-footer .powered {
+    margin-top: 32px;
+    padding-top: 24px;
+    border-top: 1px solid rgba(255,255,255,0.08);
+    font-size: 11.5px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: rgba(255,255,255,0.32);
+  }
+  footer.gallery-footer .powered strong { color: rgba(255,255,255,0.55); }
+
+  /* Reveal */
+  .reveal { opacity: 0; transform: translateY(28px); transition: opacity 760ms cubic-bezier(.2,.7,.3,1), transform 760ms cubic-bezier(.2,.7,.3,1); }
+  .reveal.in { opacity: 1; transform: translateY(0); }
+
+  /* Watermark band — preserves your existing screenshot protection visual */
+  .watermark-strip {
+    position: fixed;
+    pointer-events: none;
+    z-index: 1;
+    inset: 0;
+    background-image:
+      repeating-linear-gradient(
+        -22deg,
+        transparent 0px,
+        transparent 240px,
+        rgba(0,0,0,0.04) 240px,
+        rgba(0,0,0,0.04) 244px
+      );
+    mix-blend-mode: multiply;
+    opacity: 0.65;
+  }
+</style>
+</head>
+<body>
+
+<div class="watermark-strip"></div>
+
+<!-- Top bar ──────────────────────────────────────────────── -->
+<header class="gallery-bar" id="bar">
+  <div class="container">
+    <div class="row">
+      <div class="photographer-mark serif">WHITE PHOTO <em>· studio</em></div>
+      <nav class="scene-nav">
+        <a href="#chapters" class="active">Chapters</a>
+        <a href="#01">Getting Ready</a>
+        <a href="#02">Ceremony</a>
+        <a href="#03">Reception</a>
+        <a href="#shop">Prints</a>
+      </nav>
+      <div class="right-tools">
+        <a href="#" class="tool-pill"><span class="heart">♥</span> Favorites <span class="badge">12</span></a>
+        <a href="#" class="tool-pill cart">Cart · $0</a>
+      </div>
+    </div>
+  </div>
+</header>
+
+<!-- Cover ────────────────────────────────────────────────── -->
+<section class="cover">
+  <div class="cover-image">
+    <img src="https://images.pexels.com/photos/1444442/pexels-photo-1444442.jpeg?auto=compress&cs=tinysrgb&w=2600" alt="">
+  </div>
+  <div class="container cover-content">
+    <div class="cover-eyebrow">A Wedding · Six chapters · 482 photos</div>
+    <h1>Sarah <span class="amp serif">&</span> <em>James</em></h1>
+    <div class="cover-meta">
+      <div><span class="label">Date</span><strong>Saturday, July 12, 2025</strong></div>
+      <div><span class="label">Venue</span><strong>Marais Estate, Hudson Valley</strong></div>
+      <div><span class="label">Photographer</span><strong>WHITE PHOTO</strong></div>
+    </div>
+  </div>
+  <div class="cover-scroll">Begin the story</div>
+</section>
+
+<!-- Photographer's Note ──────────────────────────────────── -->
+<section class="note">
+  <div class="narrow">
+    <div class="eyebrow serif">— A note from the photographer</div>
+    <p class="serif">
+      Of all the weddings I've shot, this one held its breath. The light in that field at six o'clock,
+      the way Sarah looked at James through the doorway — <em>some moments don't need explaining.</em>
+      Here are the ones we won't forget.
+    </p>
+    <div class="signature serif">Yours,<strong>Harout · WHITE PHOTO</strong></div>
+  </div>
+</section>
+
+<!-- Album Index ──────────────────────────────────────────── -->
+<section class="album-index" id="chapters">
+  <div class="container">
+    <div class="album-head reveal">
+      <div class="eyebrow">— The story in chapters</div>
+      <h2 class="serif">Six <em>chapters,</em> one day.</h2>
+    </div>
+
+    <div class="album-grid">
+      <a href="#01" class="album-card card-hero reveal">
+        <img src="https://images.pexels.com/photos/3014019/pexels-photo-3014019.jpeg?auto=compress&cs=tinysrgb&w=1600" alt="">
+        <div class="meta">
+          <div class="ch-num serif">Chapter 01</div>
+          <div class="ch-name serif">Getting Ready</div>
+          <div class="ch-count">62 photos · Morning</div>
+        </div>
+        <div class="arrow">↗</div>
+      </a>
+
+      <a href="#02" class="album-card card-tall reveal">
+        <img src="https://images.pexels.com/photos/1820770/pexels-photo-1820770.jpeg?auto=compress&cs=tinysrgb&w=1200" alt="">
+        <div class="meta">
+          <div class="ch-num serif">Chapter 02</div>
+          <div class="ch-name serif">First Look</div>
+          <div class="ch-count">28 photos</div>
+        </div>
+        <div class="arrow">↗</div>
+      </a>
+
+      <a href="#03" class="album-card card-square reveal">
+        <img src="https://images.pexels.com/photos/1729797/pexels-photo-1729797.jpeg?auto=compress&cs=tinysrgb&w=1000" alt="">
+        <div class="meta">
+          <div class="ch-num serif">Chapter 03</div>
+          <div class="ch-name serif">Ceremony</div>
+          <div class="ch-count">94 photos</div>
+        </div>
+        <div class="arrow">↗</div>
+      </a>
+
+      <a href="#04" class="album-card card-wide reveal">
+        <img src="https://images.pexels.com/photos/2253870/pexels-photo-2253870.jpeg?auto=compress&cs=tinysrgb&w=1600" alt="">
+        <div class="meta">
+          <div class="ch-num serif">Chapter 04</div>
+          <div class="ch-name serif">Portraits</div>
+          <div class="ch-count">71 photos · Golden hour</div>
+        </div>
+        <div class="arrow">↗</div>
+      </a>
+
+      <a href="#05" class="album-card card-half reveal">
+        <img src="https://images.pexels.com/photos/2774556/pexels-photo-2774556.jpeg?auto=compress&cs=tinysrgb&w=1400" alt="">
+        <div class="meta">
+          <div class="ch-num serif">Chapter 05</div>
+          <div class="ch-name serif">Family & Bridal Party</div>
+          <div class="ch-count">88 photos</div>
+        </div>
+        <div class="arrow">↗</div>
+      </a>
+
+      <a href="#06" class="album-card card-half reveal">
+        <img src="https://images.pexels.com/photos/2422281/pexels-photo-2422281.jpeg?auto=compress&cs=tinysrgb&w=1400" alt="">
+        <div class="meta">
+          <div class="ch-num serif">Chapter 06</div>
+          <div class="ch-name serif">Reception</div>
+          <div class="ch-count">139 photos · Into the night</div>
+        </div>
+        <div class="arrow">↗</div>
+      </a>
+    </div>
+  </div>
+</section>
+
+<!-- Chapter 01: Getting Ready ───────────────────────────── -->
+<section class="chapter" id="01">
+  <div class="chapter-intro reveal">
+    <div class="chapter-num serif">Chapter 01</div>
+    <h3 class="serif">Getting <em>ready.</em></h3>
+    <p>Six in the morning. A field of mist outside the bridal suite. The first cup of coffee, the dress on a hanger, the quiet before everyone arrives.</p>
+  </div>
+  <div class="container">
+    <div class="wall">
+      <div class="tile t-hero">
+        <img src="https://images.pexels.com/photos/3014019/pexels-photo-3014019.jpeg?auto=compress&cs=tinysrgb&w=2200" alt="">
+        <button class="fave">♡</button>
+      </div>
+      <div class="tile t-third">
+        <img src="https://images.pexels.com/photos/1820770/pexels-photo-1820770.jpeg?auto=compress&cs=tinysrgb&w=1000" alt="">
+        <button class="fave">♡</button>
+      </div>
+      <div class="tile t-twothird">
+        <img src="https://images.pexels.com/photos/1444442/pexels-photo-1444442.jpeg?auto=compress&cs=tinysrgb&w=1600" alt="">
+        <button class="fave">♡</button>
+      </div>
+      <div class="tile t-half faved">
+        <img src="https://images.pexels.com/photos/1729797/pexels-photo-1729797.jpeg?auto=compress&cs=tinysrgb&w=1400" alt="">
+        <button class="fave">♥</button>
+      </div>
+      <div class="tile t-quarter">
+        <img src="https://images.pexels.com/photos/3692748/pexels-photo-3692748.jpeg?auto=compress&cs=tinysrgb&w=900" alt="">
+        <button class="fave">♡</button>
+      </div>
+      <div class="tile t-quarter">
+        <img src="https://images.pexels.com/photos/2774556/pexels-photo-2774556.jpeg?auto=compress&cs=tinysrgb&w=900" alt="">
+        <button class="fave">♡</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="pull-quote reveal">
+    <div class="mark">"</div>
+    <blockquote class="serif">It's the small moments before the big one that I'll always remember most.</blockquote>
+  </div>
+</section>
+
+<!-- Chapter 02: First Look (cream bg) ───────────────────── -->
+<section class="chapter" id="02">
+  <div class="chapter-intro reveal">
+    <div class="chapter-num serif">Chapter 02</div>
+    <h3 class="serif">The <em>first</em> look.</h3>
+    <p>James turned around and the world went silent. Twenty-eight frames. Maybe a hundred breaths held by everyone watching from the trees.</p>
+  </div>
+  <div class="container">
+    <div class="wall">
+      <div class="tile t-half">
+        <img src="https://images.pexels.com/photos/3812944/pexels-photo-3812944.jpeg?auto=compress&cs=tinysrgb&w=1400" alt="">
+        <button class="fave">♡</button>
+      </div>
+      <div class="tile t-half">
+        <img src="https://images.pexels.com/photos/1684187/pexels-photo-1684187.jpeg?auto=compress&cs=tinysrgb&w=1400" alt="">
+        <button class="fave">♡</button>
+      </div>
+      <div class="tile t-hero">
+        <img src="https://images.pexels.com/photos/2253870/pexels-photo-2253870.jpeg?auto=compress&cs=tinysrgb&w=2200" alt="">
+        <button class="fave">♡</button>
+      </div>
+      <div class="tile t-third">
+        <img src="https://images.pexels.com/photos/3779487/pexels-photo-3779487.jpeg?auto=compress&cs=tinysrgb&w=1000" alt="">
+        <button class="fave">♡</button>
+      </div>
+      <div class="tile t-third">
+        <img src="https://images.pexels.com/photos/8466111/pexels-photo-8466111.jpeg?auto=compress&cs=tinysrgb&w=1000" alt="">
+        <button class="fave">♡</button>
+      </div>
+      <div class="tile t-third faved">
+        <img src="https://images.pexels.com/photos/2422281/pexels-photo-2422281.jpeg?auto=compress&cs=tinysrgb&w=1000" alt="">
+        <button class="fave">♥</button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Chapter 03: Ceremony ────────────────────────────────── -->
+<section class="chapter" id="03">
+  <div class="chapter-intro reveal">
+    <div class="chapter-num serif">Chapter 03</div>
+    <h3 class="serif">The <em>ceremony.</em></h3>
+    <p>Ninety-four photographs. Three readings. One promise. The vows in particular — Sarah's voice cracked once and James pretended not to notice.</p>
+  </div>
+  <div class="container">
+    <div class="wall">
+      <div class="tile t-hero">
+        <img src="https://images.pexels.com/photos/1729797/pexels-photo-1729797.jpeg?auto=compress&cs=tinysrgb&w=2200" alt="">
+        <button class="fave">♡</button>
+      </div>
+      <div class="tile t-third">
+        <img src="https://images.pexels.com/photos/1444220/pexels-photo-1444220.jpeg?auto=compress&cs=tinysrgb&w=1000" alt="">
+        <button class="fave">♡</button>
+      </div>
+      <div class="tile t-third">
+        <img src="https://images.pexels.com/photos/1024960/pexels-photo-1024960.jpeg?auto=compress&cs=tinysrgb&w=1000" alt="">
+        <button class="fave">♡</button>
+      </div>
+      <div class="tile t-third">
+        <img src="https://images.pexels.com/photos/1820770/pexels-photo-1820770.jpeg?auto=compress&cs=tinysrgb&w=1000" alt="">
+        <button class="fave">♡</button>
+      </div>
+      <div class="tile t-twothird">
+        <img src="https://images.pexels.com/photos/2253870/pexels-photo-2253870.jpeg?auto=compress&cs=tinysrgb&w=1600" alt="">
+        <button class="fave">♡</button>
+      </div>
+      <div class="tile t-third faved">
+        <img src="https://images.pexels.com/photos/3014019/pexels-photo-3014019.jpeg?auto=compress&cs=tinysrgb&w=1000" alt="">
+        <button class="fave">♥</button>
+      </div>
+      <div class="tile t-quarter">
+        <img src="https://images.pexels.com/photos/3692748/pexels-photo-3692748.jpeg?auto=compress&cs=tinysrgb&w=900" alt="">
+        <button class="fave">♡</button>
+      </div>
+      <div class="tile t-quarter">
+        <img src="https://images.pexels.com/photos/2774556/pexels-photo-2774556.jpeg?auto=compress&cs=tinysrgb&w=900" alt="">
+        <button class="fave">♡</button>
+      </div>
+      <div class="tile t-half">
+        <img src="https://images.pexels.com/photos/8466111/pexels-photo-8466111.jpeg?auto=compress&cs=tinysrgb&w=1200" alt="">
+        <button class="fave">♡</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="pull-quote reveal">
+    <div class="mark">"</div>
+    <blockquote class="serif">I take you, in this dress, in this light, in front of everyone we love.</blockquote>
+  </div>
+</section>
+
+<!-- Chapter 04: Portraits ───────────────────────────────── -->
+<section class="chapter" id="04">
+  <div class="chapter-intro reveal">
+    <div class="chapter-num serif">Chapter 04</div>
+    <h3 class="serif">Golden <em>portraits.</em></h3>
+    <p>Twenty minutes between the ceremony and the reception. The light went soft. We walked to the field. These are the photographs you'll print.</p>
+  </div>
+  <div class="container">
+    <div class="wall">
+      <div class="tile t-half">
+        <img src="https://images.pexels.com/photos/1444442/pexels-photo-1444442.jpeg?auto=compress&cs=tinysrgb&w=1400" alt="">
+        <button class="fave">♡</button>
+      </div>
+      <div class="tile t-half faved">
+        <img src="https://images.pexels.com/photos/2253870/pexels-photo-2253870.jpeg?auto=compress&cs=tinysrgb&w=1400" alt="">
+        <button class="fave">♥</button>
+      </div>
+      <div class="tile t-third">
+        <img src="https://images.pexels.com/photos/3779487/pexels-photo-3779487.jpeg?auto=compress&cs=tinysrgb&w=1000" alt="">
+        <button class="fave">♡</button>
+      </div>
+      <div class="tile t-twothird faved">
+        <img src="https://images.pexels.com/photos/1820770/pexels-photo-1820770.jpeg?auto=compress&cs=tinysrgb&w=1600" alt="">
+        <button class="fave">♥</button>
+      </div>
+      <div class="tile t-portrait">
+        <img src="https://images.pexels.com/photos/3014019/pexels-photo-3014019.jpeg?auto=compress&cs=tinysrgb&w=900" alt="">
+        <button class="fave">♡</button>
+      </div>
+      <div class="tile t-portrait">
+        <img src="https://images.pexels.com/photos/2774556/pexels-photo-2774556.jpeg?auto=compress&cs=tinysrgb&w=900" alt="">
+        <button class="fave">♡</button>
+      </div>
+      <div class="tile t-portrait">
+        <img src="https://images.pexels.com/photos/1024960/pexels-photo-1024960.jpeg?auto=compress&cs=tinysrgb&w=900" alt="">
+        <button class="fave">♡</button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Print Shop Teaser ────────────────────────────────────── -->
+<section class="shop-teaser" id="shop">
+  <div class="container">
+    <div class="shop-grid">
+      <div class="shop-text">
+        <div class="eyebrow">— Print Shop</div>
+        <h3 class="serif">Hang it on <em>your wall.</em></h3>
+        <p>
+          Twelve photos in your favorites. Pick a size and we'll show you exactly how it looks
+          above your couch — at true scale, in a real room, with the frame and finish you choose.
+          Printed on archival fine art paper, ready to hang in seven days.
+        </p>
+        <a href="#" class="shop-cta">See your favorites at scale →</a>
+      </div>
+      <div class="shop-mock">
+        <div class="room"></div>
+        <div class="frame">
+          <img src="https://images.pexels.com/photos/1820770/pexels-photo-1820770.jpeg?auto=compress&cs=tinysrgb&w=600" alt="">
+        </div>
+        <div class="scale-tag">16×20 · <span class="red">true scale</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- End Card ─────────────────────────────────────────────── -->
+<section class="end-card">
+  <div class="narrow">
+    <div class="eyebrow">— And so it ends</div>
+    <h3 class="serif">A day to <em>remember.</em></h3>
+    <p style="color: var(--muted); font-size: 16px; max-width: 540px; margin: 0 auto 36px;">
+      Save your favorites, share the gallery with family, or order prints below. The gallery
+      stays open through October 12, 2026.
+    </p>
+    <a href="#" style="display: inline-flex; padding: 16px 28px; background: var(--ink); color: #fff; font-weight: 600; font-size: 14.5px; border-radius: 999px; box-shadow: 0 16px 40px rgba(0,0,0,0.18);">
+      Share this gallery →
+    </a>
+  </div>
+</section>
+
+<!-- Footer ──────────────────────────────────────────────── -->
+<footer class="gallery-footer">
+  <div class="container">
+    <div class="credit serif">WHITE PHOTO <em>· studio</em></div>
+    <div>Documentary wedding & event photography · Toronto + worldwide</div>
+    <div class="powered">Powered by <strong>Studio OS Cloud</strong></div>
+  </div>
+</footer>
+
+<script>
+  // Header scroll
+  const bar = document.getElementById('bar');
+  window.addEventListener('scroll', () => {
+    if (window.scrollY > 80) bar.classList.add('scrolled');
+    else bar.classList.remove('scrolled');
+  }, { passive: true });
+
+  // Reveal on scroll
+  const io = new IntersectionObserver((entries) => {
+    entries.forEach(e => {
+      if (e.isIntersecting) {
+        e.target.classList.add('in');
+        io.unobserve(e.target);
+      }
+    });
+  }, { threshold: 0.12 });
+  document.querySelectorAll('.reveal').forEach(el => io.observe(el));
+
+  // Favorite toggle (cosmetic for mockup)
+  document.querySelectorAll('.tile').forEach(tile => {
+    const fave = tile.querySelector('.fave');
+    if (!fave) return;
+    fave.addEventListener('click', (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      tile.classList.toggle('faved');
+      fave.textContent = tile.classList.contains('faved') ? '♥' : '♡';
+    });
+  });
+
+  // Active scene highlight
+  const sceneLinks = document.querySelectorAll('.scene-nav a');
+  const chapters = document.querySelectorAll('.chapter, #chapters, #shop');
+  const sectionMap = {};
+  sceneLinks.forEach(a => {
+    const id = a.getAttribute('href').replace('#', '');
+    sectionMap[id] = a;
+  });
+  const sceneIO = new IntersectionObserver((entries) => {
+    entries.forEach(e => {
+      if (e.isIntersecting) {
+        sceneLinks.forEach(a => a.classList.remove('active'));
+        const link = sectionMap[e.target.id];
+        if (link) link.classList.add('active');
+      }
+    });
+  }, { rootMargin: '-30% 0px -60% 0px' });
+  chapters.forEach(c => sceneIO.observe(c));
+</script>
+</body>
+</html>
