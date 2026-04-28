@@ -82,7 +82,7 @@ export async function POST(req: NextRequest) {
     service,
     userId: userData.user.id,
   });
-  if (!guard.ok) return guard.response;
+  if (!guard.ok) return NextResponse.json(guard.body, { status: guard.status });
 
   // Validate body.
   let body: z.infer<typeof Body>;

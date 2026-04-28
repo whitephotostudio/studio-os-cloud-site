@@ -11,6 +11,7 @@
 // reverting the import in `app/page.tsx`.
 
 import Link from "next/link";
+import { Logo } from "./logo";
 
 export function HeroRefined() {
   return (
@@ -28,13 +29,21 @@ export function HeroRefined() {
       <div className="relative mx-auto max-w-7xl px-4 pt-14 pb-10 sm:px-6 lg:px-8 lg:pt-28 lg:pb-16">
         <div className="grid items-start gap-10 lg:grid-cols-2">
           <div className="hero-fade-in">
-            {/* Eyebrow chip — adds editorial confidence above the headline. */}
-            <div className="mb-7 inline-flex items-center gap-3 text-[11px] font-medium uppercase tracking-[0.22em] text-neutral-700">
-              <span className="relative flex h-2 w-2">
-                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#df2b2f] opacity-60" />
-                <span className="relative inline-flex h-2 w-2 rounded-full bg-[#df2b2f]" />
-              </span>
-              Studio OS Cloud · 2026
+            {/* Brand mark above the headline. Uses the same `<Logo />` that
+                lives in the SiteHeader so the editorial hero stays brand-true.
+                Small red pulse + a confidence tag sit beside it for rhythm. */}
+            <div className="mb-7 flex items-center gap-4">
+              <div className="flex items-start">
+                <Logo />
+              </div>
+              <div className="h-7 w-px bg-neutral-300/80" />
+              <div className="inline-flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.22em] text-neutral-700">
+                <span className="relative flex h-2 w-2">
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#df2b2f] opacity-60" />
+                  <span className="relative inline-flex h-2 w-2 rounded-full bg-[#df2b2f]" />
+                </span>
+                2026 Edition
+              </div>
             </div>
 
             {/* H1 — preserves the original three-line copy, restyled in

@@ -70,7 +70,7 @@ export async function GET(req: NextRequest) {
     service,
     userId: userData.user.id,
   });
-  if (!guard.ok) return guard.response;
+  if (!guard.ok) return NextResponse.json(guard.body, { status: guard.status });
 
   const since = req.nextUrl.searchParams.get("since");
   const pathsParam = req.nextUrl.searchParams.get("paths");
