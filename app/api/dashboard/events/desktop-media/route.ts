@@ -293,30 +293,51 @@ export async function POST(request: NextRequest) {
     // the wrong album", which is recoverable; the previous failure
     // was "photos vanish entirely", which wasn't.
     if ((collectionRows ?? []).length === 0) {
-      const { data: anyCollection, error: anyErr } = await service
+      // 2026-04-28 — Salvage filter now matches the desktop reality.
+      // Desktop creates collections with `kind = 'album'` (see
+      // cloud_sync_service.dart line ~3506), but the parents portal
+      // accepts kind in {album, gallery, null}.  The previous filter
+      // of `kind = 'gallery'` only would never find a match for
+      // desktop-created projects, so the salvage path silently
+      // skipped and we dropped every item.  Now: prefer gallery,
+      // then album, then any non-roster collection — in that order.
+      const { data: candidateCollections, error: anyErr } = await service
         .from("collections")
-        .select("id,project_id,cover_photo_url")
+        .select("id,project_id,cover_photo_url,kind,sort_order")
         .eq("project_id", cloudProjectId)
-        .eq("kind", "gallery")
-        .order("sort_order", { ascending: true })
-        .limit(1);
+        .order("sort_order", { ascending: true });
       if (anyErr) throw anyErr;
-      if ((anyCollection ?? []).length > 0) {
-        const fallbackId = clean((anyCollection![0] as { id?: string | null }).id);
+
+      const candidates = (candidateCollections ?? []) as Array<{
+        id?: string | null;
+        kind?: string | null;
+      }>;
+      const nonRoster = candidates.filter(
+        (c) => (c.kind ?? "").toLowerCase() !== "roster",
+      );
+      // Preference order: gallery → album → any non-roster.
+      const preferred =
+        nonRoster.find((c) => (c.kind ?? "").toLowerCase() === "gallery") ??
+        nonRoster.find((c) => (c.kind ?? "").toLowerCase() === "album") ??
+        nonRoster[0];
+
+      if (preferred) {
+        const fallbackId = clean(preferred.id);
         console.warn(
           "[desktop-media POST] no collection_ids matched for project %s. " +
-            "Salvaging by routing all %d items to fallback collection %s. " +
+            "Salvaging by routing all %d items to fallback collection %s (kind=%s). " +
             "The desktop's album mapping is stale — re-sync project shell to refresh.",
           cloudProjectId,
           normalizedItems.length,
           fallbackId,
+          preferred.kind ?? "null",
         );
         // Rewrite every item's collection_id to the fallback so the
         // downstream filter passes.
         for (const item of normalizedItems) {
           item.collection_id = fallbackId;
         }
-        collectionRows = anyCollection;
+        collectionRows = [preferred] as typeof collectionRows;
       }
     }
 
