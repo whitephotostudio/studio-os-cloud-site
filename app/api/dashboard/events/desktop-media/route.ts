@@ -172,9 +172,48 @@ export async function GET(request: NextRequest) {
     const { data: mediaRows, error: mediaError } = await mediaQuery;
     if (mediaError) throw mediaError;
 
+    // 2026-04-29 — Diagnostic: ALSO query the project's full media set
+    // (no collection filter) and report the breakdown.  If the desktop
+    // sent collection_ids and got 0 rows back, but the project has 489
+    // total media rows, we can immediately tell the photographer
+    // "your photos uploaded to a collection your desktop doesn't know
+    // about — re-sync the project shell."  The previous behaviour
+    // ("cloud has 0 of 489") gave no actionable signal.
+    let totalProjectMediaCount = 0;
+    let collectionsWithMedia: Array<{ collection_id: string; count: number }> =
+      [];
+    try {
+      const { data: allMediaRows, error: allMediaError } = await service
+        .from("media")
+        .select("collection_id")
+        .eq("project_id", cloudProjectId);
+      if (!allMediaError && allMediaRows) {
+        totalProjectMediaCount = allMediaRows.length;
+        const tally = new Map<string, number>();
+        for (const row of allMediaRows as Array<{
+          collection_id?: string | null;
+        }>) {
+          const cid = clean(row.collection_id);
+          if (!cid) continue;
+          tally.set(cid, (tally.get(cid) ?? 0) + 1);
+        }
+        collectionsWithMedia = Array.from(tally.entries()).map(
+          ([collection_id, count]) => ({ collection_id, count }),
+        );
+      }
+    } catch (diagErr) {
+      console.warn("[desktop-media GET] diagnostic query failed:", diagErr);
+    }
+
     return NextResponse.json({
       ok: true,
       items: mediaRows ?? [],
+      diagnostic: {
+        scoped_count: (mediaRows ?? []).length,
+        scoped_collection_ids: collectionIds,
+        project_total_count: totalProjectMediaCount,
+        collections_with_media: collectionsWithMedia,
+      },
     });
   } catch (error) {
     return NextResponse.json(
