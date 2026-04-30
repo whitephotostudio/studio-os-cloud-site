@@ -111,14 +111,14 @@ export function PanelScreenshotModal({
         }
       }}
     >
-      <div className="absolute inset-0 bg-neutral-950/80 backdrop-blur-[8px]" />
+      <div className="studio-panel-modal-backdrop absolute inset-0 bg-neutral-950/80 backdrop-blur-[8px]" />
 
       <div
         ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby={`studio-panel-title-${panel.id}`}
-        className="relative z-10 w-full max-w-[1210px] overflow-hidden rounded-[24px] border border-white/10 bg-white shadow-[0_32px_80px_rgba(12,12,12,0.36)]"
+        className="studio-panel-modal relative z-10 w-full max-w-[1210px] overflow-hidden rounded-[24px] border border-white/10 bg-white shadow-[0_32px_80px_rgba(12,12,12,0.36)]"
         style={{ maxHeight: "92vh" }}
         onMouseDown={(event) => event.stopPropagation()}
       >
@@ -135,7 +135,7 @@ export function PanelScreenshotModal({
 
         <div className="flex flex-col lg:grid lg:grid-cols-[minmax(0,1.4fr)_360px]" style={{ maxHeight: "92vh" }}>
           {/* Screenshot area */}
-          <div className="relative min-w-0 overflow-hidden bg-[linear-gradient(180deg,#111111_0%,#050505_100%)] p-3 sm:p-4">
+          <div className="studio-panel-modal-shot relative min-w-0 overflow-hidden bg-[linear-gradient(180deg,#111111_0%,#050505_100%)] p-3 sm:p-4">
             <VisualSlot
               src={panel.screenshot}
               alt={panel.alt}
@@ -174,7 +174,7 @@ export function PanelScreenshotModal({
           </div>
 
           {/* Info panel */}
-          <div className="relative z-10 flex min-w-0 flex-col gap-5 overflow-y-auto bg-white p-7 sm:p-8">
+          <div className="studio-panel-modal-info relative z-10 flex min-w-0 flex-col gap-5 overflow-y-auto bg-white p-7 sm:p-8">
             <div className="space-y-4">
               {panel.badge ? (
                 <div className="inline-flex rounded-full border border-neutral-200 bg-neutral-50 px-3 py-1 text-xs font-semibold text-neutral-600">

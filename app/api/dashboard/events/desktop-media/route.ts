@@ -541,6 +541,45 @@ export async function POST(request: NextRequest) {
 
       if (error) throw error;
       insertedRows = (data ?? []) as unknown[];
+
+      // 2026-04-30 — Defensive: if the DB silently returned fewer rows
+      // than we sent, log loudly and reflect the real count below.
+      // Previously line 615 returned `inserts.length` (rows ATTEMPTED)
+      // not `insertedRows.length` (rows actually persisted).  When the
+      // RETURNING clause came back empty for any reason the endpoint
+      // lied "inserted: 25" while the DB had 0 rows — desktop trusted
+      // the lie and reported "Project photos done".  Now: real count,
+      // and we 500 if every single insert silently dropped (no point
+      // pretending success when nothing landed).
+      if (insertedRows.length < inserts.length) {
+        console.warn(
+          "[desktop-media POST] insert returned %d rows but %d were sent — possible silent rejection. project=%s",
+          insertedRows.length,
+          inserts.length,
+          cloudProjectId,
+        );
+      }
+      if (insertedRows.length === 0 && inserts.length > 0) {
+        return NextResponse.json(
+          {
+            ok: false,
+            inserted: 0,
+            attempted: inserts.length,
+            skipped,
+            message:
+              "Postgres accepted the INSERT but RETURNING came back empty. Cloud has 0 new rows.",
+            diagnostic: {
+              reason: "empty_returning_clause",
+              project_id: cloudProjectId,
+              attempted_rows: inserts.length,
+              sample_storage_paths: inserts
+                .slice(0, 3)
+                .map((row) => row.storage_path),
+            },
+          },
+          { status: 500 },
+        );
+      }
     }
 
     const normalizedSettings = normalizeEventGallerySettings(
@@ -610,9 +649,13 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // 2026-04-30 — Return the REAL persisted count (insertedRows.length),
+    // not the attempted count (inserts.length).  See the silent-rejection
+    // guard above.
     return NextResponse.json({
       ok: true,
-      inserted: inserts.length,
+      inserted: insertedRows.length,
+      attempted: inserts.length,
       skipped,
       items: insertedRows,
     });

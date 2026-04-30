@@ -3,6 +3,7 @@ import Link from "next/link";
 
 import { SiteHeader } from "../../components/site-header";
 import { BreadcrumbJsonLd, SoftwareApplicationJsonLd } from "@/components/json-ld";
+import { Reveal } from "@/components/reveal";
 import { StudioPanelShowcase } from "@/components/studio-panel-showcase";
 import { VisualSlot } from "@/components/visual-slot";
 import { studioFeatureAssets } from "@/lib/studio-os-content";
@@ -100,54 +101,68 @@ export default function StudioOSPage() {
       <SiteHeader />
 
       <main
-        className="px-4 py-16 sm:py-24"
-        style={{
-          background:
-            "radial-gradient(ellipse 80% 40% at 50% 0%, rgba(239,68,68,0.06), transparent)",
-        }}
+        className="studio-os-motion-page px-4 py-16 sm:py-24"
       >
         <div className="mx-auto max-w-6xl space-y-10">
-          <div className="mx-auto max-w-3xl space-y-5 pb-2 text-center">
-            <div className="inline-flex items-center gap-2 rounded-full border border-red-100 bg-red-50 px-4 py-1.5 text-xs font-bold uppercase tracking-widest text-red-500">
+          <Reveal
+            className="studio-os-hero-motion mx-auto max-w-3xl space-y-5 pb-2 text-center"
+            repeat
+          >
+            <Reveal delay={90} repeat>
+              <div className="inline-flex items-center gap-2 rounded-full border border-red-100 bg-red-50 px-4 py-1.5 text-xs font-bold uppercase tracking-widest text-red-500">
               ✦ Studio OS App · Desktop + Cloud Workflow
-            </div>
-            <h1 className="text-5xl font-black leading-[1.05] tracking-tight text-neutral-950 sm:text-[62px]">
-              Run the workflow
-              <br />
-              <span className="text-red-500">behind every gallery.</span>
-            </h1>
-            <p className="mx-auto max-w-xl text-lg leading-relaxed text-neutral-500">
-              Studio OS App gives photographers a fast desktop workspace for
-              capture, Projects, sorting, production control, and live sync to
-              Studio OS Cloud galleries and ordering.
-            </p>
-            <div className="flex items-center justify-center gap-3 pt-1">
-              <Link
-                href="/studio-os/download"
-                className="inline-flex items-center gap-2 rounded-2xl bg-neutral-950 px-6 py-3 text-sm font-bold text-white shadow-lg transition-colors hover:bg-neutral-800"
-              >
-                Download App →
-              </Link>
-              <Link
-                href="/sign-up"
-                className="inline-flex items-center gap-2 rounded-2xl border border-neutral-200 px-6 py-3 text-sm font-semibold text-neutral-700 transition-colors hover:bg-neutral-50"
-              >
-                Create Account
-              </Link>
-            </div>
-          </div>
+              </div>
+            </Reveal>
+            <Reveal delay={210} repeat>
+              <h1 className="text-5xl font-black leading-[1.05] tracking-tight text-neutral-950 sm:text-[62px]">
+                Run the workflow
+                <br />
+                <span className="text-red-500">behind every gallery.</span>
+              </h1>
+            </Reveal>
+            <Reveal delay={330} repeat>
+              <p className="mx-auto max-w-xl text-lg leading-relaxed text-neutral-500">
+                Studio OS App gives photographers a fast desktop workspace for
+                capture, Projects, sorting, production control, and live sync to
+                Studio OS Cloud galleries and ordering.
+              </p>
+            </Reveal>
+            <Reveal delay={450} repeat>
+              <div className="flex items-center justify-center gap-3 pt-1">
+                <Link
+                  href="/studio-os/download"
+                  className="inline-flex items-center gap-2 rounded-2xl bg-neutral-950 px-6 py-3 text-sm font-bold text-white shadow-lg transition-colors hover:-translate-y-0.5 hover:bg-neutral-800 hover:shadow-2xl"
+                >
+                  Download App →
+                </Link>
+                <Link
+                  href="/sign-up"
+                  className="inline-flex items-center gap-2 rounded-2xl border border-neutral-200 px-6 py-3 text-sm font-semibold text-neutral-700 transition-colors hover:-translate-y-0.5 hover:bg-neutral-50 hover:shadow-lg"
+                >
+                  Create Account
+                </Link>
+              </div>
+            </Reveal>
+          </Reveal>
 
-          <StudioPanelShowcase />
+          <Reveal delay={150} className="studio-os-panel-motion" repeat>
+            <StudioPanelShowcase />
+          </Reveal>
 
           <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-            <div
-              className="relative overflow-hidden rounded-[28px] p-8 md:col-span-2"
-              style={{
-                background:
-                  "linear-gradient(135deg,#0f0f0f 0%,#1a1a1a 100%)",
-                minHeight: 330,
-              }}
+            <Reveal
+              delay={120}
+              className="studio-os-panel-motion md:col-span-2"
+              repeat
             >
+              <div
+                className="studio-os-dark-motion relative overflow-hidden rounded-[28px] p-8"
+                style={{
+                  background:
+                    "linear-gradient(135deg,#0f0f0f 0%,#1a1a1a 100%)",
+                  minHeight: 330,
+                }}
+              >
               <div
                 className="pointer-events-none absolute inset-0"
                 style={{
@@ -244,16 +259,22 @@ export default function StudioOSPage() {
                   </div>
                 </div>
               </div>
-            </div>
+              </div>
+            </Reveal>
 
-            <div
-              className="flex flex-col justify-between rounded-[28px] p-8"
-              style={{
-                background:
-                  "linear-gradient(145deg,#ef4444 0%,#dc2626 100%)",
-                minHeight: 330,
-              }}
+            <Reveal
+              delay={240}
+              className="studio-os-panel-motion"
+              repeat
             >
+              <div
+                className="flex flex-col justify-between rounded-[28px] p-8"
+                style={{
+                  background:
+                    "linear-gradient(145deg,#ef4444 0%,#dc2626 100%)",
+                  minHeight: 330,
+                }}
+              >
               <div className="space-y-2">
                 <div className="text-[10px] font-bold uppercase tracking-widest text-red-200">
                   Portraits · Schools · Events · Volume
@@ -282,10 +303,12 @@ export default function StudioOSPage() {
                   className="rounded-[22px] border border-white/15 bg-white/10"
                   objectPosition={scan[0].objectPosition}
                   fallback={
-                    <QrWorkflowPlaceholder
-                      title="Emma Johnson · Grade 4B"
-                      detail="Scanner reads the code, confirms the roster record, and keeps the next capture moving."
-                    />
+                    <div className="studio-os-scan-pulse">
+                      <QrWorkflowPlaceholder
+                        title="Emma Johnson · Grade 4B"
+                        detail="Scanner reads the code, confirms the roster record, and keeps the next capture moving."
+                      />
+                    </div>
                   }
                 />
 
@@ -301,10 +324,12 @@ export default function StudioOSPage() {
                   imageClassName="p-3"
                   objectPosition={scan[1].objectPosition}
                   fallback={
-                    <QrWorkflowPlaceholder
-                      title="Jake Torres · Soccer #7"
-                      detail="Use the same workflow for sports, events, graduations, and roster-based jobs outside school day."
-                    />
+                    <div className="studio-os-scan-pulse">
+                      <QrWorkflowPlaceholder
+                        title="Jake Torres · Soccer #7"
+                        detail="Use the same workflow for sports, events, graduations, and roster-based jobs outside school day."
+                      />
+                    </div>
                   }
                 />
 
@@ -326,9 +351,14 @@ export default function StudioOSPage() {
                   ))}
                 </div>
               </div>
-            </div>
+              </div>
+            </Reveal>
 
-            <div className="overflow-hidden rounded-[28px] border border-neutral-200 bg-neutral-50 p-8 md:col-span-2">
+            <Reveal
+              delay={120}
+              className="studio-os-panel-motion overflow-hidden rounded-[28px] border border-neutral-200 bg-neutral-50 p-8 md:col-span-2"
+              repeat
+            >
               <div className="grid items-center gap-8 md:grid-cols-2">
                 <div className="space-y-3">
                   <div className="inline-flex items-center gap-2 rounded-full bg-neutral-200 px-3 py-1 text-xs font-bold text-neutral-700">
@@ -384,9 +414,13 @@ export default function StudioOSPage() {
                   </div>
                 </div>
               </div>
-            </div>
+            </Reveal>
 
-            <div className="flex flex-col justify-between rounded-[28px] border border-neutral-200 bg-white p-8">
+            <Reveal
+              delay={240}
+              className="studio-os-panel-motion flex flex-col justify-between rounded-[28px] border border-neutral-200 bg-white p-8"
+              repeat
+            >
               <div className="space-y-2">
                 <div
                   className="flex h-11 w-11 items-center justify-center rounded-2xl text-xl"
@@ -424,11 +458,15 @@ export default function StudioOSPage() {
                   objectPosition={excel.objectPosition}
                 />
               </div>
-            </div>
+            </Reveal>
 
             <div className="md:col-span-3 flex justify-center">
               <div className="grid w-full gap-4 md:max-w-[calc(66.666%-0.35rem)] md:grid-cols-2">
-                <div className="flex flex-col justify-between rounded-[28px] border border-neutral-200 bg-white p-8">
+                <Reveal
+                  delay={120}
+                  className="studio-os-panel-motion flex flex-col justify-between rounded-[28px] border border-neutral-200 bg-white p-8"
+                  repeat
+                >
                   <div className="space-y-2">
                     <div
                       className="flex h-11 w-11 items-center justify-center rounded-2xl text-xl"
@@ -487,16 +525,21 @@ export default function StudioOSPage() {
                       </div>
                     ))}
                   </div>
-                </div>
+                </Reveal>
 
-                <div
-                  className="flex flex-col justify-between rounded-[28px] p-8"
-                  style={{
-                    background:
-                      "linear-gradient(135deg,#0f0f0f 0%,#1c1c1c 100%)",
-                    minHeight: 200,
-                  }}
+                <Reveal
+                  delay={240}
+                  className="studio-os-panel-motion"
+                  repeat
                 >
+                  <div
+                    className="studio-os-dark-motion flex flex-col justify-between rounded-[28px] p-8"
+                    style={{
+                      background:
+                        "linear-gradient(135deg,#0f0f0f 0%,#1c1c1c 100%)",
+                      minHeight: 200,
+                    }}
+                  >
                   <div className="space-y-2">
                     <div className="text-[10px] font-bold uppercase tracking-widest text-neutral-500">
                       Built for every job
@@ -549,11 +592,16 @@ export default function StudioOSPage() {
                       </div>
                     </div>
                   </div>
-                </div>
+                  </div>
+                </Reveal>
               </div>
             </div>
 
-            <div className="overflow-hidden rounded-[28px] border border-neutral-200 bg-white md:col-span-3">
+            <Reveal
+              delay={180}
+              className="studio-os-panel-motion overflow-hidden rounded-[28px] border border-neutral-200 bg-white md:col-span-3"
+              repeat
+            >
               <div className="grid items-stretch md:grid-cols-2">
                 <div
                   className="flex flex-col justify-center space-y-4 p-10"
@@ -608,7 +656,7 @@ export default function StudioOSPage() {
                   />
 
                   <div className="relative z-10 w-full max-w-[760px]">
-                    <div className="relative h-[270px] sm:h-[340px] lg:h-[400px]">
+                    <div className="studio-os-floating-visual relative h-[270px] sm:h-[340px] lg:h-[400px]">
                       <div className="absolute bottom-0 left-0 w-[68%] sm:w-[70%]">
                         <VisualSlot
                           src={cloud.src}
@@ -638,11 +686,13 @@ export default function StudioOSPage() {
                   </div>
                 </div>
               </div>
-            </div>
+            </Reveal>
           </div>
 
-          <div
-            className="space-y-4 rounded-[28px] p-10 text-center"
+          <Reveal
+            delay={220}
+            className="studio-os-cta-motion space-y-4 rounded-[28px] p-10 text-center"
+            repeat
             style={{
               background:
                 "linear-gradient(135deg,#0f0f0f 0%,#1a1a1a 100%)",
@@ -674,7 +724,7 @@ export default function StudioOSPage() {
                 See pricing
               </Link>
             </div>
-          </div>
+          </Reveal>
         </div>
       </main>
     </div>

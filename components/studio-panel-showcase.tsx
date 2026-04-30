@@ -46,18 +46,22 @@ export function StudioPanelShowcase() {
           8 panels. One connected app.
         </div>
 
-        <div className="flex min-w-[640px] items-start justify-between gap-1">
+        <div className="studio-panel-flow flex min-w-[640px] items-start justify-between gap-1">
           {studioPanels.map((panel, index) => {
             const Icon = iconMap[panel.icon];
             const isActive = panel.id === activePanelId;
 
             return (
-              <div key={panel.id} className="flex flex-1 items-center gap-1">
+              <div
+                key={panel.id}
+                className="studio-panel-step flex flex-1 items-center gap-1"
+                style={{ animationDelay: `${index * 90}ms` }}
+              >
                 <button
                   type="button"
                   onClick={() => setActivePanelId(panel.id)}
                   className={joinClasses(
-                    "group flex flex-shrink-0 flex-col items-center rounded-[20px] px-2 py-1 text-center outline-none transition duration-200",
+                    "studio-panel-button group flex flex-shrink-0 flex-col items-center rounded-[20px] px-2 py-1 text-center outline-none transition duration-200",
                     "hover:-translate-y-0.5 hover:bg-white hover:shadow-[0_10px_24px_rgba(15,23,42,0.08)]",
                     "focus-visible:-translate-y-0.5 focus-visible:bg-white focus-visible:ring-2 focus-visible:ring-red-200 focus-visible:shadow-[0_10px_24px_rgba(15,23,42,0.08)]",
                     isActive && "bg-white shadow-[0_10px_24px_rgba(15,23,42,0.08)]",
@@ -95,7 +99,7 @@ export function StudioPanelShowcase() {
                 {index < studioPanels.length - 1 ? (
                   <div className="mx-0.5 mt-[-28px] flex flex-1 items-center">
                     <div
-                      className="h-px flex-1"
+                      className="studio-panel-connector h-px flex-1"
                       style={{ borderTop: "1.5px dashed #d4d4d4" }}
                     />
                     <div className="flex-shrink-0 text-[10px] text-neutral-300">
