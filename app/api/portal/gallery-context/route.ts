@@ -7,6 +7,10 @@ import { buildSchoolGalleryDownloadAccess } from "@/lib/school-gallery-downloads
 import { filterPackagesForProfile } from "@/lib/package-profile-selection";
 import { buildSchoolCandidateFolders, loadFolderMediaRows } from "@/lib/storage-folder";
 import { hasActiveSubscription } from "@/lib/subscription-gate";
+import {
+  buildSignedMediaUrls,
+  SIGNED_URL_TTL_PARENTS_PORTAL_SECONDS,
+} from "@/lib/storage-images";
 
 export const dynamic = "force-dynamic";
 
@@ -204,10 +208,21 @@ async function loadSchoolCompositeMedia(
     }
   }
 
-  return Array.from(uniqueRows.values()).map((row) => ({
-    ...row,
-    collection_title: collectionTitleById.get(clean(row.collection_id)) || normalizedClass,
-  }));
+  // 2026-04-30 — Sign URLs server-side; the raw values in DB point at
+  // a dead R2 public host.  6h TTL since parents shop for a long time.
+  return Array.from(uniqueRows.values()).map((row) => {
+    const mediaUrls = buildSignedMediaUrls({
+      storagePath: row.storage_path,
+      previewUrl: row.preview_url,
+      thumbnailUrl: row.thumbnail_url,
+    }, { ttlSeconds: SIGNED_URL_TTL_PARENTS_PORTAL_SECONDS });
+    return {
+      ...row,
+      preview_url: mediaUrls.previewUrl || null,
+      thumbnail_url: mediaUrls.thumbnailUrl || null,
+      collection_title: collectionTitleById.get(clean(row.collection_id)) || normalizedClass,
+    };
+  });
 }
 
 export async function POST(request: NextRequest) {

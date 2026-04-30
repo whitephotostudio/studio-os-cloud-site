@@ -5,6 +5,7 @@ import {
 } from "@/lib/school-sync";
 import {
   buildStoredMediaUrls,
+  buildSignedMediaUrls,
   extractStoragePathFromSupabaseUrl,
 } from "@/lib/storage-images";
 import { listR2FolderImages, r2DeleteWithVariants, r2Upload } from "@/lib/r2";
@@ -255,7 +256,10 @@ export function storageFilePublicUrl(
   file: { name: string; url?: string },
 ) {
   void service;
-  return clean(file.url) || buildStoredMediaUrls({
+  // 2026-04-30 — file.url from the storage-folder helper is a dead R2
+  // public URL.  Always re-derive a signed URL from the path so it
+  // actually loads.
+  return buildSignedMediaUrls({
     storagePath: `${folderPath}/${file.name}`,
-  }).previewUrl || "";
+  }).previewUrl || clean(file.url) || "";
 }

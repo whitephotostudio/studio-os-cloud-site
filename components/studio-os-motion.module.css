@@ -130,6 +130,192 @@
   animation: studio-os-glow 14s ease-in-out infinite alternate;
 }
 
+:global(.download-motion-page) {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  background: #050505;
+}
+
+:global(.download-motion-page::before) {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 18% 18%, rgba(220, 38, 38, .26), transparent 28%),
+    radial-gradient(circle at 76% 18%, rgba(255, 255, 255, .08), transparent 24%),
+    radial-gradient(circle at 50% 85%, rgba(90, 6, 10, .34), transparent 36%),
+    linear-gradient(135deg, #060606 0%, #180304 44%, #050505 100%);
+  animation: studio-download-glow 18s ease-in-out infinite alternate;
+}
+
+:global(.download-page-main) {
+  position: relative;
+  min-height: calc(100vh - 112px);
+  background:
+    radial-gradient(circle at 18% 18%, rgba(255, 45, 65, .22), transparent 28%),
+    radial-gradient(circle at 82% 8%, rgba(255, 255, 255, .07), transparent 22%),
+    radial-gradient(circle at 54% 100%, rgba(120, 9, 14, .34), transparent 34%),
+    linear-gradient(135deg, #070707 0%, #220405 48%, #070707 100%);
+}
+
+:global(.download-page-main::after) {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(90deg, rgba(255, 255, 255, .025) 1px, transparent 1px),
+    linear-gradient(180deg, rgba(255, 255, 255, .018) 1px, transparent 1px);
+  background-size: 78px 78px;
+  mask-image: radial-gradient(circle at 50% 16%, black, transparent 70%);
+  opacity: .34;
+}
+
+:global(.download-hero-shell) {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  border-color: rgba(255, 255, 255, .14) !important;
+  background:
+    radial-gradient(circle at 24% 12%, rgba(255, 55, 72, .18), transparent 30%),
+    radial-gradient(circle at 82% 18%, rgba(255, 255, 255, .08), transparent 26%),
+    linear-gradient(145deg, rgba(18, 18, 18, .94), rgba(47, 6, 9, .9) 48%, rgba(7, 7, 7, .96)) !important;
+  box-shadow:
+    0 42px 120px rgba(0, 0, 0, .48),
+    inset 0 1px 0 rgba(255, 255, 255, .12) !important;
+  backdrop-filter: blur(18px);
+}
+
+:global(.download-hero-shell::before) {
+  content: "";
+  position: absolute;
+  inset: -45%;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 22% 18%, rgba(255, 48, 65, .26), transparent 28%),
+    radial-gradient(circle at 78% 14%, rgba(255, 255, 255, .13), transparent 22%),
+    radial-gradient(circle at 54% 92%, rgba(130, 8, 14, .22), transparent 30%);
+  animation: studio-download-glow 14s ease-in-out infinite alternate;
+}
+
+:global(.download-hero-kicker) {
+  border-color: rgba(255, 255, 255, .18) !important;
+  background: rgba(255, 255, 255, .08) !important;
+  color: #ffffff !important;
+  box-shadow: 0 14px 42px rgba(220, 38, 38, .16);
+  backdrop-filter: blur(18px);
+}
+
+:global(.download-hero-title) {
+  color: #ffffff !important;
+  text-wrap: balance;
+}
+
+:global(.download-hero-shell > div:first-child p) {
+  color: rgba(255, 255, 255, .72) !important;
+}
+
+:global(.download-reveal-strong.studio-os-reveal-item) {
+  filter: blur(10px);
+  transform: translate3d(0, 72px, 0) scale(.965);
+  transition:
+    opacity 1400ms cubic-bezier(.16, 1, .3, 1),
+    transform 1400ms cubic-bezier(.16, 1, .3, 1),
+    filter 1400ms cubic-bezier(.16, 1, .3, 1);
+}
+
+:global(.download-reveal-side-left.studio-os-reveal-item) {
+  filter: blur(8px);
+  transform: translate3d(-64px, 28px, 0) scale(.97);
+  transition:
+    opacity 1350ms cubic-bezier(.16, 1, .3, 1),
+    transform 1350ms cubic-bezier(.16, 1, .3, 1),
+    filter 1350ms cubic-bezier(.16, 1, .3, 1);
+}
+
+:global(.download-reveal-side-right.studio-os-reveal-item) {
+  filter: blur(8px);
+  transform: translate3d(64px, 28px, 0) scale(.97);
+  transition:
+    opacity 1350ms cubic-bezier(.16, 1, .3, 1),
+    transform 1350ms cubic-bezier(.16, 1, .3, 1),
+    filter 1350ms cubic-bezier(.16, 1, .3, 1);
+}
+
+:global(.download-reveal-strong.studio-os-reveal-item.is-visible),
+:global(.download-reveal-side-left.studio-os-reveal-item.is-visible),
+:global(.download-reveal-side-right.studio-os-reveal-item.is-visible) {
+  filter: blur(0);
+  transform: translate3d(0, 0, 0) scale(1);
+}
+
+:global(.download-card-motion),
+:global(.download-platform-card) {
+  position: relative;
+  overflow: hidden;
+  border-color: rgba(255, 255, 255, .72) !important;
+  background: rgba(255, 255, 255, .94) !important;
+  box-shadow:
+    0 26px 80px rgba(0, 0, 0, .22),
+    inset 0 1px 0 rgba(255, 255, 255, .85) !important;
+  backdrop-filter: blur(18px);
+  transition:
+    transform 420ms cubic-bezier(.22, 1, .36, 1),
+    box-shadow 420ms ease,
+    border-color 420ms ease,
+    background 420ms ease;
+}
+
+:global(.download-card-motion::before),
+:global(.download-platform-card::before) {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  pointer-events: none;
+  background: linear-gradient(120deg, transparent, rgba(180, 12, 20, .12), transparent);
+  opacity: 0;
+  transform: translateX(-40%);
+  transition:
+    opacity 420ms ease,
+    transform 700ms cubic-bezier(.16, 1, .3, 1);
+}
+
+:global(.download-card-motion:hover),
+:global(.download-platform-card:hover) {
+  transform: translateY(-7px);
+  border-color: rgba(255, 255, 255, .92) !important;
+  box-shadow:
+    0 34px 96px rgba(0, 0, 0, .34),
+    0 0 0 1px rgba(220, 38, 38, .1) !important;
+}
+
+:global(.download-card-motion:hover::before),
+:global(.download-platform-card:hover::before) {
+  opacity: 1;
+  transform: translateX(36%);
+}
+
+:global(.download-button-motion) {
+  box-shadow: 0 12px 26px rgba(15, 23, 42, .08);
+  transition:
+    transform 260ms cubic-bezier(.22, 1, .36, 1),
+    box-shadow 260ms ease,
+    background 260ms ease,
+    border-color 260ms ease;
+}
+
+:global(.download-button-motion:hover),
+:global(.download-button-motion:focus-visible) {
+  transform: translateY(-3px);
+  box-shadow:
+    0 18px 38px rgba(220, 38, 38, .2),
+    0 0 0 1px rgba(255, 255, 255, .16);
+}
+
 @keyframes studio-os-glow {
   from {
     transform: translate3d(-2%, -1%, 0) scale(1);
@@ -137,6 +323,16 @@
 
   to {
     transform: translate3d(2%, 2%, 0) scale(1.06);
+  }
+}
+
+@keyframes studio-download-glow {
+  from {
+    transform: translate3d(-2%, -2%, 0) scale(1);
+  }
+
+  to {
+    transform: translate3d(2%, 3%, 0) scale(1.08);
   }
 }
 
@@ -238,9 +434,20 @@
   :global(.studio-panel-modal-backdrop),
   :global(.studio-panel-modal),
   :global(.studio-panel-modal-shot),
-  :global(.studio-panel-modal-info) {
+  :global(.studio-panel-modal-info),
+  :global(.download-motion-page::before),
+  :global(.download-hero-shell::before) {
     animation: none !important;
     opacity: 1;
     transform: none;
+  }
+
+  :global(.download-reveal-strong.studio-os-reveal-item),
+  :global(.download-reveal-side-left.studio-os-reveal-item),
+  :global(.download-reveal-side-right.studio-os-reveal-item) {
+    filter: none;
+    opacity: 1;
+    transform: none;
+    transition: none;
   }
 }

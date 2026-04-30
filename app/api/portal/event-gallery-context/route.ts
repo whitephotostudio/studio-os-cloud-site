@@ -4,7 +4,10 @@ import {
   normalizeEventGallerySettings,
   sanitizeEventGallerySettingsForClient,
 } from "@/lib/event-gallery-settings";
-import { buildStoredMediaUrls } from "@/lib/storage-images";
+import {
+  buildSignedMediaUrls,
+  SIGNED_URL_TTL_PARENTS_PORTAL_SECONDS,
+} from "@/lib/storage-images";
 import { filterPackagesForProfile } from "@/lib/package-profile-selection";
 import { hasActiveSubscription } from "@/lib/subscription-gate";
 
@@ -379,12 +382,14 @@ export async function POST(request: NextRequest) {
         .limit(5000);
 
       if (mediaError) throw mediaError;
+      // 2026-04-30 — Parents portal sessions stay open for hours
+      // during shopping/checkout, so we sign with a 6-hour TTL.
       mediaRows = ((mediaData ?? []) as MediaRow[]).map((row) => {
-        const mediaUrls = buildStoredMediaUrls({
+        const mediaUrls = buildSignedMediaUrls({
           storagePath: row.storage_path,
           previewUrl: row.preview_url,
           thumbnailUrl: row.thumbnail_url,
-        });
+        }, { ttlSeconds: SIGNED_URL_TTL_PARENTS_PORTAL_SECONDS });
 
         return {
           ...row,

@@ -1,3 +1,5 @@
+import { r2PresignedGetUrl, r2KeyFromAnyUrl } from "./r2-signed-urls";
+
 const SUPABASE_URL = (process.env.NEXT_PUBLIC_SUPABASE_URL || "").replace(/\/$/, "");
 const R2_PUBLIC_URL = (
   process.env.NEXT_PUBLIC_R2_PUBLIC_URL ||
@@ -6,6 +8,12 @@ const R2_PUBLIC_URL = (
 ).replace(/\/$/, "");
 
 export const MEDIA_BUCKET = "thumbs";
+
+// 2026-04-30 — Default TTLs for buildSignedMediaUrls().  Dashboard
+// views are short (photographer is actively browsing); parents
+// portal sessions stay open for hours during shopping/checkout.
+export const SIGNED_URL_TTL_DASHBOARD_SECONDS = 60 * 60;
+export const SIGNED_URL_TTL_PARENTS_PORTAL_SECONDS = 60 * 60 * 6;
 
 type ResizeMode = "cover" | "contain" | "fill";
 
@@ -179,5 +187,62 @@ export function buildStoredMediaUrls(
     originalUrl,
     previewUrl: previewUrl || thumbnailUrl || originalUrl,
     thumbnailUrl: thumbnailUrl || previewUrl || originalUrl,
+  };
+}
+
+/**
+ * 2026-04-30 — Signed-URL variant of buildStoredMediaUrls.  Use this
+ * for gallery images on R2 (the public dev URL is dead).  Returns
+ * time-limited presigned GET URLs derived from `storage_path`
+ * (preferred) or falling back to the legacy preview_url/thumbnail_url
+ * if storage_path is empty.
+ *
+ * SERVER-SIDE ONLY.  Never import from a client component — the
+ * presigner reads R2 secret env vars.  Galleries should call this
+ * inside their server-component data layer or API route, then send
+ * the resolved URLs to the client.
+ *
+ * Behaviour:
+ * - Original key: `<storage_path>` (if it ends in .jpg) or derived
+ *   from filename pattern.
+ * - Preview key:  `<basename>_preview.jpg`
+ * - Thumbnail key: `<basename>_thumbnail.jpg`
+ * - Each URL is signed with the supplied TTL.
+ *
+ * Empty inputs yield empty strings (graceful fallback for legacy
+ * rows that never got a storage_path written).
+ */
+export function buildSignedMediaUrls(
+  input: StoredMediaInput,
+  options?: { ttlSeconds?: number },
+) {
+  const ttl = options?.ttlSeconds ?? SIGNED_URL_TTL_DASHBOARD_SECONDS;
+
+  // Prefer storage_path; fall back to extracting key from a stored
+  // legacy URL.  Both lead to the same key shape for R2 objects
+  // uploaded by the desktop.
+  const rawKey =
+    clean(input.storagePath) ||
+    r2KeyFromAnyUrl(input.previewUrl) ||
+    r2KeyFromAnyUrl(input.thumbnailUrl);
+
+  if (!rawKey) {
+    return { originalUrl: "", previewUrl: "", thumbnailUrl: "" };
+  }
+
+  // Normalize: original key should end in .jpg.  Some legacy rows
+  // pointed at _preview.jpg / _thumbnail.jpg in storage_path, which
+  // we don't want to use as the original.
+  const cleaned = rawKey.replace(/_(preview|thumbnail)\.[^.]+$/i, ".jpg");
+  const baseNoExt = cleaned.replace(/\.[^./]+$/i, "");
+
+  const originalKey = `${baseNoExt}.jpg`;
+  const previewKey = `${baseNoExt}_preview.jpg`;
+  const thumbnailKey = `${baseNoExt}_thumbnail.jpg`;
+
+  return {
+    originalUrl: r2PresignedGetUrl(originalKey, ttl),
+    previewUrl: r2PresignedGetUrl(previewKey, ttl),
+    thumbnailUrl: r2PresignedGetUrl(thumbnailKey, ttl),
   };
 }

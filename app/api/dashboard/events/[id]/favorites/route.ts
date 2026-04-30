@@ -3,7 +3,10 @@ import {
   createDashboardServiceClient,
   resolveDashboardAuth,
 } from "@/lib/dashboard-auth";
-import { buildStoredMediaUrls } from "@/lib/storage-images";
+import {
+  buildSignedMediaUrls,
+  SIGNED_URL_TTL_DASHBOARD_SECONDS,
+} from "@/lib/storage-images";
 
 export const dynamic = "force-dynamic";
 
@@ -240,11 +243,11 @@ export async function GET(
 
     const mediaMap = new Map(
       ((mediaRows.data ?? []) as MediaRow[]).map((row) => {
-        const mediaUrls = buildStoredMediaUrls({
+        const mediaUrls = buildSignedMediaUrls({
           storagePath: row.storage_path,
           previewUrl: row.preview_url,
           thumbnailUrl: row.thumbnail_url,
-        });
+        }, { ttlSeconds: SIGNED_URL_TTL_DASHBOARD_SECONDS });
         return [
           row.id,
           {

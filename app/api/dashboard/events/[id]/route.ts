@@ -15,7 +15,10 @@ import {
 } from "@/lib/project-email-deliveries";
 import { resendConfigured, sendResendEmail } from "@/lib/resend";
 import { ensurePackageProfile } from "@/lib/ensure-package-profile";
-import { buildStoredMediaUrls } from "@/lib/storage-images";
+import {
+  buildSignedMediaUrls,
+  SIGNED_URL_TTL_DASHBOARD_SECONDS,
+} from "@/lib/storage-images";
 import { r2DeletePrefix } from "@/lib/r2";
 import { guardAgreement } from "@/lib/require-agreement";
 
@@ -518,11 +521,11 @@ export async function GET(
     if (mediaError) throw mediaError;
 
     const normalizedMediaRows = (mediaRows ?? []).map((row) => {
-      const mediaUrls = buildStoredMediaUrls({
+      const mediaUrls = buildSignedMediaUrls({
         storagePath: "storage_path" in row ? row.storage_path : null,
         previewUrl: "preview_url" in row ? row.preview_url : null,
         thumbnailUrl: "thumbnail_url" in row ? row.thumbnail_url : null,
-      });
+      }, { ttlSeconds: SIGNED_URL_TTL_DASHBOARD_SECONDS });
 
       return {
         ...row,

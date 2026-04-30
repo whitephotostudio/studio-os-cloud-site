@@ -3,6 +3,7 @@ import { Download } from "lucide-react";
 
 import { SiteFooter } from "@/components/site-footer";
 import { SiteHeader } from "@/components/site-header";
+import { Reveal } from "@/components/reveal";
 
 export const metadata: Metadata = {
   title: "Download Studio OS App — Mac & Windows",
@@ -31,31 +32,43 @@ export default async function StudioOSDownloadPage() {
 
   return (
     <AgreementGate>
-    <div className="min-h-screen bg-white text-neutral-950">
+    <div className="download-motion-page min-h-screen bg-neutral-950 text-neutral-950">
       <SiteHeader />
 
-      <main className="mx-auto max-w-6xl px-4 py-16 sm:px-6 sm:py-20 lg:px-8">
-        <div className="rounded-[36px] border border-neutral-200 bg-[radial-gradient(circle_at_top,rgba(220,38,38,0.08),transparent_34%),linear-gradient(180deg,#fff_0%,#fafafa_100%)] p-8 shadow-[0_24px_80px_rgba(15,23,42,0.08)] sm:p-12">
+      <main className="download-page-main px-4 py-16 sm:px-6 sm:py-20 lg:px-8">
+        <div className="mx-auto max-w-6xl">
+        <Reveal repeat className="download-reveal-strong">
+        <div className="download-hero-shell rounded-[36px] border border-neutral-200 bg-[radial-gradient(circle_at_top,rgba(220,38,38,0.08),transparent_34%),linear-gradient(180deg,#fff_0%,#fafafa_100%)] p-8 shadow-[0_24px_80px_rgba(15,23,42,0.08)] sm:p-12">
           <div className="mx-auto max-w-3xl text-center">
-            <div className="inline-flex items-center gap-2 rounded-full border border-red-100 bg-red-50 px-4 py-1.5 text-xs font-bold uppercase tracking-[0.22em] text-red-600">
+            <Reveal repeat delay={120} className="download-reveal-strong">
+            <div className="download-hero-kicker inline-flex items-center gap-2 rounded-full border border-red-100 bg-red-50 px-4 py-1.5 text-xs font-bold uppercase tracking-[0.22em] text-red-600">
               <Download className="h-4 w-4" />
               Studio OS App Download
             </div>
-            <h1 className="mt-6 text-4xl font-black tracking-tight text-neutral-950 sm:text-6xl">
+            </Reveal>
+            <Reveal repeat delay={240} className="download-reveal-strong">
+            <h1 className="download-hero-title mt-6 text-4xl font-black tracking-tight text-neutral-950 sm:text-6xl">
               Download the Studio OS app.
             </h1>
+            </Reveal>
+            <Reveal repeat delay={360} className="download-reveal-strong">
             <p className="mx-auto mt-5 max-w-2xl text-lg leading-8 text-neutral-600">
               Install the app first, then sign in inside the app with your photographer account.
               If your plan includes Studio OS access, you can start using it right away. If not,
               the app will guide you to subscribe first.
             </p>
+            </Reveal>
           </div>
 
-          <StudioOSDownloadAccess
-            publicRelease={publicRelease}
-            macReady={macReady}
-            windowsReady={windowsReady}
-          />
+          <Reveal repeat delay={520} className="download-reveal-strong">
+            <StudioOSDownloadAccess
+              publicRelease={publicRelease}
+              macReady={macReady}
+              windowsReady={windowsReady}
+            />
+          </Reveal>
+        </div>
+        </Reveal>
         </div>
       </main>
 

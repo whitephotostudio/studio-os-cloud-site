@@ -3,7 +3,10 @@ import { z } from "zod";
 import { createDashboardServiceClient, resolveDashboardAuth } from "@/lib/dashboard-auth";
 import { parseJson } from "@/lib/api-validation";
 import { recordAudit, diffFields } from "@/lib/audit";
-import { buildStoredMediaUrls } from "@/lib/storage-images";
+import {
+  buildSignedMediaUrls,
+  SIGNED_URL_TTL_DASHBOARD_SECONDS,
+} from "@/lib/storage-images";
 import { r2DeleteWithVariantsBestEffort } from "@/lib/r2";
 import { guardAgreement } from "@/lib/require-agreement";
 
@@ -126,12 +129,16 @@ export async function GET(
 
     if (mediaError) throw mediaError;
 
+    // 2026-04-30 — Sign URLs server-side instead of trusting the dead
+    // R2 public URLs in DB.  Photographer dashboard uses 1 hour TTL —
+    // long enough for an active browse session, short enough that a
+    // copied URL doesn't outlive the gallery view by much.
     const normalizedMedia = (mediaData ?? []).map((row) => {
-      const mediaUrls = buildStoredMediaUrls({
+      const mediaUrls = buildSignedMediaUrls({
         storagePath: row.storage_path,
         previewUrl: row.preview_url,
         thumbnailUrl: row.thumbnail_url,
-      });
+      }, { ttlSeconds: SIGNED_URL_TTL_DASHBOARD_SECONDS });
 
       return {
         ...row,

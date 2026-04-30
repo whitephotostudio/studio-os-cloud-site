@@ -2,7 +2,10 @@ import sharp from "sharp";
 import { NextRequest, NextResponse } from "next/server";
 import { createDashboardServiceClient } from "@/lib/dashboard-auth";
 import { verifyEventGalleryBatchToken } from "@/lib/event-gallery-download-tokens";
-import { buildStoredMediaUrls } from "@/lib/storage-images";
+import {
+  buildSignedMediaUrls,
+  SIGNED_URL_TTL_PARENTS_PORTAL_SECONDS,
+} from "@/lib/storage-images";
 import { createZipBytes, type ZipEntry } from "@/lib/zip";
 
 export const dynamic = "force-dynamic";
@@ -155,11 +158,13 @@ function preferredDownloadUrls(
   row: Pick<MediaRow, "storage_path" | "preview_url" | "thumbnail_url">,
   resolution: "original" | "large" | "web",
 ) {
-  const mediaUrls = buildStoredMediaUrls({
+  // 2026-04-30 — Sign with parents-portal TTL so the download path
+  // can fetch from R2 directly via SigV4 instead of dead public URLs.
+  const mediaUrls = buildSignedMediaUrls({
     storagePath: row.storage_path,
     previewUrl: row.preview_url,
     thumbnailUrl: row.thumbnail_url,
-  });
+  }, { ttlSeconds: SIGNED_URL_TTL_PARENTS_PORTAL_SECONDS });
 
   // For "original" we do NOT fall back to preview/thumbnail — the whole point of
   // requesting "original" is to get the full-resolution file. Silent fallback

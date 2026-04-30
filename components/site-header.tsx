@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
 import { Menu, UserRound, X } from "lucide-react";
+import { useEffect, useState } from "react";
 import { Logo } from "./logo";
 
 const navLinks = [
@@ -10,141 +10,116 @@ const navLinks = [
   { href: "/studio-os", label: "Studio OS" },
   { href: "/studio-os/download", label: "Download App" },
   { href: "/pricing", label: "Pricing" },
-  // The prominent "Parents Portal" button on the right side of the header
-  // already links to /parents, so the small-text link here was redundant.
 ];
 
 export function SiteHeader() {
-  const [menuOpen, setMenuOpen] = useState(false);
+  const [isScrolled, setIsScrolled] = useState(false);
+  const [isOpen, setIsOpen] = useState(false);
 
-  // Close the mobile menu if the viewport grows past the md breakpoint
-  // (e.g. user rotates a tablet to landscape while the panel is open).
   useEffect(() => {
-    if (!menuOpen) return;
-    const mq = window.matchMedia("(min-width: 768px)");
-    const handler = (e: MediaQueryListEvent) => {
-      if (e.matches) setMenuOpen(false);
-    };
-    mq.addEventListener("change", handler);
-    return () => mq.removeEventListener("change", handler);
-  }, [menuOpen]);
+    const onScroll = () => setIsScrolled(window.scrollY > 8);
+    onScroll();
+    window.addEventListener("scroll", onScroll, { passive: true });
 
-  // Lock background scroll while the mobile menu is open.
-  useEffect(() => {
-    if (menuOpen) {
-      const prev = document.body.style.overflow;
-      document.body.style.overflow = "hidden";
-      return () => {
-        document.body.style.overflow = prev;
-      };
-    }
-  }, [menuOpen]);
-
-  const closeMenu = () => setMenuOpen(false);
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
 
   return (
-    <header className="sticky top-0 z-40 border-b border-neutral-200/70 bg-white/90 backdrop-blur-xl">
-      <div className="mx-auto flex h-[72px] max-w-7xl items-center justify-between gap-4 px-4 sm:h-[96px] sm:px-6 sm:pt-[4px] lg:px-8">
-        <Link href="/" className="text-left" onClick={closeMenu}>
-          <Logo small caption="brand" />
+    <header
+      className={`sticky top-0 z-40 border-b bg-white/95 text-neutral-950 backdrop-blur-xl transition duration-300 ${
+        isScrolled
+          ? "border-neutral-200 shadow-[0_14px_45px_rgba(0,0,0,0.08)]"
+          : "border-neutral-100"
+      }`}
+    >
+      <div className="mx-auto flex h-[92px] max-w-7xl items-center justify-between gap-4 px-4 sm:h-[112px] sm:px-6 lg:px-8">
+        <Link
+          href="/"
+          className="relative z-10 -ml-2 flex h-[82px] w-[96px] items-center justify-center rounded-[6px] text-left transition hover:translate-y-[-1px] sm:h-[96px] sm:w-[118px]"
+          aria-label="Studio OS Cloud home"
+        >
+          <Logo small />
         </Link>
 
-        <nav className="hidden items-center gap-6 md:flex">
+        <nav className="relative z-10 hidden items-center gap-7 lg:flex">
           {navLinks.map((link) => (
             <Link
               key={link.href}
               href={link.href}
-              className="text-sm font-medium text-neutral-600 transition hover:text-neutral-950"
+              className="marketing-caption relative font-medium text-neutral-600 transition hover:-translate-y-0.5 hover:text-neutral-950 after:absolute after:-bottom-1 after:left-0 after:h-px after:w-0 after:bg-red-600 after:transition-all hover:after:w-full"
             >
               {link.label}
             </Link>
           ))}
         </nav>
 
-        <div className="hidden items-center gap-3 sm:flex">
+        <div className="relative z-10 hidden items-center gap-3 lg:flex">
           <Link
             href="/parents"
-            className="inline-flex items-center gap-2 rounded-2xl border border-[#e7e2d8] bg-[linear-gradient(180deg,#ffffff_0%,#faf8f4_50%,#f3eee5_100%)] px-4 py-2.5 text-sm font-semibold text-neutral-950 shadow-[0_10px_22px_rgba(23,23,23,0.06)] transition hover:brightness-[0.99]"
+            className="marketing-button premium-button inline-flex items-center gap-2 rounded-full border border-stone-200 bg-stone-50 px-4 py-2.5 text-neutral-950 shadow-[0_12px_35px_rgba(0,0,0,0.06)] transition hover:bg-white"
           >
-            <UserRound className="h-4 w-4 text-neutral-700" />
+            <UserRound className="h-4 w-4" />
             Parents Portal
           </Link>
 
           <Link
             href="/sign-in"
-            className="rounded-2xl border border-transparent px-4 py-2.5 text-sm font-medium text-neutral-700 transition hover:border-neutral-200/80 hover:bg-neutral-50 hover:text-neutral-950"
+            className="marketing-caption whitespace-nowrap rounded-full px-4 py-2 font-medium text-neutral-600 transition hover:-translate-y-0.5 hover:bg-neutral-100 hover:text-neutral-950"
           >
             Photographer Sign In
           </Link>
 
           <Link
             href="/studio-os/download"
-            className="rounded-2xl border border-[#050505] bg-[linear-gradient(180deg,#181818_0%,#080808_55%,#000000_100%)] px-4 py-2.5 text-sm font-medium text-white shadow-[0_14px_28px_rgba(0,0,0,0.18)] transition hover:brightness-[1.03]"
+            className="marketing-button premium-button inline-flex items-center justify-center rounded-full bg-neutral-950 px-5 py-3 text-white shadow-[0_16px_38px_rgba(0,0,0,0.18)] transition hover:bg-black"
           >
             Download App
           </Link>
         </div>
 
-        {/* Hamburger — visible below the sm breakpoint */}
-        <button
-          type="button"
-          aria-label={menuOpen ? "Close menu" : "Open menu"}
-          aria-expanded={menuOpen}
-          aria-controls="site-header-mobile-panel"
-          onClick={() => setMenuOpen((v) => !v)}
-          className="inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-neutral-200 bg-white text-neutral-800 transition hover:bg-neutral-50 active:scale-[0.97] sm:hidden"
-        >
-          {menuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
-        </button>
-      </div>
-
-      {/* Mobile slide-down panel */}
-      {menuOpen && (
-        <div
-          id="site-header-mobile-panel"
-          className="border-t border-neutral-200 bg-white sm:hidden"
-        >
-          <nav className="mx-auto flex max-w-7xl flex-col gap-1 px-4 py-3">
-            {navLinks.map((link) => (
-              <Link
-                key={link.href}
-                href={link.href}
-                onClick={closeMenu}
-                className="rounded-xl px-3 py-3 text-base font-medium text-neutral-800 transition hover:bg-neutral-50 active:bg-neutral-100"
-              >
-                {link.label}
-              </Link>
-            ))}
-
-            <div className="mt-2 flex flex-col gap-2 border-t border-neutral-200 pt-3">
-              <Link
-                href="/parents"
-                onClick={closeMenu}
-                className="inline-flex items-center justify-center gap-2 rounded-2xl border border-[#e7e2d8] bg-[linear-gradient(180deg,#ffffff_0%,#faf8f4_50%,#f3eee5_100%)] px-4 py-3 text-sm font-semibold text-neutral-950 shadow-[0_10px_22px_rgba(23,23,23,0.06)]"
-              >
-                <UserRound className="h-4 w-4 text-neutral-700" />
-                Parents Portal
-              </Link>
-
-              <Link
-                href="/sign-in"
-                onClick={closeMenu}
-                className="rounded-2xl border border-neutral-200 px-4 py-3 text-center text-sm font-medium text-neutral-800 transition hover:bg-neutral-50"
-              >
-                Photographer Sign In
-              </Link>
-
+        <div className="relative z-10 lg:hidden">
+          <button
+            type="button"
+            onClick={() => setIsOpen((current) => !current)}
+            aria-expanded={isOpen}
+            aria-label="Toggle navigation"
+            className="flex h-11 w-11 items-center justify-center rounded-full border border-neutral-200 bg-white text-neutral-950 shadow-sm transition hover:bg-neutral-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-neutral-300"
+          >
+            {isOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+          </button>
+          <div
+            className={`absolute right-0 mt-3 w-[min(82vw,320px)] rounded-2xl border border-neutral-200 bg-white p-3 text-neutral-950 shadow-2xl transition duration-200 ${
+              isOpen
+                ? "pointer-events-auto translate-y-0 opacity-100"
+                : "pointer-events-none -translate-y-2 opacity-0"
+            }`}
+          >
+            <nav className="grid gap-1">
+              {[
+                ...navLinks,
+                { href: "/parents", label: "Parents Portal" },
+                { href: "/sign-in", label: "Photographer Sign In" },
+              ].map((link) => (
+                <Link
+                  key={link.href}
+                  href={link.href}
+                  onClick={() => setIsOpen(false)}
+                  className="marketing-caption rounded-xl px-3 py-2.5 font-medium text-neutral-600 transition hover:bg-neutral-100 hover:text-neutral-950"
+                >
+                  {link.label}
+                </Link>
+              ))}
               <Link
                 href="/studio-os/download"
-                onClick={closeMenu}
-                className="rounded-2xl border border-[#050505] bg-[linear-gradient(180deg,#181818_0%,#080808_55%,#000000_100%)] px-4 py-3 text-center text-sm font-medium text-white shadow-[0_14px_28px_rgba(0,0,0,0.18)]"
+                onClick={() => setIsOpen(false)}
+                className="marketing-button mt-2 rounded-xl bg-neutral-950 px-3 py-2.5 text-center text-white"
               >
                 Download App
               </Link>
-            </div>
-          </nav>
+            </nav>
+          </div>
         </div>
-      )}
+      </div>
     </header>
   );
 }

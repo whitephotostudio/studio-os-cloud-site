@@ -5,7 +5,10 @@ import {
   sanitizeEventGallerySettingsForClient,
 } from "@/lib/event-gallery-settings";
 import { buildSchoolGalleryDownloadAccess } from "@/lib/school-gallery-downloads";
-import { buildStoredMediaUrls } from "@/lib/storage-images";
+import {
+  buildSignedMediaUrls,
+  SIGNED_URL_TTL_PARENTS_PORTAL_SECONDS,
+} from "@/lib/storage-images";
 import { filterPackagesForProfile } from "@/lib/package-profile-selection";
 import { buildSchoolCandidateFolders, loadFolderMediaRows } from "@/lib/storage-folder";
 
@@ -178,12 +181,13 @@ async function loadSchoolCompositeMedia(
     }
   }
 
+  // 2026-04-30 — School-mode parents portal: 6h signed URLs.
   return Array.from(uniqueRows.values()).map((row) => {
-    const mediaUrls = buildStoredMediaUrls({
+    const mediaUrls = buildSignedMediaUrls({
       storagePath: row.storage_path,
       previewUrl: row.preview_url,
       thumbnailUrl: row.thumbnail_url,
-    });
+    }, { ttlSeconds: SIGNED_URL_TTL_PARENTS_PORTAL_SECONDS });
 
     return {
       ...row,

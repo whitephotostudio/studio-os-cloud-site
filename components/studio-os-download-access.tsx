@@ -13,6 +13,7 @@ import {
   ShieldCheck,
 } from "lucide-react";
 
+import { Reveal } from "@/components/reveal";
 import { createClient } from "@/lib/supabase/client";
 
 type StudioOSDownloadAccessProps = {
@@ -181,18 +182,22 @@ export function StudioOSDownloadAccess({
   return (
     <>
       {!authResolved ? (
-        <div className="mx-auto mt-12 max-w-4xl rounded-[28px] border border-neutral-200 bg-white p-6 shadow-[0_18px_40px_rgba(15,23,42,0.05)] sm:p-8">
+        <Reveal
+          repeat
+          className="download-card-motion download-reveal-strong mx-auto mt-12 max-w-4xl rounded-[28px] border border-neutral-200 bg-white p-6 shadow-[0_18px_40px_rgba(15,23,42,0.05)] sm:p-8"
+        >
           <div className="flex items-center gap-3 text-neutral-600">
             <Loader2 className="h-5 w-5 animate-spin" />
             <span className="text-sm font-medium">Checking your app access...</span>
           </div>
-        </div>
+        </Reveal>
       ) : null}
 
       {authResolved && !signedIn ? (
+        <Reveal repeat delay={80} className="download-reveal-side-left">
         <div
           ref={formRef}
-          className="mx-auto mt-12 max-w-4xl rounded-[28px] border border-neutral-200 bg-white p-6 shadow-[0_18px_40px_rgba(15,23,42,0.05)] sm:p-8"
+          className="download-card-motion mx-auto mt-12 max-w-4xl rounded-[28px] border border-neutral-200 bg-white p-6 shadow-[0_18px_40px_rgba(15,23,42,0.05)] sm:p-8"
         >
           <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
             <div className="max-w-2xl">
@@ -236,7 +241,7 @@ export function StudioOSDownloadAccess({
                 type="button"
                 onClick={handleTrialStart}
                 disabled={submitting}
-                className="inline-flex items-center justify-center gap-2 rounded-2xl bg-red-600 px-5 py-3 font-semibold text-white transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-60"
+                className="download-button-motion inline-flex items-center justify-center gap-2 rounded-2xl bg-red-600 px-5 py-3 font-semibold text-white transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {submitting ? (
                   <>
@@ -266,10 +271,15 @@ export function StudioOSDownloadAccess({
             </div>
           ) : null}
         </div>
+        </Reveal>
       ) : null}
 
       {authResolved && signedIn ? (
-        <div className="mx-auto mt-12 max-w-4xl rounded-[28px] border border-neutral-200 bg-white p-6 shadow-[0_18px_40px_rgba(15,23,42,0.05)] sm:p-8">
+        <Reveal
+          repeat
+          delay={80}
+          className="download-card-motion download-reveal-side-left mx-auto mt-12 max-w-4xl rounded-[28px] border border-neutral-200 bg-white p-6 shadow-[0_18px_40px_rgba(15,23,42,0.05)] sm:p-8"
+        >
           <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
             <div>
               <div className="inline-flex items-center gap-2 rounded-full border border-neutral-200 bg-neutral-50 px-4 py-1.5 text-xs font-bold uppercase tracking-[0.2em] text-neutral-700">
@@ -307,11 +317,12 @@ export function StudioOSDownloadAccess({
               Not you? Sign out
             </button>
           </div>
-        </div>
+        </Reveal>
       ) : null}
 
       <div className="mx-auto mt-12 grid max-w-4xl gap-6 lg:grid-cols-2">
-        <div className="rounded-[28px] border border-neutral-200 bg-white p-8 shadow-[0_18px_40px_rgba(15,23,42,0.05)]">
+        <Reveal repeat delay={150} className="download-reveal-side-left">
+        <div className="download-platform-card rounded-[28px] border border-neutral-200 bg-white p-8 shadow-[0_18px_40px_rgba(15,23,42,0.05)]">
           <div className="flex items-center gap-3 text-neutral-950">
             <Laptop className="h-6 w-6 text-red-500" />
             <div className="text-2xl font-bold">Mac</div>
@@ -323,7 +334,7 @@ export function StudioOSDownloadAccess({
             releaseReady && macReady ? (
               <a
                 href="/api/studio-os-app/download?platform=mac"
-                className="mt-6 inline-flex items-center justify-center gap-2 rounded-2xl bg-neutral-950 px-5 py-3 font-semibold text-white transition hover:bg-neutral-800"
+                className="download-button-motion mt-6 inline-flex items-center justify-center gap-2 rounded-2xl bg-neutral-950 px-5 py-3 font-semibold text-white transition hover:bg-neutral-800"
               >
                 <Download className="h-4 w-4" />
                 Download for Mac
@@ -337,14 +348,16 @@ export function StudioOSDownloadAccess({
             <button
               type="button"
               onClick={() => requestTrialFor("mac")}
-              className="mt-6 inline-flex items-center justify-center gap-2 rounded-2xl border border-neutral-200 bg-neutral-50 px-5 py-3 font-semibold text-neutral-900 transition hover:bg-neutral-100"
+              className="download-button-motion mt-6 inline-flex items-center justify-center gap-2 rounded-2xl border border-neutral-200 bg-neutral-50 px-5 py-3 font-semibold text-neutral-900 transition hover:bg-neutral-100"
             >
               Activate Trial to Download
             </button>
           )}
         </div>
+        </Reveal>
 
-        <div className="rounded-[28px] border border-neutral-200 bg-white p-8 shadow-[0_18px_40px_rgba(15,23,42,0.05)]">
+        <Reveal repeat delay={280} className="download-reveal-side-right">
+        <div className="download-platform-card rounded-[28px] border border-neutral-200 bg-white p-8 shadow-[0_18px_40px_rgba(15,23,42,0.05)]">
           <div className="flex items-center gap-3 text-neutral-950">
             <MonitorSmartphone className="h-6 w-6 text-red-500" />
             <div className="text-2xl font-bold">Windows</div>
@@ -356,7 +369,7 @@ export function StudioOSDownloadAccess({
             releaseReady && windowsReady ? (
               <a
                 href="/api/studio-os-app/download?platform=windows"
-                className="mt-6 inline-flex items-center justify-center gap-2 rounded-2xl bg-neutral-950 px-5 py-3 font-semibold text-white transition hover:bg-neutral-800"
+                className="download-button-motion mt-6 inline-flex items-center justify-center gap-2 rounded-2xl bg-neutral-950 px-5 py-3 font-semibold text-white transition hover:bg-neutral-800"
               >
                 <Download className="h-4 w-4" />
                 Download for Windows
@@ -373,16 +386,21 @@ export function StudioOSDownloadAccess({
             <button
               type="button"
               onClick={() => requestTrialFor("windows")}
-              className="mt-6 inline-flex items-center justify-center gap-2 rounded-2xl border border-neutral-200 bg-neutral-50 px-5 py-3 font-semibold text-neutral-900 transition hover:bg-neutral-100"
+              className="download-button-motion mt-6 inline-flex items-center justify-center gap-2 rounded-2xl border border-neutral-200 bg-neutral-50 px-5 py-3 font-semibold text-neutral-900 transition hover:bg-neutral-100"
             >
               Activate Trial to Download
             </button>
           )}
         </div>
+        </Reveal>
       </div>
 
       {!signedIn ? (
-        <div className="mx-auto mt-10 max-w-3xl rounded-[24px] border border-neutral-200 bg-white/90 p-6 text-center shadow-[0_16px_36px_rgba(15,23,42,0.04)]">
+        <Reveal
+          repeat
+          delay={220}
+          className="download-card-motion download-reveal-strong mx-auto mt-10 max-w-3xl rounded-[24px] border border-neutral-200 bg-white/90 p-6 text-center shadow-[0_16px_36px_rgba(15,23,42,0.04)]"
+        >
           <div className="text-sm font-bold uppercase tracking-[0.18em] text-neutral-500">
             Already a photographer account?
           </div>
@@ -392,7 +410,7 @@ export function StudioOSDownloadAccess({
           <div className="mt-5 flex flex-wrap items-center justify-center gap-3">
             <Link
               href={buildSignInHref(email, redirectPath)}
-              className="rounded-2xl bg-neutral-950 px-5 py-3 font-semibold text-white transition hover:bg-neutral-800"
+              className="download-button-motion rounded-2xl bg-neutral-950 px-5 py-3 font-semibold text-white transition hover:bg-neutral-800"
             >
               Sign In to Download
             </Link>
@@ -403,7 +421,7 @@ export function StudioOSDownloadAccess({
               See Pricing
             </Link>
           </div>
-        </div>
+        </Reveal>
       ) : null}
     </>
   );
