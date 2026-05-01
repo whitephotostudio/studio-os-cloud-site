@@ -150,13 +150,23 @@ export function r2KeyFromAnyUrl(input: string | null | undefined): string {
   const value = (input ?? "").trim();
   if (!value) return "";
 
-  // Already a bare key (no scheme)?
+  // Already a bare key (no scheme)?  This includes our new
+  // `/api/r2/img/<path>` proxy URLs — strip that prefix so the key
+  // reflects the underlying storage path.
   if (!/^https?:\/\//i.test(value)) {
-    return value.replace(/^\/+/, "");
+    const stripped = value.replace(/^\/+/, "");
+    if (stripped.startsWith("api/r2/img/")) {
+      return decodeURIComponent(stripped.slice("api/r2/img/".length));
+    }
+    return decodeURIComponent(stripped);
   }
 
   try {
     const parsed = new URL(value);
+    // Our own proxy URL: <site>/api/r2/img/<key>
+    if (parsed.pathname.startsWith("/api/r2/img/")) {
+      return decodeURIComponent(parsed.pathname.slice("/api/r2/img/".length));
+    }
     // R2 public dev URL: pub-XXXX.r2.dev/<key>
     if (/\.r2\.dev$/i.test(parsed.host)) {
       return decodeURIComponent(parsed.pathname.replace(/^\/+/, ""));

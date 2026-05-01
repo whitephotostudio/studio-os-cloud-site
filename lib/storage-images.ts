@@ -60,9 +60,24 @@ export function publicStorageUrl(
 ) {
   const safePath = clean(storagePath);
   if (!safePath) return "";
-  if (R2_PUBLIC_URL) return `${R2_PUBLIC_URL}/${encodeStoragePath(safePath)}`;
-  if (!SUPABASE_URL) return "";
-  return `${SUPABASE_URL}/storage/v1/object/public/${bucket}/${encodeStoragePath(safePath)}`;
+  // 2026-04-30 — Route through the auth-gated /api/r2/img redirect
+  // endpoint instead of the dead R2 public URL.  The endpoint signs
+  // the request server-side and 302s to a short-lived signed URL, so
+  // photographers see images on client-rendered pages without ever
+  // exposing the R2 secret in the browser bundle.  Server-side render
+  // paths use buildSignedMediaUrls() directly and skip this proxy.
+  //
+  // Falls back to the Supabase public URL only when storagePath looks
+  // like a Supabase-bucket path (e.g. backdrops/, studio-logos/) which
+  // are intentionally public.
+  if (
+    safePath.startsWith("backdrops/") ||
+    safePath.startsWith("studio-logos/")
+  ) {
+    if (!SUPABASE_URL) return "";
+    return `${SUPABASE_URL}/storage/v1/object/public/${bucket}/${encodeStoragePath(safePath)}`;
+  }
+  return `/api/r2/img/${encodeStoragePath(safePath)}`;
 }
 
 /**
