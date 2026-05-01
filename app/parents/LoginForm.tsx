@@ -193,7 +193,7 @@ function SearchableSelect<T>({
   const showClear = Boolean(selectedOption && query === selectedOption.label);
 
   return (
-    <div ref={wrapperRef} style={{ position: "relative" }}>
+    <div className="parents-motion-searchable" ref={wrapperRef} style={{ position: "relative" }}>
       <Search
         size={16}
         color="#98a2b3"
@@ -748,6 +748,7 @@ export default function LoginForm({
 
   return (
     <div
+      className="parents-motion-page"
       style={{
         minHeight: "100vh",
         background: "linear-gradient(180deg, #f7f8fa 0%, #eff2f6 100%)",
@@ -759,9 +760,199 @@ export default function LoginForm({
         fontFamily: "Inter, Helvetica Neue, Helvetica, Arial, sans-serif",
       }}
     >
+      <style>{`
+        .parents-motion-page {
+          position: relative;
+          overflow: hidden;
+          isolation: isolate;
+        }
+
+        .parents-motion-page::before,
+        .parents-motion-page::after {
+          content: "";
+          position: fixed;
+          inset: auto;
+          z-index: -1;
+          pointer-events: none;
+          border-radius: 999px;
+          filter: blur(12px);
+          transform: translate3d(0, 0, 0);
+        }
+
+        .parents-motion-page::before {
+          width: 42vw;
+          height: 42vw;
+          left: -12vw;
+          top: -12vw;
+          background:
+            radial-gradient(circle at 45% 45%, rgba(225, 29, 72, 0.16), rgba(225, 29, 72, 0) 62%),
+            radial-gradient(circle at 55% 55%, rgba(17, 24, 39, 0.08), rgba(17, 24, 39, 0) 68%);
+          animation: parentsGlowDrift 18s ease-in-out infinite alternate;
+        }
+
+        .parents-motion-page::after {
+          width: 46vw;
+          height: 46vw;
+          right: -16vw;
+          bottom: -18vw;
+          background:
+            radial-gradient(circle at 50% 50%, rgba(17, 24, 39, 0.09), rgba(17, 24, 39, 0) 64%),
+            radial-gradient(circle at 44% 44%, rgba(225, 29, 72, 0.08), rgba(225, 29, 72, 0) 70%);
+          animation: parentsGlowDrift 22s ease-in-out infinite alternate-reverse;
+        }
+
+        .parents-motion-card {
+          position: relative;
+          overflow: visible;
+          animation: parentsCardIn 900ms cubic-bezier(.16, 1, .3, 1) both;
+          transition:
+            transform 420ms cubic-bezier(.16, 1, .3, 1),
+            box-shadow 420ms cubic-bezier(.16, 1, .3, 1),
+            border-color 420ms ease;
+        }
+
+        .parents-motion-card::before {
+          content: "";
+          position: absolute;
+          inset: -1px;
+          border-radius: inherit;
+          background:
+            linear-gradient(135deg, rgba(255,255,255,.94), rgba(255,255,255,0) 42%),
+            radial-gradient(circle at 50% 0%, rgba(225, 29, 72, .08), transparent 42%);
+          pointer-events: none;
+        }
+
+        .parents-motion-card:hover {
+          transform: translateY(-4px);
+          box-shadow: 0 28px 80px rgba(17,24,39,0.12) !important;
+          border-color: rgba(17, 24, 39, 0.08) !important;
+        }
+
+        .parents-motion-icon {
+          animation: parentsIconFloat 5.5s ease-in-out infinite;
+        }
+
+        .parents-motion-tabs,
+        .parents-motion-title,
+        .parents-motion-copy,
+        .parents-motion-form,
+        .parents-motion-footer {
+          animation: parentsFadeUp 760ms cubic-bezier(.16, 1, .3, 1) both;
+        }
+
+        .parents-motion-tabs { animation-delay: 120ms; }
+        .parents-motion-title { animation-delay: 210ms; }
+        .parents-motion-copy { animation-delay: 290ms; }
+        .parents-motion-form { animation-delay: 370ms; }
+        .parents-motion-footer { animation-delay: 470ms; }
+
+        .parents-motion-tab,
+        .parents-motion-primary-button,
+        .parents-motion-card input,
+        .parents-motion-searchable input {
+          transition:
+            transform 240ms cubic-bezier(.16, 1, .3, 1),
+            box-shadow 240ms cubic-bezier(.16, 1, .3, 1),
+            border-color 240ms ease,
+            background 240ms ease;
+        }
+
+        .parents-motion-tab:hover {
+          transform: translateY(-1px);
+        }
+
+        .parents-motion-primary-button:hover:not(:disabled) {
+          transform: translateY(-2px);
+          box-shadow: 0 16px 34px rgba(17,24,39,.18);
+          background: #080b12 !important;
+        }
+
+        .parents-motion-primary-button:active:not(:disabled) {
+          transform: translateY(0);
+        }
+
+        .parents-motion-card input:focus,
+        .parents-motion-searchable input:focus {
+          border-color: rgba(17, 24, 39, .34) !important;
+          box-shadow: 0 0 0 4px rgba(17, 24, 39, .06);
+        }
+
+        .parents-motion-footer {
+          opacity: .98;
+        }
+
+        @keyframes parentsCardIn {
+          from {
+            opacity: 0;
+            transform: translateY(28px) scale(.975);
+            filter: blur(8px);
+          }
+          to {
+            opacity: 1;
+            transform: translateY(0) scale(1);
+            filter: blur(0);
+          }
+        }
+
+        @keyframes parentsFadeUp {
+          from {
+            opacity: 0;
+            transform: translateY(18px);
+          }
+          to {
+            opacity: 1;
+            transform: translateY(0);
+          }
+        }
+
+        @keyframes parentsIconFloat {
+          0%, 100% {
+            transform: translateY(0);
+            box-shadow: 0 16px 40px rgba(17,24,39,0.22);
+          }
+          50% {
+            transform: translateY(-7px);
+            box-shadow: 0 24px 54px rgba(17,24,39,0.18);
+          }
+        }
+
+        @keyframes parentsGlowDrift {
+          from { transform: translate3d(0, 0, 0) scale(1); }
+          to { transform: translate3d(7vw, 4vw, 0) scale(1.12); }
+        }
+
+        @media (max-width: 640px) {
+          .parents-motion-card:hover {
+            transform: none;
+          }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+          .parents-motion-page::before,
+          .parents-motion-page::after,
+          .parents-motion-card,
+          .parents-motion-icon,
+          .parents-motion-tabs,
+          .parents-motion-title,
+          .parents-motion-copy,
+          .parents-motion-form,
+          .parents-motion-footer {
+            animation: none !important;
+          }
+
+          .parents-motion-card,
+          .parents-motion-tab,
+          .parents-motion-primary-button,
+          .parents-motion-card input,
+          .parents-motion-searchable input {
+            transition: none !important;
+          }
+        }
+      `}</style>
       {step === "login" && (
-        <div style={card}>
+        <div className="parents-motion-card" style={card}>
           <div
+            className="parents-motion-icon"
             style={{
               width: 62,
               height: 62,
@@ -782,6 +973,7 @@ export default function LoginForm({
           </div>
 
           <div
+            className="parents-motion-tabs"
             style={{
               display: "flex",
               background: "#f3f5f8",
@@ -792,6 +984,7 @@ export default function LoginForm({
             }}
           >
             <button
+              className="parents-motion-tab"
               type="button"
               onClick={() => switchMode("school")}
               style={{
@@ -805,6 +998,7 @@ export default function LoginForm({
               School Access
             </button>
             <button
+              className="parents-motion-tab"
               type="button"
               onClick={() => switchMode("event")}
               style={{
@@ -819,7 +1013,7 @@ export default function LoginForm({
             </button>
           </div>
 
-          <h1 style={{ fontSize: 28, fontWeight: 800, color: "#111", margin: "0 0 8px", textAlign: "center" }}>
+          <h1 className="parents-motion-title" style={{ fontSize: 28, fontWeight: 800, color: "#111", margin: "0 0 8px", textAlign: "center" }}>
             Client Panel
           </h1>
 
@@ -900,7 +1094,7 @@ export default function LoginForm({
             </div>
           ) : null}
 
-          <p style={{ fontSize: 14, color: "#667085", margin: "0 0 28px", lineHeight: 1.7, textAlign: "center" }}>
+          <p className="parents-motion-copy" style={{ fontSize: 14, color: "#667085", margin: "0 0 28px", lineHeight: 1.7, textAlign: "center" }}>
             {mode === "school"
               ? "Choose your school, then enter your email and the PIN from your child's photo envelope."
               : selectedEvent?.portal_status === "pre_release"
@@ -909,7 +1103,7 @@ export default function LoginForm({
           </p>
 
           {mode === "school" ? (
-            <form onSubmit={handleSchoolLogin} style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+            <form className="parents-motion-form" onSubmit={handleSchoolLogin} style={{ display: "flex", flexDirection: "column", gap: 16 }}>
               <div>
                 <label style={labelStyle}>School</label>
                 <SearchableSelect<SchoolRow>
@@ -976,6 +1170,7 @@ export default function LoginForm({
                 </div>
               ) : (
                 <button
+                  className="parents-motion-primary-button"
                   type="submit"
                   disabled={searching}
                   style={{ height: 52, borderRadius: 14, border: "none", background: "#111827", color: "#fff", fontWeight: 800, fontSize: 14, cursor: "pointer" }}
@@ -996,7 +1191,7 @@ export default function LoginForm({
               />
             </form>
           ) : (
-            <form onSubmit={handleEventLogin} style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+            <form className="parents-motion-form" onSubmit={handleEventLogin} style={{ display: "flex", flexDirection: "column", gap: 16 }}>
               <div>
                 <label style={labelStyle}>Event</label>
                 <SearchableSelect<EventProjectRow>
@@ -1065,6 +1260,7 @@ export default function LoginForm({
                 </div>
               ) : (
                 <button
+                  className="parents-motion-primary-button"
                   type="submit"
                   disabled={searching}
                   style={{ height: 52, borderRadius: 14, border: "none", background: "#111827", color: "#fff", fontWeight: 800, fontSize: 14, cursor: "pointer" }}
@@ -1078,6 +1274,7 @@ export default function LoginForm({
           )}
 
           <div
+            className="parents-motion-footer"
             style={{
               display: "flex",
               flexDirection: "column",
@@ -1116,15 +1313,15 @@ export default function LoginForm({
       )}
 
       {step === "school_prerelease" && (
-        <div style={card}>
-          <div style={{ width: 60, height: 60, borderRadius: 18, background: "#eef2ff", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 22px" }}>
+        <div className="parents-motion-card" style={card}>
+          <div className="parents-motion-icon" style={{ width: 60, height: 60, borderRadius: 18, background: "#eef2ff", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 22px" }}>
             <Mail size={26} color="#4338ca" />
           </div>
           <h1 style={{ fontSize: 26, fontWeight: 800, textAlign: "center", margin: "0 0 10px", color: "#111" }}>Gallery coming soon</h1>
           <p style={{ textAlign: "center", color: "#667085", lineHeight: 1.7, margin: "0 0 26px" }}>
             Leave your email and we'll notify you when your school gallery opens.
           </p>
-          <form onSubmit={handleSchoolPreReleaseRegister} style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          <form className="parents-motion-form" onSubmit={handleSchoolPreReleaseRegister} style={{ display: "flex", flexDirection: "column", gap: 16 }}>
             <div>
               <label style={labelStyle}>Email</label>
               <input type="email" value={regEmail} onChange={(e) => setRegEmail(e.target.value)} required style={inputStyle} placeholder="name@example.com" />
@@ -1134,7 +1331,7 @@ export default function LoginForm({
                 {regError}
               </div>
             ) : null}
-            <button type="submit" disabled={regSubmitting} style={{ height: 52, borderRadius: 14, border: "none", background: "#111827", color: "#fff", fontWeight: 800, cursor: "pointer" }}>
+            <button className="parents-motion-primary-button" type="submit" disabled={regSubmitting} style={{ height: 52, borderRadius: 14, border: "none", background: "#111827", color: "#fff", fontWeight: 800, cursor: "pointer" }}>
               {regSubmitting ? "Saving…" : "Notify me"}
             </button>
             <button type="button" onClick={() => setStep("login")} style={{ height: 48, borderRadius: 14, border: "1px solid #d0d5dd", background: "#fff", color: "#344054", fontWeight: 700, cursor: "pointer" }}>
@@ -1145,8 +1342,8 @@ export default function LoginForm({
       )}
 
       {step === "school_prerelease_done" && (
-        <div style={card}>
-          <div style={{ width: 60, height: 60, borderRadius: 999, background: "#ecfdf3", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 22px" }}>
+        <div className="parents-motion-card" style={card}>
+          <div className="parents-motion-icon" style={{ width: 60, height: 60, borderRadius: 999, background: "#ecfdf3", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 22px" }}>
             <Check size={28} color="#16a34a" />
           </div>
           <h1 style={{ fontSize: 26, fontWeight: 800, textAlign: "center", margin: "0 0 10px", color: "#111" }}>You're on the list</h1>
@@ -1157,8 +1354,8 @@ export default function LoginForm({
       )}
 
       {step === "event_prerelease" && (
-        <div style={card}>
-          <div style={{ width: 60, height: 60, borderRadius: 18, background: "#eef2ff", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 22px" }}>
+        <div className="parents-motion-card" style={card}>
+          <div className="parents-motion-icon" style={{ width: 60, height: 60, borderRadius: 18, background: "#eef2ff", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 22px" }}>
             <Mail size={26} color="#4338ca" />
           </div>
           <h1 style={{ fontSize: 26, fontWeight: 800, textAlign: "center", margin: "0 0 10px", color: "#111" }}>
@@ -1167,7 +1364,7 @@ export default function LoginForm({
           <p style={{ textAlign: "center", color: "#667085", lineHeight: 1.7, margin: "0 0 26px" }}>
             Leave your email and the photographer can send you the gallery link and any access PIN as soon as this event is released.
           </p>
-          <form onSubmit={handleEventPreReleaseRegister} style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          <form className="parents-motion-form" onSubmit={handleEventPreReleaseRegister} style={{ display: "flex", flexDirection: "column", gap: 16 }}>
             <div>
               <label style={labelStyle}>Email</label>
               <input type="email" value={regEmail} onChange={(e) => setRegEmail(e.target.value)} required style={inputStyle} placeholder="name@example.com" />
@@ -1177,7 +1374,7 @@ export default function LoginForm({
                 {regError}
               </div>
             ) : null}
-            <button type="submit" disabled={regSubmitting} style={{ height: 52, borderRadius: 14, border: "none", background: "#111827", color: "#fff", fontWeight: 800, cursor: "pointer" }}>
+            <button className="parents-motion-primary-button" type="submit" disabled={regSubmitting} style={{ height: 52, borderRadius: 14, border: "none", background: "#111827", color: "#fff", fontWeight: 800, cursor: "pointer" }}>
               {regSubmitting ? "Saving…" : "Notify me when it opens"}
             </button>
             <button type="button" onClick={() => setStep("login")} style={{ height: 48, borderRadius: 14, border: "1px solid #d0d5dd", background: "#fff", color: "#344054", fontWeight: 700, cursor: "pointer" }}>
@@ -1188,8 +1385,8 @@ export default function LoginForm({
       )}
 
       {step === "event_prerelease_done" && (
-        <div style={card}>
-          <div style={{ width: 60, height: 60, borderRadius: 999, background: "#ecfdf3", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 22px" }}>
+        <div className="parents-motion-card" style={card}>
+          <div className="parents-motion-icon" style={{ width: 60, height: 60, borderRadius: 999, background: "#ecfdf3", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 22px" }}>
             <Check size={28} color="#16a34a" />
           </div>
           <h1 style={{ fontSize: 26, fontWeight: 800, textAlign: "center", margin: "0 0 10px", color: "#111" }}>You're on the release list</h1>
@@ -1200,8 +1397,8 @@ export default function LoginForm({
       )}
 
       {step === "school_closed" && (
-        <div style={card}>
-          <div style={{ width: 60, height: 60, borderRadius: 18, background: "#fff7ed", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 22px" }}>
+        <div className="parents-motion-card" style={card}>
+          <div className="parents-motion-icon" style={{ width: 60, height: 60, borderRadius: 18, background: "#fff7ed", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 22px" }}>
             <KeyRound size={26} color="#c2410c" />
           </div>
           <h1 style={{ fontSize: 26, fontWeight: 800, textAlign: "center", margin: "0 0 10px", color: "#111" }}>This school gallery is closed</h1>
