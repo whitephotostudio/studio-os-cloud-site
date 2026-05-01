@@ -273,12 +273,190 @@ export default function SignInPage() {
   }
 
   return (
-    <div className="min-h-screen bg-white text-neutral-950">
+    <div className="sign-motion-page min-h-screen bg-white text-neutral-950">
       <SiteHeader />
 
-      <main className="mx-auto flex max-w-7xl px-6 py-20">
+      <style>{`
+        .sign-motion-page {
+          position: relative;
+          overflow: hidden;
+          isolation: isolate;
+          background:
+            radial-gradient(circle at 16% 20%, rgba(225, 29, 72, .12), transparent 31%),
+            radial-gradient(circle at 82% 12%, rgba(17, 24, 39, .08), transparent 33%),
+            linear-gradient(180deg, #ffffff 0%, #f7f8fa 52%, #ffffff 100%);
+        }
+
+        .sign-motion-page::before,
+        .sign-motion-page::after {
+          content: "";
+          position: fixed;
+          z-index: -1;
+          pointer-events: none;
+          border-radius: 999px;
+          filter: blur(16px);
+          transform: translate3d(0, 0, 0);
+        }
+
+        .sign-motion-page::before {
+          width: 46vw;
+          height: 46vw;
+          left: -14vw;
+          top: 10vh;
+          background:
+            radial-gradient(circle at 45% 45%, rgba(127, 29, 29, .16), transparent 58%),
+            radial-gradient(circle at 62% 62%, rgba(17, 24, 39, .07), transparent 66%);
+          animation: signGlowDrift 20s ease-in-out infinite alternate;
+        }
+
+        .sign-motion-page::after {
+          width: 40vw;
+          height: 40vw;
+          right: -13vw;
+          bottom: -14vw;
+          background:
+            radial-gradient(circle at 50% 50%, rgba(17, 24, 39, .1), transparent 62%),
+            radial-gradient(circle at 38% 38%, rgba(225, 29, 72, .1), transparent 68%);
+          animation: signGlowDrift 24s ease-in-out infinite alternate-reverse;
+        }
+
+        .sign-motion-main {
+          animation: signPageIn 760ms cubic-bezier(.16, 1, .3, 1) both;
+        }
+
+        .sign-motion-copy {
+          animation: signFadeUp 780ms cubic-bezier(.16, 1, .3, 1) both;
+        }
+
+        .sign-motion-card {
+          position: relative;
+          overflow: hidden;
+          animation: signCardIn 980ms 120ms cubic-bezier(.16, 1, .3, 1) both;
+          transition:
+            transform 420ms cubic-bezier(.16, 1, .3, 1),
+            box-shadow 420ms cubic-bezier(.16, 1, .3, 1),
+            border-color 420ms ease;
+        }
+
+        .sign-motion-card::before {
+          content: "";
+          position: absolute;
+          inset: -1px;
+          border-radius: inherit;
+          background:
+            linear-gradient(135deg, rgba(255,255,255,.98), rgba(255,255,255,0) 46%),
+            radial-gradient(circle at 80% 0%, rgba(225, 29, 72, .08), transparent 42%);
+          pointer-events: none;
+        }
+
+        .sign-motion-card:hover {
+          transform: translateY(-4px);
+          box-shadow: 0 30px 90px rgba(17,24,39,.14);
+          border-color: rgba(17, 24, 39, .1);
+        }
+
+        .sign-motion-card > * {
+          position: relative;
+          z-index: 1;
+        }
+
+        .sign-motion-form {
+          animation: signFadeUp 760ms 260ms cubic-bezier(.16, 1, .3, 1) both;
+        }
+
+        .sign-motion-input,
+        .sign-motion-primary,
+        .sign-motion-link {
+          transition:
+            transform 240ms cubic-bezier(.16, 1, .3, 1),
+            box-shadow 240ms cubic-bezier(.16, 1, .3, 1),
+            border-color 240ms ease,
+            opacity 240ms ease,
+            color 240ms ease,
+            background 240ms ease;
+        }
+
+        .sign-motion-input:focus {
+          border-color: rgba(17,24,39,.38) !important;
+          box-shadow: 0 0 0 4px rgba(17,24,39,.06);
+        }
+
+        .sign-motion-primary:hover:not(:disabled) {
+          transform: translateY(-2px);
+          box-shadow: 0 18px 40px rgba(17,24,39,.18);
+          opacity: 1 !important;
+        }
+
+        .sign-motion-primary:active:not(:disabled) {
+          transform: translateY(0);
+        }
+
+        .sign-motion-link:hover {
+          transform: translateY(-1px);
+        }
+
+        @keyframes signPageIn {
+          from { opacity: 0; }
+          to { opacity: 1; }
+        }
+
+        @keyframes signFadeUp {
+          from {
+            opacity: 0;
+            transform: translateY(22px);
+          }
+          to {
+            opacity: 1;
+            transform: translateY(0);
+          }
+        }
+
+        @keyframes signCardIn {
+          from {
+            opacity: 0;
+            transform: translateX(34px) translateY(18px) scale(.975);
+            filter: blur(8px);
+          }
+          to {
+            opacity: 1;
+            transform: translateX(0) translateY(0) scale(1);
+            filter: blur(0);
+          }
+        }
+
+        @keyframes signGlowDrift {
+          from { transform: translate3d(0, 0, 0) scale(1); }
+          to { transform: translate3d(6vw, 3vw, 0) scale(1.12); }
+        }
+
+        @media (max-width: 768px) {
+          .sign-motion-card:hover {
+            transform: none;
+          }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+          .sign-motion-page::before,
+          .sign-motion-page::after,
+          .sign-motion-main,
+          .sign-motion-copy,
+          .sign-motion-card,
+          .sign-motion-form {
+            animation: none !important;
+          }
+
+          .sign-motion-card,
+          .sign-motion-input,
+          .sign-motion-primary,
+          .sign-motion-link {
+            transition: none !important;
+          }
+        }
+      `}</style>
+
+      <main className="sign-motion-main mx-auto flex max-w-7xl px-6 py-20">
         <div className="grid w-full gap-12 lg:grid-cols-2">
-          <div className="flex flex-col justify-center">
+          <div className="sign-motion-copy flex flex-col justify-center">
             <p className="mb-4 text-sm font-semibold uppercase tracking-[0.22em] text-neutral-500">
               Photographer Access
             </p>
@@ -292,7 +470,7 @@ export default function SignInPage() {
           </div>
 
           <div className="flex items-center justify-center">
-            <div className="w-full max-w-md rounded-3xl border border-black/5 bg-white p-8 shadow-[0_20px_60px_rgba(0,0,0,0.08)]">
+            <div className="sign-motion-card w-full max-w-md rounded-3xl border border-black/5 bg-white p-8 shadow-[0_20px_60px_rgba(0,0,0,0.08)]">
               {agreementDeclined ? (
                 <div
                   role="alert"
@@ -346,7 +524,7 @@ export default function SignInPage() {
                     type="button"
                     onClick={handleResendVerification}
                     disabled={resendBusy}
-                    className="mt-6 w-full rounded-2xl bg-black px-4 py-3 text-sm font-semibold text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+                    className="sign-motion-primary mt-6 w-full rounded-2xl bg-black px-4 py-3 text-sm font-semibold text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     {resendBusy ? "Sending..." : "Resend verification email"}
                   </button>
@@ -363,7 +541,7 @@ export default function SignInPage() {
                       setNeedsVerification(false);
                       setResendNotice("");
                     }}
-                    className="mt-4 w-full text-sm font-medium text-neutral-500 transition hover:text-black"
+                    className="sign-motion-link mt-4 w-full text-sm font-medium text-neutral-500 transition hover:text-black"
                   >
                     Back to sign in
                   </button>
@@ -377,7 +555,7 @@ export default function SignInPage() {
                     Sign in with your email and password.
                   </p>
 
-                  <form onSubmit={handleSignIn} className="mt-8 space-y-5">
+                  <form onSubmit={handleSignIn} className="sign-motion-form mt-8 space-y-5">
                     <div>
                       <label className="mb-2 block text-sm font-medium text-neutral-700">
                         Email
@@ -387,7 +565,7 @@ export default function SignInPage() {
                         value={email}
                         onChange={(e) => setEmail(e.target.value)}
                         required
-                        className="w-full rounded-2xl border border-neutral-200 px-4 py-3 text-sm outline-none transition focus:border-black"
+                        className="sign-motion-input w-full rounded-2xl border border-neutral-200 px-4 py-3 text-sm outline-none transition focus:border-black"
                         placeholder="you@example.com"
                       />
                     </div>
@@ -399,7 +577,7 @@ export default function SignInPage() {
                         </label>
                         <Link
                           href="/forgot-password"
-                          className="text-sm font-medium text-neutral-500 transition hover:text-black"
+                          className="sign-motion-link text-sm font-medium text-neutral-500 transition hover:text-black"
                         >
                           Forgot password?
                         </Link>
@@ -409,7 +587,7 @@ export default function SignInPage() {
                         value={password}
                         onChange={(e) => setPassword(e.target.value)}
                         required
-                        className="w-full rounded-2xl border border-neutral-200 px-4 py-3 text-sm outline-none transition focus:border-black"
+                        className="sign-motion-input w-full rounded-2xl border border-neutral-200 px-4 py-3 text-sm outline-none transition focus:border-black"
                         placeholder="Your password"
                       />
                     </div>
@@ -435,7 +613,7 @@ export default function SignInPage() {
                     <button
                       type="submit"
                       disabled={loading}
-                      className="w-full rounded-2xl bg-black px-4 py-3 text-sm font-medium text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+                      className="sign-motion-primary w-full rounded-2xl bg-black px-4 py-3 text-sm font-medium text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
                     >
                       {loading ? "Signing in..." : "Sign In"}
                     </button>
@@ -443,7 +621,7 @@ export default function SignInPage() {
 
                   <div className="mt-6 text-sm text-neutral-600">
                     New to Studio OS Cloud?{" "}
-                    <Link href="/sign-up" className="font-medium text-black underline underline-offset-4">
+                    <Link href="/sign-up" className="sign-motion-link font-medium text-black underline underline-offset-4">
                       Create an account
                     </Link>
                   </div>
@@ -463,7 +641,7 @@ export default function SignInPage() {
                     Enter the 6-digit code from your authenticator app to continue.
                   </p>
 
-                  <form onSubmit={handleMfaVerify} className="mt-8 space-y-5">
+                  <form onSubmit={handleMfaVerify} className="sign-motion-form mt-8 space-y-5">
                     <div>
                       <label className="mb-2 block text-sm font-medium text-neutral-700">
                         Verification code
@@ -480,7 +658,7 @@ export default function SignInPage() {
                           setMfaCode(val);
                         }}
                         required
-                        className="w-full rounded-2xl border border-neutral-200 px-4 py-3 text-center text-lg font-semibold tracking-[0.3em] outline-none transition focus:border-black"
+                        className="sign-motion-input w-full rounded-2xl border border-neutral-200 px-4 py-3 text-center text-lg font-semibold tracking-[0.3em] outline-none transition focus:border-black"
                         placeholder="000000"
                       />
                     </div>
@@ -494,7 +672,7 @@ export default function SignInPage() {
                     <button
                       type="submit"
                       disabled={mfaVerifying || mfaCode.length !== 6}
-                      className="w-full rounded-2xl bg-black px-4 py-3 text-sm font-medium text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+                      className="sign-motion-primary w-full rounded-2xl bg-black px-4 py-3 text-sm font-medium text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
                     >
                       {mfaVerifying ? "Verifying..." : "Verify"}
                     </button>
@@ -507,7 +685,7 @@ export default function SignInPage() {
                       setMfaFactorId("");
                       setMessage("");
                     }}
-                    className="mt-4 text-sm font-medium text-neutral-500 transition hover:text-black"
+                    className="sign-motion-link mt-4 text-sm font-medium text-neutral-500 transition hover:text-black"
                   >
                     Back to sign in
                   </button>
