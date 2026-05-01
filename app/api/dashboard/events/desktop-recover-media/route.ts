@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
+import { HeadObjectCommand } from "@aws-sdk/client-s3";
 import {
   createDashboardServiceClient,
   resolveDashboardAuth,
 } from "@/lib/dashboard-auth";
-import { r2PublicUrl } from "@/lib/r2";
+import { r2PublicUrl, getR2Client, R2_BUCKET, hasR2Config } from "@/lib/r2";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -190,8 +191,12 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // ── Build insert rows ──
-    const inserts: Array<Record<string, string | number | boolean | null>> = [];
+    // ── Build candidate rows ──
+    type Candidate = {
+      row: Record<string, string | number | boolean | null>;
+      storagePath: string;
+    };
+    const candidates: Candidate[] = [];
     let skipped = 0;
     for (const f of validFiles) {
       const baseName = f.filename.replace(/\.[^./]+$/i, "");
@@ -207,17 +212,84 @@ export async function POST(request: NextRequest) {
       const sortOrder = nextSortByCollection.get(f.collectionId) ?? 0;
       nextSortByCollection.set(f.collectionId, sortOrder + 1);
       existingKeySet.add(key);
-      inserts.push({
-        project_id: cloudProjectId,
-        collection_id: f.collectionId,
-        storage_path: storagePath,
-        filename: safeFilename,
-        mime_type: "image/jpeg",
-        preview_url: r2PublicUrl(previewKey),
-        thumbnail_url: r2PublicUrl(thumbKey),
-        sort_order: sortOrder,
-        is_cover: false,
+      candidates.push({
+        storagePath,
+        row: {
+          project_id: cloudProjectId,
+          collection_id: f.collectionId,
+          storage_path: storagePath,
+          filename: safeFilename,
+          mime_type: "image/jpeg",
+          preview_url: r2PublicUrl(previewKey),
+          thumbnail_url: r2PublicUrl(thumbKey),
+          sort_order: sortOrder,
+          is_cover: false,
+        },
       });
+    }
+
+    // ── 2026-04-30 — VERIFY R2 EXISTS BEFORE INSERTING ──
+    //
+    // Previously this endpoint trusted the desktop's file list and
+    // inserted media rows for every supplied path.  When R2 PUTs
+    // failed silently (revoked token), the desktop's auto-heal would
+    // call recover-media → 139 rows landed in DB pointing at R2
+    // objects that didn't exist.  Galleries then served signed URLs
+    // that 404'd because the underlying file wasn't there.
+    //
+    // Now: HEAD each candidate object in parallel (capped at 16 in
+    // flight to avoid hammering R2).  Drop any candidate whose object
+    // is missing.  Report the dropped count back so the desktop sees
+    // a real failure signal instead of a fake "139 inserted" success.
+    const inserts: Array<Record<string, string | number | boolean | null>> = [];
+    const skippedMissingFromR2: string[] = [];
+
+    if (candidates.length > 0 && hasR2Config()) {
+      const r2 = getR2Client();
+      const concurrency = 16;
+      let cursor = 0;
+      async function worker() {
+        while (cursor < candidates.length) {
+          const idx = cursor++;
+          const candidate = candidates[idx];
+          try {
+            await r2.send(
+              new HeadObjectCommand({
+                Bucket: R2_BUCKET,
+                Key: candidate.storagePath,
+              }),
+            );
+            inserts.push(candidate.row);
+          } catch (err: unknown) {
+            const status = (err as { $metadata?: { httpStatusCode?: number } })
+              ?.$metadata?.httpStatusCode;
+            const name = (err as { name?: string })?.name;
+            if (status === 404 || name === "NotFound") {
+              skippedMissingFromR2.push(candidate.storagePath);
+            } else {
+              // Network blip / transient: treat as missing rather than
+              // inserting a row we can't verify.  Better to under-report
+              // than to create a ghost row.
+              console.warn(
+                "[desktop-recover-media] HEAD failed for %s: %s",
+                candidate.storagePath,
+                (err as Error)?.message ?? err,
+              );
+              skippedMissingFromR2.push(candidate.storagePath);
+            }
+          }
+        }
+      }
+      await Promise.all(
+        Array.from({ length: Math.min(concurrency, candidates.length) }, () => worker()),
+      );
+    } else if (candidates.length > 0) {
+      // R2 not configured → cannot verify.  Fall back to old (trusting)
+      // behavior with a loud warning so the next debug session sees it.
+      console.warn(
+        "[desktop-recover-media] R2 not configured — falling back to UNVERIFIED inserts.  Configure R2_ACCOUNT_ID + R2_ACCESS_KEY_ID + R2_SECRET_ACCESS_KEY to enable verification.",
+      );
+      for (const candidate of candidates) inserts.push(candidate.row);
     }
 
     let inserted = 0;
@@ -237,13 +309,26 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    const message =
+      skippedMissingFromR2.length > 0
+        ? `Recovered ${inserted} media rows.  Skipped ${skipped} already-registered + ${skippedMissingFromR2.length} whose R2 file is missing (desktop upload failed for those — re-upload).`
+        : `Recovered ${inserted} media rows. Skipped ${skipped} already-registered.`;
+
     return NextResponse.json({
       ok: true,
       cloudProjectId,
       scanned: incomingFiles.length,
       inserted,
-      skipped,
-      message: `Recovered ${inserted} media rows. Skipped ${skipped} already-registered.`,
+      skipped: skipped + skippedMissingFromR2.length,
+      skippedMissingFromR2: skippedMissingFromR2.length,
+      message,
+      diagnostic:
+        skippedMissingFromR2.length > 0
+          ? {
+              reason: "missing_from_r2",
+              sample_paths: skippedMissingFromR2.slice(0, 5),
+            }
+          : undefined,
     });
   } catch (error: unknown) {
     console.error("[desktop-recover-media POST]", error);
