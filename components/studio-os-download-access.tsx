@@ -73,6 +73,7 @@ export function StudioOSDownloadAccess({
   const [submitting, setSubmitting] = useState(false);
   const [selectedPlatform, setSelectedPlatform] = useState<"mac" | "windows">("mac");
   const [message, setMessage] = useState("");
+  const [messageTone, setMessageTone] = useState<"error" | "success">("error");
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -127,6 +128,7 @@ export function StudioOSDownloadAccess({
   async function handleTrialStart() {
     const normalizedEmail = email.trim();
     if (!normalizedEmail) {
+      setMessageTone("error");
       setMessage("Please enter your email first.");
       return;
     }
@@ -154,8 +156,53 @@ export function StudioOSDownloadAccess({
 
       window.location.href = buildSignUpHref(normalizedEmail, redirectPath);
     } catch (error) {
+      setMessageTone("error");
       setMessage(
         error instanceof Error ? error.message : "Unable to start your trial right now.",
+      );
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function handleWindowsRegister() {
+    const normalizedEmail = email.trim();
+    if (!normalizedEmail) {
+      setSelectedPlatform("windows");
+      setMessageTone("error");
+      setMessage("Please enter your email so we can notify you when Windows is released.");
+      formRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+      return;
+    }
+
+    setSelectedPlatform("windows");
+    setSubmitting(true);
+    setMessage("");
+
+    try {
+      const response = await fetch("/api/studio-os-app/download-interest", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: normalizedEmail,
+          platform: "windows",
+        }),
+      });
+
+      const json = (await response.json().catch(() => null)) as
+        | { ok?: boolean; message?: string }
+        | null;
+
+      if (!response.ok || !json?.ok) {
+        throw new Error(json?.message || "Unable to register your email right now.");
+      }
+
+      setMessageTone("success");
+      setMessage("You're registered. We'll email you when Windows is released at the end of May.");
+    } catch (error) {
+      setMessageTone("error");
+      setMessage(
+        error instanceof Error ? error.message : "Unable to register your email right now.",
       );
     } finally {
       setSubmitting(false);
@@ -203,19 +250,26 @@ export function StudioOSDownloadAccess({
             <div className="max-w-2xl">
               <div className="inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-4 py-1.5 text-xs font-bold uppercase tracking-[0.2em] text-emerald-700">
                 <Clock3 className="h-4 w-4" />
-                Activate your 7-day trial
+                {selectedPlatform === "windows"
+                  ? "Windows release list"
+                  : "Activate your 7-day trial"}
               </div>
               <h2 className="mt-4 text-3xl font-black tracking-tight text-neutral-950 sm:text-4xl">
-                Use your email first, then download the app.
+                {selectedPlatform === "windows"
+                  ? "Windows is coming end of May."
+                  : "Use your email first, then download the app."}
               </h2>
               <p className="mt-4 text-base leading-7 text-neutral-600">
-                Create your photographer account first so we can activate your 7-day Studio OS trial,
-                track your access, and bring you back to the app download when you are ready.
+                {selectedPlatform === "windows"
+                  ? "Register your email and we will notify you as soon as the Windows installer is released."
+                  : "Create your photographer account first so we can activate your 7-day Studio OS trial, track your access, and bring you back to the app download when you are ready."}
               </p>
             </div>
 
             <div className="rounded-2xl border border-neutral-200 bg-neutral-50 px-4 py-3 text-sm font-medium text-neutral-700">
-              Installer ready for {selectedPlatform === "mac" ? "Mac" : "Windows"} after account setup
+              {selectedPlatform === "mac"
+                ? "Installer ready for Mac after account setup"
+                : "Windows coming end of May. Register for release email."}
             </div>
           </div>
 
@@ -239,18 +293,20 @@ export function StudioOSDownloadAccess({
             <div className="flex flex-col justify-end gap-3 sm:w-[260px]">
               <button
                 type="button"
-                onClick={handleTrialStart}
+                onClick={selectedPlatform === "windows" ? handleWindowsRegister : handleTrialStart}
                 disabled={submitting}
                 className="download-button-motion inline-flex items-center justify-center gap-2 rounded-2xl bg-red-600 px-5 py-3 font-semibold text-white transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {submitting ? (
                   <>
                     <Loader2 className="h-4 w-4 animate-spin" />
-                    Starting trial...
+                    {selectedPlatform === "windows" ? "Registering..." : "Starting trial..."}
                   </>
                 ) : (
                   <>
-                    Start Free 7-Day Trial
+                    {selectedPlatform === "windows"
+                      ? "Register for Windows Release"
+                      : "Start Free 7-Day Trial"}
                     <ArrowRight className="h-4 w-4" />
                   </>
                 )}
@@ -266,7 +322,13 @@ export function StudioOSDownloadAccess({
           </div>
 
           {message ? (
-            <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            <div
+              className={`mt-4 rounded-2xl border px-4 py-3 text-sm ${
+                messageTone === "success"
+                  ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                  : "border-red-200 bg-red-50 text-red-700"
+              }`}
+            >
               {message}
             </div>
           ) : null}
@@ -363,7 +425,7 @@ export function StudioOSDownloadAccess({
             <div className="text-2xl font-bold">Windows</div>
           </div>
           <p className="mt-4 text-sm leading-7 text-neutral-600">
-            Windows support can live here too. Once your Windows installer is uploaded, this button will light up automatically.
+            Windows is coming at the end of May. Register your email and we will notify you as soon as the installer is released.
           </p>
           {signedIn ? (
             releaseReady && windowsReady ? (
@@ -375,20 +437,28 @@ export function StudioOSDownloadAccess({
                 Download for Windows
               </a>
             ) : (
-              <div className="mt-6 inline-flex flex-col items-center justify-center rounded-2xl border border-neutral-200 bg-neutral-100 px-5 py-3 font-semibold text-neutral-400">
-                <span>Windows Download</span>
+              <button
+                type="button"
+                onClick={handleWindowsRegister}
+                disabled={submitting}
+                className="download-button-motion mt-6 inline-flex flex-col items-center justify-center rounded-2xl border border-neutral-200 bg-neutral-100 px-5 py-3 font-semibold text-neutral-700 transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                <span>{submitting ? "Registering..." : "Register for Windows Release"}</span>
                 <span className="mt-1 text-[11px] uppercase tracking-[0.16em] text-neutral-400">
-                  Coming soon
+                  Coming end of May
                 </span>
-              </div>
+              </button>
             )
           ) : (
             <button
               type="button"
-              onClick={() => requestTrialFor("windows")}
+              onClick={() => {
+                setSelectedPlatform("windows");
+                requestTrialFor("windows");
+              }}
               className="download-button-motion mt-6 inline-flex items-center justify-center gap-2 rounded-2xl border border-neutral-200 bg-neutral-50 px-5 py-3 font-semibold text-neutral-900 transition hover:bg-neutral-100"
             >
-              Activate Trial to Download
+              Register for Windows Release
             </button>
           )}
         </div>
