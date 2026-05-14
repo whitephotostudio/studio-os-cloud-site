@@ -5,11 +5,11 @@ export const metadata: Metadata = {
   title: "Studio OS vs ShootProof — Photography Platform Comparison (2026)",
   description:
     "Compare Studio OS Cloud and ShootProof for photography workflows. Feature comparison covering galleries, ordering, tethering, contracts, invoicing, and print fulfillment.",
-  alternates: { canonical: "https://studiooscloud.com/compare/studio-os-vs-shootproof" },
+  alternates: { canonical: "https://www.studiooscloud.com/compare/studio-os-vs-shootproof" },
   openGraph: {
     title: "Studio OS vs ShootProof — Complete Workflow vs Gallery Platform",
     description: "Side-by-side comparison for photographers choosing between Studio OS Cloud and ShootProof.",
-    url: "https://studiooscloud.com/compare/studio-os-vs-shootproof",
+    url: "https://www.studiooscloud.com/compare/studio-os-vs-shootproof",
   },
 };
 
@@ -17,6 +17,7 @@ export default function StudioOsVsShootProof() {
   return (
     <ComparisonPage
       competitorName="ShootProof"
+      competitorSlug="shootproof"
       competitorUrl="https://shootproof.com"
       headline="Studio OS vs ShootProof"
       subheadline="ShootProof is a gallery and studio management platform. Studio OS Cloud covers the full workflow from capture to delivery."

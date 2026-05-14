@@ -5,11 +5,11 @@ export const metadata: Metadata = {
   title: "Studio OS vs ZNO — Photography Platform Comparison (2026)",
   description:
     "Compare Studio OS Cloud and ZNO for event and volume photography. Feature comparison covering real-time galleries, tethering, AI tools, album design, and print fulfillment.",
-  alternates: { canonical: "https://studiooscloud.com/compare/studio-os-vs-zno" },
+  alternates: { canonical: "https://www.studiooscloud.com/compare/studio-os-vs-zno" },
   openGraph: {
     title: "Studio OS vs ZNO — Full Workflow vs Real-Time Event Platform",
     description: "Side-by-side comparison for photographers choosing between Studio OS Cloud and ZNO.",
-    url: "https://studiooscloud.com/compare/studio-os-vs-zno",
+    url: "https://www.studiooscloud.com/compare/studio-os-vs-zno",
   },
 };
 
@@ -17,6 +17,7 @@ export default function StudioOsVsZno() {
   return (
     <ComparisonPage
       competitorName="ZNO"
+      competitorSlug="zno"
       competitorUrl="https://cloud.zno.com"
       headline="Studio OS vs ZNO"
       subheadline="ZNO excels at real-time event galleries with its own print lab. Studio OS Cloud specializes in the full capture-to-delivery workflow for volume photography."

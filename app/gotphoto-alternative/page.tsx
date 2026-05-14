@@ -1,4 +1,6 @@
 import type { Metadata } from "next";
+import Link from "next/link";
+import { ArrowRight } from "lucide-react";
 import { SeoLandingPage } from "@/components/seo-landing-page";
 
 export const metadata: Metadata = {
@@ -6,19 +8,20 @@ export const metadata: Metadata = {
   description:
     "Looking for a GotPhoto alternative with built-in tethering and AI backgrounds? Studio OS Cloud connects desktop capture, roster management, galleries, ordering, and fulfillment in one platform — no separate tethering software required.",
   alternates: {
-    canonical: "https://studiooscloud.com/gotphoto-alternative",
+    canonical: "https://www.studiooscloud.com/gotphoto-alternative",
   },
   openGraph: {
     title: "GotPhoto Alternative for School Photographers | Studio OS Cloud",
     description:
       "Built-in tethering, AI backgrounds, rosters, galleries, and ordering. One connected platform instead of GotPhoto plus Smart Shooter.",
-    url: "https://studiooscloud.com/gotphoto-alternative",
+    url: "https://www.studiooscloud.com/gotphoto-alternative",
   },
 };
 
 export default function GotPhotoAlternativePage() {
   return (
-    <SeoLandingPage
+    <>
+      <SeoLandingPage
       badge="GotPhoto Alternative"
       headline="A GotPhoto Alternative with Connected Desktop and Cloud Workflow"
       subheadline="GotPhoto handles school photography well. But if you want built-in tethering, AI background upsells, and a truly connected desktop-to-cloud workflow, Studio OS Cloud does it without extra software."
@@ -154,6 +157,49 @@ export default function GotPhotoAlternativePage() {
       ]}
       ctaHeading="One Platform. No Extra Software."
       ctaDescription="Start your free trial and see how Studio OS Cloud handles school photography from capture to delivery — with built-in tethering and AI backgrounds."
-    />
+      />
+      <section className="bg-neutral-50 px-4 py-16 sm:px-6 lg:px-8">
+        <div className="mx-auto max-w-5xl rounded-[2rem] border border-neutral-200 bg-white p-8 sm:p-10">
+          <div className="grid gap-8 lg:grid-cols-[1.2fr_1fr] lg:items-center">
+            <div>
+              <p className="marketing-caption text-xs font-semibold uppercase tracking-[0.18em] text-red-600">
+                Keep Comparing
+              </p>
+              <h2 className="mt-3 text-2xl font-semibold tracking-tight text-neutral-950 sm:text-3xl">
+                See the side-by-side comparison.
+              </h2>
+              <p className="mt-4 text-base leading-7 text-neutral-600">
+                Want the feature-by-feature breakdown of Studio OS Cloud versus
+                GotPhoto? Read the full comparison, or explore alternatives to other
+                photography platforms.
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-3">
+              <Link
+                href="/compare/studio-os-vs-gotphoto"
+                className="inline-flex items-center justify-center gap-2 rounded-full bg-neutral-950 px-5 py-3 text-sm font-semibold text-white transition hover:bg-black"
+              >
+                Studio OS vs GotPhoto
+                <ArrowRight className="h-4 w-4" />
+              </Link>
+              <Link
+                href="/pixieset-alternative"
+                className="inline-flex items-center justify-center gap-2 rounded-full border border-neutral-300 bg-white px-5 py-3 text-sm font-semibold text-neutral-900 transition hover:border-neutral-400"
+              >
+                Pixieset alternative
+                <ArrowRight className="h-4 w-4" />
+              </Link>
+              <Link
+                href="/compare"
+                className="inline-flex items-center justify-center gap-2 rounded-full border border-neutral-300 bg-white px-5 py-3 text-sm font-semibold text-neutral-900 transition hover:border-neutral-400"
+              >
+                All comparisons
+                <ArrowRight className="h-4 w-4" />
+              </Link>
+            </div>
+          </div>
+        </div>
+      </section>
+    </>
   );
 }

@@ -5,11 +5,11 @@ export const metadata: Metadata = {
   title: "Studio OS vs SmugMug — Photography Platform Comparison (2026)",
   description:
     "Compare Studio OS Cloud and SmugMug for photography. Feature comparison covering galleries, storage, tethering, AI backgrounds, ordering, and print fulfillment.",
-  alternates: { canonical: "https://studiooscloud.com/compare/studio-os-vs-smugmug" },
+  alternates: { canonical: "https://www.studiooscloud.com/compare/studio-os-vs-smugmug" },
   openGraph: {
     title: "Studio OS vs SmugMug — Modern Workflow vs Legacy Platform",
     description: "Side-by-side comparison for photographers choosing between Studio OS Cloud and SmugMug.",
-    url: "https://studiooscloud.com/compare/studio-os-vs-smugmug",
+    url: "https://www.studiooscloud.com/compare/studio-os-vs-smugmug",
   },
 };
 
@@ -17,6 +17,7 @@ export default function StudioOsVsSmugMug() {
   return (
     <ComparisonPage
       competitorName="SmugMug"
+      competitorSlug="smugmug"
       competitorUrl="https://smugmug.com"
       headline="Studio OS vs SmugMug"
       subheadline="SmugMug offers unlimited storage and portfolio hosting. Studio OS Cloud offers a complete capture-to-delivery workflow."

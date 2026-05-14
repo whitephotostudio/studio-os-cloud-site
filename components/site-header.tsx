@@ -7,6 +7,7 @@ import { Logo } from "./logo";
 
 const navLinks = [
   { href: "/", label: "Home" },
+  { href: "/sample-galleries", label: "Sample Galleries" },
   { href: "/studio-os", label: "Studio OS" },
   { href: "/studio-os/download", label: "Download App" },
   { href: "/pricing", label: "Pricing" },
@@ -56,6 +57,10 @@ export function SiteHeader() {
         <div className="relative z-10 hidden items-center gap-3 lg:flex">
           <Link
             href="/parents"
+            rel="nofollow"
+            data-marketing-event="cta_parents_portal"
+            data-marketing-label="Header parents portal"
+            data-marketing-placement="site_header"
             className="marketing-button premium-button inline-flex items-center gap-2 rounded-full border border-stone-200 bg-stone-50 px-4 py-2.5 text-neutral-950 shadow-[0_12px_35px_rgba(0,0,0,0.06)] transition hover:bg-white"
           >
             <UserRound className="h-4 w-4" />
@@ -64,6 +69,9 @@ export function SiteHeader() {
 
           <Link
             href="/sign-in"
+            data-marketing-event="cta_photographer_sign_in"
+            data-marketing-label="Header photographer sign in"
+            data-marketing-placement="site_header"
             className="marketing-caption whitespace-nowrap rounded-full px-4 py-2 font-medium text-neutral-600 transition hover:-translate-y-0.5 hover:bg-neutral-100 hover:text-neutral-950"
           >
             Photographer Sign In
@@ -71,6 +79,9 @@ export function SiteHeader() {
 
           <Link
             href="/studio-os/download"
+            data-marketing-event="cta_download_app"
+            data-marketing-label="Header download app"
+            data-marketing-placement="site_header"
             className="marketing-button premium-button inline-flex items-center justify-center rounded-full bg-neutral-950 px-5 py-3 text-white shadow-[0_16px_38px_rgba(0,0,0,0.18)] transition hover:bg-black"
           >
             Download App
@@ -104,6 +115,7 @@ export function SiteHeader() {
                   key={link.href}
                   href={link.href}
                   onClick={() => setIsOpen(false)}
+                  {...(link.href === "/parents" ? { rel: "nofollow" } : {})}
                   className="marketing-caption rounded-xl px-3 py-2.5 font-medium text-neutral-600 transition hover:bg-neutral-100 hover:text-neutral-950"
                 >
                   {link.label}
@@ -112,6 +124,9 @@ export function SiteHeader() {
               <Link
                 href="/studio-os/download"
                 onClick={() => setIsOpen(false)}
+                data-marketing-event="cta_download_app"
+                data-marketing-label="Mobile header download app"
+                data-marketing-placement="mobile_header"
                 className="marketing-button mt-2 rounded-xl bg-neutral-950 px-3 py-2.5 text-center text-white"
               >
                 Download App

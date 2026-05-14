@@ -1,4 +1,6 @@
+import Link from "next/link";
 import {
+  ArrowRight,
   Camera,
   FolderKanban,
   Monitor,
@@ -7,6 +9,16 @@ import {
   Users,
 } from "lucide-react";
 import { Reveal } from "./Reveal";
+
+const competitorLinks = [
+  { slug: "pixieset", label: "Pixieset" },
+  { slug: "gotphoto", label: "GotPhoto" },
+  { slug: "photoday", label: "PhotoDay" },
+  { slug: "shootproof", label: "ShootProof" },
+  { slug: "smugmug", label: "SmugMug" },
+  { slug: "zenfolio", label: "Zenfolio" },
+  { slug: "zno", label: "Zno" },
+];
 
 const featureCards = [
   {
@@ -76,6 +88,37 @@ export function ComparisonSection() {
             </Reveal>
           ))}
         </div>
+
+        <Reveal delay={120}>
+          <div className="mt-10 flex flex-col items-start justify-between gap-4 rounded-2xl border border-neutral-200 bg-neutral-50 p-5 sm:flex-row sm:items-center sm:p-6">
+            <div>
+              <p className="marketing-caption text-xs font-semibold uppercase tracking-wider text-neutral-500">
+                Already evaluating an alternative?
+              </p>
+              <p className="mt-1 text-base font-medium text-neutral-900">
+                See how Studio OS Cloud compares to the platform you are considering.
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              {competitorLinks.map((entry) => (
+                <Link
+                  key={entry.slug}
+                  href={`/compare/studio-os-vs-${entry.slug}`}
+                  className="marketing-caption inline-flex items-center rounded-full border border-neutral-200 bg-white px-3 py-1.5 text-sm font-medium text-neutral-700 transition hover:border-neutral-300 hover:text-neutral-950"
+                >
+                  vs {entry.label}
+                </Link>
+              ))}
+              <Link
+                href="/compare"
+                className="marketing-caption inline-flex items-center gap-1 rounded-full bg-neutral-950 px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-black"
+              >
+                All comparisons
+                <ArrowRight className="h-3.5 w-3.5" />
+              </Link>
+            </div>
+          </div>
+        </Reveal>
       </div>
     </section>
   );

@@ -1,6 +1,6 @@
 import Image from "next/image";
 import Link from "next/link";
-import { ArrowRight, LockKeyhole, Play, ShieldCheck } from "lucide-react";
+import { ArrowRight, LockKeyhole, ShieldCheck } from "lucide-react";
 import { Reveal } from "./Reveal";
 
 const projects = [
@@ -51,17 +51,23 @@ export function HeroSection() {
           <Reveal delay={390} className="mt-9 flex flex-col gap-3 sm:flex-row">
             <Link
               href="/sign-up"
+              data-marketing-event="cta_start_trial"
+              data-marketing-label="Homepage hero"
+              data-marketing-placement="home_hero"
               className="marketing-button premium-button inline-flex items-center justify-center gap-2 rounded-full bg-white px-5 py-3 text-neutral-950 shadow-[0_20px_60px_rgba(255,255,255,0.18)] transition hover:bg-neutral-100"
             >
               Get Early Access
               <ArrowRight className="h-4 w-4" />
             </Link>
             <Link
-              href="/preview"
+              href="/sample-galleries"
+              data-marketing-event="cta_sample_galleries"
+              data-marketing-label="Homepage hero"
+              data-marketing-placement="home_hero"
               className="marketing-button premium-button inline-flex items-center justify-center gap-2 rounded-full border border-white/20 bg-white/10 px-5 py-3 text-white backdrop-blur transition hover:bg-white/20"
             >
-              <Play className="h-4 w-4 fill-white" />
-              View Platform Demo
+              View Sample Galleries
+              <ArrowRight className="h-4 w-4" />
             </Link>
           </Reveal>
         </div>
@@ -220,6 +226,10 @@ export function HeroSection() {
                 </div>
                 <Link
                   href="/parents"
+                  rel="nofollow"
+                  data-marketing-event="cta_parents_portal"
+                  data-marketing-label="Homepage phone preview"
+                  data-marketing-placement="home_hero_phone"
                   className="marketing-button flex items-center justify-center rounded-full bg-neutral-950 px-4 py-3 text-white"
                 >
                   Order Photos

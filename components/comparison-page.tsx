@@ -1,5 +1,8 @@
 import Link from "next/link";
-import { Check, X, Minus } from "lucide-react";
+import { ArrowRight, Check, X, Minus } from "lucide-react";
+import { BreadcrumbJsonLd } from "@/components/json-ld";
+
+const baseUrl = "https://www.studiooscloud.com";
 
 export type FeatureValue = "yes" | "no" | "partial" | string;
 
@@ -12,6 +15,8 @@ export type ComparisonFeature = {
 export type ComparisonPageProps = {
   competitorName: string;
   competitorUrl: string;
+  competitorSlug: string;
+  alternativePagePath?: string;
   headline: string;
   subheadline: string;
   introduction: string;
@@ -21,6 +26,16 @@ export type ComparisonPageProps = {
   verdict: string;
   targetAudience: string;
 };
+
+const allCompetitors = [
+  { slug: "pixieset", name: "Pixieset" },
+  { slug: "gotphoto", name: "GotPhoto" },
+  { slug: "photoday", name: "PhotoDay" },
+  { slug: "shootproof", name: "ShootProof" },
+  { slug: "smugmug", name: "SmugMug" },
+  { slug: "zenfolio", name: "Zenfolio" },
+  { slug: "zno", name: "Zno" },
+];
 
 function CellValue({ value }: { value: FeatureValue }) {
   if (value === "yes") {
@@ -49,7 +64,8 @@ function CellValue({ value }: { value: FeatureValue }) {
 
 export function ComparisonPage({
   competitorName,
-  competitorUrl,
+  competitorSlug,
+  alternativePagePath,
   headline,
   subheadline,
   introduction,
@@ -59,10 +75,44 @@ export function ComparisonPage({
   verdict,
   targetAudience,
 }: ComparisonPageProps) {
+  const otherCompetitors = allCompetitors.filter(
+    (entry) => entry.slug !== competitorSlug
+  );
+
   return (
     <div className="mx-auto max-w-4xl px-4 sm:px-6 lg:px-8">
+      <BreadcrumbJsonLd
+        items={[
+          { name: "Home", item: baseUrl },
+          { name: "Compare", item: `${baseUrl}/compare` },
+          {
+            name: `Studio OS Cloud vs ${competitorName}`,
+            item: `${baseUrl}/compare/studio-os-vs-${competitorSlug}`,
+          },
+        ]}
+      />
+
+      {/* Breadcrumb */}
+      <nav aria-label="Breadcrumb" className="pt-8 sm:pt-12">
+        <ol className="flex flex-wrap items-center gap-2 text-xs font-medium text-neutral-500">
+          <li>
+            <Link href="/" className="transition hover:text-neutral-950">
+              Home
+            </Link>
+          </li>
+          <li aria-hidden="true">/</li>
+          <li>
+            <Link href="/compare" className="transition hover:text-neutral-950">
+              Compare
+            </Link>
+          </li>
+          <li aria-hidden="true">/</li>
+          <li className="text-neutral-900">vs {competitorName}</li>
+        </ol>
+      </nav>
+
       {/* Hero */}
-      <div className="pb-10 pt-12 sm:pt-16">
+      <div className="pb-10 pt-6 sm:pt-8">
         <div className="text-xs font-semibold uppercase tracking-[0.18em] text-neutral-500">
           Comparison
         </div>
@@ -171,6 +221,41 @@ export function ComparisonPage({
             {verdict}
           </p>
         </div>
+      </div>
+
+      {/* Explore More */}
+      <div className="pb-12">
+        <h2 className="text-2xl font-semibold tracking-tight text-neutral-950">
+          Compare Studio OS Cloud to other platforms
+        </h2>
+        <p className="mt-3 text-sm leading-7 text-neutral-600">
+          Looking at more than one alternative? Read another side-by-side comparison.
+        </p>
+        <ul className="mt-5 grid gap-2 sm:grid-cols-2">
+          {otherCompetitors.map((entry) => (
+            <li key={entry.slug}>
+              <Link
+                href={`/compare/studio-os-vs-${entry.slug}`}
+                className="group flex items-center justify-between rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm font-medium text-neutral-800 transition hover:border-neutral-300 hover:bg-neutral-50"
+              >
+                <span>Studio OS Cloud vs {entry.name}</span>
+                <ArrowRight className="h-4 w-4 text-neutral-400 transition group-hover:translate-x-0.5 group-hover:text-neutral-700" />
+              </Link>
+            </li>
+          ))}
+        </ul>
+        {alternativePagePath ? (
+          <p className="mt-5 text-sm text-neutral-600">
+            Or read the dedicated{" "}
+            <Link
+              href={alternativePagePath}
+              className="font-semibold text-red-600 underline-offset-4 transition hover:underline"
+            >
+              {competitorName} alternative
+            </Link>{" "}
+            page for a different angle on the same comparison.
+          </p>
+        ) : null}
       </div>
 
       {/* CTA */}

@@ -5,11 +5,11 @@ export const metadata: Metadata = {
   title: "Studio OS vs PhotoDay — School Photography Software Comparison (2026)",
   description:
     "Compare Studio OS Cloud and PhotoDay for school and sports photography. Feature comparison covering tethering, AI backgrounds, roster management, FaceFind, and print fulfillment.",
-  alternates: { canonical: "https://studiooscloud.com/compare/studio-os-vs-photoday" },
+  alternates: { canonical: "https://www.studiooscloud.com/compare/studio-os-vs-photoday" },
   openGraph: {
     title: "Studio OS vs PhotoDay — Which Is Better for Picture Day?",
     description: "Head-to-head comparison for school and volume photographers choosing between Studio OS Cloud and PhotoDay.",
-    url: "https://studiooscloud.com/compare/studio-os-vs-photoday",
+    url: "https://www.studiooscloud.com/compare/studio-os-vs-photoday",
   },
 };
 
@@ -17,6 +17,7 @@ export default function StudioOsVsPhotoDay() {
   return (
     <ComparisonPage
       competitorName="PhotoDay"
+      competitorSlug="photoday"
       competitorUrl="https://photoday.com"
       headline="Studio OS vs PhotoDay"
       subheadline="Both platforms are built for school and sports photography — but they differ significantly in how they handle the capture workflow."

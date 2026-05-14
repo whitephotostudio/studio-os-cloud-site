@@ -5,11 +5,11 @@ export const metadata: Metadata = {
   title: "Studio OS vs GotPhoto — School Photography Software Comparison (2026)",
   description:
     "Compare Studio OS Cloud and GotPhoto for school photography. See which platform offers better tethering, roster management, AI backgrounds, ordering, and print fulfillment for picture day workflows.",
-  alternates: { canonical: "https://studiooscloud.com/compare/studio-os-vs-gotphoto" },
+  alternates: { canonical: "https://www.studiooscloud.com/compare/studio-os-vs-gotphoto" },
   openGraph: {
     title: "Studio OS vs GotPhoto — Which Is Better for School Photography?",
     description: "Head-to-head comparison of Studio OS Cloud and GotPhoto for school, sports, and high-volume photography workflows.",
-    url: "https://studiooscloud.com/compare/studio-os-vs-gotphoto",
+    url: "https://www.studiooscloud.com/compare/studio-os-vs-gotphoto",
   },
 };
 
@@ -17,7 +17,9 @@ export default function StudioOsVsGotPhoto() {
   return (
     <ComparisonPage
       competitorName="GotPhoto"
+      competitorSlug="gotphoto"
       competitorUrl="https://gotphoto.com"
+      alternativePagePath="/gotphoto-alternative"
       headline="Studio OS vs GotPhoto"
       subheadline="Both platforms serve school and high-volume photographers — but they take very different approaches to the capture-to-delivery workflow."
       introduction="GotPhoto is one of the most established platforms for school and sports photography, known for its Entagged barcode scanning device, facial recognition via SpotMyPhotos, and integrations with 30+ print labs. Studio OS Cloud takes a different approach by building the entire workflow — including camera tethering and AI background tools — into one connected platform. If you shoot school picture days, sports teams, or corporate headshots, this comparison will help you choose the right tool."

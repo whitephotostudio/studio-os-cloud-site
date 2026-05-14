@@ -5,11 +5,11 @@ export const metadata: Metadata = {
   title: "Studio OS vs Zenfolio — Photography Platform Comparison (2026)",
   description:
     "Compare Studio OS Cloud and Zenfolio for photography. Feature comparison covering galleries, sports workflows, tethering, AI backgrounds, Face Finder, and print fulfillment.",
-  alternates: { canonical: "https://studiooscloud.com/compare/studio-os-vs-zenfolio" },
+  alternates: { canonical: "https://www.studiooscloud.com/compare/studio-os-vs-zenfolio" },
   openGraph: {
     title: "Studio OS vs Zenfolio — Full Workflow vs Multi-Purpose Platform",
     description: "Side-by-side comparison for photographers choosing between Studio OS Cloud and Zenfolio.",
-    url: "https://studiooscloud.com/compare/studio-os-vs-zenfolio",
+    url: "https://www.studiooscloud.com/compare/studio-os-vs-zenfolio",
   },
 };
 
@@ -17,6 +17,7 @@ export default function StudioOsVsZenfolio() {
   return (
     <ComparisonPage
       competitorName="Zenfolio"
+      competitorSlug="zenfolio"
       competitorUrl="https://zenfolio.com"
       headline="Studio OS vs Zenfolio"
       subheadline="Zenfolio covers weddings, portraits, sports, and events. Studio OS Cloud specializes in the full capture-to-delivery workflow for volume photography."
