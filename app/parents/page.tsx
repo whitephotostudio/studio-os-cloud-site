@@ -8,6 +8,7 @@
 
 import { createDashboardServiceClient } from "@/lib/dashboard-auth";
 import LoginForm from "./LoginForm";
+import SchoolDirectLoginForm from "./SchoolDirectLoginForm";
 
 export const revalidate = 60; // ISR: revalidate school/event list every 60 s
 
@@ -15,6 +16,7 @@ type SchoolRow = {
   id: string;
   school_name: string;
   status: string | null;
+  portal_status: string | null;
   expiration_date: string | null;
   email_required: boolean | null;
 };
@@ -48,7 +50,10 @@ function projectLabel(project: EventProjectRow) {
   return clean(project.title) || clean(project.client_name) || "Untitled Event";
 }
 
-async function getPortalChoices(prefilledProjectId?: string): Promise<{
+async function getPortalChoices(
+  prefilledProjectId?: string,
+  prefilledSchoolId?: string,
+): Promise<{
   schools: SchoolRow[];
   eventProjects: EventProjectRow[];
 }> {
@@ -79,7 +84,7 @@ async function getPortalChoices(prefilledProjectId?: string): Promise<{
     const [schoolsResult, studentsResult, eventsResult] = await Promise.all([
       service
         .from("schools")
-        .select("id,school_name,status,expiration_date,email_required")
+        .select("id,school_name,status,portal_status,expiration_date,email_required")
         .order("school_name"),
       // ✅ PERF: Only fetch school_id column (minimal payload)
       service.from("students").select("school_id").not("school_id", "is", null),
@@ -107,8 +112,9 @@ async function getPortalChoices(prefilledProjectId?: string): Promise<{
       //   (b) is in pre_release status — so parents can register their
       //       email for a notification before the gallery has any photos.
       const hasStudents = schoolIdsWithStudents.has(row.id);
-      if (!hasStudents && !isPreRelease(row.status)) continue;
-      if (!uniqueSchools.has(key)) {
+      const isPrefilledSchool = !!prefilledSchoolId && row.id === prefilledSchoolId;
+      if (!hasStudents && !isPreRelease(row.portal_status ?? row.status) && !isPrefilledSchool) continue;
+      if (isPrefilledSchool || !uniqueSchools.has(key)) {
         uniqueSchools.set(key, { ...row, school_name: trimmedName });
       }
     }
@@ -138,11 +144,23 @@ export default async function ClientPortalPage({
   searchParams?: Promise<{
     mode?: string;
     project?: string;
+    school?: string;
     email?: string;
   }>;
 }) {
   const resolvedSearchParams = (await searchParams) ?? {};
-  const { schools, eventProjects } = await getPortalChoices(clean(resolvedSearchParams.project) || undefined);
+  const prefilledSchoolId = clean(resolvedSearchParams.school);
+  const { schools, eventProjects } = await getPortalChoices(
+    clean(resolvedSearchParams.project) || undefined,
+    prefilledSchoolId || undefined,
+  );
+  const prefilledSchool = prefilledSchoolId
+    ? schools.find((row) => row.id === prefilledSchoolId) ?? null
+    : null;
+
+  if (prefilledSchool) {
+    return <SchoolDirectLoginForm school={prefilledSchool} />;
+  }
 
   return (
     <LoginForm
