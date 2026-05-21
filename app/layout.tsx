@@ -108,7 +108,7 @@ export const metadata: Metadata = {
   manifest: "/manifest.webmanifest",
   appleWebApp: {
     capable: true,
-    title: "Studio OS",
+    title: "Studio OS Mobile",
     statusBarStyle: "default",
   },
   icons: {
