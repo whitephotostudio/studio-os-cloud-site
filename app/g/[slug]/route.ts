@@ -53,6 +53,8 @@ export async function GET(
       const params = new URLSearchParams({
         mode: "school",
         school: schoolRow.id,
+        direct: "school",
+        v: Date.now().toString(36),
       });
       return NextResponse.redirect(`${origin}/parents?${params.toString()}`);
     }
