@@ -3,6 +3,7 @@ import { z } from "zod";
 import { createDashboardServiceClient, resolveDashboardAuth } from "@/lib/dashboard-auth";
 import { parseJson } from "@/lib/api-validation";
 import { guardAgreement } from "@/lib/require-agreement";
+import { ensurePackageProfile } from "@/lib/ensure-package-profile";
 
 export const dynamic = "force-dynamic";
 
@@ -90,7 +91,13 @@ export async function POST(request: NextRequest) {
     }
 
     const photographerId = photographerRow.id as string;
-    const defaultProfileId = ((photographerRow as Record<string, unknown>).default_package_profile_id as string | null) ?? null;
+    const defaultProfileId = await ensurePackageProfile({
+      service,
+      photographerId,
+      packageProfileId:
+        ((photographerRow as Record<string, unknown>)
+          .default_package_profile_id as string | null) ?? null,
+    });
     const accessMode = (clean(body.accessMode) || "public").toLowerCase() === "pin" ? "pin" : "public";
     const accessPin = accessMode === "pin" ? clean(body.accessPin) || null : null;
     const eventDate = clean(body.eventDate).slice(0, 10) || new Date().toISOString().slice(0, 10);
