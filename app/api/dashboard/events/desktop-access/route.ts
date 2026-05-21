@@ -21,7 +21,10 @@ const DesktopAccessBodySchema = z.object({
   cloudProjectId: z.string().max(128).nullable().optional(),
   title: z.string().max(500).nullable().optional(),
   clientName: z.string().max(500).nullable().optional(),
+  clientEmail: z.string().max(500).nullable().optional(),
   createdAt: z.string().max(64).nullable().optional(),
+  shootDate: z.string().max(64).nullable().optional(),
+  eventDate: z.string().max(64).nullable().optional(),
   accessMode: z.string().max(64).nullable().optional(),
   accessPin: z.string().max(64).nullable().optional(),
   galleryStatus: z.string().max(64).nullable().optional(),
@@ -51,6 +54,12 @@ function normalizeAccessMode(value: string | null | undefined): string {
   const raw = clean(value).toLowerCase();
   if (raw === "pin" || raw === "protected" || raw === "private") return "pin";
   return "public";
+}
+
+function normalizeEmail(value: string | null | undefined): string {
+  const email = clean(value).toLowerCase();
+  if (!email || !email.includes("@")) return "";
+  return email;
 }
 
 function buildGalleryUrl(
@@ -108,10 +117,12 @@ export async function POST(request: NextRequest) {
     const localProjectId = clean(body.localProjectId);
     const title = clean(body.title) || "Untitled Project";
     const clientName = clean(body.clientName);
+    const clientEmail = normalizeEmail(body.clientEmail);
     const accessMode = normalizeAccessMode(body.accessMode);
     const accessPin = accessMode === "pin" ? clean(body.accessPin) : null;
     const galleryStatus = normalizeGalleryStatus(body.galleryStatus);
     const preRelease = galleryStatus === "pre_released";
+    const shootDate = clean(body.shootDate) || clean(body.eventDate);
 
     let projectId = cloudProjectId;
 
@@ -157,6 +168,8 @@ export async function POST(request: NextRequest) {
           title,
           client_name: clientName || null,
           linked_local_school_id: localProjectId || null,
+          shoot_date: shootDate || null,
+          event_date: shootDate || null,
           access_mode: accessMode,
           access_pin: accessPin,
           access_updated_at: new Date().toISOString(),
@@ -177,6 +190,7 @@ export async function POST(request: NextRequest) {
         .update({
           title,
           client_name: clientName || null,
+          ...(shootDate ? { shoot_date: shootDate, event_date: shootDate } : {}),
           access_mode: accessMode,
           access_pin: accessPin,
           access_updated_at: new Date().toISOString(),
@@ -194,7 +208,7 @@ export async function POST(request: NextRequest) {
     const { data: projectRow, error: projectReadError } = await service
       .from("projects")
       .select(
-        "id,title,client_name,shoot_date,event_date,order_due_date,expiration_date,portal_status,pre_release,gallery_slug,access_mode,access_pin,access_updated_at,access_updated_source,updated_at",
+        "id,title,client_name,shoot_date,event_date,order_due_date,expiration_date,portal_status,pre_release,gallery_slug,cover_photo_url,access_mode,access_pin,access_updated_at,access_updated_source,updated_at",
       )
       .eq("id", projectId)
       .single();
@@ -206,6 +220,43 @@ export async function POST(request: NextRequest) {
       projectRow?.gallery_slug,
       projectRow?.title ?? title,
     );
+
+    let seededVisitor: Record<string, unknown> | null = null;
+    if (clientEmail) {
+      const openedAt = new Date().toISOString();
+      const { data: existingVisitor, error: visitorLookupError } =
+        await service
+          .from("event_gallery_visitors")
+          .select("id")
+          .eq("project_id", projectId)
+          .ilike("viewer_email", clientEmail)
+          .limit(1)
+          .maybeSingle();
+
+      if (visitorLookupError) throw visitorLookupError;
+
+      const visitorMutation = existingVisitor?.id
+        ? service
+            .from("event_gallery_visitors")
+            .update({ last_opened_at: openedAt })
+            .eq("id", existingVisitor.id)
+        : service.from("event_gallery_visitors").insert({
+            project_id: projectId,
+            viewer_email: clientEmail,
+            last_opened_at: openedAt,
+          });
+
+      const { data: visitorRow, error: visitorError } = await visitorMutation
+        .select("viewer_email,created_at,last_opened_at")
+        .single();
+
+      if (visitorError) throw visitorError;
+      seededVisitor = {
+        email: visitorRow?.viewer_email ?? clientEmail,
+        createdAt: visitorRow?.created_at ?? openedAt,
+        lastOpenedAt: visitorRow?.last_opened_at ?? openedAt,
+      };
+    }
 
     // ── Sync album/collection access ──
     const albums = Array.isArray(body.albums) ? body.albums : [];
@@ -227,7 +278,7 @@ export async function POST(request: NextRequest) {
       if (albumLocalId) {
         const { data: byLocalId } = await service
           .from("collections")
-          .select("id")
+          .select("id,cover_photo_url")
           .eq("project_id", projectId)
           .eq("local_id", albumLocalId)
           .is("deleted_at", null)
@@ -239,7 +290,7 @@ export async function POST(request: NextRequest) {
       if (!collectionId) {
         const { data: bySlug } = await service
           .from("collections")
-          .select("id")
+          .select("id,cover_photo_url")
           .eq("project_id", projectId)
           .eq("kind", "gallery")
           .or(`slug.eq.${albumSlug},title.ilike.${albumName}`)
@@ -280,7 +331,7 @@ export async function POST(request: NextRequest) {
             access_updated_at: new Date().toISOString(),
             access_updated_source: "desktop",
           })
-          .select("id")
+          .select("id,cover_photo_url")
           .single();
 
         if (insertErr) throw insertErr;
@@ -305,10 +356,19 @@ export async function POST(request: NextRequest) {
         if (updateErr) throw updateErr;
       }
 
+      const { data: collectionRow, error: collectionReadError } = await service
+        .from("collections")
+        .select("cover_photo_url")
+        .eq("id", collectionId)
+        .maybeSingle();
+
+      if (collectionReadError) throw collectionReadError;
+
       collectionResults.push({
         id: collectionId,
         title: albumName,
         local_id: albumLocalId,
+        cover_photo_url: collectionRow?.cover_photo_url ?? null,
         access_mode: albumAccessMode,
         access_pin: albumAccessPin,
         access_updated_at: new Date().toISOString(),
@@ -331,6 +391,7 @@ export async function POST(request: NextRequest) {
         pre_release: projectRow?.pre_release ?? preRelease,
         gallery_url: galleryUrl,
         gallery_slug: projectRow?.gallery_slug ?? "",
+        cover_photo_url: projectRow?.cover_photo_url ?? null,
         access_mode: projectRow?.access_mode ?? accessMode,
         access_pin: projectRow?.access_pin ?? "",
         access_updated_at: projectRow?.access_updated_at ?? "",
@@ -338,6 +399,7 @@ export async function POST(request: NextRequest) {
         updated_at: projectRow?.updated_at ?? "",
       },
       collections: collectionResults,
+      seededVisitor,
       message: `Access settings synced. Gallery is ${galleryStatus.replace("_", "-")}.`,
     });
   } catch (error: unknown) {
@@ -386,7 +448,7 @@ export async function GET(request: NextRequest) {
       const { data: allProjects, error: allError } = await service
         .from("projects")
         .select(
-          "id,title,client_name,shoot_date,event_date,order_due_date,expiration_date,portal_status,pre_release,gallery_slug,access_mode,access_pin,access_updated_at,access_updated_source,linked_local_school_id,updated_at",
+          "id,title,client_name,shoot_date,event_date,order_due_date,expiration_date,portal_status,pre_release,gallery_slug,cover_photo_url,access_mode,access_pin,access_updated_at,access_updated_source,linked_local_school_id,updated_at",
         )
         .eq("photographer_id", photographerId)
         .order("created_at", { ascending: false });
@@ -398,7 +460,7 @@ export async function GET(request: NextRequest) {
         const { data: collections } = await service
           .from("collections")
           .select(
-            "id,title,slug,local_id,access_mode,access_pin,access_updated_at,access_updated_source,sort_order",
+            "id,title,slug,local_id,cover_photo_url,access_mode,access_pin,access_updated_at,access_updated_source,sort_order",
           )
           .eq("project_id", proj.id)
           .is("deleted_at", null)
@@ -447,7 +509,7 @@ export async function GET(request: NextRequest) {
     const { data: projectRow, error: projectError } = await service
       .from("projects")
       .select(
-        "id,title,client_name,shoot_date,event_date,order_due_date,expiration_date,portal_status,pre_release,gallery_slug,access_mode,access_pin,access_updated_at,access_updated_source,linked_local_school_id,updated_at",
+        "id,title,client_name,shoot_date,event_date,order_due_date,expiration_date,portal_status,pre_release,gallery_slug,cover_photo_url,access_mode,access_pin,access_updated_at,access_updated_source,linked_local_school_id,updated_at",
       )
       .eq("id", projectId)
       .eq("photographer_id", photographerId)
@@ -458,7 +520,7 @@ export async function GET(request: NextRequest) {
     const { data: collections, error: collError } = await service
       .from("collections")
       .select(
-        "id,title,slug,local_id,access_mode,access_pin,access_updated_at,access_updated_source,sort_order",
+        "id,title,slug,local_id,cover_photo_url,access_mode,access_pin,access_updated_at,access_updated_source,sort_order",
       )
       .eq("project_id", projectId)
       .is("deleted_at", null)

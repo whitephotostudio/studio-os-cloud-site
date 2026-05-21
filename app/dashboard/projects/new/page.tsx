@@ -4,30 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
-import { Logo } from "@/components/logo";
-import { ArrowLeft, CalendarDays, Lock, Globe, LogOut } from "lucide-react";
-
-const sidebar: React.CSSProperties = {
-  width: 220,
-  minHeight: "100vh",
-  background: "#000",
-  display: "flex",
-  flexDirection: "column",
-};
-
-const navItem: React.CSSProperties = {
-  padding: "12px 24px",
-  fontSize: 14,
-  color: "#ccc",
-  textDecoration: "none",
-  display: "block",
-};
-
-const navActive: React.CSSProperties = {
-  ...navItem,
-  color: "#fff",
-  background: "#1a1a1a",
-};
+import { ArrowLeft, CalendarDays, Lock, Globe } from "lucide-react";
 
 export default function NewEventPage() {
   const router = useRouter();
@@ -42,14 +19,6 @@ export default function NewEventPage() {
   const [accessPin, setAccessPin] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [userEmail, setUserEmail] = useState("");
-
-  // Load user email for sidebar
-  useState(() => {
-    supabase.auth.getUser().then(({ data }) => {
-      setUserEmail(data?.user?.email ?? "");
-    });
-  });
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -112,43 +81,9 @@ export default function NewEventPage() {
     }
   }
 
-  async function handleSignOut() {
-    await supabase.auth.signOut();
-    router.push("/sign-in");
-  }
-
   return (
-    <div className="flex min-h-screen bg-white">
-      {/* Sidebar */}
-      <aside style={sidebar}>
-        <div className="p-6">
-          <Logo />
-        </div>
-        <nav className="flex-1">
-          <Link href="/dashboard" style={navItem}>Dashboard</Link>
-          <Link href="/dashboard/schools" style={navItem}>Schools</Link>
-          <Link href="/dashboard/projects/events" style={navActive}>Events</Link>
-          <Link href="/dashboard/orders" style={navItem}>Orders</Link>
-          <Link href="/dashboard/packages" style={navItem}>Packages</Link>
-          <Link href="/dashboard/settings" style={navItem}>Settings</Link>
-          <Link href="/dashboard/membership" style={navItem}>Membership</Link>
-        </nav>
-        <div className="p-4">
-          {userEmail && (
-            <p className="mb-2 truncate text-xs text-gray-400">{userEmail}</p>
-          )}
-          <button
-            onClick={handleSignOut}
-            className="flex w-full items-center gap-2 rounded-xl bg-[#1a1a1a] px-3 py-2 text-sm text-gray-300 transition hover:bg-[#2a2a2a]"
-          >
-            <LogOut size={14} />
-            Sign Out
-          </button>
-        </div>
-      </aside>
-
-      {/* Main */}
-      <div className="flex-1 px-6 py-6 text-[#13234a] lg:px-10">
+    <div className="min-h-screen bg-white">
+      <div className="px-6 py-6 text-[#13234a] lg:px-10">
         <div className="mx-auto max-w-[720px]">
           <Link
             href="/dashboard/projects/events"

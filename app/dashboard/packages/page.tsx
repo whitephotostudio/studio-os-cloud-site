@@ -40,6 +40,7 @@ type Profile = {
   composites_enabled: boolean;
   packages: Pkg[];
   count: number;
+  legacyOnly?: boolean;
 };
 
 // ── Categories ────────────────────────────────────────────────────────────────
@@ -284,12 +285,19 @@ export default function PackagesPage() {
       .select("id,default_package_profile_id").eq("user_id", user.id).maybeSingle();
     if (!pg) { setLoading(false); return; }
     setPgId(pg.id);
-    setDefaultProfileId((pg as Record<string, unknown>).default_package_profile_id as string | null ?? null);
+    const savedDefaultProfileId =
+      ((pg as Record<string, unknown>).default_package_profile_id as
+        | string
+        | null) ?? null;
+    setDefaultProfileId(savedDefaultProfileId);
 
-    await loadData(pg.id);
+    await loadData(pg.id, savedDefaultProfileId);
   }
 
-  async function loadData(photographerId?: string) {
+  async function loadData(
+    photographerId?: string,
+    savedDefaultProfileId?: string | null,
+  ) {
     const pid = photographerId ?? pgId;
     if (!pid) return;
     setLoading(true);
@@ -336,11 +344,18 @@ export default function PackagesPage() {
           composites_enabled: false,
           packages: pkgs,
           count: pkgs.length,
+          legacyOnly: true,
         });
       }
     }
 
     setProfiles(built);
+    if (
+      savedDefaultProfileId &&
+      !rawProfiles.some((profile) => profile.id === savedDefaultProfileId)
+    ) {
+      setDefaultProfileId(null);
+    }
 
     // Keep selected profile in sync
     if (selectedProfile) {
@@ -695,6 +710,21 @@ export default function PackagesPage() {
 
   async function setAsDefaultProfile(profileId: string) {
     if (!pgId) { alert("No photographer ID found"); return; }
+    const profile = profiles.find((p) => p.id === profileId);
+    if (profile?.legacyOnly) {
+      alert("This legacy price sheet needs to be recreated before it can be the default.");
+      return;
+    }
+    const { data: existingProfile, error: profileError } = await supabase
+      .from("package_profiles")
+      .select("id")
+      .eq("id", profileId)
+      .eq("photographer_id", pgId)
+      .maybeSingle();
+    if (profileError || !existingProfile?.id) {
+      alert("Could not set default: this price sheet no longer exists.");
+      return;
+    }
     const { error } = await supabase
       .from("photographers")
       .update({ default_package_profile_id: profileId })
@@ -950,7 +980,9 @@ export default function PackagesPage() {
                                 e.stopPropagation(); setMenuOpenId(null);
                                 setAsDefaultProfile(profile.id);
                               }}
-                              style={{ width: "100%", padding: "10px 16px", background: "none", border: "none", cursor: "pointer", fontSize: 13, color: defaultProfileId === profile.id ? "#059669" : "#333", textAlign: "left", display: "flex", alignItems: "center", gap: 8 }}
+                              disabled={profile.legacyOnly}
+                              title={profile.legacyOnly ? "Recreate this legacy price sheet before using it as the default." : undefined}
+                              style={{ width: "100%", padding: "10px 16px", background: "none", border: "none", cursor: profile.legacyOnly ? "not-allowed" : "pointer", fontSize: 13, color: profile.legacyOnly ? "#999" : defaultProfileId === profile.id ? "#059669" : "#333", textAlign: "left", display: "flex", alignItems: "center", gap: 8 }}
                             >
                               <Check size={13} /> {defaultProfileId === profile.id ? "Default Price Sheet" : "Set as Default"}
                             </button>
