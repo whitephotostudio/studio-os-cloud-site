@@ -8,6 +8,7 @@ export const viewport: Viewport = {
   initialScale: 1,
   maximumScale: 5,
   viewportFit: "cover",
+  themeColor: "#cc0000",
 };
 
 const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
@@ -103,6 +104,16 @@ export const metadata: Metadata = {
   },
   alternates: {
     canonical: baseUrl,
+  },
+  manifest: "/manifest.webmanifest",
+  appleWebApp: {
+    capable: true,
+    title: "Studio OS",
+    statusBarStyle: "default",
+  },
+  icons: {
+    icon: "/studio_os_logo_official.png",
+    apple: "/studio_os_logo_official_cropped.png",
   },
 };
 
