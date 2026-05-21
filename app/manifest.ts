@@ -2,8 +2,8 @@ import type { MetadataRoute } from "next";
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: "Studio OS Cloud",
-    short_name: "Studio OS",
+    name: "Studio OS Mobile",
+    short_name: "Studio OS Mobile",
     description: "Mobile control app for Studio OS Cloud photographers.",
     start_url: "/m",
     scope: "/",
