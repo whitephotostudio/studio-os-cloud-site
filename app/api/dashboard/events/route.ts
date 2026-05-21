@@ -11,6 +11,7 @@ const CreateEventBodySchema = z.object({
   title: z.string().max(500).nullable().optional(),
   clientName: z.string().max(500).nullable().optional(),
   eventDate: z.string().max(64).nullable().optional(),
+  galleryStatus: z.string().max(64).nullable().optional(),
   accessMode: z.string().max(32).nullable().optional(),
   accessPin: z.string().max(64).nullable().optional(),
 });
@@ -42,6 +43,14 @@ type MediaRow = {
 
 function clean(value: string | null | undefined) {
   return (value ?? "").trim();
+}
+
+const VALID_PORTAL_STATUSES = ["active", "inactive", "pre_release", "closed"];
+
+function normalizePortalStatus(value: string | null | undefined) {
+  const status = clean(value).toLowerCase().replace("-", "_");
+  if (status === "pre_released") return "pre_release";
+  return VALID_PORTAL_STATUSES.includes(status) ? status : "active";
 }
 
 export async function POST(request: NextRequest) {
@@ -100,6 +109,7 @@ export async function POST(request: NextRequest) {
     });
     const accessMode = (clean(body.accessMode) || "public").toLowerCase() === "pin" ? "pin" : "public";
     const accessPin = accessMode === "pin" ? clean(body.accessPin) || null : null;
+    const portalStatus = normalizePortalStatus(body.galleryStatus);
     const eventDate = clean(body.eventDate).slice(0, 10) || new Date().toISOString().slice(0, 10);
     const nowIso = new Date().toISOString();
 
@@ -112,7 +122,9 @@ export async function POST(request: NextRequest) {
         photographer_id: photographerId,
         workflow_type: "event",
         source_type: "cloud_only",
-        status: "active",
+        status: portalStatus,
+        portal_status: portalStatus,
+        pre_release: portalStatus === "pre_release",
         linked_local_school_id: localId,
         title,
         client_name: clean(body.clientName) || null,
