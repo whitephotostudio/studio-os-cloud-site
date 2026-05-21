@@ -187,7 +187,7 @@ export default function MobileLayout({
               style={{ width: 34, height: 34, borderRadius: 10, objectFit: "contain" }}
             />
             <div style={{ fontWeight: 900, fontSize: 15, whiteSpace: "nowrap" }}>
-              Studio OS
+              Studio OS Mobile
             </div>
           </Link>
 
