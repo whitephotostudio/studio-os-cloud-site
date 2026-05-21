@@ -6,6 +6,31 @@ import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { ArrowLeft, CalendarDays, Lock, Globe } from "lucide-react";
 
+const statusOptions = [
+  {
+    value: "active",
+    label: "Active",
+    description: "Gallery is live and viewable.",
+  },
+  {
+    value: "inactive",
+    label: "Inactive",
+    description: "Gallery is hidden until you turn it on.",
+  },
+  {
+    value: "pre_release",
+    label: "Pre-Released",
+    description: "Collect visitor emails before launch.",
+  },
+  {
+    value: "closed",
+    label: "Closed",
+    description: "Gallery remains visible but ordering is closed.",
+  },
+] as const;
+
+type GalleryStatus = (typeof statusOptions)[number]["value"];
+
 export default function NewEventPage() {
   const router = useRouter();
   const supabase = createClient();
@@ -15,6 +40,8 @@ export default function NewEventPage() {
   const [eventDate, setEventDate] = useState(
     new Date().toISOString().slice(0, 10),
   );
+  const [galleryStatus, setGalleryStatus] =
+    useState<GalleryStatus>("active");
   const [accessMode, setAccessMode] = useState<"public" | "pin">("public");
   const [accessPin, setAccessPin] = useState("");
   const [saving, setSaving] = useState(false);
@@ -51,6 +78,7 @@ export default function NewEventPage() {
           title: title.trim(),
           clientName: clientName.trim() || null,
           eventDate,
+          galleryStatus,
           accessMode,
           accessPin: accessMode === "pin" ? accessPin.trim() : null,
         }),
@@ -154,6 +182,34 @@ export default function NewEventPage() {
                   onChange={(e) => setEventDate(e.target.value)}
                   className="w-full rounded-[18px] border border-[#d9dfeb] py-4 pl-12 pr-5 text-base text-[#13234a] outline-none transition focus:border-[#13234a] focus:ring-2 focus:ring-[#13234a]/10"
                 />
+              </div>
+            </div>
+
+            {/* Gallery Status */}
+            <div>
+              <label className="mb-3 block text-sm font-medium text-[#13234a]">
+                Status
+              </label>
+              <div className="grid gap-3 md:grid-cols-2">
+                {statusOptions.map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    onClick={() => setGalleryStatus(option.value)}
+                    className={`rounded-[18px] border-2 px-5 py-4 text-left transition ${
+                      galleryStatus === option.value
+                        ? "border-[#0c1633] bg-[#f0f2f8]"
+                        : "border-[#d9dfeb] hover:border-[#b0b8cc]"
+                    }`}
+                  >
+                    <div className="text-sm font-semibold text-[#13234a]">
+                      {option.label}
+                    </div>
+                    <div className="mt-1 text-xs text-[#667085]">
+                      {option.description}
+                    </div>
+                  </button>
+                ))}
               </div>
             </div>
 
