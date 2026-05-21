@@ -4,6 +4,7 @@ import { Logo } from "./logo";
 const footerLinks = [
   { href: "/", label: "Home" },
   { href: "/studio-os", label: "Studio OS" },
+  { href: "/mobile-app", label: "Mobile App" },
   { href: "/studio-os/download", label: "Download App" },
   { href: "/pricing", label: "Pricing" },
   { href: "/parents", label: "Parents Portal" },
