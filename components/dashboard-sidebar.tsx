@@ -34,6 +34,7 @@ const NAV_ITEMS = [
   { href: "/dashboard", label: "Dashboard", match: /^\/dashboard$/ },
   { href: "/dashboard/schools", label: "Schools", match: /^\/dashboard\/schools/ },
   { href: "/dashboard/projects/events", label: "Projects", match: /^\/dashboard\/projects/ },
+  { href: "/dashboard/calendar", label: "Calendar", match: /^\/dashboard\/calendar/ },
   { href: "/dashboard/orders", label: "Orders", match: /^\/dashboard\/orders/ },
   { href: "/dashboard/packages", label: "Packages", match: /^\/dashboard\/packages/ },
   // 2026-04-25: Backdrops was reachable only by typing the URL.  Surface it

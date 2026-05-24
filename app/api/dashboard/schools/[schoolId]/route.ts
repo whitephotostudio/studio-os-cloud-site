@@ -301,6 +301,13 @@ export async function PATCH(
     if (hasOwn(body, "gallery_settings")) {
       updates.gallery_settings = normalizeEventGallerySettings(body.gallery_settings);
     }
+    if (hasOwn(body, "access_mode") || hasOwn(body, "access_pin")) {
+      const requestedMode = clean(body.access_mode || schoolRow.access_mode).toLowerCase();
+      const nextAccessMode = requestedMode === "pin" || requestedMode === "password" ? "pin" : "public";
+      updates.access_mode = nextAccessMode;
+      updates.access_pin =
+        nextAccessMode === "pin" ? clean(body.access_pin ?? schoolRow.access_pin) || null : null;
+    }
     // Screenshot protection flags — coerce to strict booleans so any
     // truthy-string or null from a buggy client still stores as false.
     if (hasOwn(body, "screenshot_protection_desktop")) {
@@ -322,7 +329,7 @@ export async function PATCH(
       updates.group_label_plural = v || "Classes";
     }
     if (hasOwn(body, "gallery_slug")) {
-      let rawSlug = clean(body.gallery_slug)
+      const rawSlug = clean(body.gallery_slug)
         .toLowerCase()
         .replace(/[^a-z0-9]+/g, "-")
         .replace(/^-+|-+$/g, "");
@@ -415,6 +422,8 @@ export async function PATCH(
         "checkout_contact_required",
         "internal_notes",
         "gallery_slug",
+        "access_mode",
+        "access_pin",
         "screenshot_protection_desktop",
         "screenshot_protection_mobile",
         "screenshot_protection_watermark",

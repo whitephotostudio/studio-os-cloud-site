@@ -9,7 +9,7 @@
 //
 // This layout gives every /m/* route:
 //   - a sticky top header with the studio logo + a bell icon (unread orders)
-//   - a sticky bottom tab bar (Home / Orders / Schools / Events)
+//   - a sticky bottom tab bar (Home / Orders / Schools / Events / Calendar)
 //   - a centered max-width 480 column so it degrades sanely on desktop
 //
 // Session enforcement mirrors app/dashboard/layout.tsx.  Non-authenticated
@@ -56,6 +56,12 @@ const TABS: TabDef[] = [
     label: "Events",
     icon: CalendarDays,
     match: (p) => p.startsWith("/m/events"),
+  },
+  {
+    href: "/m/calendar",
+    label: "Calendar",
+    icon: CalendarDays,
+    match: (p) => p.startsWith("/m/calendar"),
   },
 ];
 

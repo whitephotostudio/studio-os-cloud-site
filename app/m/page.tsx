@@ -6,15 +6,16 @@
 //   1. Tell him at a glance: new orders today, how many schools are live.
 //   2. Give him a Spotlight-style search he can tap once and find a student,
 //      order, school, or event across everything.
-//   3. Four fat tiles for the subpages — thumb-reach navigation.
+//   3. Big thumb-reach tiles for the subpages.
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
   ArrowRight,
-  CalendarDays,
+  CalendarCheck,
   ChevronRight,
   GraduationCap,
+  PartyPopper,
   Search,
   ShoppingBag,
   Sparkles,
@@ -109,7 +110,6 @@ export default function MobileHomePage() {
         now.getMonth(),
         now.getDate(),
       ).toISOString();
-
       const [ordersToday, ordersUnread, schools] = await Promise.all([
         supabase
           .from("orders")
@@ -149,14 +149,16 @@ export default function MobileHomePage() {
     const term = search.trim();
     if (!photographerId) return;
     if (term.length < 2) {
-      setHits([]);
-      setSearching(false);
-      return;
+      const resetHandle = window.setTimeout(() => {
+        setHits([]);
+        setSearching(false);
+      }, 0);
+      return () => window.clearTimeout(resetHandle);
     }
 
     let cancelled = false;
-    setSearching(true);
     const handle = window.setTimeout(async () => {
+      setSearching(true);
       try {
         // Order-id lookup is only useful when the term looks like a
         // uuid fragment (hex + dashes).  Skips the query for plain names
@@ -344,9 +346,16 @@ export default function MobileHomePage() {
         note: `${activeSchools} active`,
       },
       {
+        href: "/m/calendar",
+        label: "Calendar",
+        icon: <CalendarCheck size={22} />,
+        accent: "#cc0000",
+        note: "Dates + notes",
+      },
+      {
         href: "/m/events",
         label: "Events",
-        icon: <CalendarDays size={22} />,
+        icon: <PartyPopper size={22} />,
         accent: "#b45309",
         note: "Gallery + PIN",
       },
@@ -492,7 +501,7 @@ export default function MobileHomePage() {
                 fontWeight: 600,
               }}
             >
-              No results for "{search}".
+              No results for &quot;{search}&quot;.
             </div>
           ) : (
             hits.map((hit, idx) => (
