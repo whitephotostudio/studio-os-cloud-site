@@ -100,6 +100,15 @@ export type EventGalleryShareSettings = {
   emailMessage: string;
 };
 
+export type EventScheduleDetails = {
+  startTime: string;
+  endTime: string;
+  time: string;
+  location: string;
+  address: string;
+  notes: string;
+};
+
 export type EventGallerySettings = {
   version: 1;
   galleryLanguage: string;
@@ -107,6 +116,7 @@ export type EventGallerySettings = {
   branding: EventGalleryBrandingSettings;
   linkedContacts: EventGalleryLinkedContact[];
   share: EventGalleryShareSettings;
+  schedule: EventScheduleDetails;
 };
 
 export const defaultEventGalleryExtras: EventGalleryExtraSettings = {
@@ -186,6 +196,15 @@ export const defaultEventGalleryShareSettings: EventGalleryShareSettings = {
     "Hi,\n\nYour gallery is ready to view.\n\nUse the gallery link and access details provided below to enter.\n\nThanks,\nStudio OS",
 };
 
+export const defaultEventScheduleDetails: EventScheduleDetails = {
+  startTime: "",
+  endTime: "",
+  time: "",
+  location: "",
+  address: "",
+  notes: "",
+};
+
 export const defaultEventGallerySettings: EventGallerySettings = {
   version: 1,
   galleryLanguage: "English (US)",
@@ -193,6 +212,7 @@ export const defaultEventGallerySettings: EventGallerySettings = {
   branding: defaultEventGalleryBranding,
   linkedContacts: [],
   share: defaultEventGalleryShareSettings,
+  schedule: defaultEventScheduleDetails,
 };
 
 function asObject(value: unknown): Record<string, unknown> | null {
@@ -555,6 +575,24 @@ export function normalizeEventGallerySettings(value: unknown): EventGallerySetti
           defaultEventGalleryShareSettings.emailMessage,
         ),
       } satisfies EventGalleryShareSettings;
+    })(),
+    schedule: (() => {
+      const scheduleSource = asObject(source?.schedule);
+      const legacyTime = asString(scheduleSource?.time, defaultEventScheduleDetails.time);
+      return {
+        startTime: asString(scheduleSource?.startTime, legacyTime),
+        endTime: asString(scheduleSource?.endTime, defaultEventScheduleDetails.endTime),
+        time: legacyTime,
+        location: asString(
+          scheduleSource?.location,
+          defaultEventScheduleDetails.location,
+        ),
+        address: asString(
+          scheduleSource?.address,
+          defaultEventScheduleDetails.address,
+        ),
+        notes: asString(scheduleSource?.notes, defaultEventScheduleDetails.notes),
+      } satisfies EventScheduleDetails;
     })(),
   };
 }

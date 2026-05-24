@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { Logo } from "@/components/logo";
 import { useIsMobile } from "@/lib/use-is-mobile";
-import { Check, GraduationCap, Images, LogOut, MoreHorizontal, Plus, School, Search, Settings, Trash2, Users, X } from "lucide-react";
+import { CalendarDays, Check, GraduationCap, Images, LogOut, MoreHorizontal, Plus, School, Search, Settings, Trash2, Users, X } from "lucide-react";
 
 type SchoolRow = {
   id: string;
@@ -14,6 +14,7 @@ type SchoolRow = {
   photographer_id: string | null;
   package_profile_id: string | null;
   local_school_id: string | null;
+  shoot_date: string | null;
   created_at: string | null;
 };
 
@@ -28,6 +29,7 @@ type SchoolCard = {
   id: string;
   school_name: string;
   local_school_id: string | null;
+  shoot_date: string | null;
   created_at: string | null;
   peopleCount: number;
   classesCount: number;
@@ -131,6 +133,7 @@ export default function SchoolsPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [newSchoolName, setNewSchoolName] = useState("");
+  const [newSchoolShootDate, setNewSchoolShootDate] = useState(new Date().toISOString().slice(0, 10));
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState("");
   const createInputRef = useRef<HTMLInputElement>(null);
@@ -190,7 +193,7 @@ export default function SchoolsPage() {
 
       const { data: schoolRows, error: schoolErr } = await supabase
         .from("schools")
-        .select("id,school_name,photographer_id,package_profile_id,local_school_id,created_at")
+        .select("id,school_name,photographer_id,package_profile_id,local_school_id,shoot_date,created_at")
         .eq("photographer_id", photographerRow.id)
         .order("created_at", { ascending: false });
 
@@ -284,6 +287,7 @@ export default function SchoolsPage() {
           id: school.id,
           school_name: school.school_name,
           local_school_id: school.local_school_id,
+          shoot_date: school.shoot_date,
           created_at: school.created_at,
           peopleCount: stat?.peopleCount ?? 0,
           classesCount: stat?.classNames.size ?? 0,
@@ -329,11 +333,15 @@ export default function SchoolsPage() {
           "Content-Type": "application/json",
           Authorization: `Bearer ${session?.access_token ?? ""}`,
         },
-        body: JSON.stringify({ school_name: name }),
+        body: JSON.stringify({
+          school_name: name,
+          shoot_date: newSchoolShootDate || null,
+        }),
       });
       const data = (await res.json()) as { ok?: boolean; message?: string; school?: { id: string } };
       if (!res.ok || !data.ok) throw new Error(data.message || "Failed to create school.");
       setShowCreateModal(false);
+      setNewSchoolShootDate(new Date().toISOString().slice(0, 10));
       if (data.school?.id) {
         router.push(`/dashboard/projects/schools/${data.school.id}/settings`);
       } else {
@@ -673,7 +681,7 @@ export default function SchoolsPage() {
                     {school.school_name}
                   </div>
                   <div style={{ fontSize: 12, color: "#9ca3af", marginTop: 4 }}>
-                    {formatDate(school.created_at)}
+                    {school.shoot_date ? `Shoot ${formatDate(school.shoot_date)}` : formatDate(school.created_at)}
                   </div>
                   <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 10 }}>
                     <span style={{ fontSize: 12, color: "#6b7280" }}>{school.classesCount} classes</span>
@@ -868,6 +876,31 @@ export default function SchoolsPage() {
                   style={{ width: "100%", height: 44, borderRadius: 12, border: "1px solid #d1d5db", padding: "0 14px", fontSize: 15, color: "#111", outline: "none", boxSizing: "border-box" }}
                   disabled={creating}
                 />
+              </div>
+              <div style={{ marginBottom: 20 }}>
+                <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#374151", marginBottom: 8 }}>
+                  Shoot date
+                </label>
+                <div style={{ position: "relative" }}>
+                  <CalendarDays
+                    size={17}
+                    style={{
+                      position: "absolute",
+                      left: 14,
+                      top: "50%",
+                      transform: "translateY(-50%)",
+                      color: "#6b7280",
+                      pointerEvents: "none",
+                    }}
+                  />
+                  <input
+                    type="date"
+                    value={newSchoolShootDate}
+                    onChange={(e) => setNewSchoolShootDate(e.target.value)}
+                    style={{ width: "100%", height: 44, borderRadius: 12, border: "1px solid #d1d5db", padding: "0 14px 0 42px", fontSize: 15, color: "#111", outline: "none", boxSizing: "border-box" }}
+                    disabled={creating}
+                  />
+                </div>
               </div>
               {createError && (
                 <div style={{ marginBottom: 16, padding: "10px 14px", background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 10, color: "#b91c1c", fontSize: 13 }}>

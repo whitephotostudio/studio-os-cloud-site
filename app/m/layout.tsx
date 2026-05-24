@@ -9,7 +9,7 @@
 //
 // This layout gives every /m/* route:
 //   - a sticky top header with the studio logo + a bell icon (unread orders)
-//   - a sticky bottom tab bar (Home / Orders / Schools / Events)
+//   - a sticky bottom tab bar (Home / Orders / Schools / Events / Calendar)
 //   - a centered max-width 480 column so it degrades sanely on desktop
 //
 // Session enforcement mirrors app/dashboard/layout.tsx.  Non-authenticated
@@ -18,7 +18,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Bell, CalendarDays, GraduationCap, Home, ShoppingBag } from "lucide-react";
+import { Bell, CalendarDays, GraduationCap, Home, PlusCircle, ShoppingBag } from "lucide-react";
 import { AgreementGate } from "@/components/agreement-gate";
 import { createClient } from "@/lib/supabase/client";
 
@@ -56,6 +56,12 @@ const TABS: TabDef[] = [
     label: "Events",
     icon: CalendarDays,
     match: (p) => p.startsWith("/m/events"),
+  },
+  {
+    href: "/m/calendar",
+    label: "Calendar",
+    icon: CalendarDays,
+    match: (p) => p.startsWith("/m/calendar"),
   },
 ];
 
@@ -177,75 +183,88 @@ export default function MobileLayout({
               gap: 8,
               textDecoration: "none",
               color: "#111827",
+              minWidth: 0,
             }}
           >
-            <div
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src="/studio_os_logo_official_cropped.png"
+              alt=""
+              style={{ width: 34, height: 34, borderRadius: 10, objectFit: "contain" }}
+            />
+            <div style={{ fontWeight: 900, fontSize: 15, whiteSpace: "nowrap" }}>
+              Studio OS Mobile
+            </div>
+          </Link>
+
+          <div style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+            <Link
+              href="/m/new"
+              aria-label="Create event or school"
               style={{
-                width: 32,
-                height: 32,
-                borderRadius: 10,
-                background: "#cc0000",
-                color: "#fff",
+                width: 40,
+                height: 40,
+                borderRadius: 12,
+                background: "#111827",
+                border: "1px solid #111827",
                 display: "inline-flex",
                 alignItems: "center",
                 justifyContent: "center",
-                fontWeight: 900,
-                fontSize: 14,
-                letterSpacing: "0.02em",
+                color: "#fff",
+                textDecoration: "none",
               }}
             >
-              SO
-            </div>
-            <div style={{ fontWeight: 900, fontSize: 15 }}>Studio OS</div>
-          </Link>
+              <PlusCircle size={19} />
+            </Link>
 
-          <Link
-            href="/m/orders"
-            aria-label={
-              unreadCount > 0
-                ? `${unreadCount} new orders`
-                : "No new orders"
-            }
-            style={{
-              position: "relative",
-              width: 40,
-              height: 40,
-              borderRadius: 12,
-              background: "#fff",
-              border: "1px solid #e5e7eb",
-              display: "inline-flex",
-              alignItems: "center",
-              justifyContent: "center",
-              color: "#111827",
-              textDecoration: "none",
-            }}
-          >
-            <Bell size={18} />
-            {unreadCount > 0 ? (
-              <span
-                aria-hidden
-                style={{
-                  position: "absolute",
-                  top: 5,
-                  right: 5,
-                  minWidth: 18,
-                  height: 18,
-                  borderRadius: 999,
-                  background: "#cc0000",
-                  color: "#fff",
-                  fontSize: 10,
-                  fontWeight: 900,
-                  display: "inline-flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  padding: "0 4px",
-                  border: "2px solid #fff",
-                }}
-              >
-                {unreadCount > 99 ? "99+" : unreadCount}
-              </span>
-            ) : null}
-          </Link>
+            <Link
+              href="/m/orders"
+              aria-label={
+                unreadCount > 0
+                  ? `${unreadCount} new orders`
+                  : "No new orders"
+              }
+              style={{
+                position: "relative",
+                width: 40,
+                height: 40,
+                borderRadius: 12,
+                background: "#fff",
+                border: "1px solid #e5e7eb",
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                color: "#111827",
+                textDecoration: "none",
+              }}
+            >
+              <Bell size={18} />
+              {unreadCount > 0 ? (
+                <span
+                  aria-hidden
+                  style={{
+                    position: "absolute",
+                    top: 5,
+                    right: 5,
+                    minWidth: 18,
+                    height: 18,
+                    borderRadius: 999,
+                    background: "#cc0000",
+                    color: "#fff",
+                    fontSize: 10,
+                    fontWeight: 900,
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    padding: "0 4px",
+                    border: "2px solid #fff",
+                  }}
+                >
+                  {unreadCount > 99 ? "99+" : unreadCount}
+                </span>
+              ) : null}
+            </Link>
+          </div>
         </header>
 
         {/* ── Content ────────────────────────────────────────────── */}
