@@ -5,6 +5,7 @@ import { parseJson } from "@/lib/api-validation";
 import { recordAudit, diffFields } from "@/lib/audit";
 import {
   buildSignedMediaUrls,
+  extractStoragePathFromSupabaseUrl,
   SIGNED_URL_TTL_DASHBOARD_SECONDS,
 } from "@/lib/storage-images";
 import { r2DeleteWithVariantsBestEffort } from "@/lib/r2";
@@ -38,6 +39,56 @@ type CollectionRow = {
 
 function clean(value: string | null | undefined) {
   return (value ?? "").trim();
+}
+
+function isR2CloudflareStorageUrl(value: string) {
+  try {
+    return /\.r2\.cloudflarestorage\.com$/i.test(new URL(value).host);
+  } catch {
+    return false;
+  }
+}
+
+function isKnownStorageUrl(value: string) {
+  try {
+    const parsed = new URL(value);
+    return (
+      parsed.pathname.startsWith("/api/r2/img/") ||
+      /\.r2\.dev$/i.test(parsed.host) ||
+      /\.r2\.cloudflarestorage\.com$/i.test(parsed.host) ||
+      value.includes("/storage/v1/object/public/") ||
+      value.includes("/storage/v1/render/image/public/")
+    );
+  } catch {
+    return false;
+  }
+}
+
+function resolveDashboardCoverUrl(value: string | null | undefined) {
+  const cover = clean(value);
+  if (!cover) return "";
+
+  const isHttpUrl = /^https?:\/\//i.test(cover);
+  if (isHttpUrl && !isKnownStorageUrl(cover)) return cover;
+
+  const isR2SignedUrl = isHttpUrl && isR2CloudflareStorageUrl(cover);
+  const storagePath =
+    !isHttpUrl && !cover.startsWith("/api/r2/img/")
+      ? cover
+      : isR2SignedUrl
+        ? ""
+        : extractStoragePathFromSupabaseUrl(cover) ?? "";
+
+  const signed = buildSignedMediaUrls(
+    {
+      storagePath,
+      previewUrl: cover,
+      thumbnailUrl: cover,
+    },
+    { ttlSeconds: SIGNED_URL_TTL_DASHBOARD_SECONDS },
+  );
+
+  return signed.previewUrl || signed.thumbnailUrl || signed.originalUrl || cover;
 }
 
 function slugify(value: string) {
@@ -325,7 +376,12 @@ export async function PATCH(
 
     return NextResponse.json({
       ok: true,
-      album: albumData as CollectionRow,
+      album: {
+        ...(albumData as CollectionRow),
+        cover_photo_url: resolveDashboardCoverUrl(
+          (albumData as CollectionRow).cover_photo_url,
+        ),
+      },
     });
   } catch (error) {
     console.error("[dashboard:events:album:PATCH]", error);
