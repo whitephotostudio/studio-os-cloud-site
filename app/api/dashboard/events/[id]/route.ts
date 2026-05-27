@@ -403,6 +403,40 @@ async function sendCampaignEmails(params: {
   };
 }
 
+async function fetchProjectMediaBreakdown(
+  service: ReturnType<typeof createDashboardServiceClient>,
+  projectId: string,
+) {
+  const collectionMediaCounts: Record<string, number> = {};
+  let unassignedMediaCount = 0;
+  const pageSize = 1000;
+
+  for (let from = 0; ; from += pageSize) {
+    const { data, error } = await service
+      .from("media")
+      .select("collection_id")
+      .eq("project_id", projectId)
+      .range(from, from + pageSize - 1);
+
+    if (error) throw error;
+
+    const rows = data ?? [];
+    for (const row of rows) {
+      const collectionId = clean(row.collection_id);
+      if (collectionId) {
+        collectionMediaCounts[collectionId] =
+          (collectionMediaCounts[collectionId] ?? 0) + 1;
+      } else {
+        unassignedMediaCount += 1;
+      }
+    }
+
+    if (rows.length < pageSize) break;
+  }
+
+  return { collectionMediaCounts, unassignedMediaCount };
+}
+
 export async function GET(
   request: NextRequest,
   context: { params: Promise<{ id: string }> },
@@ -503,10 +537,12 @@ export async function GET(
       else albumsCount += 1;
     }
 
-    // Pagination for media — defaults: page 1, 200 items per page
+    // Pagination for media — defaults: page 1, 1000 items per page.
+    // The project overview uses the returned preview rows to render album cards,
+    // so a 200-row default made 300-photo albums look incomplete.
     const url = new URL(request.url);
     const mediaPage = Math.max(1, Number(url.searchParams.get("mediaPage")) || 1);
-    const mediaLimit = Math.min(500, Math.max(1, Number(url.searchParams.get("mediaLimit")) || 200));
+    const mediaLimit = Math.min(1000, Math.max(1, Number(url.searchParams.get("mediaLimit")) || 1000));
     const mediaFrom = (mediaPage - 1) * mediaLimit;
     const mediaTo = mediaFrom + mediaLimit - 1;
 
@@ -519,6 +555,9 @@ export async function GET(
       .range(mediaFrom, mediaTo);
 
     if (mediaError) throw mediaError;
+
+    const { collectionMediaCounts, unassignedMediaCount } =
+      await fetchProjectMediaBreakdown(service, projectId);
 
     const normalizedMediaRows = (mediaRows ?? []).map((row) => {
       const mediaUrls = buildSignedMediaUrls({
@@ -541,6 +580,8 @@ export async function GET(
       collections,
       media: normalizedMediaRows,
       mediaCount: mediaTotalCount ?? normalizedMediaRows.length,
+      collectionMediaCounts,
+      unassignedMediaCount,
       mediaPage,
       mediaTotalCount: mediaTotalCount ?? normalizedMediaRows.length,
       classesCount,
@@ -633,7 +674,7 @@ export async function PATCH(
     }
 
     if (hasOwn(body, "gallery_slug")) {
-      let rawSlug = clean(body.gallery_slug)
+      const rawSlug = clean(body.gallery_slug)
         .toLowerCase()
         .replace(/[^a-z0-9]+/g, "-")
         .replace(/^-+|-+$/g, "");
