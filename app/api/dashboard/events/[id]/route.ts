@@ -17,6 +17,7 @@ import { resendConfigured, sendResendEmail } from "@/lib/resend";
 import { ensurePackageProfile } from "@/lib/ensure-package-profile";
 import {
   buildSignedMediaUrls,
+  extractStoragePathFromSupabaseUrl,
   SIGNED_URL_TTL_DASHBOARD_SECONDS,
 } from "@/lib/storage-images";
 import { r2DeletePrefix } from "@/lib/r2";
@@ -62,6 +63,56 @@ type ProjectUpdateBody = z.infer<typeof ProjectUpdateBodySchema>;
 
 function clean(value: string | null | undefined) {
   return (value ?? "").trim();
+}
+
+function isR2CloudflareStorageUrl(value: string) {
+  try {
+    return /\.r2\.cloudflarestorage\.com$/i.test(new URL(value).host);
+  } catch {
+    return false;
+  }
+}
+
+function isKnownStorageUrl(value: string) {
+  try {
+    const parsed = new URL(value);
+    return (
+      parsed.pathname.startsWith("/api/r2/img/") ||
+      /\.r2\.dev$/i.test(parsed.host) ||
+      /\.r2\.cloudflarestorage\.com$/i.test(parsed.host) ||
+      value.includes("/storage/v1/object/public/") ||
+      value.includes("/storage/v1/render/image/public/")
+    );
+  } catch {
+    return false;
+  }
+}
+
+function resolveDashboardCoverUrl(value: string | null | undefined) {
+  const cover = clean(value);
+  if (!cover) return "";
+
+  const isHttpUrl = /^https?:\/\//i.test(cover);
+  if (isHttpUrl && !isKnownStorageUrl(cover)) return cover;
+
+  const isR2SignedUrl = isHttpUrl && isR2CloudflareStorageUrl(cover);
+  const storagePath =
+    !isHttpUrl && !cover.startsWith("/api/r2/img/")
+      ? cover
+      : isR2SignedUrl
+        ? ""
+        : extractStoragePathFromSupabaseUrl(cover) ?? "";
+
+  const signed = buildSignedMediaUrls(
+    {
+      storagePath,
+      previewUrl: cover,
+      thumbnailUrl: cover,
+    },
+    { ttlSeconds: SIGNED_URL_TTL_DASHBOARD_SECONDS },
+  );
+
+  return signed.previewUrl || signed.thumbnailUrl || signed.originalUrl || cover;
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -527,7 +578,12 @@ export async function GET(
     const collections = (collectionRows ?? []).filter((row) => {
       const kind = clean((row as { kind?: string | null }).kind).toLowerCase();
       return kind === "album" || kind === "class" || kind === "gallery" || !kind;
-    });
+    }).map((row) => ({
+      ...row,
+      cover_photo_url: resolveDashboardCoverUrl(
+        (row as { cover_photo_url?: string | null }).cover_photo_url,
+      ),
+    }));
 
     let galleriesCount = 0;
     let albumsCount = 0;
@@ -576,7 +632,12 @@ export async function GET(
 
     return NextResponse.json({
       ok: true,
-      project: projectRow,
+      project: {
+        ...projectRow,
+        cover_photo_url: resolveDashboardCoverUrl(
+          (projectRow as { cover_photo_url?: string | null }).cover_photo_url,
+        ),
+      },
       collections,
       media: normalizedMediaRows,
       mediaCount: mediaTotalCount ?? normalizedMediaRows.length,
@@ -883,7 +944,12 @@ export async function PATCH(
 
     return NextResponse.json({
       ok: true,
-      project: projectData,
+      project: {
+        ...projectData,
+        cover_photo_url: resolveDashboardCoverUrl(
+          (projectData as { cover_photo_url?: string | null }).cover_photo_url,
+        ),
+      },
       releaseEmailResult,
       campaignEmailResult,
     });
