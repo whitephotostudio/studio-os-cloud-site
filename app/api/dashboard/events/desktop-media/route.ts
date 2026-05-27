@@ -80,8 +80,10 @@ type NormalizedMediaItem = {
   is_cover: boolean;
 };
 
-function preferredCoverUrl(item: Pick<NormalizedMediaItem, "preview_url" | "thumbnail_url">) {
-  return clean(item.preview_url) || clean(item.thumbnail_url) || null;
+function preferredCoverUrl(
+  item: Pick<NormalizedMediaItem, "storage_path" | "preview_url" | "thumbnail_url">,
+) {
+  return clean(item.storage_path) || clean(item.preview_url) || clean(item.thumbnail_url) || null;
 }
 
 function chooseCoverCandidate(
@@ -315,11 +317,13 @@ export async function POST(request: NextRequest) {
       new Set(normalizedItems.map((item) => item.collection_id)),
     );
 
-    let { data: collectionRows, error: collectionError } = await service
+    const collectionLookup = await service
       .from("collections")
       .select("id,project_id,cover_photo_url")
       .eq("project_id", cloudProjectId)
       .in("id", collectionIds);
+    let collectionRows = collectionLookup.data;
+    const collectionError = collectionLookup.error;
 
     if (collectionError) throw collectionError;
 
