@@ -237,6 +237,8 @@ export default function ProjectDetailPage() {
   const [collections, setCollections] = useState<CollectionRow[]>([]);
   const [media, setMedia] = useState<MediaRow[]>([]);
   const [mediaCount, setMediaCount] = useState(0);
+  const [collectionMediaCounts, setCollectionMediaCounts] = useState<Record<string, number>>({});
+  const [unassignedMediaCount, setUnassignedMediaCount] = useState(0);
 
   const [classesCount, setClassesCount] = useState(0);
   const [rolesCount, setRolesCount] = useState(0);
@@ -332,6 +334,8 @@ export default function ProjectDetailPage() {
           collections?: CollectionRow[];
           media?: MediaRow[];
           mediaCount?: number;
+          collectionMediaCounts?: Record<string, number>;
+          unassignedMediaCount?: number;
           classesCount?: number;
           rolesCount?: number;
           peopleCount?: number;
@@ -372,6 +376,8 @@ export default function ProjectDetailPage() {
         setCollections(payload.collections ?? []);
         setMedia(payload.media ?? []);
         setMediaCount(payload.mediaCount ?? 0);
+        setCollectionMediaCounts(payload.collectionMediaCounts ?? {});
+        setUnassignedMediaCount(payload.unassignedMediaCount ?? 0);
         setClassesCount(payload.classesCount ?? 0);
         setRolesCount(payload.rolesCount ?? 0);
         setPeopleCount(payload.peopleCount ?? 0);
@@ -1064,18 +1070,27 @@ export default function ProjectDetailPage() {
 
   const albumStats = useMemo(() => {
     const stats: Record<string, { count: number; preview: string }> = {};
+    const hasServerCounts = Object.keys(collectionMediaCounts).length > 0;
     for (const row of orderedCollections) {
-      stats[row.id] = { count: 0, preview: collectionCover(row) };
+      stats[row.id] = {
+        count: collectionMediaCounts[row.id] ?? 0,
+        preview: collectionCover(row),
+      };
     }
     for (const row of media) {
       const key = clean(row.collection_id);
       if (!key) continue;
-      if (!stats[key]) stats[key] = { count: 0, preview: mediaUrl(row) };
-      stats[key].count += 1;
+      if (!stats[key]) {
+        stats[key] = {
+          count: collectionMediaCounts[key] ?? 0,
+          preview: mediaUrl(row),
+        };
+      }
+      if (!hasServerCounts) stats[key].count += 1;
       if (!stats[key].preview) stats[key].preview = mediaUrl(row);
     }
     return stats;
-  }, [collectionCover, media, orderedCollections]);
+  }, [collectionCover, collectionMediaCounts, media, orderedCollections]);
 
   const favoriteAlbumCounts = useMemo(() => {
     const next: Record<string, number> = {};
@@ -1320,7 +1335,7 @@ export default function ProjectDetailPage() {
                   </div>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "11px 14px", borderBottom: orderedCollections.length ? "1px solid #eef2f7" : "0", color: "#111111", fontSize: 13 }}>
                     <span>All Photos Not in Albums</span>
-                    <span>0</span>
+                    <span>{unassignedMediaCount}</span>
                   </div>
                   <div style={{ maxHeight: 300, overflow: "auto" }}>
                     {filteredCollections.map((album) => {
