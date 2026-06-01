@@ -18,7 +18,7 @@ import { guardAgreement } from "@/lib/require-agreement";
 export const dynamic = "force-dynamic";
 
 const SendCampaignBodySchema = z.object({
-  recipientMode: z.enum(["visitors", "others"]).optional(),
+  recipientMode: z.enum(["client", "visitors", "others"]).optional(),
   recipients: z.union([z.array(z.string()), z.string()]).optional(),
   subject: z.string().max(200).optional(),
   headline: z.string().max(200).optional(),
@@ -110,8 +110,19 @@ export async function POST(
     }
 
     let recipients: string[] = [];
-    if (body.recipientMode === "others") {
+    if (body.recipientMode === "others" || body.recipientMode === "client") {
       recipients = parseRecipients(body.recipients);
+      if (!recipients.length && body.recipientMode === "client") {
+        const settings = normalizeEventGallerySettings(projectRow.gallery_settings);
+        recipients = Array.from(
+          new Set(
+            settings.linkedContacts
+              .filter((contact) => clean(contact.role).toLowerCase() === "client")
+              .map((contact) => clean(contact.email).toLowerCase())
+              .filter(looksLikeEmail),
+          ),
+        );
+      }
     } else {
       const [visitorsResult, preReleaseResult, favoritesResult] = await Promise.all([
         service
