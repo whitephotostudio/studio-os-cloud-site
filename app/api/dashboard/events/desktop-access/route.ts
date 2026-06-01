@@ -5,6 +5,7 @@ import {
   resolveDashboardAuth,
 } from "@/lib/dashboard-auth";
 import { parseJson } from "@/lib/api-validation";
+import { normalizeEventGallerySettings } from "@/lib/event-gallery-settings";
 import { guardAgreement } from "@/lib/require-agreement";
 
 export const dynamic = "force-dynamic";
@@ -22,6 +23,7 @@ const DesktopAccessBodySchema = z.object({
   cloudProjectId: z.string().max(128).nullable().optional(),
   title: z.string().max(500).nullable().optional(),
   clientName: z.string().max(500).nullable().optional(),
+  clientEmail: z.string().max(500).nullable().optional(),
   createdAt: z.string().max(64).nullable().optional(),
   accessMode: z.string().max(64).nullable().optional(),
   accessPin: z.string().max(64).nullable().optional(),
@@ -32,6 +34,12 @@ const DesktopAccessBodySchema = z.object({
 
 function clean(value: string | null | undefined) {
   return (value ?? "").trim();
+}
+
+function normalizeEmail(value: string | null | undefined) {
+  const email = clean(value).toLowerCase();
+  if (!email || !email.includes("@")) return "";
+  return email;
 }
 
 function slugify(value: string, fallback = "gallery") {
@@ -97,13 +105,62 @@ function shouldApplyIncomingAccess({
   return true;
 }
 
-function buildGalleryUrl(
-  projectId: string,
-  slug: string | null | undefined,
-  title: string,
-): string {
-  const effectiveSlug = clean(slug) || slugify(title);
-  return `https://www.studiooscloud.com/gallery/${effectiveSlug}`;
+function buildGalleryUrl(projectId: string): string {
+  const params = new URLSearchParams({
+    mode: "event",
+    project: projectId,
+  });
+  return `https://www.studiooscloud.com/parents?${params.toString()}`;
+}
+
+function clientContactId(email: string) {
+  const safe = email.replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  return `desktop-client-${safe || "contact"}`;
+}
+
+function withDesktopClientContact(
+  gallerySettings: unknown,
+  clientName: string,
+  clientEmail: string,
+) {
+  if (!clientEmail) return undefined;
+  const settings = normalizeEventGallerySettings(gallerySettings);
+  const email = clientEmail.toLowerCase();
+  const existingIndex = settings.linkedContacts.findIndex(
+    (contact) => clean(contact.email).toLowerCase() === email,
+  );
+  const contact = {
+    id:
+      existingIndex >= 0
+        ? settings.linkedContacts[existingIndex].id
+        : clientContactId(email),
+    name:
+      clientName ||
+      (existingIndex >= 0 ? settings.linkedContacts[existingIndex].name : ""),
+    email,
+    role: "Client",
+    labelPhotos:
+      existingIndex >= 0 ? settings.linkedContacts[existingIndex].labelPhotos : false,
+    hidePhotos:
+      existingIndex >= 0 ? settings.linkedContacts[existingIndex].hidePhotos : false,
+    isVip: existingIndex >= 0 ? settings.linkedContacts[existingIndex].isVip : true,
+    note:
+      existingIndex >= 0
+        ? settings.linkedContacts[existingIndex].note
+        : "Synced from Studio OS desktop client details.",
+  };
+
+  const linkedContacts =
+    existingIndex >= 0
+      ? settings.linkedContacts.map((item, index) =>
+          index === existingIndex ? contact : item,
+        )
+      : [contact, ...settings.linkedContacts];
+
+  return {
+    ...settings,
+    linkedContacts,
+  };
 }
 
 // ─── POST: Sync access settings from desktop app to cloud ───────────
@@ -153,6 +210,7 @@ export async function POST(request: NextRequest) {
     const localProjectId = clean(body.localProjectId);
     const title = clean(body.title) || "Untitled Project";
     const clientName = clean(body.clientName);
+    const clientEmail = normalizeEmail(body.clientEmail);
     const accessMode = normalizeAccessMode(body.accessMode);
     const accessPin = accessMode === "pin" ? clean(body.accessPin) : null;
     const galleryStatus = normalizeGalleryStatus(body.galleryStatus);
@@ -165,6 +223,7 @@ export async function POST(request: NextRequest) {
       access_pin?: string | null;
       access_updated_at?: string | null;
       access_updated_source?: string | null;
+      gallery_settings?: unknown;
     } | null = null;
 
     if (projectId) {
@@ -172,7 +231,7 @@ export async function POST(request: NextRequest) {
       const { data: existing } = await service
         .from("projects")
         .select(
-          "id,access_mode,access_pin,access_updated_at,access_updated_source",
+          "id,access_mode,access_pin,access_updated_at,access_updated_source,gallery_settings",
         )
         .eq("id", projectId)
         .eq("photographer_id", photographerId)
@@ -190,7 +249,7 @@ export async function POST(request: NextRequest) {
       const { data: linked } = await service
         .from("projects")
         .select(
-          "id,access_mode,access_pin,access_updated_at,access_updated_source",
+          "id,access_mode,access_pin,access_updated_at,access_updated_source,gallery_settings",
         )
         .eq("linked_local_school_id", localProjectId)
         .eq("photographer_id", photographerId)
@@ -227,6 +286,11 @@ export async function POST(request: NextRequest) {
     const effectiveProjectAccessUpdatedSource = applyIncomingProjectAccess
       ? "desktop"
       : existingProjectAccess?.access_updated_source || "cloud";
+    const desktopClientGallerySettings = withDesktopClientContact(
+      existingProjectAccess?.gallery_settings,
+      clientName,
+      clientEmail,
+    );
 
     if (!projectId) {
       // Create new project
@@ -251,6 +315,9 @@ export async function POST(request: NextRequest) {
           portal_status: galleryStatus,
           pre_release: preRelease,
           gallery_slug: slug,
+          ...(desktopClientGallerySettings
+            ? { gallery_settings: desktopClientGallerySettings }
+            : {}),
         })
         .select("id,gallery_slug")
         .single();
@@ -271,6 +338,9 @@ export async function POST(request: NextRequest) {
           portal_status: galleryStatus,
           pre_release: preRelease,
           updated_at: nowIso,
+          ...(desktopClientGallerySettings
+            ? { gallery_settings: desktopClientGallerySettings }
+            : {}),
         })
         .eq("id", projectId);
 
@@ -281,18 +351,38 @@ export async function POST(request: NextRequest) {
     const { data: projectRow, error: projectReadError } = await service
       .from("projects")
       .select(
-        "id,title,client_name,shoot_date,event_date,order_due_date,expiration_date,portal_status,pre_release,gallery_slug,access_mode,access_pin,access_updated_at,access_updated_source,updated_at",
+        "id,title,client_name,shoot_date,event_date,order_due_date,expiration_date,portal_status,pre_release,gallery_slug,gallery_settings,access_mode,access_pin,access_updated_at,access_updated_source,updated_at",
       )
       .eq("id", projectId)
       .single();
 
     if (projectReadError) throw projectReadError;
 
-    const galleryUrl = buildGalleryUrl(
-      projectId,
-      projectRow?.gallery_slug,
-      projectRow?.title ?? title,
-    );
+    const galleryUrl = buildGalleryUrl(projectId);
+
+    let seededVisitor: Record<string, unknown> | null = null;
+    if (clientEmail) {
+      const openedAt = nowIso;
+      const { data: visitorRow, error: visitorError } = await service
+        .from("event_gallery_visitors")
+        .upsert(
+          {
+            project_id: projectId,
+            viewer_email: clientEmail,
+            last_opened_at: openedAt,
+          },
+          { onConflict: "project_id,viewer_email" },
+        )
+        .select("viewer_email,created_at,last_opened_at")
+        .single();
+
+      if (visitorError && visitorError.code !== "42P01") throw visitorError;
+      seededVisitor = {
+        email: visitorRow?.viewer_email ?? clientEmail,
+        createdAt: visitorRow?.created_at ?? openedAt,
+        lastOpenedAt: visitorRow?.last_opened_at ?? openedAt,
+      };
+    }
 
     // ── Sync album/collection access ──
     const albums = Array.isArray(body.albums) ? body.albums : [];
@@ -465,6 +555,7 @@ export async function POST(request: NextRequest) {
         updated_at: projectRow?.updated_at ?? "",
       },
       collections: collectionResults,
+      seededVisitor,
       message: `Access settings synced. Gallery is ${galleryStatus.replace("_", "-")}.`,
     });
   } catch (error: unknown) {
@@ -535,11 +626,7 @@ export async function GET(request: NextRequest) {
           project: {
             ...proj,
             gallery_status: proj.portal_status,
-            gallery_url: buildGalleryUrl(
-              proj.id,
-              proj.gallery_slug,
-              proj.title,
-            ),
+            gallery_url: buildGalleryUrl(proj.id),
           },
           collections: collections ?? [],
         });
@@ -551,7 +638,6 @@ export async function GET(request: NextRequest) {
     // ── Single project pull ──
     const cloudProjectId = clean(url.searchParams.get("cloudProjectId"));
     const localProjectId = clean(url.searchParams.get("localProjectId"));
-    const titleHint = clean(url.searchParams.get("title"));
 
     let projectId = cloudProjectId;
 
@@ -597,11 +683,7 @@ export async function GET(request: NextRequest) {
 
     if (collError) throw collError;
 
-    const galleryUrl = buildGalleryUrl(
-      projectId,
-      projectRow?.gallery_slug,
-      projectRow?.title ?? titleHint,
-    );
+    const galleryUrl = buildGalleryUrl(projectId);
 
     return NextResponse.json({
       ok: true,
