@@ -1113,6 +1113,27 @@ function imageUrlExists(url: string): Promise<boolean> {
   });
 }
 
+function shouldUseAnonymousCanvasCors(url: string | null | undefined): boolean {
+  const candidate = clean(url);
+  if (!candidate) return false;
+  try {
+    const parsed = new URL(candidate, window.location.origin);
+    return !/\.r2\.cloudflarestorage\.com$/i.test(parsed.host);
+  } catch {
+    return true;
+  }
+}
+
+function prepareCanvasImage(img: HTMLImageElement, url: string | null | undefined) {
+  if (shouldUseAnonymousCanvasCors(url)) {
+    img.crossOrigin = "anonymous";
+  } else {
+    img.removeAttribute("crossorigin");
+    img.crossOrigin = null;
+  }
+  img.decoding = "async";
+}
+
 function favoriteStorageKey(projectId: string | null | undefined, email: string | null | undefined, pin: string | null | undefined) {
   const safeProjectId = clean(projectId);
   const safeEmail = clean(email).toLowerCase();
@@ -2977,12 +2998,12 @@ function CompositeCanvas({
     const bufferCtx = scratchCtx;
     bufferCtx.scale(dpr, dpr);
 
+    const bgSrc = backdropUrl || backdropFallbackUrl || "";
+    const fgSrc = nobgUrl || fallbackUrl;
     const bgImg = new Image();
-    bgImg.crossOrigin = "anonymous";
-    bgImg.decoding = "async";
+    prepareCanvasImage(bgImg, bgSrc);
     const fgImg = new Image();
-    fgImg.crossOrigin = "anonymous";
-    fgImg.decoding = "async";
+    prepareCanvasImage(fgImg, fgSrc);
 
     let bgLoaded = false;
     let fgLoaded = false;
@@ -3189,6 +3210,7 @@ function CompositeCanvas({
     bgImg.onerror = () => {
       if (!triedBackdropFallback && backdropFallbackUrl && backdropFallbackUrl !== backdropUrl) {
         triedBackdropFallback = true;
+        prepareCanvasImage(bgImg, backdropFallbackUrl);
         bgImg.src = backdropFallbackUrl;
         return;
       }
@@ -3197,11 +3219,12 @@ function CompositeCanvas({
     };
     fgImg.onerror = () => {
       // If nobg fails, fall back to original photo
+      prepareCanvasImage(fgImg, fallbackUrl);
       fgImg.src = fallbackUrl;
     };
 
-    bgImg.src = backdropUrl || backdropFallbackUrl || "";
-    fgImg.src = nobgUrl || fallbackUrl;
+    bgImg.src = bgSrc;
+    fgImg.src = fgSrc;
 
     return () => { cancelled = true; };
   }, [useDomBlurLayer, backdropUrl, backdropFallbackUrl, nobgUrl, fallbackUrl, width, height, renderKey, trimTransparentForeground, preserveForegroundAlignment, effectiveBackdropBlurPx]);
@@ -3495,12 +3518,12 @@ function MiniComposite({
     canvas.height = size * dpr;
     ctx.scale(dpr, dpr);
 
+    const bgSrc = backdropUrl || backdropFallbackUrl || "";
+    const fgSrc = nobgUrl || fallbackUrl;
     const bgImg = new Image();
-    bgImg.crossOrigin = "anonymous";
-    bgImg.decoding = "async";
+    prepareCanvasImage(bgImg, bgSrc);
     const fgImg = new Image();
-    fgImg.crossOrigin = "anonymous";
-    fgImg.decoding = "async";
+    prepareCanvasImage(fgImg, fgSrc);
 
     let bgDone = false, fgDone = false;
     let triedBackdropFallback = false;
@@ -3533,6 +3556,7 @@ function MiniComposite({
     bgImg.onerror = () => {
       if (!triedBackdropFallback && backdropFallbackUrl && backdropFallbackUrl !== backdropUrl) {
         triedBackdropFallback = true;
+        prepareCanvasImage(bgImg, backdropFallbackUrl);
         bgImg.src = backdropFallbackUrl;
         return;
       }
@@ -3541,8 +3565,8 @@ function MiniComposite({
     };
     fgImg.onerror = () => { fgDone = true; draw(); };
 
-    bgImg.src = backdropUrl || backdropFallbackUrl || "";
-    fgImg.src = nobgUrl || fallbackUrl;
+    bgImg.src = bgSrc;
+    fgImg.src = fgSrc;
   }, [backdropUrl, backdropFallbackUrl, nobgUrl, fallbackUrl, size, backdropBlurPx]);
 
   return (
