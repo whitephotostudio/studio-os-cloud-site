@@ -5,7 +5,11 @@ import {
 } from "@/lib/event-gallery-settings";
 import { buildSchoolGalleryDownloadAccess } from "@/lib/school-gallery-downloads";
 import { filterPackagesForProfile } from "@/lib/package-profile-selection";
-import { buildSchoolCandidateFolders, loadFolderMediaRows } from "@/lib/storage-folder";
+import {
+  buildSchoolCandidateFolders,
+  loadFolderMediaRows,
+  loadNoBgUrlMapForMediaRows,
+} from "@/lib/storage-folder";
 import { hasActiveSubscription } from "@/lib/subscription-gate";
 import {
   buildSignedMediaUrls,
@@ -348,6 +352,7 @@ export async function POST(request: NextRequest) {
     let backdropRows: BackdropRow[] = [];
     let compositeRows: CompositeMediaRow[] = [];
     let mediaRows: CompositeMediaRow[] = [];
+    let nobgUrls: Record<string, string> = {};
     let photographerId: string | null = activeSchool?.photographer_id ?? null;
     let watermarkEnabled = true;
     let watermarkLogoUrl = "";
@@ -430,15 +435,17 @@ export async function POST(request: NextRequest) {
       activeSchool,
       primaryStudent.class_name,
     );
-    mediaRows = (
-      await loadFolderMediaRows(
-        buildSchoolCandidateFolders({
-          studentCandidates,
-          activeSchool,
-          selectedSchoolId,
-        }),
-      )
-    ).map((row) => ({
+    const loadedMediaRows = await loadFolderMediaRows(
+      buildSchoolCandidateFolders({
+        studentCandidates,
+        activeSchool,
+        selectedSchoolId,
+      }),
+    );
+    nobgUrls = await loadNoBgUrlMapForMediaRows(loadedMediaRows, {
+      ttlSeconds: SIGNED_URL_TTL_PARENTS_PORTAL_SECONDS,
+    });
+    mediaRows = loadedMediaRows.map((row) => ({
       ...row,
       collection_id: null,
       created_at: null,
@@ -483,6 +490,7 @@ export async function POST(request: NextRequest) {
       composites: compositeRows,
       packages: packageRows,
       backdrops: backdropRows,
+      nobgUrls,
       photographerId,
       watermarkEnabled,
       watermarkLogoUrl,

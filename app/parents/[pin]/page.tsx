@@ -184,6 +184,7 @@ type GalleryContextPayload = {
   composites?: CompositeMediaRow[];
   packages?: PackageRow[];
   backdrops?: BackdropRow[];
+  nobgUrls?: Record<string, string>;
   photographerId?: string | null;
   watermarkEnabled?: boolean;
   watermarkLogoUrl?: string;
@@ -260,6 +261,7 @@ type EventGalleryDownloadAccess = {
 type GalleryImage = {
   id: string;
   url: string;
+  storagePath?: string | null;
   collectionId?: string | null;
   filename?: string | null;
   downloadUrl?: string | null;
@@ -1030,13 +1032,85 @@ function formatPackageItem(item: PackageItemValue): string {
 function folderFromPhotoUrl(photoUrl: string): string | null {
   try {
     const storagePath = extractStoragePathFromSupabaseUrl(photoUrl);
-    if (!storagePath) return null;
-    const parts = storagePath.split("/");
-    if (parts.length < 2) return null;
-    return parts.slice(0, parts.length - 1).join("/");
+    return folderFromStoragePath(storagePath);
   } catch {
     return null;
   }
+}
+
+function encodeStoragePath(path: string): string {
+  return normalizeStorageFolder(path)
+    .split("/")
+    .map((part) => encodeURIComponent(part))
+    .join("/");
+}
+
+function folderFromStoragePath(storagePath: string | null | undefined): string | null {
+  const normalized = normalizeStorageFolder(storagePath ?? "");
+  const parts = normalized.split("/").filter(Boolean);
+  if (parts.length < 2) return null;
+  return parts.slice(0, parts.length - 1).join("/");
+}
+
+function photoBaseNameFromFileName(name: string | null | undefined): string {
+  let base = clean(name).split(/[?#]/)[0].split("/").pop() ?? "";
+  for (let index = 0; index < 3; index += 1) {
+    base = base.replace(/\.[^.]+$/i, "");
+    base = base.replace(/_(preview|thumbnail|cutout|nobg)$/i, "");
+  }
+  return base;
+}
+
+function photoBaseNameFromImage(image: GalleryImage): string {
+  return (
+    photoBaseNameFromFileName(image.storagePath) ||
+    photoBaseNameFromFileName(image.filename) ||
+    photoBaseNameFromFileName(image.url)
+  );
+}
+
+function photoDedupeKey(storagePath: string | null | undefined, url: string): string {
+  const normalizedPath = normalizeStorageFolder(storagePath ?? "");
+  if (!normalizedPath) return `url:${clean(url).split("?")[0].toLowerCase()}`;
+
+  const parts = normalizedPath.split("/").filter(Boolean);
+  const fileBase = photoBaseNameFromFileName(parts.pop());
+  const folderParts = parts.length >= 3 ? parts.slice(1) : parts;
+  return `photo:${[...folderParts, fileBase].join("/").toLowerCase()}`;
+}
+
+function nobgPathsForImage(image: GalleryImage): string[] {
+  const storagePath = image.storagePath ?? extractStoragePathFromSupabaseUrl(image.url);
+  const normalizedStoragePath = normalizeStorageFolder(storagePath ?? "");
+  const folder = folderFromStoragePath(storagePath);
+  const baseName = photoBaseNameFromImage(image);
+  if (!folder || !baseName) return [];
+
+  return uniq([
+    normalizedStoragePath ? `${normalizedStoragePath}.png` : null,
+    normalizedStoragePath ? `${normalizedStoragePath}_cutout.png` : null,
+    normalizedStoragePath ? `${normalizedStoragePath}_nobg.png` : null,
+    `${folder}/${baseName}_cutout.png`,
+    `${folder}/${baseName}_nobg.png`,
+    `${folder}/${baseName}.png`,
+  ]);
+}
+
+function imageUrlExists(url: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    const done = (exists: boolean) => {
+      window.clearTimeout(timeout);
+      img.onload = null;
+      img.onerror = null;
+      resolve(exists);
+    };
+
+    img.onload = () => done(true);
+    img.onerror = () => done(false);
+    const timeout = window.setTimeout(() => done(false), 8000);
+    img.src = url;
+  });
 }
 
 function favoriteStorageKey(projectId: string | null | undefined, email: string | null | undefined, pin: string | null | undefined) {
@@ -2563,7 +2637,7 @@ function renderMockupStrip(
 
 // ── Nobg helpers ──────────────────────────────────────────────────────────
 function nobgPublicUrl(path: string): string {
-  return `${SUPABASE_URL}/storage/v1/object/public/${NOBG_BUCKET}/${path}`;
+  return `${SUPABASE_URL}/storage/v1/object/public/${NOBG_BUCKET}/${encodeStoragePath(path)}`;
 }
 
 /** Client-side canvas composite: backdrop image + nobg (transparent foreground) */
@@ -4449,17 +4523,18 @@ export default function ParentGalleryPage() {
 
         const combinedImages: GalleryImage[] = [];
         const seenUrls = new Set<string>();
+        const seenPhotoKeys = new Set<string>();
 
         const candidateFolders = uniqueFolders([
           ...studentCandidates.map((s) => folderFromPhotoUrl(s.photo_url ?? "")),
-          ...studentCandidates.flatMap((s) =>
-            (schoolRowsForMatch.length ? schoolRowsForMatch : activeSchool ? [activeSchool] : [])
-              .map((school) =>
-                school.local_school_id && s.class_name && s.folder_name
-                  ? `${school.local_school_id}/${s.class_name}/${s.folder_name}`
-                  : null
-              )
-          ),
+          ...studentCandidates.map((s) => {
+            const school =
+              schoolRowsForMatch.find((row) => row.id === s.school_id) ??
+              (activeSchool?.id === s.school_id ? activeSchool : null);
+            return school?.local_school_id && s.class_name && s.folder_name
+              ? `${school.local_school_id}/${s.class_name}/${s.folder_name}`
+              : null;
+          }),
           activeSchool?.local_school_id && primaryStudent.class_name && primaryStudent.folder_name
             ? `${activeSchool.local_school_id}/${primaryStudent.class_name}/${primaryStudent.folder_name}`
             : null,
@@ -4468,12 +4543,16 @@ export default function ParentGalleryPage() {
         for (const row of schoolMediaRows) {
           const downloadUrl = clean(row.download_url) || clean(row.preview_url) || clean(row.thumbnail_url);
           const displayUrl = clean(row.preview_url) || clean(row.thumbnail_url) || downloadUrl;
-          if (!displayUrl || seenUrls.has(displayUrl)) continue;
+          const storagePath = normalizeStorageFolder(row.storage_path ?? "");
+          const dedupeKey = photoDedupeKey(storagePath, displayUrl);
+          if (!displayUrl || seenPhotoKeys.has(dedupeKey) || seenUrls.has(displayUrl)) continue;
+          seenPhotoKeys.add(dedupeKey);
           seenUrls.add(displayUrl);
           combinedImages.push({
             id: row.id,
             url: displayUrl,
             filename: clean(row.filename) || null,
+            storagePath,
             downloadUrl: downloadUrl || displayUrl,
             previewUrl: clean(row.preview_url) || null,
             thumbnailUrl: clean(row.thumbnail_url) || null,
@@ -4483,11 +4562,17 @@ export default function ParentGalleryPage() {
 
         if (!combinedImages.length) {
           for (const s of studentCandidates) {
-            if (s.photo_url && !seenUrls.has(s.photo_url)) {
+            if (s.photo_url) {
+              const storagePath = extractStoragePathFromSupabaseUrl(s.photo_url);
+              const dedupeKey = photoDedupeKey(storagePath, s.photo_url);
+              if (seenPhotoKeys.has(dedupeKey) || seenUrls.has(s.photo_url)) continue;
+              seenPhotoKeys.add(dedupeKey);
               seenUrls.add(s.photo_url);
               combinedImages.push({
                 id: `student-${s.id}`,
                 url: s.photo_url,
+                filename: storagePath?.split("/").pop() ?? null,
+                storagePath,
                 source: "photo",
               });
             }
@@ -4583,7 +4668,12 @@ export default function ParentGalleryPage() {
 
         setLoading(false);
 
-        if (!resolvedPhotographerId || !candidateFolders.length || !combinedImages.length) {
+        const prefetchedNobgUrls = contextPayload.nobgUrls ?? {};
+        if (Object.keys(prefetchedNobgUrls).length > 0) {
+          setNobgUrls(prefetchedNobgUrls);
+        }
+
+        if (!resolvedPhotographerId || !combinedImages.length) {
           setNobgStatus("ready");
           return;
         }
@@ -4591,54 +4681,88 @@ export default function ParentGalleryPage() {
         setNobgStatus("loading");
 
         void (async () => {
-          const nobgUrlMap: Record<string, string> = {};
-          const priorityImageId = combinedImages[0]?.id ?? null;
+          const nobgUrlMap: Record<string, string> = { ...prefetchedNobgUrls };
+          const photoImages = combinedImages.filter((image) => image.source !== "composite");
+          const priorityImageId = photoImages[0]?.id ?? null;
           let priorityResolved = false;
-          const nobgListings = await Promise.all(
-            candidateFolders.map(async (folder) => {
-              try {
-                const { data: nobgFiles, error: nobgErr } = await supabase.storage
-                  .from(NOBG_BUCKET)
-                  .list(folder, { limit: 200, sortBy: { column: "name", order: "asc" } });
 
-                if (nobgErr) {
-                  console.warn(`[Gallery] nobg bucket list error for ${folder}:`, nobgErr.message);
-                  return { folder, files: [] as { name?: string | null }[] };
-                }
+          const markNobgReady = (image: GalleryImage, resolvedUrl: string) => {
+            if (nobgUrlMap[image.id]) return;
+            nobgUrlMap[image.id] = resolvedUrl;
+            if (!priorityResolved && priorityImageId && image.id === priorityImageId && mounted) {
+              priorityResolved = true;
+              setNobgUrls({ ...prefetchedNobgUrls, [image.id]: resolvedUrl });
+              setNobgStatus("ready");
+            }
+          };
 
-                return { folder, files: nobgFiles ?? [] };
-              } catch (nobgCatchErr) {
-                console.warn(`[Gallery] nobg bucket error for folder ${folder}:`, nobgCatchErr);
-                return { folder, files: [] as { name?: string | null }[] };
-              }
-            })
-          );
+          const nobgListings = candidateFolders.length
+            ? await Promise.all(
+                candidateFolders.map(async (folder) => {
+                  try {
+                    const { data: nobgFiles, error: nobgErr } = await supabase.storage
+                      .from(NOBG_BUCKET)
+                      .list(folder, { limit: 200, sortBy: { column: "name", order: "asc" } });
+
+                    if (nobgErr) {
+                      console.warn(`[Gallery] nobg bucket list error for ${folder}:`, nobgErr.message);
+                      return { folder, files: [] as { name?: string | null }[] };
+                    }
+
+                    return { folder, files: nobgFiles ?? [] };
+                  } catch (nobgCatchErr) {
+                    console.warn(`[Gallery] nobg bucket error for folder ${folder}:`, nobgCatchErr);
+                    return { folder, files: [] as { name?: string | null }[] };
+                  }
+                })
+              )
+            : [];
+
+          const expectedPathToImage = new Map<string, GalleryImage>();
+          for (const image of photoImages) {
+            for (const path of nobgPathsForImage(image)) {
+              expectedPathToImage.set(normalizeStorageFolder(path).toLowerCase(), image);
+            }
+          }
 
           for (const { folder, files } of nobgListings) {
             for (const f of files) {
               if (!f.name || !isImageFileName(f.name)) continue;
-              const baseName = f.name.replace(/_cutout/i, "").replace(/\.png$/i, "");
-              for (const origImg of combinedImages) {
-                const origName = origImg.url.split("/").pop()?.replace(/\.[^.]+$/, "") ?? "";
-                const normalizedOrigName =
-                  origImg.url.split("/").pop()?.replace(/\.[^.]+$/, "").toLowerCase() ?? "";
-                const normalizedNobgName = f.name.replace(/\.[^.]+$/, "").toLowerCase();
+              const nobgPath = normalizeStorageFolder(`${folder}/${f.name}`);
+              const exactMatch = expectedPathToImage.get(nobgPath.toLowerCase());
+              if (exactMatch) {
+                markNobgReady(exactMatch, nobgPublicUrl(nobgPath));
+                continue;
+              }
+
+              const nobgBaseName = photoBaseNameFromFileName(f.name).toLowerCase();
+              for (const origImg of photoImages) {
+                if (nobgUrlMap[origImg.id]) continue;
+                const origName = photoBaseNameFromImage(origImg).toLowerCase();
                 if (
-                  origName.toLowerCase() === baseName.toLowerCase() ||
-                  normalizedOrigName === normalizedNobgName
+                  origName &&
+                  nobgBaseName &&
+                  origName === nobgBaseName
                 ) {
-                  const resolvedUrl = nobgPublicUrl(`${folder}/${f.name}`);
-                  nobgUrlMap[origImg.id] = resolvedUrl;
-                  if (!priorityResolved && priorityImageId && origImg.id === priorityImageId && mounted) {
-                    priorityResolved = true;
-                    setNobgUrls({ [origImg.id]: resolvedUrl });
-                    setNobgStatus("ready");
-                  }
+                  markNobgReady(origImg, nobgPublicUrl(nobgPath));
                   break;
                 }
               }
             }
           }
+
+          const unresolvedImages = photoImages.filter((image) => !nobgUrlMap[image.id]);
+          await Promise.all(
+            unresolvedImages.map(async (image) => {
+              for (const path of nobgPathsForImage(image)) {
+                const candidateUrl = nobgPublicUrl(path);
+                if (await imageUrlExists(candidateUrl)) {
+                  markNobgReady(image, candidateUrl);
+                  return;
+                }
+              }
+            })
+          );
 
           if (!mounted) return;
           setNobgUrls(nobgUrlMap);

@@ -10,7 +10,11 @@ import {
   SIGNED_URL_TTL_PARENTS_PORTAL_SECONDS,
 } from "@/lib/storage-images";
 import { filterPackagesForProfile } from "@/lib/package-profile-selection";
-import { buildSchoolCandidateFolders, loadFolderMediaRows } from "@/lib/storage-folder";
+import {
+  buildSchoolCandidateFolders,
+  loadFolderMediaRows,
+  loadNoBgUrlMapForMediaRows,
+} from "@/lib/storage-folder";
 
 export const dynamic = "force-dynamic";
 
@@ -360,7 +364,24 @@ export async function POST(request: NextRequest) {
     // ─────────────────────────────────────────────────────────────────────
     let galleryContext: Record<string, unknown> | undefined;
 
-    if (prefetch && selectedSchool.photographer_id) {
+    let gallerySchool = selectedSchool;
+    if (resolvedSchoolId && resolvedSchoolId !== selectedSchool.id) {
+      const { data: resolvedSchool, error: resolvedSchoolError } = await service
+        .from("schools")
+        .select("id,school_name,status,portal_status,expiration_date,photographer_id,package_profile_id,local_school_id,order_due_date,access_mode,access_pin,email_required,gallery_settings,screenshot_protection_desktop,screenshot_protection_mobile,screenshot_protection_watermark,group_label_singular,group_label_plural")
+        .eq("id", resolvedSchoolId)
+        .maybeSingle();
+
+      if (resolvedSchoolError) throw resolvedSchoolError;
+      if (resolvedSchool) {
+        gallerySchool = resolvedSchool as typeof selectedSchool;
+      }
+    }
+
+    const gallerySchoolName = clean(gallerySchool.school_name);
+    const gallerySchoolStatus = gallerySchool.portal_status ?? gallerySchool.status;
+
+    if (prefetch && gallerySchool.photographer_id) {
       try {
         // Resolve full student list for all candidate schools
         const [studentsResult, packagesResult, backdropsResult, photographerResult] =
@@ -373,19 +394,19 @@ export async function POST(request: NextRequest) {
             service
               .from("packages")
               .select("id,name,description,price_cents,items,profile_id,category,is_retouch_addon")
-              .eq("photographer_id", selectedSchool.photographer_id)
+              .eq("photographer_id", gallerySchool.photographer_id)
               .eq("active", true)
               .order("price_cents", { ascending: true }),
             service
               .from("backdrop_catalog")
               .select("id,name,image_url,thumbnail_url,tier,price_cents,category,tags,sort_order,supports_landscape")
-              .eq("photographer_id", selectedSchool.photographer_id)
+              .eq("photographer_id", gallerySchool.photographer_id)
               .eq("active", true)
               .order("sort_order", { ascending: true }),
             service
               .from("photographers")
               .select("id,watermark_enabled,watermark_logo_url,logo_url,business_name,studio_address,studio_phone,studio_email,default_package_profile_id")
-              .eq("id", selectedSchool.photographer_id)
+              .eq("id", gallerySchool.photographer_id)
               .maybeSingle(),
           ]);
 
@@ -396,15 +417,17 @@ export async function POST(request: NextRequest) {
           studentCandidates.find((s) => s.school_id === resolvedSchoolId) ??
           studentCandidates[0] ??
           null;
-        const mediaRows = (
-          await loadFolderMediaRows(
-            buildSchoolCandidateFolders({
-              studentCandidates,
-              activeSchool: selectedSchool,
-              selectedSchoolId: resolvedSchoolId,
-            }),
-          )
-        ).map((row) => ({
+        const mediaRowsResult = await loadFolderMediaRows(
+          buildSchoolCandidateFolders({
+            studentCandidates,
+            activeSchool: gallerySchool,
+            selectedSchoolId: resolvedSchoolId,
+          }),
+        );
+        const noBgUrls = await loadNoBgUrlMapForMediaRows(mediaRowsResult, {
+          ttlSeconds: SIGNED_URL_TTL_PARENTS_PORTAL_SECONDS,
+        });
+        const mediaRows = mediaRowsResult.map((row) => ({
           ...row,
           collection_id: null,
           created_at: null,
@@ -412,18 +435,18 @@ export async function POST(request: NextRequest) {
         }));
         const compositeRows = await loadSchoolCompositeMedia(
           service,
-          selectedSchool,
+          gallerySchool,
           primaryStudent?.class_name,
         );
 
         const publicGallerySettings = sanitizeEventGallerySettingsForClient(
-          selectedSchool.gallery_settings,
+          gallerySchool.gallery_settings,
         );
         const photographerDefaultProfileId = ((photographerResult.data as Record<string, unknown> | null)?.default_package_profile_id as string | null) ?? null;
         const availablePackages = (packagesResult.data ?? []) as PackageRow[];
         const packageRows = filterPackagesForProfile(availablePackages, {
           selectedProfileId:
-            selectedSchool.package_profile_id ||
+            gallerySchool.package_profile_id ||
             publicGallerySettings.extras.priceSheetProfileId ||
             photographerDefaultProfileId,
         }).packages;
@@ -445,23 +468,23 @@ export async function POST(request: NextRequest) {
         };
 
         const activeProject = {
-          id: selectedSchool.id,
-          portal_status: selectedSchoolStatus ?? null,
-          order_due_date: selectedSchool.order_due_date ?? null,
-          expiration_date: selectedSchool.expiration_date ?? null,
+          id: gallerySchool.id,
+          portal_status: gallerySchoolStatus ?? null,
+          order_due_date: gallerySchool.order_due_date ?? null,
+          expiration_date: gallerySchool.expiration_date ?? null,
         };
         const downloadAccess = await buildSchoolGalleryDownloadAccess({
           service,
           schoolId: resolvedSchoolId,
           viewerEmail: selectedEmail,
-          gallerySettings: selectedSchool.gallery_settings,
+          gallerySettings: gallerySchool.gallery_settings,
         });
 
         // Resolve the set of school rows needed by gallery-context consumers
         const { data: sameNameFull } = await service
           .from("schools")
           .select("id,school_name,photographer_id,package_profile_id,local_school_id,status,portal_status,order_due_date,expiration_date,access_mode,access_pin,email_required,gallery_settings,group_label_singular,group_label_plural")
-          .ilike("school_name", selectedSchoolName)
+          .ilike("school_name", gallerySchoolName || selectedSchoolName)
           .order("created_at", { ascending: false });
 
         // 2026-04-26: Mirror gallery-context's response shape for the
@@ -475,19 +498,19 @@ export async function POST(request: NextRequest) {
         // the missing supports_landscape on backdrops above.
         const screenshotProtection = {
           desktop: Boolean(
-            (selectedSchool as Record<string, unknown>).screenshot_protection_desktop,
+            (gallerySchool as Record<string, unknown>).screenshot_protection_desktop,
           ),
           mobile: Boolean(
-            (selectedSchool as Record<string, unknown>).screenshot_protection_mobile,
+            (gallerySchool as Record<string, unknown>).screenshot_protection_mobile,
           ),
           watermark: Boolean(
-            (selectedSchool as Record<string, unknown>).screenshot_protection_watermark,
+            (gallerySchool as Record<string, unknown>).screenshot_protection_watermark,
           ),
         };
 
         // 2026-04-26: per-school grouping label, mirrored from gallery-
         // context so the prefetch cache lands fresh on the parents page.
-        const schoolForLabel = selectedSchool as Record<string, unknown>;
+        const schoolForLabel = gallerySchool as Record<string, unknown>;
         const groupLabel = {
           singular:
             (typeof schoolForLabel.group_label_singular === "string" &&
@@ -502,10 +525,10 @@ export async function POST(request: NextRequest) {
         galleryContext = {
           ok: true,
           currentSchool: selectedSchool,
-          schoolRowsForMatch: sameNameFull ?? [selectedSchool],
+          schoolRowsForMatch: sameNameFull ?? [gallerySchool],
           studentCandidates,
           primaryStudent,
-          activeSchool: selectedSchool,
+          activeSchool: gallerySchool,
           activeProject,
           gallerySettings: publicGallerySettings,
           downloadAccess,
@@ -513,7 +536,8 @@ export async function POST(request: NextRequest) {
           composites: compositeRows,
           packages: packageRows,
           backdrops: backdropsResult.data ?? [],
-          photographerId: photographer?.id ?? selectedSchool.photographer_id,
+          nobgUrls: noBgUrls,
+          photographerId: photographer?.id ?? gallerySchool.photographer_id,
           watermarkEnabled,
           watermarkLogoUrl,
           studioInfo,
