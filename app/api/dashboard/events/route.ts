@@ -303,7 +303,7 @@ export async function GET(request: NextRequest) {
       )
       .eq("photographer_id", photographerRow.id)
       .eq("workflow_type", "event")
-      .is("deleted_at", null)
+      .or("status.is.null,status.neq.deleted")
       .order("event_date", { ascending: false })
       .order("shoot_date", { ascending: false })
       .order("created_at", { ascending: false })

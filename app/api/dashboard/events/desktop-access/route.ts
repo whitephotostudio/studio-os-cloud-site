@@ -256,7 +256,7 @@ export async function POST(request: NextRequest) {
         )
         .eq("id", projectId)
         .eq("photographer_id", photographerId)
-        .is("deleted_at", null)
+        .or("status.is.null,status.neq.deleted")
         .maybeSingle();
 
       if (!existing?.id) {
@@ -275,7 +275,7 @@ export async function POST(request: NextRequest) {
         )
         .eq("linked_local_school_id", localProjectId)
         .eq("photographer_id", photographerId)
-        .is("deleted_at", null)
+        .or("status.is.null,status.neq.deleted")
         .order("created_at", { ascending: false })
         .limit(1)
         .maybeSingle();
@@ -646,7 +646,7 @@ export async function GET(request: NextRequest) {
         )
         .eq("photographer_id", photographerId)
         .eq("workflow_type", "event")
-        .is("deleted_at", null)
+        .or("status.is.null,status.neq.deleted")
         .order("created_at", { ascending: false });
 
       if (allError) throw allError;
@@ -687,7 +687,7 @@ export async function GET(request: NextRequest) {
         .select("id")
         .eq("linked_local_school_id", localProjectId)
         .eq("photographer_id", photographerId)
-        .is("deleted_at", null)
+        .or("status.is.null,status.neq.deleted")
         .order("created_at", { ascending: false })
         .limit(1)
         .maybeSingle();
@@ -709,7 +709,7 @@ export async function GET(request: NextRequest) {
       )
       .eq("id", projectId)
       .eq("photographer_id", photographerId)
-      .is("deleted_at", null)
+      .or("status.is.null,status.neq.deleted")
       .single();
 
     if (projectError) throw projectError;

@@ -1046,7 +1046,6 @@ export async function DELETE(
         .update({
           status: "deleted",
           portal_status: "archived",
-          deleted_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
         })
         .eq("id", projectId)

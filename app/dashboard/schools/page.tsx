@@ -201,6 +201,16 @@ export default function SchoolsPage() {
 
       const rawSchools = (schoolRows ?? []) as SchoolRow[];
 
+      const deduped = new Map<string, SchoolRow>();
+
+      for (const school of rawSchools) {
+        const localId = clean(school.local_school_id);
+        const nameKey = clean(school.school_name).toLowerCase();
+        const key = localId || nameKey;
+        if (!key) continue;
+        if (!deduped.has(key)) deduped.set(key, school);
+      }
+
       const { data: projectRows } = await supabase
         .from("projects")
         .select("id,title,workflow_type,linked_local_school_id,linked_school_id,cover_photo_url,cover_focal_x,cover_focal_y")
@@ -208,25 +218,6 @@ export default function SchoolsPage() {
         .in("workflow_type", ["event", "school"]);
 
       const allProjects = (projectRows ?? []) as ProjectRow[];
-      const eventProjects = allProjects.filter((p) => clean(p.workflow_type) === "event");
-      const blockedLocalIds = new Set(
-        eventProjects.map((p) => clean(p.linked_local_school_id)).filter(Boolean)
-      );
-      const blockedTitles = new Set(
-        eventProjects.map((p) => clean(p.title).toLowerCase()).filter(Boolean)
-      );
-
-      const deduped = new Map<string, SchoolRow>();
-
-      for (const school of rawSchools) {
-        const localId = clean(school.local_school_id);
-        const nameKey = clean(school.school_name).toLowerCase();
-        if (localId && blockedLocalIds.has(localId)) continue;
-        if (nameKey && blockedTitles.has(nameKey)) continue;
-        const key = localId || nameKey;
-        if (!key) continue;
-        if (!deduped.has(key)) deduped.set(key, school);
-      }
 
       // Build maps of school ID → synced project cover info
       const schoolProjects = allProjects.filter((p) => clean(p.workflow_type) === "school");
