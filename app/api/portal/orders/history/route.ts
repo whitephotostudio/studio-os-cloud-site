@@ -32,6 +32,13 @@ import { createDashboardServiceClient } from "@/lib/dashboard-auth";
 import { rateLimit, getClientIp } from "@/lib/rate-limit";
 import { parseJson } from "@/lib/api-validation";
 import type { RateLimitConfig } from "@/lib/rate-limit";
+import {
+  isWebImageUrl,
+  parseOrderPhotoSelections,
+  resolveOrderItemDisplayCents,
+  resolveOrderSubtotalCents,
+  resolveOrderTotalCents,
+} from "@/lib/order-display";
 
 export const dynamic = "force-dynamic";
 
@@ -56,6 +63,7 @@ type OrderRow = {
   paid_at: string | null;
   status: string | null;
   total_cents: number | null;
+  total_amount: number | null;
   subtotal_cents: number | null;
   tax_cents: number | null;
   currency: string | null;
@@ -164,6 +172,7 @@ export async function POST(request: NextRequest) {
       .from("orders")
       .select(
         `id,created_at,paid_at,status,total_cents,subtotal_cents,tax_cents,currency,package_name,
+         total_amount,
          parent_name,parent_email,parent_phone,customer_email,special_notes,notes,
          cart_snapshot,photographer_id,
          school_id,project_id,student_id,order_group_id,
@@ -238,6 +247,7 @@ export async function POST(request: NextRequest) {
     .from("orders")
     .select(
       `id,created_at,paid_at,status,total_cents,subtotal_cents,tax_cents,currency,package_name,
+       total_amount,
        parent_name,parent_email,parent_phone,customer_email,special_notes,notes,
        cart_snapshot,photographer_id,
        school_id,project_id,student_id,order_group_id,
@@ -269,12 +279,26 @@ function formatOrder(
   row: OrderRow,
   ctx: { student_name: string | null },
 ) {
-  const items = (row.order_items ?? []).map((it) => ({
+  const notePhotos = parseOrderPhotoSelections(row.special_notes ?? row.notes);
+  const rawItems = (row.order_items?.length ? row.order_items : notePhotos.map((photo) => ({
+    product_name: photo.label,
+    quantity: 1,
+    line_total_cents: null,
+    unit_price_cents: null,
+    sku: photo.url,
+  }))) ?? [];
+  const orderTotalCents = resolveOrderTotalCents(row, rawItems);
+  const items = rawItems.map((it, index) => ({
     productName: it.product_name ?? "Item",
     quantity: it.quantity ?? 1,
-    lineTotalCents: it.line_total_cents ?? 0,
+    lineTotalCents: resolveOrderItemDisplayCents(
+      it,
+      rawItems,
+      orderTotalCents,
+      index,
+    ),
     unitPriceCents: it.unit_price_cents ?? 0,
-    sku: it.sku,
+    sku: isWebImageUrl(it.sku) ? it.sku : notePhotos[index]?.url ?? null,
   }));
   return {
     id: row.id,
@@ -282,8 +306,8 @@ function formatOrder(
     createdAt: row.created_at,
     paidAt: row.paid_at,
     status: row.status ?? "pending",
-    totalCents: row.total_cents ?? 0,
-    subtotalCents: row.subtotal_cents ?? null,
+    totalCents: orderTotalCents,
+    subtotalCents: resolveOrderSubtotalCents(row, rawItems),
     taxCents: row.tax_cents ?? null,
     currency: row.currency ?? "cad",
     packageName: row.package_name ?? null,

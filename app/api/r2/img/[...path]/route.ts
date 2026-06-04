@@ -92,9 +92,11 @@ export async function GET(
     //   2. nobg-photos/<photographerId>/...           — background-removed PNGs
     //   3. projects/<projectId>/...  where the project belongs to this photographer
     //   4. thumbs/<photographerId>/...                — old thumbnails bucket
+    //   5. <school.local_school_id>/...                — desktop school sync photos
     let authorized = false;
 
     const firstSegment = storagePath.split("/")[0] ?? "";
+    const secondSegment = storagePath.split("/")[1] ?? "";
     if (firstSegment === photographerId) {
       authorized = true;
     } else if (
@@ -114,6 +116,20 @@ export async function GET(
           .maybeSingle();
         if (projectError) throw projectError;
         if (projectRow) authorized = true;
+      }
+    }
+
+    if (!authorized && firstSegment) {
+      const localSchoolId = firstSegment === "nobg-photos" ? secondSegment : firstSegment;
+      if (localSchoolId) {
+        const { data: schoolRow, error: schoolError } = await service
+          .from("schools")
+          .select("id")
+          .eq("photographer_id", photographerId)
+          .eq("local_school_id", localSchoolId)
+          .maybeSingle();
+        if (schoolError) throw schoolError;
+        if (schoolRow) authorized = true;
       }
     }
 

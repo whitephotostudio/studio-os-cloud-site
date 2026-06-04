@@ -9,6 +9,15 @@
 // render HTML).  Thumbnails are referenced by URL — no inline attachments.
 // Most modern email clients render external image URLs from HTTPS.
 
+import {
+  isWebImageUrl,
+  parseOrderPhotoSelections,
+  resolveOrderItemDisplayCents,
+  resolveOrderSubtotalCents,
+  resolveOrderTotalCents,
+} from "./order-display";
+import { r2KeyFromAnyUrl, r2PresignedGetUrl } from "./r2-signed-urls";
+
 export type OrderReceiptOrder = {
   id: string;
   package_name?: string | null;
@@ -77,6 +86,28 @@ function formatDate(iso: string | null | undefined) {
   });
 }
 
+function emailImageUrl(url: string | null | undefined) {
+  const raw = clean(url);
+  if (!raw) return "";
+
+  try {
+    const parsed = new URL(raw);
+    if (
+      /\.r2\.dev$/i.test(parsed.host) ||
+      /\.r2\.cloudflarestorage\.com$/i.test(parsed.host) ||
+      parsed.pathname.startsWith("/api/r2/img/")
+    ) {
+      const key = r2KeyFromAnyUrl(raw);
+      const signed = key ? r2PresignedGetUrl(key, 60 * 60 * 24 * 7) : "";
+      return signed || raw;
+    }
+  } catch {
+    // Keep non-URL values out of email image tags.
+  }
+
+  return isWebImageUrl(raw) ? raw : "";
+}
+
 /**
  * Some parents' email clients (Outlook desktop especially) drop large
  * external images.  Force a stable max width and use a 1:1 srcset so the
@@ -101,8 +132,8 @@ export function buildOrderReceiptEmail(input: {
   const { order, items, photographer, context, ordersHistoryUrl } = input;
 
   const currency = clean(order.currency) || "cad";
-  const totalCents = order.total_cents ?? Math.round(Number(order.total_amount ?? 0) * 100);
-  const subtotalCents = order.subtotal_cents ?? totalCents;
+  const totalCents = resolveOrderTotalCents(order, items);
+  const subtotalCents = resolveOrderSubtotalCents(order, items);
   const taxCents = order.tax_cents ?? 0;
   const studioName = clean(photographer.business_name) || "Your Studio";
   const orderId = clean(order.id).slice(0, 8).toUpperCase();
@@ -124,15 +155,27 @@ export function buildOrderReceiptEmail(input: {
     (i) => (i.line_total_cents ?? 0) < 0,
   );
 
+  const notePhotos = parseOrderPhotoSelections(order.special_notes);
+  const itemPhotoUrl = (item: OrderReceiptItem, index: number) => {
+    const raw = isWebImageUrl(item.sku)
+      ? clean(item.sku)
+      : clean(notePhotos[index]?.url);
+    return emailImageUrl(raw);
+  };
+
   const itemRowsHtml = visibleItems
-    .map((item) => {
+    .map((item, index) => {
       const name = clean(item.product_name) || "Item";
       const qty = item.quantity ?? 1;
-      const lineTotal =
-        item.line_total_cents ?? (item.unit_price_cents ?? 0) * qty;
+      const lineTotal = resolveOrderItemDisplayCents(
+        item,
+        visibleItems,
+        totalCents,
+        index,
+      );
       return `
         <tr>
-          ${thumbCell(item.sku)}
+          ${thumbCell(itemPhotoUrl(item, index))}
           <td style="padding:12px 16px 12px 0;font-size:14px;color:#222;font-weight:600;line-height:1.4;">${esc(name)}<br><span style="font-size:12px;color:#888;font-weight:400;">Qty ${qty}</span></td>
           <td style="padding:12px 16px;font-size:14px;color:#222;text-align:right;font-weight:600;white-space:nowrap;">${formatCurrency(lineTotal, currency)}</td>
         </tr>`;
@@ -286,12 +329,17 @@ export function buildOrderReceiptEmail(input: {
   if (contextLabel) textLines.push(`Gallery: ${contextLabel}`);
   textLines.push("");
   textLines.push("Items:");
-  for (const item of visibleItems) {
+  visibleItems.forEach((item, index) => {
     const name = clean(item.product_name) || "Item";
     const qty = item.quantity ?? 1;
-    const lineTotal = item.line_total_cents ?? (item.unit_price_cents ?? 0) * qty;
+    const lineTotal = resolveOrderItemDisplayCents(
+      item,
+      visibleItems,
+      totalCents,
+      index,
+    );
     textLines.push(`  • ${name} (qty ${qty}) — ${formatCurrency(lineTotal, currency)}`);
-  }
+  });
   if (discountItems.length > 0) {
     textLines.push("");
     for (const d of discountItems) {

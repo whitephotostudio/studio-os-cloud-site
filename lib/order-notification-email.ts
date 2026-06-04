@@ -4,6 +4,16 @@
  * but elevated with our own palette.
  */
 
+import {
+  cleanOrderCustomerNote,
+  isWebImageUrl,
+  parseOrderPhotoSelections,
+  resolveOrderItemDisplayCents,
+  resolveOrderSubtotalCents,
+  resolveOrderTotalCents,
+} from "./order-display";
+import { r2KeyFromAnyUrl, r2PresignedGetUrl } from "./r2-signed-urls";
+
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
 /* ------------------------------------------------------------------ */
@@ -77,6 +87,74 @@ function formatDate(iso: string | null | undefined) {
   });
 }
 
+function emailImageUrl(url: string | null | undefined) {
+  const raw = clean(url);
+  if (!raw) return "";
+
+  try {
+    const parsed = new URL(raw);
+    if (
+      /\.r2\.dev$/i.test(parsed.host) ||
+      /\.r2\.cloudflarestorage\.com$/i.test(parsed.host) ||
+      parsed.pathname.startsWith("/api/r2/img/")
+    ) {
+      const key = r2KeyFromAnyUrl(raw);
+      const signed = key ? r2PresignedGetUrl(key, 60 * 60 * 24 * 7) : "";
+      return signed || raw;
+    }
+  } catch {
+    // Keep non-URL values out of email image tags.
+  }
+
+  return isWebImageUrl(raw) ? raw : "";
+}
+
+function fileNameFromUrl(url: string, fallback: string) {
+  try {
+    const pathname = new URL(url).pathname;
+    const name = pathname.split("/").pop();
+    return name && name.trim() ? decodeURIComponent(name) : fallback;
+  } catch {
+    const parts = url.split("?")[0].split("/");
+    return parts[parts.length - 1] || fallback;
+  }
+}
+
+function resolveOrderedPhotos(
+  notes: string | null | undefined,
+  items: OrderNotificationItem[],
+) {
+  const parsed = parseOrderPhotoSelections(notes);
+  const rawSources = parsed.length > 0
+    ? parsed.map((entry) => ({ label: entry.label, url: entry.url }))
+    : items
+        .map((item) => ({
+          label: clean(item.product_name) || "Photo",
+          url: clean(item.sku),
+        }))
+        .filter((item) => isWebImageUrl(item.url));
+
+  const seen = new Set<string>();
+  return rawSources
+    .map((entry, index) => {
+      const displayUrl = emailImageUrl(entry.url);
+      if (!displayUrl || seen.has(displayUrl)) return null;
+      seen.add(displayUrl);
+      return {
+        label: entry.label || `Photo ${index + 1}`,
+        originalUrl: entry.url,
+        displayUrl,
+        fileName: fileNameFromUrl(entry.url, `photo-${index + 1}.jpg`),
+      };
+    })
+    .filter(Boolean) as Array<{
+      label: string;
+      originalUrl: string;
+      displayUrl: string;
+      fileName: string;
+    }>;
+}
+
 /* ------------------------------------------------------------------ */
 /*  Email builder                                                      */
 /* ------------------------------------------------------------------ */
@@ -91,13 +169,15 @@ export function buildOrderNotificationEmail(input: {
   const { order, items, photographer, context, dashboardUrl } = input;
 
   const currency = clean(order.currency) || "cad";
-  const totalCents = order.total_cents ?? Math.round(Number(order.total_amount ?? 0) * 100);
-  const subtotalCents = order.subtotal_cents ?? totalCents;
+  const totalCents = resolveOrderTotalCents(order, items);
+  const subtotalCents = resolveOrderSubtotalCents(order, items);
   const taxCents = order.tax_cents ?? 0;
   const buyerEmail = clean(order.customer_email || order.parent_email) || "—";
   const packageName = clean(order.package_name) || "Photo Order";
   const studioName = clean(photographer.business_name) || "Your Studio";
   const orderId = clean(order.id).slice(0, 8).toUpperCase();
+  const orderedPhotos = resolveOrderedPhotos(order.special_notes, items);
+  const customerNote = cleanOrderCustomerNote(order.special_notes);
 
   const contextLabel = clean(context.project_title)
     || clean(context.school_name)
@@ -108,10 +188,10 @@ export function buildOrderNotificationEmail(input: {
   const subject = `New Order #${orderId} — ${formatCurrency(totalCents, currency)} from ${contextLabel}`;
 
   // Build item rows
-  const itemRowsHtml = items.map((item) => {
+  const itemRowsHtml = items.map((item, index) => {
     const name = clean(item.product_name) || "Item";
     const qty = item.quantity ?? 1;
-    const lineTotal = item.line_total_cents ?? (item.unit_price_cents ?? 0) * qty;
+    const lineTotal = resolveOrderItemDisplayCents(item, items, totalCents, index);
     return `
       <tr>
         <td style="padding:12px 16px;border-bottom:1px solid #f0f0f0;font-size:14px;color:#333;">${esc(name)}</td>
@@ -119,6 +199,20 @@ export function buildOrderNotificationEmail(input: {
         <td style="padding:12px 16px;border-bottom:1px solid #f0f0f0;font-size:14px;color:#333;text-align:right;">${formatCurrency(lineTotal, currency)}</td>
       </tr>`;
   }).join("");
+
+  const photoRowsHtml = Array.from({ length: Math.ceil(orderedPhotos.length / 2) })
+    .map((_, rowIndex) => `
+      <tr>
+        ${orderedPhotos.slice(rowIndex * 2, rowIndex * 2 + 2).map((photo) => `
+      <td width="50%" style="width:50%;padding:0 8px 16px;vertical-align:top;">
+        <div style="border:1px solid #eeeeee;border-radius:10px;padding:10px;background:#fafafa;">
+          <img src="${esc(photo.displayUrl)}" alt="${esc(photo.label)}" width="220" style="display:block;width:100%;max-width:220px;height:260px;object-fit:cover;border-radius:8px;background:#f3f4f6;margin:0 auto;" />
+          <p style="margin:8px 0 0;font-size:12px;font-weight:700;color:#333;line-height:1.35;">${esc(photo.label)}</p>
+          <p style="margin:3px 0 0;font-size:11px;color:#888;line-height:1.35;word-break:break-word;">${esc(photo.fileName)}</p>
+        </div>
+      </td>`).join("")}
+      </tr>`)
+    .join("");
 
   // Build the HTML
   const html = `<!DOCTYPE html>
@@ -221,6 +315,17 @@ export function buildOrderNotificationEmail(input: {
     </td>
   </tr>` : ""}
 
+  ${orderedPhotos.length > 0 ? `
+  <!-- Ordered photos -->
+  <tr>
+    <td style="padding:4px 24px 20px;">
+      <p style="margin:0 8px 10px;font-size:12px;text-transform:uppercase;letter-spacing:0.06em;color:#999;font-weight:700;">Ordered Photos</p>
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+        ${photoRowsHtml}
+      </table>
+    </td>
+  </tr>` : ""}
+
   <!-- Totals -->
   <tr>
     <td style="padding:8px 32px 24px;">
@@ -243,13 +348,13 @@ export function buildOrderNotificationEmail(input: {
     </td>
   </tr>
 
-  ${clean(order.special_notes) ? `
+  ${customerNote ? `
   <!-- Special notes -->
   <tr>
     <td style="padding:0 32px 20px;">
       <div style="background:#fffbeb;border:1px solid #fef3c7;border-radius:8px;padding:12px 16px;">
         <p style="margin:0 0 4px;font-size:12px;text-transform:uppercase;letter-spacing:0.06em;color:#92400e;font-weight:600;">Customer Note</p>
-        <p style="margin:0;font-size:14px;color:#78350f;">${esc(clean(order.special_notes))}</p>
+        <p style="margin:0;font-size:14px;color:#78350f;">${esc(customerNote)}</p>
       </div>
     </td>
   </tr>` : ""}
@@ -294,17 +399,18 @@ export function buildOrderNotificationEmail(input: {
     studentLabel ? `Student: ${studentLabel}` : null,
     `Package: ${packageName}`,
     "",
-    items.map((item) => {
+    items.map((item, index) => {
       const name = clean(item.product_name) || "Item";
       const qty = item.quantity ?? 1;
-      const lineTotal = item.line_total_cents ?? (item.unit_price_cents ?? 0) * qty;
+      const lineTotal = resolveOrderItemDisplayCents(item, items, totalCents, index);
       return `  ${name} x${qty} — ${formatCurrency(lineTotal, currency)}`;
     }).join("\n"),
+    orderedPhotos.length ? `\nOrdered photos:\n${orderedPhotos.map((photo, index) => `  ${index + 1}. ${photo.label}: ${photo.displayUrl}`).join("\n")}` : null,
     "",
     subtotalCents !== totalCents ? `Subtotal: ${formatCurrency(subtotalCents, currency)}` : null,
     taxCents > 0 ? `Tax: ${formatCurrency(taxCents, currency)}` : null,
     `Total: ${formatCurrency(totalCents, currency)}`,
-    clean(order.special_notes) ? `\nCustomer Note: ${clean(order.special_notes)}` : null,
+    customerNote ? `\nCustomer Note: ${customerNote}` : null,
     "",
     `View in dashboard: ${dashboardUrl}`,
   ].filter(Boolean).join("\n");

@@ -3,6 +3,12 @@ import {
   createDashboardServiceClient,
   resolveDashboardAuth,
 } from "@/lib/dashboard-auth";
+import {
+  cleanOrderCustomerNote,
+  isWebImageUrl,
+  parseOrderPhotoSelections,
+} from "@/lib/order-display";
+import { r2KeyFromAnyUrl, r2PresignedGetUrl } from "@/lib/r2-signed-urls";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 120; // allow up to 2 minutes for large downloads
@@ -22,21 +28,6 @@ function crc32(buf: Uint8Array): number {
     }
   }
   return (crc ^ 0xffffffff) >>> 0;
-}
-
-function u16(v: number) {
-  const b = new Uint8Array(2);
-  b[0] = v & 0xff;
-  b[1] = (v >> 8) & 0xff;
-  return b;
-}
-function u32(v: number) {
-  const b = new Uint8Array(4);
-  b[0] = v & 0xff;
-  b[1] = (v >> 8) & 0xff;
-  b[2] = (v >> 16) & 0xff;
-  b[3] = (v >> 24) & 0xff;
-  return b;
 }
 
 type ZipEntry = { name: string; data: Uint8Array };
@@ -132,11 +123,6 @@ function clean(v: string | null | undefined) {
   return (v ?? "").trim();
 }
 
-function money(cents: number | null | undefined, fallbackAmount?: number | null) {
-  const val = cents != null ? cents / 100 : (fallbackAmount ?? 0);
-  return `$${val.toFixed(2)}`;
-}
-
 function slug(v: string | null | undefined, fallback: string) {
   const s = clean(v);
   return s ? s.replace(/[^a-zA-Z0-9]+/g, "_").replace(/^_|_$/g, "") : fallback;
@@ -145,26 +131,11 @@ function slug(v: string | null | undefined, fallback: string) {
 /** Parse structured order info from special_notes text when order_items table is empty */
 function parseNotesItems(notes: string): { productName: string; photoUrl: string; quantity: number }[] {
   if (!notes) return [];
-  const parsed: { productName: string; photoUrl: string; quantity: number }[] = [];
-  // Split on "ORDER ITEM N:" blocks
-  const blocks = notes.split(/ORDER ITEM\s*\d+:\s*/i).filter(Boolean);
-  for (const block of blocks) {
-    const lines = block.split("\n").map(l => l.trim()).filter(Boolean);
-    if (lines.length === 0) continue;
-    // First line is the product name (e.g. "5x7 Lustre" or "Composite • 8x10 Lustre")
-    const productName = lines[0].replace(/^:\s*/, "").trim();
-    if (productName.toLowerCase().startsWith("delivery")) continue; // skip delivery line
-    // Find photo URL — URLs may contain spaces in folder names (e.g. "Abrahamyan Nicole 92996")
-    // so we match from https:// to the file extension (.png, .jpg, .jpeg, .webp)
-    let photoUrl = "";
-    const joined = lines.join(" ");
-    const urlMatch = joined.match(/(https?:\/\/[^\n]*?\.(?:png|jpg|jpeg|webp|gif))/i);
-    if (urlMatch) {
-      photoUrl = urlMatch[1].trim();
-    }
-    parsed.push({ productName, photoUrl, quantity: 1 });
-  }
-  return parsed;
+  return parseOrderPhotoSelections(notes).map((entry) => ({
+    productName: entry.label || "Item",
+    photoUrl: entry.url,
+    quantity: 1,
+  }));
 }
 
 function fileNameFromUrl(url: string, fallback: string) {
@@ -202,6 +173,28 @@ function encodePhotoUrl(url: string): string {
   }
 }
 
+function downloadPhotoUrl(url: string): string {
+  const raw = clean(url);
+  if (!raw) return "";
+
+  try {
+    const parsed = new URL(raw);
+    if (
+      /\.r2\.dev$/i.test(parsed.host) ||
+      /\.r2\.cloudflarestorage\.com$/i.test(parsed.host) ||
+      parsed.pathname.startsWith("/api/r2/img/")
+    ) {
+      const key = r2KeyFromAnyUrl(raw);
+      const signed = key ? r2PresignedGetUrl(key, 60 * 60) : "";
+      return signed || encodePhotoUrl(raw);
+    }
+  } catch {
+    return "";
+  }
+
+  return encodePhotoUrl(raw);
+}
+
 function formatDate(d: string) {
   return new Date(d).toLocaleDateString("en-US", { year: "numeric", month: "numeric", day: "numeric" });
 }
@@ -215,12 +208,12 @@ function shortOrderId(id: string) {
 function resolveOrderDisplayItems(order: any): { productName: string; photoUrl: string; quantity: number }[] {
   const dbItems = order.items ?? [];
   const notesText = clean(order.special_notes) || clean(order.notes);
-  const parsedFromNotes = dbItems.length === 0 ? parseNotesItems(notesText) : [];
+  const parsedFromNotes = parseNotesItems(notesText);
 
   if (dbItems.length > 0) {
-    return dbItems.map((item: { product_name?: string; quantity?: number; sku?: string }) => ({
-      productName: item.product_name ?? "Item",
-      photoUrl: item.sku ?? "",
+    return dbItems.map((item: { product_name?: string; quantity?: number; sku?: string }, index: number) => ({
+      productName: item.product_name ?? parsedFromNotes[index]?.productName ?? "Item",
+      photoUrl: isWebImageUrl(item.sku) ? (item.sku ?? "") : (parsedFromNotes[index]?.photoUrl ?? ""),
       quantity: item.quantity ?? 1,
     }));
   }
@@ -248,23 +241,7 @@ function buildOrderSummaryHtml(order: any, branding: StudioBranding, photoFileMa
   const orderId = shortOrderId(order.id);
   const status = (order.status ?? "new").toUpperCase().replace(/_/g, " ");
   const rawNotes = clean(order.special_notes) || clean(order.notes);
-  // Strip structured ORDER ITEM data, URLs, and technical lines — keep only human notes
-  const cleanedNotes = rawNotes
-    .split("\n")
-    .filter((line: string) => {
-      const t = line.trim();
-      if (!t) return false;
-      if (/^ORDER ITEM\s*\d+/i.test(t)) return false;
-      if (/^PHOTO SELECTIONS/i.test(t)) return false;
-      if (/^CLASS COMPOSITE/i.test(t)) return false;
-      if (/^Item\s*\d+:/i.test(t)) return false;
-      if (/https?:\/\//i.test(t)) return false;
-      if (/^[a-f0-9-]{20,}/i.test(t)) return false; // UUID-like fragments
-      if (/^\d+\/[A-Za-z_]+\.(png|jpg|jpeg)/i.test(t)) return false; // partial file paths
-      return true;
-    })
-    .join("\n")
-    .trim();
+  const cleanedNotes = cleanOrderCustomerNote(rawNotes);
 
   const displayItems = resolveOrderDisplayItems(order);
 
@@ -448,7 +425,9 @@ export async function GET(request: NextRequest) {
       for (const url of photoUrls) {
         photoIndex++;
         try {
-          const resp = await fetch(encodePhotoUrl(url));
+          const fetchUrl = downloadPhotoUrl(url);
+          if (!fetchUrl) continue;
+          const resp = await fetch(fetchUrl);
           if (!resp.ok) {
             console.error(`Failed to download photo ${url}: ${resp.status}`);
             continue;

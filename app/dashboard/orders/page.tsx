@@ -45,6 +45,14 @@ import {
 import { createClient } from "@/lib/supabase/client";
 import { Logo } from "@/components/logo";
 import { useIsMobile } from "@/lib/use-is-mobile";
+import {
+  cleanOrderCustomerNote,
+  extractOrderPhotoUrls,
+  isWebImageUrl,
+  parseOrderPhotoSelections,
+  resolveOrderItemDisplayCents,
+  resolveOrderTotalCents,
+} from "@/lib/order-display";
 
 type OrderItem = {
   id?: string;
@@ -149,37 +157,13 @@ function moneyFromCents(cents: number | null | undefined, currency = "CAD") {
   }).format(((cents ?? 0) || 0) / 100);
 }
 
-function moneyFromAmount(amount: number | null | undefined, currency = "CAD") {
-  return new Intl.NumberFormat("en-CA", {
-    style: "currency",
-    currency: currency || "CAD",
-  }).format(Number(amount || 0));
-}
-
 function clean(value: string | null | undefined) {
   return (value ?? "").trim();
 }
 
 /** Strip ORDER ITEM blocks, URLs, and technical lines — keep only human notes */
 function cleanNotes(value: string | null | undefined): string {
-  const raw = clean(value);
-  if (!raw) return "";
-  return raw
-    .split("\n")
-    .filter((line) => {
-      const t = line.trim();
-      if (!t) return false;
-      if (/^ORDER ITEM\s*\d+/i.test(t)) return false;
-      if (/^PHOTO SELECTIONS/i.test(t)) return false;
-      if (/^CLASS COMPOSITE/i.test(t)) return false;
-      if (/^Item\s*\d+:/i.test(t)) return false;
-      if (/https?:\/\//i.test(t)) return false;
-      if (/^[a-f0-9-]{20,}/i.test(t)) return false;
-      if (/^\d+\/[A-Za-z_]+\.(png|jpg|jpeg)/i.test(t)) return false;
-      return true;
-    })
-    .join("\n")
-    .trim();
+  return cleanOrderCustomerNote(value);
 }
 
 function singleRelation<T>(value: RelatedRow<T>): T | null {
@@ -222,12 +206,82 @@ function fileNameFromUrl(url: string, fallback: string) {
   }
 }
 
+function encodeStoragePath(path: string) {
+  return path
+    .split("/")
+    .filter(Boolean)
+    .map((segment) => encodeURIComponent(decodeURIComponent(segment)))
+    .join("/");
+}
+
+function r2KeyFromBrowserUrl(url: string) {
+  try {
+    const parsed = new URL(
+      url,
+      typeof window === "undefined" ? "https://www.studiooscloud.com" : window.location.origin,
+    );
+    if (parsed.pathname.startsWith("/api/r2/img/")) {
+      return decodeURIComponent(parsed.pathname.slice("/api/r2/img/".length));
+    }
+    if (/\.r2\.dev$/i.test(parsed.host)) {
+      return decodeURIComponent(parsed.pathname.replace(/^\/+/, ""));
+    }
+    if (/\.r2\.cloudflarestorage\.com$/i.test(parsed.host)) {
+      const stripped = parsed.pathname.replace(/^\/+/, "");
+      const slash = stripped.indexOf("/");
+      return slash >= 0 ? decodeURIComponent(stripped.slice(slash + 1)) : "";
+    }
+  } catch {
+    return "";
+  }
+  return "";
+}
+
+function encodeExternalImageUrl(url: string) {
+  try {
+    const parsed = new URL(url);
+    parsed.pathname = parsed.pathname
+      .split("/")
+      .map((segment) => encodeURIComponent(decodeURIComponent(segment)))
+      .join("/");
+    return parsed.toString();
+  } catch {
+    return url.replace(/ /g, "%20");
+  }
+}
+
+function dashboardPhotoUrl(value: string | null | undefined) {
+  const raw = clean(value);
+  if (!raw) return "";
+  if (raw.startsWith("/api/r2/img/")) return raw;
+  if (!/^https?:\/\//i.test(raw)) return "";
+
+  const key = r2KeyFromBrowserUrl(raw);
+  if (key) return `/api/r2/img/${encodeStoragePath(key)}`;
+
+  return isWebImageUrl(raw) ? encodeExternalImageUrl(raw) : "";
+}
+
+function noteTextForOrder(order: Order | null) {
+  return [order?.special_notes, order?.notes].map(clean).filter(Boolean).join("\n");
+}
+
 function extractImageUrls(order: Order | null) {
   if (!order) return [] as string[];
   const urls = new Set<string>();
-  if (clean(order.student?.photo_url)) urls.add(order.student?.photo_url as string);
-  for (const item of order.items ?? []) {
-    if (clean(item.sku)) urls.add(item.sku as string);
+  const noteUrls = extractOrderPhotoUrls(noteTextForOrder(order));
+  const orderedUrls = noteUrls.length > 0
+    ? noteUrls
+    : (order.items ?? []).map((item) => clean(item.sku)).filter((url) => !!dashboardPhotoUrl(url));
+
+  for (const url of orderedUrls) {
+    const displayUrl = dashboardPhotoUrl(url);
+    if (displayUrl) urls.add(displayUrl);
+  }
+
+  if (urls.size === 0) {
+    const studentUrl = dashboardPhotoUrl(order.student?.photo_url);
+    if (studentUrl) urls.add(studentUrl);
   }
   return Array.from(urls);
 }
@@ -260,6 +314,7 @@ function buildManifest(order: Order) {
   const studentName = slug(`${order.student?.first_name ?? "Student"} ${order.student?.last_name ?? ""}`, "Student");
   const folderRoot = `${schoolName}/${className}/${studentName}`;
   const urls = extractImageUrls(order);
+  const orderTotalCents = resolveOrderTotalCents(order, order.items);
 
   const lines = [
     `Studio OS Lab Export`,
@@ -271,17 +326,20 @@ function buildManifest(order: Order) {
     `Parent: ${order.parent_name ?? order.customer_name ?? "—"}`,
     `Email: ${order.parent_email ?? order.customer_email ?? "—"}`,
     `Package: ${order.package_name || "Package"}`,
-    `Total: ${moneyFromCents(order.total_cents ?? Math.round((order.total_amount ?? 0) * 100), order.currency?.toUpperCase() || "CAD")}`,
+    `Total: ${moneyFromCents(orderTotalCents, order.currency?.toUpperCase() || "CAD")}`,
     `Suggested Folder: ${folderRoot}`,
     ``,
     `Order Items`,
     ...(order.items?.length
       ? order.items.map((item, index) => {
           const qty = item.quantity ?? 0;
-          const total = item.line_total_cents != null ? moneyFromCents(item.line_total_cents, order.currency?.toUpperCase() || "CAD") : moneyFromAmount(item.price, order.currency?.toUpperCase() || "CAD");
+          const total = moneyFromCents(
+            resolveOrderItemDisplayCents(item, order.items, orderTotalCents, index),
+            order.currency?.toUpperCase() || "CAD",
+          );
           return `${index + 1}. ${item.product_name ?? "Item"} | Qty: ${qty} | Total: ${total}`;
         })
-      : [`1. ${order.package_name || "Package"} | Qty: 1 | Total: ${moneyFromAmount(order.package_price, order.currency?.toUpperCase() || "CAD")}`]),
+      : [`1. ${order.package_name || "Package"} | Qty: 1 | Total: ${moneyFromCents(orderTotalCents, order.currency?.toUpperCase() || "CAD")}`]),
     ``,
     `Original Files`,
     ...(urls.length ? urls.map((url, index) => `${index + 1}. ${fileNameFromUrl(url, `image-${index + 1}.jpg`)}\n   ${url}`) : ["No image URLs found."]),
@@ -310,18 +368,20 @@ function buildCombinedPackageSummary(orders: Order[]) {
 function buildOrderSummaryHtml(order: Order) {
   const manifest = buildManifest(order);
   const currency = order.currency?.toUpperCase() || "CAD";
-  const items = order.items?.length ? order.items : [{ product_name: order.package_name, quantity: 1, price: order.package_price, unit_price_cents: null, line_total_cents: Math.round((order.total_amount ?? order.package_price) * 100), sku: order.student?.photo_url ?? null }];
+  const orderTotalCents = resolveOrderTotalCents(order, order.items);
+  const items = order.items?.length ? order.items : [{ product_name: order.package_name, quantity: 1, price: order.package_price, unit_price_cents: null, line_total_cents: orderTotalCents, sku: order.student?.photo_url ?? null }];
   const imageUrls = extractImageUrls(order);
 
   const rows = items
-    .map((item) => {
+    .map((item, index) => {
       const qty = item.quantity ?? 0;
-      const total = item.line_total_cents != null ? moneyFromCents(item.line_total_cents, currency) : moneyFromAmount(item.price, currency);
+      const total = moneyFromCents(resolveOrderItemDisplayCents(item, items, orderTotalCents, index), currency);
+      const itemUrl = dashboardPhotoUrl(item.sku);
       return `<tr>
         <td>${item.product_name ?? "Item"}</td>
         <td>${qty}</td>
         <td>${total}</td>
-        <td>${item.sku ? `<a href="${item.sku}" target="_blank" rel="noopener">Open original</a>` : "—"}</td>
+        <td>${itemUrl ? `<a href="${itemUrl}" target="_blank" rel="noopener">Open original</a>` : "—"}</td>
       </tr>`;
     })
     .join("");
@@ -366,7 +426,7 @@ pre{white-space:pre-wrap;line-height:1.55;font-size:12px;background:#f9fafb;bord
     </div>
     <div class="card" style="min-width:240px;">
       <div class="small">Total</div>
-      <div class="value" style="font-size:26px;">${moneyFromCents(order.total_cents ?? Math.round((order.total_amount ?? 0) * 100), currency)}</div>
+      <div class="value" style="font-size:26px;">${moneyFromCents(orderTotalCents, currency)}</div>
       <div style="margin-top:10px;color:#6b7280;font-size:13px;">Status: ${STATUS_COLORS[order.status]?.label ?? order.status}</div>
       <div style="color:#6b7280;font-size:13px;">Created: ${formatDate(order.created_at)}</div>
     </div>
@@ -923,35 +983,85 @@ function OrdersPageContent() {
 
 
   const selectedOrderedPhotoGroups = useMemo(() => {
-    if (!selected) return [] as Array<{ url: string | null; fileName: string; items: OrderItem[] }>;
+    if (!selected) return [] as Array<{ url: string | null; originalUrl: string | null; fileName: string; items: OrderItem[] }>;
 
-    const buckets = new Map<string, { url: string | null; fileName: string; items: OrderItem[] }>();
-    const sourceItems = selected.items?.length
+    const buckets = new Map<string, { url: string | null; originalUrl: string | null; fileName: string; items: OrderItem[] }>();
+    const orderTotalCents = resolveOrderTotalCents(selected, selected.items);
+    const noteSelections = parseOrderPhotoSelections(noteTextForOrder(selected));
+    const baseItems: OrderItem[] = selected.items?.length
       ? selected.items
+      : noteSelections.length
+        ? noteSelections.map((entry, index) => ({
+            id: `${selected.id}-note-${index}`,
+            product_name: entry.label || selected.package_name,
+            quantity: 1,
+            price: null,
+            unit_price_cents: null,
+            line_total_cents: resolveOrderItemDisplayCents(
+              { product_name: entry.label, quantity: 1, line_total_cents: null, unit_price_cents: null, price: null },
+              noteSelections.map((note) => ({ product_name: note.label, quantity: 1, line_total_cents: null, unit_price_cents: null, price: null })),
+              orderTotalCents,
+              index,
+            ),
+            sku: entry.url,
+          } as OrderItem))
       : [{
           id: `${selected.id}-package`,
           product_name: selected.package_name,
           quantity: 1,
           price: selected.package_price,
           unit_price_cents: null,
-          line_total_cents: Math.round((selected.total_amount ?? selected.package_price) * 100),
+          line_total_cents: orderTotalCents,
           sku: selected.student?.photo_url ?? null,
         } as OrderItem];
+    const sourceItems = baseItems.map((item, index) => ({
+      ...item,
+      line_total_cents: resolveOrderItemDisplayCents(
+        item,
+        baseItems,
+        orderTotalCents,
+        index,
+      ),
+    }));
 
-    for (const item of sourceItems) {
-      const rawUrl = clean(item.sku);
-      const key = rawUrl || `no-image-${selected.id}`;
+    sourceItems.forEach((item, index) => {
+      const rawSku = clean(item.sku);
+      const rawUrl = dashboardPhotoUrl(rawSku) ? rawSku : clean(noteSelections[index]?.url);
+      const displayUrl = dashboardPhotoUrl(rawUrl);
+      const key = displayUrl || `no-image-${selected.id}-${index}`;
       const existing = buckets.get(key);
       if (existing) {
         existing.items.push(item);
       } else {
         buckets.set(key, {
-          url: rawUrl || null,
-          fileName: rawUrl ? fileNameFromUrl(rawUrl, selected.student?.folder_name || 'photo.jpg') : selected.student?.folder_name || `${selected.student?.first_name ?? 'student'}-${selected.id.slice(0, 6)}.jpg`,
+          url: displayUrl || null,
+          originalUrl: rawUrl || null,
+          fileName: rawUrl ? fileNameFromUrl(rawUrl, selected.student?.folder_name || "photo.jpg") : selected.student?.folder_name || `${selected.student?.first_name ?? "student"}-${selected.id.slice(0, 6)}.jpg`,
           items: [item],
         });
       }
-    }
+    });
+
+    noteSelections.slice(sourceItems.length).forEach((entry, offset) => {
+      const displayUrl = dashboardPhotoUrl(entry.url);
+      if (!displayUrl) return;
+      const index = sourceItems.length + offset;
+      const item = {
+        id: `${selected.id}-extra-photo-${index}`,
+        product_name: entry.label || "Photo",
+        quantity: 1,
+        price: null,
+        unit_price_cents: null,
+        line_total_cents: 0,
+        sku: entry.url,
+      } as OrderItem;
+      buckets.set(displayUrl, {
+        url: displayUrl,
+        originalUrl: entry.url,
+        fileName: fileNameFromUrl(entry.url, `photo-${index + 1}.jpg`),
+        items: [item],
+      });
+    });
 
     return Array.from(buckets.values());
   }, [selected]);
@@ -968,7 +1078,7 @@ function OrdersPageContent() {
     return Array.from(groups.entries()).map(([key, groupOrders]) => {
       const representative = groupOrders[0];
       const imageUrls = Array.from(new Set(groupOrders.flatMap((order) => extractImageUrls(order))));
-      const totalCents = groupOrders.reduce((sum, order) => sum + (order.total_cents ?? Math.round((order.total_amount ?? order.package_price) * 100)), 0);
+      const totalCents = groupOrders.reduce((sum, order) => sum + resolveOrderTotalCents(order, order.items), 0);
       const itemsCount = groupOrders.reduce((sum, order) => sum + ((order.items?.length || 0) > 0 ? order.items!.length : 1), 0);
       const statuses = Array.from(new Set(groupOrders.map((order) => order.status)));
 
@@ -1035,7 +1145,7 @@ function OrdersPageContent() {
   }
 
   const newCount = useMemo(() => orders.filter((o) => !o.seen_by_photographer).length, [orders]);
-  const totalRevenue = useMemo(() => filtered.reduce((sum, order) => sum + (order.total_cents ?? Math.round((order.total_amount ?? 0) * 100)), 0), [filtered]);
+  const totalRevenue = useMemo(() => filtered.reduce((sum, order) => sum + resolveOrderTotalCents(order, order.items), 0), [filtered]);
   const totalImages = useMemo(() => filtered.reduce((sum, order) => sum + extractImageUrls(order).length, 0), [filtered]);
 
   const navSectionTitle: React.CSSProperties = {
@@ -1934,7 +2044,7 @@ function OrdersPageContent() {
                 </div>
                 <div style={{ flex: "0 0 auto", textAlign: "right" }}>
                   <div style={{ fontSize: 11, color: textMuted, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>Order Total</div>
-                  <div style={{ fontSize: 28, fontWeight: 900, color: textPrimary }}>{moneyFromCents(selected.total_cents ?? Math.round((selected.total_amount ?? 0) * 100), selected.currency?.toUpperCase() || "CAD")}</div>
+                  <div style={{ fontSize: 28, fontWeight: 900, color: textPrimary }}>{moneyFromCents(resolveOrderTotalCents(selected, selected.items), selected.currency?.toUpperCase() || "CAD")}</div>
                 </div>
               </div>
 
@@ -1980,9 +2090,7 @@ function OrdersPageContent() {
                                 <div style={{ fontSize: 14, fontWeight: 700, color: textPrimary }}>{item.product_name ?? "Item"}</div>
                                 <div style={{ fontSize: 12, color: textMuted, marginTop: 2 }}>Qty: {item.quantity ?? 1}</div>
                               </div>
-                              <div style={{ fontSize: 14, fontWeight: 700, color: textPrimary }}>
-                                {item.line_total_cents != null ? moneyFromCents(item.line_total_cents, selected.currency?.toUpperCase() || "CAD") : moneyFromAmount(item.price, selected.currency?.toUpperCase() || "CAD")}
-                              </div>
+                              <div style={{ fontSize: 14, fontWeight: 700, color: textPrimary }}>{moneyFromCents(item.line_total_cents ?? 0, selected.currency?.toUpperCase() || "CAD")}</div>
                             </div>
                           </div>
                         ))}
@@ -2141,9 +2249,9 @@ function OrdersPageContent() {
                         placeholder="https://... photo URL or leave blank"
                         style={{ width: "100%", border: `1px solid ${borderColor}`, borderRadius: 10, padding: "9px 12px", fontSize: 13, color: textPrimary, outline: "none", boxSizing: "border-box" }}
                       />
-                      {item.sku ? (
+                      {dashboardPhotoUrl(item.sku) ? (
                         <div style={{ marginTop: 10 }}>
-                          <img loading="lazy" src={item.sku} alt="" style={{ width: 72, height: 92, objectFit: "cover", borderRadius: 10, border: `1px solid ${borderColor}` }} onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
+                          <img loading="lazy" src={dashboardPhotoUrl(item.sku)} alt="" style={{ width: 72, height: 92, objectFit: "cover", borderRadius: 10, border: `1px solid ${borderColor}` }} onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
                         </div>
                       ) : null}
                     </div>
