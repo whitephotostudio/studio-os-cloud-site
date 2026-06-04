@@ -41,6 +41,12 @@ function clean(value: string | null | undefined) {
   return (value ?? "").trim();
 }
 
+function normalizeEmail(value: string | null | undefined) {
+  const email = clean(value).toLowerCase();
+  if (!email || !email.includes("@")) return "";
+  return email;
+}
+
 function slugify(value: string, fallback = "gallery") {
   const base = clean(value)
     .toLowerCase()
@@ -111,50 +117,6 @@ function shouldApplyIncomingAccess({
   return true;
 }
 
-function normalizeEmail(value: string | null | undefined): string {
-  const email = clean(value).toLowerCase();
-  if (!email || !email.includes("@")) return "";
-  return email;
-}
-
-function clientContactId(email: string) {
-  return `desktop-client-${email.replace(/[^a-z0-9]+/g, "-")}`;
-}
-
-function withDesktopClientContact(
-  rawSettings: unknown,
-  clientEmail: string,
-  clientName: string,
-) {
-  const settings = normalizeEventGallerySettings(rawSettings);
-  if (!clientEmail) return settings;
-
-  const normalizedEmail = clientEmail.toLowerCase();
-  const existing = settings.linkedContacts.find(
-    (contact) => clean(contact.email).toLowerCase() === normalizedEmail,
-  );
-  const contact: EventGalleryLinkedContact = {
-    id: existing?.id || clientContactId(normalizedEmail),
-    name: clean(existing?.name) || clientName,
-    email: normalizedEmail,
-    role: "Client",
-    labelPhotos: existing?.labelPhotos ?? false,
-    hidePhotos: existing?.hidePhotos ?? false,
-    isVip: existing?.isVip ?? true,
-    note: clean(existing?.note),
-  };
-
-  return {
-    ...settings,
-    linkedContacts: [
-      contact,
-      ...settings.linkedContacts.filter(
-        (item) => clean(item.email).toLowerCase() !== normalizedEmail,
-      ),
-    ],
-  };
-}
-
 function buildGalleryUrl(
   projectId: string,
   slug?: string | null,
@@ -169,6 +131,56 @@ function buildGalleryUrl(
     project: projectId,
   });
   return `https://www.studiooscloud.com/parents?${params.toString()}`;
+}
+
+function clientContactId(email: string) {
+  const safe = email.replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  return `desktop-client-${safe || "contact"}`;
+}
+
+function withDesktopClientContact(
+  gallerySettings: unknown,
+  clientName: string,
+  clientEmail: string,
+) {
+  if (!clientEmail) return undefined;
+  const settings = normalizeEventGallerySettings(gallerySettings);
+  const email = clientEmail.toLowerCase();
+  const existingIndex = settings.linkedContacts.findIndex(
+    (contact) => clean(contact.email).toLowerCase() === email,
+  );
+  const contact: EventGalleryLinkedContact = {
+    id:
+      existingIndex >= 0
+        ? settings.linkedContacts[existingIndex].id
+        : clientContactId(email),
+    name:
+      clientName ||
+      (existingIndex >= 0 ? settings.linkedContacts[existingIndex].name : ""),
+    email,
+    role: "Client",
+    labelPhotos:
+      existingIndex >= 0 ? settings.linkedContacts[existingIndex].labelPhotos : false,
+    hidePhotos:
+      existingIndex >= 0 ? settings.linkedContacts[existingIndex].hidePhotos : false,
+    isVip: existingIndex >= 0 ? settings.linkedContacts[existingIndex].isVip : true,
+    note:
+      existingIndex >= 0
+        ? settings.linkedContacts[existingIndex].note
+        : "Synced from Studio OS desktop client details.",
+  };
+
+  const linkedContacts =
+    existingIndex >= 0
+      ? settings.linkedContacts.map((item, index) =>
+          index === existingIndex ? contact : item,
+        )
+      : [contact, ...settings.linkedContacts];
+
+  return {
+    ...settings,
+    linkedContacts,
+  };
 }
 
 // ─── POST: Sync access settings from desktop app to cloud ───────────
@@ -224,6 +236,7 @@ export async function POST(request: NextRequest) {
     const galleryStatus = normalizeGalleryStatus(body.galleryStatus);
     const preRelease = galleryStatus === "pre_released";
     const shootDate = clean(body.shootDate) || clean(body.eventDate);
+    const nowIso = new Date().toISOString();
 
     let projectId = cloudProjectId;
     let existingProjectAccess: {
@@ -273,7 +286,6 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const nowIso = new Date().toISOString();
     const applyIncomingProjectAccess = shouldApplyIncomingAccess({
       incomingUpdatedAt: body.accessUpdatedAt,
       existingUpdatedAt: existingProjectAccess?.access_updated_at,
@@ -297,13 +309,11 @@ export async function POST(request: NextRequest) {
     const effectiveProjectAccessUpdatedSource = applyIncomingProjectAccess
       ? "desktop"
       : existingProjectAccess?.access_updated_source || "cloud";
-    const gallerySettingsWithClient = clientEmail
-      ? withDesktopClientContact(
-          existingProjectAccess?.gallery_settings,
-          clientEmail,
-          clientName,
-        )
-      : null;
+    const desktopClientGallerySettings = withDesktopClientContact(
+      existingProjectAccess?.gallery_settings,
+      clientName,
+      clientEmail,
+    );
 
     if (!projectId) {
       // Create new project
@@ -330,8 +340,8 @@ export async function POST(request: NextRequest) {
           portal_status: galleryStatus,
           pre_release: preRelease,
           gallery_slug: slug,
-          ...(gallerySettingsWithClient
-            ? { gallery_settings: gallerySettingsWithClient }
+          ...(desktopClientGallerySettings
+            ? { gallery_settings: desktopClientGallerySettings }
             : {}),
         })
         .select("id,gallery_slug")
@@ -356,8 +366,8 @@ export async function POST(request: NextRequest) {
           portal_status: galleryStatus,
           pre_release: preRelease,
           updated_at: nowIso,
-          ...(gallerySettingsWithClient
-            ? { gallery_settings: gallerySettingsWithClient }
+          ...(desktopClientGallerySettings
+            ? { gallery_settings: desktopClientGallerySettings }
             : {}),
         })
         .eq("id", projectId);
@@ -369,7 +379,7 @@ export async function POST(request: NextRequest) {
     const { data: projectRow, error: projectReadError } = await service
       .from("projects")
       .select(
-        "id,title,client_name,shoot_date,event_date,order_due_date,expiration_date,portal_status,pre_release,gallery_slug,cover_photo_url,access_mode,access_pin,access_updated_at,access_updated_source,updated_at",
+        "id,title,client_name,shoot_date,event_date,order_due_date,expiration_date,portal_status,pre_release,gallery_slug,gallery_settings,cover_photo_url,access_mode,access_pin,access_updated_at,access_updated_source,updated_at",
       )
       .eq("id", projectId)
       .single();
@@ -380,33 +390,21 @@ export async function POST(request: NextRequest) {
 
     let seededVisitor: Record<string, unknown> | null = null;
     if (clientEmail) {
-      const openedAt = new Date().toISOString();
-      const { data: existingVisitor, error: visitorLookupError } = await service
+      const openedAt = nowIso;
+      const { data: visitorRow, error: visitorError } = await service
         .from("event_gallery_visitors")
-        .select("id")
-        .eq("project_id", projectId)
-        .ilike("viewer_email", clientEmail)
-        .limit(1)
-        .maybeSingle();
-
-      if (visitorLookupError) throw visitorLookupError;
-
-      const visitorMutation = existingVisitor?.id
-        ? service
-            .from("event_gallery_visitors")
-            .update({ last_opened_at: openedAt })
-            .eq("id", existingVisitor.id)
-        : service.from("event_gallery_visitors").insert({
+        .upsert(
+          {
             project_id: projectId,
             viewer_email: clientEmail,
             last_opened_at: openedAt,
-          });
-
-      const { data: visitorRow, error: visitorError } = await visitorMutation
+          },
+          { onConflict: "project_id,viewer_email" },
+        )
         .select("viewer_email,created_at,last_opened_at")
         .single();
 
-      if (visitorError) throw visitorError;
+      if (visitorError && visitorError.code !== "42P01") throw visitorError;
       seededVisitor = {
         email: visitorRow?.viewer_email ?? clientEmail,
         createdAt: visitorRow?.created_at ?? openedAt,
@@ -607,7 +605,7 @@ export async function POST(request: NextRequest) {
   }
 }
 
-// ─── GET: Pull access settings from cloud to desktop app ────────────
+// ─── GET: Pull access settings from cloud to desktop app ───────────
 export async function GET(request: NextRequest) {
   try {
     const { user } = await resolveDashboardAuth(request);

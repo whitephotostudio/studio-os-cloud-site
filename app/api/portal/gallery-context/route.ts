@@ -33,6 +33,7 @@ type SchoolRow = {
   package_profile_id: string | null;
   local_school_id?: string | null;
   status?: string | null;
+  portal_status?: string | null;
   order_due_date?: string | null;
   expiration_date?: string | null;
   access_mode?: string | null;
@@ -246,7 +247,7 @@ export async function POST(request: NextRequest) {
     const { data: currentSchool, error: currentSchoolError } = selectedSchoolId
       ? await service
           .from("schools")
-          .select("id,school_name,photographer_id,package_profile_id,local_school_id,status,order_due_date,expiration_date,access_mode,access_pin,email_required,gallery_settings,screenshot_protection_desktop,screenshot_protection_mobile,screenshot_protection_watermark,group_label_singular,group_label_plural")
+          .select("id,school_name,photographer_id,package_profile_id,local_school_id,status,portal_status,order_due_date,expiration_date,access_mode,access_pin,email_required,gallery_settings,screenshot_protection_desktop,screenshot_protection_mobile,screenshot_protection_watermark,group_label_singular,group_label_plural")
           .eq("id", selectedSchoolId)
           .maybeSingle<SchoolRow>()
       : { data: null as SchoolRow | null, error: null };
@@ -260,7 +261,7 @@ export async function POST(request: NextRequest) {
     if (schoolNameForMatch) {
       const { data: sameNameSchools, error: sameNameError } = await service
         .from("schools")
-        .select("id,school_name,photographer_id,package_profile_id,local_school_id,status,order_due_date,expiration_date,access_mode,access_pin,email_required,gallery_settings,screenshot_protection_desktop,screenshot_protection_mobile,screenshot_protection_watermark,group_label_singular,group_label_plural")
+        .select("id,school_name,photographer_id,package_profile_id,local_school_id,status,portal_status,order_due_date,expiration_date,access_mode,access_pin,email_required,gallery_settings,screenshot_protection_desktop,screenshot_protection_mobile,screenshot_protection_watermark,group_label_singular,group_label_plural")
         .ilike("school_name", schoolNameForMatch)
         .order("created_at", { ascending: false });
 
@@ -315,7 +316,7 @@ export async function POST(request: NextRequest) {
     if (!activeSchool && primaryStudent.school_id) {
       const { data: fetchedSchool, error: fetchedSchoolError } = await service
         .from("schools")
-        .select("id,school_name,photographer_id,package_profile_id,local_school_id,status,order_due_date,expiration_date,access_mode,access_pin,email_required,gallery_settings,screenshot_protection_desktop,screenshot_protection_mobile,screenshot_protection_watermark,group_label_singular,group_label_plural")
+        .select("id,school_name,photographer_id,package_profile_id,local_school_id,status,portal_status,order_due_date,expiration_date,access_mode,access_pin,email_required,gallery_settings,screenshot_protection_desktop,screenshot_protection_mobile,screenshot_protection_watermark,group_label_singular,group_label_plural")
         .eq("id", primaryStudent.school_id)
         .maybeSingle<SchoolRow>();
 
@@ -326,7 +327,7 @@ export async function POST(request: NextRequest) {
     const activeProject: ProjectRow | null = activeSchool
       ? {
           id: activeSchool.id,
-          portal_status: activeSchool.status ?? null,
+          portal_status: activeSchool.portal_status ?? activeSchool.status ?? null,
           order_due_date: activeSchool.order_due_date ?? null,
           expiration_date: activeSchool.expiration_date ?? null,
         }

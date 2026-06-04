@@ -18,6 +18,7 @@ type SchoolRow = {
   id: string;
   school_name: string;
   status: string | null;
+  portal_status?: string | null;
   expiration_date: string | null;
   photographer_id?: string | null;
   package_profile_id?: string | null;
@@ -238,16 +239,13 @@ export async function POST(request: NextRequest) {
     if (!selectedSchoolId) {
       return NextResponse.json({ ok: false, message: "Please choose your school." }, { status: 400 });
     }
-    if (!selectedPin) {
-      return NextResponse.json({ ok: false, message: "Please enter the PIN from your photo envelope." }, { status: 400 });
-    }
 
     const service = createDashboardServiceClient();
 
     // Step 1: Validate school
     const { data: schoolRow, error: schoolError } = await service
       .from("schools")
-      .select("id,school_name,status,expiration_date,photographer_id,package_profile_id,local_school_id,order_due_date,access_mode,access_pin,email_required,gallery_settings,screenshot_protection_desktop,screenshot_protection_mobile,screenshot_protection_watermark,group_label_singular,group_label_plural")
+      .select("id,school_name,status,portal_status,expiration_date,photographer_id,package_profile_id,local_school_id,order_due_date,access_mode,access_pin,email_required,gallery_settings,screenshot_protection_desktop,screenshot_protection_mobile,screenshot_protection_watermark,group_label_singular,group_label_plural")
       .eq("id", selectedSchoolId)
       .maybeSingle();
 
@@ -267,8 +265,14 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: false, step: "school_closed" }, { status: 409 });
     }
 
-    if (normalizedSchoolStatus(selectedSchool.status) === "pre_release") {
+    const selectedSchoolStatus = selectedSchool.portal_status ?? selectedSchool.status;
+
+    if (normalizedSchoolStatus(selectedSchoolStatus) === "pre_release") {
       return NextResponse.json({ ok: false, step: "school_prerelease" }, { status: 409 });
+    }
+
+    if (!selectedPin) {
+      return NextResponse.json({ ok: false, message: "Please enter the PIN from your photo envelope." }, { status: 400 });
     }
 
     if (!looksLikeEmail(selectedEmail)) {
@@ -442,7 +446,7 @@ export async function POST(request: NextRequest) {
 
         const activeProject = {
           id: selectedSchool.id,
-          portal_status: selectedSchool.status ?? null,
+          portal_status: selectedSchoolStatus ?? null,
           order_due_date: selectedSchool.order_due_date ?? null,
           expiration_date: selectedSchool.expiration_date ?? null,
         };
@@ -456,7 +460,7 @@ export async function POST(request: NextRequest) {
         // Resolve the set of school rows needed by gallery-context consumers
         const { data: sameNameFull } = await service
           .from("schools")
-          .select("id,school_name,photographer_id,package_profile_id,local_school_id,status,order_due_date,expiration_date,access_mode,access_pin,email_required,gallery_settings,group_label_singular,group_label_plural")
+          .select("id,school_name,photographer_id,package_profile_id,local_school_id,status,portal_status,order_due_date,expiration_date,access_mode,access_pin,email_required,gallery_settings,group_label_singular,group_label_plural")
           .ilike("school_name", selectedSchoolName)
           .order("created_at", { ascending: false });
 

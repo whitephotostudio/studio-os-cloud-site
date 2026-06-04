@@ -4,8 +4,7 @@ export default function manifest(): MetadataRoute.Manifest {
   return {
     name: "Studio OS Mobile",
     short_name: "Studio OS Mobile",
-    description:
-      "Mobile control app for Studio OS Cloud photographers.",
+    description: "Mobile control app for Studio OS Cloud photographers.",
     start_url: "/m",
     scope: "/",
     display: "standalone",

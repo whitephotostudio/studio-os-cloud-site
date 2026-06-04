@@ -149,14 +149,16 @@ export default function MobileHomePage() {
     const term = search.trim();
     if (!photographerId) return;
     if (term.length < 2) {
-      setHits([]);
-      setSearching(false);
-      return;
+      const resetHandle = window.setTimeout(() => {
+        setHits([]);
+        setSearching(false);
+      }, 0);
+      return () => window.clearTimeout(resetHandle);
     }
 
     let cancelled = false;
-    setSearching(true);
     const handle = window.setTimeout(async () => {
+      setSearching(true);
       try {
         // Order-id lookup is only useful when the term looks like a
         // uuid fragment (hex + dashes).  Skips the query for plain names

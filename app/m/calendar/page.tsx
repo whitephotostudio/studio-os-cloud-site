@@ -237,22 +237,28 @@ export default function MobileCalendarPage() {
   }, [items]);
 
   useEffect(() => {
-    if (!selectedItems.length) {
-      setSelectedBookingKey("");
-      return;
-    }
-    if (!selectedItems.some((item) => bookingKey(item) === selectedBookingKey)) {
-      setSelectedBookingKey(bookingKey(selectedItems[0]));
-    }
+    const handle = window.setTimeout(() => {
+      if (!selectedItems.length) {
+        setSelectedBookingKey("");
+        return;
+      }
+      if (!selectedItems.some((item) => bookingKey(item) === selectedBookingKey)) {
+        setSelectedBookingKey(bookingKey(selectedItems[0]));
+      }
+    }, 0);
+    return () => window.clearTimeout(handle);
   }, [selectedBookingKey, selectedItems]);
 
   useEffect(() => {
-    setDetailDate(selectedBooking?.date ?? selectedDate);
-    setDetailStartTime(toTimeInput(selectedBooking?.startTime ?? selectedBooking?.time));
-    setDetailEndTime(toTimeInput(selectedBooking?.endTime));
-    setDetailLocation(selectedBooking?.location ?? "");
-    setDetailAddress(selectedBooking?.address ?? "");
-    setDetailNotes(selectedBooking?.notes ?? "");
+    const handle = window.setTimeout(() => {
+      setDetailDate(selectedBooking?.date ?? selectedDate);
+      setDetailStartTime(toTimeInput(selectedBooking?.startTime ?? selectedBooking?.time));
+      setDetailEndTime(toTimeInput(selectedBooking?.endTime));
+      setDetailLocation(selectedBooking?.location ?? "");
+      setDetailAddress(selectedBooking?.address ?? "");
+      setDetailNotes(selectedBooking?.notes ?? "");
+    }, 0);
+    return () => window.clearTimeout(handle);
   }, [selectedBooking, selectedDate]);
 
   function showToast(message: string) {
