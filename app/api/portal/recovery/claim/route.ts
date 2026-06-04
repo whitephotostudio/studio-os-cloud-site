@@ -31,7 +31,7 @@ function buildResultUrl(
   const origin =
     request.nextUrl.origin ||
     process.env.NEXT_PUBLIC_SITE_URL ||
-    "https://studiooscloud.com";
+    "https://www.studiooscloud.com";
   const params = new URLSearchParams();
   params.set("recovery", status);
   if (pin) params.set("pin", pin);

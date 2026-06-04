@@ -7,7 +7,7 @@ export const metadata: Metadata = {
   description:
     "Studio OS Cloud Terms of Service for professional photographers using the platform.",
   alternates: {
-    canonical: "https://studiooscloud.com/terms",
+    canonical: "https://www.studiooscloud.com/terms",
   },
 };
 

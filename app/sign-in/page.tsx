@@ -273,55 +273,52 @@ export default function SignInPage() {
   }
 
   return (
-    <div className="sign-motion-page min-h-screen bg-white text-neutral-950">
+    <div className="sign-motion-page min-h-screen bg-neutral-950 text-neutral-950">
       <SiteHeader />
 
       <style>{`
         .sign-motion-page {
           position: relative;
-          overflow: hidden;
+          overflow: clip;
           isolation: isolate;
-          background:
-            radial-gradient(circle at 16% 20%, rgba(225, 29, 72, .12), transparent 31%),
-            radial-gradient(circle at 82% 12%, rgba(17, 24, 39, .08), transparent 33%),
-            linear-gradient(180deg, #ffffff 0%, #f7f8fa 52%, #ffffff 100%);
-        }
-
-        .sign-motion-page::before,
-        .sign-motion-page::after {
-          content: "";
-          position: fixed;
-          z-index: -1;
-          pointer-events: none;
-          border-radius: 999px;
-          filter: blur(16px);
-          transform: translate3d(0, 0, 0);
-        }
-
-        .sign-motion-page::before {
-          width: 46vw;
-          height: 46vw;
-          left: -14vw;
-          top: 10vh;
-          background:
-            radial-gradient(circle at 45% 45%, rgba(127, 29, 29, .16), transparent 58%),
-            radial-gradient(circle at 62% 62%, rgba(17, 24, 39, .07), transparent 66%);
-          animation: signGlowDrift 20s ease-in-out infinite alternate;
-        }
-
-        .sign-motion-page::after {
-          width: 40vw;
-          height: 40vw;
-          right: -13vw;
-          bottom: -14vw;
-          background:
-            radial-gradient(circle at 50% 50%, rgba(17, 24, 39, .1), transparent 62%),
-            radial-gradient(circle at 38% 38%, rgba(225, 29, 72, .1), transparent 68%);
-          animation: signGlowDrift 24s ease-in-out infinite alternate-reverse;
+          background: #050505;
         }
 
         .sign-motion-main {
+          position: relative;
+          overflow: hidden;
+          isolation: isolate;
+          background:
+            radial-gradient(circle at 18% 24%, rgba(239, 68, 68, .34), transparent 31%),
+            radial-gradient(circle at 82% 16%, rgba(255, 255, 255, .1), transparent 26%),
+            radial-gradient(circle at 76% 86%, rgba(127, 29, 29, .34), transparent 40%),
+            linear-gradient(135deg, #050505 0%, #1a0607 52%, #050505 100%);
           animation: signPageIn 760ms cubic-bezier(.16, 1, .3, 1) both;
+        }
+
+        .sign-motion-main::before,
+        .sign-motion-main::after {
+          content: "";
+          position: absolute;
+          pointer-events: none;
+          z-index: 0;
+          transform: translate3d(0, 0, 0);
+        }
+
+        .sign-motion-main::before {
+          inset: -34%;
+          background:
+            radial-gradient(circle at 22% 18%, rgba(239, 68, 68, .18), transparent 28%),
+            radial-gradient(circle at 74% 34%, rgba(255, 255, 255, .08), transparent 24%),
+            radial-gradient(circle at 48% 88%, rgba(127, 29, 29, .2), transparent 34%);
+          animation: signGlowDrift 20s ease-in-out infinite alternate;
+        }
+
+        .sign-motion-main::after {
+          inset: 0;
+          background:
+            linear-gradient(90deg, rgba(255, 255, 255, .04), transparent 18%, transparent 82%, rgba(255, 255, 255, .03)),
+            linear-gradient(180deg, rgba(255, 255, 255, .05), transparent 22%, rgba(0, 0, 0, .24));
         }
 
         .sign-motion-copy {
@@ -344,15 +341,15 @@ export default function SignInPage() {
           inset: -1px;
           border-radius: inherit;
           background:
-            linear-gradient(135deg, rgba(255,255,255,.98), rgba(255,255,255,0) 46%),
-            radial-gradient(circle at 80% 0%, rgba(225, 29, 72, .08), transparent 42%);
+            linear-gradient(135deg, rgba(255,255,255,.98), rgba(255,255,255,0) 48%),
+            radial-gradient(circle at 82% 0%, rgba(225, 29, 72, .13), transparent 44%);
           pointer-events: none;
         }
 
         .sign-motion-card:hover {
           transform: translateY(-4px);
-          box-shadow: 0 30px 90px rgba(17,24,39,.14);
-          border-color: rgba(17, 24, 39, .1);
+          box-shadow: 0 36px 110px rgba(0,0,0,.34);
+          border-color: rgba(255, 255, 255, .38);
         }
 
         .sign-motion-card > * {
@@ -376,14 +373,24 @@ export default function SignInPage() {
             background 240ms ease;
         }
 
+        .sign-motion-input {
+          color: #111827;
+          caret-color: #111827;
+          background: rgba(255, 255, 255, .94);
+        }
+
+        .sign-motion-input::placeholder {
+          color: rgba(82, 82, 82, .72);
+        }
+
         .sign-motion-input:focus {
-          border-color: rgba(17,24,39,.38) !important;
-          box-shadow: 0 0 0 4px rgba(17,24,39,.06);
+          border-color: rgba(127,29,29,.38) !important;
+          box-shadow: 0 0 0 4px rgba(127,29,29,.08);
         }
 
         .sign-motion-primary:hover:not(:disabled) {
           transform: translateY(-2px);
-          box-shadow: 0 18px 40px rgba(17,24,39,.18);
+          box-shadow: 0 18px 44px rgba(0,0,0,.24);
           opacity: 1 !important;
         }
 
@@ -436,8 +443,7 @@ export default function SignInPage() {
         }
 
         @media (prefers-reduced-motion: reduce) {
-          .sign-motion-page::before,
-          .sign-motion-page::after,
+          .sign-motion-main::before,
           .sign-motion-main,
           .sign-motion-copy,
           .sign-motion-card,
@@ -454,23 +460,23 @@ export default function SignInPage() {
         }
       `}</style>
 
-      <main className="sign-motion-main mx-auto flex max-w-7xl px-6 py-20">
-        <div className="grid w-full gap-12 lg:grid-cols-2">
+      <main className="sign-motion-main flex min-h-[calc(100vh-92px)] px-6 py-20 text-white">
+        <div className="relative z-10 mx-auto grid w-full max-w-7xl gap-12 lg:grid-cols-2">
           <div className="sign-motion-copy flex flex-col justify-center">
-            <p className="mb-4 text-sm font-semibold uppercase tracking-[0.22em] text-neutral-500">
+            <p className="mb-4 text-sm font-semibold uppercase tracking-[0.22em] text-red-200/80">
               Photographer Access
             </p>
-            <h1 className="max-w-xl text-4xl font-semibold tracking-tight text-neutral-950 md:text-5xl">
+            <h1 className="max-w-xl text-4xl font-semibold tracking-tight text-white md:text-5xl">
               Sign in to Studio OS Cloud
             </h1>
-            <p className="mt-6 max-w-xl text-lg leading-8 text-neutral-600">
+            <p className="mt-6 max-w-xl text-lg leading-8 text-white/68">
               Access your photographer account, manage schools, organize galleries,
               and continue building your connected Studio OS workflow.
             </p>
           </div>
 
           <div className="flex items-center justify-center">
-            <div className="sign-motion-card w-full max-w-md rounded-3xl border border-black/5 bg-white p-8 shadow-[0_20px_60px_rgba(0,0,0,0.08)]">
+            <div className="sign-motion-card w-full max-w-md rounded-3xl border border-white/25 bg-white/95 p-8 shadow-[0_34px_110px_rgba(0,0,0,0.32)] backdrop-blur-xl">
               {agreementDeclined ? (
                 <div
                   role="alert"

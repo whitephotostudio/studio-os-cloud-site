@@ -3,6 +3,7 @@ import { Logo } from "./logo";
 
 const productLinks = [
   { href: "/studio-os", label: "Studio OS App" },
+  { href: "/mobile-app", label: "Mobile App" },
   { href: "/studio-os/download", label: "Download" },
   { href: "/sample-galleries", label: "Sample Galleries" },
   { href: "/pricing", label: "Pricing" },

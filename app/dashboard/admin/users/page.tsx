@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { useIsMobile } from "@/lib/use-is-mobile";
@@ -14,13 +14,13 @@ import {
   Users,
   Mail,
   Phone,
-  MapPin,
   ChevronDown,
   ChevronUp,
   Search,
   Volume2,
   VolumeX,
   Sparkles,
+  BellRing,
 } from "lucide-react";
 
 type UserRow = {
@@ -63,6 +63,7 @@ type UserRow = {
 };
 
 const NEW_SIGNUP_WINDOW_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+const TEST_NOTIFICATION_ACTION_ID = "owner-notification-test";
 
 function isNewSignup(createdAt: string | null, since: Date | null): boolean {
   if (!createdAt) return false;
@@ -370,13 +371,14 @@ function VoicePanel({
 }
 
 export default function AdminUsersPage() {
-  const supabase = createClient();
+  const supabase = useMemo(() => createClient(), []);
   const isMobile = useIsMobile();
   const [users, setUsers] = useState<UserRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [actionBusy, setActionBusy] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
+  const [actionMessageTone, setActionMessageTone] = useState<"success" | "error">("success");
   const [extendDays, setExtendDays] = useState<Record<string, number>>({});
   const [isAdmin, setIsAdmin] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -422,6 +424,39 @@ export default function AdminUsersPage() {
     fetchUsers();
   }, [fetchUsers]);
 
+  async function sendTestOwnerNotification() {
+    setActionBusy(TEST_NOTIFICATION_ACTION_ID);
+    setActionMessage(null);
+    setActionMessageTone("success");
+    try {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      const headers: Record<string, string> = session?.access_token
+        ? { Authorization: `Bearer ${session.access_token}` }
+        : {};
+
+      const res = await fetch("/api/dashboard/admin/owner-notifications/test", {
+        method: "POST",
+        headers,
+      });
+      const json = await res.json();
+      if (!json.ok) {
+        setActionMessageTone("error");
+        setActionMessage(json.message || "Could not send the test notification.");
+        return;
+      }
+      const requestId =
+        typeof json.result?.requestId === "string" ? ` Request: ${json.result.requestId}` : "";
+      setActionMessage(`Pushover accepted the test push.${requestId}`);
+    } catch (err) {
+      setActionMessageTone("error");
+      setActionMessage(err instanceof Error ? err.message : "Could not send the test notification.");
+    } finally {
+      setActionBusy(null);
+    }
+  }
+
   async function saveVoiceForUser(u: UserRow) {
     const draft = voiceDraft[u.id] ?? {
       enabled: Boolean(u.voicePremiumEnabled),
@@ -450,6 +485,7 @@ export default function AdminUsersPage() {
         }),
       });
       const json = await res.json();
+      setActionMessageTone(json.ok ? "success" : "error");
       setActionMessage(json.message || (json.ok ? "Voice updated." : "Update failed."));
       if (json.ok) {
         await fetchUsers();
@@ -460,6 +496,7 @@ export default function AdminUsersPage() {
         });
       }
     } catch (err) {
+      setActionMessageTone("error");
       setActionMessage(err instanceof Error ? err.message : "Voice update failed.");
     } finally {
       setActionBusy(null);
@@ -493,9 +530,11 @@ export default function AdminUsersPage() {
         }),
       });
       const json = await res.json();
+      setActionMessageTone(json.ok ? "success" : "error");
       setActionMessage(json.ok ? "Usage counter reset." : json.message ?? "Reset failed.");
       if (json.ok) await fetchUsers();
     } catch (err) {
+      setActionMessageTone("error");
       setActionMessage(err instanceof Error ? err.message : "Reset failed.");
     } finally {
       setActionBusy(null);
@@ -538,11 +577,13 @@ export default function AdminUsersPage() {
         body: JSON.stringify(body),
       });
       const json = await res.json();
+      setActionMessageTone(json.ok ? "success" : "error");
       setActionMessage(json.message || (json.ok ? "Done." : "Action failed."));
       if (json.ok) {
         await fetchUsers();
       }
     } catch (err) {
+      setActionMessageTone("error");
       setActionMessage(err instanceof Error ? err.message : "Action failed.");
     } finally {
       setActionBusy(null);
@@ -633,26 +674,49 @@ export default function AdminUsersPage() {
               </p>
             </div>
           </div>
-          <button
-            onClick={() => fetchUsers()}
-            disabled={loading}
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 6,
-              padding: "8px 16px",
-              borderRadius: 12,
-              border: `1px solid ${borderSoft}`,
-              background: "#fff",
-              cursor: "pointer",
-              fontSize: 13,
-              fontWeight: 500,
-              color: textPrimary,
-            }}
-          >
-            <RefreshCw size={14} />
-            Refresh
-          </button>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <button
+              onClick={sendTestOwnerNotification}
+              disabled={actionBusy === TEST_NOTIFICATION_ACTION_ID}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+                padding: "8px 16px",
+                borderRadius: 12,
+                border: "1px solid #111827",
+                background: "#111827",
+                cursor: actionBusy === TEST_NOTIFICATION_ACTION_ID ? "not-allowed" : "pointer",
+                fontSize: 13,
+                fontWeight: 600,
+                color: "#fff",
+                opacity: actionBusy === TEST_NOTIFICATION_ACTION_ID ? 0.7 : 1,
+              }}
+            >
+              <BellRing size={14} />
+              {actionBusy === TEST_NOTIFICATION_ACTION_ID ? "Sending..." : "Send Test Push"}
+            </button>
+            <button
+              onClick={() => fetchUsers()}
+              disabled={loading}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+                padding: "8px 16px",
+                borderRadius: 12,
+                border: `1px solid ${borderSoft}`,
+                background: "#fff",
+                cursor: "pointer",
+                fontSize: 13,
+                fontWeight: 500,
+                color: textPrimary,
+              }}
+            >
+              <RefreshCw size={14} />
+              Refresh
+            </button>
+          </div>
         </div>
 
         {/* Stats */}
@@ -758,10 +822,10 @@ export default function AdminUsersPage() {
               marginBottom: 14,
               padding: "10px 16px",
               borderRadius: 12,
-              background: "#f0fdf4",
-              border: "1px solid #bbf7d0",
+              background: actionMessageTone === "success" ? "#f0fdf4" : "#fef2f2",
+              border: actionMessageTone === "success" ? "1px solid #bbf7d0" : "1px solid #fecaca",
               fontSize: 13,
-              color: "#166534",
+              color: actionMessageTone === "success" ? "#166534" : "#991b1b",
               fontWeight: 500,
             }}
           >

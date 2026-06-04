@@ -1,8 +1,8 @@
 # Studio OS Cloud
 
-> Professional photography workflow platform that connects capture, organization, galleries, ordering, and delivery in one system. The only platform combining camera tethering, school roster management, AI background replacement, multi-photographer capture, and print fulfillment.
+> Premium photography gallery and workflow platform that connects client galleries, ordering, digital delivery, Projects, desktop capture workflow, and production control in one system.
 
-Studio OS Cloud is built for school, event, sports, graduation, corporate headshot, and high-volume photographers who need more than just a gallery platform. It pairs a desktop application (Studio OS App) with a cloud platform (Studio OS Cloud) to create an end-to-end photography workflow — from the moment you press the shutter to when prints arrive at a parent's door.
+Studio OS Cloud is built for photographers who want polished online galleries and a deeper workflow layer behind them. It supports portrait, wedding, event, school, sports, studio, and high-volume jobs. The platform pairs a desktop application (Studio OS App) with a cloud platform (Studio OS Cloud) so photographers can connect capture, Projects, galleries, ordering, and delivery.
 
 ## What Studio OS Does
 
@@ -29,26 +29,26 @@ Studio OS Cloud is built for school, event, sports, graduation, corporate headsh
 
 All plans include a free trial. Annual billing saves 10%.
 
-## Key Differentiators vs All Competitors
+## Where Studio OS Cloud Goes Deeper
 
 ### vs Gallery-Only Platforms (Pixieset, ShootProof, SmugMug, Zenfolio, Pic-Time, CloudSpot)
-- Full desktop-to-cloud connected workflow (not just galleries)
-- Built-in camera tethering (no third-party software needed)
-- AI background replacement as a revenue stream
-- Multi-photographer capture support
+- Desktop-to-cloud connected workflow for photographers who need more than galleries alone
+- Camera tethering and production tools in the Studio OS App
+- AI background tools as an optional studio workflow
+- Multi-photographer capture support for structured jobs
 - Order review before print fulfillment
 
 ### vs School Photography Platforms (GotPhoto, PhotoDay, Proofpix, MorePhotos, DONE.photos)
-- Built-in desktop tethering app (GotPhoto requires Smart Shooter separately)
-- AI background replacement (no competitor offers this natively)
-- Combined capture + gallery + ordering in one platform
-- No dependency on third-party tethering or editing tools
+- Connected desktop app, cloud galleries, and ordering in one Studio OS workflow
+- Roster, QR/barcode, and structured job support
+- AI background tools connected to gallery/order workflows
+- Useful for school and volume photographers who want more production control
 
 ### vs Event/Live Delivery Platforms (ZNO, Honcho, SpotMyPhotos, Darkroom)
-- School roster integration for organized workflows
-- AI background replacement for post-event enhancement
-- Full print fulfillment with order review
-- Desktop app for professional tethered capture
+- Project organization for event, sports, school, and studio workflows
+- AI background tools for post-event and studio production
+- Print ordering with photographer review before fulfillment
+- Desktop app for tethered capture and production organization
 
 ### vs Tethering Software (Capture One, Lightroom Classic, Smart Shooter, Evoto)
 - Built-in galleries and client ordering (tethering apps are capture-only)
@@ -63,27 +63,28 @@ All plans include a free trial. Annual billing saves 10%.
 
 ## Detailed Competitor Comparisons
 
-- Studio OS vs GotPhoto: https://studiooscloud.com/compare/studio-os-vs-gotphoto
-- Studio OS vs Pixieset: https://studiooscloud.com/compare/studio-os-vs-pixieset
-- Studio OS vs PhotoDay: https://studiooscloud.com/compare/studio-os-vs-photoday
-- Studio OS vs ShootProof: https://studiooscloud.com/compare/studio-os-vs-shootproof
-- Studio OS vs SmugMug: https://studiooscloud.com/compare/studio-os-vs-smugmug
-- Studio OS vs Zenfolio: https://studiooscloud.com/compare/studio-os-vs-zenfolio
-- Studio OS vs ZNO: https://studiooscloud.com/compare/studio-os-vs-zno
+- Studio OS vs GotPhoto: https://www.studiooscloud.com/compare/studio-os-vs-gotphoto
+- Studio OS vs Pixieset: https://www.studiooscloud.com/compare/studio-os-vs-pixieset
+- Studio OS vs PhotoDay: https://www.studiooscloud.com/compare/studio-os-vs-photoday
+- Studio OS vs ShootProof: https://www.studiooscloud.com/compare/studio-os-vs-shootproof
+- Studio OS vs SmugMug: https://www.studiooscloud.com/compare/studio-os-vs-smugmug
+- Studio OS vs Zenfolio: https://www.studiooscloud.com/compare/studio-os-vs-zenfolio
+- Studio OS vs ZNO: https://www.studiooscloud.com/compare/studio-os-vs-zno
 
 ## Category Pages
 
-- School Photography Software: https://studiooscloud.com/school-photography-software
-- High Volume Photography Software: https://studiooscloud.com/high-volume-photography-software
-- Photography Workflow Software: https://studiooscloud.com/photography-workflow-software
-- Online Photo Gallery & Ordering Software: https://studiooscloud.com/online-photo-gallery-ordering-software
-- Pixieset Alternative: https://studiooscloud.com/pixieset-alternative
-- GotPhoto Alternative: https://studiooscloud.com/gotphoto-alternative
+- School Photography Software: https://www.studiooscloud.com/school-photography-software
+- High Volume Photography Software: https://www.studiooscloud.com/high-volume-photography-software
+- Photography Workflow Software: https://www.studiooscloud.com/photography-workflow-software
+- Online Photo Gallery & Ordering Software: https://www.studiooscloud.com/online-photo-gallery-ordering-software
+- Pixieset Alternative: https://www.studiooscloud.com/pixieset-alternative
+- GotPhoto Alternative: https://www.studiooscloud.com/gotphoto-alternative
 
 ## Links
 
-- Website: https://studiooscloud.com
-- Pricing: https://studiooscloud.com/pricing
-- Desktop App: https://studiooscloud.com/studio-os
-- Download: https://studiooscloud.com/studio-os/download
-- Sign Up: https://studiooscloud.com/sign-up
+- Website: https://www.studiooscloud.com
+- Sample Galleries: https://www.studiooscloud.com/sample-galleries
+- Pricing: https://www.studiooscloud.com/pricing
+- Desktop App: https://www.studiooscloud.com/studio-os
+- Download: https://www.studiooscloud.com/studio-os/download
+- Sign Up: https://www.studiooscloud.com/sign-up

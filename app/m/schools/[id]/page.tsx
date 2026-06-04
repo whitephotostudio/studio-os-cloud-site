@@ -34,6 +34,9 @@ type School = {
   school_name: string | null;
   local_school_id: string | null;
   gallery_slug: string | null;
+  status: string | null;
+  access_mode: string | null;
+  access_pin: string | null;
 };
 
 type Student = {
@@ -62,6 +65,24 @@ type OrderPreview = {
 
 function clean(v: string | null | undefined): string {
   return (v ?? "").trim();
+}
+
+const statusOptions = [
+  { value: "active", label: "Active" },
+  { value: "inactive", label: "Inactive" },
+  { value: "pre_release", label: "Pre-Released" },
+  { value: "closed", label: "Closed" },
+] as const;
+
+type GalleryStatus = (typeof statusOptions)[number]["value"];
+
+function normalizeStatus(value: string | null | undefined): GalleryStatus {
+  const normalized = clean(value).toLowerCase().replace("-", "_");
+  if (normalized === "active" || normalized === "inactive" || normalized === "closed") {
+    return normalized;
+  }
+  if (normalized === "pre_release" || normalized === "pre_released") return "pre_release";
+  return "inactive";
 }
 
 function single<T>(v: T | T[] | null | undefined): T | null {
@@ -145,6 +166,11 @@ export default function MobileSchoolDetailPage() {
   const [copied, setCopied] = useState<string>("");
   const [toast, setToast] = useState("");
   const [focusStudentId, setFocusStudentId] = useState<string | null>(null);
+  const [settingsStatus, setSettingsStatus] = useState<GalleryStatus>("inactive");
+  const [settingsAccessMode, setSettingsAccessMode] = useState<"public" | "pin">("public");
+  const [settingsPin, setSettingsPin] = useState("");
+  const [settingsSaving, setSettingsSaving] = useState(false);
+  const [settingsMessage, setSettingsMessage] = useState("");
 
   useEffect(() => {
     if (!id) return;
@@ -159,7 +185,7 @@ export default function MobileSchoolDetailPage() {
 
       const { data: schoolRow, error: schoolErr } = await supabase
         .from("schools")
-        .select("id, school_name, local_school_id, gallery_slug")
+        .select("id, school_name, local_school_id, gallery_slug, status, access_mode, access_pin")
         .eq("id", id)
         .maybeSingle();
       if (cancelled) return;
@@ -206,6 +232,14 @@ export default function MobileSchoolDetailPage() {
       cancelled = true;
     };
   }, [id, supabase]);
+
+  useEffect(() => {
+    if (!school) return;
+    setSettingsStatus(normalizeStatus(school.status));
+    setSettingsAccessMode(clean(school.access_mode).toLowerCase() === "pin" ? "pin" : "public");
+    setSettingsPin(clean(school.access_pin));
+    setSettingsMessage("");
+  }, [school]);
 
   // Apply the ?student= deep-link once students are loaded.
   useEffect(() => {
@@ -310,6 +344,54 @@ export default function MobileSchoolDetailPage() {
       window.setTimeout(() => setCopied(""), 1500);
     } catch {
       showToast("Could not copy PIN");
+    }
+  }
+
+  async function saveQuickSettings() {
+    if (!school) return;
+    if (settingsAccessMode === "pin" && !clean(settingsPin)) {
+      setSettingsMessage("Enter a PIN before saving.");
+      return;
+    }
+    setSettingsSaving(true);
+    setSettingsMessage("");
+    try {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      const res = await fetch(`/api/dashboard/schools/${school.id}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session?.access_token ?? ""}`,
+        },
+        body: JSON.stringify({
+          status: settingsStatus,
+          access_mode: settingsAccessMode,
+          access_pin: settingsAccessMode === "pin" ? clean(settingsPin) : null,
+          email_required: true,
+        }),
+      });
+      const payload = await res.json();
+      if (!res.ok || payload.ok === false) {
+        setSettingsMessage(payload.message || "Could not save settings.");
+        return;
+      }
+      setSchool((prev) =>
+        prev
+          ? {
+              ...prev,
+              status: settingsStatus,
+              access_mode: settingsAccessMode,
+              access_pin: settingsAccessMode === "pin" ? clean(settingsPin) : null,
+            }
+          : prev,
+      );
+      setSettingsMessage("Saved");
+    } catch (err) {
+      setSettingsMessage(err instanceof Error ? err.message : "Could not save settings.");
+    } finally {
+      setSettingsSaving(false);
     }
   }
 
@@ -572,6 +654,135 @@ export default function MobileSchoolDetailPage() {
             </button>
           </div>
         </div>
+      </section>
+
+      <section
+        style={{
+          background: "#fff",
+          border: "1px solid #e5e7eb",
+          borderRadius: 16,
+          padding: 14,
+          display: "grid",
+          gap: 12,
+        }}
+      >
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
+          <div>
+            <div style={{ fontSize: 10, letterSpacing: "0.12em", fontWeight: 900, color: "#6b7280" }}>
+              QUICK CONTROLS
+            </div>
+            <div style={{ marginTop: 2, fontSize: 15, fontWeight: 950, color: "#111827" }}>
+              Status and gallery PIN
+            </div>
+          </div>
+          {settingsMessage ? (
+            <span style={{ fontSize: 12, fontWeight: 900, color: settingsMessage === "Saved" ? "#15803d" : "#b91c1c" }}>
+              {settingsMessage}
+            </span>
+          ) : null}
+        </div>
+        <Link
+          href={`/dashboard/projects/schools/${school.id}/settings`}
+          style={{
+            color: "#cc0000",
+            fontSize: 12,
+            fontWeight: 900,
+            textDecoration: "none",
+          }}
+        >
+          Open full school settings
+        </Link>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+          {statusOptions.map((option) => {
+            const active = settingsStatus === option.value;
+            return (
+              <button
+                key={option.value}
+                type="button"
+                onClick={() => setSettingsStatus(option.value)}
+                style={{
+                  minHeight: 42,
+                  borderRadius: 12,
+                  border: active ? "2px solid #111827" : "1px solid #e5e7eb",
+                  background: active ? "#f3f4f6" : "#fff",
+                  color: "#111827",
+                  fontSize: 12,
+                  fontWeight: 900,
+                }}
+              >
+                {option.label}
+              </button>
+            );
+          })}
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+          {[
+            { value: "public" as const, label: "Public" },
+            { value: "pin" as const, label: "PIN protected" },
+          ].map((option) => {
+            const active = settingsAccessMode === option.value;
+            return (
+              <button
+                key={option.value}
+                type="button"
+                onClick={() => setSettingsAccessMode(option.value)}
+                style={{
+                  minHeight: 42,
+                  borderRadius: 12,
+                  border: active ? "2px solid #cc0000" : "1px solid #e5e7eb",
+                  background: active ? "#fff5f5" : "#fff",
+                  color: active ? "#b91c1c" : "#111827",
+                  fontSize: 12,
+                  fontWeight: 900,
+                }}
+              >
+                {option.label}
+              </button>
+            );
+          })}
+        </div>
+
+        {settingsAccessMode === "pin" ? (
+          <input
+            value={settingsPin}
+            onChange={(e) => setSettingsPin(e.target.value)}
+            placeholder="Gallery PIN"
+            inputMode="numeric"
+            autoComplete="off"
+            style={{
+              width: "100%",
+              minHeight: 46,
+              borderRadius: 12,
+              border: "1px solid #d1d5db",
+              padding: "0 12px",
+              fontSize: 18,
+              fontWeight: 900,
+              letterSpacing: "0.08em",
+              color: "#111827",
+              outline: "none",
+              boxSizing: "border-box",
+            }}
+          />
+        ) : null}
+
+        <button
+          type="button"
+          onClick={saveQuickSettings}
+          disabled={settingsSaving}
+          style={{
+            minHeight: 46,
+            borderRadius: 13,
+            border: "none",
+            background: settingsSaving ? "#9ca3af" : "#cc0000",
+            color: "#fff",
+            fontSize: 14,
+            fontWeight: 950,
+          }}
+        >
+          {settingsSaving ? "Saving..." : "Save controls"}
+        </button>
       </section>
 
       {/* Students list */}

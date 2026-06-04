@@ -110,7 +110,7 @@ export async function POST(
 
     const { data: schoolRow, error: schoolError } = await service
       .from("schools")
-      .select("id,school_name,access_mode,access_pin,email_required,cover_photo_url,gallery_settings,photographer_id")
+      .select("id,school_name,access_mode,access_pin,email_required,cover_photo_url,gallery_settings,gallery_slug,photographer_id")
       .eq("id", schoolId)
       .eq("photographer_id", photographerRow.id)
       .maybeSingle<SchoolRow>();

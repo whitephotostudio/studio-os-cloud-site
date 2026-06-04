@@ -5,13 +5,13 @@ export const metadata: Metadata = {
   description:
     "Sign in to your Studio OS Cloud account to manage galleries, orders, and your photography workflow.",
   alternates: {
-    canonical: "https://studiooscloud.com/sign-in",
+    canonical: "https://www.studiooscloud.com/sign-in",
   },
   openGraph: {
     title: "Sign In — Studio OS Cloud",
     description:
       "Access your Studio OS Cloud dashboard. Manage galleries, orders, and your full photography workflow.",
-    url: "https://studiooscloud.com/sign-in",
+    url: "https://www.studiooscloud.com/sign-in",
   },
 };
 

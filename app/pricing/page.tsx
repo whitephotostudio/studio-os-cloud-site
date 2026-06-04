@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import {
   ArrowUpRight,
@@ -10,8 +11,24 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { Reveal } from "@/components/marketing/Reveal";
+import { PricingJsonLd } from "@/components/json-ld";
 import { SiteFooter } from "@/components/site-footer";
 import { SiteHeader } from "@/components/site-header";
+
+export const metadata: Metadata = {
+  title: "Pricing for Photography Galleries and Workflow",
+  description:
+    "Studio OS Cloud pricing for premium online galleries, client ordering, digital delivery, desktop workflow, AI background tools, and connected production control.",
+  alternates: {
+    canonical: "https://www.studiooscloud.com/pricing",
+  },
+  openGraph: {
+    title: "Studio OS Cloud Pricing",
+    description:
+      "Choose the Studio OS Cloud plan for galleries, ordering, desktop workflow, and deeper production control.",
+    url: "https://www.studiooscloud.com/pricing",
+  },
+};
 
 type PricingPlan = {
   eyebrow: string;
@@ -189,6 +206,7 @@ const plans: PricingPlan[] = [
 export default function PricingPage() {
   return (
     <div className="min-h-screen bg-white text-neutral-950">
+      <PricingJsonLd />
       <SiteHeader />
       <main className="px-4 py-16 sm:px-6 lg:px-8 lg:py-24">
         <section className="mx-auto max-w-7xl">
@@ -280,6 +298,9 @@ export default function PricingPage() {
             </div>
             <Link
               href="/sign-up"
+              data-marketing-event="cta_start_trial"
+              data-marketing-label="Pricing final CTA"
+              data-marketing-placement="pricing_page"
               className="marketing-button premium-button inline-flex items-center justify-center gap-2 rounded-2xl bg-neutral-950 px-7 py-4 text-white shadow-[0_16px_38px_rgba(0,0,0,0.18)] transition hover:bg-black"
             >
               Start Free Trial
@@ -384,6 +405,9 @@ function PricingCard({ plan }: { plan: PricingPlan }) {
 
       <Link
         href={plan.href}
+        data-marketing-event="cta_start_trial"
+        data-marketing-label={`Pricing plan: ${plan.name}`}
+        data-marketing-placement="pricing_plan_card"
         className={`marketing-button premium-button mt-7 inline-flex items-center justify-center gap-2 rounded-2xl px-5 py-4 ${
           isFeatured
             ? "bg-white text-neutral-950 hover:bg-neutral-100"

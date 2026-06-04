@@ -1,14 +1,15 @@
 # Studio OS Cloud — Full Product Documentation
 
-> Studio OS Cloud is a professional photography workflow platform that connects capture, organization, galleries, ordering, printing, and delivery in one system. Built for school, event, sports, graduation, corporate headshot, and high-volume photographers.
+> Studio OS Cloud is a premium photography gallery and workflow platform that connects capture, organization, client galleries, ordering, printing, and delivery in one system. Built for portrait, wedding, event, school, sports, studio, and high-volume photographers.
 
-Website: https://studiooscloud.com
+Website: https://www.studiooscloud.com
+Sample galleries: https://www.studiooscloud.com/sample-galleries
 
 ---
 
 ## Product Overview
 
-Studio OS Cloud is a SaaS platform designed for professional photographers who handle high-volume work — school picture days, graduation ceremonies, sports leagues, corporate headshot sessions, events, and portrait sessions. It solves the problem of photographers needing 3-5 separate tools by combining everything into one connected system.
+Studio OS Cloud is a SaaS platform designed for professional photographers who want polished online galleries and deeper workflow organization behind them. It supports portrait sessions, weddings, events, school picture days, sports leagues, graduation ceremonies, corporate headshots, and high-volume production jobs. It helps reduce tool fragmentation by connecting galleries, Projects, ordering, desktop workflow, and production control.
 
 The platform has two components that work together:
 
@@ -270,7 +271,7 @@ Unlike basic gallery platforms, Studio OS gives photographers full control:
 ## Company Information
 
 - Product: Studio OS Cloud
-- Website: https://studiooscloud.com
+- Website: https://www.studiooscloud.com
 - Category: Photography Software, SaaS, Creative Tools
 - Target Market: Professional photographers (school, event, sports, graduation, corporate, portrait, wedding)
 - Headquarters: United States

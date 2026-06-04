@@ -15,6 +15,7 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 const DOWNLOAD_TOKEN_TTL_MS = 45 * 60 * 1000;
+const MEDIA_LOOKUP_CHUNK_SIZE = 100;
 
 type DownloadLogRow = {
   download_count: number | null;
@@ -69,6 +70,34 @@ function uniqueMediaIds(values: Array<string | null | undefined>) {
     out.push(nextValue);
   }
   return out;
+}
+
+function chunkValues<T>(values: T[], size: number) {
+  const safeSize = Math.max(1, Math.floor(size) || 1);
+  const chunks: T[][] = [];
+  for (let index = 0; index < values.length; index += safeSize) {
+    chunks.push(values.slice(index, index + safeSize));
+  }
+  return chunks;
+}
+
+async function fetchMediaAccessRows(
+  service: { from: (table: string) => any },
+  projectId: string,
+  mediaIds: string[],
+) {
+  const rows: MediaAccessRow[] = [];
+  for (const chunk of chunkValues(mediaIds, MEDIA_LOOKUP_CHUNK_SIZE)) {
+    const { data, error } = await service
+      .from("media")
+      .select("id,collection_id")
+      .eq("project_id", projectId)
+      .in("id", chunk);
+
+    if (error) throw error;
+    rows.push(...((data ?? []) as MediaAccessRow[]));
+  }
+  return rows;
 }
 
 export async function POST(request: NextRequest) {
@@ -228,16 +257,14 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { data: mediaRows, error: mediaError } = await access.service
-      .from("media")
-      .select("id,collection_id")
-      .eq("project_id", access.projectId)
-      .in("id", allowedMediaIds);
-
-    if (mediaError) throw mediaError;
+    const mediaRows = await fetchMediaAccessRows(
+      access.service,
+      access.projectId,
+      allowedMediaIds,
+    );
 
     const mediaMap = new Map<string, MediaAccessRow>();
-    for (const row of (mediaRows ?? []) as MediaAccessRow[]) {
+    for (const row of mediaRows) {
       if (settings.extras.freeDigitalAudience === "album" && row.collection_id !== collectionId) {
         continue;
       }

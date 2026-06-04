@@ -6,6 +6,7 @@ import {
 } from "@/lib/event-gallery-settings";
 import {
   buildSignedMediaUrls,
+  extractStoragePathFromSupabaseUrl,
   SIGNED_URL_TTL_PARENTS_PORTAL_SECONDS,
 } from "@/lib/storage-images";
 import { filterPackagesForProfile } from "@/lib/package-profile-selection";
@@ -15,6 +16,56 @@ export const dynamic = "force-dynamic";
 
 function clean(value: string | null | undefined) {
   return (value ?? "").trim();
+}
+
+function isR2CloudflareStorageUrl(value: string) {
+  try {
+    return /\.r2\.cloudflarestorage\.com$/i.test(new URL(value).host);
+  } catch {
+    return false;
+  }
+}
+
+function isKnownStorageUrl(value: string) {
+  try {
+    const parsed = new URL(value);
+    return (
+      parsed.pathname.startsWith("/api/r2/img/") ||
+      /\.r2\.dev$/i.test(parsed.host) ||
+      /\.r2\.cloudflarestorage\.com$/i.test(parsed.host) ||
+      value.includes("/storage/v1/object/public/") ||
+      value.includes("/storage/v1/render/image/public/")
+    );
+  } catch {
+    return false;
+  }
+}
+
+function resolvePortalCoverUrl(value: string | null | undefined) {
+  const cover = clean(value);
+  if (!cover) return "";
+
+  const isHttpUrl = /^https?:\/\//i.test(cover);
+  if (isHttpUrl && !isKnownStorageUrl(cover)) return cover;
+
+  const isR2SignedUrl = isHttpUrl && isR2CloudflareStorageUrl(cover);
+  const storagePath =
+    !isHttpUrl && !cover.startsWith("/api/r2/img/")
+      ? cover
+      : isR2SignedUrl
+        ? ""
+        : extractStoragePathFromSupabaseUrl(cover) ?? "";
+
+  const signed = buildSignedMediaUrls(
+    {
+      storagePath,
+      previewUrl: cover,
+      thumbnailUrl: cover,
+    },
+    { ttlSeconds: SIGNED_URL_TTL_PARENTS_PORTAL_SECONDS },
+  );
+
+  return signed.originalUrl || signed.previewUrl || signed.thumbnailUrl || cover;
 }
 
 function looksLikeImageAssetUrl(value: string | null | undefined) {
@@ -659,13 +710,31 @@ export async function POST(request: NextRequest) {
       watermark: Boolean(projectRow.screenshot_protection_watermark),
     };
 
+    const projectForClient = {
+      ...projectRow,
+      cover_photo_url: resolvePortalCoverUrl(projectRow.cover_photo_url) || projectRow.cover_photo_url,
+    };
+    const collectionsForClient = collections.map((collection) => ({
+      ...collection,
+      cover_photo_url:
+        resolvePortalCoverUrl(collection.cover_photo_url) || collection.cover_photo_url,
+    }));
+    const activeCollectionForClient = matchingCollection
+      ? {
+          ...matchingCollection,
+          cover_photo_url:
+            resolvePortalCoverUrl(matchingCollection.cover_photo_url) ||
+            matchingCollection.cover_photo_url,
+        }
+      : null;
+
     return NextResponse.json({
       ok: true,
-      project: projectRow,
+      project: projectForClient,
       gallerySettings: publicGallerySettings,
       downloadAccess,
-      activeCollection: matchingCollection ?? null,
-      collections,
+      activeCollection: activeCollectionForClient,
+      collections: collectionsForClient,
       media: mediaRows,
       packages,
       favoriteDownloadAccess,

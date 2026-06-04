@@ -7,13 +7,13 @@ export const metadata: Metadata = {
   description:
     "Photography workflow software that connects capture, Projects, galleries, ordering, and delivery in one platform. Replace disconnected tools with one connected desktop and cloud workflow.",
   alternates: {
-    canonical: "https://studiooscloud.com/photography-workflow-software",
+    canonical: "https://www.studiooscloud.com/photography-workflow-software",
   },
   openGraph: {
     title: "Photography Workflow Software | Studio OS Cloud",
     description:
       "One connected system for capture, galleries, orders, and delivery. Built for photographers who need more than a gallery platform.",
-    url: "https://studiooscloud.com/photography-workflow-software",
+    url: "https://www.studiooscloud.com/photography-workflow-software",
   },
 };
 
@@ -22,10 +22,10 @@ export default function PhotographyWorkflowSoftwarePage() {
     <>
       <BreadcrumbJsonLd
         items={[
-          { name: "Home", item: "https://studiooscloud.com" },
+          { name: "Home", item: "https://www.studiooscloud.com" },
           {
             name: "Photography Workflow Software",
-            item: "https://studiooscloud.com/photography-workflow-software",
+            item: "https://www.studiooscloud.com/photography-workflow-software",
           },
         ]}
       />

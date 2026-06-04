@@ -10,8 +10,10 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
+  CalendarDays,
   ChevronRight,
   GraduationCap,
+  Plus,
   Search,
   Share2,
   X,
@@ -23,6 +25,7 @@ type SchoolRow = {
   school_name: string | null;
   local_school_id: string | null;
   gallery_slug: string | null;
+  shoot_date: string | null;
   created_at: string | null;
 };
 
@@ -39,6 +42,18 @@ function buildShareUrl(origin: string, school: SchoolRow): string {
   if (slug) return `${origin}/g/${slug}`;
   const params = new URLSearchParams({ mode: "school", school: school.id });
   return `${origin}/parents?${params.toString()}`;
+}
+
+function formatShootDate(value: string | null | undefined): string {
+  const raw = clean(value);
+  if (!raw) return "";
+  const date = new Date(`${raw.slice(0, 10)}T12:00:00`);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
 }
 
 async function shareOrCopy(
@@ -93,7 +108,7 @@ export default function MobileSchoolsPage() {
 
       const { data: schoolRows, error: sErr } = await supabase
         .from("schools")
-        .select("id, school_name, local_school_id, gallery_slug, created_at")
+        .select("id, school_name, local_school_id, gallery_slug, shoot_date, created_at")
         .eq("photographer_id", photog.id)
         .order("created_at", { ascending: false });
 
@@ -179,13 +194,34 @@ export default function MobileSchoolsPage() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-      <header style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-        <div style={{ fontSize: 11, letterSpacing: "0.12em", fontWeight: 800, color: "#6b7280" }}>
-          SCHOOLS
+      <header style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 12 }}>
+        <div style={{ display: "grid", gap: 4 }}>
+          <div style={{ fontSize: 11, letterSpacing: "0.12em", fontWeight: 800, color: "#6b7280" }}>
+            SCHOOLS
+          </div>
+          <h1 style={{ margin: 0, fontSize: 22, fontWeight: 900, color: "#111827" }}>
+            All schools
+          </h1>
         </div>
-        <h1 style={{ margin: 0, fontSize: 22, fontWeight: 900, color: "#111827" }}>
-          All schools
-        </h1>
+        <Link
+          href="/m/new"
+          style={{
+            minHeight: 38,
+            padding: "0 12px",
+            borderRadius: 12,
+            background: "#111827",
+            color: "#fff",
+            textDecoration: "none",
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 7,
+            fontSize: 13,
+            fontWeight: 900,
+            whiteSpace: "nowrap",
+          }}
+        >
+          <Plus size={15} /> New
+        </Link>
       </header>
 
       {/* Search */}
@@ -309,6 +345,7 @@ export default function MobileSchoolsPage() {
             const students = studentsBySchool[school.id] ?? 0;
             const orderCt = ordersBySchool[school.id] ?? 0;
             const cover = coversBySchool[school.id];
+            const shootDate = formatShootDate(school.shoot_date);
             // Mockup-inspired status pill: Gallery Released when there's
             // a slug + students, Pending when students exist but no slug,
             // Setup when there are no students yet.
@@ -451,6 +488,22 @@ export default function MobileSchoolsPage() {
                           Orders: {orderCt}
                         </strong>
                       </div>
+                      {shootDate ? (
+                        <div
+                          style={{
+                            marginTop: 6,
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: 5,
+                            fontSize: 12,
+                            color: "#374151",
+                            fontWeight: 800,
+                          }}
+                        >
+                          <CalendarDays size={13} color="#cc0000" />
+                          {shootDate}
+                        </div>
+                      ) : null}
                     </div>
                     <ChevronRight size={16} color="#9ca3af" />
                   </div>

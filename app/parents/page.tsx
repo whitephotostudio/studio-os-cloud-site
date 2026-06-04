@@ -7,9 +7,18 @@
 // The interactive form logic lives in LoginForm.tsx (Client Component).
 
 import { createDashboardServiceClient } from "@/lib/dashboard-auth";
+import type { Metadata } from "next";
 import LoginForm from "./LoginForm";
 
 export const revalidate = 60; // ISR: revalidate school/event list every 60 s
+
+export const metadata: Metadata = {
+  title: "Parents Portal | Studio OS Cloud",
+  robots: {
+    index: false,
+    follow: false,
+  },
+};
 
 type SchoolRow = {
   id: string;

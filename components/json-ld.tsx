@@ -5,6 +5,8 @@
  * can understand what Studio OS Cloud is, what it costs, and how it compares.
  */
 
+import { homeFaqItems } from "@/lib/marketing-faq";
+
 type JsonLdProps = {
   data: Record<string, unknown>;
 };
@@ -26,8 +28,8 @@ export function OrganizationJsonLd() {
         "@context": "https://schema.org",
         "@type": "Organization",
         name: "Studio OS Cloud",
-        url: "https://studiooscloud.com",
-        logo: "https://studiooscloud.com/studio_os_logo.png",
+        url: "https://www.studiooscloud.com",
+        logo: "https://www.studiooscloud.com/studio_os_logo.png",
         description:
           "Premium photography gallery and workflow platform connecting Projects, client galleries, ordering, and delivery in one system.",
         sameAs: [],
@@ -53,7 +55,7 @@ export function SoftwareApplicationJsonLd() {
         operatingSystem: "Web, macOS, Windows",
         description:
           "Premium photography gallery and workflow platform for portrait, wedding, event, school, sports, and volume photographers. Includes online galleries, client ordering, digital delivery, Projects, connected desktop and cloud workflow, AI background tools, and production control.",
-        url: "https://studiooscloud.com",
+        url: "https://www.studiooscloud.com",
         offers: [
           {
             "@type": "Offer",
@@ -63,7 +65,7 @@ export function SoftwareApplicationJsonLd() {
             priceValidUntil: "2027-12-31",
             description:
               "Premium online galleries, client ordering, digital delivery, and private client access in the cloud.",
-            url: "https://studiooscloud.com/pricing",
+            url: "https://www.studiooscloud.com/pricing",
           },
           {
             "@type": "Offer",
@@ -73,7 +75,7 @@ export function SoftwareApplicationJsonLd() {
             priceValidUntil: "2027-12-31",
             description:
               "Connected desktop and cloud workflow with capture control, Projects, AI background tools, and online galleries.",
-            url: "https://studiooscloud.com/pricing",
+            url: "https://www.studiooscloud.com/pricing",
           },
           {
             "@type": "Offer",
@@ -83,7 +85,7 @@ export function SoftwareApplicationJsonLd() {
             priceValidUntil: "2027-12-31",
             description:
               "Multi-photographer plan with advanced structured workflow tools for studios and high-volume teams.",
-            url: "https://studiooscloud.com/pricing",
+            url: "https://www.studiooscloud.com/pricing",
           },
         ],
         featureList: [
@@ -125,7 +127,7 @@ export function PricingJsonLd() {
           "@type": "Brand",
           name: "Studio OS",
         },
-        url: "https://studiooscloud.com/pricing",
+        url: "https://www.studiooscloud.com/pricing",
         offers: {
           "@type": "AggregateOffer",
           lowPrice: "49.00",
@@ -183,80 +185,14 @@ export function FaqJsonLd() {
       data={{
         "@context": "https://schema.org",
         "@type": "FAQPage",
-        mainEntity: [
-          {
-            "@type": "Question",
-            name: "What types of photographers is Studio OS designed for?",
-            acceptedAnswer: {
-              "@type": "Answer",
-              text: "Studio OS is designed for photographers who want premium galleries and stronger workflow control. It supports portrait, wedding, event, school, sports, and high-volume photography, and is especially strong when jobs need more structure behind the scenes.",
-            },
+        mainEntity: homeFaqItems.map((item) => ({
+          "@type": "Question",
+          name: item.question,
+          acceptedAnswer: {
+            "@type": "Answer",
+            text: item.answer,
           },
-          {
-            "@type": "Question",
-            name: "How is Studio OS different from ShootProof or Pixieset?",
-            acceptedAnswer: {
-              "@type": "Answer",
-              text: "Platforms like ShootProof and Pixieset are strong for gallery delivery and client presentation. Studio OS also treats galleries as a core product, but goes deeper by connecting Projects, production control, desktop and cloud workflow, order review, and structured job organization in one system.",
-            },
-          },
-          {
-            "@type": "Question",
-            name: "Do I need the desktop app to use Studio OS Cloud?",
-            acceptedAnswer: {
-              "@type": "Answer",
-              text: "No. The Starter plan at $49/month gives you online galleries, client ordering, and delivery without the desktop app. The Core and Studio plans include the desktop app for tethering, roster management, and AI background tools.",
-            },
-          },
-          {
-            "@type": "Question",
-            name: "Is there a free trial?",
-            acceptedAnswer: {
-              "@type": "Answer",
-              text: "Yes, all Studio OS Cloud plans include a free trial period so you can test the full platform before committing.",
-            },
-          },
-          {
-            "@type": "Question",
-            name: "How does AI background replacement work?",
-            acceptedAnswer: {
-              "@type": "Answer",
-              text: "Photographers purchase credit packs starting at $15 for 250 credits. Unused credits do not carry over to the next month. Clients can select AI-generated background options as paid upgrades inside the gallery ordering flow. Each swap uses one credit and helps turn standard portraits into premium add-on revenue.",
-            },
-          },
-          {
-            "@type": "Question",
-            name: "How is Studio OS different from GotPhoto?",
-            acceptedAnswer: {
-              "@type": "Answer",
-              text: "Both platforms support school ordering and roster-based workflows. Studio OS goes deeper with built-in desktop capture, connected cloud galleries, AI background tools, and one workflow from capture through delivery.",
-            },
-          },
-          {
-            "@type": "Question",
-            name: "Can Studio OS handle sports photography and team photos?",
-            acceptedAnswer: {
-              "@type": "Answer",
-              text: "Yes. Multi-photographer capture lets you shoot from multiple positions simultaneously. The roster system handles team and league organization. AI background replacement creates instant composite variations like memory mates without reshooting.",
-            },
-          },
-          {
-            "@type": "Question",
-            name: "Is Studio OS good for corporate headshot sessions?",
-            acceptedAnswer: {
-              "@type": "Answer",
-              text: "Yes. Camera tethering provides live preview during sessions. The roster system imports employee lists for automatic matching. AI background replacement offers multiple corporate background options per person. Batch delivery handles large sessions efficiently.",
-            },
-          },
-          {
-            "@type": "Question",
-            name: "Can Studio OS handle graduation ceremonies?",
-            acceptedAnswer: {
-              "@type": "Answer",
-              text: "Yes. Multi-photographer sync captures multiple stage angles simultaneously. The roster system matches stage shots to graduates automatically. Parents order through individual graduate galleries with print fulfillment built in.",
-            },
-          },
-        ],
+        })),
       }}
     />
   );
@@ -270,7 +206,7 @@ export function WebSiteJsonLd() {
         "@context": "https://schema.org",
         "@type": "WebSite",
         name: "Studio OS Cloud",
-        url: "https://studiooscloud.com",
+        url: "https://www.studiooscloud.com",
         description:
           "Premium photography gallery and workflow platform for photographers who need more than a standalone gallery.",
       }}

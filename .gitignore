@@ -53,3 +53,10 @@ supabase/.temp/
 
 SCHOOL_GALLERY_AUDIT.md
 scripts/backfill-backdrop-thumbnails.mjs
+
+# ── Local-only junk that must NEVER be committed (checkpoint guard) ──
+.tooling/
+.next/
+.next.*/
+.next.bad-calendar-cache/
+*.flutter-sdk/

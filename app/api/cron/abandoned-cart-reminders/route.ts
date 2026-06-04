@@ -100,11 +100,11 @@ export async function GET(request: NextRequest) {
     const [projectsResult, schoolsResult, photographersResult] = await Promise.all([
       service
         .from("projects")
-        .select("id,title,client_name,access_mode,access_pin,email_required,cover_photo_url,gallery_settings")
+        .select("id,title,client_name,access_mode,access_pin,email_required,cover_photo_url,gallery_settings,gallery_slug")
         .in("id", projectIds),
       service
         .from("schools")
-        .select("id,school_name,access_mode,access_pin,email_required,gallery_settings")
+        .select("id,school_name,access_mode,access_pin,email_required,gallery_settings,gallery_slug")
         .in("id", schoolIds),
       service
         .from("photographers")

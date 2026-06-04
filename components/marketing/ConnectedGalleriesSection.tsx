@@ -93,7 +93,10 @@ export function ConnectedGalleriesSection() {
 
             <div className="mt-10 flex flex-col gap-3 sm:flex-row">
               <Link
-                href="#gallery-experience"
+                href="/sample-galleries"
+                data-marketing-event="cta_sample_galleries"
+                data-marketing-label="Connected galleries section"
+                data-marketing-placement="home_connected_galleries"
                 className="marketing-button premium-button inline-flex items-center justify-center rounded-full bg-red-600 px-6 py-3 text-white shadow-lg shadow-red-600/20 transition hover:-translate-y-0.5 hover:bg-red-700 hover:shadow-red-600/30"
               >
                 Explore Online Galleries

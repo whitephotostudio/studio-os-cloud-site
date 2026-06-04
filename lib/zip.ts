@@ -4,7 +4,15 @@ export type ZipEntry = {
   modifiedAt?: Date;
 };
 
+export type ZipStreamEntry = {
+  name: string;
+  data?: Uint8Array;
+  stream?: ReadableStream<Uint8Array>;
+  modifiedAt?: Date;
+};
+
 const ZIP_UTF8_FLAG = 0x0800;
+const ZIP_DATA_DESCRIPTOR_FLAG = 0x0008;
 const DOS_EPOCH_YEAR = 1980;
 
 let crcTable: Uint32Array | null = null;
@@ -24,12 +32,15 @@ function getCrcTable() {
 }
 
 function crc32(bytes: Uint8Array) {
-  let crc = 0xffffffff;
+  return (crc32Update(0xffffffff, bytes) ^ 0xffffffff) >>> 0;
+}
+
+function crc32Update(crc: number, bytes: Uint8Array) {
   const table = getCrcTable();
   for (let index = 0; index < bytes.length; index += 1) {
     crc = table[(crc ^ bytes[index]) & 0xff] ^ (crc >>> 8);
   }
-  return (crc ^ 0xffffffff) >>> 0;
+  return crc >>> 0;
 }
 
 function toDosDateParts(input?: Date) {
@@ -157,5 +168,157 @@ export function createZipBytes(entries: ZipEntry[]) {
 export function createZipBlob(entries: ZipEntry[]) {
   return new Blob([createZipBytes(entries)], {
     type: "application/zip",
+  });
+}
+
+function normalizeEntryData(entry: ZipStreamEntry) {
+  if (entry.data) return entry.data;
+  return null;
+}
+
+type ZipStreamState = {
+  offset: number;
+  centralParts: Uint8Array[];
+  entryCount: number;
+};
+
+async function* streamZipEntry(
+  entry: ZipStreamEntry,
+  state: ZipStreamState,
+): AsyncGenerator<Uint8Array> {
+  const encoder = new TextEncoder();
+  const entryName = sanitizeEntryName(entry.name);
+  const fileNameBytes = encoder.encode(entryName);
+  const { dosTime, dosDate } = toDosDateParts(entry.modifiedAt);
+  const localOffset = state.offset;
+  const generalPurposeFlags = ZIP_UTF8_FLAG | ZIP_DATA_DESCRIPTOR_FLAG;
+
+  const track = (chunk: Uint8Array) => {
+    state.offset += chunk.length;
+    return chunk;
+  };
+
+  yield track(
+    concatBytes([
+      uint32(0x04034b50),
+      uint16(20),
+      uint16(generalPurposeFlags),
+      uint16(0),
+      uint16(dosTime),
+      uint16(dosDate),
+      uint32(0),
+      uint32(0),
+      uint32(0),
+      uint16(fileNameBytes.length),
+      uint16(0),
+      fileNameBytes,
+    ]),
+  );
+
+  let checksum = 0xffffffff;
+  let fileSize = 0;
+  const staticData = normalizeEntryData(entry);
+  if (staticData) {
+    checksum = crc32Update(checksum, staticData);
+    fileSize += staticData.length;
+    yield track(staticData);
+  } else if (entry.stream) {
+    const reader = entry.stream.getReader();
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (!value?.length) continue;
+        checksum = crc32Update(checksum, value);
+        fileSize += value.length;
+        yield track(value);
+      }
+    } finally {
+      reader.releaseLock();
+    }
+  }
+
+  const finalizedChecksum = (checksum ^ 0xffffffff) >>> 0;
+  yield track(
+    concatBytes([
+      uint32(0x08074b50),
+      uint32(finalizedChecksum),
+      uint32(fileSize),
+      uint32(fileSize),
+    ]),
+  );
+
+  state.centralParts.push(
+    concatBytes([
+      uint32(0x02014b50),
+      uint16(20),
+      uint16(20),
+      uint16(generalPurposeFlags),
+      uint16(0),
+      uint16(dosTime),
+      uint16(dosDate),
+      uint32(finalizedChecksum),
+      uint32(fileSize),
+      uint32(fileSize),
+      uint16(fileNameBytes.length),
+      uint16(0),
+      uint16(0),
+      uint16(0),
+      uint16(0),
+      uint32(0),
+      uint32(localOffset),
+      fileNameBytes,
+    ]),
+  );
+  state.entryCount += 1;
+}
+
+async function* streamZipChunks(
+  entries: AsyncIterable<ZipStreamEntry> | Iterable<ZipStreamEntry>,
+) {
+  const state: ZipStreamState = {
+    offset: 0,
+    centralParts: [],
+    entryCount: 0,
+  };
+
+  for await (const entry of entries) {
+    yield* streamZipEntry(entry, state);
+  }
+
+  const centralDirectory = concatBytes(state.centralParts);
+  const centralDirectoryOffset = state.offset;
+  state.offset += centralDirectory.length;
+  yield centralDirectory;
+
+  yield concatBytes([
+    uint32(0x06054b50),
+    uint16(0),
+    uint16(0),
+    uint16(state.entryCount),
+    uint16(state.entryCount),
+    uint32(centralDirectory.length),
+    uint32(centralDirectoryOffset),
+    uint16(0),
+  ]);
+}
+
+export function createZipStream(
+  entries: AsyncIterable<ZipStreamEntry> | Iterable<ZipStreamEntry>,
+) {
+  const iterator = streamZipChunks(entries)[Symbol.asyncIterator]();
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const next = await iterator.next();
+        if (next.done) controller.close();
+        else controller.enqueue(next.value);
+      } catch (error) {
+        controller.error(error);
+      }
+    },
+    async cancel() {
+      await iterator.return?.();
+    },
   });
 }

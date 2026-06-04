@@ -872,7 +872,13 @@ export default function SchoolsSchoolDetailPage() {
   }
 
   async function copySchoolLink() {
-    const origin = typeof window !== "undefined" ? window.location.origin : "";
+    // Always build client-facing links on the branded domain, never the
+    // deployment/preview host the dashboard happens to be opened on.
+    const origin =
+      typeof window !== "undefined" &&
+      /^https?:\/\/localhost(:\d+)?$/i.test(window.location.origin)
+        ? window.location.origin
+        : "https://www.studiooscloud.com";
     const slug = clean(school?.gallery_slug);
     let url: string;
     if (slug) {

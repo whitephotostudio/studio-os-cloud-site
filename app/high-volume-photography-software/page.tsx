@@ -6,13 +6,13 @@ export const metadata: Metadata = {
   description:
     "High-volume photography software for faster capture, ordering, and delivery. Built for school, event, sports, and corporate photographers who shoot hundreds or thousands of subjects per session.",
   alternates: {
-    canonical: "https://studiooscloud.com/high-volume-photography-software",
+    canonical: "https://www.studiooscloud.com/high-volume-photography-software",
   },
   openGraph: {
     title: "High Volume Photography Software | Studio OS Cloud",
     description:
       "Capture, organize, sell, and deliver at scale. The connected workflow platform for high-volume photographers.",
-    url: "https://studiooscloud.com/high-volume-photography-software",
+    url: "https://www.studiooscloud.com/high-volume-photography-software",
   },
 };
 

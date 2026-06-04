@@ -7,7 +7,7 @@ export const metadata: Metadata = {
   description:
     "Your responsibilities as a photographer when uploading photos, rosters, student information, and client data through Studio OS Cloud.",
   alternates: {
-    canonical: "https://studiooscloud.com/data-responsibility-agreement",
+    canonical: "https://www.studiooscloud.com/data-responsibility-agreement",
   },
 };
 

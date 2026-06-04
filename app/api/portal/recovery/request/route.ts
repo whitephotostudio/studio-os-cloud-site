@@ -99,7 +99,7 @@ export async function POST(request: NextRequest) {
   const origin =
     request.headers.get("origin") ||
     process.env.NEXT_PUBLIC_SITE_URL ||
-    "https://studiooscloud.com";
+    "https://www.studiooscloud.com";
 
   if (!outcome.ok) {
     await logRecoveryAttempt(service, {

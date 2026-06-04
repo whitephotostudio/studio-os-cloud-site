@@ -176,7 +176,7 @@ export async function POST(request: NextRequest) {
   const origin =
     request.headers.get("origin") ||
     process.env.NEXT_PUBLIC_SITE_URL ||
-    "https://studiooscloud.com";
+    "https://www.studiooscloud.com";
   const recoveryUrl = `${origin.replace(/\/$/, "")}/api/portal/recovery/claim?token=${encodeURIComponent(plaintextToken)}`;
   const studentName = `${student.first_name ?? ""} ${student.last_name ?? ""}`.trim() || "your child";
   const studioName = ctx.photographer.business_name || "Studio OS Cloud";

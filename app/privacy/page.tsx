@@ -7,7 +7,7 @@ export const metadata: Metadata = {
   description:
     "How Studio OS Cloud collects, stores, and protects photographer and client data.",
   alternates: {
-    canonical: "https://studiooscloud.com/privacy",
+    canonical: "https://www.studiooscloud.com/privacy",
   },
 };
 

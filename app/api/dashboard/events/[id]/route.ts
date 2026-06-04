@@ -17,10 +17,11 @@ import { resendConfigured, sendResendEmail } from "@/lib/resend";
 import { ensurePackageProfile } from "@/lib/ensure-package-profile";
 import {
   buildSignedMediaUrls,
+  extractStoragePathFromSupabaseUrl,
   SIGNED_URL_TTL_DASHBOARD_SECONDS,
 } from "@/lib/storage-images";
-import { r2DeletePrefix } from "@/lib/r2";
 import { guardAgreement } from "@/lib/require-agreement";
+import { deleteProjectCascade } from "@/lib/delete-cascade";
 
 export const dynamic = "force-dynamic";
 
@@ -62,6 +63,56 @@ type ProjectUpdateBody = z.infer<typeof ProjectUpdateBodySchema>;
 
 function clean(value: string | null | undefined) {
   return (value ?? "").trim();
+}
+
+function isR2CloudflareStorageUrl(value: string) {
+  try {
+    return /\.r2\.cloudflarestorage\.com$/i.test(new URL(value).host);
+  } catch {
+    return false;
+  }
+}
+
+function isKnownStorageUrl(value: string) {
+  try {
+    const parsed = new URL(value);
+    return (
+      parsed.pathname.startsWith("/api/r2/img/") ||
+      /\.r2\.dev$/i.test(parsed.host) ||
+      /\.r2\.cloudflarestorage\.com$/i.test(parsed.host) ||
+      value.includes("/storage/v1/object/public/") ||
+      value.includes("/storage/v1/render/image/public/")
+    );
+  } catch {
+    return false;
+  }
+}
+
+function resolveDashboardCoverUrl(value: string | null | undefined) {
+  const cover = clean(value);
+  if (!cover) return "";
+
+  const isHttpUrl = /^https?:\/\//i.test(cover);
+  if (isHttpUrl && !isKnownStorageUrl(cover)) return cover;
+
+  const isR2SignedUrl = isHttpUrl && isR2CloudflareStorageUrl(cover);
+  const storagePath =
+    !isHttpUrl && !cover.startsWith("/api/r2/img/")
+      ? cover
+      : isR2SignedUrl
+        ? ""
+        : extractStoragePathFromSupabaseUrl(cover) ?? "";
+
+  const signed = buildSignedMediaUrls(
+    {
+      storagePath,
+      previewUrl: cover,
+      thumbnailUrl: cover,
+    },
+    { ttlSeconds: SIGNED_URL_TTL_DASHBOARD_SECONDS },
+  );
+
+  return signed.previewUrl || signed.thumbnailUrl || signed.originalUrl || cover;
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -527,7 +578,12 @@ export async function GET(
     const collections = (collectionRows ?? []).filter((row) => {
       const kind = clean((row as { kind?: string | null }).kind).toLowerCase();
       return kind === "album" || kind === "class" || kind === "gallery" || !kind;
-    });
+    }).map((row) => ({
+      ...row,
+      cover_photo_url: resolveDashboardCoverUrl(
+        (row as { cover_photo_url?: string | null }).cover_photo_url,
+      ),
+    }));
 
     let galleriesCount = 0;
     let albumsCount = 0;
@@ -537,10 +593,12 @@ export async function GET(
       else albumsCount += 1;
     }
 
-    // Pagination for media — defaults: page 1, 200 items per page
+    // Pagination for media — defaults: page 1, 1000 items per page.
+    // The project overview uses the returned preview rows to render album cards,
+    // so a 200-row default made 300-photo albums look incomplete.
     const url = new URL(request.url);
     const mediaPage = Math.max(1, Number(url.searchParams.get("mediaPage")) || 1);
-    const mediaLimit = Math.min(500, Math.max(1, Number(url.searchParams.get("mediaLimit")) || 200));
+    const mediaLimit = Math.min(1000, Math.max(1, Number(url.searchParams.get("mediaLimit")) || 1000));
     const mediaFrom = (mediaPage - 1) * mediaLimit;
     const mediaTo = mediaFrom + mediaLimit - 1;
 
@@ -574,7 +632,12 @@ export async function GET(
 
     return NextResponse.json({
       ok: true,
-      project: projectRow,
+      project: {
+        ...projectRow,
+        cover_photo_url: resolveDashboardCoverUrl(
+          (projectRow as { cover_photo_url?: string | null }).cover_photo_url,
+        ),
+      },
       collections,
       media: normalizedMediaRows,
       mediaCount: mediaTotalCount ?? normalizedMediaRows.length,
@@ -881,7 +944,12 @@ export async function PATCH(
 
     return NextResponse.json({
       ok: true,
-      project: projectData,
+      project: {
+        ...projectData,
+        cover_photo_url: resolveDashboardCoverUrl(
+          (projectData as { cover_photo_url?: string | null }).cover_photo_url,
+        ),
+      },
       releaseEmailResult,
       campaignEmailResult,
     });
@@ -954,10 +1022,9 @@ export async function DELETE(
       return NextResponse.json({ ok: false, message: "Project not found." }, { status: 404 });
     }
 
-    // Collect all storage paths so we can delete from R2
-    const { data: mediaRows } = await service
+    const { count: mediaCount } = await service
       .from("media")
-      .select("storage_path")
+      .select("id", { count: "exact", head: true })
       .eq("project_id", projectId);
 
     // Count collections for audit metadata.
@@ -966,19 +1033,26 @@ export async function DELETE(
       .select("id", { count: "exact", head: true })
       .eq("project_id", projectId);
 
-    // Delete related data first, then the project
-    await Promise.all([
-      service.from("media").delete().eq("project_id", projectId),
-      service.from("collections").delete().eq("project_id", projectId),
-    ]);
+    const cascade = await deleteProjectCascade(service, projectId);
+    const projectDeleted = (cascade.rows_deleted.projects ?? 0) > 0;
 
-    const { error: deleteError } = await service
-      .from("projects")
-      .delete()
-      .eq("id", projectId)
-      .eq("photographer_id", photographerRow.id);
-
-    if (deleteError) throw deleteError;
+    // If a future/unknown relationship blocks the hard delete, hide the
+    // project from every dashboard and desktop-pull path. This keeps client
+    // production safe while the cascade result tells us what still needs a
+    // schema-level cleanup.
+    if (!projectDeleted) {
+      const { error: softDeleteError } = await service
+        .from("projects")
+        .update({
+          status: "deleted",
+          portal_status: "archived",
+          deleted_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", projectId)
+        .eq("photographer_id", photographerRow.id);
+      if (softDeleteError) throw softDeleteError;
+    }
 
     await recordAudit({
       request,
@@ -994,30 +1068,15 @@ export async function DELETE(
         name: projectRow.name ?? null,
       },
       metadata: {
-        mediaCount: mediaRows?.length ?? 0,
+        mediaCount: mediaCount ?? 0,
         albumCount: albumCount ?? 0,
+        cascade,
+        hardDeleted: projectDeleted,
       },
       result: "ok",
     });
 
-    // Delete files from R2 in the background (don't block the response)
-    // Each storage_path is the original; also delete _thumbnail and _preview variants.
-    if (mediaRows && mediaRows.length > 0) {
-      const prefixes = new Set<string>();
-      for (const row of mediaRows) {
-        if (row.storage_path) {
-          // Derive the folder prefix from storage path (e.g. "projects/abc/albums/xyz/")
-          const folder = row.storage_path.substring(0, row.storage_path.lastIndexOf("/") + 1);
-          if (folder) prefixes.add(folder);
-        }
-      }
-      // Delete each unique folder prefix from R2
-      Promise.allSettled(
-        Array.from(prefixes).map((prefix) => r2DeletePrefix(prefix)),
-      ).catch((err) => console.error("R2 cleanup error:", err));
-    }
-
-    return NextResponse.json({ ok: true });
+    return NextResponse.json({ ok: true, hardDeleted: projectDeleted });
   } catch (error) {
     console.error("[DELETE /api/dashboard/events/[id]]", error);
     return NextResponse.json(

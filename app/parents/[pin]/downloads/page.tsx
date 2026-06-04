@@ -5,6 +5,7 @@ import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { AlertCircle, ArrowLeft, CheckCircle2, Clock3, Download, FileArchive, LoaderCircle } from "lucide-react";
 import {
   eventGalleryDownloadManifestStorageKey,
+  type EventGalleryDownloadBatch,
   type EventGalleryDownloadManifest,
 } from "@/lib/event-gallery-downloads";
 
@@ -47,6 +48,40 @@ function triggerBatchDownload(url: string, fileName: string) {
   document.body.removeChild(anchor);
 }
 
+function buildBatchDownloadUrl(token: string, format?: "json") {
+  const params = new URLSearchParams({ token });
+  if (format) params.set("format", format);
+  return `/api/portal/event-download-batch?${params.toString()}`;
+}
+
+function downloadErrorMessage(error: unknown) {
+  return error instanceof Error && error.message
+    ? error.message
+    : "Could not prepare the ZIP download.";
+}
+
+async function prepareBatchDownload(batch: EventGalleryDownloadBatch) {
+  const response = await fetch(buildBatchDownloadUrl(batch.token, "json"), {
+    headers: { accept: "application/json" },
+    cache: "no-store",
+  });
+  const payload = (await response.json().catch(() => ({}))) as {
+    ok?: boolean;
+    message?: string;
+    downloadUrl?: string;
+    fileName?: string;
+  };
+
+  if (!response.ok || payload.ok === false || !payload.downloadUrl) {
+    throw new Error(payload.message || `Could not prepare ${batch.label}.`);
+  }
+
+  return {
+    downloadUrl: payload.downloadUrl,
+    fileName: clean(payload.fileName) || batch.fileName,
+  };
+}
+
 function wait(ms: number) {
   return new Promise<void>((resolve) => window.setTimeout(resolve, ms));
 }
@@ -62,7 +97,9 @@ export default function ParentGalleryDownloadsPage() {
   const [status, setStatus] = useState<"loading" | "ready" | "missing" | "expired">("loading");
   const [downloadingAll, setDownloadingAll] = useState(false);
   const [downloadedBatchCount, setDownloadedBatchCount] = useState(0);
+  const [preparingBatchId, setPreparingBatchId] = useState<string | null>(null);
   const [downloadNotice, setDownloadNotice] = useState("");
+  const [downloadError, setDownloadError] = useState("");
 
   useEffect(() => {
     const nextManifest = readStoredManifest(manifestId);
@@ -95,17 +132,21 @@ export default function ParentGalleryDownloadsPage() {
         : "Download Files";
 
   async function handleDownloadAllBatches() {
-    if (!manifest || downloadingAll) return;
+    if (!manifest || downloadingAll || preparingBatchId) return;
     setDownloadingAll(true);
     setDownloadedBatchCount(0);
+    setPreparingBatchId(null);
     setDownloadNotice("");
+    setDownloadError("");
 
     try {
       for (let index = 0; index < manifest.batches.length; index += 1) {
         const batch = manifest.batches[index];
+        setPreparingBatchId(batch.id);
+        const preparedDownload = await prepareBatchDownload(batch);
         triggerBatchDownload(
-          `/api/portal/event-download-batch?token=${encodeURIComponent(batch.token)}`,
-          batch.fileName,
+          preparedDownload.downloadUrl,
+          preparedDownload.fileName,
         );
         setDownloadedBatchCount(index + 1);
         if (index < manifest.batches.length - 1) {
@@ -118,10 +159,28 @@ export default function ParentGalleryDownloadsPage() {
           ? "Your ZIP download has started."
           : `Started ${manifest.batchCount} ZIP downloads. Your browser may ask you to allow multiple downloads.`,
       );
-    } catch {
-      setDownloadNotice("Could not start all ZIP downloads automatically.");
+    } catch (error) {
+      setDownloadError(downloadErrorMessage(error));
     } finally {
+      setPreparingBatchId(null);
       setDownloadingAll(false);
+    }
+  }
+
+  async function handleDownloadBatch(batch: EventGalleryDownloadBatch) {
+    if (downloadingAll || preparingBatchId) return;
+    setPreparingBatchId(batch.id);
+    setDownloadNotice("");
+    setDownloadError("");
+
+    try {
+      const preparedDownload = await prepareBatchDownload(batch);
+      triggerBatchDownload(preparedDownload.downloadUrl, preparedDownload.fileName);
+      setDownloadNotice(`${batch.label} download has started.`);
+    } catch (error) {
+      setDownloadError(downloadErrorMessage(error));
+    } finally {
+      setPreparingBatchId(null);
     }
   }
 
@@ -298,7 +357,7 @@ export default function ParentGalleryDownloadsPage() {
                   <button
                     type="button"
                     onClick={() => void handleDownloadAllBatches()}
-                    disabled={downloadingAll}
+                    disabled={downloadingAll || !!preparingBatchId}
                     style={{
                       display: "inline-flex",
                       alignItems: "center",
@@ -310,13 +369,16 @@ export default function ParentGalleryDownloadsPage() {
                       padding: "14px 20px",
                       fontSize: 14,
                       fontWeight: 800,
-                      cursor: downloadingAll ? "default" : "pointer",
-                      opacity: downloadingAll ? 0.8 : 1,
+                      cursor: downloadingAll || preparingBatchId ? "default" : "pointer",
+                      opacity: downloadingAll || preparingBatchId ? 0.8 : 1,
                     }}
                   >
                     {downloadingAll ? <LoaderCircle size={16} /> : <Download size={16} />}
                     {downloadingAll
-                      ? `Starting ZIP ${Math.max(1, downloadedBatchCount)} of ${manifest.batchCount}`
+                      ? `Preparing ZIP ${Math.min(
+                          manifest.batchCount,
+                          downloadedBatchCount + 1,
+                        )} of ${manifest.batchCount}`
                       : manifest.batchCount === 1
                         ? "Download ZIP File"
                         : `Download All ${manifest.batchCount} ZIP Files`}
@@ -353,6 +415,25 @@ export default function ParentGalleryDownloadsPage() {
                   </div>
                 ) : null}
 
+                {downloadError ? (
+                  <div
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 8,
+                      borderRadius: 16,
+                      background: "#fff1f0",
+                      color: "#9f2f24",
+                      padding: "12px 14px",
+                      fontSize: 14,
+                      fontWeight: 600,
+                    }}
+                  >
+                    <AlertCircle size={16} />
+                    {downloadError}
+                  </div>
+                ) : null}
+
                 {manifest.photoCount < manifest.requestedPhotoCount ? (
                   <div
                     style={{
@@ -377,11 +458,13 @@ export default function ParentGalleryDownloadsPage() {
                   }}
                 >
                   {manifest.batches.map((batch) => (
-                    <a
+                    <button
                       key={batch.id}
-                      href={`/api/portal/event-download-batch?token=${encodeURIComponent(batch.token)}`}
-                      download={batch.fileName}
+                      type="button"
+                      onClick={() => void handleDownloadBatch(batch)}
+                      disabled={downloadingAll || !!preparingBatchId}
                       style={{
+                        width: "100%",
                         display: "flex",
                         alignItems: "center",
                         justifyContent: "space-between",
@@ -391,7 +474,9 @@ export default function ParentGalleryDownloadsPage() {
                         border: "1px solid rgba(22,22,22,0.08)",
                         background: "#fbfaf8",
                         color: "inherit",
-                        textDecoration: "none",
+                        textAlign: "left",
+                        cursor: downloadingAll || preparingBatchId ? "default" : "pointer",
+                        opacity: downloadingAll || preparingBatchId ? 0.72 : 1,
                       }}
                     >
                       <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
@@ -444,10 +529,14 @@ export default function ParentGalleryDownloadsPage() {
                           whiteSpace: "nowrap",
                         }}
                       >
-                        <Download size={15} />
-                        Download
+                        {preparingBatchId === batch.id ? (
+                          <LoaderCircle size={15} />
+                        ) : (
+                          <Download size={15} />
+                        )}
+                        {preparingBatchId === batch.id ? "Preparing" : "Download"}
                       </div>
-                    </a>
+                    </button>
                   ))}
                 </div>
               </>

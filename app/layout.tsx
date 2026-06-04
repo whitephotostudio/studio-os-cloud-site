@@ -2,12 +2,14 @@ import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono, Fraunces } from "next/font/google";
 import "./globals.css";
 import { OrganizationJsonLd, WebSiteJsonLd } from "@/components/json-ld";
+import { MarketingEventTracker } from "@/components/marketing/MarketingEventTracker";
 
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   maximumScale: 5,
   viewportFit: "cover",
+  themeColor: "#cc0000",
 };
 
 const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
@@ -22,7 +24,7 @@ const fraunces = Fraunces({
   display: "swap",
 });
 
-const baseUrl = "https://studiooscloud.com";
+const baseUrl = "https://www.studiooscloud.com";
 
 export const metadata: Metadata = {
   metadataBase: new URL(baseUrl),
@@ -104,6 +106,16 @@ export const metadata: Metadata = {
   alternates: {
     canonical: baseUrl,
   },
+  manifest: "/manifest.webmanifest",
+  appleWebApp: {
+    capable: true,
+    title: "Studio OS Mobile",
+    statusBarStyle: "default",
+  },
+  icons: {
+    icon: "/studio_os_logo_official.png",
+    apple: "/studio_os_logo_official_cropped.png",
+  },
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
@@ -114,6 +126,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
         <WebSiteJsonLd />
       </head>
       <body className={`${geistSans.variable} ${geistMono.variable} ${fraunces.variable} antialiased`}>
+        <MarketingEventTracker />
         {children}
       </body>
     </html>

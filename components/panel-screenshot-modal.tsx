@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { ChevronLeft, ChevronRight, X } from "lucide-react";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 import { VisualSlot } from "@/components/visual-slot";
 import type { StudioPanel } from "@/lib/studio-os-content";
@@ -26,6 +27,11 @@ export function PanelScreenshotModal({
   const dialogRef = useRef<HTMLDivElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const previousActiveElementRef = useRef<HTMLElement | null>(null);
+  const [isMounted, setIsMounted] = useState(false);
+
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
 
   useEffect(() => {
     if (!panel) {
@@ -98,11 +104,11 @@ export function PanelScreenshotModal({
     };
   }, [panel, onClose, onNext, onPrevious]);
 
-  if (!panel) {
+  if (!panel || !isMounted) {
     return null;
   }
 
-  return (
+  return createPortal(
     <div
       className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5"
       onMouseDown={(event) => {
@@ -236,6 +242,7 @@ export function PanelScreenshotModal({
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

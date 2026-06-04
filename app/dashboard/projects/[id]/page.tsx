@@ -74,6 +74,7 @@ type CollectionRow = {
 type MediaRow = {
   id: string;
   collection_id?: string | null;
+  storage_path?: string | null;
   preview_url?: string | null;
   thumbnail_url?: string | null;
   filename?: string | null;
@@ -272,7 +273,7 @@ export default function ProjectDetailPage() {
   const [hoveredActivityMetric, setHoveredActivityMetric] = useState<string | null>(null);
   const [downloadingFavoriteMedia, setDownloadingFavoriteMedia] = useState(false);
   const [favoriteLibraryNotice, setFavoriteLibraryNotice] = useState("");
-  const [shareRecipientMode, setShareRecipientMode] = useState<"visitors" | "others">("visitors");
+  const [shareRecipientMode, setShareRecipientMode] = useState<"visitors" | "others" | "client">("visitors");
   const [shareRecipientInput, setShareRecipientInput] = useState("");
   const [shareSubject, setShareSubject] = useState(defaultEventGalleryShareSettings.emailSubject);
   const [shareHeadline, setShareHeadline] = useState(defaultEventGalleryShareSettings.emailHeadline);
@@ -465,6 +466,18 @@ export default function ProjectDetailPage() {
   const projectLocked = hasPinProtection(project?.access_mode, project?.access_pin);
   const albumHasLock = (album: CollectionRow) => hasPinProtection(album.access_mode, album.access_pin) || (normalizedAccessMode(album.access_mode) === "inherit_project" && projectLocked);
   const linkedContacts = gallerySettings.linkedContacts;
+  const clientContact = useMemo(
+    () =>
+      linkedContacts.find(
+        (contact) =>
+          clean(contact.email) &&
+          clean(contact.role).toLowerCase().includes("client"),
+      ) ||
+      linkedContacts.find((contact) => clean(contact.email)) ||
+      null,
+    [linkedContacts],
+  );
+  const clientEmail = clean(clientContact?.email).toLowerCase();
   const visitorEmails = useMemo(
     () =>
       Array.from(
@@ -477,7 +490,13 @@ export default function ProjectDetailPage() {
     [favoritesSummary.viewers],
   );
   const galleryEntryUrl = useMemo(() => {
-    const origin = typeof window !== "undefined" ? window.location.origin : "";
+    // Always build client-facing links on the branded domain, never the
+    // deployment/preview host the dashboard happens to be opened on.
+    const origin =
+      typeof window !== "undefined" &&
+      /^https?:\/\/localhost(:\d+)?$/i.test(window.location.origin)
+        ? window.location.origin
+        : "https://www.studiooscloud.com";
     const slug = clean(project?.gallery_slug);
     if (slug) {
       return `${origin}/g/${slug}`;
@@ -544,7 +563,8 @@ export default function ProjectDetailPage() {
     if (!coverTarget || !selectedMediaId) return;
     const selected = media.find((m) => m.id === selectedMediaId);
     const chosenUrl = mediaUrl(selected);
-    if (!chosenUrl) return;
+    const stableCoverValue = clean(selected?.storage_path) || chosenUrl;
+    if (!stableCoverValue) return;
     setSavingCover(true);
     try {
       if (coverTarget.type === "project") {
@@ -552,7 +572,7 @@ export default function ProjectDetailPage() {
           `/api/dashboard/events/${projectId}`,
           {
             method: "PATCH",
-            body: JSON.stringify({ cover_photo_url: chosenUrl }),
+            body: JSON.stringify({ cover_photo_url: stableCoverValue }),
           },
         );
 
@@ -568,7 +588,7 @@ export default function ProjectDetailPage() {
           `/api/dashboard/events/${projectId}/albums/${coverTarget.albumId}`,
           {
             method: "PATCH",
-            body: JSON.stringify({ cover_photo_url: chosenUrl }),
+            body: JSON.stringify({ cover_photo_url: stableCoverValue }),
           },
         );
 
@@ -604,9 +624,20 @@ export default function ProjectDetailPage() {
     }
   }
 
-  function openShareComposer(mode: "visitors" | "others") {
+  function openShareComposer(mode: "visitors" | "others" | "client") {
+    if (mode === "client" && !clientEmail) {
+      setShareNotice("Please input client email in Client details, then sync to cloud.");
+      window.setTimeout(() => setShareNotice(""), 3200);
+      return;
+    }
     setShareRecipientMode(mode);
-    setShareRecipientInput(mode === "visitors" ? visitorEmails.join(", ") : "");
+    setShareRecipientInput(
+      mode === "visitors"
+        ? visitorEmails.join(", ")
+        : mode === "client"
+          ? clientEmail
+          : "",
+    );
     setShareView("compose");
     setShareModalOpen(true);
   }
@@ -654,6 +685,8 @@ export default function ProjectDetailPage() {
           recipients:
             shareRecipientMode === "visitors"
               ? visitorEmails
+              : shareRecipientMode === "client"
+                ? [clientEmail].filter(Boolean)
               : shareRecipientInput
                   .split(",")
                   .map((value) => clean(value))
@@ -1709,6 +1742,19 @@ export default function ProjectDetailPage() {
 
             {shareView === "menu" ? (
               <div style={{ padding: 24, display: "grid", gap: 16 }}>
+                <button onClick={() => openShareComposer("client")} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, borderRadius: 18, border: "1px solid #e5e7eb", background: "#fff", padding: "18px 20px", cursor: "pointer", textAlign: "left" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+                    <div style={{ width: 44, height: 44, borderRadius: 999, background: "#ecfdf3", color: "#16a34a", display: "grid", placeItems: "center" }}><Mail size={20} /></div>
+                    <div>
+                      <div style={{ color: "#111111", fontWeight: 800 }}>Email Client</div>
+                      <div style={{ color: "#4b5563", fontSize: 13, marginTop: 4 }}>
+                        {clientEmail || "Please input client email in Client details, then sync to cloud."}
+                      </div>
+                    </div>
+                  </div>
+                  <ExternalLink size={18} color="#6b7280" />
+                </button>
+
                 <button onClick={() => openShareComposer("visitors")} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, borderRadius: 18, border: "1px solid #e5e7eb", background: "#fff", padding: "18px 20px", cursor: "pointer", textAlign: "left" }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
                     <div style={{ width: 44, height: 44, borderRadius: 999, background: "#fff3e8", color: "#f97316", display: "grid", placeItems: "center" }}><Mail size={20} /></div>
@@ -1982,6 +2028,10 @@ export default function ProjectDetailPage() {
                       {shareRecipientMode === "visitors" ? (
                         <div style={{ borderRadius: 12, border: "1px solid #d0d5dd", background: "#f8fafc", padding: "12px 14px", color: "#111111", fontSize: 14 }}>
                           {visitorEmails.length ? `${visitorEmails.length} gallery visitors` : "No visitor emails yet"}
+                        </div>
+                      ) : shareRecipientMode === "client" ? (
+                        <div style={{ borderRadius: 12, border: "1px solid #d0d5dd", background: "#f8fafc", padding: "12px 14px", color: "#111111", fontSize: 14 }}>
+                          {clientEmail || "Please input client email in Client details."}
                         </div>
                       ) : (
                         <textarea value={shareRecipientInput} onChange={(e) => setShareRecipientInput(e.target.value)} placeholder="client@example.com, parent@example.com" style={{ minHeight: 80, width: "100%", boxSizing: "border-box", borderRadius: 12, border: "1px solid #d0d5dd", padding: "12px 14px", fontSize: 14, color: "#111111", outline: "none" }} />

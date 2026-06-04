@@ -11,6 +11,7 @@ export type EventEmailProject = {
   access_pin?: string | null;
   email_required?: boolean | null;
   cover_photo_url?: string | null;
+  gallery_slug?: string | null;
 };
 
 export type SchoolEmailGallery = {
@@ -20,6 +21,7 @@ export type SchoolEmailGallery = {
   access_pin?: string | null;
   email_required?: boolean | null;
   cover_photo_url?: string | null;
+  gallery_slug?: string | null;
 };
 
 export type EventEmailPhotographer = {
@@ -73,13 +75,40 @@ export function eventProjectName(project: EventEmailProject) {
   return clean(project.title) || clean(project.client_name) || "Your gallery";
 }
 
-export function eventGalleryEntryUrl(origin: string, projectId: string) {
-  const base = origin.replace(/\/$/, "");
+// Branded host for all client-facing gallery links. Using this (instead of the
+// request origin) guarantees preview hosts like *.vercel.app never leak into
+// the emails we send to clients.
+const PUBLIC_GALLERY_HOST = "https://www.studiooscloud.com";
+
+// Resolve the base URL for a client-facing link. Always the branded host in
+// production; local development (localhost) keeps its own origin so links work
+// while testing.
+function publicLinkBase(origin: string) {
+  const trimmed = clean(origin).replace(/\/$/, "");
+  if (/^https?:\/\/localhost(:\d+)?$/i.test(trimmed)) return trimmed;
+  return PUBLIC_GALLERY_HOST;
+}
+
+export function eventGalleryEntryUrl(
+  origin: string,
+  projectId: string,
+  slug?: string | null,
+) {
+  const base = publicLinkBase(origin);
+  const cleanSlug = clean(slug).toLowerCase();
+  // Short, clean link (no internal IDs) when a slug exists; long form otherwise.
+  if (cleanSlug) return `${base}/g/${encodeURIComponent(cleanSlug)}`;
   return `${base}/parents?mode=event&project=${encodeURIComponent(projectId)}`;
 }
 
-export function schoolGalleryEntryUrl(origin: string, schoolId: string) {
-  const base = origin.replace(/\/$/, "");
+export function schoolGalleryEntryUrl(
+  origin: string,
+  schoolId: string,
+  slug?: string | null,
+) {
+  const base = publicLinkBase(origin);
+  const cleanSlug = clean(slug).toLowerCase();
+  if (cleanSlug) return `${base}/g/${encodeURIComponent(cleanSlug)}`;
   return `${base}/parents?mode=school&school=${encodeURIComponent(schoolId)}`;
 }
 
@@ -135,7 +164,11 @@ export function buildGalleryShareEmail(input: EventEmailContentInput) {
     clean(input.overrideMessage) ||
     clean(input.share?.emailMessage) ||
     defaultEventGalleryShareSettings.emailMessage;
-  const galleryUrl = eventGalleryEntryUrl(input.origin, input.project.id);
+  const galleryUrl = eventGalleryEntryUrl(
+    input.origin,
+    input.project.id,
+    input.project.gallery_slug,
+  );
   const accessSummary = eventAccessSummary(input.project);
   const emailRequirement = eventEmailRequirementSummary(input.project);
   const studioName = eventFromName(input.photographer);
@@ -226,7 +259,11 @@ export function buildSchoolShareEmail(input: SchoolEmailContentInput) {
     clean(input.overrideMessage) ||
     clean(input.share?.emailMessage) ||
     defaultEventGalleryShareSettings.emailMessage;
-  const galleryUrl = schoolGalleryEntryUrl(input.origin, input.school.id);
+  const galleryUrl = schoolGalleryEntryUrl(
+    input.origin,
+    input.school.id,
+    input.school.gallery_slug,
+  );
   const accessSummary = schoolAccessSummary();
   const emailRequirement = schoolEmailRequirementSummary(input.school);
   const studioName = eventFromName(input.photographer);

@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createDashboardServiceClient } from "@/lib/dashboard-auth";
 import { syncPhotographyKeysByPhotographerId } from "@/lib/studio-os-app";
+import { notifyOwnerForSetting } from "@/lib/admin-notification-center";
+import { ownerUrl } from "@/lib/owner-notifications";
 import { resendConfigured, sendResendEmail } from "@/lib/resend";
 import { r2DeletePrefix } from "@/lib/r2";
 import { recordAudit } from "@/lib/audit";
@@ -173,6 +175,23 @@ function formatInvoiceDate(unix: number | null | undefined) {
   });
 }
 
+function photographerLabel(photographer: PhotographerRow) {
+  return (
+    (photographer.business_name ?? "").trim() ||
+    (photographer.billing_email ?? "").trim() ||
+    (photographer.studio_email ?? "").trim() ||
+    "Studio OS photographer"
+  );
+}
+
+function photographerContact(photographer: PhotographerRow) {
+  return (
+    (photographer.billing_email ?? "").trim() ||
+    (photographer.studio_email ?? "").trim() ||
+    "No email captured"
+  );
+}
+
 async function sendInvoicePaidEmail(
   invoice: StripeInvoice,
   photographer: PhotographerRow,
@@ -272,7 +291,7 @@ async function sendInvoicePaidEmail(
       <!-- Footer -->
       <div style="padding:20px 24px;border-top:1px solid #f0f0f0;text-align:center;">
         <p style="margin:0;font-size:12px;color:#9ca3af;">This is an automated payment receipt from Studio OS Cloud.</p>
-        <p style="margin:4px 0 0;font-size:12px;color:#9ca3af;">If you have questions, reply to this email or visit <a href="https://studiooscloud.com" style="color:#2563eb;text-decoration:none;">studiooscloud.com</a></p>
+        <p style="margin:4px 0 0;font-size:12px;color:#9ca3af;">If you have questions, reply to this email or visit <a href="https://www.studiooscloud.com" style="color:#2563eb;text-decoration:none;">studiooscloud.com</a></p>
       </div>
     </div>
   </div>
@@ -523,6 +542,17 @@ export async function POST(req: NextRequest) {
         const photographer = await findPhotographerForSubscription(service, subscription);
         if (photographer) {
           await syncDeletedSubscriptionState(service, photographer, subscription);
+          await notifyOwnerForSetting("alertOnSubscriptionCanceled", {
+            title: "Studio OS subscription canceled",
+            message: [
+              photographerLabel(photographer),
+              photographerContact(photographer),
+              `Subscription: ${subscription.id}`,
+            ].join("\n"),
+            url: ownerUrl("/dashboard/admin/users"),
+            urlTitle: "Open admin users",
+            priority: 0,
+          });
         }
         break;
       }
@@ -567,6 +597,19 @@ export async function POST(req: NextRequest) {
             } catch {
               await markSubscriptionPaymentFailure(service, photographer);
             }
+
+            await notifyOwnerForSetting("alertOnPaymentFailed", {
+              title: "Studio OS payment failed",
+              message: [
+                photographerLabel(photographer),
+                photographerContact(photographer),
+                `Amount due: ${formatInvoiceCurrency(invoice.amount_due ?? invoice.total ?? 0, invoice.currency)}`,
+                `Invoice: ${invoice.number ?? invoice.id}`,
+              ].join("\n"),
+              url: ownerUrl("/dashboard/admin/users"),
+              urlTitle: "Open admin users",
+              priority: 1,
+            });
           }
         }
         break;
@@ -588,7 +631,19 @@ export async function POST(req: NextRequest) {
 
           if (photographer) {
             const liveSubscription = await retrieveStripeSubscription(session.subscription);
-            await syncSubscriptionStateFromStripe(service, photographer, liveSubscription);
+            const synced = await syncSubscriptionStateFromStripe(service, photographer, liveSubscription);
+            await notifyOwnerForSetting("alertOnNewSubscription", {
+              title: "New Studio OS subscription",
+              message: [
+                photographerLabel(photographer),
+                photographerContact(photographer),
+                `Plan: ${synced.planCode ?? "unknown"} · ${synced.subscription.status ?? "unknown"}`,
+                `Subscription: ${synced.subscription.id}`,
+              ].join("\n"),
+              url: ownerUrl("/dashboard/admin/users"),
+              urlTitle: "Open admin users",
+              priority: 1,
+            });
           }
           break;
         }

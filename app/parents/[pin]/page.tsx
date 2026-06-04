@@ -3633,6 +3633,7 @@ export default function ParentGalleryPage() {
   const [loadedGalleryImageIds, setLoadedGalleryImageIds] = useState<Set<string>>(
     () => new Set(),
   );
+  const eventWallLearnedRatiosRef = useRef<Record<string, number>>({});
   const [selectedImageIndex, setSelectedImageIndex] = useState(0);
   const [eventPhotoStage, setEventPhotoStage] = useState<EventPhotoStage>(
     mode === "event" ? "albums" : "viewer",
@@ -4189,6 +4190,18 @@ export default function ParentGalleryPage() {
     });
     if (!aspectRatio || !Number.isFinite(aspectRatio) || aspectRatio <= 0) return;
     const nextAspectRatio = getEventWallAspectRatio(aspectRatio);
+    if (eventWallRatiosKey) {
+      const learnedRatios = eventWallLearnedRatiosRef.current;
+      if (learnedRatios[id] !== nextAspectRatio) {
+        const nextRatios = {
+          ...learnedRatios,
+          [id]: nextAspectRatio,
+        };
+        eventWallLearnedRatiosRef.current = nextRatios;
+        writeStoredEventWallRatios(eventWallRatiosKey, nextRatios);
+      }
+      return;
+    }
     setGalleryImageRatios((prev) =>
       prev[id] === nextAspectRatio
         ? prev
@@ -4336,6 +4349,7 @@ export default function ParentGalleryPage() {
               .map((image) => [image.id, storedWallRatios[image.id]] as const)
               .filter((entry): entry is readonly [string, number] => Number.isFinite(entry[1])),
           );
+          eventWallLearnedRatiosRef.current = nextEventWallRatios;
 
           if (!mounted) return;
 
@@ -4867,6 +4881,37 @@ export default function ParentGalleryPage() {
   ].filter(Boolean);
   const heroPreviewImages = images.slice(0, Math.min(images.length, 8));
   const featuredAlbums = eventCollectionsWithImages.slice(0, Math.min(eventCollectionsWithImages.length, 3));
+  const landingAlbumCards = [
+    ...(!currentGalleryExtras.hideAllPhotosAlbum
+      ? [
+          {
+            id: "__all__",
+            title: galleryCopy.allPhotos,
+            label: "Complete gallery",
+            photoCount: images.length,
+            coverUrl: project?.cover_photo_url || images[0]?.url || heroImageUrl,
+            collectionId: null as string | null,
+          },
+        ]
+      : []),
+    ...featuredAlbums.map((collection) => {
+      const collectionId = clean(collection.id);
+      const firstAlbumImage = images.find(
+        (image) => clean(image.collectionId) === collectionId,
+      );
+      return {
+        id: collectionId,
+        title: clean(collection.title) || galleryCopy.album,
+        label: galleryCopy.album,
+        photoCount: eventCollectionPhotoCounts[collectionId] ?? 0,
+        coverUrl: clean(collection.cover_photo_url) || firstAlbumImage?.url || heroImageUrl,
+        collectionId,
+      };
+    }),
+  ].slice(0, isMobileViewport ? 3 : 4);
+  const activeScenePhotoCount = activeEventCollectionId ? visibleImages.length : images.length;
+  const activeSceneCoverUrl =
+    selectedEventCollection?.cover_photo_url || visibleImages[0]?.url || heroImageUrl;
   const galleryMetaItems = [
     galleryEventDate,
     showAlbumOverview ? compactCountLabel(eventCollectionsWithImages.length, galleryCopy.album.toLowerCase()) : "",
@@ -6281,21 +6326,20 @@ export default function ParentGalleryPage() {
     if (isEventPhotoWall) {
       const eventGap = Math.max(12, Math.min(galleryGap, 16));
       const eventColumnWidth = Math.max(220, photoWallColumnWidth - 30);
-      const eventWallFallbackWidth =
-        typeof window !== "undefined"
-          ? Math.max(320, Math.floor(window.innerWidth - 48))
-          : Math.max(980, eventColumnWidth * 4 + eventGap * 3);
       const eventTargetRowHeight = Math.max(
         210,
         Math.min(250, Math.round(eventColumnWidth * 0.98)),
       );
-      const eventRows = buildEventPhotoRows(
-        imagesToRender,
-        galleryImageRatios,
-        eventPhotoWallWidth || eventWallFallbackWidth,
-        eventGap,
-        eventTargetRowHeight,
-      );
+      const eventRows =
+        eventPhotoWallWidth > 0
+          ? buildEventPhotoRows(
+              imagesToRender,
+              galleryImageRatios,
+              eventPhotoWallWidth,
+              eventGap,
+              eventTargetRowHeight,
+            )
+          : [];
       return (
         <div
           ref={eventPhotoWallRef}
@@ -6303,6 +6347,7 @@ export default function ParentGalleryPage() {
             display: "grid",
             gap: `${eventGap}px`,
             alignContent: "start",
+            minHeight: eventPhotoWallWidth > 0 ? undefined : eventTargetRowHeight,
           }}
         >
           {eventRows.map((row, rowIndex) => (
@@ -8177,13 +8222,12 @@ export default function ParentGalleryPage() {
         ::-webkit-scrollbar{width:4px;height:4px;}
         ::-webkit-scrollbar-track{background:transparent;}
         ::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.12);border-radius:2px;}
-        .event-hover-card{transition:transform .22s ease, box-shadow .22s ease, border-color .22s ease;}
-        .event-hover-card:hover{transform:translateY(-4px);box-shadow:0 26px 56px rgba(0,0,0,0.22);}
+        .event-hover-card{transition:box-shadow .22s ease, border-color .22s ease;}
+        .event-hover-card:hover{box-shadow:0 26px 56px rgba(0,0,0,0.22);border-color:rgba(255,255,255,0.58);}
         .event-chip{transition:background .18s ease,border-color .18s ease,color .18s ease,transform .18s ease;}
         .event-chip:hover{transform:translateY(-1px);}
-        .event-photo-card{transition:transform .22s ease, opacity .22s ease;}
+        .event-photo-card{transition:opacity .22s ease;}
         .event-photo-card img{transition:transform .32s ease;}
-        .event-photo-card:hover{transform:translateY(-2px);}
         .event-photo-card:hover img{transform:scale(1.015);}
         .event-photo-actions{
           opacity:0;
@@ -8836,14 +8880,14 @@ export default function ParentGalleryPage() {
               background: "#f7f3ee",
             }}
           >
-            <div
-              style={{
-                position: "relative",
-                overflow: "hidden",
-                minHeight: "100vh",
-                background: "#e9e2da",
-              }}
-            >
+              <div
+                style={{
+                  position: "relative",
+                  overflow: "hidden",
+                  minHeight: "100svh",
+                  background: "#e9e2da",
+                }}
+              >
               {heroImageUrl ? (
                 <img
                   src={heroImageUrl}
@@ -8873,10 +8917,10 @@ export default function ParentGalleryPage() {
                 style={{
                   position: "relative",
                   zIndex: 1,
-                  minHeight: "100vh",
+                  minHeight: "100svh",
                   display: "grid",
                   gridTemplateRows: "auto 1fr auto",
-                  padding: "32px 42px 54px",
+                  padding: isMobileViewport ? "24px 18px 28px" : "32px 42px 42px",
                 }}
               >
                 <div style={{ display: "flex", justifyContent: "center" }}>
@@ -8924,10 +8968,16 @@ export default function ParentGalleryPage() {
                     style={{
                       maxWidth: 820,
                       color: "#ffffff",
-                      fontSize: usesSerifHero(currentGalleryBranding.fontPreset) ? 68 : 60,
+                      fontSize: isMobileViewport
+                        ? usesSerifHero(currentGalleryBranding.fontPreset)
+                          ? 42
+                          : 38
+                        : usesSerifHero(currentGalleryBranding.fontPreset)
+                          ? 68
+                          : 60,
                       fontWeight: 600,
                       lineHeight: 1,
-                      letterSpacing: usesSerifHero(currentGalleryBranding.fontPreset) ? "0.01em" : "-0.04em",
+                      letterSpacing: 0,
                       textShadow: "0 18px 48px rgba(0,0,0,0.3)",
                     }}
                   >
@@ -8992,24 +9042,159 @@ export default function ParentGalleryPage() {
                   </button>
                 </div>
 
-                <div style={{ display: "flex", justifyContent: "flex-start" }}>
-                  <button
-                    type="button"
-                    onClick={openAlbumsOverview}
+                <div
+                  style={{
+                    width: "100%",
+                    display: "grid",
+                    gap: 14,
+                    alignSelf: "end",
+                  }}
+                >
+                  <div
                     style={{
-                      background: "transparent",
-                      border: "none",
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      gap: 16,
                       color: "rgba(255,255,255,0.78)",
-                      fontSize: 10,
-                      fontWeight: 700,
-                      letterSpacing: "0.18em",
-                      textTransform: "uppercase",
-                      cursor: "pointer",
-                      padding: 0,
                     }}
                   >
-                    {galleryCopy.albums}
-                  </button>
+                    <div
+                      style={{
+                        fontSize: 10,
+                        fontWeight: 700,
+                        letterSpacing: "0.18em",
+                        textTransform: "uppercase",
+                      }}
+                    >
+                      {galleryCopy.albums}
+                    </div>
+                    {eventCollectionsWithImages.length > featuredAlbums.length ? (
+                      <button
+                        type="button"
+                        onClick={openAlbumsOverview}
+                        style={{
+                          background: "transparent",
+                          border: "none",
+                          color: "rgba(255,255,255,0.82)",
+                          fontSize: 10,
+                          fontWeight: 700,
+                          letterSpacing: "0.12em",
+                          textTransform: "uppercase",
+                          cursor: "pointer",
+                          padding: 0,
+                        }}
+                      >
+                        {compactCountLabel(eventCollectionsWithImages.length, galleryCopy.album.toLowerCase())}
+                      </button>
+                    ) : null}
+                  </div>
+
+                  {landingAlbumCards.length ? (
+                    <div
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: isMobileViewport
+                          ? "minmax(0, 1fr)"
+                          : `repeat(${landingAlbumCards.length}, minmax(0, 1fr))`,
+                        gap: 12,
+                        maxWidth: 1180,
+                        width: "100%",
+                      }}
+                    >
+                      {landingAlbumCards.map((card) => (
+                        <button
+                          key={card.id}
+                          type="button"
+                          className="event-hover-card"
+                          onClick={() => openEventPhotoGrid(card.collectionId)}
+                          style={{
+                            minHeight: isMobileViewport ? 92 : 132,
+                            border: "1px solid rgba(255,255,255,0.34)",
+                            borderRadius: 0,
+                            background: "rgba(10,10,10,0.22)",
+                            color: "#ffffff",
+                            padding: 0,
+                            overflow: "hidden",
+                            position: "relative",
+                            textAlign: "left",
+                            cursor: "pointer",
+                            boxShadow: "0 18px 44px rgba(0,0,0,0.2)",
+                          }}
+                        >
+                          {card.coverUrl ? (
+                            <img
+                              src={card.coverUrl}
+                              alt=""
+                              loading="lazy"
+                              style={{
+                                position: "absolute",
+                                inset: 0,
+                                width: "100%",
+                                height: "100%",
+                                objectFit: "cover",
+                                filter: blackWhitePreviewActive
+                                  ? "grayscale(1) saturate(0.7)"
+                                  : "saturate(0.95)",
+                              }}
+                            />
+                          ) : null}
+                          <div
+                            style={{
+                              position: "absolute",
+                              inset: 0,
+                              background:
+                                "linear-gradient(180deg, rgba(0,0,0,0.06) 0%, rgba(0,0,0,0.58) 100%)",
+                            }}
+                          />
+                          <div
+                            style={{
+                              position: "relative",
+                              minHeight: "inherit",
+                              display: "grid",
+                              alignContent: "end",
+                              gap: 6,
+                              padding: isMobileViewport ? "16px 16px" : "18px 18px",
+                            }}
+                          >
+                            <div
+                              style={{
+                                fontSize: 10,
+                                fontWeight: 700,
+                                letterSpacing: "0.14em",
+                                textTransform: "uppercase",
+                                color: "rgba(255,255,255,0.72)",
+                              }}
+                            >
+                              {card.label}
+                            </div>
+                            <div
+                              style={{
+                                fontSize: isMobileViewport ? 18 : 21,
+                                fontWeight: 600,
+                                lineHeight: 1.08,
+                              }}
+                            >
+                              {card.title}
+                            </div>
+                            {!currentGalleryExtras.hideAlbumPhotoCount ? (
+                              <div
+                                style={{
+                                  fontSize: 11,
+                                  fontWeight: 700,
+                                  letterSpacing: "0.1em",
+                                  textTransform: "uppercase",
+                                  color: "rgba(255,255,255,0.76)",
+                                }}
+                              >
+                                {compactCountLabel(card.photoCount, "photo")}
+                              </div>
+                            ) : null}
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
                 </div>
               </div>
             </div>
@@ -9579,6 +9764,139 @@ export default function ParentGalleryPage() {
             ) : showEventPhotoGrid ? (
               <div style={{ flex: 1, overflow: "auto", padding: "12px 12px 32px" }}>
                 <div style={{ width: "100%", display: "grid", gap: 12 }}>
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: isMobileViewport ? "minmax(0, 1fr)" : "minmax(0, 1fr) auto",
+                      gap: isMobileViewport ? 16 : 28,
+                      alignItems: "end",
+                      padding: isMobileViewport ? "18px 2px 10px" : "28px 12px 16px",
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "flex-end",
+                        gap: 16,
+                        minWidth: 0,
+                      }}
+                    >
+                      {activeSceneCoverUrl ? (
+                        <div
+                          style={{
+                            width: isMobileViewport ? 58 : 76,
+                            height: isMobileViewport ? 58 : 76,
+                            flex: "0 0 auto",
+                            overflow: "hidden",
+                            background: "#efe7dc",
+                          }}
+                        >
+                          <img
+                            src={activeSceneCoverUrl}
+                            alt=""
+                            loading="lazy"
+                            style={{
+                              width: "100%",
+                              height: "100%",
+                              objectFit: "cover",
+                              filter: blackWhitePreviewActive
+                                ? "grayscale(1) saturate(0.7)"
+                                : "saturate(0.96)",
+                            }}
+                          />
+                        </div>
+                      ) : null}
+                      <div style={{ minWidth: 0, display: "grid", gap: 7 }}>
+                        <div
+                          style={{
+                            color: "#8b8176",
+                            fontSize: 10,
+                            fontWeight: 700,
+                            letterSpacing: "0.16em",
+                            textTransform: "uppercase",
+                          }}
+                        >
+                          {galleryHeaderLabel}
+                        </div>
+                        <div
+                          style={{
+                            color: "#18181b",
+                            fontSize: isMobileViewport ? 30 : 42,
+                            fontWeight: 500,
+                            lineHeight: 1,
+                            letterSpacing: 0,
+                          }}
+                        >
+                          {galleryHeaderTitle}
+                        </div>
+                        <div
+                          style={{
+                            color: "#756b60",
+                            fontSize: 13,
+                            lineHeight: 1.5,
+                          }}
+                        >
+                          {compactCountLabel(activeScenePhotoCount, "photo")}
+                          {galleryEventDate ? ` · ${galleryEventDate}` : ""}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: isMobileViewport ? "flex-start" : "flex-end",
+                        alignItems: "center",
+                        gap: 10,
+                        flexWrap: "wrap",
+                      }}
+                    >
+                      {eventHasAlbums ? (
+                        <button
+                          type="button"
+                          onClick={openAlbumsOverview}
+                          style={{
+                            border: "1px solid rgba(24,24,27,0.13)",
+                            background: "#ffffff",
+                            color: "#18181b",
+                            height: 38,
+                            padding: "0 14px",
+                            fontSize: 12,
+                            fontWeight: 700,
+                            cursor: "pointer",
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: 8,
+                          }}
+                        >
+                          <ChevronLeft size={14} />
+                          {galleryCopy.albums}
+                        </button>
+                      ) : null}
+                      {currentGalleryExtras.enableStore && !orderingDisabled ? (
+                        <button
+                          type="button"
+                          onClick={() => setActiveView("store")}
+                          style={{
+                            border: "1px solid rgba(24,24,27,0.13)",
+                            background: "#18181b",
+                            color: "#ffffff",
+                            height: 38,
+                            padding: "0 14px",
+                            fontSize: 12,
+                            fontWeight: 700,
+                            cursor: "pointer",
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: 8,
+                          }}
+                        >
+                          <ShoppingCart size={14} />
+                          {galleryCopy.openStore}
+                        </button>
+                      ) : null}
+                    </div>
+                  </div>
                   {visibleImages.length > 0 ? (
                     renderPhotoWall(visibleImages)
                   ) : (

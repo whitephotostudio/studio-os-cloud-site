@@ -1,23 +1,26 @@
 import sharp from "sharp";
 import { NextRequest, NextResponse } from "next/server";
 import { createDashboardServiceClient } from "@/lib/dashboard-auth";
-import { verifyEventGalleryBatchToken } from "@/lib/event-gallery-download-tokens";
+import {
+  verifyEventGalleryBatchToken,
+  type EventGalleryBatchTokenPayload,
+} from "@/lib/event-gallery-download-tokens";
 import {
   buildSignedMediaUrls,
   SIGNED_URL_TTL_PARENTS_PORTAL_SECONDS,
 } from "@/lib/storage-images";
-import { createZipBytes, type ZipEntry } from "@/lib/zip";
+import { galleryZipBatchSize } from "@/lib/event-gallery-downloads";
+import { createZipStream, type ZipStreamEntry } from "@/lib/zip";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
-export const maxDuration = 120;
+export const maxDuration = 300;
 
-// Upper bound on photos included in a single ZIP request. The /event-download-ready
-// route already chunks batches (~72–100 photos per token depending on resolution
-// and watermark), but we enforce a hard cap here as a defense-in-depth guard so
-// a forged/tampered token cannot ask us to materialize thousands of full-size
-// buffers in memory at once.
-const MAX_MEDIA_PER_BATCH = 150;
+// Hard upper bound for legacy or tampered tokens. The ZIP response streams now,
+// so larger professional batches are safe, but we still cap untrusted token
+// payloads to prevent one request from tying up a function for too long.
+const MAX_MEDIA_PER_BATCH = 800;
+const MEDIA_LOOKUP_CHUNK_SIZE = 100;
 
 type MediaRow = {
   id: string;
@@ -29,6 +32,38 @@ type MediaRow = {
 
 function clean(value: string | null | undefined) {
   return (value ?? "").trim();
+}
+
+function safeZipFileName(value: string | null | undefined) {
+  const cleaned = clean(value)
+    .replace(/[\\/:*?"<>|\r\n]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const fileName = cleaned || "gallery-download.zip";
+  return fileName.toLowerCase().endsWith(".zip") ? fileName : `${fileName}.zip`;
+}
+
+function headerFallbackFileName(value: string) {
+  return (
+    safeZipFileName(value)
+      .replace(/[^\x20-\x7E]+/g, "_")
+      .replace(/\\/g, "\\\\")
+      .replace(/"/g, '\\"') || "gallery-download.zip"
+  );
+}
+
+function encodeRfc5987Value(value: string) {
+  return encodeURIComponent(value).replace(
+    /['()*]/g,
+    (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`,
+  );
+}
+
+function contentDispositionAttachment(fileName: string) {
+  const safeFileName = safeZipFileName(fileName);
+  return `attachment; filename="${headerFallbackFileName(safeFileName)}"; filename*=UTF-8''${encodeRfc5987Value(
+    safeFileName,
+  )}`;
 }
 
 function xmlEscape(value: string) {
@@ -57,6 +92,34 @@ function uniqueDownloadName(name: string, usedNames: Map<string, number>) {
   const nextCount = (usedNames.get(cleaned) ?? 0) + 1;
   usedNames.set(cleaned, nextCount);
   return nextCount === 1 ? cleaned : `${base}-${nextCount}${ext}`;
+}
+
+function chunkValues<T>(values: T[], size: number) {
+  const safeSize = Math.max(1, Math.floor(size) || 1);
+  const chunks: T[][] = [];
+  for (let index = 0; index < values.length; index += safeSize) {
+    chunks.push(values.slice(index, index + safeSize));
+  }
+  return chunks;
+}
+
+async function fetchMediaRows(
+  service: { from: (table: string) => any },
+  projectId: string,
+  mediaIds: string[],
+) {
+  const rows: MediaRow[] = [];
+  for (const chunk of chunkValues(mediaIds, MEDIA_LOOKUP_CHUNK_SIZE)) {
+    const { data, error } = await service
+      .from("media")
+      .select("id,storage_path,preview_url,thumbnail_url,filename")
+      .eq("project_id", projectId)
+      .in("id", chunk);
+
+    if (error) throw error;
+    rows.push(...((data ?? []) as MediaRow[]));
+  }
+  return rows;
 }
 
 function buildPdfFromJpegBytes(imageBytes: Uint8Array, width: number, height: number) {
@@ -134,6 +197,22 @@ async function fetchBuffer(url: string) {
   };
 }
 
+async function fetchStream(url: string) {
+  const response = await fetch(url, {
+    cache: "no-store",
+    redirect: "follow",
+  });
+
+  if (!response.ok || !response.body) {
+    throw new Error(`Could not load ${url}: HTTP ${response.status} ${response.statusText}`);
+  }
+
+  return {
+    stream: response.body,
+    contentType: clean(response.headers.get("content-type")),
+  };
+}
+
 async function fetchFirstAvailable(
   urls: string[],
   mediaId: string,
@@ -147,6 +226,26 @@ async function fetchFirstAvailable(
       const message = err instanceof Error ? err.message : String(err);
       errors.push(message);
       console.warn(`[event-download-batch] fetch failed for media ${mediaId}: ${message}`);
+    }
+  }
+  throw new Error(
+    `All ${urls.length} candidate URL(s) failed for media ${mediaId}: ${errors.join(" | ")}`,
+  );
+}
+
+async function fetchFirstAvailableStream(
+  urls: string[],
+  mediaId: string,
+): Promise<{ stream: ReadableStream<Uint8Array>; contentType: string; url: string }> {
+  const errors: string[] = [];
+  for (const url of urls) {
+    try {
+      const result = await fetchStream(url);
+      return { ...result, url };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      errors.push(message);
+      console.warn(`[event-download-batch] stream fetch failed for media ${mediaId}: ${message}`);
     }
   }
   throw new Error(
@@ -364,9 +463,109 @@ async function addWatermarkToImageBuffer(
   };
 }
 
+async function* buildDownloadZipEntries(options: {
+  payload: EventGalleryBatchTokenPayload;
+  mediaMap: Map<string, MediaRow>;
+  logoBuffer: Buffer | null;
+  logoMimeType: string | null;
+}): AsyncGenerator<ZipStreamEntry> {
+  const { payload, mediaMap, logoBuffer, logoMimeType } = options;
+  const failedFileNames: string[] = [];
+  const usedNames = new Map<string, number>();
+  let archivedPhotoCount = 0;
+
+  for (const mediaId of payload.mediaIds) {
+    const row = mediaMap.get(mediaId);
+    if (!row) {
+      failedFileNames.push(mediaId);
+      continue;
+    }
+
+    const candidateUrls = preferredDownloadUrls(row, payload.resolution);
+    const fallbackName = clean(row.filename) || `${mediaId}.jpg`;
+    if (!candidateUrls.length) {
+      console.warn(`[event-download-batch] no candidate URLs for media ${mediaId}`);
+      failedFileNames.push(fallbackName);
+      continue;
+    }
+
+    let sourceUrl = candidateUrls[0];
+    try {
+      if (payload.applyWatermark) {
+        const source = await fetchFirstAvailable(candidateUrls, mediaId);
+        sourceUrl = source.url;
+        const watermarked = await addWatermarkToImageBuffer(source.buffer, {
+          watermarkText: payload.watermarkText,
+          logoBuffer,
+          logoMimeType,
+        });
+        const resolvedFallbackName =
+          clean(row.filename) || fileNameFromUrl(sourceUrl, `photo${watermarked.outputExt}`);
+        const normalizedName = clean(resolvedFallbackName).includes(".")
+          ? resolvedFallbackName
+          : `${resolvedFallbackName}${watermarked.outputExt}`;
+        archivedPhotoCount += 1;
+        yield {
+          name: uniqueDownloadName(normalizedName, usedNames),
+          data: new Uint8Array(watermarked.buffer),
+        };
+        continue;
+      }
+
+      const source = await fetchFirstAvailableStream(candidateUrls, mediaId);
+      sourceUrl = source.url;
+      const outputExt = clean(row.filename).toLowerCase().endsWith(".png") ? ".png" : ".jpg";
+      const resolvedFallbackName =
+        clean(row.filename) || fileNameFromUrl(sourceUrl, `photo${outputExt}`);
+      const normalizedName = clean(resolvedFallbackName).includes(".")
+        ? resolvedFallbackName
+        : `${resolvedFallbackName}${outputExt}`;
+      archivedPhotoCount += 1;
+      yield {
+        name: uniqueDownloadName(normalizedName, usedNames),
+        stream: source.stream,
+      };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`[event-download-batch] skipping media ${mediaId} (${fallbackName}): ${message}`);
+      failedFileNames.push(clean(row.filename) || fileNameFromUrl(sourceUrl, fallbackName));
+    }
+  }
+
+  if (payload.includePrintRelease && archivedPhotoCount > 0) {
+    try {
+      const printReleasePdf = await buildPrintReleasePdf({
+        studioName: payload.studioName,
+        galleryName: payload.galleryName,
+        replyTo: payload.studioEmail,
+        logoUrl: payload.watermarkLogoUrl,
+      });
+      yield {
+        name: uniqueDownloadName("Print Release.pdf", usedNames),
+        data: printReleasePdf,
+      };
+    } catch {
+      // Keep the photo archive available even if the print release could not be generated.
+    }
+  }
+
+  if (failedFileNames.length) {
+    const skippedText = [
+      "The following files could not be included in this ZIP:",
+      "",
+      ...failedFileNames.map((name) => `- ${name}`),
+    ].join("\n");
+    yield {
+      name: uniqueDownloadName("Skipped Files.txt", usedNames),
+      data: new TextEncoder().encode(skippedText),
+    };
+  }
+}
+
 export async function GET(request: NextRequest) {
   try {
     const token = clean(request.nextUrl.searchParams.get("token"));
+    const wantsJson = clean(request.nextUrl.searchParams.get("format")) === "json";
     if (!token) {
       return NextResponse.json(
         { ok: false, message: "Missing download token." },
@@ -375,26 +574,50 @@ export async function GET(request: NextRequest) {
     }
 
     const payload = verifyEventGalleryBatchToken(token);
+    const maxMediaForThisBatch = Math.min(
+      MAX_MEDIA_PER_BATCH,
+      galleryZipBatchSize(payload.resolution, payload.applyWatermark),
+    );
     if (Array.isArray(payload.mediaIds) && payload.mediaIds.length > MAX_MEDIA_PER_BATCH) {
       return NextResponse.json(
         {
           ok: false,
-          message: `This batch exceeds the ${MAX_MEDIA_PER_BATCH}-photo per-request limit. Please request a new download link.`,
+          message: "This prepared ZIP is too large. Go back to the gallery and press Download All again to create smaller ZIP files.",
         },
-        { status: 400 },
+        { status: 413 },
       );
     }
-    const service = createDashboardServiceClient();
-    const { data: mediaRows, error: mediaError } = await service
-      .from("media")
-      .select("id,storage_path,preview_url,thumbnail_url,filename")
-      .eq("project_id", payload.projectId)
-      .in("id", payload.mediaIds);
+    if (Array.isArray(payload.mediaIds) && payload.mediaIds.length > maxMediaForThisBatch) {
+      return NextResponse.json(
+        {
+          ok: false,
+          message: "This download session was prepared before the safer ZIP split. Go back to the gallery and press Download All again.",
+        },
+        { status: 409 },
+      );
+    }
 
-    if (mediaError) throw mediaError;
+    if (wantsJson) {
+      return NextResponse.json(
+        {
+          ok: true,
+          fileName: safeZipFileName(payload.fileName),
+          downloadUrl: `/api/portal/event-download-batch?token=${encodeURIComponent(token)}`,
+          expiresAt: new Date(payload.exp).toISOString(),
+        },
+        {
+          headers: {
+            "cache-control": "private, no-store",
+          },
+        },
+      );
+    }
+
+    const service = createDashboardServiceClient();
+    const mediaRows = await fetchMediaRows(service, payload.projectId, payload.mediaIds);
 
     const mediaMap = new Map<string, MediaRow>();
-    for (const row of (mediaRows ?? []) as MediaRow[]) {
+    for (const row of mediaRows) {
       mediaMap.set(row.id, row);
     }
 
@@ -411,103 +634,23 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    const zipEntries: ZipEntry[] = [];
-    const failedFileNames: string[] = [];
-    const usedNames = new Map<string, number>();
+    const zipStream = createZipStream(
+      buildDownloadZipEntries({
+        payload,
+        mediaMap,
+        logoBuffer,
+        logoMimeType,
+      }),
+    );
 
-    for (const mediaId of payload.mediaIds) {
-      const row = mediaMap.get(mediaId);
-      if (!row) {
-        failedFileNames.push(mediaId);
-        continue;
-      }
-
-      const candidateUrls = preferredDownloadUrls(row, payload.resolution);
-      const fallbackName = clean(row.filename) || `${mediaId}.jpg`;
-      if (!candidateUrls.length) {
-        console.warn(`[event-download-batch] no candidate URLs for media ${mediaId}`);
-        failedFileNames.push(fallbackName);
-        continue;
-      }
-
-      let sourceUrl = candidateUrls[0];
-      try {
-        const source = await fetchFirstAvailable(candidateUrls, mediaId);
-        sourceUrl = source.url;
-        let outputBytes = new Uint8Array(source.buffer);
-        let outputExt = clean(row.filename).toLowerCase().endsWith(".png") ? ".png" : ".jpg";
-        if (payload.applyWatermark) {
-          const watermarked = await addWatermarkToImageBuffer(source.buffer, {
-            watermarkText: payload.watermarkText,
-            logoBuffer,
-            logoMimeType,
-          });
-          outputBytes = new Uint8Array(watermarked.buffer);
-          outputExt = watermarked.outputExt;
-        }
-
-        const resolvedFallbackName = clean(row.filename) || fileNameFromUrl(sourceUrl, `photo${outputExt}`);
-        const normalizedName = clean(resolvedFallbackName).includes(".")
-          ? resolvedFallbackName
-          : `${resolvedFallbackName}${outputExt}`;
-        zipEntries.push({
-          name: uniqueDownloadName(normalizedName, usedNames),
-          data: outputBytes,
-        });
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        console.error(`[event-download-batch] skipping media ${mediaId} (${fallbackName}): ${message}`);
-        failedFileNames.push(clean(row.filename) || fileNameFromUrl(sourceUrl, fallbackName));
-      }
-    }
-
-    if (payload.includePrintRelease && zipEntries.length > 0) {
-      try {
-        const printReleasePdf = await buildPrintReleasePdf({
-          studioName: payload.studioName,
-          galleryName: payload.galleryName,
-          replyTo: payload.studioEmail,
-          logoUrl: payload.watermarkLogoUrl,
-        });
-        zipEntries.push({
-          name: uniqueDownloadName("Print Release.pdf", usedNames),
-          data: printReleasePdf,
-        });
-      } catch {
-        // Keep the photo archive available even if the print release could not be generated.
-      }
-    }
-
-    if (failedFileNames.length) {
-      const skippedText = [
-        "The following files could not be included in this ZIP:",
-        "",
-        ...failedFileNames.map((name) => `- ${name}`),
-      ].join("\n");
-      zipEntries.push({
-        name: uniqueDownloadName("Skipped Files.txt", usedNames),
-        data: new TextEncoder().encode(skippedText),
-      });
-    }
-
-    if (!zipEntries.length) {
-      return NextResponse.json(
-        { ok: false, message: "Could not build this gallery ZIP file." },
-        { status: 502 },
-      );
-    }
-
-    const zipBytes = createZipBytes(zipEntries);
-    const response = new NextResponse(zipBytes, {
+    return new NextResponse(zipStream, {
       status: 200,
       headers: {
         "content-type": "application/zip",
-        "content-disposition": `attachment; filename="${payload.fileName}"`,
+        "content-disposition": contentDispositionAttachment(payload.fileName),
         "cache-control": "private, no-store",
       },
     });
-    response.headers.set("content-length", String(zipBytes.length));
-    return response;
   } catch (error) {
     console.error("[event-download-batch]", error);
     return NextResponse.json(

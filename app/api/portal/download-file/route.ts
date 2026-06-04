@@ -12,6 +12,8 @@ const SUPABASE_URL = (
   process.env.SUPABASE_URL ||
   ""
 ).replace(/\/$/, "");
+const R2_ACCOUNT_ID = process.env.R2_ACCOUNT_ID || "";
+const R2_BUCKET = process.env.R2_BUCKET_NAME || "whitephoto-media";
 
 function clean(value: string | null | undefined) {
   return (value ?? "").trim();
@@ -34,6 +36,10 @@ function matchesOriginPrefix(target: URL, baseUrl: string) {
 }
 
 function isAllowedDownloadUrl(target: URL) {
+  if (isAllowedSignedR2Url(target)) {
+    return true;
+  }
+
   if (matchesOriginPrefix(target, R2_PUBLIC_URL)) {
     return true;
   }
@@ -46,6 +52,24 @@ function isAllowedDownloadUrl(target: URL) {
   }
 
   return false;
+}
+
+function isAllowedSignedR2Url(target: URL) {
+  if (!R2_ACCOUNT_ID || !R2_BUCKET) return false;
+  if (target.protocol !== "https:") return false;
+  if (target.host !== `${R2_ACCOUNT_ID}.r2.cloudflarestorage.com`) return false;
+
+  const pathPrefix = `/${R2_BUCKET}/`;
+  if (!target.pathname.startsWith(pathPrefix)) return false;
+
+  return (
+    target.searchParams.get("X-Amz-Algorithm") === "AWS4-HMAC-SHA256" &&
+    Boolean(clean(target.searchParams.get("X-Amz-Credential"))) &&
+    Boolean(clean(target.searchParams.get("X-Amz-Date"))) &&
+    Boolean(clean(target.searchParams.get("X-Amz-Expires"))) &&
+    Boolean(clean(target.searchParams.get("X-Amz-SignedHeaders"))) &&
+    Boolean(clean(target.searchParams.get("X-Amz-Signature")))
+  );
 }
 
 export async function GET(request: NextRequest) {

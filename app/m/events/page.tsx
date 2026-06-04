@@ -16,6 +16,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
   CalendarDays,
+  Plus,
   Search,
   Share2,
   X,
@@ -203,13 +204,34 @@ export default function MobileEventsPage() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-      <header style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-        <div style={{ fontSize: 11, letterSpacing: "0.12em", fontWeight: 800, color: "#6b7280" }}>
-          EVENTS
+      <header style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 12 }}>
+        <div style={{ display: "grid", gap: 4 }}>
+          <div style={{ fontSize: 11, letterSpacing: "0.12em", fontWeight: 800, color: "#6b7280" }}>
+            EVENTS
+          </div>
+          <h1 style={{ margin: 0, fontSize: 22, fontWeight: 900, color: "#111827" }}>
+            All events
+          </h1>
         </div>
-        <h1 style={{ margin: 0, fontSize: 22, fontWeight: 900, color: "#111827" }}>
-          All events
-        </h1>
+        <Link
+          href="/m/new"
+          style={{
+            minHeight: 38,
+            padding: "0 12px",
+            borderRadius: 12,
+            background: "#111827",
+            color: "#fff",
+            textDecoration: "none",
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 7,
+            fontSize: 13,
+            fontWeight: 900,
+            whiteSpace: "nowrap",
+          }}
+        >
+          <Plus size={15} /> New
+        </Link>
       </header>
 
       {/* Search */}

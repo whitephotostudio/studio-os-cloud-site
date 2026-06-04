@@ -3,6 +3,8 @@ import { createDashboardServiceClient } from "@/lib/dashboard-auth";
 import { syncPhotographyKeysByPhotographerId } from "@/lib/studio-os-app";
 import { buildOrderNotificationEmail } from "@/lib/order-notification-email";
 import { buildOrderReceiptEmail } from "@/lib/order-receipt-email";
+import { notifyOwnerForSetting } from "@/lib/admin-notification-center";
+import { ownerUrl } from "@/lib/owner-notifications";
 import { resendConfigured, sendResendEmail, resolveReplyTo } from "@/lib/resend";
 import {
   ANNUAL_DISCOUNT_PERCENT,
@@ -640,7 +642,23 @@ export async function getOrCreatePhotographerByUser(
     if (error) throw error;
   }
 
-  return data as PhotographerBillingRow;
+  const createdPhotographer = data as PhotographerBillingRow;
+  if (!createdPhotographer.is_platform_admin) {
+    await notifyOwnerForSetting("alertOnNewRegistration", {
+      title: "New Studio OS photographer",
+      message: [
+        createdPhotographer.business_name || defaultName,
+        createdPhotographer.billing_email || user.email || "No email captured",
+        `Trial ends: ${trialEnd.toLocaleDateString("en-CA")}`,
+      ].join("\n"),
+      url: ownerUrl("/dashboard/admin/users"),
+      urlTitle: "Open admin users",
+      priority: 0,
+      sound: "pushover",
+    });
+  }
+
+  return createdPhotographer;
 }
 
 export async function ensurePlatformCustomer(
@@ -1421,7 +1439,6 @@ export async function syncSubscriptionStateFromStripe(
 ) {
   let subscription = subscriptionInput;
   const planCode = resolvePlanCodeFromSubscription(subscription);
-  const subscriptionInterval = resolveSubscriptionBillingInterval(subscription);
   const { usageItem } = findSubscriptionItems(subscription);
 
   if (planCode && !usageItem) {
@@ -2013,7 +2030,7 @@ export async function finalizePaidOrder(
             school_name: (school as Record<string, unknown>)?.school_name as string ?? null,
             student_name: studentName,
           },
-          dashboardUrl: `https://studiooscloud.com/dashboard/orders`,
+          dashboardUrl: `https://www.studiooscloud.com/dashboard/orders`,
         });
 
         await sendResendEmail({
@@ -2062,7 +2079,7 @@ export async function finalizePaidOrder(
               email: buyerEmailAddress,
               tab: "orders",
             });
-            ordersHistoryUrl = `https://studiooscloud.com/parents/${encodeURIComponent(studentPin)}?${params.toString()}`;
+            ordersHistoryUrl = `https://www.studiooscloud.com/parents/${encodeURIComponent(studentPin)}?${params.toString()}`;
           } else if (projectPin && projectId) {
             const params = new URLSearchParams({
               mode: "event",
@@ -2070,7 +2087,7 @@ export async function finalizePaidOrder(
               email: buyerEmailAddress,
               tab: "orders",
             });
-            ordersHistoryUrl = `https://studiooscloud.com/parents/${encodeURIComponent(projectPin)}?${params.toString()}`;
+            ordersHistoryUrl = `https://www.studiooscloud.com/parents/${encodeURIComponent(projectPin)}?${params.toString()}`;
           }
 
           const receiptEmail = buildOrderReceiptEmail({

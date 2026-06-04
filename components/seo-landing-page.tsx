@@ -179,12 +179,18 @@ export function SeoLandingPage({
           <div className="mt-8 flex flex-wrap items-center justify-center gap-4">
             <Link
               href="/sign-up"
+              data-marketing-event="cta_start_trial"
+              data-marketing-label={ctaHeading}
+              data-marketing-placement="seo_landing_page"
               className="inline-flex items-center rounded-full bg-white px-6 py-3 text-sm font-semibold text-neutral-950 transition hover:bg-neutral-100"
             >
               Start Free Trial
             </Link>
             <Link
               href="/pricing"
+              data-marketing-event="cta_view_pricing"
+              data-marketing-label={ctaHeading}
+              data-marketing-placement="seo_landing_page"
               className="inline-flex items-center rounded-full border border-neutral-700 px-6 py-3 text-sm font-semibold text-white transition hover:border-neutral-500"
             >
               View Pricing

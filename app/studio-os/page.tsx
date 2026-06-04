@@ -13,13 +13,13 @@ export const metadata: Metadata = {
   description:
     "The Studio OS App gives photographers desktop capture control, Projects, sorting, AI background tools, and live sync to Studio OS Cloud galleries and ordering.",
   alternates: {
-    canonical: "https://studiooscloud.com/studio-os",
+    canonical: "https://www.studiooscloud.com/studio-os",
   },
   openGraph: {
     title: "Studio OS App | Desktop Workflow Connected to Studio OS Cloud",
     description:
       "Desktop capture control, Projects, AI background tools, and live sync to Studio OS Cloud galleries and ordering.",
-    url: "https://studiooscloud.com/studio-os",
+    url: "https://www.studiooscloud.com/studio-os",
   },
 };
 
@@ -94,8 +94,8 @@ export default function StudioOSPage() {
       <SoftwareApplicationJsonLd />
       <BreadcrumbJsonLd
         items={[
-          { name: "Home", item: "https://studiooscloud.com" },
-          { name: "Studio OS App", item: "https://studiooscloud.com/studio-os" },
+          { name: "Home", item: "https://www.studiooscloud.com" },
+          { name: "Studio OS App", item: "https://www.studiooscloud.com/studio-os" },
         ]}
       />
       <SiteHeader />

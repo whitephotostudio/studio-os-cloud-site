@@ -32,10 +32,28 @@ export type RateLimitResult = {
 // Upstash-backed limiter (preferred)
 // ------------------------------------------------------------------
 
+function cleanEnv(value: string | null | undefined): string {
+  let next = (value ?? "").trim();
+  while (
+    next.length >= 2 &&
+    ((next.startsWith('"') && next.endsWith('"')) ||
+      (next.startsWith("'") && next.endsWith("'")))
+  ) {
+    next = next.slice(1, -1).trim();
+  }
+  return next;
+}
+
+function upstashCredentials() {
+  return {
+    url: cleanEnv(process.env.UPSTASH_REDIS_REST_URL),
+    token: cleanEnv(process.env.UPSTASH_REDIS_REST_TOKEN),
+  };
+}
+
 function hasUpstashEnv(): boolean {
-  return Boolean(
-    process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN,
-  );
+  const { url, token } = upstashCredentials();
+  return Boolean(url && token);
 }
 
 let cachedRedis: Redis | null = null;
@@ -45,7 +63,8 @@ function getRedis(): Redis | null {
   if (redisInitFailed) return null;
   if (!cachedRedis) {
     try {
-      cachedRedis = Redis.fromEnv();
+      const { url, token } = upstashCredentials();
+      cachedRedis = new Redis({ url, token });
     } catch (error) {
       // Malformed env vars (wrong URL shape, bad token, etc.) would
       // otherwise throw synchronously at first request and 500 the route.

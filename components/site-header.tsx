@@ -9,6 +9,7 @@ const navLinks = [
   { href: "/", label: "Home" },
   { href: "/sample-galleries", label: "Sample Galleries" },
   { href: "/studio-os", label: "Studio OS" },
+  { href: "/mobile-app", label: "Mobile App" },
   { href: "/studio-os/download", label: "Download App" },
   { href: "/pricing", label: "Pricing" },
 ];

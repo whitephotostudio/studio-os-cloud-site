@@ -4,6 +4,11 @@ import { createDashboardServiceClient, resolveDashboardAuth } from "@/lib/dashbo
 import { parseJson } from "@/lib/api-validation";
 import { guardAgreement } from "@/lib/require-agreement";
 import { ensurePackageProfile } from "@/lib/ensure-package-profile";
+import {
+  buildSignedMediaUrls,
+  extractStoragePathFromSupabaseUrl,
+  SIGNED_URL_TTL_DASHBOARD_SECONDS,
+} from "@/lib/storage-images";
 
 export const dynamic = "force-dynamic";
 
@@ -51,6 +56,104 @@ function normalizePortalStatus(value: string | null | undefined) {
   const status = clean(value).toLowerCase().replace("-", "_");
   if (status === "pre_released") return "pre_release";
   return VALID_PORTAL_STATUSES.includes(status) ? status : "active";
+}
+
+function isR2CloudflareStorageUrl(value: string) {
+  try {
+    return /\.r2\.cloudflarestorage\.com$/i.test(new URL(value).host);
+  } catch {
+    return false;
+  }
+}
+
+function isKnownStorageUrl(value: string) {
+  try {
+    const parsed = new URL(value);
+    return (
+      parsed.pathname.startsWith("/api/r2/img/") ||
+      /\.r2\.dev$/i.test(parsed.host) ||
+      /\.r2\.cloudflarestorage\.com$/i.test(parsed.host) ||
+      value.includes("/storage/v1/object/public/") ||
+      value.includes("/storage/v1/render/image/public/")
+    );
+  } catch {
+    return false;
+  }
+}
+
+function resolveDashboardCoverUrl(value: string | null | undefined) {
+  const cover = clean(value);
+  if (!cover) return "";
+
+  const isHttpUrl = /^https?:\/\//i.test(cover);
+  if (isHttpUrl && !isKnownStorageUrl(cover)) return cover;
+
+  const isR2SignedUrl = isHttpUrl && isR2CloudflareStorageUrl(cover);
+  const storagePath =
+    !isHttpUrl && !cover.startsWith("/api/r2/img/")
+      ? cover
+      : isR2SignedUrl
+        ? ""
+        : extractStoragePathFromSupabaseUrl(cover) ?? "";
+
+  const signed = buildSignedMediaUrls(
+    {
+      storagePath,
+      previewUrl: cover,
+      thumbnailUrl: cover,
+    },
+    { ttlSeconds: SIGNED_URL_TTL_DASHBOARD_SECONDS },
+  );
+
+  return signed.previewUrl || signed.thumbnailUrl || signed.originalUrl || cover;
+}
+
+async function fetchCollectionRowsForProjects(
+  service: ReturnType<typeof createDashboardServiceClient>,
+  projectIds: string[],
+) {
+  const rows: CollectionRow[] = [];
+  const pageSize = 1000;
+
+  for (let from = 0; ; from += pageSize) {
+    const { data, error } = await service
+      .from("collections")
+      .select("id,project_id,kind")
+      .in("project_id", projectIds)
+      .range(from, from + pageSize - 1);
+
+    if (error) throw error;
+
+    const pageRows = (data ?? []) as CollectionRow[];
+    rows.push(...pageRows);
+    if (pageRows.length < pageSize) break;
+  }
+
+  return rows;
+}
+
+async function fetchMediaRowsForProjects(
+  service: ReturnType<typeof createDashboardServiceClient>,
+  projectIds: string[],
+) {
+  const rows: MediaRow[] = [];
+  const pageSize = 1000;
+
+  for (let from = 0; ; from += pageSize) {
+    const { data, error } = await service
+      .from("media")
+      .select("id,project_id")
+      .in("project_id", projectIds)
+      .range(from, from + pageSize - 1);
+
+    if (error) throw error;
+
+    const pageRows = (data ?? []) as MediaRow[];
+    rows.push(...pageRows);
+    if (pageRows.length < pageSize) break;
+  }
+
+  return rows;
 }
 
 export async function POST(request: NextRequest) {
@@ -200,6 +303,7 @@ export async function GET(request: NextRequest) {
       )
       .eq("photographer_id", photographerRow.id)
       .eq("workflow_type", "event")
+      .is("deleted_at", null)
       .order("event_date", { ascending: false })
       .order("shoot_date", { ascending: false })
       .order("created_at", { ascending: false })
@@ -207,7 +311,10 @@ export async function GET(request: NextRequest) {
 
     if (projectsError) throw projectsError;
 
-    const projects = (projectRows ?? []) as ProjectRow[];
+    const projects = ((projectRows ?? []) as ProjectRow[]).map((project) => ({
+      ...project,
+      cover_photo_url: resolveDashboardCoverUrl(project.cover_photo_url),
+    }));
     const ids = projects.map((row) => row.id);
 
     if (!ids.length) {
@@ -221,17 +328,13 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    // Use lightweight count queries instead of fetching all rows
-    const [collectionsRes, mediaRes] = await Promise.all([
-      service.from("collections").select("id,project_id,kind").in("project_id", ids),
-      service.from("media").select("id,project_id").in("project_id", ids),
+    const [collectionRows, mediaRows] = await Promise.all([
+      fetchCollectionRowsForProjects(service, ids),
+      fetchMediaRowsForProjects(service, ids),
     ]);
 
-    if (collectionsRes.error) throw collectionsRes.error;
-    if (mediaRes.error) throw mediaRes.error;
-
     const albumCounts: Record<string, number> = {};
-    for (const row of (collectionsRes.data ?? []) as CollectionRow[]) {
+    for (const row of collectionRows) {
       const projectId = clean(row.project_id);
       if (!projectId) continue;
       const kind = clean(row.kind).toLowerCase();
@@ -240,7 +343,7 @@ export async function GET(request: NextRequest) {
     }
 
     const imageCounts: Record<string, number> = {};
-    for (const row of (mediaRes.data ?? []) as MediaRow[]) {
+    for (const row of mediaRows) {
       const projectId = clean(row.project_id);
       if (!projectId) continue;
       imageCounts[projectId] = (imageCounts[projectId] ?? 0) + 1;

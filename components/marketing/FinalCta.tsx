@@ -19,6 +19,9 @@ export function FinalCta() {
           <div className="relative z-10 flex flex-col gap-3 sm:flex-row lg:flex-col">
             <Link
               href="/sign-up"
+              data-marketing-event="cta_start_trial"
+              data-marketing-label="Homepage final CTA"
+              data-marketing-placement="home_final_cta"
               className="marketing-button premium-button inline-flex items-center justify-center gap-2 rounded-full bg-white px-5 py-3 text-neutral-950 transition hover:bg-neutral-100"
             >
               Start Free Trial
@@ -26,6 +29,9 @@ export function FinalCta() {
             </Link>
             <Link
               href="/pricing"
+              data-marketing-event="cta_view_pricing"
+              data-marketing-label="Homepage final CTA"
+              data-marketing-placement="home_final_cta"
               className="marketing-button premium-button inline-flex items-center justify-center rounded-full border border-white/20 bg-white/10 px-5 py-3 text-white transition hover:bg-white/20"
             >
               See Pricing

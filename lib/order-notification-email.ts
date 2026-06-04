@@ -271,7 +271,7 @@ export function buildOrderNotificationEmail(input: {
   <tr>
     <td style="padding:24px 32px;text-align:center;">
       <p style="margin:0;font-size:12px;color:#bbb;">
-        Powered by <a href="https://studiooscloud.com" style="color:#999;text-decoration:none;font-weight:500;">Studio OS Cloud</a>
+        Powered by <a href="https://www.studiooscloud.com" style="color:#999;text-decoration:none;font-weight:500;">Studio OS Cloud</a>
       </p>
       <p style="margin:8px 0 0;font-size:11px;color:#ccc;">
         You received this because a customer placed an order in your gallery.

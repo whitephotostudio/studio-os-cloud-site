@@ -7,13 +7,13 @@ export const metadata: Metadata = {
   description:
     "School photography software built for real picture day workflows. Manage rosters, organize by class, deliver private parent galleries, take orders online, and connect your desktop capture workflow to the cloud.",
   alternates: {
-    canonical: "https://studiooscloud.com/school-photography-software",
+    canonical: "https://www.studiooscloud.com/school-photography-software",
   },
   openGraph: {
     title: "School Photography Software | Galleries, Ordering, Rosters | Studio OS Cloud",
     description:
       "Run school picture day from one connected platform. Rosters, galleries, ordering, AI backgrounds, and print fulfillment.",
-    url: "https://studiooscloud.com/school-photography-software",
+    url: "https://www.studiooscloud.com/school-photography-software",
   },
 };
 
@@ -22,10 +22,10 @@ export default function SchoolPhotographySoftwarePage() {
     <>
       <BreadcrumbJsonLd
         items={[
-          { name: "Home", item: "https://studiooscloud.com" },
+          { name: "Home", item: "https://www.studiooscloud.com" },
           {
             name: "School Photography Software",
-            item: "https://studiooscloud.com/school-photography-software",
+            item: "https://www.studiooscloud.com/school-photography-software",
           },
         ]}
       />

@@ -6,6 +6,10 @@ import {
 } from "@/lib/dashboard-auth";
 import { parseJson } from "@/lib/api-validation";
 import { guardAgreement } from "@/lib/require-agreement";
+import {
+  normalizeEventGallerySettings,
+  type EventGalleryLinkedContact,
+} from "@/lib/event-gallery-settings";
 
 export const dynamic = "force-dynamic";
 
@@ -14,6 +18,7 @@ const AlbumPayloadSchema = z.object({
   localId: z.string().max(128).nullable().optional(),
   accessMode: z.string().max(64).nullable().optional(),
   accessPin: z.string().max(64).nullable().optional(),
+  accessUpdatedAt: z.string().max(64).nullable().optional(),
 });
 
 const DesktopAccessBodySchema = z.object({
@@ -27,6 +32,7 @@ const DesktopAccessBodySchema = z.object({
   eventDate: z.string().max(64).nullable().optional(),
   accessMode: z.string().max(64).nullable().optional(),
   accessPin: z.string().max(64).nullable().optional(),
+  accessUpdatedAt: z.string().max(64).nullable().optional(),
   galleryStatus: z.string().max(64).nullable().optional(),
   albums: z.array(AlbumPayloadSchema).max(1000).nullable().optional(),
 });
@@ -36,10 +42,17 @@ function clean(value: string | null | undefined) {
 }
 
 function slugify(value: string, fallback = "gallery") {
-  return clean(value)
+  const base = clean(value)
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "") || fallback;
+    .replace(/^-+|-+$/g, "");
+  if (!base) return fallback;
+  // Cap length so an oversized title can never produce a monster slug.
+  // Trim back to the last word boundary (dash) to avoid cutting mid-word.
+  const MAX = 60;
+  if (base.length <= MAX) return base;
+  const trimmed = base.slice(0, MAX).replace(/-+[^-]*$/, "").replace(/-+$/g, "");
+  return trimmed || base.slice(0, MAX).replace(/-+$/g, "") || fallback;
 }
 
 // Valid gallery statuses matching the web dashboard
@@ -56,19 +69,106 @@ function normalizeAccessMode(value: string | null | undefined): string {
   return "public";
 }
 
+function timeValue(value: string | null | undefined): number | null {
+  const raw = clean(value);
+  if (!raw) return null;
+  const parsed = Date.parse(raw);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function shouldApplyIncomingAccess({
+  incomingUpdatedAt,
+  existingUpdatedAt,
+  incomingMode,
+  incomingPin,
+  existingMode,
+  existingPin,
+}: {
+  incomingUpdatedAt: string | null | undefined;
+  existingUpdatedAt: string | null | undefined;
+  incomingMode: string | null | undefined;
+  incomingPin: string | null | undefined;
+  existingMode: string | null | undefined;
+  existingPin: string | null | undefined;
+}) {
+  const incomingTime = timeValue(incomingUpdatedAt);
+  const existingTime = timeValue(existingUpdatedAt);
+  if (incomingTime !== null && existingTime !== null) {
+    return incomingTime >= existingTime;
+  }
+
+  // Safety for older desktop clients or stale local files: if Cloud already
+  // has an explicit PIN and desktop is sending the untouched default Public
+  // state, preserve the safer cloud setting.
+  const cloudHasPin =
+    normalizeAccessMode(existingMode) === "pin" &&
+    clean(existingPin).length > 0;
+  const incomingIsBlankPublic =
+    normalizeAccessMode(incomingMode) === "public" &&
+    clean(incomingPin).length === 0;
+  if (cloudHasPin && incomingIsBlankPublic) return false;
+
+  return true;
+}
+
 function normalizeEmail(value: string | null | undefined): string {
   const email = clean(value).toLowerCase();
   if (!email || !email.includes("@")) return "";
   return email;
 }
 
+function clientContactId(email: string) {
+  return `desktop-client-${email.replace(/[^a-z0-9]+/g, "-")}`;
+}
+
+function withDesktopClientContact(
+  rawSettings: unknown,
+  clientEmail: string,
+  clientName: string,
+) {
+  const settings = normalizeEventGallerySettings(rawSettings);
+  if (!clientEmail) return settings;
+
+  const normalizedEmail = clientEmail.toLowerCase();
+  const existing = settings.linkedContacts.find(
+    (contact) => clean(contact.email).toLowerCase() === normalizedEmail,
+  );
+  const contact: EventGalleryLinkedContact = {
+    id: existing?.id || clientContactId(normalizedEmail),
+    name: clean(existing?.name) || clientName,
+    email: normalizedEmail,
+    role: "Client",
+    labelPhotos: existing?.labelPhotos ?? false,
+    hidePhotos: existing?.hidePhotos ?? false,
+    isVip: existing?.isVip ?? true,
+    note: clean(existing?.note),
+  };
+
+  return {
+    ...settings,
+    linkedContacts: [
+      contact,
+      ...settings.linkedContacts.filter(
+        (item) => clean(item.email).toLowerCase() !== normalizedEmail,
+      ),
+    ],
+  };
+}
+
 function buildGalleryUrl(
   projectId: string,
-  slug: string | null | undefined,
-  title: string,
+  slug?: string | null,
 ): string {
-  const effectiveSlug = clean(slug) || slugify(title);
-  return `https://www.studiooscloud.com/gallery/${effectiveSlug}`;
+  const cleanSlug = clean(slug).toLowerCase();
+  // Prefer the short, clean share link (no internal IDs) when a slug exists.
+  if (cleanSlug) {
+    return `https://www.studiooscloud.com/g/${encodeURIComponent(cleanSlug)}`;
+  }
+  const params = new URLSearchParams({
+    mode: "event",
+    project: projectId,
+  });
+  return `https://www.studiooscloud.com/parents?${params.toString()}`;
 }
 
 // ─── POST: Sync access settings from desktop app to cloud ───────────
@@ -93,7 +193,8 @@ export async function POST(request: NextRequest) {
     // modal. Same pattern as upload-to-r2 / generate-thumbnails.
     {
       const guard = await guardAgreement({ service, userId: user.id });
-      if (!guard.ok) return NextResponse.json(guard.body, { status: guard.status });
+      if (!guard.ok)
+        return NextResponse.json(guard.body, { status: guard.status });
     }
 
     // ── Resolve photographer ──
@@ -125,32 +226,84 @@ export async function POST(request: NextRequest) {
     const shootDate = clean(body.shootDate) || clean(body.eventDate);
 
     let projectId = cloudProjectId;
+    let existingProjectAccess: {
+      access_mode?: string | null;
+      access_pin?: string | null;
+      access_updated_at?: string | null;
+      access_updated_source?: string | null;
+      gallery_settings?: unknown;
+    } | null = null;
 
     if (projectId) {
       // Verify the project belongs to this photographer
       const { data: existing } = await service
         .from("projects")
-        .select("id")
+        .select(
+          "id,access_mode,access_pin,access_updated_at,access_updated_source,gallery_settings",
+        )
         .eq("id", projectId)
         .eq("photographer_id", photographerId)
+        .is("deleted_at", null)
         .maybeSingle();
 
-      if (!existing?.id) projectId = "";
+      if (!existing?.id) {
+        projectId = "";
+      } else {
+        existingProjectAccess = existing;
+      }
     }
 
     if (!projectId && localProjectId) {
       // Try to find by linked_local_school_id
       const { data: linked } = await service
         .from("projects")
-        .select("id")
+        .select(
+          "id,access_mode,access_pin,access_updated_at,access_updated_source,gallery_settings",
+        )
         .eq("linked_local_school_id", localProjectId)
         .eq("photographer_id", photographerId)
+        .is("deleted_at", null)
         .order("created_at", { ascending: false })
         .limit(1)
         .maybeSingle();
 
-      if (linked?.id) projectId = linked.id;
+      if (linked?.id) {
+        projectId = linked.id;
+        existingProjectAccess = linked;
+      }
     }
+
+    const nowIso = new Date().toISOString();
+    const applyIncomingProjectAccess = shouldApplyIncomingAccess({
+      incomingUpdatedAt: body.accessUpdatedAt,
+      existingUpdatedAt: existingProjectAccess?.access_updated_at,
+      incomingMode: accessMode,
+      incomingPin: accessPin,
+      existingMode: existingProjectAccess?.access_mode,
+      existingPin: existingProjectAccess?.access_pin,
+    });
+    const effectiveProjectAccessMode = applyIncomingProjectAccess
+      ? accessMode
+      : normalizeAccessMode(existingProjectAccess?.access_mode);
+    const effectiveProjectAccessPin =
+      effectiveProjectAccessMode === "pin"
+        ? applyIncomingProjectAccess
+          ? accessPin
+          : clean(existingProjectAccess?.access_pin)
+        : null;
+    const effectiveProjectAccessUpdatedAt = applyIncomingProjectAccess
+      ? nowIso
+      : existingProjectAccess?.access_updated_at || nowIso;
+    const effectiveProjectAccessUpdatedSource = applyIncomingProjectAccess
+      ? "desktop"
+      : existingProjectAccess?.access_updated_source || "cloud";
+    const gallerySettingsWithClient = clientEmail
+      ? withDesktopClientContact(
+          existingProjectAccess?.gallery_settings,
+          clientEmail,
+          clientName,
+        )
+      : null;
 
     if (!projectId) {
       // Create new project
@@ -170,13 +323,16 @@ export async function POST(request: NextRequest) {
           linked_local_school_id: localProjectId || null,
           shoot_date: shootDate || null,
           event_date: shootDate || null,
-          access_mode: accessMode,
-          access_pin: accessPin,
-          access_updated_at: new Date().toISOString(),
-          access_updated_source: "desktop",
+          access_mode: effectiveProjectAccessMode,
+          access_pin: effectiveProjectAccessPin,
+          access_updated_at: effectiveProjectAccessUpdatedAt,
+          access_updated_source: effectiveProjectAccessUpdatedSource,
           portal_status: galleryStatus,
           pre_release: preRelease,
           gallery_slug: slug,
+          ...(gallerySettingsWithClient
+            ? { gallery_settings: gallerySettingsWithClient }
+            : {}),
         })
         .select("id,gallery_slug")
         .single();
@@ -190,14 +346,19 @@ export async function POST(request: NextRequest) {
         .update({
           title,
           client_name: clientName || null,
-          ...(shootDate ? { shoot_date: shootDate, event_date: shootDate } : {}),
-          access_mode: accessMode,
-          access_pin: accessPin,
-          access_updated_at: new Date().toISOString(),
-          access_updated_source: "desktop",
+          ...(shootDate
+            ? { shoot_date: shootDate, event_date: shootDate }
+            : {}),
+          access_mode: effectiveProjectAccessMode,
+          access_pin: effectiveProjectAccessPin,
+          access_updated_at: effectiveProjectAccessUpdatedAt,
+          access_updated_source: effectiveProjectAccessUpdatedSource,
           portal_status: galleryStatus,
           pre_release: preRelease,
-          updated_at: new Date().toISOString(),
+          updated_at: nowIso,
+          ...(gallerySettingsWithClient
+            ? { gallery_settings: gallerySettingsWithClient }
+            : {}),
         })
         .eq("id", projectId);
 
@@ -215,23 +376,18 @@ export async function POST(request: NextRequest) {
 
     if (projectReadError) throw projectReadError;
 
-    const galleryUrl = buildGalleryUrl(
-      projectId,
-      projectRow?.gallery_slug,
-      projectRow?.title ?? title,
-    );
+    const galleryUrl = buildGalleryUrl(projectId, projectRow?.gallery_slug);
 
     let seededVisitor: Record<string, unknown> | null = null;
     if (clientEmail) {
       const openedAt = new Date().toISOString();
-      const { data: existingVisitor, error: visitorLookupError } =
-        await service
-          .from("event_gallery_visitors")
-          .select("id")
-          .eq("project_id", projectId)
-          .ilike("viewer_email", clientEmail)
-          .limit(1)
-          .maybeSingle();
+      const { data: existingVisitor, error: visitorLookupError } = await service
+        .from("event_gallery_visitors")
+        .select("id")
+        .eq("project_id", projectId)
+        .ilike("viewer_email", clientEmail)
+        .limit(1)
+        .maybeSingle();
 
       if (visitorLookupError) throw visitorLookupError;
 
@@ -274,23 +430,36 @@ export async function POST(request: NextRequest) {
 
       // Find existing collection by local_id or slug/title
       let collectionId = "";
+      let existingCollectionAccess: {
+        access_mode?: string | null;
+        access_pin?: string | null;
+        access_updated_at?: string | null;
+        access_updated_source?: string | null;
+      } | null = null;
 
       if (albumLocalId) {
         const { data: byLocalId } = await service
           .from("collections")
-          .select("id,cover_photo_url")
+          .select(
+            "id,cover_photo_url,access_mode,access_pin,access_updated_at,access_updated_source",
+          )
           .eq("project_id", projectId)
           .eq("local_id", albumLocalId)
           .is("deleted_at", null)
           .maybeSingle();
 
-        if (byLocalId?.id) collectionId = byLocalId.id;
+        if (byLocalId?.id) {
+          collectionId = byLocalId.id;
+          existingCollectionAccess = byLocalId;
+        }
       }
 
       if (!collectionId) {
         const { data: bySlug } = await service
           .from("collections")
-          .select("id,cover_photo_url")
+          .select(
+            "id,cover_photo_url,access_mode,access_pin,access_updated_at,access_updated_source",
+          )
           .eq("project_id", projectId)
           .eq("kind", "gallery")
           .or(`slug.eq.${albumSlug},title.ilike.${albumName}`)
@@ -299,8 +468,35 @@ export async function POST(request: NextRequest) {
           .limit(1)
           .maybeSingle();
 
-        if (bySlug?.id) collectionId = bySlug.id;
+        if (bySlug?.id) {
+          collectionId = bySlug.id;
+          existingCollectionAccess = bySlug;
+        }
       }
+
+      const applyIncomingAlbumAccess = shouldApplyIncomingAccess({
+        incomingUpdatedAt: album.accessUpdatedAt,
+        existingUpdatedAt: existingCollectionAccess?.access_updated_at,
+        incomingMode: albumAccessMode,
+        incomingPin: albumAccessPin,
+        existingMode: existingCollectionAccess?.access_mode,
+        existingPin: existingCollectionAccess?.access_pin,
+      });
+      const effectiveAlbumAccessMode = applyIncomingAlbumAccess
+        ? albumAccessMode
+        : clean(existingCollectionAccess?.access_mode) || "inherit_project";
+      const effectiveAlbumAccessPin =
+        effectiveAlbumAccessMode === "pin"
+          ? applyIncomingAlbumAccess
+            ? albumAccessPin
+            : clean(existingCollectionAccess?.access_pin)
+          : null;
+      const effectiveAlbumAccessUpdatedAt = applyIncomingAlbumAccess
+        ? nowIso
+        : existingCollectionAccess?.access_updated_at || nowIso;
+      const effectiveAlbumAccessUpdatedSource = applyIncomingAlbumAccess
+        ? "desktop"
+        : existingCollectionAccess?.access_updated_source || "cloud";
 
       if (!collectionId) {
         // Get next sort_order
@@ -313,7 +509,7 @@ export async function POST(request: NextRequest) {
           .limit(1)
           .maybeSingle();
 
-        const nextSort = (Number(lastRow?.sort_order ?? -1)) + 1;
+        const nextSort = Number(lastRow?.sort_order ?? -1) + 1;
 
         const { data: inserted, error: insertErr } = await service
           .from("collections")
@@ -326,10 +522,10 @@ export async function POST(request: NextRequest) {
             visibility: "public",
             local_id: albumLocalId || null,
             sync_source: "desktop",
-            access_mode: albumAccessMode,
-            access_pin: albumAccessPin,
-            access_updated_at: new Date().toISOString(),
-            access_updated_source: "desktop",
+            access_mode: effectiveAlbumAccessMode,
+            access_pin: effectiveAlbumAccessPin,
+            access_updated_at: effectiveAlbumAccessUpdatedAt,
+            access_updated_source: effectiveAlbumAccessUpdatedSource,
           })
           .select("id,cover_photo_url")
           .single();
@@ -340,11 +536,11 @@ export async function POST(request: NextRequest) {
         // Update existing collection
         const updatePayload: Record<string, unknown> = {
           title: albumName,
-          access_mode: albumAccessMode,
-          access_pin: albumAccessPin,
-          access_updated_at: new Date().toISOString(),
-          access_updated_source: "desktop",
-          updated_at: new Date().toISOString(),
+          access_mode: effectiveAlbumAccessMode,
+          access_pin: effectiveAlbumAccessPin,
+          access_updated_at: effectiveAlbumAccessUpdatedAt,
+          access_updated_source: effectiveAlbumAccessUpdatedSource,
+          updated_at: nowIso,
         };
         if (albumLocalId) updatePayload.local_id = albumLocalId;
 
@@ -369,10 +565,10 @@ export async function POST(request: NextRequest) {
         title: albumName,
         local_id: albumLocalId,
         cover_photo_url: collectionRow?.cover_photo_url ?? null,
-        access_mode: albumAccessMode,
-        access_pin: albumAccessPin,
-        access_updated_at: new Date().toISOString(),
-        access_updated_source: "desktop",
+        access_mode: effectiveAlbumAccessMode,
+        access_pin: effectiveAlbumAccessPin,
+        access_updated_at: effectiveAlbumAccessUpdatedAt,
+        access_updated_source: effectiveAlbumAccessUpdatedSource,
       });
     }
 
@@ -451,6 +647,8 @@ export async function GET(request: NextRequest) {
           "id,title,client_name,shoot_date,event_date,order_due_date,expiration_date,portal_status,pre_release,gallery_slug,cover_photo_url,access_mode,access_pin,access_updated_at,access_updated_source,linked_local_school_id,updated_at",
         )
         .eq("photographer_id", photographerId)
+        .eq("workflow_type", "event")
+        .is("deleted_at", null)
         .order("created_at", { ascending: false });
 
       if (allError) throw allError;
@@ -470,7 +668,7 @@ export async function GET(request: NextRequest) {
           project: {
             ...proj,
             gallery_status: proj.portal_status,
-            gallery_url: buildGalleryUrl(proj.id, proj.gallery_slug, proj.title),
+            gallery_url: buildGalleryUrl(proj.id, proj.gallery_slug),
           },
           collections: collections ?? [],
         });
@@ -482,7 +680,6 @@ export async function GET(request: NextRequest) {
     // ── Single project pull ──
     const cloudProjectId = clean(url.searchParams.get("cloudProjectId"));
     const localProjectId = clean(url.searchParams.get("localProjectId"));
-    const titleHint = clean(url.searchParams.get("title"));
 
     let projectId = cloudProjectId;
 
@@ -492,6 +689,7 @@ export async function GET(request: NextRequest) {
         .select("id")
         .eq("linked_local_school_id", localProjectId)
         .eq("photographer_id", photographerId)
+        .is("deleted_at", null)
         .order("created_at", { ascending: false })
         .limit(1)
         .maybeSingle();
@@ -513,6 +711,7 @@ export async function GET(request: NextRequest) {
       )
       .eq("id", projectId)
       .eq("photographer_id", photographerId)
+      .is("deleted_at", null)
       .single();
 
     if (projectError) throw projectError;
@@ -528,11 +727,7 @@ export async function GET(request: NextRequest) {
 
     if (collError) throw collError;
 
-    const galleryUrl = buildGalleryUrl(
-      projectId,
-      projectRow?.gallery_slug,
-      projectRow?.title ?? titleHint,
-    );
+    const galleryUrl = buildGalleryUrl(projectId, projectRow?.gallery_slug);
 
     return NextResponse.json({
       ok: true,
