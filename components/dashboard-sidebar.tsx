@@ -32,8 +32,13 @@ const navActiveStyle: React.CSSProperties = {
 
 const NAV_ITEMS = [
   { href: "/dashboard", label: "Dashboard", match: /^\/dashboard$/ },
-  { href: "/dashboard/schools", label: "Schools", match: /^\/dashboard\/schools/ },
-  { href: "/dashboard/projects/events", label: "Projects", match: /^\/dashboard\/projects/ },
+  // Schools owns both the school list AND the school galleries, which live at
+  // /dashboard/projects/schools/[id] — so opening a school keeps "Schools"
+  // active instead of jumping the sidebar to "Projects".
+  { href: "/dashboard/schools", label: "Schools", match: /^\/dashboard\/(schools|projects\/schools)/ },
+  // Projects matches everything under /dashboard/projects EXCEPT the school
+  // galleries (those belong to Schools, above).
+  { href: "/dashboard/projects/events", label: "Projects", match: /^\/dashboard\/projects(?!\/schools)/ },
   { href: "/dashboard/calendar", label: "Calendar", match: /^\/dashboard\/calendar/ },
   { href: "/dashboard/orders", label: "Orders", match: /^\/dashboard\/orders/ },
   { href: "/dashboard/packages", label: "Packages", match: /^\/dashboard\/packages/ },
@@ -134,37 +139,46 @@ export function DashboardSidebar({
           </Link>
         ))}
         {isAdmin && (
-          <Link
-            href="/dashboard/admin/users"
-            onClick={onNavigate}
-            style={{
-              ...(/^\/dashboard\/admin/.test(pathname) ? navActiveStyle : navItemStyle),
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              gap: 8,
-            }}
-          >
-            <span>Admin</span>
-            {adminBadgeCount > 0 ? (
-              <span
-                aria-label={`${adminBadgeCount} new photographer${adminBadgeCount === 1 ? "" : "s"}`}
-                style={{
-                  background: "#dc2626",
-                  color: "#fff",
-                  fontSize: 11,
-                  fontWeight: 700,
-                  borderRadius: 999,
-                  minWidth: 20,
-                  padding: "1px 6px",
-                  textAlign: "center",
-                  lineHeight: "16px",
-                }}
-              >
-                {adminBadgeCount > 99 ? "99+" : adminBadgeCount}
-              </span>
-            ) : null}
-          </Link>
+          <>
+            <Link
+              href="/dashboard/admin/users"
+              onClick={onNavigate}
+              style={{
+                ...(/^\/dashboard\/admin\/users/.test(pathname) ? navActiveStyle : navItemStyle),
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: 8,
+              }}
+            >
+              <span>Admin Users</span>
+              {adminBadgeCount > 0 ? (
+                <span
+                  aria-label={`${adminBadgeCount} new photographer${adminBadgeCount === 1 ? "" : "s"}`}
+                  style={{
+                    background: "#dc2626",
+                    color: "#fff",
+                    fontSize: 11,
+                    fontWeight: 700,
+                    borderRadius: 999,
+                    minWidth: 20,
+                    padding: "1px 6px",
+                    textAlign: "center",
+                    lineHeight: "16px",
+                  }}
+                >
+                  {adminBadgeCount > 99 ? "99+" : adminBadgeCount}
+                </span>
+              ) : null}
+            </Link>
+            <Link
+              href="/dashboard/admin/notifications"
+              onClick={onNavigate}
+              style={/^\/dashboard\/admin\/notifications/.test(pathname) ? navActiveStyle : navItemStyle}
+            >
+              Notifications
+            </Link>
+          </>
         )}
       </nav>
 
