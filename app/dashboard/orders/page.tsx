@@ -449,6 +449,12 @@ function removeUnpaidCheckoutShadows(sourceOrders: Order[]) {
   return sourceOrders.filter((order) => !hiddenIds.has(order.id));
 }
 
+function matchesOrderStatusFilter(order: Order, statusKey: string) {
+  if (statusKey === "all") return true;
+  if (statusKey === "new") return !order.seen_by_photographer;
+  return order.status === statusKey;
+}
+
 function buildOrderSummaryHtml(order: Order) {
   const manifest = buildManifest(order);
   const currency = order.currency?.toUpperCase() || "CAD";
@@ -561,7 +567,7 @@ function OrdersPageContent() {
   const focusAppliedRef = useRef(false);
   const [loading, setLoading] = useState(true);
   const [orders, setOrders] = useState<Order[]>([]);
-  const [filter, setFilter] = useState<string>("new");
+  const [filter, setFilter] = useState<string>("all");
   const [selected, setSelected] = useState<Order | null>(null);
   const detailsPanelRef = useRef<HTMLDivElement | null>(null);
   // On mobile the details panel renders beneath the orders list instead of
@@ -1064,7 +1070,7 @@ function OrdersPageContent() {
     let result =
       filter === "all"
         ? displayOrders
-        : displayOrders.filter((o) => o.status === filter);
+        : displayOrders.filter((o) => matchesOrderStatusFilter(o, filter));
     if (schoolFilter === "event") {
       result = result.filter((o) => !o.school_id);
     } else if (schoolFilter?.startsWith("event:")) {
@@ -1686,7 +1692,7 @@ function OrdersPageContent() {
                     const count =
                       statusKey === "all"
                         ? displayOrders.length
-                        : displayOrders.filter((order) => order.status === statusKey).length;
+                        : displayOrders.filter((order) => matchesOrderStatusFilter(order, statusKey)).length;
                     return (
                       <button
                         key={statusKey}
