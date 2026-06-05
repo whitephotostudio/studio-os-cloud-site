@@ -93,6 +93,24 @@ type EventsPayload = {
   projects?: ProjectRow[];
 };
 
+type DownloadActivityItem = {
+  id: string;
+  kind: "school" | "event";
+  galleryName: string;
+  viewerEmail: string;
+  downloadType: string;
+  downloadCount: number;
+  mediaCount: number;
+  createdAt: string | null;
+  href: string;
+};
+
+type DownloadActivityPayload = {
+  ok?: boolean;
+  message?: string;
+  activities?: DownloadActivityItem[];
+};
+
 type StudioWelcomeStatus = {
   release: {
     version: string;
@@ -188,6 +206,18 @@ function moneyFromCents(cents: number) {
 
 function orderTotalCents(order: OrderRow) {
   return resolveOrderTotalCents(order);
+}
+
+function isCustomerOrder(order: OrderRow) {
+  const buyer = clean(
+    order.parent_email ?? order.customer_email ?? order.parent_name ?? order.customer_name,
+  );
+  return (
+    !!buyer ||
+    orderTotalCents(order) > 0 ||
+    !!clean(order.stripe_checkout_session_id) ||
+    !!clean(order.stripe_payment_intent_id)
+  );
 }
 
 function isPaidOrder(order: OrderRow) {
@@ -615,6 +645,7 @@ function DashboardPageContent() {
   const [orders, setOrders] = useState<OrderRow[]>([]);
   const [studioWelcome, setStudioWelcome] = useState<StudioWelcomeStatus | null>(null);
   const [showStudioWelcome, setShowStudioWelcome] = useState(false);
+  const [downloadActivity, setDownloadActivity] = useState<DownloadActivityItem[]>([]);
   // Dismissed notification IDs (persisted in localStorage)
   const [dismissed, setDismissed] = useState<Set<string>>(new Set());
 
@@ -709,7 +740,7 @@ function DashboardPageContent() {
 
       setPhotographer(photographerRow as Photographer);
 
-      const [schoolRes, projectRes, orderRes, eventRes, studioAppRes] = await Promise.all([
+      const [schoolRes, projectRes, orderRes, eventRes, studioAppRes, downloadActivityRes] = await Promise.all([
         supabase
           .from("schools")
           .select("id,school_name,local_school_id,created_at")
@@ -736,6 +767,12 @@ function DashboardPageContent() {
           credentials: "include",
           headers: authHeaders,
         }).catch(() => null),
+        fetch("/api/dashboard/download-activity", {
+          method: "GET",
+          cache: "no-store",
+          credentials: "include",
+          headers: authHeaders,
+        }).catch(() => null),
       ]);
 
       if (schoolRes.error) throw schoolRes.error;
@@ -755,7 +792,15 @@ function DashboardPageContent() {
       setSchools(dedupedSchools);
       setProjects((projectRes.data ?? []) as ProjectRow[]);
       setEventProjects(eventPayload.projects ?? []);
-      setOrders((orderRes.data ?? []) as OrderRow[]);
+      setOrders(((orderRes.data ?? []) as OrderRow[]).filter(isCustomerOrder));
+
+      if (downloadActivityRes?.ok) {
+        const downloadPayload =
+          (await downloadActivityRes.json().catch(() => null)) as DownloadActivityPayload | null;
+        setDownloadActivity(downloadPayload?.ok === false ? [] : downloadPayload?.activities ?? []);
+      } else {
+        setDownloadActivity([]);
+      }
 
       if (dedupedSchools.length > 0) {
         const { data: studentRows, error: studentErr } = await supabase
@@ -833,7 +878,9 @@ function DashboardPageContent() {
   function clearAllNotifications() {
     setDismissed((prev) => {
       const next = new Set(prev);
-      removeUnpaidCheckoutShadows(orders).forEach((o) => next.add(o.id));
+      removeUnpaidCheckoutShadows(orders.filter(isCustomerOrder)).forEach((o) =>
+        next.add(o.id),
+      );
       saveDismissed(next);
       return next;
     });
@@ -854,7 +901,10 @@ function DashboardPageContent() {
   }
 
   // ── Derived values ──────────────────────────────────────────────────────────
-  const displayOrders = useMemo(() => removeUnpaidCheckoutShadows(orders), [orders]);
+  const displayOrders = useMemo(
+    () => removeUnpaidCheckoutShadows(orders.filter(isCustomerOrder)),
+    [orders],
+  );
   const schoolProjects = projects.filter((p) => p.workflow_type === "school");
   const revenueTracked = displayOrders.reduce((sum, order) => sum + orderTotalCents(order), 0);
   const imageCount = students.filter((row) => clean(row.photo_url)).length;
@@ -885,7 +935,8 @@ function DashboardPageContent() {
 
   const pendingOrders = displayOrders.filter(
     (o) => (clean(o.status) || "pending").toLowerCase() === "pending" ||
-            clean(o.status).toLowerCase() === "needs_attention",
+            clean(o.status).toLowerCase() === "needs_attention" ||
+            clean(o.status).toLowerCase() === "payment_pending",
   );
 
   const visibleOrders = displayOrders.filter((o) => !dismissed.has(o.id));
@@ -1602,6 +1653,62 @@ function DashboardPageContent() {
                 <QuickStat label="REVENUE TRACKED" value={moneyFromCents(revenueTracked)} />
                 <QuickStat label="SCHOOL PROJECTS LINKED" value={schoolProjects.length} />
                 <QuickStat label="PHOTO COVERAGE" value={`${coveragePct}%`} accent={coveragePct >= 80 ? "#15803d" : "#cc0000"} />
+              </div>
+
+              <div style={{ marginTop: 22, paddingTop: 18, borderTop: "1px solid #e5e5e5" }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 12 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14, fontWeight: 900, color: textPrimary }}>
+                    <Download size={16} color="#cc0000" /> Recent downloads
+                  </div>
+                </div>
+                {loading ? (
+                  <div style={{ display: "grid", gap: 10 }}>
+                    {[1, 2].map((i) => (
+                      <div key={i} style={{ height: 52, borderRadius: 14, background: "#ffffff", border: "1px solid #eeeeee" }} />
+                    ))}
+                  </div>
+                ) : downloadActivity.length === 0 ? (
+                  <div style={{ borderRadius: 14, background: "#fff", border: "1px solid #eeeeee", padding: 14, color: textMuted, fontSize: 13 }}>
+                    No parent downloads logged yet.
+                  </div>
+                ) : (
+                  <div style={{ display: "grid", gap: 10 }}>
+                    {downloadActivity.slice(0, 4).map((activity) => (
+                      <Link
+                        key={`${activity.kind}:${activity.id}`}
+                        href={activity.href}
+                        style={{
+                          display: "block",
+                          borderRadius: 14,
+                          background: "#fff",
+                          border: "1px solid #eeeeee",
+                          padding: 12,
+                          color: "inherit",
+                          textDecoration: "none",
+                        }}
+                      >
+                        <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start" }}>
+                          <div style={{ minWidth: 0 }}>
+                            <div style={{ color: textPrimary, fontSize: 13, fontWeight: 900, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                              {activity.viewerEmail || "Parent visitor"}
+                            </div>
+                            <div style={{ color: textMuted, fontSize: 12, marginTop: 3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                              {activity.galleryName}
+                            </div>
+                          </div>
+                          <div style={{ textAlign: "right", flexShrink: 0 }}>
+                            <div style={{ color: textPrimary, fontSize: 13, fontWeight: 900 }}>
+                              {activity.downloadCount} photo{activity.downloadCount === 1 ? "" : "s"}
+                            </div>
+                            <div style={{ color: textMuted, fontSize: 11, marginTop: 3 }}>
+                              {relativeTime(activity.createdAt)}
+                            </div>
+                          </div>
+                        </div>
+                      </Link>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           </div>

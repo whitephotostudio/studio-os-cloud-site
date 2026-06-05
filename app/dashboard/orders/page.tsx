@@ -385,6 +385,18 @@ function isPaidOrder(order: Order) {
   );
 }
 
+function isCustomerOrder(order: Order) {
+  const buyer = clean(
+    order.parent_email ?? order.customer_email ?? order.parent_name ?? order.customer_name,
+  );
+  return (
+    !!buyer ||
+    resolveOrderTotalCents(order, order.items) > 0 ||
+    !!clean(order.stripe_checkout_session_id) ||
+    !!clean(order.stripe_payment_intent_id)
+  );
+}
+
 function isUnpaidCheckoutShadow(order: Order) {
   const paymentStatus = clean(order.payment_status).toLowerCase();
   const orderStatus = clean(order.status).toLowerCase();
@@ -754,14 +766,16 @@ function OrdersPageContent() {
       .eq("photographer_id", photographer.id)
       .order("created_at", { ascending: false });
 
-    const nextOrders = ((rows as RawOrder[] | null) ?? []).map((order) => ({
-      ...order,
-      student: singleRelation(order.student),
-      school: singleRelation(order.school),
-      class: singleRelation(order.class),
-      project: singleRelation(order.project),
-      items: order.items ?? [],
-    }));
+    const nextOrders = ((rows as RawOrder[] | null) ?? [])
+      .map((order) => ({
+        ...order,
+        student: singleRelation(order.student),
+        school: singleRelation(order.school),
+        class: singleRelation(order.class),
+        project: singleRelation(order.project),
+        items: order.items ?? [],
+      }))
+      .filter(isCustomerOrder);
 
     setOrders(nextOrders);
     setSelected((prev) => nextOrders.find((row) => row.id === prev?.id) ?? null);
@@ -1069,7 +1083,10 @@ function OrdersPageContent() {
     }
   }
 
-  const displayOrders = useMemo(() => removeUnpaidCheckoutShadows(orders), [orders]);
+  const displayOrders = useMemo(
+    () => removeUnpaidCheckoutShadows(orders.filter(isCustomerOrder)),
+    [orders],
+  );
 
   const uniqueSchools = useMemo(() => {
     const map = new Map<string, string>();

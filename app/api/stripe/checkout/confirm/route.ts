@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createDashboardServiceClient } from "@/lib/dashboard-auth";
 import {
-  finalizePaidOrder,
+  finalizePaidOrderOrGroup,
   getConnectedAccountId,
   retrieveCheckoutSession,
 } from "@/lib/payments";
@@ -69,6 +69,13 @@ export async function POST(req: NextRequest) {
       (currentStatus === "paid" || currentStatus === "digital_paid") &&
       (currentPaymentStatus === "paid" || currentPaymentStatus === "succeeded" || currentPaymentStatus === "no_payment_required")
     ) {
+      await finalizePaidOrderOrGroup(sb, {
+        orderId: order.id,
+        checkoutSessionId: order.stripe_checkout_session_id,
+        paymentStatus: currentPaymentStatus || "paid",
+        note: "[Stripe checkout confirm] order was already marked paid",
+        paidAt: order.paid_at ?? new Date().toISOString(),
+      });
       return NextResponse.json({
         ok: true,
         orderId: order.id,
@@ -103,7 +110,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    await finalizePaidOrder(sb, {
+    await finalizePaidOrderOrGroup(sb, {
       orderId: order.id,
       checkoutSessionId: session.id,
       paymentIntentId: session.payment_intent ?? null,

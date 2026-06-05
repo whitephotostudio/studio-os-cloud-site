@@ -1970,17 +1970,16 @@ export async function finalizePaidOrder(
         (photographer as Record<string, unknown>).studio_email as string
       );
 
-      if (recipientEmail) {
-        // Fetch order items
-        const { data: itemRows } = await service
-          .from("order_items")
-          .select("product_name,quantity,unit_price_cents,line_total_cents,sku")
-          .eq("order_id", input.orderId);
+      // Fetch order items
+      const { data: itemRows } = await service
+        .from("order_items")
+        .select("product_name,quantity,unit_price_cents,line_total_cents,sku")
+        .eq("order_id", input.orderId);
 
-        // Fetch context (project title, school name, student name)
-        const fullOrder = await service
-          .from("orders")
-          .select(`
+      // Fetch context (project title, school name, student name)
+      const fullOrder = await service
+        .from("orders")
+        .select(`
             id,package_name,total_cents,total_amount,subtotal_cents,tax_cents,currency,
             parent_name,parent_email,customer_email,special_notes,created_at,paid_at,status,
             school_id,project_id,student_id,
@@ -1988,24 +1987,25 @@ export async function finalizePaidOrder(
             school:schools(school_name),
             student:students(first_name,last_name,pin)
           `)
-          .eq("id", input.orderId)
-          .maybeSingle();
+        .eq("id", input.orderId)
+        .maybeSingle();
 
-        const project = Array.isArray(fullOrder.data?.project)
-          ? fullOrder.data.project[0]
-          : fullOrder.data?.project;
-        const school = Array.isArray(fullOrder.data?.school)
-          ? fullOrder.data.school[0]
-          : fullOrder.data?.school;
-        const student = Array.isArray(fullOrder.data?.student)
-          ? fullOrder.data.student[0]
-          : fullOrder.data?.student;
+      const project = Array.isArray(fullOrder.data?.project)
+        ? fullOrder.data.project[0]
+        : fullOrder.data?.project;
+      const school = Array.isArray(fullOrder.data?.school)
+        ? fullOrder.data.school[0]
+        : fullOrder.data?.school;
+      const student = Array.isArray(fullOrder.data?.student)
+        ? fullOrder.data.student[0]
+        : fullOrder.data?.student;
 
-        const studentName = [
-          clean((student as Record<string, unknown>)?.first_name as string),
-          clean((student as Record<string, unknown>)?.last_name as string),
-        ].filter(Boolean).join(" ") || null;
+      const studentName = [
+        clean((student as Record<string, unknown>)?.first_name as string),
+        clean((student as Record<string, unknown>)?.last_name as string),
+      ].filter(Boolean).join(" ") || null;
 
+      if (recipientEmail) {
         const email = buildOrderNotificationEmail({
           order: fullOrder.data ?? {
             ...order,
@@ -2033,33 +2033,39 @@ export async function finalizePaidOrder(
           dashboardUrl: `https://www.studiooscloud.com/dashboard/orders`,
         });
 
-        await sendResendEmail({
-          to: recipientEmail,
-          subject: email.subject,
-          html: email.html,
-          text: email.text,
-          fromName: "Studio OS Cloud",
-          replyTo: resolveReplyTo(recipientEmail),
-          tags: [{ name: "type", value: "order-notification" }],
-          idempotencyKey: `order-notify-${input.orderId}`,
-        });
-
-        // 2026-04-25: Parent-facing receipt email.  Sent to the buyer's
-        // email address (parent_email / customer_email) with order
-        // number, line items + thumbnails, sizes, totals — acts as
-        // proof of purchase.  Idempotent via key so a webhook retry
-        // doesn't double-send.
-        const buyerEmailAddress = clean(
-          (fullOrder.data as Record<string, unknown> | null)?.customer_email as string,
-        ) ||
-          clean(
-            (fullOrder.data as Record<string, unknown> | null)?.parent_email as string,
+        try {
+          await sendResendEmail({
+            to: recipientEmail,
+            subject: email.subject,
+            html: email.html,
+            text: email.text,
+            fromName: "Studio OS Cloud",
+            replyTo: resolveReplyTo(recipientEmail),
+            tags: [{ name: "type", value: "order-notification" }],
+            idempotencyKey: `order-notify-${input.orderId}`,
+          });
+        } catch (notificationEmailError) {
+          console.error(
+            "[order-notification] Photographer email failed:",
+            notificationEmailError,
           );
-        if (buyerEmailAddress) {
-          const studentFullName = [
-            clean((student as Record<string, unknown> | null)?.first_name as string),
-            clean((student as Record<string, unknown> | null)?.last_name as string),
-          ].filter(Boolean).join(" ") || null;
+        }
+      }
+
+      // 2026-04-25: Parent-facing receipt email.  Sent to the buyer's
+      // email address (parent_email / customer_email) with order number,
+      // line items + thumbnails, sizes, totals — acts as proof of purchase.
+      const buyerEmailAddress = clean(
+        (fullOrder.data as Record<string, unknown> | null)?.customer_email as string,
+      ) ||
+        clean(
+          (fullOrder.data as Record<string, unknown> | null)?.parent_email as string,
+        );
+      if (buyerEmailAddress) {
+        const studentFullName = [
+          clean((student as Record<string, unknown> | null)?.first_name as string),
+          clean((student as Record<string, unknown> | null)?.last_name as string),
+        ].filter(Boolean).join(" ") || null;
 
           // Build a deep-link to the parent's Orders tab in the portal.
           // School mode: PIN comes from students.pin (per-student gate).
@@ -2118,22 +2124,25 @@ export async function finalizePaidOrder(
             ordersHistoryUrl,
           });
 
-          await sendResendEmail({
-            to: buyerEmailAddress,
-            subject: receiptEmail.subject,
-            html: receiptEmail.html,
-            text: receiptEmail.text,
-            fromName: clean(
-              (photographer as Record<string, unknown>).business_name as string,
-            ) || "Studio OS Cloud",
-            replyTo: clean(
-              (photographer as Record<string, unknown>).studio_email as string,
-            ) || resolveReplyTo(buyerEmailAddress),
-            tags: [{ name: "type", value: "order-receipt" }],
-            idempotencyKey: `order-receipt-${input.orderId}`,
-          });
+          try {
+            await sendResendEmail({
+              to: buyerEmailAddress,
+              subject: receiptEmail.subject,
+              html: receiptEmail.html,
+              text: receiptEmail.text,
+              fromName: clean(
+                (photographer as Record<string, unknown>).business_name as string,
+              ) || "Studio OS Cloud",
+              replyTo: clean(
+                (photographer as Record<string, unknown>).studio_email as string,
+              ) || resolveReplyTo(buyerEmailAddress),
+              tags: [{ name: "type", value: "order-receipt" }],
+              idempotencyKey: `order-receipt-${input.orderId}`,
+            });
+          } catch (receiptEmailError) {
+            console.error("[order-notification] Buyer receipt failed:", receiptEmailError);
+          }
         }
-      }
     }
   } catch (emailError) {
     // Never let email failure break the payment flow

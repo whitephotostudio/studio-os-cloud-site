@@ -37,6 +37,8 @@ type OrderRow = {
   total_amount: number | null;
   currency: string | null;
   seen_by_photographer: boolean | null;
+  stripe_checkout_session_id?: string | null;
+  stripe_payment_intent_id?: string | null;
   student_id: string | null;
   student:
     | { first_name: string | null; last_name: string | null; photo_url: string | null }
@@ -61,6 +63,26 @@ function moneyFromOrder(order: OrderRow): string {
     style: "currency",
     currency: order.currency || "USD",
   }).format(cents / 100);
+}
+
+function orderTotalCents(order: OrderRow) {
+  return order.total_cents != null
+    ? order.total_cents
+    : order.total_amount != null
+      ? Math.round(order.total_amount * 100)
+      : 0;
+}
+
+function isCustomerOrder(order: OrderRow): boolean {
+  const buyer = clean(
+    order.parent_email ?? order.customer_email ?? order.parent_name ?? order.customer_name,
+  );
+  return (
+    !!buyer ||
+    orderTotalCents(order) > 0 ||
+    !!clean(order.stripe_checkout_session_id) ||
+    !!clean(order.stripe_payment_intent_id)
+  );
 }
 
 function shortId(id: string): string {
@@ -140,7 +162,7 @@ export default function MobileOrdersPage() {
           `id, created_at, status, parent_name, parent_email,
            customer_name, customer_email, package_name,
            total_cents, total_amount, currency,
-           seen_by_photographer, student_id,
+           seen_by_photographer, stripe_checkout_session_id, stripe_payment_intent_id, student_id,
            student:students(first_name,last_name,photo_url)`,
         )
         .eq("photographer_id", photog.id)
@@ -151,7 +173,7 @@ export default function MobileOrdersPage() {
         setError(qErr.message);
         setOrders([]);
       } else {
-        setOrders((data ?? []) as OrderRow[]);
+        setOrders(((data ?? []) as OrderRow[]).filter(isCustomerOrder));
       }
       setLoading(false);
     }
