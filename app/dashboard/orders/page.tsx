@@ -957,12 +957,38 @@ function OrdersPageContent() {
     }
   }
 
+  async function deleteOrders(orderIds: string[]) {
+    const ids = Array.from(new Set(orderIds.filter(Boolean)));
+    if (ids.length === 0) return [];
+
+    const { data: { session } } = await supabase.auth.getSession();
+    const response = await fetch("/api/dashboard/orders/delete", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${session?.access_token ?? ""}`,
+      },
+      body: JSON.stringify({ orderIds: ids }),
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || result.ok === false) {
+      throw new Error(result.message || "Failed to delete orders.");
+    }
+    return Array.isArray(result.deletedOrderIds)
+      ? (result.deletedOrderIds as string[])
+      : ids;
+  }
+
   async function deleteOrder(orderId: string) {
-    await supabase.from("order_items").delete().eq("order_id", orderId);
-    await supabase.from("orders").delete().eq("id", orderId);
-    setDeleteConfirmId(null);
-    if (selected?.id === orderId) setSelected(null);
-    await load();
+    try {
+      const deletedIds = await deleteOrders([orderId]);
+      setDeleteConfirmId(null);
+      if (selected && deletedIds.includes(selected.id)) setSelected(null);
+      await load();
+    } catch (error) {
+      console.error("Order delete error:", error);
+      alert(error instanceof Error ? error.message : "Failed to delete order.");
+    }
   }
 
   function openEdit(order: Order) {
@@ -1027,24 +1053,16 @@ function OrdersPageContent() {
         .filter((g) => selectedKeys.has(g.key))
         .flatMap((g) => g.orders.map((o) => o.id));
       setBulkDeleteProgress({ done: 0, total: orderIds.length });
-
-      // Delete in batches of 10 for speed
-      const batchSize = 10;
-      for (let i = 0; i < orderIds.length; i += batchSize) {
-        const batch = orderIds.slice(i, i + batchSize);
-        await Promise.all(
-          batch.map(async (id) => {
-            await supabase.from("order_items").delete().eq("order_id", id);
-            await supabase.from("orders").delete().eq("id", id);
-          })
-        );
-        setBulkDeleteProgress({ done: Math.min(i + batchSize, orderIds.length), total: orderIds.length });
-      }
+      const deletedIds = await deleteOrders(orderIds);
+      setBulkDeleteProgress({ done: orderIds.length, total: orderIds.length });
 
       setSelectedKeys(new Set());
       setBulkDeleteConfirm(false);
-      if (selected && orderIds.includes(selected.id)) setSelected(null);
+      if (selected && deletedIds.includes(selected.id)) setSelected(null);
       await load();
+    } catch (error) {
+      console.error("Bulk order delete error:", error);
+      alert(error instanceof Error ? error.message : "Failed to delete selected orders.");
     } finally {
       setBulkDeleting(false);
       setBulkDeleteProgress({ done: 0, total: 0 });
