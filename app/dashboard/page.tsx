@@ -297,11 +297,15 @@ function displayStatus(order: OrderRow) {
 
 function displayStatusLabel(order: OrderRow) {
   const status = displayStatus(order);
-  if (status === "payment_pending") return "Checkout Started";
+  if (status === "payment_pending") return "Cart / Pending";
   if (status === "paid") return "Processed";
   if (status === "digital_paid") return "Digital Paid";
   if (status === "sent_to_print") return "Sent to Print";
   return status.replace(/_/g, " ");
+}
+
+function isMainWorkflowOrder(order: OrderRow) {
+  return displayStatus(order) !== "payment_pending";
 }
 
 function formatDate(value: string | null) {
@@ -934,6 +938,10 @@ function DashboardPageContent() {
     () => removeUnpaidCheckoutShadows(orders.filter(isCustomerOrder)),
     [orders],
   );
+  const mainWorkflowOrders = useMemo(
+    () => displayOrders.filter(isMainWorkflowOrder),
+    [displayOrders],
+  );
   const schoolProjects = projects.filter((p) => p.workflow_type === "school");
   const revenueTracked = displayOrders.reduce((sum, order) => (isPaidOrder(order) ? sum + orderTotalCents(order) : sum), 0);
   const imageCount = students.filter((row) => clean(row.photo_url)).length;
@@ -994,8 +1002,8 @@ function DashboardPageContent() {
               projectOrders.set(o.project_id, { orders: 0, pending: 0, revenue: 0 }).get(o.project_id)!)
           : null;
       if (!bucket) continue;
-      bucket.orders += 1;
       if (displayStatus(o) === "payment_pending") bucket.pending += 1;
+      if (isMainWorkflowOrder(o)) bucket.orders += 1;
       if (isPaidOrder(o)) bucket.revenue += orderTotalCents(o);
     }
 
@@ -1360,7 +1368,7 @@ function DashboardPageContent() {
           <div style={{ display: "grid", gridTemplateColumns: isMobile ? "repeat(2,minmax(0,1fr))" : "repeat(4,minmax(0,1fr))", gap: isMobile ? 12 : 18, marginBottom: 24 }}>
             <OverviewLinkCard href="/dashboard/schools" icon={<GraduationCap size={20} />} label="SCHOOLS" value={schools.length} description="Synced school jobs available from the desktop app." />
             <OverviewLinkCard href="/dashboard/projects/events" icon={<FolderOpen size={20} />} label="EVENT PROJECTS" value={eventProjects.length} description="Weddings, baptisms, engagements, and private events." />
-            <OverviewLinkCard href="/dashboard/orders" icon={<ShoppingBag size={20} />} label="ORDERS" value={displayOrders.length} description="Total orders received across all schools and events." />
+            <OverviewLinkCard href="/dashboard/orders" icon={<ShoppingBag size={20} />} label="ORDERS" value={mainWorkflowOrders.length} description="Processed orders received across all schools and events." />
             <Link
               href="/dashboard/schools"
               style={overviewCardStyle(true)}
@@ -1669,7 +1677,7 @@ function DashboardPageContent() {
               </div>
 
               <div style={{ display: "grid", gap: 14 }}>
-                <QuickStat label="TOTAL ORDERS" value={displayOrders.length} />
+                <QuickStat label="TOTAL ORDERS" value={mainWorkflowOrders.length} />
                 <QuickStat
                   label="PENDING ORDERS"
                   value={pendingOrders.length}

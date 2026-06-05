@@ -151,7 +151,7 @@ function displayStatus(order: OrderRow): string {
 
 function displayStatusLabel(order: OrderRow): string {
   const status = displayStatus(order);
-  if (status === "payment_pending") return "Checkout Started";
+  if (status === "payment_pending") return "Cart / Pending";
   if (status === "paid") return "Processed";
   if (status === "digital_paid") return "Digital Paid";
   if (status === "sent_to_print") return "Sent to Print";
@@ -160,6 +160,10 @@ function displayStatusLabel(order: OrderRow): string {
 
 function isPendingStatus(order: OrderRow): boolean {
   return displayStatus(order) === "payment_pending";
+}
+
+function isMainWorkflowOrder(order: OrderRow): boolean {
+  return !isPendingStatus(order);
 }
 
 function isCompletedStatus(order: OrderRow): boolean {
@@ -221,8 +225,10 @@ export default function MobileOrdersPage() {
   }, [supabase]);
 
   const filtered = useMemo(() => {
-    let list = orders;
-    if (filter === "unread") list = list.filter((o) => o.seen_by_photographer === false);
+    let list = filter === "all" ? orders.filter(isMainWorkflowOrder) : orders;
+    if (filter === "unread") {
+      list = list.filter((o) => o.seen_by_photographer === false && isMainWorkflowOrder(o));
+    }
     if (filter === "pending") list = list.filter(isPendingStatus);
     if (filter === "completed") list = list.filter(isCompletedStatus);
 
@@ -245,8 +251,8 @@ export default function MobileOrdersPage() {
 
   const counts = useMemo(() => {
     return {
-      all: orders.length,
-      unread: orders.filter((o) => o.seen_by_photographer === false).length,
+      all: orders.filter(isMainWorkflowOrder).length,
+      unread: orders.filter((o) => o.seen_by_photographer === false && isMainWorkflowOrder(o)).length,
       pending: orders.filter(isPendingStatus).length,
       completed: orders.filter(isCompletedStatus).length,
     };

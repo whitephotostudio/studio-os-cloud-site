@@ -145,7 +145,7 @@ const STATUS_COLORS: Record<string, { bg: string; color: string; label: string }
   reviewed: { bg: "#fffbeb", color: "#d97706", label: "Reviewed" },
   sent_to_print: { bg: "#fff5f5", color: "#cc0000", label: "Sent to Print" },
   completed: { bg: "#f0fdf4", color: "#16a34a", label: "Completed" },
-  payment_pending: { bg: "#fff7ed", color: "#ea580c", label: "Checkout Started" },
+  payment_pending: { bg: "#fff7ed", color: "#ea580c", label: "Cart / Pending" },
   paid: { bg: "#ecfeff", color: "#0891b2", label: "Processed" },
   digital_paid: { bg: "#eef2ff", color: "#4f46e5", label: "Digital Paid" },
 };

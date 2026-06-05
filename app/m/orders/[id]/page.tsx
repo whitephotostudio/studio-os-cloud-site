@@ -159,7 +159,7 @@ function displayStatus(order: Row): string {
 
 function displayStatusLabel(order: Row): string {
   const status = displayStatus(order);
-  if (status === "payment_pending") return "Checkout Started";
+  if (status === "payment_pending") return "Cart / Pending";
   if (status === "paid") return "Processed";
   if (status === "digital_paid") return "Digital Paid";
   if (status === "sent_to_print") return "Sent to Print";

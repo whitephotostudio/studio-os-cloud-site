@@ -144,7 +144,7 @@ const STATUS_COLORS: Record<string, { bg: string; color: string; label: string }
   reviewed: { bg: "#fffbeb", color: "#d97706", label: "Reviewed" },
   sent_to_print: { bg: "#fff5f5", color: "#cc0000", label: "Sent to Print" },
   completed: { bg: "#f0fdf4", color: "#16a34a", label: "Completed" },
-  payment_pending: { bg: "#fff7ed", color: "#ea580c", label: "Checkout Started" },
+  payment_pending: { bg: "#fff7ed", color: "#ea580c", label: "Cart / Pending" },
   paid: { bg: "#ecfeff", color: "#0891b2", label: "Processed" },
   digital_paid: { bg: "#eef2ff", color: "#4f46e5", label: "Digital Paid" },
 };
@@ -423,7 +423,7 @@ function getGroupDisplayStatus(orders: Order[]) {
 function paymentStateLabel(order: Order) {
   if (isPaidOrder(order)) return "Processed";
   if (isPaymentFailed(order)) return "Payment Failed";
-  if (hasStartedCheckout(order) || isUnpaidCheckoutShadow(order)) return "Checkout Started";
+  if (hasStartedCheckout(order) || isUnpaidCheckoutShadow(order)) return "Cart / Pending";
   return "Not Paid";
 }
 
@@ -438,6 +438,14 @@ function paymentStateDescription(order: Order) {
     return "Parent opened checkout, but Stripe has not sent a successful payment yet.";
   }
   return "No Stripe checkout payment has been completed.";
+}
+
+function isCheckoutPendingOrder(order: Order) {
+  return getOrderDisplayStatus(order) === "payment_pending";
+}
+
+function isMainWorkflowOrder(order: Order) {
+  return !isCheckoutPendingOrder(order);
 }
 
 function isCustomerOrder(order: Order) {
@@ -517,11 +525,9 @@ function removeUnpaidCheckoutShadows(sourceOrders: Order[]) {
 }
 
 function matchesOrderStatusFilter(order: Order, statusKey: string) {
-  if (statusKey === "all") return true;
-  if (statusKey === "new") return !order.seen_by_photographer;
-  if (statusKey === "payment_pending") {
-    return !isPaidOrder(order) && (hasStartedCheckout(order) || isUnpaidCheckoutShadow(order));
-  }
+  if (statusKey === "all") return isMainWorkflowOrder(order);
+  if (statusKey === "new") return !order.seen_by_photographer && isMainWorkflowOrder(order);
+  if (statusKey === "payment_pending") return isCheckoutPendingOrder(order);
   if (statusKey === "paid") return isPaidOrder(order) && getOrderDisplayStatus(order) !== "digital_paid";
   if (statusKey === "digital_paid") return getOrderDisplayStatus(order) === "digital_paid";
   return order.status === statusKey;
@@ -1163,10 +1169,7 @@ function OrdersPageContent() {
   );
 
   const filtered = useMemo(() => {
-    let result =
-      filter === "all"
-        ? displayOrders
-        : displayOrders.filter((o) => matchesOrderStatusFilter(o, filter));
+    let result = displayOrders.filter((o) => matchesOrderStatusFilter(o, filter));
     if (schoolFilter === "event") {
       result = result.filter((o) => !o.school_id);
     } else if (schoolFilter?.startsWith("event:")) {
@@ -1287,7 +1290,7 @@ function OrdersPageContent() {
         orderCount: groupOrders.length,
         combinedStatus: getGroupDisplayStatus(groupOrders),
         packageSummary: buildCombinedPackageSummary(groupOrders),
-        isAnyNew: groupOrders.some((order) => !order.seen_by_photographer),
+        isAnyNew: groupOrders.some((order) => !order.seen_by_photographer && isMainWorkflowOrder(order)),
       };
     });
   }, [filtered]);
@@ -1340,7 +1343,7 @@ function OrdersPageContent() {
   }
 
   const newCount = useMemo(
-    () => displayOrders.filter((o) => !o.seen_by_photographer).length,
+    () => displayOrders.filter((o) => matchesOrderStatusFilter(o, "new")).length,
     [displayOrders],
   );
   const totalRevenue = useMemo(
@@ -1790,10 +1793,7 @@ function OrdersPageContent() {
                   {["all", "new", "reviewed", "sent_to_print", "completed", "payment_pending", "paid", "digital_paid"].map((statusKey) => {
                     const isActive = filter === statusKey;
                     const cfg = statusKey === "all" ? { label: "All Orders" } : STATUS_COLORS[statusKey] ?? { label: statusKey };
-                    const count =
-                      statusKey === "all"
-                        ? displayOrders.length
-                        : displayOrders.filter((order) => matchesOrderStatusFilter(order, statusKey)).length;
+                    const count = displayOrders.filter((order) => matchesOrderStatusFilter(order, statusKey)).length;
                     return (
                       <button
                         key={statusKey}
@@ -1952,6 +1952,7 @@ function OrdersPageContent() {
                 {combinedRows.map((group) => {
                   const order = group.representative;
                   const cfg = STATUS_COLORS[group.combinedStatus] ?? STATUS_COLORS.new;
+                  const isPendingGroup = group.combinedStatus === "payment_pending";
                   const isNew = group.isAnyNew;
                   const currency = order.currency?.toUpperCase() || "CAD";
                   const imageUrls = group.imageUrls;
@@ -2070,12 +2071,12 @@ function OrdersPageContent() {
                             <div style={{ background: "#f9fafb", border: `1px solid ${borderColor}`, borderRadius: isMobile ? 12 : 18, padding: isMobile ? 10 : 14 }}>
                               <div style={{ fontSize: isMobile ? 10 : 11, color: textMuted, fontWeight: 900, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: isMobile ? 4 : 8 }}>Original Files</div>
                               <div style={{ fontSize: isMobile ? 14 : 18, fontWeight: 900, color: textPrimary }}>{imageUrls.length}</div>
-                              <div style={{ fontSize: isMobile ? 11 : 13, color: textMuted, marginTop: isMobile ? 2 : 6 }}>Ready for lab export</div>
+                              <div style={{ fontSize: isMobile ? 11 : 13, color: textMuted, marginTop: isMobile ? 2 : 6 }}>{isPendingGroup ? "Waiting for payment" : "Ready for lab export"}</div>
                             </div>
 
                             <div style={{ background: "#f9fafb", border: `1px solid ${borderColor}`, borderRadius: isMobile ? 12 : 18, padding: isMobile ? 10 : 14 }}>
                               <div style={{ fontSize: isMobile ? 10 : 11, color: textMuted, fontWeight: 900, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: isMobile ? 4 : 8 }}>Export Flow</div>
-                              <div style={{ fontSize: isMobile ? 11 : 13, fontWeight: 700, color: textPrimary, lineHeight: 1.5 }}>Summary sheet + manifest + originals</div>
+                              <div style={{ fontSize: isMobile ? 11 : 13, fontWeight: 700, color: textPrimary, lineHeight: 1.5 }}>{isPendingGroup ? "Not ready until checkout is paid" : "Summary sheet + manifest + originals"}</div>
                             </div>
                           </div>
 
@@ -2148,27 +2149,33 @@ function OrdersPageContent() {
                           ) : null}
 
                           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                downloadCombinedOriginals(group);
-                              }}
-                              style={{
-                                background: "#111827",
-                                color: "#fff",
-                                border: "none",
-                                borderRadius: 12,
-                                padding: "10px 14px",
-                                display: "inline-flex",
-                                alignItems: "center",
-                                gap: 8,
-                                fontWeight: 800,
-                                cursor: "pointer",
-                              }}
-                            >
-                              <Download size={16} /> {downloadingId === group.key ? "Downloading…" : "Download Summary & Photos"}
-                            </button>
+                            {isPendingGroup ? (
+                              <div style={{ background: "#fff7ed", color: "#c2410c", border: "1px solid #fed7aa", borderRadius: 12, padding: "10px 14px", display: "inline-flex", alignItems: "center", gap: 8, fontWeight: 800, fontSize: 13 }}>
+                                <WalletCards size={16} /> Waiting for Stripe payment
+                              </div>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  downloadCombinedOriginals(group);
+                                }}
+                                style={{
+                                  background: "#111827",
+                                  color: "#fff",
+                                  border: "none",
+                                  borderRadius: 12,
+                                  padding: "10px 14px",
+                                  display: "inline-flex",
+                                  alignItems: "center",
+                                  gap: 8,
+                                  fontWeight: 800,
+                                  cursor: "pointer",
+                                }}
+                              >
+                                <Download size={16} /> {downloadingId === group.key ? "Downloading…" : "Download Summary & Photos"}
+                              </button>
+                            )}
 
                             <button
                               type="button"
@@ -2339,13 +2346,19 @@ function OrdersPageContent() {
 
               {/* ── Actions ── */}
               <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 18 }}>
-                <button
-                  type="button"
-                  onClick={() => downloadOriginals(selected)}
-                  style={{ background: "#111", color: "#fff", border: "none", borderRadius: 6, padding: "10px 16px", display: "inline-flex", alignItems: "center", gap: 8, fontWeight: 700, cursor: "pointer", fontSize: 13 }}
-                >
-                  <Download size={15} /> {downloadingId === selected.id ? "Downloading…" : "Download Summary & Photos"}
-                </button>
+                {isCheckoutPendingOrder(selected) ? (
+                  <div style={{ width: "100%", background: "#fff7ed", color: "#c2410c", border: "1px solid #fed7aa", borderRadius: 12, padding: "10px 14px", display: "inline-flex", alignItems: "center", gap: 8, fontWeight: 800, fontSize: 13 }}>
+                    <WalletCards size={15} /> This is a cart attempt. Lab export unlocks after payment is processed.
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => downloadOriginals(selected)}
+                    style={{ background: "#111", color: "#fff", border: "none", borderRadius: 6, padding: "10px 16px", display: "inline-flex", alignItems: "center", gap: 8, fontWeight: 700, cursor: "pointer", fontSize: 13 }}
+                  >
+                    <Download size={15} /> {downloadingId === selected.id ? "Downloading…" : "Download Summary & Photos"}
+                  </button>
+                )}
               </div>
 
               {/* ── Edit & Delete ── */}
