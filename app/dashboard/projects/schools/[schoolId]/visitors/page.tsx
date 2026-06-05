@@ -9,10 +9,10 @@ import {
   ChevronRight,
   Download,
   Edit3,
+  Image as ImageIcon,
   Mail,
   Search,
   ShoppingCart,
-  Star,
   Users,
   X,
 } from "lucide-react";
@@ -41,7 +41,14 @@ type VisitorDownload = {
   downloadType: string;
   downloadCount: number;
   mediaIds: string[];
+  media?: DownloadMediaPreview[];
   createdAt: string;
+};
+
+type DownloadMediaPreview = {
+  id: string;
+  thumbnailUrl: string | null;
+  filename: string | null;
 };
 
 type Visitor = {
@@ -109,6 +116,92 @@ function statusBadge(status: string) {
     >
       {label}
     </span>
+  );
+}
+
+function DownloadPreviewGrid({
+  download,
+  maxItems = 10,
+}: {
+  download: VisitorDownload;
+  maxItems?: number;
+}) {
+  const media =
+    download.media?.length
+      ? download.media
+      : download.mediaIds.map((id) => ({
+          id,
+          thumbnailUrl: null,
+          filename: id,
+        }));
+
+  if (!media.length) return null;
+
+  return (
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "repeat(auto-fill, minmax(52px, 1fr))",
+        gap: 6,
+        marginTop: 10,
+      }}
+    >
+      {media.slice(0, maxItems).map((item, index) => (
+        <div
+          key={`${item.id}-${index}`}
+          title={item.filename ?? item.id}
+          style={{
+            position: "relative",
+            aspectRatio: "1 / 1",
+            borderRadius: 6,
+            overflow: "hidden",
+            border: `1px solid ${borderColor}`,
+            background: "#eef0f3",
+          }}
+        >
+          <ImageIcon
+            size={18}
+            style={{
+              position: "absolute",
+              inset: 0,
+              margin: "auto",
+              color: "#9ca3af",
+            }}
+          />
+          {item.thumbnailUrl && (
+            <div
+              aria-label={item.filename ?? "Downloaded photo preview"}
+              role="img"
+              style={{
+                position: "absolute",
+                inset: 0,
+                backgroundImage: `url(${JSON.stringify(item.thumbnailUrl)})`,
+                backgroundPosition: "center",
+                backgroundSize: "cover",
+              }}
+            />
+          )}
+        </div>
+      ))}
+      {media.length > maxItems && (
+        <div
+          style={{
+            aspectRatio: "1 / 1",
+            borderRadius: 6,
+            border: `1px solid ${borderColor}`,
+            background: "#f3f4f6",
+            color: textMuted,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            fontSize: 11,
+            fontWeight: 700,
+          }}
+        >
+          +{media.length - maxItems}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -190,7 +283,10 @@ export default function SchoolVisitorsPage() {
   }, [supabase, schoolId]);
 
   useEffect(() => {
-    load();
+    const handle = window.setTimeout(() => {
+      void load();
+    }, 0);
+    return () => window.clearTimeout(handle);
   }, [load]);
 
   /* ── search / filter ──────────────────── */
@@ -250,9 +346,6 @@ export default function SchoolVisitorsPage() {
 
   /* ── mass email ───────────────────────── */
   function openComposer() {
-    const selectedEmails = visitors
-      .filter((v) => selected.has(v.id))
-      .map((v) => v.email);
     setEmailForm({
       subject: `Update from ${branding.businessName || "Your Photographer"}`,
       headline: "A message from your photographer",
@@ -671,18 +764,7 @@ export default function SchoolVisitorsPage() {
                     </div>
                     <div style={{ fontSize: 11, color: textMuted }}>{fmtDateTime(d.createdAt)}</div>
                   </div>
-                  {d.mediaIds.length > 0 && (
-                    <div style={{ marginTop: 8, fontSize: 11, color: textMuted, lineHeight: 1.6 }}>
-                      {d.mediaIds.slice(0, 10).map((mid, i) => (
-                        <span key={i} style={{ display: "inline-block", padding: "2px 8px", background: "#e5e7eb", borderRadius: 4, marginRight: 4, marginBottom: 4 }}>
-                          {mid.slice(0, 12)}…
-                        </span>
-                      ))}
-                      {d.mediaIds.length > 10 && (
-                        <span style={{ color: textMuted }}>+{d.mediaIds.length - 10} more</span>
-                      )}
-                    </div>
-                  )}
+                  <DownloadPreviewGrid download={d} />
                 </div>
               ))
             )}

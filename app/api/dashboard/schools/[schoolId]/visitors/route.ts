@@ -7,6 +7,7 @@ import {
 import { parseJson } from "@/lib/api-validation";
 import { recordAudit } from "@/lib/audit";
 import { guardAgreement } from "@/lib/require-agreement";
+import { publicStorageUrl } from "@/lib/storage-images";
 
 export const dynamic = "force-dynamic";
 
@@ -14,6 +15,31 @@ const VisitorPatchBodySchema = z.object({
   visitorId: z.string().min(1).max(128),
   newEmail: z.string().email().max(320),
 });
+
+function mediaIdsFromRaw(value: unknown) {
+  return Array.isArray(value)
+    ? value
+        .map((entry) => (typeof entry === "string" ? entry.trim() : ""))
+        .filter(Boolean)
+    : [];
+}
+
+function filenameFromStoragePath(storagePath: string) {
+  const rawName = storagePath.split("/").filter(Boolean).pop() ?? storagePath;
+  try {
+    return decodeURIComponent(rawName);
+  } catch {
+    return rawName;
+  }
+}
+
+function previewFromSchoolMediaId(mediaId: string): DownloadMediaPreview {
+  return {
+    id: mediaId,
+    thumbnailUrl: publicStorageUrl(mediaId) || null,
+    filename: filenameFromStoragePath(mediaId),
+  };
+}
 
 /**
  * GET /api/dashboard/schools/[schoolId]/visitors
@@ -66,6 +92,20 @@ export async function GET(
     .eq("school_id", schoolId)
     .order("created_at", { ascending: false });
 
+  const downloadedMediaIds = Array.from(
+    new Set(
+      (downloads ?? []).flatMap((d: Record<string, unknown>) =>
+        mediaIdsFromRaw(d.media_ids),
+      ),
+    ),
+  );
+  const downloadedMediaById = new Map(
+    downloadedMediaIds.map((mediaId) => [
+      mediaId,
+      previewFromSchoolMediaId(mediaId),
+    ] as const),
+  );
+
   // Fetch orders for this school
   const { data: orders } = await service
     .from("orders")
@@ -111,13 +151,19 @@ export async function GET(
     // Find downloads by this visitor
     const visitorDownloads = (downloads ?? []).filter((d: Record<string, unknown>) =>
       (d.viewer_email as string || "").toLowerCase() === email
-    ).map((d: Record<string, unknown>) => ({
-      id: d.id,
-      downloadType: d.download_type,
-      downloadCount: d.download_count,
-      mediaIds: d.media_ids,
-      createdAt: d.created_at,
-    }));
+    ).map((d: Record<string, unknown>) => {
+      const mediaIds = mediaIdsFromRaw(d.media_ids);
+      return {
+        id: d.id,
+        downloadType: d.download_type,
+        downloadCount: d.download_count,
+        mediaIds,
+        media: mediaIds.map(
+          (mediaId) => downloadedMediaById.get(mediaId) ?? previewFromSchoolMediaId(mediaId),
+        ),
+        createdAt: d.created_at,
+      };
+    });
 
     return {
       id: (v.id as string) ?? "",
@@ -196,7 +242,14 @@ type VisitorDownload = {
   downloadType: string;
   downloadCount: number;
   mediaIds: string[];
+  media: DownloadMediaPreview[];
   createdAt: string;
+};
+
+type DownloadMediaPreview = {
+  id: string;
+  thumbnailUrl: string | null;
+  filename: string | null;
 };
 
 /**
