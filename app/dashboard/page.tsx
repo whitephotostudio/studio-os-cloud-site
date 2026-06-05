@@ -231,6 +231,10 @@ function isPaidOrder(order: OrderRow) {
   );
 }
 
+function hasStartedCheckout(order: OrderRow) {
+  return !isPaidOrder(order) && !!clean(order.stripe_checkout_session_id);
+}
+
 function isUnpaidCheckoutShadow(order: OrderRow) {
   const paymentStatus = clean(order.payment_status).toLowerCase();
   const status = clean(order.status).toLowerCase();
@@ -278,6 +282,28 @@ function removeUnpaidCheckoutShadows(sourceOrders: OrderRow[]) {
   return sourceOrders.filter((order) => !hiddenIds.has(order.id));
 }
 
+function displayStatus(order: OrderRow) {
+  const status = clean(order.status).toLowerCase();
+  if (hasStartedCheckout(order) || isUnpaidCheckoutShadow(order)) return "payment_pending";
+  if (isPaidOrder(order)) {
+    if (status === "digital_paid") return "digital_paid";
+    if (status === "reviewed" || status === "sent_to_print" || status === "completed") {
+      return status;
+    }
+    return "paid";
+  }
+  return status || "pending";
+}
+
+function displayStatusLabel(order: OrderRow) {
+  const status = displayStatus(order);
+  if (status === "payment_pending") return "Checkout Started";
+  if (status === "paid") return "Processed";
+  if (status === "digital_paid") return "Digital Paid";
+  if (status === "sent_to_print") return "Sent to Print";
+  return status.replace(/_/g, " ");
+}
+
 function formatDate(value: string | null) {
   if (!value) return "No date";
   const d = new Date(value);
@@ -307,7 +333,7 @@ function statusStyle(status: string): React.CSSProperties {
     return { background: "#f0fdf4", color: "#15803d" };
   if (s === "ready")
     return { background: "#f5f5f5", color: "#374151" };
-  if (s === "pending" || s === "needs_attention")
+  if (s === "pending" || s === "needs_attention" || s === "payment_pending")
     return { background: "#fff7ed", color: "#c2410c" };
   return { background: "#f3f4f6", color: "#374151" };
 }
@@ -318,7 +344,7 @@ function StatusIcon({ status }: { status: string }) {
     return <CheckCircle2 size={13} />;
   if (s === "ready")
     return <TrendingUp size={13} />;
-  if (s === "pending" || s === "needs_attention")
+  if (s === "pending" || s === "needs_attention" || s === "payment_pending")
     return <AlertCircle size={13} />;
   return <Clock3 size={13} />;
 }
@@ -647,12 +673,7 @@ function DashboardPageContent() {
   const [showStudioWelcome, setShowStudioWelcome] = useState(false);
   const [downloadActivity, setDownloadActivity] = useState<DownloadActivityItem[]>([]);
   // Dismissed notification IDs (persisted in localStorage)
-  const [dismissed, setDismissed] = useState<Set<string>>(new Set());
-
-  useEffect(() => {
-    setDismissed(loadDismissed());
-    void load();
-  }, []);
+  const [dismissed, setDismissed] = useState<Set<string>>(() => loadDismissed());
 
   const load = useCallback(async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true);
@@ -679,13 +700,14 @@ function DashboardPageContent() {
         ? { Authorization: `Bearer ${session.access_token}` }
         : {};
 
-      let { data: photographerRow, error: photographerErr } = await supabase
+      const photographerResult = await supabase
         .from("photographers")
         .select("id,business_name,logo_url,is_platform_admin,subscription_status,trial_starts_at,trial_ends_at,created_at")
         .eq("user_id", user.id)
         .maybeSingle();
+      let photographerRow = photographerResult.data;
 
-      if (photographerErr) throw photographerErr;
+      if (photographerResult.error) throw photographerResult.error;
 
       // First-visit bootstrap: if no photographer row exists yet, hit the
       // status endpoint which creates one (with a fresh 7-day trial) via
@@ -861,6 +883,13 @@ function DashboardPageContent() {
     }
   }, [searchParams, supabase]);
 
+  useEffect(() => {
+    const raf = requestAnimationFrame(() => {
+      void load();
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [load]);
+
   async function handleSignOut() {
     await supabase.auth.signOut();
     window.location.href = "/sign-in";
@@ -906,7 +935,7 @@ function DashboardPageContent() {
     [orders],
   );
   const schoolProjects = projects.filter((p) => p.workflow_type === "school");
-  const revenueTracked = displayOrders.reduce((sum, order) => sum + orderTotalCents(order), 0);
+  const revenueTracked = displayOrders.reduce((sum, order) => (isPaidOrder(order) ? sum + orderTotalCents(order) : sum), 0);
   const imageCount = students.filter((row) => clean(row.photo_url)).length;
   const coveragePct =
     students.length > 0 ? Math.round((imageCount / students.length) * 100) : 0;
@@ -933,11 +962,7 @@ function DashboardPageContent() {
         })
       : null;
 
-  const pendingOrders = displayOrders.filter(
-    (o) => (clean(o.status) || "pending").toLowerCase() === "pending" ||
-            clean(o.status).toLowerCase() === "needs_attention" ||
-            clean(o.status).toLowerCase() === "payment_pending",
-  );
+  const pendingOrders = displayOrders.filter((order) => displayStatus(order) === "payment_pending");
 
   const visibleOrders = displayOrders.filter((o) => !dismissed.has(o.id));
   const unreadCount = visibleOrders.length;
@@ -970,9 +995,8 @@ function DashboardPageContent() {
           : null;
       if (!bucket) continue;
       bucket.orders += 1;
-      const s = clean(o.status).toLowerCase();
-      if (s === "pending" || s === "needs_attention") bucket.pending += 1;
-      bucket.revenue += orderTotalCents(o);
+      if (displayStatus(o) === "payment_pending") bucket.pending += 1;
+      if (isPaidOrder(o)) bucket.revenue += orderTotalCents(o);
     }
 
     const photosBySchool = new Map<string, number>();
@@ -1450,7 +1474,8 @@ function DashboardPageContent() {
                   </div>
                 ) : (
                   visibleOrders.slice(0, 4).map((order) => {
-                    const status = clean(order.status) || "pending";
+                    const status = displayStatus(order);
+                    const statusLabel = displayStatusLabel(order);
                     const ss = statusStyle(status);
                     return (
                       <div key={order.id} style={{ border: `1px solid ${borderSoft}`, borderRadius: 18, padding: 16, background: "#fff", position: "relative" }}>
@@ -1478,13 +1503,13 @@ function DashboardPageContent() {
                           <div style={{ display: "flex", justifyContent: "space-between", gap: 12, marginBottom: 10, paddingRight: 20 }}>
                             <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                               <span style={{ padding: "4px 10px", borderRadius: 999, fontSize: 12, fontWeight: 800, display: "flex", alignItems: "center", gap: 4, ...ss }}>
-                                <StatusIcon status={status} /> {status}
+                                <StatusIcon status={status} /> {statusLabel}
                               </span>
                               <span style={{ color: textMuted, fontSize: 12 }}>{relativeTime(order.created_at)}</span>
                             </div>
                             <span style={{ color: textPrimary, fontSize: 14, fontWeight: 900 }}>{moneyFromCents(orderTotalCents(order))}</span>
                           </div>
-                          <div style={{ color: textPrimary, fontSize: 15, fontWeight: 800, marginBottom: 4 }}>{clean(order.customer_name) || "Client order"}</div>
+                          <div style={{ color: textPrimary, fontSize: 15, fontWeight: 800, marginBottom: 4 }}>{clean(order.customer_name) || clean(order.parent_name) || "Client order"}</div>
                           <div style={{ color: textMuted, fontSize: 13 }}>Tap to view in orders →</div>
                         </Link>
                       </div>

@@ -369,6 +369,7 @@ export async function POST(req: NextRequest) {
       .from("orders")
       .update({
         photographer_id: photographer.id,
+        status: "payment_pending",
         stripe_checkout_session_id: session.id,
         payment_status: "pending",
       })

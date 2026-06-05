@@ -36,6 +36,8 @@ type OrderRow = {
   total_cents: number | null;
   total_amount: number | null;
   currency: string | null;
+  payment_status?: string | null;
+  paid_at?: string | null;
   seen_by_photographer: boolean | null;
   stripe_checkout_session_id?: string | null;
   stripe_payment_intent_id?: string | null;
@@ -121,13 +123,47 @@ function statusPillStyle(status: string): React.CSSProperties {
   return { background: "#f3f4f6", color: "#374151" };
 }
 
-function isPendingStatus(s: string | null | undefined): boolean {
-  const v = (s ?? "").toLowerCase();
-  return v === "pending" || v === "new" || v === "needs_attention" || v === "payment_pending";
+function isPaidOrder(order: OrderRow): boolean {
+  const paymentStatus = clean(order.payment_status).toLowerCase();
+  return (
+    paymentStatus === "paid" ||
+    paymentStatus === "succeeded" ||
+    paymentStatus === "digital_paid" ||
+    !!clean(order.paid_at) ||
+    !!clean(order.stripe_payment_intent_id)
+  );
 }
 
-function isCompletedStatus(s: string | null | undefined): boolean {
-  const v = (s ?? "").toLowerCase();
+function hasStartedCheckout(order: OrderRow): boolean {
+  return !isPaidOrder(order) && !!clean(order.stripe_checkout_session_id);
+}
+
+function displayStatus(order: OrderRow): string {
+  const status = clean(order.status).toLowerCase();
+  if (hasStartedCheckout(order)) return "payment_pending";
+  if (isPaidOrder(order)) {
+    if (status === "digital_paid") return "digital_paid";
+    if (status === "reviewed" || status === "sent_to_print" || status === "completed") return status;
+    return "paid";
+  }
+  return status || "pending";
+}
+
+function displayStatusLabel(order: OrderRow): string {
+  const status = displayStatus(order);
+  if (status === "payment_pending") return "Checkout Started";
+  if (status === "paid") return "Processed";
+  if (status === "digital_paid") return "Digital Paid";
+  if (status === "sent_to_print") return "Sent to Print";
+  return status.replace(/_/g, " ");
+}
+
+function isPendingStatus(order: OrderRow): boolean {
+  return displayStatus(order) === "payment_pending";
+}
+
+function isCompletedStatus(order: OrderRow): boolean {
+  const v = displayStatus(order);
   return v === "completed" || v === "paid" || v === "digital_paid" || v === "sent_to_print";
 }
 
@@ -162,6 +198,7 @@ export default function MobileOrdersPage() {
           `id, created_at, status, parent_name, parent_email,
            customer_name, customer_email, package_name,
            total_cents, total_amount, currency,
+           payment_status, paid_at,
            seen_by_photographer, stripe_checkout_session_id, stripe_payment_intent_id, student_id,
            student:students(first_name,last_name,photo_url)`,
         )
@@ -186,8 +223,8 @@ export default function MobileOrdersPage() {
   const filtered = useMemo(() => {
     let list = orders;
     if (filter === "unread") list = list.filter((o) => o.seen_by_photographer === false);
-    if (filter === "pending") list = list.filter((o) => isPendingStatus(o.status));
-    if (filter === "completed") list = list.filter((o) => isCompletedStatus(o.status));
+    if (filter === "pending") list = list.filter(isPendingStatus);
+    if (filter === "completed") list = list.filter(isCompletedStatus);
 
     const term = search.trim().toLowerCase();
     if (!term) return list;
@@ -210,8 +247,8 @@ export default function MobileOrdersPage() {
     return {
       all: orders.length,
       unread: orders.filter((o) => o.seen_by_photographer === false).length,
-      pending: orders.filter((o) => isPendingStatus(o.status)).length,
-      completed: orders.filter((o) => isCompletedStatus(o.status)).length,
+      pending: orders.filter(isPendingStatus).length,
+      completed: orders.filter(isCompletedStatus).length,
     };
   }, [orders]);
 
@@ -526,15 +563,15 @@ export default function MobileOrdersPage() {
                           display: "inline-flex",
                           alignItems: "center",
                           gap: 4,
-                          ...statusPillStyle(order.status ?? ""),
+                          ...statusPillStyle(displayStatus(order)),
                         }}
                       >
-                        {isCompletedStatus(order.status) ? (
+                        {isCompletedStatus(order) ? (
                           <CheckCircle2 size={10} />
                         ) : (
                           <Clock3 size={10} />
                         )}
-                        {clean(order.status) || "pending"}
+                        {displayStatusLabel(order)}
                       </span>
                       {order.package_name ? (
                         <span

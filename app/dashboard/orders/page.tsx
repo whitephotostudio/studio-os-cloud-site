@@ -144,8 +144,8 @@ const STATUS_COLORS: Record<string, { bg: string; color: string; label: string }
   reviewed: { bg: "#fffbeb", color: "#d97706", label: "Reviewed" },
   sent_to_print: { bg: "#fff5f5", color: "#cc0000", label: "Sent to Print" },
   completed: { bg: "#f0fdf4", color: "#16a34a", label: "Completed" },
-  payment_pending: { bg: "#fff7ed", color: "#ea580c", label: "Payment Pending" },
-  paid: { bg: "#ecfeff", color: "#0891b2", label: "Paid" },
+  payment_pending: { bg: "#fff7ed", color: "#ea580c", label: "Checkout Started" },
+  paid: { bg: "#ecfeff", color: "#0891b2", label: "Processed" },
   digital_paid: { bg: "#eef2ff", color: "#4f46e5", label: "Digital Paid" },
 };
 
@@ -385,6 +385,61 @@ function isPaidOrder(order: Order) {
   );
 }
 
+function hasStartedCheckout(order: Order) {
+  return !isPaidOrder(order) && !!clean(order.stripe_checkout_session_id);
+}
+
+function isPaymentFailed(order: Order) {
+  const paymentStatus = clean(order.payment_status).toLowerCase();
+  const orderStatus = clean(order.status).toLowerCase();
+  return paymentStatus === "failed" || orderStatus === "payment_failed";
+}
+
+function getOrderDisplayStatus(order: Order) {
+  const status = clean(order.status).toLowerCase();
+
+  if (isPaymentFailed(order)) return "payment_pending";
+  if (hasStartedCheckout(order) || isUnpaidCheckoutShadow(order)) return "payment_pending";
+  if (isPaidOrder(order)) {
+    if (status === "digital_paid") return "digital_paid";
+    if (status === "reviewed" || status === "sent_to_print" || status === "completed") {
+      return status;
+    }
+    return "paid";
+  }
+  if (STATUS_COLORS[status]) return status;
+  return "new";
+}
+
+function getGroupDisplayStatus(orders: Order[]) {
+  const statuses = Array.from(new Set(orders.map(getOrderDisplayStatus)));
+  if (statuses.includes("payment_pending")) return "payment_pending";
+  if (statuses.includes("paid")) return "paid";
+  if (statuses.includes("digital_paid")) return "digital_paid";
+  if (statuses.length === 1) return statuses[0];
+  return statuses.find((status) => status !== "new") ?? "new";
+}
+
+function paymentStateLabel(order: Order) {
+  if (isPaidOrder(order)) return "Processed";
+  if (isPaymentFailed(order)) return "Payment Failed";
+  if (hasStartedCheckout(order) || isUnpaidCheckoutShadow(order)) return "Checkout Started";
+  return "Not Paid";
+}
+
+function paymentStateDescription(order: Order) {
+  if (isPaidOrder(order)) {
+    return clean(order.paid_at)
+      ? `Stripe payment received ${formatDate(order.paid_at)}`
+      : "Stripe payment received";
+  }
+  if (isPaymentFailed(order)) return "Stripe did not complete this payment.";
+  if (hasStartedCheckout(order) || isUnpaidCheckoutShadow(order)) {
+    return "Parent opened checkout, but Stripe has not sent a successful payment yet.";
+  }
+  return "No Stripe checkout payment has been completed.";
+}
+
 function isCustomerOrder(order: Order) {
   const buyer = clean(
     order.parent_email ?? order.customer_email ?? order.parent_name ?? order.customer_name,
@@ -464,6 +519,11 @@ function removeUnpaidCheckoutShadows(sourceOrders: Order[]) {
 function matchesOrderStatusFilter(order: Order, statusKey: string) {
   if (statusKey === "all") return true;
   if (statusKey === "new") return !order.seen_by_photographer;
+  if (statusKey === "payment_pending") {
+    return !isPaidOrder(order) && (hasStartedCheckout(order) || isUnpaidCheckoutShadow(order));
+  }
+  if (statusKey === "paid") return isPaidOrder(order) && getOrderDisplayStatus(order) !== "digital_paid";
+  if (statusKey === "digital_paid") return getOrderDisplayStatus(order) === "digital_paid";
   return order.status === statusKey;
 }
 
@@ -531,7 +591,8 @@ pre{white-space:pre-wrap;line-height:1.55;font-size:12px;background:#f9fafb;bord
     <div class="card" style="min-width:240px;">
       <div class="small">Total</div>
       <div class="value" style="font-size:26px;">${moneyFromCents(orderTotalCents, currency)}</div>
-      <div style="margin-top:10px;color:#6b7280;font-size:13px;">Status: ${STATUS_COLORS[order.status]?.label ?? order.status}</div>
+      <div style="margin-top:10px;color:#6b7280;font-size:13px;">Status: ${STATUS_COLORS[getOrderDisplayStatus(order)]?.label ?? getOrderDisplayStatus(order)}</div>
+      <div style="color:#6b7280;font-size:13px;">Payment: ${paymentStateLabel(order)}</div>
       <div style="color:#6b7280;font-size:13px;">Created: ${formatDate(order.created_at)}</div>
     </div>
   </div>
@@ -608,12 +669,12 @@ function OrdersPageContent() {
     const target = orders.find((o) => o.id === focusOrderId);
     if (!target) return;
     focusAppliedRef.current = true;
-    setFilter("all");
-    setSelected(target);
     if (!target.seen_by_photographer) {
       void markSeen(target.id);
     }
     const raf = requestAnimationFrame(() => {
+      setFilter("all");
+      setSelected(target);
       // data-order-ids is a space-separated list (group cards can bundle
       // multiple orders); ~= matches a whole whitespace-separated word.
       const el = document.querySelector<HTMLElement>(
@@ -1216,8 +1277,6 @@ function OrdersPageContent() {
       const imageUrls = Array.from(new Set(groupOrders.flatMap((order) => extractImageUrls(order))));
       const totalCents = groupOrders.reduce((sum, order) => sum + resolveOrderTotalCents(order, order.items), 0);
       const itemsCount = groupOrders.reduce((sum, order) => sum + ((order.items?.length || 0) > 0 ? order.items!.length : 1), 0);
-      const statuses = Array.from(new Set(groupOrders.map((order) => order.status)));
-
       return {
         key,
         representative,
@@ -1226,7 +1285,7 @@ function OrdersPageContent() {
         totalCents,
         itemsCount,
         orderCount: groupOrders.length,
-        combinedStatus: statuses.length === 1 ? statuses[0] : representative.status,
+        combinedStatus: getGroupDisplayStatus(groupOrders),
         packageSummary: buildCombinedPackageSummary(groupOrders),
         isAnyNew: groupOrders.some((order) => !order.seen_by_photographer),
       };
@@ -1284,7 +1343,10 @@ function OrdersPageContent() {
     () => displayOrders.filter((o) => !o.seen_by_photographer).length,
     [displayOrders],
   );
-  const totalRevenue = useMemo(() => filtered.reduce((sum, order) => sum + resolveOrderTotalCents(order, order.items), 0), [filtered]);
+  const totalRevenue = useMemo(
+    () => filtered.reduce((sum, order) => (isPaidOrder(order) ? sum + resolveOrderTotalCents(order, order.items) : sum), 0),
+    [filtered],
+  );
   const totalImages = useMemo(() => filtered.reduce((sum, order) => sum + extractImageUrls(order).length, 0), [filtered]);
 
   const navSectionTitle: React.CSSProperties = {
@@ -1414,7 +1476,11 @@ function OrdersPageContent() {
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", justifyContent: "flex-end" }}>
             {/* View mode toggle */}
             <div style={{ display: "inline-flex", border: `1px solid ${borderColor}`, borderRadius: 12, overflow: "hidden" }}>
-              {([["list", <List size={15} />], ["grid", <LayoutGrid size={15} />], ["table", <Table2 size={15} />]] as const).map(([mode, icon]) => (
+              {([
+                { mode: "list", Icon: List },
+                { mode: "grid", Icon: LayoutGrid },
+                { mode: "table", Icon: Table2 },
+              ] as const).map(({ mode, Icon }) => (
                 <button
                   key={mode}
                   type="button"
@@ -1422,7 +1488,7 @@ function OrdersPageContent() {
                   onClick={() => setViewMode(mode)}
                   style={{ padding: "9px 13px", background: viewMode === mode ? "#111827" : "#fff", color: viewMode === mode ? "#fff" : textMuted, border: "none", cursor: "pointer", display: "inline-flex", alignItems: "center" }}
                 >
-                  {icon}
+                  <Icon size={15} />
                 </button>
               ))}
             </div>
@@ -1494,7 +1560,7 @@ function OrdersPageContent() {
             >
               {[
                 { label: "Visible Orders", value: filtered.length, icon: <ShoppingBag size={18} />, note: "Filtered order count" },
-                { label: "Visible Revenue", value: moneyFromCents(totalRevenue, "CAD"), icon: <WalletCards size={18} />, note: "Totals from visible list" },
+                { label: "Visible Revenue", value: moneyFromCents(totalRevenue, "CAD"), icon: <WalletCards size={18} />, note: "Paid totals from visible list" },
                 { label: "Original Files", value: totalImages, icon: <Images size={18} />, note: "URLs attached to visible orders" },
                 { label: "Lab Ready", value: filtered.filter((o) => o.status === "sent_to_print").length, icon: <Printer size={18} />, note: "Orders already sent to print" },
               ].map((card) => (
@@ -1589,7 +1655,7 @@ function OrdersPageContent() {
                               </button>
                             ))}
                           {uniqueSchools.filter((s) => s.name.toLowerCase().includes(schoolSearch.toLowerCase())).length === 0 && (
-                            <div style={{ padding: "12px 14px", fontSize: 13, color: textMuted }}>No schools match "{schoolSearch}"</div>
+                            <div style={{ padding: "12px 14px", fontSize: 13, color: textMuted }}>No schools match &quot;{schoolSearch}&quot;</div>
                           )}
                         </div>
                       </div>
@@ -1685,7 +1751,7 @@ function OrdersPageContent() {
                                   })}
                                 {eventProjects.filter((p) => [p.title, p.client_name].filter(Boolean).join(" ").toLowerCase().includes(eventSearch.toLowerCase())).length === 0 &&
                                   !("All Event Orders".toLowerCase().includes(eventSearch.toLowerCase())) && (
-                                  <div style={{ padding: "12px 14px", fontSize: 13, color: textMuted }}>No events match "{eventSearch}"</div>
+                                  <div style={{ padding: "12px 14px", fontSize: 13, color: textMuted }}>No events match &quot;{eventSearch}&quot;</div>
                                 )}
                               </div>
                             </div>
@@ -2162,12 +2228,18 @@ function OrdersPageContent() {
                 <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                   <span style={{
                     display: "inline-block", padding: "5px 14px", borderRadius: 4, fontSize: 12, fontWeight: 700, letterSpacing: "0.04em",
-                    background: STATUS_COLORS[selected.status]?.color ?? "#666", color: "#fff",
-                  }}>{STATUS_COLORS[selected.status]?.label ?? selected.status}</span>
+                    background: STATUS_COLORS[getOrderDisplayStatus(selected)]?.color ?? "#666", color: "#fff",
+                  }}>{STATUS_COLORS[getOrderDisplayStatus(selected)]?.label ?? getOrderDisplayStatus(selected)}</span>
                   <button type="button" onClick={() => setSelected(null)} style={{ background: "#f3f4f6", border: "none", width: 32, height: 32, borderRadius: 8, cursor: "pointer", color: textMuted, display: "flex", alignItems: "center", justifyContent: "center" }}>
                     <X size={16} />
                   </button>
                 </div>
+              </div>
+
+              <div style={{ background: isPaidOrder(selected) ? "#f0fdf4" : "#fff7ed", border: `1px solid ${isPaidOrder(selected) ? "#bbf7d0" : "#fed7aa"}`, borderRadius: 16, padding: "12px 14px", marginBottom: 16 }}>
+                <div style={{ fontSize: 11, color: isPaidOrder(selected) ? "#15803d" : "#c2410c", fontWeight: 900, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 4 }}>Payment</div>
+                <div style={{ fontSize: 15, fontWeight: 900, color: textPrimary }}>{paymentStateLabel(selected)}</div>
+                <div style={{ fontSize: 12, color: textMuted, marginTop: 3, lineHeight: 1.45 }}>{paymentStateDescription(selected)}</div>
               </div>
 
               {/* ── Client + Order Info ── */}

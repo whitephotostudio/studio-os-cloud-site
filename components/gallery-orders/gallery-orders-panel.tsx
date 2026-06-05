@@ -57,6 +57,10 @@ type OrderRow = {
   total_cents: number | null;
   total_amount: number | null;
   currency: string | null;
+  payment_status?: string | null;
+  paid_at?: string | null;
+  stripe_payment_intent_id?: string | null;
+  stripe_checkout_session_id?: string | null;
   special_notes: string | null;
   notes: string | null;
   student_id: string | null;
@@ -141,10 +145,36 @@ const STATUS_COLORS: Record<string, { bg: string; color: string; label: string }
   reviewed: { bg: "#fffbeb", color: "#d97706", label: "Reviewed" },
   sent_to_print: { bg: "#fff5f5", color: "#cc0000", label: "Sent to Print" },
   completed: { bg: "#f0fdf4", color: "#16a34a", label: "Completed" },
-  payment_pending: { bg: "#fff7ed", color: "#ea580c", label: "Payment Pending" },
-  paid: { bg: "#ecfeff", color: "#0891b2", label: "Paid" },
+  payment_pending: { bg: "#fff7ed", color: "#ea580c", label: "Checkout Started" },
+  paid: { bg: "#ecfeff", color: "#0891b2", label: "Processed" },
   digital_paid: { bg: "#eef2ff", color: "#4f46e5", label: "Digital Paid" },
 };
+
+function isPaidOrder(order: OrderRow): boolean {
+  const paymentStatus = (order.payment_status ?? "").trim().toLowerCase();
+  return (
+    paymentStatus === "paid" ||
+    paymentStatus === "succeeded" ||
+    paymentStatus === "digital_paid" ||
+    !!(order.paid_at ?? "").trim() ||
+    !!(order.stripe_payment_intent_id ?? "").trim()
+  );
+}
+
+function hasStartedCheckout(order: OrderRow): boolean {
+  return !isPaidOrder(order) && !!(order.stripe_checkout_session_id ?? "").trim();
+}
+
+function displayStatus(order: OrderRow): string {
+  const status = (order.status ?? "").trim().toLowerCase();
+  if (hasStartedCheckout(order)) return "payment_pending";
+  if (isPaidOrder(order)) {
+    if (status === "digital_paid") return "digital_paid";
+    if (status === "reviewed" || status === "sent_to_print" || status === "completed") return status;
+    return "paid";
+  }
+  return status || "new";
+}
 
 const BORDER = "#e5e7eb";
 const TEXT_PRIMARY = "#111827";
@@ -214,6 +244,7 @@ export function GalleryOrdersPanel({ schoolId, projectId }: GalleryOrdersPanelPr
             customer_name, customer_email,
             package_name,
             subtotal_cents, tax_cents, total_cents, total_amount, currency,
+            payment_status, paid_at, stripe_payment_intent_id, stripe_checkout_session_id,
             special_notes, notes,
             student_id, school_id, class_id, project_id,
             student:students(first_name, last_name, photo_url, class_name),
@@ -279,15 +310,14 @@ export function GalleryOrdersPanel({ schoolId, projectId }: GalleryOrdersPanelPr
 
   const stats = useMemo(() => {
     const revenueCents = orders.reduce((sum, order) => {
+      if (!isPaidOrder(order)) return sum;
       if (order.total_cents != null) return sum + order.total_cents;
       if (order.total_amount != null) return sum + Math.round(order.total_amount * 100);
       return sum;
     }, 0);
-    const pending = orders.filter(
-      (o) => o.status === "new" || o.status === "payment_pending",
-    ).length;
+    const pending = orders.filter((o) => displayStatus(o) === "payment_pending").length;
     const completed = orders.filter(
-      (o) => o.status === "completed" || o.status === "sent_to_print",
+      (o) => displayStatus(o) === "completed" || displayStatus(o) === "sent_to_print",
     ).length;
     return { revenueCents, pending, completed };
   }, [orders]);
@@ -403,7 +433,7 @@ export function GalleryOrdersPanel({ schoolId, projectId }: GalleryOrdersPanelPr
             letterSpacing: "0.04em",
           }}
         >
-          {filtered.length} of {orders.length} orders match "{search}"
+          {filtered.length} of {orders.length} orders match &quot;{search}&quot;
         </div>
       ) : null}
 
@@ -414,12 +444,12 @@ export function GalleryOrdersPanel({ schoolId, projectId }: GalleryOrdersPanelPr
         <div style={{ ...emptyBoxStyle, color: "#b91c1c" }}>{error}</div>
       ) : orders.length === 0 ? (
         <div style={emptyBoxStyle}>
-          No orders yet for this {schoolId ? "school" : "event"}. They'll appear
+          No orders yet for this {schoolId ? "school" : "event"}. They&apos;ll appear
           here the moment parents place one.
         </div>
       ) : filtered.length === 0 ? (
         <div style={emptyBoxStyle}>
-          No orders match "{search}". Try a different name or order number.
+          No orders match &quot;{search}&quot;. Try a different name or order number.
         </div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
@@ -510,9 +540,10 @@ function OrderCard({
   onToggle: () => void;
   isMobile: boolean;
 }) {
+  const statusKey = displayStatus(order);
   const statusCfg =
-    STATUS_COLORS[order.status] ??
-    ({ bg: "#f3f4f6", color: "#374151", label: order.status || "Unknown" } as const);
+    STATUS_COLORS[statusKey] ??
+    ({ bg: "#f3f4f6", color: "#374151", label: statusKey || "Unknown" } as const);
   const student = studentDisplayName(order);
   const currency = (order.currency || "CAD").toUpperCase();
   const total = orderTotalLabel(order);

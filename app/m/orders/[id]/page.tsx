@@ -44,6 +44,10 @@ type Row = {
   total_cents: number | null;
   total_amount: number | null;
   currency: string | null;
+  payment_status?: string | null;
+  paid_at?: string | null;
+  stripe_payment_intent_id?: string | null;
+  stripe_checkout_session_id?: string | null;
   special_notes: string | null;
   notes: string | null;
   student_id: string | null;
@@ -127,8 +131,43 @@ function statusPillStyle(s: string): React.CSSProperties {
   return { background: "#f3f4f6", color: "#374151" };
 }
 
-function isCompletedStatus(s: string | null | undefined): boolean {
-  const v = (s ?? "").toLowerCase();
+function isPaidOrder(order: Row): boolean {
+  const paymentStatus = clean(order.payment_status).toLowerCase();
+  return (
+    paymentStatus === "paid" ||
+    paymentStatus === "succeeded" ||
+    paymentStatus === "digital_paid" ||
+    !!clean(order.paid_at) ||
+    !!clean(order.stripe_payment_intent_id)
+  );
+}
+
+function hasStartedCheckout(order: Row): boolean {
+  return !isPaidOrder(order) && !!clean(order.stripe_checkout_session_id);
+}
+
+function displayStatus(order: Row): string {
+  const status = clean(order.status).toLowerCase();
+  if (hasStartedCheckout(order)) return "payment_pending";
+  if (isPaidOrder(order)) {
+    if (status === "digital_paid") return "digital_paid";
+    if (status === "reviewed" || status === "sent_to_print" || status === "completed") return status;
+    return "paid";
+  }
+  return status || "pending";
+}
+
+function displayStatusLabel(order: Row): string {
+  const status = displayStatus(order);
+  if (status === "payment_pending") return "Checkout Started";
+  if (status === "paid") return "Processed";
+  if (status === "digital_paid") return "Digital Paid";
+  if (status === "sent_to_print") return "Sent to Print";
+  return status.replace(/_/g, " ");
+}
+
+function isCompletedStatus(order: Row): boolean {
+  const v = displayStatus(order);
   return v === "completed" || v === "paid" || v === "digital_paid" || v === "sent_to_print";
 }
 
@@ -158,6 +197,7 @@ export default function MobileOrderDetailPage() {
           `id, created_at, status, parent_name, parent_email, parent_phone,
            customer_name, customer_email, package_name,
            subtotal_cents, tax_cents, total_cents, total_amount, currency,
+           payment_status, paid_at, stripe_payment_intent_id, stripe_checkout_session_id,
            special_notes, notes,
            student_id, school_id, class_id, project_id,
            student:students(first_name,last_name,photo_url,class_name),
@@ -392,15 +432,15 @@ export default function MobileOrderDetailPage() {
                 display: "inline-flex",
                 alignItems: "center",
                 gap: 4,
-                ...statusPillStyle(order.status ?? ""),
+                ...statusPillStyle(displayStatus(order)),
               }}
             >
-              {isCompletedStatus(order.status) ? (
+              {isCompletedStatus(order) ? (
                 <CheckCircle2 size={11} />
               ) : (
                 <Clock3 size={11} />
               )}
-              {clean(order.status) || "pending"}
+              {displayStatusLabel(order)}
             </span>
             <span style={{ fontSize: 11, color: "#6b7280" }}>
               {dateLabel(order.created_at)}
