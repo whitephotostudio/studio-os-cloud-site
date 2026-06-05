@@ -40,6 +40,11 @@ export type EventGalleryExtraSettings = {
   guestIdentificationMode: "none" | "qr" | "barcode";
   instantPhotoDelivery: boolean;
   orderNotificationHooks: boolean;
+  schoolClassDownloadOverrides: Record<string, SchoolClassDownloadOverride>;
+};
+
+export type SchoolClassDownloadOverride = {
+  freeDigitalRuleEnabled: boolean;
 };
 
 export type EventGalleryBrandingSettings = {
@@ -161,6 +166,7 @@ export const defaultEventGalleryExtras: EventGalleryExtraSettings = {
   guestIdentificationMode: "none",
   instantPhotoDelivery: false,
   orderNotificationHooks: false,
+  schoolClassDownloadOverrides: {},
 };
 
 export const defaultEventGalleryBranding: EventGalleryBrandingSettings = {
@@ -237,6 +243,55 @@ function asEnum<T extends string>(value: unknown, allowed: readonly T[], fallbac
   return typeof value === "string" && allowed.includes(value as T)
     ? (value as T)
     : fallback;
+}
+
+export function normalizeSchoolClassOverrideKey(
+  value: string | null | undefined,
+) {
+  return (value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 160);
+}
+
+export function getSchoolClassDownloadOverrideKeys(params: {
+  classId?: string | null;
+  className?: string | null;
+}) {
+  const keys = [
+    normalizeSchoolClassOverrideKey(params.classId),
+    normalizeSchoolClassOverrideKey(params.className),
+  ].filter(Boolean);
+  return Array.from(new Set(keys));
+}
+
+function normalizeSchoolClassDownloadOverrides(
+  value: unknown,
+): Record<string, SchoolClassDownloadOverride> {
+  const source = asObject(value);
+  if (!source) return {};
+
+  const overrides: Record<string, SchoolClassDownloadOverride> = {};
+  for (const [rawKey, rawValue] of Object.entries(source).slice(0, 500)) {
+    const key = normalizeSchoolClassOverrideKey(rawKey);
+    if (!key) continue;
+
+    if (typeof rawValue === "boolean") {
+      overrides[key] = { freeDigitalRuleEnabled: rawValue };
+      continue;
+    }
+
+    const row = asObject(rawValue);
+    if (typeof row?.freeDigitalRuleEnabled === "boolean") {
+      overrides[key] = {
+        freeDigitalRuleEnabled: row.freeDigitalRuleEnabled,
+      };
+    }
+  }
+
+  return overrides;
 }
 
 export function normalizeEventGallerySettings(value: unknown): EventGallerySettings {
@@ -418,6 +473,9 @@ export function normalizeEventGallerySettings(value: unknown): EventGallerySetti
       orderNotificationHooks: asBoolean(
         extrasSource?.orderNotificationHooks,
         defaultEventGalleryExtras.orderNotificationHooks,
+      ),
+      schoolClassDownloadOverrides: normalizeSchoolClassDownloadOverrides(
+        extrasSource?.schoolClassDownloadOverrides,
       ),
     },
     branding: {

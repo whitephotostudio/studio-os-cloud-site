@@ -21,6 +21,7 @@
 
 const UUID_REGEX = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const CONTROL_CHARACTER_REGEX = /[\u0000-\u001f\u007f]/;
 
 export type ValidationResult<T> =
   | { ok: true; value: T }
@@ -94,6 +95,50 @@ export function validateUuidArray(
     }
     const trimmed = entry.trim();
     if (!UUID_REGEX.test(trimmed)) {
+      return { ok: false, message: `${field} contains an invalid identifier.` };
+    }
+    result.push(trimmed);
+  }
+  return { ok: true, value: result };
+}
+
+/**
+ * Validate a bounded list of general string identifiers. School gallery media
+ * IDs are R2 storage keys, not database UUIDs, so they can contain folders,
+ * spaces, and file extensions. Keep this stricter than "any string" because
+ * these values are logged and echoed back to the browser.
+ */
+export function validateIdentifierArray(
+  raw: unknown,
+  field: string,
+  opts: { min?: number; max?: number; maxLength?: number } = {},
+): ValidationResult<string[]> {
+  const { min = 0, max = 500, maxLength = 1024 } = opts;
+  if (!Array.isArray(raw)) {
+    return { ok: false, message: `${field} must be an array.` };
+  }
+  if (raw.length < min) {
+    return { ok: false, message: `${field} is required.` };
+  }
+  if (raw.length > max) {
+    return { ok: false, message: `${field} has too many entries (max ${max}).` };
+  }
+
+  const result: string[] = [];
+  for (const entry of raw) {
+    if (typeof entry !== "string") {
+      return { ok: false, message: `${field} contains a non-string value.` };
+    }
+    const trimmed = entry.trim();
+    if (
+      !trimmed ||
+      trimmed.length > maxLength ||
+      CONTROL_CHARACTER_REGEX.test(trimmed) ||
+      trimmed.startsWith("/") ||
+      trimmed.startsWith("\\") ||
+      trimmed.includes("\\") ||
+      trimmed.split("/").some((part) => part === "..")
+    ) {
       return { ok: false, message: `${field} contains an invalid identifier.` };
     }
     result.push(trimmed);

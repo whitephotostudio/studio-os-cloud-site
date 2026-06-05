@@ -1,6 +1,7 @@
 import { createDashboardServiceClient } from "@/lib/dashboard-auth";
 import {
   defaultEventGallerySettings,
+  getSchoolClassDownloadOverrideKeys,
   normalizeEventGallerySettings,
   type EventGallerySettings,
 } from "@/lib/event-gallery-settings";
@@ -85,13 +86,30 @@ export async function buildSchoolGalleryDownloadAccess(params: {
   schoolId: string;
   viewerEmail: string;
   gallerySettings: unknown;
+  classId?: string | null;
+  className?: string | null;
 }): Promise<SchoolDownloadAccess> {
   const settings = normalizeEventGallerySettings(params.gallerySettings);
   const base = defaultSchoolGalleryDownloadAccess(settings);
   const normalizedEmail = clean(params.viewerEmail).toLowerCase();
+  const classOverride = getSchoolClassDownloadOverrideKeys({
+    classId: params.classId,
+    className: params.className,
+  })
+    .map((key) => settings.extras.schoolClassDownloadOverrides[key])
+    .find((override) => override);
 
   if (!base.enabled) {
     return base;
+  }
+
+  if (classOverride?.freeDigitalRuleEnabled === false) {
+    return {
+      ...base,
+      enabled: false,
+      canDownload: false,
+      message: "Downloads are turned off for this class.",
+    };
   }
 
   if (!normalizedEmail) {

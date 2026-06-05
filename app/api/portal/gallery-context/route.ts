@@ -345,6 +345,8 @@ export async function POST(request: NextRequest) {
           schoolId: activeSchool.id,
           viewerEmail: selectedEmail,
           gallerySettings: activeSchool.gallery_settings,
+          classId: primaryStudent.class_id,
+          className: primaryStudent.class_name,
         })
       : undefined;
 

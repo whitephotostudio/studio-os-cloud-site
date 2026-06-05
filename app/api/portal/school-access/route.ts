@@ -478,6 +478,8 @@ export async function POST(request: NextRequest) {
           schoolId: resolvedSchoolId,
           viewerEmail: selectedEmail,
           gallerySettings: gallerySchool.gallery_settings,
+          classId: primaryStudent?.class_id,
+          className: primaryStudent?.class_name,
         });
 
         // Resolve the set of school rows needed by gallery-context consumers

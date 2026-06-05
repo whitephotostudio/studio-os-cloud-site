@@ -13,6 +13,11 @@ import {
   Sparkles,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import {
+  getSchoolClassDownloadOverrideKeys,
+  normalizeEventGallerySettings,
+  type EventGallerySettings,
+} from "@/lib/event-gallery-settings";
 
 type ClassCollectionRow = {
   id: string;
@@ -118,6 +123,30 @@ function galleryAccessToCollectionMode(value: ExtraSettings["galleryAccess"]) {
   return "inherit_project";
 }
 
+function applySchoolDigitalSettingsToExtras(
+  extras: ExtraSettings,
+  settings: EventGallerySettings,
+  classId: string,
+  className: string,
+): ExtraSettings {
+  const override = getSchoolClassDownloadOverrideKeys({ classId, className })
+    .map((key) => settings.extras.schoolClassDownloadOverrides[key])
+    .find((value) => value);
+
+  return {
+    ...extras,
+    freeDigitalRuleEnabled:
+      override?.freeDigitalRuleEnabled ?? settings.extras.freeDigitalRuleEnabled,
+    freeDigitalAudience: settings.extras.freeDigitalAudience,
+    freeDigitalResolution: settings.extras.freeDigitalResolution,
+    freeDigitalDownloadLimit: settings.extras.freeDigitalDownloadLimit,
+    showDownloadAllButton: settings.extras.showDownloadAllButton,
+    showProofWatermark: settings.extras.showProofWatermark,
+    watermarkDownloads: settings.extras.watermarkDownloads,
+    includePrintRelease: settings.extras.includePrintRelease,
+  };
+}
+
 const Toggle = ({
   checked,
   onChange,
@@ -157,6 +186,8 @@ export default function ClassSettingsPage() {
   const [classCollectionId, setClassCollectionId] = useState<string | null>(null);
   const [nextSortOrder, setNextSortOrder] = useState(0);
   const [syncWarning, setSyncWarning] = useState<string | null>(null);
+  const [schoolGallerySettings, setSchoolGallerySettings] =
+    useState<EventGallerySettings | null>(null);
 
   // Form state
   const [extras, setExtras] = useState<ExtraSettings>(defaultExtras);
@@ -171,6 +202,7 @@ export default function ClassSettingsPage() {
 
         const localKey = `studioos_class_settings_${schoolId}_${classId}`;
         let nextExtras = defaultExtras;
+        let nextClassDisplayName = decodedClassId;
 
         const savedExtras = localStorage.getItem(localKey);
         if (savedExtras) {
@@ -180,6 +212,19 @@ export default function ClassSettingsPage() {
             nextExtras = defaultExtras;
           }
         }
+
+        const { data: schoolSettingsRow, error: schoolSettingsError } = await supabase
+          .from("schools")
+          .select("gallery_settings")
+          .eq("id", schoolId)
+          .maybeSingle();
+
+        if (schoolSettingsError) throw schoolSettingsError;
+
+        const nextSchoolGallerySettings = normalizeEventGallerySettings(
+          (schoolSettingsRow as { gallery_settings?: unknown } | null)?.gallery_settings,
+        );
+        setSchoolGallerySettings(nextSchoolGallerySettings);
 
         const schoolProjectBySchoolId = await supabase
           .from("projects")
@@ -247,23 +292,31 @@ export default function ClassSettingsPage() {
           );
 
           if (existingClassCollection) {
-            setClassDisplayName(clean(existingClassCollection.title) || decodedClassId);
+            nextClassDisplayName = clean(existingClassCollection.title) || decodedClassId;
+            setClassDisplayName(nextClassDisplayName);
             nextExtras = {
               ...nextExtras,
               galleryAccess: collectionAccessToGalleryAccess(existingClassCollection.access_mode),
               classPin: clean(existingClassCollection.access_pin),
             };
           } else {
-            setClassDisplayName(decodedClassId);
+            setClassDisplayName(nextClassDisplayName);
           }
         } else {
           setClassCollectionId(null);
           setNextSortOrder(0);
-          setClassDisplayName(decodedClassId);
+          setClassDisplayName(nextClassDisplayName);
           setSyncWarning("No synced school project was found yet. Class PIN changes here will stay local until a school project exists.");
         }
 
-        setExtras(nextExtras);
+        setExtras(
+          applySchoolDigitalSettingsToExtras(
+            nextExtras,
+            nextSchoolGallerySettings,
+            decodedClassId,
+            nextClassDisplayName,
+          ),
+        );
       } catch (error) {
         console.error("Error fetching class settings data:", error);
         setSyncWarning("Could not load synced class password settings.");
@@ -277,6 +330,53 @@ export default function ClassSettingsPage() {
     void fetchData();
   }, [schoolId, classId, decodedClassId, supabase]);
 
+  const saveClassDownloadOverride = async (nextClassDisplayName: string) => {
+    const currentSettings = schoolGallerySettings ?? normalizeEventGallerySettings(null);
+    const keys = getSchoolClassDownloadOverrideKeys({
+      classId: decodedClassId,
+      className: nextClassDisplayName,
+    });
+    const primaryKey = keys[0] || slugify(nextClassDisplayName);
+    const nextOverrides = {
+      ...currentSettings.extras.schoolClassDownloadOverrides,
+    };
+
+    for (const key of keys) {
+      delete nextOverrides[key];
+    }
+
+    if (currentSettings.extras.freeDigitalRuleEnabled && !extras.freeDigitalRuleEnabled) {
+      nextOverrides[primaryKey] = { freeDigitalRuleEnabled: false };
+    }
+
+    const nextSettings: EventGallerySettings = {
+      ...currentSettings,
+      extras: {
+        ...currentSettings.extras,
+        schoolClassDownloadOverrides: nextOverrides,
+      },
+    };
+
+    const response = await fetch(`/api/dashboard/schools/${schoolId}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ gallery_settings: nextSettings }),
+    });
+    const result = (await response.json().catch(() => ({}))) as {
+      ok?: boolean;
+      message?: string;
+      school?: { gallery_settings?: unknown };
+    };
+
+    if (!response.ok || result.ok === false) {
+      throw new Error(result.message || "Could not save class download settings.");
+    }
+
+    setSchoolGallerySettings(
+      normalizeEventGallerySettings(result.school?.gallery_settings ?? nextSettings),
+    );
+  };
+
   const handleSave = async () => {
     try {
       setIsSaving(true);
@@ -285,6 +385,8 @@ export default function ClassSettingsPage() {
 
       const localKey = `studioos_class_settings_${schoolId}_${classId}`;
       localStorage.setItem(localKey, JSON.stringify(extras));
+
+      await saveClassDownloadOverride(nextClassDisplayName);
 
       if (syncProjectId) {
         const accessMode = galleryAccessToCollectionMode(extras.galleryAccess);
@@ -331,7 +433,7 @@ export default function ClassSettingsPage() {
         setSaveNotice("Saved and synced");
       } else {
         setClassDisplayName(nextClassDisplayName);
-        setSaveNotice("Saved locally");
+        setSaveNotice("Saved and synced");
       }
 
       setHasChanges(false);
@@ -352,6 +454,7 @@ export default function ClassSettingsPage() {
       try {
         const localKey = `studioos_class_settings_${schoolId}_${classId}`;
         let nextExtras = defaultExtras;
+        let nextClassDisplayName = decodedClassId;
         const savedExtras = localStorage.getItem(localKey);
         if (savedExtras) {
           try {
@@ -361,6 +464,19 @@ export default function ClassSettingsPage() {
           }
         }
 
+        const { data: schoolSettingsRow, error: schoolSettingsError } = await supabase
+          .from("schools")
+          .select("gallery_settings")
+          .eq("id", schoolId)
+          .maybeSingle();
+
+        if (schoolSettingsError) throw schoolSettingsError;
+
+        const nextSchoolGallerySettings = normalizeEventGallerySettings(
+          (schoolSettingsRow as { gallery_settings?: unknown } | null)?.gallery_settings,
+        );
+        setSchoolGallerySettings(nextSchoolGallerySettings);
+
         if (syncProjectId) {
           const { data: row } = await supabase
             .from("collections")
@@ -369,20 +485,28 @@ export default function ClassSettingsPage() {
             .maybeSingle();
 
           if (row) {
-            setClassDisplayName(clean((row as ClassCollectionRow).title) || decodedClassId);
+            nextClassDisplayName = clean((row as ClassCollectionRow).title) || decodedClassId;
+            setClassDisplayName(nextClassDisplayName);
             nextExtras = {
               ...nextExtras,
               galleryAccess: collectionAccessToGalleryAccess((row as ClassCollectionRow).access_mode),
               classPin: clean((row as ClassCollectionRow).access_pin),
             };
           } else {
-            setClassDisplayName(decodedClassId);
+            setClassDisplayName(nextClassDisplayName);
           }
         } else {
-          setClassDisplayName(decodedClassId);
+          setClassDisplayName(nextClassDisplayName);
         }
 
-        setExtras(nextExtras);
+        setExtras(
+          applySchoolDigitalSettingsToExtras(
+            nextExtras,
+            nextSchoolGallerySettings,
+            decodedClassId,
+            nextClassDisplayName,
+          ),
+        );
       } finally {
         setLoading(false);
       }

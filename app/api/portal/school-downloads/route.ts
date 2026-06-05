@@ -3,16 +3,30 @@ import { createDashboardServiceClient } from "@/lib/dashboard-auth";
 import { normalizeEventGallerySettings } from "@/lib/event-gallery-settings";
 import { buildSchoolGalleryDownloadAccess } from "@/lib/school-gallery-downloads";
 import { getClientIp, rateLimit } from "@/lib/rate-limit";
-import { validateUuidArray } from "@/lib/request-validation";
+import { validateIdentifierArray } from "@/lib/request-validation";
+import {
+  buildSchoolCandidateFolders,
+  loadFolderMediaRows,
+} from "@/lib/storage-folder";
 
 export const dynamic = "force-dynamic";
 
 type SchoolRow = {
   id: string;
   school_name: string | null;
+  local_school_id?: string | null;
   status: string | null;
   expiration_date: string | null;
   gallery_settings: unknown;
+};
+
+type StudentAccessRow = {
+  id: string;
+  school_id: string;
+  photo_url?: string | null;
+  class_id?: string | null;
+  class_name?: string | null;
+  folder_name?: string | null;
 };
 
 function clean(value: string | null | undefined) {
@@ -39,7 +53,7 @@ async function validateSchoolDownloadAccess(params: {
 
   const { data: schoolRow, error: schoolError } = await service
     .from("schools")
-    .select("id,school_name,status,expiration_date,gallery_settings")
+    .select("id,school_name,local_school_id,status,expiration_date,gallery_settings")
     .eq("id", selectedSchoolId)
     .maybeSingle<SchoolRow>();
 
@@ -69,7 +83,7 @@ async function validateSchoolDownloadAccess(params: {
     service.from("schools").select("id").ilike("school_name", selectedSchoolName),
     service
       .from("students")
-      .select("id,school_id")
+      .select("id,school_id,photo_url,class_id,class_name,folder_name")
       .eq("pin", selectedPin)
       .eq("school_id", selectedSchoolId),
   ]);
@@ -85,7 +99,7 @@ async function validateSchoolDownloadAccess(params: {
   if (!matches.length && candidateSchoolIds.length > 1) {
     const { data: broadMatches, error: broadError } = await service
       .from("students")
-      .select("id,school_id")
+      .select("id,school_id,photo_url,class_id,class_name,folder_name")
       .in("school_id", candidateSchoolIds)
       .eq("pin", selectedPin);
 
@@ -101,18 +115,68 @@ async function validateSchoolDownloadAccess(params: {
     };
   }
 
-  const resolvedSchoolId =
-    matches.find((row) => row.school_id === selectedSchoolId)?.school_id ??
-    matches[0]?.school_id ??
-    selectedSchoolId;
+  let studentCandidates = matches as StudentAccessRow[];
+  if (candidateSchoolIds.length > 1) {
+    const { data: allCandidateMatches, error: allCandidateError } = await service
+      .from("students")
+      .select("id,school_id,photo_url,class_id,class_name,folder_name")
+      .in("school_id", candidateSchoolIds)
+      .eq("pin", selectedPin);
+
+    if (allCandidateError) throw allCandidateError;
+    if (allCandidateMatches?.length) {
+      studentCandidates = allCandidateMatches as StudentAccessRow[];
+    }
+  }
+
+  const bestMatch =
+    studentCandidates.find(
+      (row) => row.school_id === selectedSchoolId && !!row.photo_url,
+    ) ??
+    studentCandidates.find((row) => !!row.photo_url) ??
+    studentCandidates.find((row) => row.school_id === selectedSchoolId) ??
+    studentCandidates[0];
+  const resolvedSchoolId = bestMatch?.school_id ?? selectedSchoolId;
+  let resolvedSchool = schoolRow;
+
+  if (resolvedSchoolId !== selectedSchoolId) {
+    const { data: resolvedSchoolRow, error: resolvedSchoolError } = await service
+      .from("schools")
+      .select("id,school_name,local_school_id,status,expiration_date,gallery_settings")
+      .eq("id", resolvedSchoolId)
+      .maybeSingle<SchoolRow>();
+
+    if (resolvedSchoolError) throw resolvedSchoolError;
+    if (resolvedSchoolRow) {
+      resolvedSchool = resolvedSchoolRow;
+    }
+  }
 
   return {
     ok: true as const,
     service,
     schoolId: resolvedSchoolId,
     viewerEmail: selectedEmail,
-    school: schoolRow,
+    school: resolvedSchool,
+    classId: bestMatch?.class_id ?? null,
+    className: bestMatch?.class_name ?? null,
+    studentCandidates,
   };
+}
+
+async function loadAllowedMediaIdsForPin(params: {
+  studentCandidates: StudentAccessRow[];
+  school: SchoolRow;
+  schoolId: string;
+}) {
+  const rows = await loadFolderMediaRows(
+    buildSchoolCandidateFolders({
+      studentCandidates: params.studentCandidates,
+      activeSchool: params.school,
+      selectedSchoolId: params.schoolId,
+    }),
+  );
+  return new Set(rows.map((row) => row.id));
 }
 
 export async function POST(request: NextRequest) {
@@ -162,8 +226,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Hard cap + UUID format: prevent oversized / malformed batch DoS.
-    const mediaIdsResult = validateUuidArray(body.mediaIds, "mediaIds", {
+    // Hard cap + storage-key format: school media IDs are R2 object keys.
+    const mediaIdsResult = validateIdentifierArray(body.mediaIds, "mediaIds", {
       min: 1,
       max: 2000,
     });
@@ -180,6 +244,8 @@ export async function POST(request: NextRequest) {
       schoolId: access.schoolId,
       viewerEmail: access.viewerEmail,
       gallerySettings: access.school.gallery_settings,
+      classId: access.classId,
+      className: access.className,
     });
     const settings = normalizeEventGallerySettings(access.school.gallery_settings);
     const providedDownloadPin = clean(body.downloadPin);
@@ -225,10 +291,29 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const allowedMediaIdSet = await loadAllowedMediaIdsForPin({
+      studentCandidates: access.studentCandidates,
+      school: access.school,
+      schoolId: access.schoolId,
+    });
+    const downloadableMediaIds = mediaIds.filter((id) => allowedMediaIdSet.has(id));
+
+    if (!downloadableMediaIds.length) {
+      return NextResponse.json(
+        {
+          ok: false,
+          message: "Those photos are not available for this PIN.",
+          downloadsUsed: downloadAccess.downloadsUsed,
+          downloadsRemaining: downloadAccess.downloadsRemaining,
+        },
+        { status: 403 },
+      );
+    }
+
     const allowedMediaIds =
       downloadAccess.downloadsRemaining === null
-        ? mediaIds
-        : mediaIds.slice(0, downloadAccess.downloadsRemaining);
+        ? downloadableMediaIds
+        : downloadableMediaIds.slice(0, downloadAccess.downloadsRemaining);
 
     if (!allowedMediaIds.length) {
       return NextResponse.json(
