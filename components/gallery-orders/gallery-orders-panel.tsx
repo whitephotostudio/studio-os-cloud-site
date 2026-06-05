@@ -176,6 +176,23 @@ function displayStatus(order: OrderRow): string {
   return status || "new";
 }
 
+function orderTotalCents(order: OrderRow): number {
+  if (order.total_cents != null) return order.total_cents;
+  if (order.total_amount != null) return Math.round(order.total_amount * 100);
+  return 0;
+}
+
+function isCustomerOrder(order: OrderRow): boolean {
+  return (
+    !!(order.parent_email ?? order.customer_email ?? "").trim() ||
+    orderTotalCents(order) > 0 ||
+    !!(order.payment_status ?? "").trim() ||
+    !!(order.paid_at ?? "").trim() ||
+    !!(order.stripe_checkout_session_id ?? "").trim() ||
+    !!(order.stripe_payment_intent_id ?? "").trim()
+  );
+}
+
 const BORDER = "#e5e7eb";
 const TEXT_PRIMARY = "#111827";
 const TEXT_MUTED = "#6b7280";
@@ -270,12 +287,14 @@ export function GalleryOrdersPanel({ schoolId, projectId }: GalleryOrdersPanelPr
         items?: OrderItem[] | null;
       };
 
-      const rows = ((data as RawRow[] | null) ?? []).map<OrderRow>((row) => ({
-        ...row,
-        student: singleRelation(row.student),
-        class: singleRelation(row.class),
-        items: row.items ?? [],
-      }));
+      const rows = ((data as RawRow[] | null) ?? [])
+        .map<OrderRow>((row) => ({
+          ...row,
+          student: singleRelation(row.student),
+          class: singleRelation(row.class),
+          items: row.items ?? [],
+        }))
+        .filter(isCustomerOrder);
 
       setOrders(rows);
       setLoading(false);

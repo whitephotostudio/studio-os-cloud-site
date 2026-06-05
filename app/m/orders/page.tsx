@@ -76,12 +76,13 @@ function orderTotalCents(order: OrderRow) {
 }
 
 function isCustomerOrder(order: OrderRow): boolean {
-  const buyer = clean(
-    order.parent_email ?? order.customer_email ?? order.parent_name ?? order.customer_name,
-  );
+  const buyerEmail = clean(order.parent_email ?? order.customer_email);
+  const paymentStatus = clean(order.payment_status);
   return (
-    !!buyer ||
+    !!buyerEmail ||
     orderTotalCents(order) > 0 ||
+    !!paymentStatus ||
+    !!clean(order.paid_at) ||
     !!clean(order.stripe_checkout_session_id) ||
     !!clean(order.stripe_payment_intent_id)
   );
