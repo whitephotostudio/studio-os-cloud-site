@@ -1,4 +1,5 @@
 export type OrderMoneyLike = {
+  package_name?: string | null;
   total_cents?: number | null;
   total_amount?: number | null;
   subtotal_cents?: number | null;
@@ -111,6 +112,43 @@ export function resolveOrderItemDisplayCents(
   return index === count - 1
     ? orderTotalCents - base * (count - 1)
     : base;
+}
+
+function normalizeDisplayName(value: string | null | undefined) {
+  return clean(value)
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .replace(/[–—]/g, "-");
+}
+
+function isSeparateChargeItem(item: OrderItemMoneyLike) {
+  const name = normalizeDisplayName(item.product_name);
+  const cents = resolveLineItemCents(item);
+
+  if (cents != null && cents < 0) return true;
+  return (
+    name.includes("premium backdrop") ||
+    name.includes("shipping") ||
+    name.includes("handling") ||
+    name.includes("discount")
+  );
+}
+
+export function isPackageComponentItem(
+  order: OrderMoneyLike | null | undefined,
+  item: OrderItemMoneyLike,
+  items?: OrderItemMoneyLike[] | null,
+) {
+  const packageName = normalizeDisplayName(order?.package_name);
+  const itemName = normalizeDisplayName(item.product_name);
+
+  if (!packageName || !itemName) return false;
+  if (packageName === itemName) return false;
+  if (isSeparateChargeItem(item)) return false;
+
+  const itemCount = (items ?? []).filter(Boolean).length;
+  const skuLooksLikePhoto = isWebImageUrl(item.sku);
+  return skuLooksLikePhoto || itemCount > 1;
 }
 
 function firstImageUrl(value: string) {

@@ -49,6 +49,7 @@ import {
   cleanOrderCustomerNote,
   extractOrderPhotoUrls,
   isWebImageUrl,
+  isPackageComponentItem,
   parseOrderPhotoSelections,
   resolveOrderItemDisplayCents,
   resolveOrderTotalCents,
@@ -331,6 +332,7 @@ function buildManifest(order: Order) {
     `Parent: ${order.parent_name ?? order.customer_name ?? "—"}`,
     `Email: ${order.parent_email ?? order.customer_email ?? "—"}`,
     `Package: ${order.package_name || "Package"}`,
+    `Package Price: ${moneyFromCents(orderTotalCents, order.currency?.toUpperCase() || "CAD")}`,
     `Total: ${moneyFromCents(orderTotalCents, order.currency?.toUpperCase() || "CAD")}`,
     `Suggested Folder: ${folderRoot}`,
     ``,
@@ -338,10 +340,12 @@ function buildManifest(order: Order) {
     ...(order.items?.length
       ? order.items.map((item, index) => {
           const qty = item.quantity ?? 0;
-          const total = moneyFromCents(
-            resolveOrderItemDisplayCents(item, order.items, orderTotalCents, index),
-            order.currency?.toUpperCase() || "CAD",
-          );
+          const total = isPackageComponentItem(order, item, order.items)
+            ? "Included in package"
+            : moneyFromCents(
+                resolveOrderItemDisplayCents(item, order.items, orderTotalCents, index),
+                order.currency?.toUpperCase() || "CAD",
+              );
           return `${index + 1}. ${item.product_name ?? "Item"} | Qty: ${qty} | Total: ${total}`;
         })
       : [`1. ${order.package_name || "Package"} | Qty: 1 | Total: ${moneyFromCents(orderTotalCents, order.currency?.toUpperCase() || "CAD")}`]),
@@ -455,7 +459,9 @@ function buildOrderSummaryHtml(order: Order) {
   const rows = items
     .map((item, index) => {
       const qty = item.quantity ?? 0;
-      const total = moneyFromCents(resolveOrderItemDisplayCents(item, items, orderTotalCents, index), currency);
+      const total = isPackageComponentItem(order, item, items)
+        ? "Included"
+        : moneyFromCents(resolveOrderItemDisplayCents(item, items, orderTotalCents, index), currency);
       const itemUrl = dashboardPhotoUrl(item.sku);
       return `<tr>
         <td>${item.product_name ?? "Item"}</td>
@@ -2146,9 +2152,14 @@ function OrdersPageContent() {
               <div style={{ borderTop: `1px solid ${borderColor}`, marginBottom: 16 }} />
 
               {/* ── Package info ── */}
-              <div style={{ fontSize: 18, fontWeight: 800, color: textPrimary, marginBottom: 4 }}>{selected.package_name || "Package"}</div>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "baseline", marginBottom: 4 }}>
+                <div style={{ fontSize: 18, fontWeight: 800, color: textPrimary }}>{selected.package_name || "Package"}</div>
+                <div style={{ fontSize: 16, fontWeight: 900, color: textPrimary, whiteSpace: "nowrap" }}>
+                  {moneyFromCents(resolveOrderTotalCents(selected, selected.items), selected.currency?.toUpperCase() || "CAD")}
+                </div>
+              </div>
               <div style={{ fontSize: 13, color: textMuted, marginBottom: 16 }}>
-                {selectedOrderedPhotoGroups.reduce((sum, g) => sum + g.items.length, 0)} item{selectedOrderedPhotoGroups.reduce((sum, g) => sum + g.items.length, 0) === 1 ? "" : "s"}
+                {selectedOrderedPhotoGroups.reduce((sum, g) => sum + g.items.length, 0)} included item{selectedOrderedPhotoGroups.reduce((sum, g) => sum + g.items.length, 0) === 1 ? "" : "s"}
                 {" · "}{selectedOrderedPhotoGroups.length} photo{selectedOrderedPhotoGroups.length === 1 ? "" : "s"}
               </div>
 
@@ -2178,17 +2189,24 @@ function OrdersPageContent() {
 
                       {/* Item details */}
                       <div style={{ flex: 1, minWidth: 0 }}>
-                        {photoGroup.items.map((item, itemIndex) => (
-                          <div key={`${photoGroup.fileName}-${item.product_name}-${itemIndex}`} style={{ padding: "10px 14px", background: "#f9fafb", borderRadius: 4, marginBottom: 8, border: `1px solid ${borderColor}` }}>
-                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                              <div>
-                                <div style={{ fontSize: 14, fontWeight: 700, color: textPrimary }}>{item.product_name ?? "Item"}</div>
-                                <div style={{ fontSize: 12, color: textMuted, marginTop: 2 }}>Qty: {item.quantity ?? 1}</div>
+                        {photoGroup.items.map((item, itemIndex) => {
+                          const includedInPackage = isPackageComponentItem(selected, item, selected.items);
+                          const amountLabel = includedInPackage
+                            ? "Included"
+                            : moneyFromCents(item.line_total_cents ?? 0, selected.currency?.toUpperCase() || "CAD");
+
+                          return (
+                            <div key={`${photoGroup.fileName}-${item.product_name}-${itemIndex}`} style={{ padding: "10px 14px", background: "#f9fafb", borderRadius: 4, marginBottom: 8, border: `1px solid ${borderColor}` }}>
+                              <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
+                                <div>
+                                  <div style={{ fontSize: 14, fontWeight: 700, color: textPrimary }}>{item.product_name ?? "Item"}</div>
+                                  <div style={{ fontSize: 12, color: textMuted, marginTop: 2 }}>Qty: {item.quantity ?? 1}</div>
+                                </div>
+                                <div style={{ fontSize: 14, fontWeight: 700, color: includedInPackage ? "#16a34a" : textPrimary, whiteSpace: "nowrap" }}>{amountLabel}</div>
                               </div>
-                              <div style={{ fontSize: 14, fontWeight: 700, color: textPrimary }}>{moneyFromCents(item.line_total_cents ?? 0, selected.currency?.toUpperCase() || "CAD")}</div>
                             </div>
-                          </div>
-                        ))}
+                          );
+                        })}
                         {photoGroup.items.length === 0 && (
                           <div style={{ fontSize: 13, color: textMuted, fontStyle: "italic" }}>No item details</div>
                         )}

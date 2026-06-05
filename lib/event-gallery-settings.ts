@@ -21,6 +21,7 @@ export type EventGalleryExtraSettings = {
   watermarkDownloads: boolean;
   includePrintRelease: boolean;
   enableStore: boolean;
+  shippingEnabled: boolean;
   minimumOrderAmount: string;
   allowCropping: boolean;
   enableAbandonedCartEmail: boolean;
@@ -147,6 +148,7 @@ export const defaultEventGalleryExtras: EventGalleryExtraSettings = {
   watermarkDownloads: false,
   includePrintRelease: false,
   enableStore: true,
+  shippingEnabled: false,
   minimumOrderAmount: "",
   allowCropping: false,
   enableAbandonedCartEmail: true,
@@ -394,6 +396,10 @@ export function normalizeEventGallerySettings(value: unknown): EventGallerySetti
       enableStore: asBoolean(
         extrasSource?.enableStore,
         defaultEventGalleryExtras.enableStore,
+      ),
+      shippingEnabled: asBoolean(
+        extrasSource?.shippingEnabled,
+        defaultEventGalleryExtras.shippingEnabled,
       ),
       minimumOrderAmount: asString(
         extrasSource?.minimumOrderAmount,

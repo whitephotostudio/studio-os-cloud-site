@@ -6,6 +6,7 @@
 
 import {
   cleanOrderCustomerNote,
+  isPackageComponentItem,
   isWebImageUrl,
   parseOrderPhotoSelections,
   resolveOrderItemDisplayCents,
@@ -192,11 +193,14 @@ export function buildOrderNotificationEmail(input: {
     const name = clean(item.product_name) || "Item";
     const qty = item.quantity ?? 1;
     const lineTotal = resolveOrderItemDisplayCents(item, items, totalCents, index);
+    const totalLabel = isPackageComponentItem(order, item, items)
+      ? "Included"
+      : formatCurrency(lineTotal, currency);
     return `
       <tr>
         <td style="padding:12px 16px;border-bottom:1px solid #f0f0f0;font-size:14px;color:#333;">${esc(name)}</td>
         <td style="padding:12px 16px;border-bottom:1px solid #f0f0f0;font-size:14px;color:#333;text-align:center;">${qty}</td>
-        <td style="padding:12px 16px;border-bottom:1px solid #f0f0f0;font-size:14px;color:#333;text-align:right;">${formatCurrency(lineTotal, currency)}</td>
+        <td style="padding:12px 16px;border-bottom:1px solid #f0f0f0;font-size:14px;color:#333;text-align:right;">${totalLabel}</td>
       </tr>`;
   }).join("");
 
@@ -403,7 +407,10 @@ export function buildOrderNotificationEmail(input: {
       const name = clean(item.product_name) || "Item";
       const qty = item.quantity ?? 1;
       const lineTotal = resolveOrderItemDisplayCents(item, items, totalCents, index);
-      return `  ${name} x${qty} — ${formatCurrency(lineTotal, currency)}`;
+      const totalLabel = isPackageComponentItem(order, item, items)
+        ? "Included"
+        : formatCurrency(lineTotal, currency);
+      return `  ${name} x${qty} — ${totalLabel}`;
     }).join("\n"),
     orderedPhotos.length ? `\nOrdered photos:\n${orderedPhotos.map((photo, index) => `  ${index + 1}. ${photo.label}: ${photo.displayUrl}`).join("\n")}` : null,
     "",

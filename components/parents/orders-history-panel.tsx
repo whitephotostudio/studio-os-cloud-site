@@ -14,6 +14,7 @@ export type OrderHistoryItem = {
   quantity: number;
   lineTotalCents: number;
   unitPriceCents: number;
+  includedInPackage?: boolean;
   sku: string | null;
 };
 
@@ -430,7 +431,9 @@ export default function OrdersHistoryPanel({
                           }}
                         >
                           Qty {item.quantity}
-                          {item.lineTotalCents > 0
+                          {item.includedInPackage
+                            ? " · Included"
+                            : item.lineTotalCents > 0
                             ? ` · ${formatCurrency(item.lineTotalCents, order.currency)}`
                             : ""}
                         </div>

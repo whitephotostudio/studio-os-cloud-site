@@ -296,7 +296,7 @@ function planDisplayLabel(value: string | null | undefined) {
   return humanizeStatus(value);
 }
 
-// ── Combine-orders + shipping helpers ─────────────────────────────────
+// ── Combine-order commerce helpers ────────────────────────────────────
 //
 // The photographers row stores tiers as a jsonb object so we can grow
 // beyond 2/3 kids in future. The settings UI keeps it simple — just two
@@ -352,7 +352,7 @@ export default function SettingsPage() {
   const [studioPhone, setStudioPhone] = useState("");
   const [studioEmail, setStudioEmail] = useState("");
 
-  // Combine-orders + shipping commerce knobs (added 2026-04-24).
+  // Combine-order commerce knobs (added 2026-04-24).
   // Tiers are stored as a JSON object on the photographers row but the UI
   // exposes them as two simple percentages — most studios stop at "3+ kids".
   // Spec: docs/design/combine-orders-and-recovery.md.
@@ -533,7 +533,7 @@ export default function SettingsPage() {
       setStudioPhone(json.studioPhone || "");
       setStudioEmail(json.studioEmail || "");
 
-      // Combine-orders + shipping commerce knobs.  Direct Supabase fetch so
+      // Combine-order commerce knobs.  Direct Supabase fetch so
       // we don't have to extend the StripeStatus API surface.  Defaults
       // applied below match the photographers DB defaults.
       try {
@@ -1315,10 +1315,10 @@ export default function SettingsPage() {
           </div>
         </div>
 
-        {/* ── Row 1.5: Combine orders & shipping commerce knobs ─────────
+        {/* ── Row 1.5: Combine-order commerce knobs ─────────────────────
             Per-studio config for the sibling-combine discount tiers,
-            flat shipping fee, and late-handling % (applied automatically
-            when a parent orders after the school's order_due_date).
+            default shipping fee, and late-handling %. Shipping itself is
+            enabled per school from School Settings.
             Spec: docs/design/combine-orders-and-recovery.md. */}
         <div
           style={{ marginTop: 20, position: "relative" }}
@@ -1340,14 +1340,14 @@ export default function SettingsPage() {
                 <div style={{ fontSize: 13, fontWeight: 800, letterSpacing: "0.14em", textTransform: "uppercase", color: "#64748b" }}>
                   Commerce
                 </div>
-                <div style={{ fontSize: 20, fontWeight: 900, color: "#0f172a", marginTop: 2 }}>Combine orders &amp; shipping</div>
+                <div style={{ fontSize: 20, fontWeight: 900, color: "#0f172a", marginTop: 2 }}>Combine orders</div>
               </div>
             </div>
             <p style={{ fontSize: 13, color: "#475569", margin: "0 0 18px 0", lineHeight: 1.55 }}>
               Discounts apply to the second sibling onward — the primary kid pays full price.
-              Shipping is charged once per combined order (never multiplied by sibling count).
-              When a parent orders after a school&rsquo;s due date, school pickup is disabled and
-              the late handling fee is added automatically.
+              If a school enables shipping, the default shipping fee is charged once per
+              combined order and is never multiplied by sibling count. Late handling applies
+              only when shipping is enabled for that school.
             </p>
 
             <div style={{ display: "grid", gap: 16, gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))" }}>
@@ -1372,14 +1372,14 @@ export default function SettingsPage() {
                 helper="Applied to each additional kid (3+)"
               />
               <NumberField
-                label="Shipping fee"
+                label="Default shipping fee"
                 prefix="$"
                 value={Math.round(shippingFeeCents) / 100}
                 onChange={(v) => setShippingFeeCents(Math.round(v * 100))}
                 min={0}
                 max={200}
                 step={0.5}
-                helper="Per combined order; never free"
+                helper="Used only for schools with shipping enabled"
               />
               <NumberField
                 label="Late handling fee"
@@ -3091,7 +3091,7 @@ function Field({
 
 /**
  * Numeric input with optional prefix (e.g. "$") or suffix (e.g. "%") and a
- * helper line below.  Used by the Combine orders & shipping settings card.
+ * helper line below.  Used by the Combine orders settings card.
  */
 function NumberField({
   label,

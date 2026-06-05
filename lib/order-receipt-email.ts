@@ -10,6 +10,7 @@
 // Most modern email clients render external image URLs from HTTPS.
 
 import {
+  isPackageComponentItem,
   isWebImageUrl,
   parseOrderPhotoSelections,
   resolveOrderItemDisplayCents,
@@ -173,11 +174,14 @@ export function buildOrderReceiptEmail(input: {
         totalCents,
         index,
       );
+      const totalLabel = isPackageComponentItem(order, item, visibleItems)
+        ? "Included"
+        : formatCurrency(lineTotal, currency);
       return `
         <tr>
           ${thumbCell(itemPhotoUrl(item, index))}
           <td style="padding:12px 16px 12px 0;font-size:14px;color:#222;font-weight:600;line-height:1.4;">${esc(name)}<br><span style="font-size:12px;color:#888;font-weight:400;">Qty ${qty}</span></td>
-          <td style="padding:12px 16px;font-size:14px;color:#222;text-align:right;font-weight:600;white-space:nowrap;">${formatCurrency(lineTotal, currency)}</td>
+          <td style="padding:12px 16px;font-size:14px;color:#222;text-align:right;font-weight:600;white-space:nowrap;">${totalLabel}</td>
         </tr>`;
     })
     .join("");
@@ -338,7 +342,10 @@ export function buildOrderReceiptEmail(input: {
       totalCents,
       index,
     );
-    textLines.push(`  • ${name} (qty ${qty}) — ${formatCurrency(lineTotal, currency)}`);
+    const totalLabel = isPackageComponentItem(order, item, visibleItems)
+      ? "Included"
+      : formatCurrency(lineTotal, currency);
+    textLines.push(`  • ${name} (qty ${qty}) — ${totalLabel}`);
   });
   if (discountItems.length > 0) {
     textLines.push("");

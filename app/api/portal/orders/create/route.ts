@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createDashboardServiceClient } from "@/lib/dashboard-auth";
 import { validateEventGalleryAccess } from "@/lib/event-gallery-access";
+import { normalizeEventGallerySettings } from "@/lib/event-gallery-settings";
 import { isOrderingWindowOpen } from "@/lib/ordering-window";
 import { getClientIp, rateLimit } from "@/lib/rate-limit";
 import { hasActiveSubscription } from "@/lib/subscription-gate";
@@ -95,6 +96,7 @@ type SchoolRow = {
   photographer_id: string | null;
   order_due_date: string | null;
   expiration_date: string | null;
+  gallery_settings?: unknown;
 };
 
 type StudentRow = {
@@ -452,6 +454,7 @@ export async function POST(request: NextRequest) {
     let student: StudentRow | null = null;
     let projectId: string | null = null;
     let projectTitle: string | null = null;
+    let schoolShippingEnabled = false;
     let sb = createDashboardServiceClient();
 
     if (mode === "school") {
@@ -479,7 +482,7 @@ export async function POST(request: NextRequest) {
 
       const { data: schoolRow, error: schoolError } = await sb
         .from("schools")
-        .select("id,photographer_id,order_due_date,expiration_date")
+        .select("id,photographer_id,order_due_date,expiration_date,gallery_settings")
         .eq("id", schoolIdResult.value)
         .maybeSingle<SchoolRow>();
       if (schoolError) throw schoolError;
@@ -500,6 +503,9 @@ export async function POST(request: NextRequest) {
       student = studentRow;
       schoolId = schoolRow.id;
       photographerId = schoolRow.photographer_id;
+      schoolShippingEnabled = normalizeEventGallerySettings(
+        schoolRow.gallery_settings,
+      ).extras.shippingEnabled;
     } else {
       const projectIdResult = validateUuid(body.projectId, "projectId");
       if (!projectIdResult.ok) {
@@ -545,6 +551,13 @@ export async function POST(request: NextRequest) {
       projectId = access.projectId;
       projectTitle = clean(access.project.title) || null;
       photographerId = access.project.photographer_id;
+    }
+
+    if (delivery.method === "shipping" && !schoolShippingEnabled) {
+      return NextResponse.json(
+        { ok: false, message: "Shipping is not enabled for this school." },
+        { status: 400 },
+      );
     }
 
     const { data: photographer, error: photographerError } = await sb

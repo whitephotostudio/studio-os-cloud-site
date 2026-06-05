@@ -34,6 +34,7 @@ import { parseJson } from "@/lib/api-validation";
 import type { RateLimitConfig } from "@/lib/rate-limit";
 import {
   isWebImageUrl,
+  isPackageComponentItem,
   parseOrderPhotoSelections,
   resolveOrderItemDisplayCents,
   resolveOrderSubtotalCents,
@@ -291,6 +292,7 @@ function formatOrder(
   const items = rawItems.map((it, index) => ({
     productName: it.product_name ?? "Item",
     quantity: it.quantity ?? 1,
+    includedInPackage: isPackageComponentItem(row, it, rawItems),
     lineTotalCents: resolveOrderItemDisplayCents(
       it,
       rawItems,

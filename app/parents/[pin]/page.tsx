@@ -4891,6 +4891,8 @@ export default function ParentGalleryPage() {
   const backdropForegroundScaleLandscape = getLandscapeForegroundScale(selectedImageAspectRatio);
   const backdropForegroundVerticalOffsetLandscape = getLandscapeForegroundVerticalOffset(selectedImageAspectRatio);
   const currentGalleryExtras = gallerySettings.extras;
+  const shippingEnabledForGallery =
+    isSchoolMode && currentGalleryExtras.shippingEnabled;
   const showProofWatermark =
     watermarkEnabled && currentGalleryExtras.showProofWatermark !== false;
   const currentGalleryBranding = gallerySettings.branding;
@@ -7383,6 +7385,7 @@ export default function ParentGalleryPage() {
     }
 
     if (
+      shippingEnabledForGallery &&
       anyPhysicalCheckoutItem &&
       deliveryMethod === "shipping" &&
       (!shippingName.trim() ||
@@ -7456,7 +7459,7 @@ export default function ParentGalleryPage() {
     }));
 
     const deliveryPayload =
-      anyPhysicalCheckoutItem && deliveryMethod === "shipping"
+      shippingEnabledForGallery && anyPhysicalCheckoutItem && deliveryMethod === "shipping"
         ? {
             method: "shipping" as const,
             name: shippingName.trim(),
@@ -12084,7 +12087,7 @@ export default function ParentGalleryPage() {
                       </div>
                     </div>
 
-                    {anyPhysicalCheckoutItem && (
+                    {shippingEnabledForGallery && anyPhysicalCheckoutItem && (
                       <div>
                         <label style={labelStyle}>Delivery</label>
                         <div style={{ display: "flex", gap: 8 }}>
@@ -12123,7 +12126,8 @@ export default function ParentGalleryPage() {
                       </div>
                     )}
 
-                    {deliveryMethod === "shipping" &&
+                    {shippingEnabledForGallery &&
+                      deliveryMethod === "shipping" &&
                       anyPhysicalCheckoutItem && (
                         <div
                           style={{

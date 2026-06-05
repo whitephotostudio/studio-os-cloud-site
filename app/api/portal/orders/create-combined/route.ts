@@ -43,6 +43,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { createDashboardServiceClient } from "@/lib/dashboard-auth";
+import { normalizeEventGallerySettings } from "@/lib/event-gallery-settings";
 import { isOrderingWindowOpen } from "@/lib/ordering-window";
 import { getClientIp, rateLimit } from "@/lib/rate-limit";
 import { hasActiveSubscription } from "@/lib/subscription-gate";
@@ -205,6 +206,7 @@ export async function POST(request: NextRequest) {
       studentLastName: string | null;
       orderDueDate: string | null;
       isLate: boolean;
+      shippingEnabled: boolean;
     };
 
     const resolvedGroups: ResolvedGroup[] = [];
@@ -235,7 +237,7 @@ export async function POST(request: NextRequest) {
       const { data: schoolRow, error: schoolErr } = await sb
         .from("schools")
         .select(
-          "id, school_name, photographer_id, order_due_date, expiration_date",
+          "id, school_name, photographer_id, order_due_date, expiration_date, gallery_settings",
         )
         .eq("id", group.schoolId)
         .maybeSingle();
@@ -281,6 +283,9 @@ export async function POST(request: NextRequest) {
       const dueDate = (schoolRow.order_due_date as string | null) ?? null;
       const isLate = isPastDueDate(dueDate);
       if (isLate) anyGroupLate = true;
+      const shippingEnabled = normalizeEventGallerySettings(
+        (schoolRow as { gallery_settings?: unknown }).gallery_settings,
+      ).extras.shippingEnabled;
 
       resolvedGroups.push({
         groupIndex: i,
@@ -294,6 +299,7 @@ export async function POST(request: NextRequest) {
         studentLastName: (studentRow.last_name as string | null) ?? null,
         orderDueDate: dueDate,
         isLate,
+        shippingEnabled,
       });
     }
 
@@ -521,8 +527,16 @@ export async function POST(request: NextRequest) {
     }));
 
     const anyPhysical = resolvedEntries.some((e) => !e.isDigital);
+    const shippingEnabledForAllGroups =
+      resolvedGroups.length > 0 && resolvedGroups.every((g) => g.shippingEnabled);
+    if (body.delivery.method === "shipping" && !shippingEnabledForAllGroups) {
+      return NextResponse.json(
+        { ok: false, message: "Shipping is not enabled for every school in this order." },
+        { status: 400 },
+      );
+    }
     const requestedMethod: "pickup" | "shipping" =
-      anyPhysical ? body.delivery.method : "pickup";
+      anyPhysical && shippingEnabledForAllGroups ? body.delivery.method : "pickup";
 
     const combineTotals = computeCombineTotals({
       groups,
@@ -531,7 +545,7 @@ export async function POST(request: NextRequest) {
         requestedMethod,
         shippingFeeCents,
         lateHandlingFeePercent,
-        anyGroupLate: anyPhysical && anyGroupLate,
+        anyGroupLate: anyPhysical && shippingEnabledForAllGroups && anyGroupLate,
       },
     });
 
