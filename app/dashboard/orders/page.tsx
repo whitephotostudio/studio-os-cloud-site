@@ -89,6 +89,11 @@ type Order = {
   total_cents: number | null;
   total_amount: number | null;
   currency: string | null;
+  payment_status?: string | null;
+  paid_at?: string | null;
+  stripe_payment_intent_id?: string | null;
+  stripe_checkout_session_id?: string | null;
+  order_group_id?: string | null;
   special_notes: string | null;
   notes: string | null;
   student_id: string | null;
@@ -363,6 +368,81 @@ function buildCombinedPackageSummary(orders: Order[]) {
   const uniquePackages = Array.from(new Set(orders.map((order) => clean(order.package_name)).filter(Boolean)));
   if (uniquePackages.length <= 2) return uniquePackages.join(" + ") || "Package";
   return `${uniquePackages.slice(0, 2).join(" + ")} +${uniquePackages.length - 2} more`;
+}
+
+function isPaidOrder(order: Order) {
+  const paymentStatus = clean(order.payment_status).toLowerCase();
+  return (
+    paymentStatus === "succeeded" ||
+    paymentStatus === "paid" ||
+    paymentStatus === "digital_paid" ||
+    !!clean(order.paid_at) ||
+    !!clean(order.stripe_payment_intent_id)
+  );
+}
+
+function isUnpaidCheckoutShadow(order: Order) {
+  const paymentStatus = clean(order.payment_status).toLowerCase();
+  const orderStatus = clean(order.status).toLowerCase();
+  return (
+    !isPaidOrder(order) &&
+    (paymentStatus === "pending" ||
+      orderStatus === "pending" ||
+      (!!clean(order.stripe_checkout_session_id) && !clean(order.stripe_payment_intent_id)))
+  );
+}
+
+function orderDuplicateFingerprint(order: Order) {
+  const mediaKey = extractImageUrls(order).sort().join("|");
+  const itemKey = (order.items ?? [])
+    .map((item) =>
+      [
+        clean(item.product_name).toLowerCase(),
+        Number(item.quantity ?? 1),
+        resolveOrderItemDisplayCents(
+          item,
+          order.items,
+          resolveOrderTotalCents(order, order.items),
+          0,
+        ),
+      ].join(":"),
+    )
+    .sort()
+    .join("|");
+
+  return [
+    clean(order.school_id) || clean(order.project_id) || "gallery",
+    clean(order.class_id) || "class",
+    clean(order.student_id) ||
+      slug(`${order.student?.first_name ?? ""} ${order.student?.last_name ?? ""}`, "student"),
+    clean(order.parent_email ?? order.customer_email ?? order.parent_name ?? order.customer_name).toLowerCase(),
+    clean(order.package_name).toLowerCase(),
+    resolveOrderTotalCents(order, order.items),
+    mediaKey || itemKey,
+  ].join("__");
+}
+
+function removeUnpaidCheckoutShadows(sourceOrders: Order[]) {
+  const buckets = new Map<string, Order[]>();
+  for (const order of sourceOrders) {
+    const key = orderDuplicateFingerprint(order);
+    const bucket = buckets.get(key) ?? [];
+    bucket.push(order);
+    buckets.set(key, bucket);
+  }
+
+  const hiddenIds = new Set<string>();
+  for (const bucket of buckets.values()) {
+    if (!bucket.some(isPaidOrder)) continue;
+    for (const order of bucket) {
+      if (isUnpaidCheckoutShadow(order)) {
+        hiddenIds.add(order.id);
+      }
+    }
+  }
+
+  if (!hiddenIds.size) return sourceOrders;
+  return sourceOrders.filter((order) => !hiddenIds.has(order.id));
 }
 
 function buildOrderSummaryHtml(order: Order) {
@@ -649,6 +729,7 @@ function OrdersPageContent() {
           customer_name, customer_email,
           package_name, package_price,
           subtotal_cents, tax_cents, total_cents, total_amount, currency,
+          payment_status, paid_at, stripe_payment_intent_id, stripe_checkout_session_id, order_group_id,
           special_notes, notes,
           student_id, school_id, class_id, project_id,
           student:students(first_name, last_name, photo_url, folder_name, class_name),
@@ -958,18 +1039,26 @@ function OrdersPageContent() {
     }
   }
 
+  const displayOrders = useMemo(() => removeUnpaidCheckoutShadows(orders), [orders]);
+
   const uniqueSchools = useMemo(() => {
     const map = new Map<string, string>();
-    for (const o of orders) {
+    for (const o of displayOrders) {
       if (o.school_id && o.school?.school_name) map.set(o.school_id, o.school.school_name);
     }
     return Array.from(map.entries()).map(([id, name]) => ({ id, name }));
-  }, [orders]);
+  }, [displayOrders]);
 
-  const hasEventOrders = useMemo(() => orders.some((o) => !o.school_id) || eventProjects.length > 0, [orders, eventProjects]);
+  const hasEventOrders = useMemo(
+    () => displayOrders.some((o) => !o.school_id) || eventProjects.length > 0,
+    [displayOrders, eventProjects],
+  );
 
   const filtered = useMemo(() => {
-    let result = filter === "all" ? orders : orders.filter((o) => o.status === filter);
+    let result =
+      filter === "all"
+        ? displayOrders
+        : displayOrders.filter((o) => o.status === filter);
     if (schoolFilter === "event") {
       result = result.filter((o) => !o.school_id);
     } else if (schoolFilter?.startsWith("event:")) {
@@ -979,7 +1068,7 @@ function OrdersPageContent() {
       result = result.filter((o) => o.school_id === schoolFilter);
     }
     return result;
-  }, [orders, filter, schoolFilter]);
+  }, [displayOrders, filter, schoolFilter]);
 
 
   const selectedOrderedPhotoGroups = useMemo(() => {
@@ -1144,7 +1233,10 @@ function OrdersPageContent() {
     }
   }
 
-  const newCount = useMemo(() => orders.filter((o) => !o.seen_by_photographer).length, [orders]);
+  const newCount = useMemo(
+    () => displayOrders.filter((o) => !o.seen_by_photographer).length,
+    [displayOrders],
+  );
   const totalRevenue = useMemo(() => filtered.reduce((sum, order) => sum + resolveOrderTotalCents(order, order.items), 0), [filtered]);
   const totalImages = useMemo(() => filtered.reduce((sum, order) => sum + extractImageUrls(order).length, 0), [filtered]);
 
@@ -1434,7 +1526,7 @@ function OrdersPageContent() {
                             style={{ width: "100%", display: "flex", justifyContent: "space-between", alignItems: "center", padding: "11px 14px", background: !schoolFilter || schoolFilter === "event" || schoolFilter.startsWith("event:") ? "#fff5f5" : "#fff", border: "none", cursor: "pointer", fontSize: 13, fontWeight: !schoolFilter || schoolFilter === "event" || schoolFilter.startsWith("event:") ? 800 : 500, color: !schoolFilter || schoolFilter === "event" || schoolFilter.startsWith("event:") ? "#cc0000" : textPrimary, textAlign: "left" }}
                           >
                             <span>All Schools</span>
-                            <span style={{ fontSize: 11, background: "#f3f4f6", borderRadius: 999, padding: "1px 8px", color: textMuted }}>{orders.filter((o) => !!o.school_id).length}</span>
+                            <span style={{ fontSize: 11, background: "#f3f4f6", borderRadius: 999, padding: "1px 8px", color: textMuted }}>{displayOrders.filter((o) => !!o.school_id).length}</span>
                           </button>
                           {uniqueSchools
                             .filter((s) => s.name.toLowerCase().includes(schoolSearch.toLowerCase()))
@@ -1446,7 +1538,7 @@ function OrdersPageContent() {
                                 style={{ width: "100%", display: "flex", justifyContent: "space-between", alignItems: "center", padding: "11px 14px", background: schoolFilter === school.id ? "#fff5f5" : "#fff", border: "none", borderTop: `1px solid #f5f5f5`, cursor: "pointer", fontSize: 13, fontWeight: schoolFilter === school.id ? 800 : 500, color: schoolFilter === school.id ? "#cc0000" : textPrimary, textAlign: "left" }}
                               >
                                 <span>{school.name}</span>
-                                <span style={{ fontSize: 11, background: "#f3f4f6", borderRadius: 999, padding: "1px 8px", color: textMuted }}>{orders.filter((o) => o.school_id === school.id).length}</span>
+                                <span style={{ fontSize: 11, background: "#f3f4f6", borderRadius: 999, padding: "1px 8px", color: textMuted }}>{displayOrders.filter((o) => o.school_id === school.id).length}</span>
                               </button>
                             ))}
                           {uniqueSchools.filter((s) => s.name.toLowerCase().includes(schoolSearch.toLowerCase())).length === 0 && (
@@ -1482,8 +1574,8 @@ function OrdersPageContent() {
                             {activeProjectName ?? "Events"}
                             <span style={{ background: isEventActive ? "rgba(255,255,255,0.25)" : "#f3f4f6", borderRadius: 999, padding: "1px 8px", fontSize: 11, fontWeight: 900, color: isEventActive ? "#fff" : textMuted }}>
                               {activeProjectId
-                                ? orders.filter((o) => o.project_id === activeProjectId).length
-                                : orders.filter((o) => !o.school_id).length}
+                                ? displayOrders.filter((o) => o.project_id === activeProjectId).length
+                                : displayOrders.filter((o) => !o.school_id).length}
                             </span>
                             <ChevronDown size={13} />
                           </button>
@@ -1514,7 +1606,7 @@ function OrdersPageContent() {
                                     style={{ width: "100%", display: "flex", justifyContent: "space-between", alignItems: "center", padding: "11px 14px", background: schoolFilter === "event" ? "#fff5f5" : "#fff", border: "none", cursor: "pointer", fontSize: 13, fontWeight: schoolFilter === "event" ? 800 : 500, color: schoolFilter === "event" ? "#cc0000" : textPrimary, textAlign: "left" }}
                                   >
                                     <span>All Event Orders</span>
-                                    <span style={{ fontSize: 11, background: "#f3f4f6", borderRadius: 999, padding: "1px 8px", color: textMuted }}>{orders.filter((o) => !o.school_id).length}</span>
+                                    <span style={{ fontSize: 11, background: "#f3f4f6", borderRadius: 999, padding: "1px 8px", color: textMuted }}>{displayOrders.filter((o) => !o.school_id).length}</span>
                                   </button>
                                 )}
                                 {/* Individual event projects */}
@@ -1525,7 +1617,7 @@ function OrdersPageContent() {
                                   })
                                   .map((proj) => {
                                     const isSelected = schoolFilter === `event:${proj.id}`;
-                                    const orderCount = orders.filter((o) => o.project_id === proj.id).length;
+                                    const orderCount = displayOrders.filter((o) => o.project_id === proj.id).length;
                                     return (
                                       <button
                                         key={proj.id}
@@ -1585,7 +1677,10 @@ function OrdersPageContent() {
                   {["all", "new", "reviewed", "sent_to_print", "completed", "payment_pending", "paid", "digital_paid"].map((statusKey) => {
                     const isActive = filter === statusKey;
                     const cfg = statusKey === "all" ? { label: "All Orders" } : STATUS_COLORS[statusKey] ?? { label: statusKey };
-                    const count = statusKey === "all" ? orders.length : orders.filter((order) => order.status === statusKey).length;
+                    const count =
+                      statusKey === "all"
+                        ? displayOrders.length
+                        : displayOrders.filter((order) => order.status === statusKey).length;
                     return (
                       <button
                         key={statusKey}
