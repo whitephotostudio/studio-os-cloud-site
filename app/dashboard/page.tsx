@@ -12,6 +12,7 @@ import {
   isFreeTrialActive,
   resolveFreeTrialEndsAt,
 } from "@/lib/payments";
+import { resolveOrderTotalCents } from "@/lib/order-display";
 import {
   FolderOpen,
   GraduationCap,
@@ -68,10 +69,21 @@ type StudentRow = {
 type OrderRow = {
   id: string;
   customer_name: string | null;
+  customer_email?: string | null;
+  parent_name?: string | null;
+  parent_email?: string | null;
+  package_name?: string | null;
   total_cents: number | null;
+  total_amount?: number | null;
   created_at: string | null;
   status: string | null;
+  payment_status?: string | null;
+  paid_at?: string | null;
+  stripe_payment_intent_id?: string | null;
+  stripe_checkout_session_id?: string | null;
   school_id?: string | null;
+  class_id?: string | null;
+  student_id?: string | null;
   project_id?: string | null;
 };
 
@@ -172,6 +184,68 @@ function moneyFromCents(cents: number) {
     style: "currency",
     currency: "USD",
   }).format((cents || 0) / 100);
+}
+
+function orderTotalCents(order: OrderRow) {
+  return resolveOrderTotalCents(order);
+}
+
+function isPaidOrder(order: OrderRow) {
+  const paymentStatus = clean(order.payment_status).toLowerCase();
+  return (
+    paymentStatus === "succeeded" ||
+    paymentStatus === "paid" ||
+    paymentStatus === "digital_paid" ||
+    !!clean(order.paid_at) ||
+    !!clean(order.stripe_payment_intent_id)
+  );
+}
+
+function isUnpaidCheckoutShadow(order: OrderRow) {
+  const paymentStatus = clean(order.payment_status).toLowerCase();
+  const status = clean(order.status).toLowerCase();
+  return (
+    !isPaidOrder(order) &&
+    (paymentStatus === "pending" ||
+      status === "pending" ||
+      (!!clean(order.stripe_checkout_session_id) && !clean(order.stripe_payment_intent_id)))
+  );
+}
+
+function duplicateOrderFingerprint(order: OrderRow) {
+  return [
+    clean(order.school_id) || clean(order.project_id) || "gallery",
+    clean(order.class_id) || "class",
+    clean(order.student_id) || "student",
+    clean(
+      order.parent_email ?? order.customer_email ?? order.parent_name ?? order.customer_name,
+    ).toLowerCase(),
+    clean(order.package_name).toLowerCase(),
+    orderTotalCents(order),
+  ].join("__");
+}
+
+function removeUnpaidCheckoutShadows(sourceOrders: OrderRow[]) {
+  const buckets = new Map<string, OrderRow[]>();
+  for (const order of sourceOrders) {
+    const key = duplicateOrderFingerprint(order);
+    const bucket = buckets.get(key) ?? [];
+    bucket.push(order);
+    buckets.set(key, bucket);
+  }
+
+  const hiddenIds = new Set<string>();
+  for (const bucket of buckets.values()) {
+    if (!bucket.some(isPaidOrder)) continue;
+    for (const order of bucket) {
+      if (isUnpaidCheckoutShadow(order)) {
+        hiddenIds.add(order.id);
+      }
+    }
+  }
+
+  if (!hiddenIds.size) return sourceOrders;
+  return sourceOrders.filter((order) => !hiddenIds.has(order.id));
 }
 
 function formatDate(value: string | null) {
@@ -648,7 +722,7 @@ function DashboardPageContent() {
           .order("created_at", { ascending: false }),
         supabase
           .from("orders")
-          .select("id,customer_name,total_cents,created_at,status,school_id,project_id")
+          .select("id,customer_name,customer_email,parent_name,parent_email,package_name,total_cents,total_amount,created_at,status,payment_status,paid_at,stripe_payment_intent_id,stripe_checkout_session_id,school_id,class_id,student_id,project_id")
           .eq("photographer_id", photographerRow.id)
           .order("created_at", { ascending: false })
           .limit(200),
@@ -759,7 +833,7 @@ function DashboardPageContent() {
   function clearAllNotifications() {
     setDismissed((prev) => {
       const next = new Set(prev);
-      orders.forEach((o) => next.add(o.id));
+      removeUnpaidCheckoutShadows(orders).forEach((o) => next.add(o.id));
       saveDismissed(next);
       return next;
     });
@@ -780,8 +854,9 @@ function DashboardPageContent() {
   }
 
   // ── Derived values ──────────────────────────────────────────────────────────
+  const displayOrders = useMemo(() => removeUnpaidCheckoutShadows(orders), [orders]);
   const schoolProjects = projects.filter((p) => p.workflow_type === "school");
-  const revenueTracked = orders.reduce((sum, order) => sum + (order.total_cents || 0), 0);
+  const revenueTracked = displayOrders.reduce((sum, order) => sum + orderTotalCents(order), 0);
   const imageCount = students.filter((row) => clean(row.photo_url)).length;
   const coveragePct =
     students.length > 0 ? Math.round((imageCount / students.length) * 100) : 0;
@@ -808,12 +883,12 @@ function DashboardPageContent() {
         })
       : null;
 
-  const pendingOrders = orders.filter(
+  const pendingOrders = displayOrders.filter(
     (o) => (clean(o.status) || "pending").toLowerCase() === "pending" ||
             clean(o.status).toLowerCase() === "needs_attention",
   );
 
-  const visibleOrders = orders.filter((o) => !dismissed.has(o.id));
+  const visibleOrders = displayOrders.filter((o) => !dismissed.has(o.id));
   const unreadCount = visibleOrders.length;
 
   // Build the Recent Gallery Activity rows: each school + event with its
@@ -834,7 +909,7 @@ function DashboardPageContent() {
   const galleryActivityItems: GalleryActivityItem[] = useMemo(() => {
     const schoolOrders = new Map<string, { orders: number; pending: number; revenue: number }>();
     const projectOrders = new Map<string, { orders: number; pending: number; revenue: number }>();
-    for (const o of orders) {
+    for (const o of displayOrders) {
       const bucket = o.school_id
         ? (schoolOrders.get(o.school_id) ??
             schoolOrders.set(o.school_id, { orders: 0, pending: 0, revenue: 0 }).get(o.school_id)!)
@@ -846,7 +921,7 @@ function DashboardPageContent() {
       bucket.orders += 1;
       const s = clean(o.status).toLowerCase();
       if (s === "pending" || s === "needs_attention") bucket.pending += 1;
-      bucket.revenue += o.total_cents || 0;
+      bucket.revenue += orderTotalCents(o);
     }
 
     const photosBySchool = new Map<string, number>();
@@ -888,7 +963,7 @@ function DashboardPageContent() {
     return [...schoolItems, ...eventItems]
       .sort((a, b) => b.sortAt - a.sortAt)
       .slice(0, 5);
-  }, [schools, eventProjects, students, orders]);
+  }, [schools, eventProjects, students, displayOrders]);
 
   return (
     <div style={{ minHeight: "100vh", background: pageBg }}>
@@ -1210,7 +1285,7 @@ function DashboardPageContent() {
           <div style={{ display: "grid", gridTemplateColumns: isMobile ? "repeat(2,minmax(0,1fr))" : "repeat(4,minmax(0,1fr))", gap: isMobile ? 12 : 18, marginBottom: 24 }}>
             <OverviewLinkCard href="/dashboard/schools" icon={<GraduationCap size={20} />} label="SCHOOLS" value={schools.length} description="Synced school jobs available from the desktop app." />
             <OverviewLinkCard href="/dashboard/projects/events" icon={<FolderOpen size={20} />} label="EVENT PROJECTS" value={eventProjects.length} description="Weddings, baptisms, engagements, and private events." />
-            <OverviewLinkCard href="/dashboard/orders" icon={<ShoppingBag size={20} />} label="ORDERS" value={orders.length} description="Total orders received across all schools and events." />
+            <OverviewLinkCard href="/dashboard/orders" icon={<ShoppingBag size={20} />} label="ORDERS" value={displayOrders.length} description="Total orders received across all schools and events." />
             <Link
               href="/dashboard/schools"
               style={overviewCardStyle(true)}
@@ -1356,7 +1431,7 @@ function DashboardPageContent() {
                               </span>
                               <span style={{ color: textMuted, fontSize: 12 }}>{relativeTime(order.created_at)}</span>
                             </div>
-                            <span style={{ color: textPrimary, fontSize: 14, fontWeight: 900 }}>{moneyFromCents(order.total_cents || 0)}</span>
+                            <span style={{ color: textPrimary, fontSize: 14, fontWeight: 900 }}>{moneyFromCents(orderTotalCents(order))}</span>
                           </div>
                           <div style={{ color: textPrimary, fontSize: 15, fontWeight: 800, marginBottom: 4 }}>{clean(order.customer_name) || "Client order"}</div>
                           <div style={{ color: textMuted, fontSize: 13 }}>Tap to view in orders →</div>
@@ -1518,7 +1593,7 @@ function DashboardPageContent() {
               </div>
 
               <div style={{ display: "grid", gap: 14 }}>
-                <QuickStat label="TOTAL ORDERS" value={orders.length} />
+                <QuickStat label="TOTAL ORDERS" value={displayOrders.length} />
                 <QuickStat
                   label="PENDING ORDERS"
                   value={pendingOrders.length}
