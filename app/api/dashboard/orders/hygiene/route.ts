@@ -1,0 +1,167 @@
+import { NextRequest, NextResponse } from "next/server";
+import {
+  createDashboardServiceClient,
+  resolveDashboardAuth,
+} from "@/lib/dashboard-auth";
+import { resolveOrderTotalCents, type OrderItemMoneyLike } from "@/lib/order-display";
+
+export const dynamic = "force-dynamic";
+
+type OrderItemRow = OrderItemMoneyLike & {
+  id?: string | null;
+};
+
+type OrderRow = {
+  id: string;
+  parent_name?: string | null;
+  parent_email?: string | null;
+  customer_name?: string | null;
+  customer_email?: string | null;
+  status?: string | null;
+  payment_status?: string | null;
+  paid_at?: string | null;
+  stripe_payment_intent_id?: string | null;
+  stripe_checkout_session_id?: string | null;
+  total_cents?: number | null;
+  total_amount?: number | null;
+  items?: OrderItemRow[] | null;
+};
+
+function clean(value: string | null | undefined) {
+  return (value ?? "").trim();
+}
+
+function hasBuyerEmail(order: OrderRow) {
+  return !!clean(order.parent_email ?? order.customer_email);
+}
+
+function isPaidOrder(order: OrderRow) {
+  const paymentStatus = clean(order.payment_status).toLowerCase();
+  return (
+    paymentStatus === "succeeded" ||
+    paymentStatus === "paid" ||
+    paymentStatus === "digital_paid" ||
+    !!clean(order.paid_at) ||
+    !!clean(order.stripe_payment_intent_id)
+  );
+}
+
+function hasStartedCheckout(order: OrderRow) {
+  return !isPaidOrder(order) && !!clean(order.stripe_checkout_session_id);
+}
+
+function isInvalidPlaceholderOrder(order: OrderRow) {
+  const totalCents = resolveOrderTotalCents(order, order.items);
+  return (
+    totalCents <= 0 &&
+    !hasBuyerEmail(order) &&
+    !clean(order.payment_status) &&
+    !clean(order.paid_at) &&
+    !clean(order.stripe_payment_intent_id) &&
+    !clean(order.stripe_checkout_session_id)
+  );
+}
+
+function shouldNormalizePaidStatus(order: OrderRow) {
+  if (!isPaidOrder(order)) return false;
+  const status = clean(order.status).toLowerCase();
+  return !["paid", "digital_paid", "reviewed", "sent_to_print", "completed"].includes(status);
+}
+
+function shouldNormalizeCheckoutStatus(order: OrderRow) {
+  if (!hasStartedCheckout(order)) return false;
+  return clean(order.status).toLowerCase() !== "payment_pending";
+}
+
+export async function POST(request: NextRequest) {
+  try {
+    const { user } = await resolveDashboardAuth(request);
+    if (!user) {
+      return NextResponse.json(
+        { ok: false, message: "Please sign in again." },
+        { status: 401 },
+      );
+    }
+
+    const service = createDashboardServiceClient();
+    const { data: photographer, error: photographerError } = await service
+      .from("photographers")
+      .select("id")
+      .eq("user_id", user.id)
+      .maybeSingle();
+
+    if (photographerError) throw photographerError;
+    if (!photographer?.id) {
+      return NextResponse.json(
+        { ok: false, message: "Photographer not found." },
+        { status: 404 },
+      );
+    }
+
+    const { data: rows, error: ordersError } = await service
+      .from("orders")
+      .select(
+        `
+          id,
+          parent_name, parent_email, customer_name, customer_email,
+          status, payment_status, paid_at, stripe_payment_intent_id, stripe_checkout_session_id,
+          total_cents, total_amount,
+          items:order_items(id, product_name, quantity, price, unit_price_cents, line_total_cents, sku)
+        `,
+      )
+      .eq("photographer_id", photographer.id);
+
+    if (ordersError) throw ordersError;
+
+    const orders = ((rows ?? []) as OrderRow[]);
+    const placeholderIds = orders.filter(isInvalidPlaceholderOrder).map((order) => order.id);
+    const paidIds = orders.filter(shouldNormalizePaidStatus).map((order) => order.id);
+    const checkoutIds = orders.filter(shouldNormalizeCheckoutStatus).map((order) => order.id);
+
+    if (placeholderIds.length > 0) {
+      const { error: itemDeleteError } = await service
+        .from("order_items")
+        .delete()
+        .in("order_id", placeholderIds);
+      if (itemDeleteError) throw itemDeleteError;
+
+      const { error: orderDeleteError } = await service
+        .from("orders")
+        .delete()
+        .eq("photographer_id", photographer.id)
+        .in("id", placeholderIds);
+      if (orderDeleteError) throw orderDeleteError;
+    }
+
+    if (paidIds.length > 0) {
+      const { error: paidError } = await service
+        .from("orders")
+        .update({ status: "paid" })
+        .eq("photographer_id", photographer.id)
+        .in("id", paidIds);
+      if (paidError) throw paidError;
+    }
+
+    if (checkoutIds.length > 0) {
+      const { error: checkoutError } = await service
+        .from("orders")
+        .update({ status: "payment_pending", payment_status: "pending" })
+        .eq("photographer_id", photographer.id)
+        .in("id", checkoutIds);
+      if (checkoutError) throw checkoutError;
+    }
+
+    return NextResponse.json({
+      ok: true,
+      deletedPlaceholders: placeholderIds.length,
+      normalizedPaid: paidIds.length,
+      normalizedCheckout: checkoutIds.length,
+    });
+  } catch (error) {
+    console.error("[dashboard:orders:hygiene] failed", error);
+    return NextResponse.json(
+      { ok: false, message: "Failed to clean dashboard orders." },
+      { status: 500 },
+    );
+  }
+}

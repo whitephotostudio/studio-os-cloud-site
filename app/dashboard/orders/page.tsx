@@ -262,6 +262,15 @@ function dashboardPhotoUrl(value: string | null | undefined) {
   if (raw.startsWith("/api/r2/img/")) return raw;
   if (!/^https?:\/\//i.test(raw)) return "";
 
+  if (isWebImageUrl(raw)) {
+    try {
+      const parsed = new URL(raw);
+      if (/\.r2\.dev$/i.test(parsed.host)) return encodeExternalImageUrl(raw);
+    } catch {
+      // Fall through to the normal URL handling below.
+    }
+  }
+
   const key = r2KeyFromBrowserUrl(raw);
   if (key) return `/api/r2/img/${encodeStoragePath(key)}`;
 
@@ -803,6 +812,19 @@ function OrdersPageContent() {
       studioAddress: (photographer as Record<string, unknown>).studio_address as string || "",
     });
 
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      await fetch("/api/dashboard/orders/hygiene", {
+        method: "POST",
+        cache: "no-store",
+        headers: {
+          Authorization: `Bearer ${session?.access_token ?? ""}`,
+        },
+      });
+    } catch (error) {
+      console.warn("Order hygiene skipped:", error);
+    }
+
     // Fetch event projects for this photographer
     const { data: projectRows } = await supabase
       .from("projects")
@@ -1184,11 +1206,12 @@ function OrdersPageContent() {
 
 
   const selectedOrderedPhotoGroups = useMemo(() => {
-    if (!selected) return [] as Array<{ url: string | null; originalUrl: string | null; fileName: string; items: OrderItem[] }>;
+    if (!selected) return [] as Array<{ url: string | null; originalUrl: string | null; fallbackUrl: string | null; fileName: string; items: OrderItem[] }>;
 
-    const buckets = new Map<string, { url: string | null; originalUrl: string | null; fileName: string; items: OrderItem[] }>();
+    const buckets = new Map<string, { url: string | null; originalUrl: string | null; fallbackUrl: string | null; fileName: string; items: OrderItem[] }>();
     const orderTotalCents = resolveOrderTotalCents(selected, selected.items);
     const noteSelections = parseOrderPhotoSelections(noteTextForOrder(selected));
+    const studentFallbackUrl = dashboardPhotoUrl(selected.student?.photo_url);
     const baseItems: OrderItem[] = selected.items?.length
       ? selected.items
       : noteSelections.length
@@ -1227,16 +1250,20 @@ function OrdersPageContent() {
 
     sourceItems.forEach((item, index) => {
       const rawSku = clean(item.sku);
-      const rawUrl = dashboardPhotoUrl(rawSku) ? rawSku : clean(noteSelections[index]?.url);
+      const noteSelection =
+        noteSelections.find((entry) => entry.itemIndex === index) ?? noteSelections[index];
+      const rawUrl = dashboardPhotoUrl(rawSku) ? rawSku : clean(noteSelection?.url);
       const displayUrl = dashboardPhotoUrl(rawUrl);
-      const key = displayUrl || `no-image-${selected.id}-${index}`;
+      const fallbackUrl = displayUrl ? studentFallbackUrl : "";
+      const key = displayUrl || studentFallbackUrl || `no-image-${selected.id}-${index}`;
       const existing = buckets.get(key);
       if (existing) {
         existing.items.push(item);
       } else {
         buckets.set(key, {
-          url: displayUrl || null,
-          originalUrl: rawUrl || null,
+          url: displayUrl || studentFallbackUrl || null,
+          originalUrl: rawUrl || selected.student?.photo_url || null,
+          fallbackUrl: fallbackUrl || null,
           fileName: rawUrl ? fileNameFromUrl(rawUrl, selected.student?.folder_name || "photo.jpg") : selected.student?.folder_name || `${selected.student?.first_name ?? "student"}-${selected.id.slice(0, 6)}.jpg`,
           items: [item],
         });
@@ -1259,6 +1286,7 @@ function OrdersPageContent() {
       buckets.set(displayUrl, {
         url: displayUrl,
         originalUrl: entry.url,
+        fallbackUrl: studentFallbackUrl || null,
         fileName: fileNameFromUrl(entry.url, `photo-${index + 1}.jpg`),
         items: [item],
       });
@@ -1852,7 +1880,8 @@ function OrdersPageContent() {
                 {combinedRows.map((group) => {
                   const order = group.representative;
                   const cfg = STATUS_COLORS[group.combinedStatus] ?? STATUS_COLORS.new;
-                  const primaryUrl = group.imageUrls[0] ?? order.student?.photo_url ?? "";
+                  const studentImageUrl = dashboardPhotoUrl(order.student?.photo_url);
+                  const primaryUrl = group.imageUrls[0] ?? studentImageUrl;
                   const isSelected = selectedKeys.has(group.key);
                   const currency = order.currency?.toUpperCase() || "CAD";
                   return (
@@ -1864,9 +1893,23 @@ function OrdersPageContent() {
                     >
                       <div style={{ position: "relative" }}>
                         <div style={{ width: "100%", aspectRatio: "3/4", background: "#f3f4f6", overflow: "hidden" }}>
-                          {clean(primaryUrl)
-                            ? <img loading="lazy" src={primaryUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                            : <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "#d1d5db" }}><Users size={28} /></div>}
+                          {clean(primaryUrl) ? (
+                            <img
+                              loading="lazy"
+                              src={primaryUrl}
+                              alt=""
+                              style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                              onError={(event) => {
+                                if (studentImageUrl && event.currentTarget.src !== studentImageUrl) {
+                                  event.currentTarget.src = studentImageUrl;
+                                } else {
+                                  event.currentTarget.style.display = "none";
+                                }
+                              }}
+                            />
+                          ) : (
+                            <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "#d1d5db" }}><Users size={28} /></div>
+                          )}
                         </div>
                         {/* Checkbox */}
                         <button
@@ -1910,7 +1953,8 @@ function OrdersPageContent() {
                 {combinedRows.map((group, idx) => {
                   const order = group.representative;
                   const cfg = STATUS_COLORS[group.combinedStatus] ?? STATUS_COLORS.new;
-                  const primaryUrl = group.imageUrls[0] ?? order.student?.photo_url ?? "";
+                  const studentImageUrl = dashboardPhotoUrl(order.student?.photo_url);
+                  const primaryUrl = group.imageUrls[0] ?? studentImageUrl;
                   const isSelected = selectedKeys.has(group.key);
                   const currency = order.currency?.toUpperCase() || "CAD";
                   return (
@@ -1927,7 +1971,21 @@ function OrdersPageContent() {
                       </div>
                       <div>
                         <div style={{ width: 40, height: 52, borderRadius: 8, overflow: "hidden", background: "#f3f4f6", border: `1px solid ${borderColor}` }}>
-                          {clean(primaryUrl) ? <img loading="lazy" src={primaryUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "#d1d5db" }}><Users size={14} /></div>}
+                          {clean(primaryUrl) ? (
+                            <img
+                              loading="lazy"
+                              src={primaryUrl}
+                              alt=""
+                              style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                              onError={(event) => {
+                                if (studentImageUrl && event.currentTarget.src !== studentImageUrl) {
+                                  event.currentTarget.src = studentImageUrl;
+                                } else {
+                                  event.currentTarget.style.display = "none";
+                                }
+                              }}
+                            />
+                          ) : <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "#d1d5db" }}><Users size={14} /></div>}
                         </div>
                       </div>
                       <div>
@@ -1957,7 +2015,8 @@ function OrdersPageContent() {
                   const isNew = group.isAnyNew;
                   const currency = order.currency?.toUpperCase() || "CAD";
                   const imageUrls = group.imageUrls;
-                  const primaryImageUrl = imageUrls[0] ?? order.student?.photo_url ?? "";
+                  const studentImageUrl = dashboardPhotoUrl(order.student?.photo_url);
+                  const primaryImageUrl = imageUrls[0] ?? studentImageUrl;
                   const isPhotosExpanded = !!expandedPhotos[group.key];
                   const orderTotal = group.totalCents;
                   const isSelected = selectedKeys.has(group.key);
@@ -1998,7 +2057,19 @@ function OrdersPageContent() {
                             }}
                           >
                             {clean(primaryImageUrl) ? (
-                              <img loading="lazy" src={primaryImageUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                              <img
+                                loading="lazy"
+                                src={primaryImageUrl}
+                                alt=""
+                                style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                                onError={(event) => {
+                                  if (studentImageUrl && event.currentTarget.src !== studentImageUrl) {
+                                    event.currentTarget.src = studentImageUrl;
+                                  } else {
+                                    event.currentTarget.style.display = "none";
+                                  }
+                                }}
+                              />
                             ) : (
                               <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "#9ca3af" }}>
                                 <Users size={26} />
@@ -2126,7 +2197,19 @@ function OrdersPageContent() {
                                   {imageUrls.map((url, index) => (
                                     <div key={`${group.key}-photo-${index}`} style={{ background: "#fff", border: `1px solid ${borderColor}`, borderRadius: 14, padding: 8 }}>
                                       <div style={{ width: "100%", aspectRatio: "3 / 4", overflow: "hidden", borderRadius: 10, background: "#f3f4f6", marginBottom: 6 }}>
-                                        <img loading="lazy" src={url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                                        <img
+                                          loading="lazy"
+                                          src={url}
+                                          alt=""
+                                          style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                                          onError={(event) => {
+                                            if (studentImageUrl && event.currentTarget.src !== studentImageUrl) {
+                                              event.currentTarget.src = studentImageUrl;
+                                            } else {
+                                              event.currentTarget.style.display = "none";
+                                            }
+                                          }}
+                                        />
                                       </div>
                                       <div style={{ fontSize: 11, color: textMuted, lineHeight: 1.35, wordBreak: "break-word" }}>{fileNameFromUrl(url, `photo-${index + 1}.jpg`)}</div>
                                     </div>
@@ -2136,7 +2219,19 @@ function OrdersPageContent() {
                                 <div style={{ display: "flex", alignItems: "center", gap: 8, overflow: "hidden" }}>
                                   {imageUrls.slice(0, 4).map((url, index) => (
                                     <div key={`${group.key}-photo-preview-${index}`} style={{ width: 46, height: 58, borderRadius: 10, overflow: "hidden", border: `1px solid ${borderColor}`, background: "#fff", flexShrink: 0 }}>
-                                      <img loading="lazy" src={url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                                      <img
+                                        loading="lazy"
+                                        src={url}
+                                        alt=""
+                                        style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                                        onError={(event) => {
+                                          if (studentImageUrl && event.currentTarget.src !== studentImageUrl) {
+                                            event.currentTarget.src = studentImageUrl;
+                                          } else {
+                                            event.currentTarget.style.display = "none";
+                                          }
+                                        }}
+                                      />
                                     </div>
                                   ))}
                                   {imageUrls.length > 4 ? (
@@ -2294,7 +2389,21 @@ function OrdersPageContent() {
                       <div style={{ width: 140, flexShrink: 0 }}>
                         <div style={{ width: 140, height: 180, borderRadius: 4, overflow: "hidden", border: `1px solid ${borderColor}`, background: "#f5f5f5" }}>
                           {photoGroup.url ? (
-                            <img loading="lazy" src={photoGroup.url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                            <img
+                              loading="lazy"
+                              src={photoGroup.url}
+                              alt=""
+                              style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                              onError={(event) => {
+                                const fallback = photoGroup.fallbackUrl;
+                                const img = event.currentTarget;
+                                if (fallback && img.src !== fallback) {
+                                  img.src = fallback;
+                                } else {
+                                  img.style.display = "none";
+                                }
+                              }}
+                            />
                           ) : (
                             <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "#ccc" }}>
                               <ImageIcon size={28} />
