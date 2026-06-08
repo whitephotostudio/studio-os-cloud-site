@@ -4,6 +4,7 @@ import {
   resolveDashboardAuth,
 } from "@/lib/dashboard-auth";
 import {
+  cartSnapshotToOrderItems,
   cleanOrderCustomerNote,
   isWebImageUrl,
   parsePackageSlotLabel,
@@ -208,11 +209,14 @@ function shortOrderId(id: string) {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function resolveOrderDisplayItems(order: any): { productName: string; photoUrl: string; quantity: number }[] {
   const dbItems = order.items ?? [];
+  const snapshotItems = cartSnapshotToOrderItems(order.cart_snapshot);
   const notesText = clean(order.special_notes) || clean(order.notes);
   const parsedFromNotes = parseNotesItems(notesText);
+  const imageDbItems = dbItems.filter((item: { sku?: string }) => isWebImageUrl(item.sku));
+  const sourceItems = snapshotItems.length > imageDbItems.length ? snapshotItems : dbItems;
 
-  if (dbItems.length > 0) {
-    return dbItems.map((item: { product_name?: string; quantity?: number; sku?: string }, index: number) => ({
+  if (sourceItems.length > 0) {
+    return sourceItems.map((item: { product_name?: string; quantity?: number; sku?: string }, index: number) => ({
       productName: item.product_name ?? parsedFromNotes[index]?.productName ?? "Item",
       photoUrl: isWebImageUrl(item.sku) ? (item.sku ?? "") : (parsedFromNotes[index]?.photoUrl ?? ""),
       quantity: item.quantity ?? 1,
@@ -431,7 +435,7 @@ export async function GET(request: NextRequest) {
         customer_name, customer_email,
         package_name, package_price,
         subtotal_cents, tax_cents, total_cents, total_amount, currency,
-        special_notes, notes, student_id, school_id, class_id, project_id,
+        special_notes, notes, cart_snapshot, student_id, school_id, class_id, project_id,
         student:students(first_name, last_name, photo_url, folder_name, class_name),
         school:schools(school_name),
         class:classes(class_name),

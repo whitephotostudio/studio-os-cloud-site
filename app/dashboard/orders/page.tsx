@@ -46,6 +46,7 @@ import { createClient } from "@/lib/supabase/client";
 import { Logo } from "@/components/logo";
 import { useIsMobile } from "@/lib/use-is-mobile";
 import {
+  cartSnapshotToOrderItems,
   cleanOrderCustomerNote,
   extractOrderPhotoUrls,
   isWebImageUrl,
@@ -90,6 +91,7 @@ type Order = {
   tax_cents: number | null;
   total_cents: number | null;
   total_amount: number | null;
+  cart_snapshot?: unknown;
   currency: string | null;
   payment_status?: string | null;
   paid_at?: string | null;
@@ -154,6 +156,7 @@ type PackageComponentSummary = {
   assignedSlots: number;
   slotTotal: number | null;
   poseCount: number;
+  assignments: Array<{ poseIndex: number; fileName: string; slotText: string }>;
 };
 
 const STATUS_COLORS: Record<string, { bg: string; color: string; label: string }> = {
@@ -220,7 +223,10 @@ function isNonProductionLineItem(item: OrderItem) {
 }
 
 function buildPackageComponentSummary(groups: OrderedPhotoGroup[]): PackageComponentSummary[] {
-  const map = new Map<string, PackageComponentSummary & { poses: Set<number> }>();
+  const map = new Map<
+    string,
+    PackageComponentSummary & { poseKeys: Set<string> }
+  >();
 
   groups.forEach((group, groupIndex) => {
     for (const item of group.items) {
@@ -234,11 +240,26 @@ function buildPackageComponentSummary(groups: OrderedPhotoGroup[]): PackageCompo
         assignedSlots: 0,
         slotTotal: parsed.slotTotal,
         poseCount: 0,
-        poses: new Set<number>(),
+        assignments: [],
+        poseKeys: new Set<string>(),
       };
+      const slotText =
+        parsed.slotIndex != null && parsed.slotTotal != null
+          ? `${parsed.slotIndex} of ${parsed.slotTotal}`
+          : "";
       existing.assignedSlots += orderItemQuantity(item);
-      existing.poses.add(groupIndex);
-      existing.poseCount = existing.poses.size;
+      const poseKey = `${groupIndex}-${group.fileName}-${slotText}`;
+      if (!existing.poseKeys.has(poseKey)) {
+        existing.assignments.push({
+          poseIndex: groupIndex,
+          fileName: group.fileName,
+          slotText,
+        });
+        existing.poseKeys.add(poseKey);
+      }
+      existing.poseCount = new Set(
+        existing.assignments.map((assignment) => assignment.poseIndex),
+      ).size;
       if (parsed.slotTotal != null) existing.slotTotal = parsed.slotTotal;
       map.set(key, existing);
     }
@@ -250,6 +271,7 @@ function buildPackageComponentSummary(groups: OrderedPhotoGroup[]): PackageCompo
     assignedSlots: summary.assignedSlots,
     slotTotal: summary.slotTotal,
     poseCount: summary.poseCount,
+    assignments: summary.assignments,
   }));
 }
 
@@ -931,6 +953,7 @@ function OrdersPageContent() {
           customer_name, customer_email,
           package_name, package_price,
           subtotal_cents, tax_cents, total_cents, total_amount, currency,
+          cart_snapshot,
           payment_status, paid_at, stripe_payment_intent_id, stripe_checkout_session_id, order_group_id,
           special_notes, notes,
           student_id, school_id, class_id, project_id,
@@ -1300,7 +1323,23 @@ function OrdersPageContent() {
     const orderTotalCents = resolveOrderTotalCents(selected, selected.items);
     const noteSelections = parseOrderPhotoSelections(noteTextForOrder(selected));
     const studentFallbackUrl = dashboardPhotoUrl(selected.student?.photo_url);
-    const baseItems: OrderItem[] = selected.items?.length
+    const snapshotItems: OrderItem[] = cartSnapshotToOrderItems(selected.cart_snapshot).map(
+      (item, index) => ({
+        id: `${selected.id}-cart-snapshot-${index}`,
+        product_name: item.product_name,
+        quantity: item.quantity,
+        price: null,
+        unit_price_cents: null,
+        line_total_cents: 0,
+        sku: item.sku,
+      }),
+    );
+    const imageItemCount = (selected.items ?? []).filter((item) =>
+      isWebImageUrl(item.sku),
+    ).length;
+    const baseItems: OrderItem[] = snapshotItems.length > imageItemCount
+      ? snapshotItems
+      : selected.items?.length
       ? selected.items
       : noteSelections.length
         ? noteSelections.map((entry, index) => ({
@@ -2481,10 +2520,25 @@ function OrdersPageContent() {
                         <div style={{ minWidth: 0 }}>
                           <div style={{ fontSize: 13, fontWeight: 800, color: textPrimary, lineHeight: 1.35 }}>{component.label}</div>
                           <div style={{ fontSize: 11, color: textMuted, marginTop: 2 }}>
-                            {component.slotTotal
+                            {component.slotTotal && component.assignedSlots <= component.slotTotal
                               ? `${component.assignedSlots} of ${component.slotTotal} package slot${component.slotTotal === 1 ? "" : "s"} assigned`
+                              : component.slotTotal
+                                ? `${component.assignedSlots} package slot${component.assignedSlots === 1 ? "" : "s"} assigned`
                               : `Qty ${component.assignedSlots}`}
                           </div>
+                          {component.assignments.length > 0 ? (
+                            <div style={{ display: "flex", flexDirection: "column", gap: 3, marginTop: 6 }}>
+                              {component.assignments.slice(0, 6).map((assignment, index) => (
+                                <div key={`${component.key}-${assignment.poseIndex}-${assignment.fileName}-${index}`} style={{ fontSize: 11, color: textMuted, lineHeight: 1.35, wordBreak: "break-word" }}>
+                                  <strong style={{ color: textPrimary }}>{poseLabel(assignment.poseIndex, selectedOrderedPhotoGroups.length)}</strong>
+                                  {assignment.slotText ? ` slot ${assignment.slotText}` : ""} · {assignment.fileName}
+                                </div>
+                              ))}
+                              {component.assignments.length > 6 ? (
+                                <div style={{ fontSize: 11, color: textMuted }}>+ {component.assignments.length - 6} more assignment{component.assignments.length - 6 === 1 ? "" : "s"}</div>
+                              ) : null}
+                            </div>
+                          ) : null}
                         </div>
                         <div style={{ flexShrink: 0, fontSize: 11, color: "#0f766e", background: "#ecfeff", border: "1px solid #a5f3fc", borderRadius: 999, padding: "3px 8px", fontWeight: 800 }}>
                           {component.poseCount} pose{component.poseCount === 1 ? "" : "s"}

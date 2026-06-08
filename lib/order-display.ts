@@ -27,6 +27,24 @@ export type ParsedPackageSlotLabel = {
   slotTotal: number | null;
 };
 
+export type CartSnapshotSlotLike = {
+  label?: string | null;
+  assignedImageUrl?: string | null;
+};
+
+export type CartSnapshotEntryLike = {
+  slots?: CartSnapshotSlotLike[] | null;
+  selectedImageUrl?: string | null;
+  quantity?: number | null;
+  packageName?: string | null;
+};
+
+export type CartSnapshotItem = {
+  product_name: string;
+  quantity: number;
+  sku: string | null;
+};
+
 function clean(value: string | null | undefined) {
   return (value ?? "").trim();
 }
@@ -134,7 +152,7 @@ export function parsePackageSlotLabel(
   const match = label.match(/^(.*?)\s*\((\d+)\s+of\s+(\d+)\)\s*$/i);
   if (!match) {
     return {
-      baseLabel: label,
+      baseLabel: label.replace(/^\s*1\s+(?=[A-Za-z])/i, "").trim() || label,
       slotIndex: null,
       slotTotal: null,
     };
@@ -156,10 +174,45 @@ export function parsePackageSlotLabel(
   }
 
   return {
-    baseLabel: clean(match[1]) || label,
+    baseLabel:
+      clean(match[1]).replace(/^\s*\d+\s+(?=(?:\d+(?:\.\d+)?\s*[x×]\s*\d+)|[A-Za-z])/i, "").trim() ||
+      clean(match[1]) ||
+      label,
     slotIndex,
     slotTotal,
   };
+}
+
+export function cartSnapshotToOrderItems(
+  snapshot: unknown,
+): CartSnapshotItem[] {
+  if (!Array.isArray(snapshot)) return [];
+
+  const items: CartSnapshotItem[] = [];
+  for (const entry of snapshot as CartSnapshotEntryLike[]) {
+    const slots = Array.isArray(entry?.slots) ? entry.slots : [];
+    if (slots.length > 0) {
+      for (const slot of slots) {
+        items.push({
+          product_name: clean(slot?.label) || clean(entry?.packageName) || "Item",
+          quantity: 1,
+          sku: clean(slot?.assignedImageUrl) || null,
+        });
+      }
+      continue;
+    }
+
+    if (clean(entry?.selectedImageUrl)) {
+      const qty = Number(entry?.quantity ?? 1);
+      items.push({
+        product_name: clean(entry?.packageName) || "Package",
+        quantity: Number.isFinite(qty) && qty > 0 ? qty : 1,
+        sku: clean(entry?.selectedImageUrl),
+      });
+    }
+  }
+
+  return items;
 }
 
 function isSeparateChargeItem(item: OrderItemMoneyLike) {
