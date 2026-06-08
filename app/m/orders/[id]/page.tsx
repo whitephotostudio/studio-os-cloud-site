@@ -28,6 +28,13 @@ import {
   ShoppingBag,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import {
+  cartSnapshotToOrderItems,
+  cleanOrderCustomerNote,
+  isWebImageUrl,
+  parseOrderPhotoSelections,
+  parsePackageSlotLabel,
+} from "@/lib/order-display";
 
 type Row = {
   id: string;
@@ -43,6 +50,7 @@ type Row = {
   tax_cents: number | null;
   total_cents: number | null;
   total_amount: number | null;
+  cart_snapshot?: unknown;
   currency: string | null;
   payment_status?: string | null;
   paid_at?: string | null;
@@ -78,8 +86,36 @@ type Row = {
         price: number | null;
         unit_price_cents: number | null;
         line_total_cents: number | null;
+        sku?: string | null;
       }>
     | null;
+};
+
+type DetailItem = {
+  id: string;
+  product_name: string | null;
+  quantity: number | null;
+  price: number | null;
+  unit_price_cents: number | null;
+  line_total_cents: number | null;
+  sku: string | null;
+  included: boolean;
+};
+
+type PoseGroup = {
+  key: string;
+  url: string | null;
+  fileName: string;
+  items: DetailItem[];
+};
+
+type ComponentSummary = {
+  key: string;
+  label: string;
+  assignedSlots: number;
+  slotTotal: number | null;
+  poseCount: number;
+  assignments: Array<{ poseIndex: number; fileName: string; slotText: string }>;
 };
 
 function clean(s: string | null | undefined): string {
@@ -96,6 +132,161 @@ function money(cents: number, currency = "USD"): string {
     style: "currency",
     currency,
   }).format(cents / 100);
+}
+
+function fileNameFromUrl(url: string | null | undefined, fallback: string) {
+  const raw = clean(url);
+  if (!raw) return fallback;
+  try {
+    const pathname = new URL(raw).pathname;
+    const parts = pathname.split("/");
+    return decodeURIComponent(parts[parts.length - 1] || fallback);
+  } catch {
+    return raw.split("/").pop() || fallback;
+  }
+}
+
+function itemQuantity(item: Pick<DetailItem, "quantity">) {
+  const qty = Number(item.quantity ?? 1);
+  return Number.isFinite(qty) && qty > 0 ? qty : 1;
+}
+
+function itemBaseLabel(item: Pick<DetailItem, "product_name">) {
+  const parsed = parsePackageSlotLabel(item.product_name);
+  return parsed.baseLabel || clean(item.product_name) || "Item";
+}
+
+function itemSlotText(item: Pick<DetailItem, "product_name">) {
+  const parsed = parsePackageSlotLabel(item.product_name);
+  if (parsed.slotIndex == null || parsed.slotTotal == null) return "";
+  return `${parsed.slotIndex} of ${parsed.slotTotal}`;
+}
+
+function poseLabel(index: number, total: number) {
+  return `Pose ${index + 1}${total > 1 ? ` of ${total}` : ""}`;
+}
+
+function isNonProductionLineItem(item: Pick<DetailItem, "product_name">) {
+  const name = clean(item.product_name).toLowerCase();
+  return (
+    name.includes("shipping") ||
+    name.includes("handling") ||
+    name.includes("discount") ||
+    name.includes("premium backdrop")
+  );
+}
+
+function resolveDisplayItems(order: Row): DetailItem[] {
+  const dbItems = order.items ?? [];
+  const snapshotItems = cartSnapshotToOrderItems(order.cart_snapshot);
+  const notesText = clean(order.special_notes) || clean(order.notes);
+  const noteSelections = parseOrderPhotoSelections(notesText);
+  const imageDbItems = dbItems.filter((item) => isWebImageUrl(item.sku));
+
+  if (snapshotItems.length > imageDbItems.length) {
+    return snapshotItems.map((item, index) => ({
+      id: `${order.id}-snapshot-${index}`,
+      product_name: item.product_name,
+      quantity: item.quantity,
+      price: null,
+      unit_price_cents: null,
+      line_total_cents: 0,
+      sku: item.sku,
+      included: true,
+    }));
+  }
+
+  if (dbItems.length > 0) {
+    return dbItems.map((item, index) => {
+      const noteSelection =
+        noteSelections.find((entry) => entry.itemIndex === index) ?? noteSelections[index];
+      return {
+        id: item.id,
+        product_name: item.product_name ?? noteSelection?.label ?? "Item",
+        quantity: item.quantity,
+        price: item.price,
+        unit_price_cents: item.unit_price_cents,
+        line_total_cents: item.line_total_cents,
+        sku: isWebImageUrl(item.sku) ? item.sku ?? null : noteSelection?.url ?? null,
+        included: (item.line_total_cents ?? 0) === 0,
+      };
+    });
+  }
+
+  return noteSelections.map((entry, index) => ({
+    id: `${order.id}-note-${index}`,
+    product_name: entry.label || "Item",
+    quantity: 1,
+    price: null,
+    unit_price_cents: null,
+    line_total_cents: 0,
+    sku: entry.url,
+    included: true,
+  }));
+}
+
+function buildPoseGroups(items: DetailItem[]): PoseGroup[] {
+  const groups = new Map<string, PoseGroup>();
+  items.forEach((item, index) => {
+    const url = isWebImageUrl(item.sku) ? item.sku : null;
+    const key = url || `no-photo-${index}`;
+    const existing = groups.get(key);
+    if (existing) {
+      existing.items.push(item);
+      return;
+    }
+    groups.set(key, {
+      key,
+      url,
+      fileName: fileNameFromUrl(url, `photo-${index + 1}.jpg`),
+      items: [item],
+    });
+  });
+  return Array.from(groups.values());
+}
+
+function buildComponentSummary(groups: PoseGroup[]): ComponentSummary[] {
+  const map = new Map<ComponentSummary["key"], ComponentSummary & { poseKeys: Set<string> }>();
+
+  groups.forEach((group, groupIndex) => {
+    for (const item of group.items) {
+      if (isNonProductionLineItem(item)) continue;
+      const parsed = parsePackageSlotLabel(item.product_name);
+      const label = parsed.baseLabel || clean(item.product_name) || "Item";
+      const key = `${label}__${parsed.slotTotal ?? "qty"}`;
+      const existing = map.get(key) ?? {
+        key,
+        label,
+        assignedSlots: 0,
+        slotTotal: parsed.slotTotal,
+        poseCount: 0,
+        assignments: [],
+        poseKeys: new Set<string>(),
+      };
+      const slotText =
+        parsed.slotIndex != null && parsed.slotTotal != null
+          ? `${parsed.slotIndex} of ${parsed.slotTotal}`
+          : "";
+      existing.assignedSlots += itemQuantity(item);
+      const poseKey = `${groupIndex}-${group.fileName}-${slotText}`;
+      if (!existing.poseKeys.has(poseKey)) {
+        existing.assignments.push({ poseIndex: groupIndex, fileName: group.fileName, slotText });
+        existing.poseKeys.add(poseKey);
+      }
+      existing.poseCount = new Set(existing.assignments.map((assignment) => assignment.poseIndex)).size;
+      if (parsed.slotTotal != null) existing.slotTotal = parsed.slotTotal;
+      map.set(key, existing);
+    }
+  });
+
+  return Array.from(map.values()).map((summary) => ({
+    key: summary.key,
+    label: summary.label,
+    assignedSlots: summary.assignedSlots,
+    slotTotal: summary.slotTotal,
+    poseCount: summary.poseCount,
+    assignments: summary.assignments,
+  }));
 }
 
 function orderTotalCents(r: Row): number {
@@ -197,6 +388,7 @@ export default function MobileOrderDetailPage() {
           `id, created_at, status, parent_name, parent_email, parent_phone,
            customer_name, customer_email, package_name,
            subtotal_cents, tax_cents, total_cents, total_amount, currency,
+           cart_snapshot,
            payment_status, paid_at, stripe_payment_intent_id, stripe_checkout_session_id,
            special_notes, notes,
            student_id, school_id, class_id, project_id,
@@ -204,7 +396,7 @@ export default function MobileOrderDetailPage() {
            class:classes(class_name),
            school:schools(id, school_name),
            project:projects(id, title),
-           items:order_items(id, product_name, quantity, price, unit_price_cents, line_total_cents)`,
+           items:order_items(id, product_name, quantity, price, unit_price_cents, line_total_cents, sku)`,
         )
         .eq("id", id)
         .maybeSingle();
@@ -335,8 +527,10 @@ export default function MobileOrderDetailPage() {
     parentName ||
     "Customer";
   const classLabel = clean(klass?.class_name) || clean(student?.class_name);
-  const clientNote = clean(order.special_notes) || clean(order.notes);
-  const items = order.items ?? [];
+  const clientNote = cleanOrderCustomerNote(clean(order.special_notes) || clean(order.notes));
+  const items = resolveDisplayItems(order);
+  const poseGroups = buildPoseGroups(items.filter((item) => !isNonProductionLineItem(item)));
+  const componentSummary = buildComponentSummary(poseGroups);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
@@ -578,6 +772,260 @@ export default function MobileOrderDetailPage() {
           ) : null}
         </div>
 
+        {componentSummary.length > 0 ? (
+          <div
+            style={{
+              border: "1px solid #e5e7eb",
+              borderRadius: 14,
+              padding: 12,
+              background: "#f8fafc",
+              marginBottom: 12,
+            }}
+          >
+            <div
+              style={{
+                fontSize: 10,
+                letterSpacing: "0.12em",
+                fontWeight: 900,
+                color: "#6b7280",
+                marginBottom: 10,
+              }}
+            >
+              PACKAGE BREAKDOWN
+            </div>
+            <div style={{ display: "grid", gap: 10 }}>
+              {componentSummary.map((component) => (
+                <div key={component.key}>
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      gap: 10,
+                      alignItems: "flex-start",
+                    }}
+                  >
+                    <div style={{ minWidth: 0 }}>
+                      <div
+                        style={{
+                          fontSize: 13,
+                          fontWeight: 900,
+                          color: "#111827",
+                          lineHeight: 1.25,
+                        }}
+                      >
+                        {component.label}
+                      </div>
+                      <div style={{ fontSize: 11, color: "#6b7280", marginTop: 2 }}>
+                        {component.slotTotal && component.assignedSlots <= component.slotTotal
+                          ? `${component.assignedSlots} of ${component.slotTotal} slot${component.slotTotal === 1 ? "" : "s"}`
+                          : `${component.assignedSlots} slot${component.assignedSlots === 1 ? "" : "s"}`}
+                      </div>
+                    </div>
+                    <span
+                      style={{
+                        flexShrink: 0,
+                        fontSize: 11,
+                        color: "#0f766e",
+                        background: "#ecfeff",
+                        border: "1px solid #a5f3fc",
+                        borderRadius: 999,
+                        padding: "3px 8px",
+                        fontWeight: 900,
+                      }}
+                    >
+                      {component.poseCount} pose{component.poseCount === 1 ? "" : "s"}
+                    </span>
+                  </div>
+                  <div style={{ display: "grid", gap: 3, marginTop: 6 }}>
+                    {component.assignments.slice(0, 5).map((assignment, index) => (
+                      <div
+                        key={`${component.key}-${assignment.poseIndex}-${index}`}
+                        style={{
+                          fontSize: 11,
+                          color: "#6b7280",
+                          lineHeight: 1.35,
+                          wordBreak: "break-word",
+                        }}
+                      >
+                        <strong style={{ color: "#111827" }}>
+                          {poseLabel(assignment.poseIndex, poseGroups.length)}
+                        </strong>
+                        {assignment.slotText ? ` slot ${assignment.slotText}` : ""} ·{" "}
+                        {assignment.fileName}
+                      </div>
+                    ))}
+                    {component.assignments.length > 5 ? (
+                      <div style={{ fontSize: 11, color: "#6b7280" }}>
+                        + {component.assignments.length - 5} more assignment
+                        {component.assignments.length - 5 === 1 ? "" : "s"}
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
+
+        {poseGroups.length > 0 ? (
+          <div style={{ display: "grid", gap: 10, marginBottom: 12 }}>
+            <div
+              style={{
+                fontSize: 10,
+                letterSpacing: "0.12em",
+                fontWeight: 900,
+                color: "#6b7280",
+              }}
+            >
+              POSE ASSIGNMENTS
+            </div>
+            {poseGroups.map((group, groupIndex) => (
+              <div
+                key={group.key}
+                style={{
+                  display: "flex",
+                  gap: 10,
+                  padding: "10px 0",
+                  borderBottom: "1px dashed #e5e7eb",
+                }}
+              >
+                <div
+                  style={{
+                    width: 58,
+                    height: 76,
+                    borderRadius: 10,
+                    background: "#f3f4f6",
+                    overflow: "hidden",
+                    flexShrink: 0,
+                    border: "1px solid #e5e7eb",
+                  }}
+                >
+                  {group.url ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={group.url}
+                      alt=""
+                      style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                    />
+                  ) : null}
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      gap: 8,
+                      alignItems: "center",
+                    }}
+                  >
+                    <div style={{ fontSize: 13, fontWeight: 900, color: "#111827" }}>
+                      {poseLabel(groupIndex, poseGroups.length)}
+                    </div>
+                    <div
+                      style={{
+                        fontSize: 10,
+                        color: "#6b7280",
+                        background: "#f3f4f6",
+                        borderRadius: 999,
+                        padding: "3px 7px",
+                        fontWeight: 800,
+                      }}
+                    >
+                      {group.items.length} item{group.items.length === 1 ? "" : "s"}
+                    </div>
+                  </div>
+                  <div
+                    style={{
+                      fontSize: 11,
+                      color: "#6b7280",
+                      marginTop: 2,
+                      wordBreak: "break-word",
+                    }}
+                  >
+                    {group.fileName}
+                  </div>
+                  <div style={{ display: "grid", gap: 6, marginTop: 8 }}>
+                    {group.items.map((item, itemIndex) => {
+                      const slotText = itemSlotText(item);
+                      return (
+                        <div
+                          key={`${group.key}-${item.id}-${itemIndex}`}
+                          style={{
+                            border: "1px solid #e5e7eb",
+                            borderRadius: 10,
+                            padding: "8px 10px",
+                            background: "#fff",
+                          }}
+                        >
+                          <div
+                            style={{
+                              display: "flex",
+                              justifyContent: "space-between",
+                              gap: 8,
+                              alignItems: "flex-start",
+                            }}
+                          >
+                            <div
+                              style={{
+                                fontSize: 13,
+                                fontWeight: 800,
+                                color: "#111827",
+                                lineHeight: 1.3,
+                              }}
+                            >
+                              {itemBaseLabel(item)}
+                            </div>
+                            <div
+                              style={{
+                                fontSize: 12,
+                                fontWeight: 900,
+                                color: "#16a34a",
+                                whiteSpace: "nowrap",
+                              }}
+                            >
+                              Included
+                            </div>
+                          </div>
+                          <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginTop: 6 }}>
+                            <span
+                              style={{
+                                fontSize: 10,
+                                color: "#6b7280",
+                                background: "#f9fafb",
+                                border: "1px solid #e5e7eb",
+                                borderRadius: 999,
+                                padding: "2px 7px",
+                                fontWeight: 800,
+                              }}
+                            >
+                              Qty {itemQuantity(item)}
+                            </span>
+                            {slotText ? (
+                              <span
+                                style={{
+                                  fontSize: 10,
+                                  color: "#6b7280",
+                                  background: "#f9fafb",
+                                  border: "1px solid #e5e7eb",
+                                  borderRadius: 999,
+                                  padding: "2px 7px",
+                                  fontWeight: 800,
+                                }}
+                              >
+                                Slot {slotText}
+                              </span>
+                            ) : null}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : null}
+
         {items.length === 0 ? (
           <div
             style={{
@@ -618,6 +1066,7 @@ export default function MobileOrderDetailPage() {
                     : it.price != null
                       ? Math.round(it.price * 100 * qty)
                       : 0;
+              const included = it.included || lineCents === 0;
               return (
                 <div
                   key={it.id}
@@ -640,7 +1089,7 @@ export default function MobileOrderDetailPage() {
                       whiteSpace: "nowrap",
                     }}
                   >
-                    {clean(it.product_name) || "Item"}
+                    {itemBaseLabel(it)}
                   </span>
                   <span
                     style={{
@@ -661,7 +1110,7 @@ export default function MobileOrderDetailPage() {
                       fontVariantNumeric: "tabular-nums",
                     }}
                   >
-                    {money(lineCents, currency)}
+                    {included ? "Included" : money(lineCents, currency)}
                   </span>
                 </div>
               );
