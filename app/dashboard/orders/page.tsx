@@ -50,6 +50,7 @@ import {
   extractOrderPhotoUrls,
   isWebImageUrl,
   isPackageComponentItem,
+  parsePackageSlotLabel,
   parseOrderPhotoSelections,
   resolveOrderItemDisplayCents,
   resolveOrderTotalCents,
@@ -139,6 +140,22 @@ type CombinedOrderGroup = {
   isAnyNew: boolean;
 };
 
+type OrderedPhotoGroup = {
+  url: string | null;
+  originalUrl: string | null;
+  fallbackUrl: string | null;
+  fileName: string;
+  items: OrderItem[];
+};
+
+type PackageComponentSummary = {
+  key: string;
+  label: string;
+  assignedSlots: number;
+  slotTotal: number | null;
+  poseCount: number;
+};
+
 const STATUS_COLORS: Record<string, { bg: string; color: string; label: string }> = {
   new: { bg: "#fef2f2", color: "#ef4444", label: "New" },
   reviewed: { bg: "#fffbeb", color: "#d97706", label: "Reviewed" },
@@ -170,6 +187,70 @@ function clean(value: string | null | undefined) {
 /** Strip ORDER ITEM blocks, URLs, and technical lines — keep only human notes */
 function cleanNotes(value: string | null | undefined): string {
   return cleanOrderCustomerNote(value);
+}
+
+function orderItemQuantity(item: OrderItem) {
+  const qty = Number(item.quantity ?? 1);
+  return Number.isFinite(qty) && qty > 0 ? qty : 1;
+}
+
+function orderItemBaseLabel(item: OrderItem) {
+  const parsed = parsePackageSlotLabel(item.product_name);
+  return parsed.baseLabel || clean(item.product_name) || "Item";
+}
+
+function packageSlotText(item: OrderItem) {
+  const parsed = parsePackageSlotLabel(item.product_name);
+  if (parsed.slotIndex == null || parsed.slotTotal == null) return "";
+  return `Package slot ${parsed.slotIndex} of ${parsed.slotTotal}`;
+}
+
+function poseLabel(index: number, total: number) {
+  return `Pose ${index + 1}${total > 1 ? ` of ${total}` : ""}`;
+}
+
+function isNonProductionLineItem(item: OrderItem) {
+  const name = clean(item.product_name).toLowerCase();
+  return (
+    name.includes("shipping") ||
+    name.includes("handling") ||
+    name.includes("discount") ||
+    name.includes("premium backdrop")
+  );
+}
+
+function buildPackageComponentSummary(groups: OrderedPhotoGroup[]): PackageComponentSummary[] {
+  const map = new Map<string, PackageComponentSummary & { poses: Set<number> }>();
+
+  groups.forEach((group, groupIndex) => {
+    for (const item of group.items) {
+      if (isNonProductionLineItem(item)) continue;
+      const parsed = parsePackageSlotLabel(item.product_name);
+      const label = parsed.baseLabel || clean(item.product_name) || "Item";
+      const key = `${label}__${parsed.slotTotal ?? "qty"}`;
+      const existing = map.get(key) ?? {
+        key,
+        label,
+        assignedSlots: 0,
+        slotTotal: parsed.slotTotal,
+        poseCount: 0,
+        poses: new Set<number>(),
+      };
+      existing.assignedSlots += orderItemQuantity(item);
+      existing.poses.add(groupIndex);
+      existing.poseCount = existing.poses.size;
+      if (parsed.slotTotal != null) existing.slotTotal = parsed.slotTotal;
+      map.set(key, existing);
+    }
+  });
+
+  return Array.from(map.values()).map((summary) => ({
+    key: summary.key,
+    label: summary.label,
+    assignedSlots: summary.assignedSlots,
+    slotTotal: summary.slotTotal,
+    poseCount: summary.poseCount,
+  }));
 }
 
 function singleRelation<T>(value: RelatedRow<T>): T | null {
@@ -355,7 +436,10 @@ function buildManifest(order: Order) {
                 resolveOrderItemDisplayCents(item, order.items, orderTotalCents, index),
                 order.currency?.toUpperCase() || "CAD",
               );
-          return `${index + 1}. ${item.product_name ?? "Item"} | Qty: ${qty} | Total: ${total}`;
+          const slot = packageSlotText(item);
+          const poseUrl = dashboardPhotoUrl(item.sku);
+          const poseFile = poseUrl ? fileNameFromUrl(poseUrl, `photo-${index + 1}.jpg`) : "—";
+          return `${index + 1}. ${orderItemBaseLabel(item)} | Qty: ${qty}${slot ? ` | ${slot}` : ""} | Pose/File: ${poseFile} | Total: ${total}`;
         })
       : [`1. ${order.package_name || "Package"} | Qty: 1 | Total: ${moneyFromCents(orderTotalCents, order.currency?.toUpperCase() || "CAD")}`]),
     ``,
@@ -557,9 +641,13 @@ function buildOrderSummaryHtml(order: Order) {
         ? "Included"
         : moneyFromCents(resolveOrderItemDisplayCents(item, items, orderTotalCents, index), currency);
       const itemUrl = dashboardPhotoUrl(item.sku);
+      const slot = packageSlotText(item) || "—";
+      const poseFile = itemUrl ? fileNameFromUrl(itemUrl, `photo-${index + 1}.jpg`) : "—";
       return `<tr>
-        <td>${item.product_name ?? "Item"}</td>
+        <td>${orderItemBaseLabel(item)}</td>
         <td>${qty}</td>
+        <td>${slot}</td>
+        <td>${poseFile}</td>
         <td>${total}</td>
         <td>${itemUrl ? `<a href="${itemUrl}" target="_blank" rel="noopener">Open original</a>` : "—"}</td>
       </tr>`;
@@ -625,7 +713,7 @@ pre{white-space:pre-wrap;line-height:1.55;font-size:12px;background:#f9fafb;bord
   <div class="card" style="margin-bottom:18px;">
     <div class="small">Items</div>
     <table>
-      <thead><tr><th>Item</th><th>Qty</th><th>Total</th><th>Original</th></tr></thead>
+      <thead><tr><th>Item</th><th>Qty</th><th>Package Slot</th><th>Pose / File</th><th>Total</th><th>Original</th></tr></thead>
       <tbody>${rows}</tbody>
     </table>
   </div>
@@ -1206,9 +1294,9 @@ function OrdersPageContent() {
 
 
   const selectedOrderedPhotoGroups = useMemo(() => {
-    if (!selected) return [] as Array<{ url: string | null; originalUrl: string | null; fallbackUrl: string | null; fileName: string; items: OrderItem[] }>;
+    if (!selected) return [] as OrderedPhotoGroup[];
 
-    const buckets = new Map<string, { url: string | null; originalUrl: string | null; fallbackUrl: string | null; fileName: string; items: OrderItem[] }>();
+    const buckets = new Map<string, OrderedPhotoGroup>();
     const orderTotalCents = resolveOrderTotalCents(selected, selected.items);
     const noteSelections = parseOrderPhotoSelections(noteTextForOrder(selected));
     const studentFallbackUrl = dashboardPhotoUrl(selected.student?.photo_url);
@@ -1294,6 +1382,11 @@ function OrdersPageContent() {
 
     return Array.from(buckets.values());
   }, [selected]);
+
+  const selectedPackageComponents = useMemo(
+    () => buildPackageComponentSummary(selectedOrderedPhotoGroups),
+    [selectedOrderedPhotoGroups],
+  );
 
   const combinedRows = useMemo<CombinedOrderGroup[]>(() => {
     const groups = new Map<string, Order[]>();
@@ -2379,11 +2472,44 @@ function OrdersPageContent() {
                 {" · "}{selectedOrderedPhotoGroups.length} photo{selectedOrderedPhotoGroups.length === 1 ? "" : "s"}
               </div>
 
+              {selectedPackageComponents.length > 0 ? (
+                <div style={{ background: "#f8fafc", border: `1px solid ${borderColor}`, borderRadius: 16, padding: 14, marginBottom: 16 }}>
+                  <div style={{ fontSize: 11, color: textMuted, fontWeight: 900, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 10 }}>Package Breakdown</div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    {selectedPackageComponents.map((component) => (
+                      <div key={component.key} style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start" }}>
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{ fontSize: 13, fontWeight: 800, color: textPrimary, lineHeight: 1.35 }}>{component.label}</div>
+                          <div style={{ fontSize: 11, color: textMuted, marginTop: 2 }}>
+                            {component.slotTotal
+                              ? `${component.assignedSlots} of ${component.slotTotal} package slot${component.slotTotal === 1 ? "" : "s"} assigned`
+                              : `Qty ${component.assignedSlots}`}
+                          </div>
+                        </div>
+                        <div style={{ flexShrink: 0, fontSize: 11, color: "#0f766e", background: "#ecfeff", border: "1px solid #a5f3fc", borderRadius: 999, padding: "3px 8px", fontWeight: 800 }}>
+                          {component.poseCount} pose{component.poseCount === 1 ? "" : "s"}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+
               {/* ── Order Items with Photos ── */}
               <div style={{ display: "flex", flexDirection: "column", gap: 16, marginBottom: 20 }}>
                 {selectedOrderedPhotoGroups.map((photoGroup, groupIndex) => (
                   <div key={`${photoGroup.fileName}-${groupIndex}`} style={{ borderBottom: `1px solid ${borderColor}`, paddingBottom: 16 }}>
-                    <div style={{ fontSize: 13, fontWeight: 700, color: textMuted, marginBottom: 8 }}>{photoGroup.fileName}</div>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, marginBottom: 8 }}>
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ fontSize: 13, fontWeight: 900, color: textPrimary }}>
+                          {poseLabel(groupIndex, selectedOrderedPhotoGroups.length)}
+                        </div>
+                        <div style={{ fontSize: 12, fontWeight: 700, color: textMuted, marginTop: 2, wordBreak: "break-word" }}>{photoGroup.fileName}</div>
+                      </div>
+                      <div style={{ flexShrink: 0, fontSize: 11, color: textMuted, background: "#f3f4f6", borderRadius: 999, padding: "3px 8px", fontWeight: 800 }}>
+                        {photoGroup.items.length} item{photoGroup.items.length === 1 ? "" : "s"}
+                      </div>
+                    </div>
                     <div style={{ display: "flex", gap: 16, alignItems: "flex-start" }}>
                       {/* Photo */}
                       <div style={{ width: 140, flexShrink: 0 }}>
@@ -2424,13 +2550,21 @@ function OrdersPageContent() {
                           const amountLabel = includedInPackage
                             ? "Included"
                             : moneyFromCents(item.line_total_cents ?? 0, selected.currency?.toUpperCase() || "CAD");
+                          const slot = packageSlotText(item);
+                          const itemQty = orderItemQuantity(item);
 
                           return (
-                            <div key={`${photoGroup.fileName}-${item.product_name}-${itemIndex}`} style={{ padding: "10px 14px", background: "#f9fafb", borderRadius: 4, marginBottom: 8, border: `1px solid ${borderColor}` }}>
+                            <div key={`${photoGroup.fileName}-${item.product_name}-${itemIndex}`} style={{ padding: "10px 14px", background: "#f9fafb", borderRadius: 8, marginBottom: 8, border: `1px solid ${borderColor}` }}>
                               <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
-                                <div>
-                                  <div style={{ fontSize: 14, fontWeight: 700, color: textPrimary }}>{item.product_name ?? "Item"}</div>
-                                  <div style={{ fontSize: 12, color: textMuted, marginTop: 2 }}>Qty: {item.quantity ?? 1}</div>
+                                <div style={{ minWidth: 0 }}>
+                                  <div style={{ fontSize: 14, fontWeight: 800, color: textPrimary, lineHeight: 1.35 }}>{orderItemBaseLabel(item)}</div>
+                                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 6 }}>
+                                    <span style={{ fontSize: 11, color: textMuted, background: "#fff", border: `1px solid ${borderColor}`, borderRadius: 999, padding: "2px 7px", fontWeight: 700 }}>Qty {itemQty}</span>
+                                    {slot ? (
+                                      <span style={{ fontSize: 11, color: textMuted, background: "#fff", border: `1px solid ${borderColor}`, borderRadius: 999, padding: "2px 7px", fontWeight: 700 }}>{slot}</span>
+                                    ) : null}
+                                    <span style={{ fontSize: 11, color: textMuted, background: "#fff", border: `1px solid ${borderColor}`, borderRadius: 999, padding: "2px 7px", fontWeight: 700 }}>{poseLabel(groupIndex, selectedOrderedPhotoGroups.length)}</span>
+                                  </div>
                                 </div>
                                 <div style={{ fontSize: 14, fontWeight: 700, color: includedInPackage ? "#16a34a" : textPrimary, whiteSpace: "nowrap" }}>{amountLabel}</div>
                               </div>

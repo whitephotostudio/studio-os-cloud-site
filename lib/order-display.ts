@@ -21,6 +21,12 @@ export type ParsedOrderPhotoSelection = {
   url: string;
 };
 
+export type ParsedPackageSlotLabel = {
+  baseLabel: string;
+  slotIndex: number | null;
+  slotTotal: number | null;
+};
+
 function clean(value: string | null | undefined) {
   return (value ?? "").trim();
 }
@@ -119,6 +125,41 @@ function normalizeDisplayName(value: string | null | undefined) {
     .toLowerCase()
     .replace(/\s+/g, " ")
     .replace(/[–—]/g, "-");
+}
+
+export function parsePackageSlotLabel(
+  value: string | null | undefined,
+): ParsedPackageSlotLabel {
+  const label = clean(value);
+  const match = label.match(/^(.*?)\s*\((\d+)\s+of\s+(\d+)\)\s*$/i);
+  if (!match) {
+    return {
+      baseLabel: label,
+      slotIndex: null,
+      slotTotal: null,
+    };
+  }
+
+  const slotIndex = Number.parseInt(match[2], 10);
+  const slotTotal = Number.parseInt(match[3], 10);
+  if (
+    !Number.isFinite(slotIndex) ||
+    !Number.isFinite(slotTotal) ||
+    slotIndex <= 0 ||
+    slotTotal <= 0
+  ) {
+    return {
+      baseLabel: label,
+      slotIndex: null,
+      slotTotal: null,
+    };
+  }
+
+  return {
+    baseLabel: clean(match[1]) || label,
+    slotIndex,
+    slotTotal,
+  };
 }
 
 function isSeparateChargeItem(item: OrderItemMoneyLike) {

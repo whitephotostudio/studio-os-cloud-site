@@ -6,6 +6,7 @@ import {
 import {
   cleanOrderCustomerNote,
   isWebImageUrl,
+  parsePackageSlotLabel,
   parseOrderPhotoSelections,
 } from "@/lib/order-display";
 import { r2KeyFromAnyUrl, r2PresignedGetUrl } from "@/lib/r2-signed-urls";
@@ -224,6 +225,11 @@ function resolveOrderDisplayItems(order: any): { productName: string; photoUrl: 
   return [];
 }
 
+function itemQuantity(value: number | null | undefined) {
+  const qty = Number(value ?? 1);
+  return Number.isFinite(qty) && qty > 0 ? qty : 1;
+}
+
 /**
  * Build the order summary HTML.
  * photoFileMap maps original photo URLs → local filenames in the ZIP
@@ -251,14 +257,40 @@ function buildOrderSummaryHtml(order: any, branding: StudioBranding, photoFileMa
     // Look up local filename; fall back to encoded remote URL
     const localFile = photoFileMap.get(item.photoUrl) ?? "";
     const imgSrc = localFile || (item.photoUrl ? encodePhotoUrl(item.photoUrl) : "");
+    const parsedLabel = parsePackageSlotLabel(item.productName);
+    const productName = parsedLabel.baseLabel || item.productName;
+    const slotLabel =
+      parsedLabel.slotIndex != null && parsedLabel.slotTotal != null
+        ? `Package slot ${parsedLabel.slotIndex} of ${parsedLabel.slotTotal}`
+        : "";
+    const poseFile = item.photoUrl ? fileNameFromUrl(item.photoUrl, `photo-${i + 1}.jpg`) : "";
     photoCardsHtml += `
       <div style="display:inline-block;vertical-align:top;margin:0 24px 24px 0;text-align:center;width:200px;">
         ${imgSrc ? `<img src="${esc(imgSrc)}" style="width:190px;height:230px;object-fit:cover;border-radius:4px;border:1px solid #ddd;background:#f5f5f5;" />` : `<div style="width:190px;height:230px;background:#f5f5f5;border-radius:4px;border:1px solid #ddd;display:flex;align-items:center;justify-content:center;color:#999;font-size:13px;">No photo</div>`}
-        <div style="margin-top:8px;font-size:14px;font-weight:600;color:#111;">${esc(item.productName)}</div>
-        <div style="font-size:12px;color:#c0392b;font-weight:700;">#${String(i + 1).padStart(4, "0")}</div>
-        <div style="font-size:13px;color:#555;">&times; ${item.quantity}</div>
+        <div style="margin-top:8px;font-size:14px;font-weight:700;color:#111;">Pose ${i + 1}</div>
+        <div style="font-size:13px;font-weight:600;color:#333;line-height:1.35;">${esc(productName)}</div>
+        ${slotLabel ? `<div style="font-size:12px;color:#0f766e;font-weight:700;">${esc(slotLabel)}</div>` : ""}
+        ${poseFile ? `<div style="font-size:11px;color:#777;word-break:break-word;">${esc(poseFile)}</div>` : ""}
+        <div style="font-size:13px;color:#555;">Qty ${itemQuantity(item.quantity)}</div>
       </div>`;
   });
+
+  const itemRowsHtml = displayItems.map((item, index) => {
+    const parsedLabel = parsePackageSlotLabel(item.productName);
+    const productName = parsedLabel.baseLabel || item.productName;
+    const slotLabel =
+      parsedLabel.slotIndex != null && parsedLabel.slotTotal != null
+        ? `Package slot ${parsedLabel.slotIndex} of ${parsedLabel.slotTotal}`
+        : "—";
+    const poseFile = item.photoUrl ? fileNameFromUrl(item.photoUrl, `photo-${index + 1}.jpg`) : "—";
+    return `<tr>
+      <td>${esc(productName)}</td>
+      <td>${itemQuantity(item.quantity)}</td>
+      <td>${esc(slotLabel)}</td>
+      <td>Pose ${index + 1}</td>
+      <td>${esc(poseFile)}</td>
+    </tr>`;
+  }).join("");
 
   // Delivery note
   const deliveryMatch = rawNotes.match(/Delivery:\s*(\w+)/i);
@@ -306,6 +338,23 @@ function buildOrderSummaryHtml(order: any, branding: StudioBranding, photoFileMa
   <!-- Photo cards -->
   <div style="padding:28px 36px;">
     ${photoCardsHtml || '<div style="color:#999;font-size:14px;">No photos in this order.</div>'}
+  </div>
+
+  <!-- Production breakdown -->
+  <div style="margin:0 36px 24px;border:1px solid #e0e0e0;border-radius:10px;overflow:hidden;">
+    <div style="padding:10px 14px;background:#f8fafc;font-size:11px;text-transform:uppercase;letter-spacing:0.08em;color:#555;font-weight:800;">Package / Pose Breakdown</div>
+    <table style="width:100%;border-collapse:collapse;font-size:12px;">
+      <thead>
+        <tr style="background:#fff;">
+          <th style="text-align:left;padding:9px 12px;border-top:1px solid #e0e0e0;border-bottom:1px solid #e0e0e0;">Item</th>
+          <th style="text-align:left;padding:9px 12px;border-top:1px solid #e0e0e0;border-bottom:1px solid #e0e0e0;">Qty</th>
+          <th style="text-align:left;padding:9px 12px;border-top:1px solid #e0e0e0;border-bottom:1px solid #e0e0e0;">Package slot</th>
+          <th style="text-align:left;padding:9px 12px;border-top:1px solid #e0e0e0;border-bottom:1px solid #e0e0e0;">Pose</th>
+          <th style="text-align:left;padding:9px 12px;border-top:1px solid #e0e0e0;border-bottom:1px solid #e0e0e0;">File</th>
+        </tr>
+      </thead>
+      <tbody>${itemRowsHtml || '<tr><td colspan="5" style="padding:12px;color:#999;">No item rows found.</td></tr>'}</tbody>
+    </table>
   </div>
 
   <!-- Customer / Parent info -->
