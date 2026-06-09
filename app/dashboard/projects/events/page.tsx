@@ -135,6 +135,7 @@ export default function EventsPage() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
   // Context menu for individual cards
   const [contextMenuId, setContextMenuId] = useState<string | null>(null);
   const [contextMenuPos, setContextMenuPos] = useState<{ x: number; y: number } | null>(null);
@@ -230,6 +231,7 @@ export default function EventsPage() {
   async function handleDelete(ids: string[]) {
     if (!ids.length) return;
     setDeleting(true);
+    setDeleteError("");
     try {
       await Promise.all(
         ids.map((id) =>
@@ -249,6 +251,7 @@ export default function EventsPage() {
       setContextMenuPos(null);
     } catch (err) {
       console.error("Delete failed:", err);
+      setDeleteError(err instanceof Error ? err.message : "Delete failed.");
     } finally {
       setDeleting(false);
     }
@@ -649,7 +652,10 @@ export default function EventsPage() {
             )}
             <div style={{ display: "flex", gap: isMobile ? 8 : 0, alignItems: "center" }}>
               <button
-                onClick={() => setShowDeleteConfirm(true)}
+                onClick={() => {
+                  setDeleteError("");
+                  setShowDeleteConfirm(true);
+                }}
                 style={{ display: "flex", alignItems: "center", gap: 8, padding: isMobile ? "7px 12px" : "8px 16px", borderRadius: 10, border: "none", background: "#dc2626", color: "#fff", fontSize: isMobile ? 12 : 13, fontWeight: 700, cursor: "pointer" }}
               >
                 <Trash2 size={14} /> Delete
@@ -680,9 +686,17 @@ export default function EventsPage() {
               <p style={{ margin: "0 0 24px", color: "#6b7280", fontSize: 14, lineHeight: 1.5 }}>
                 Are you sure you want to delete {selectedIds.size === 1 ? "this event" : `these ${selectedIds.size} events`}? This will also remove all photos and albums associated with {selectedIds.size === 1 ? "it" : "them"}. This action cannot be undone.
               </p>
+              {deleteError ? (
+                <div style={{ margin: "0 0 16px", borderRadius: 10, background: "#fef2f2", border: "1px solid #fecaca", color: "#991b1b", padding: "10px 12px", fontSize: 13, fontWeight: 600 }}>
+                  {deleteError}
+                </div>
+              ) : null}
               <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
                 <button
-                  onClick={() => setShowDeleteConfirm(false)}
+                  onClick={() => {
+                    setDeleteError("");
+                    setShowDeleteConfirm(false);
+                  }}
                   disabled={deleting}
                   style={{ padding: "10px 18px", borderRadius: 10, border: "1px solid #d1d5db", background: "#fff", color: "#374151", fontSize: 14, fontWeight: 600, cursor: "pointer" }}
                 >

@@ -21,7 +21,6 @@ import {
   SIGNED_URL_TTL_DASHBOARD_SECONDS,
 } from "@/lib/storage-images";
 import { guardAgreement } from "@/lib/require-agreement";
-import { deleteProjectCascade } from "@/lib/delete-cascade";
 
 export const dynamic = "force-dynamic";
 
@@ -1012,7 +1011,7 @@ export async function DELETE(
     // Verify the project belongs to the photographer before deleting
     const { data: projectRow, error: projectError } = await service
       .from("projects")
-      .select("id,title,project_name,name")
+      .select("id,title,status")
       .eq("id", projectId)
       .eq("photographer_id", photographerRow.id)
       .maybeSingle();
@@ -1033,9 +1032,6 @@ export async function DELETE(
       .select("id", { count: "exact", head: true })
       .eq("project_id", projectId);
 
-    const cascade = await deleteProjectCascade(service, projectId, {
-      preserveProject: true,
-    });
     const { error: softDeleteError } = await service
       .from("projects")
       .update({
@@ -1057,15 +1053,14 @@ export async function DELETE(
       targetPhotographerId: photographerRow.id,
       before: {
         title: projectRow.title ?? null,
-        project_name: projectRow.project_name ?? null,
-        name: projectRow.name ?? null,
+        status: projectRow.status ?? null,
       },
       metadata: {
         mediaCount: mediaCount ?? 0,
         albumCount: albumCount ?? 0,
-        cascade,
         hardDeleted: false,
         tombstonePreserved: true,
+        cleanupDeferred: true,
       },
       result: "ok",
     });
