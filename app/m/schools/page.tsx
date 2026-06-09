@@ -33,6 +33,11 @@ type CountRow = { school_id: string; n: number };
 
 type StudentPhotoRow = { school_id: string; photo_url: string | null };
 
+type EventProjectRow = {
+  linked_local_school_id: string | null;
+  linked_school_id?: string | null;
+};
+
 function clean(v: string | null | undefined): string {
   return (v ?? "").trim();
 }
@@ -112,21 +117,40 @@ export default function MobileSchoolsPage() {
         .eq("photographer_id", photog.id)
         .order("created_at", { ascending: false });
 
+      const { data: projectRows, error: pErr } = await supabase
+        .from("projects")
+        .select("linked_local_school_id, linked_school_id")
+        .eq("photographer_id", photog.id)
+        .eq("workflow_type", "event");
+
       if (cancelled) return;
-      if (sErr) {
-        setError(sErr.message);
+      if (sErr || pErr) {
+        setError(sErr?.message || pErr?.message || "Failed to load schools");
         setSchools([]);
         setLoading(false);
         return;
       }
-      setSchools((schoolRows ?? []) as SchoolRow[]);
 
-      if (!schoolRows?.length) {
+      const eventProjects = (projectRows ?? []) as EventProjectRow[];
+      const eventLocalSchoolIds = new Set(
+        eventProjects.map((p) => clean(p.linked_local_school_id)).filter(Boolean),
+      );
+      const eventLinkedSchoolIds = new Set(
+        eventProjects.map((p) => clean(p.linked_school_id)).filter(Boolean),
+      );
+      const visibleSchools = ((schoolRows ?? []) as SchoolRow[]).filter((school) => {
+        const localId = clean(school.local_school_id);
+        if (localId && eventLocalSchoolIds.has(localId)) return false;
+        return !eventLinkedSchoolIds.has(clean(school.id));
+      });
+      setSchools(visibleSchools);
+
+      if (!visibleSchools.length) {
         setLoading(false);
         return;
       }
 
-      const schoolIds = schoolRows.map((s) => s.id);
+      const schoolIds = visibleSchools.map((s) => s.id);
 
       const [studentsRes, ordersRes] = await Promise.all([
         // Pull photo_url too so we can paint a hero cover on each card —

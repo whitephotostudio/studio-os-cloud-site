@@ -59,6 +59,8 @@ type ProjectRow = {
   event_date: string | null;
   created_at: string | null;
   status: string | null;
+  linked_local_school_id?: string | null;
+  linked_school_id?: string | null;
 };
 
 type StudentRow = {
@@ -775,7 +777,7 @@ function DashboardPageContent() {
           .order("created_at", { ascending: false }),
         supabase
           .from("projects")
-          .select("id,title,workflow_type,client_name,event_date,created_at,status")
+          .select("id,title,workflow_type,client_name,event_date,created_at,status,linked_local_school_id,linked_school_id")
           .eq("photographer_id", photographerRow.id)
           .order("created_at", { ascending: false }),
         supabase
@@ -815,9 +817,22 @@ function DashboardPageContent() {
         throw new Error(eventPayload.message || "Failed to load event projects");
       }
 
-      const dedupedSchools = dedupeSchools((schoolRes.data ?? []) as SchoolRow[]);
+      const projectRows = (projectRes.data ?? []) as ProjectRow[];
+      const eventProjects = projectRows.filter((p) => clean(p.workflow_type) === "event");
+      const eventLocalSchoolIds = new Set(
+        eventProjects.map((p) => clean(p.linked_local_school_id)).filter(Boolean),
+      );
+      const eventLinkedSchoolIds = new Set(
+        eventProjects.map((p) => clean(p.linked_school_id)).filter(Boolean),
+      );
+      const schoolRows = ((schoolRes.data ?? []) as SchoolRow[]).filter((school) => {
+        const localId = clean(school.local_school_id);
+        if (localId && eventLocalSchoolIds.has(localId)) return false;
+        return !eventLinkedSchoolIds.has(clean(school.id));
+      });
+      const dedupedSchools = dedupeSchools(schoolRows);
       setSchools(dedupedSchools);
-      setProjects((projectRes.data ?? []) as ProjectRow[]);
+      setProjects(projectRows);
       setEventProjects(eventPayload.projects ?? []);
       setOrders(((orderRes.data ?? []) as OrderRow[]).filter(isCustomerOrder));
 

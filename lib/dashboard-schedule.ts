@@ -16,11 +16,14 @@ type ProjectScheduleRow = {
   gallery_slug: string | null;
   gallery_settings: unknown;
   created_at: string | null;
+  linked_local_school_id?: string | null;
+  linked_school_id?: string | null;
 };
 
 type SchoolScheduleRow = {
   id: string;
   school_name: string | null;
+  local_school_id: string | null;
   shoot_date: string | null;
   status: string | null;
   gallery_slug: string | null;
@@ -40,13 +43,13 @@ export async function listScheduleItems(
     service
       .from("projects")
       .select(
-        "id,title,client_name,event_date,shoot_date,portal_status,status,gallery_slug,gallery_settings,created_at",
+        "id,title,client_name,event_date,shoot_date,portal_status,status,gallery_slug,gallery_settings,created_at,linked_local_school_id,linked_school_id",
       )
       .eq("photographer_id", photographerId)
       .eq("workflow_type", "event"),
     service
       .from("schools")
-      .select("id,school_name,shoot_date,status,gallery_slug,gallery_settings,created_at")
+      .select("id,school_name,local_school_id,shoot_date,status,gallery_slug,gallery_settings,created_at")
       .eq("photographer_id", photographerId),
   ]);
 
@@ -55,7 +58,15 @@ export async function listScheduleItems(
 
   const items: ScheduleItem[] = [];
 
-  for (const project of (projectsResult.data ?? []) as ProjectScheduleRow[]) {
+  const projectRows = (projectsResult.data ?? []) as ProjectScheduleRow[];
+  const eventLocalSchoolIds = new Set(
+    projectRows.map((p) => clean(p.linked_local_school_id)).filter(Boolean),
+  );
+  const eventLinkedSchoolIds = new Set(
+    projectRows.map((p) => clean(p.linked_school_id)).filter(Boolean),
+  );
+
+  for (const project of projectRows) {
     const date = normalizeScheduleDate(project.event_date || project.shoot_date);
     if (!date) continue;
     const title = clean(project.title) || clean(project.client_name) || "Untitled event";
@@ -80,6 +91,10 @@ export async function listScheduleItems(
   }
 
   for (const school of (schoolsResult.data ?? []) as SchoolScheduleRow[]) {
+    const localId = clean(school.local_school_id);
+    if (localId && eventLocalSchoolIds.has(localId)) continue;
+    if (eventLinkedSchoolIds.has(clean(school.id))) continue;
+
     const date = normalizeScheduleDate(school.shoot_date);
     if (!date) continue;
     const schedule = normalizeEventGallerySettings(school.gallery_settings).schedule;
