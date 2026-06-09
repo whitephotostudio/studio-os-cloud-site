@@ -141,6 +141,36 @@ function buildGalleryUrl(
   return `https://www.studiooscloud.com/parents?${params.toString()}`;
 }
 
+async function projectSlugExists(
+  service: ReturnType<typeof createDashboardServiceClient>,
+  candidate: string,
+) {
+  const [{ data: projectMatch, error: projectError }, { data: schoolMatch, error: schoolError }] =
+    await Promise.all([
+      service.from("projects").select("id").eq("gallery_slug", candidate).maybeSingle(),
+      service.from("schools").select("id").eq("gallery_slug", candidate).maybeSingle(),
+    ]);
+
+  if (projectError) throw projectError;
+  if (schoolError) throw schoolError;
+  return Boolean(projectMatch?.id || schoolMatch?.id);
+}
+
+async function uniqueProjectSlug(
+  service: ReturnType<typeof createDashboardServiceClient>,
+  title: string,
+) {
+  const base = slugify(title);
+  let candidate = base;
+
+  for (let suffix = 2; suffix <= 50; suffix++) {
+    if (!(await projectSlugExists(service, candidate))) return candidate;
+    candidate = `${base}-${suffix}`;
+  }
+
+  return `${base}-${Date.now().toString(36)}`;
+}
+
 function clientContactId(email: string) {
   const safe = email.replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
   return `desktop-client-${safe || "contact"}`;
@@ -423,7 +453,7 @@ export async function POST(request: NextRequest) {
 
     if (!projectId) {
       // Create new project
-      const slug = slugify(title);
+      const slug = await uniqueProjectSlug(service, title);
       const { data: inserted, error: insertError } = await service
         .from("projects")
         .insert({
