@@ -42,6 +42,7 @@ type SchoolCard = {
 type ProjectRow = {
   id: string;
   title: string | null;
+  client_name?: string | null;
   workflow_type: string | null;
   linked_local_school_id: string | null;
   linked_school_id?: string | null;
@@ -74,6 +75,10 @@ const navActive: React.CSSProperties = {
 
 function clean(value: string | null | undefined) {
   return (value ?? "").trim();
+}
+
+function normalizeLookupName(value: string | null | undefined) {
+  return clean(value).toLowerCase().replace(/[^a-z0-9]+/g, "");
 }
 
 function normalizeRole(rawRole: string | null | undefined): string {
@@ -203,7 +208,7 @@ export default function SchoolsPage() {
 
       const { data: projectRows } = await supabase
         .from("projects")
-        .select("id,title,workflow_type,linked_local_school_id,linked_school_id,cover_photo_url,cover_focal_x,cover_focal_y")
+        .select("id,title,client_name,workflow_type,linked_local_school_id,linked_school_id,cover_photo_url,cover_focal_x,cover_focal_y")
         .eq("photographer_id", photographerRow.id)
         .in("workflow_type", ["event", "school"]);
 
@@ -214,6 +219,11 @@ export default function SchoolsPage() {
       );
       const eventLinkedSchoolIds = new Set(
         eventProjects.map((p) => clean(p.linked_school_id)).filter(Boolean),
+      );
+      const eventNameKeys = new Set(
+        eventProjects
+          .flatMap((p) => [normalizeLookupName(p.title), normalizeLookupName(p.client_name)])
+          .filter(Boolean),
       );
       const visibleRawSchools = rawSchools.filter((school) => {
         const localId = clean(school.local_school_id);
@@ -299,6 +309,13 @@ export default function SchoolsPage() {
           coverFocalX: schoolCoverBySchoolId.get(school.id)?.fx ?? schoolCoverByLocalId.get(clean(school.local_school_id))?.fx ?? 0.5,
           coverFocalY: schoolCoverBySchoolId.get(school.id)?.fy ?? schoolCoverByLocalId.get(clean(school.local_school_id))?.fy ?? 0.5,
         };
+      }).filter((card) => {
+        const isEmptyShell =
+          card.peopleCount === 0 &&
+          card.classesCount === 0 &&
+          card.imagesCount === 0;
+        if (!isEmptyShell) return true;
+        return !eventNameKeys.has(normalizeLookupName(card.school_name));
       });
 
       setSchools(cards);

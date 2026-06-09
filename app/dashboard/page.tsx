@@ -175,6 +175,10 @@ function clean(value: string | null | undefined) {
   return (value ?? "").trim();
 }
 
+function normalizeLookupName(value: string | null | undefined) {
+  return clean(value).toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
+
 /** "Good morning", "Good afternoon", "Good evening" — used in the header eyebrow. */
 function greetingWord() {
   const h = new Date().getHours();
@@ -825,13 +829,17 @@ function DashboardPageContent() {
       const eventLinkedSchoolIds = new Set(
         eventProjects.map((p) => clean(p.linked_school_id)).filter(Boolean),
       );
+      const eventNameKeys = new Set(
+        eventProjects
+          .flatMap((p) => [normalizeLookupName(p.title), normalizeLookupName(p.client_name)])
+          .filter(Boolean),
+      );
       const schoolRows = ((schoolRes.data ?? []) as SchoolRow[]).filter((school) => {
         const localId = clean(school.local_school_id);
         if (localId && eventLocalSchoolIds.has(localId)) return false;
         return !eventLinkedSchoolIds.has(clean(school.id));
       });
       const dedupedSchools = dedupeSchools(schoolRows);
-      setSchools(dedupedSchools);
       setProjects(projectRows);
       setEventProjects(eventPayload.projects ?? []);
       setOrders(((orderRes.data ?? []) as OrderRow[]).filter(isCustomerOrder));
@@ -844,8 +852,9 @@ function DashboardPageContent() {
         setDownloadActivity([]);
       }
 
+      let studentRows = [] as StudentRow[];
       if (dedupedSchools.length > 0) {
-        const { data: studentRows, error: studentErr } = await supabase
+        const { data: fetchedStudentRows, error: studentErr } = await supabase
           .from("students")
           .select("school_id,photo_url")
           .in(
@@ -854,10 +863,17 @@ function DashboardPageContent() {
           );
 
         if (studentErr) throw studentErr;
-        setStudents((studentRows ?? []) as StudentRow[]);
-      } else {
-        setStudents([]);
+        studentRows = (fetchedStudentRows ?? []) as StudentRow[];
       }
+      const schoolIdsWithPeople = new Set(
+        studentRows.map((row) => clean(row.school_id)).filter(Boolean),
+      );
+      const visibleSchools = dedupedSchools.filter((school) => {
+        if (schoolIdsWithPeople.has(clean(school.id))) return true;
+        return !eventNameKeys.has(normalizeLookupName(school.school_name));
+      });
+      setSchools(visibleSchools);
+      setStudents(studentRows);
 
       if (studioAppRes && studioAppRes.ok) {
         const studioJson = (await studioAppRes.json().catch(() => null)) as

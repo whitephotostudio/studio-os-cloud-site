@@ -34,12 +34,18 @@ type CountRow = { school_id: string; n: number };
 type StudentPhotoRow = { school_id: string; photo_url: string | null };
 
 type EventProjectRow = {
+  title?: string | null;
+  client_name?: string | null;
   linked_local_school_id: string | null;
   linked_school_id?: string | null;
 };
 
 function clean(v: string | null | undefined): string {
   return (v ?? "").trim();
+}
+
+function normalizeLookupName(v: string | null | undefined): string {
+  return clean(v).toLowerCase().replace(/[^a-z0-9]+/g, "");
 }
 
 function buildShareUrl(origin: string, school: SchoolRow): string {
@@ -119,7 +125,7 @@ export default function MobileSchoolsPage() {
 
       const { data: projectRows, error: pErr } = await supabase
         .from("projects")
-        .select("linked_local_school_id, linked_school_id")
+        .select("title, client_name, linked_local_school_id, linked_school_id")
         .eq("photographer_id", photog.id)
         .eq("workflow_type", "event");
 
@@ -138,14 +144,19 @@ export default function MobileSchoolsPage() {
       const eventLinkedSchoolIds = new Set(
         eventProjects.map((p) => clean(p.linked_school_id)).filter(Boolean),
       );
+      const eventNameKeys = new Set(
+        eventProjects
+          .flatMap((p) => [normalizeLookupName(p.title), normalizeLookupName(p.client_name)])
+          .filter(Boolean),
+      );
       const visibleSchools = ((schoolRows ?? []) as SchoolRow[]).filter((school) => {
         const localId = clean(school.local_school_id);
         if (localId && eventLocalSchoolIds.has(localId)) return false;
         return !eventLinkedSchoolIds.has(clean(school.id));
       });
-      setSchools(visibleSchools);
 
       if (!visibleSchools.length) {
+        setSchools([]);
         setLoading(false);
         return;
       }
@@ -177,6 +188,11 @@ export default function MobileSchoolsPage() {
         const url = clean(row.photo_url);
         if (url && !covers[row.school_id]) covers[row.school_id] = url;
       }
+      const finalVisibleSchools = visibleSchools.filter((school) => {
+        if ((stuCounts[school.id] ?? 0) > 0) return true;
+        return !eventNameKeys.has(normalizeLookupName(school.school_name));
+      });
+      setSchools(finalVisibleSchools);
       setStudentsBySchool(stuCounts);
       setCoversBySchool(covers);
 

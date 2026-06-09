@@ -24,6 +24,7 @@ const AlbumPayloadSchema = z.object({
 const DesktopAccessBodySchema = z.object({
   localProjectId: z.string().max(128).nullable().optional(),
   cloudProjectId: z.string().max(128).nullable().optional(),
+  workflowType: z.string().max(64).nullable().optional(),
   title: z.string().max(500).nullable().optional(),
   clientName: z.string().max(500).nullable().optional(),
   clientEmail: z.string().max(500).nullable().optional(),
@@ -39,6 +40,13 @@ const DesktopAccessBodySchema = z.object({
 
 function clean(value: string | null | undefined) {
   return (value ?? "").trim();
+}
+
+function normalizeDesktopWorkflowType(value: string | null | undefined): "school" | "event" | null {
+  const raw = clean(value).toLowerCase();
+  if (raw === "school") return "school";
+  if (raw === "project" || raw === "event") return "event";
+  return null;
 }
 
 function normalizeEmail(value: string | null | undefined) {
@@ -237,9 +245,51 @@ export async function POST(request: NextRequest) {
     const preRelease = galleryStatus === "pre_released";
     const shootDate = clean(body.shootDate) || clean(body.eventDate);
     const nowIso = new Date().toISOString();
+    const requestedWorkflowType = normalizeDesktopWorkflowType(body.workflowType);
+
+    let matchedSchool: { id?: string | null; local_school_id?: string | null } | null = null;
+    if (localProjectId) {
+      const { data: schoolByLocalId, error: schoolByLocalIdError } = await service
+        .from("schools")
+        .select("id,local_school_id")
+        .eq("photographer_id", photographerId)
+        .eq("local_school_id", localProjectId)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (schoolByLocalIdError) throw schoolByLocalIdError;
+      matchedSchool = schoolByLocalId;
+    }
+
+    if (!matchedSchool?.id && title) {
+      const { data: schoolByName, error: schoolByNameError } = await service
+        .from("schools")
+        .select("id,local_school_id")
+        .eq("photographer_id", photographerId)
+        .ilike("school_name", title)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (schoolByNameError) throw schoolByNameError;
+      matchedSchool = schoolByName;
+    }
+
+    const matchedSchoolId = clean(matchedSchool?.id);
+    let matchedSchoolHasPeople = false;
+    if (matchedSchoolId) {
+      const { count, error: peopleCountError } = await service
+        .from("students")
+        .select("id", { count: "exact", head: true })
+        .eq("school_id", matchedSchoolId);
+      if (peopleCountError) throw peopleCountError;
+      matchedSchoolHasPeople = (count ?? 0) > 0;
+    }
 
     let projectId = cloudProjectId;
     let existingProjectAccess: {
+      workflow_type?: string | null;
       access_mode?: string | null;
       access_pin?: string | null;
       access_updated_at?: string | null;
@@ -252,7 +302,7 @@ export async function POST(request: NextRequest) {
       const { data: existing } = await service
         .from("projects")
         .select(
-          "id,access_mode,access_pin,access_updated_at,access_updated_source,gallery_settings",
+          "id,workflow_type,access_mode,access_pin,access_updated_at,access_updated_source,gallery_settings",
         )
         .eq("id", projectId)
         .eq("photographer_id", photographerId)
@@ -271,7 +321,7 @@ export async function POST(request: NextRequest) {
       const { data: linked } = await service
         .from("projects")
         .select(
-          "id,access_mode,access_pin,access_updated_at,access_updated_source,gallery_settings",
+          "id,workflow_type,access_mode,access_pin,access_updated_at,access_updated_source,gallery_settings",
         )
         .eq("linked_local_school_id", localProjectId)
         .eq("photographer_id", photographerId)
@@ -285,6 +335,16 @@ export async function POST(request: NextRequest) {
         existingProjectAccess = linked;
       }
     }
+
+    const existingWorkflowType = clean(existingProjectAccess?.workflow_type).toLowerCase();
+    const effectiveWorkflowType =
+      requestedWorkflowType ??
+      (matchedSchoolId &&
+      (matchedSchoolHasPeople || existingWorkflowType === "school" || !existingProjectAccess)
+        ? "school"
+        : "event");
+    const effectiveSourceType =
+      effectiveWorkflowType === "school" ? "hybrid" : "cloud_only";
 
     const applyIncomingProjectAccess = shouldApplyIncomingAccess({
       incomingUpdatedAt: body.accessUpdatedAt,
@@ -325,11 +385,14 @@ export async function POST(request: NextRequest) {
           // DB check constraints:
           //   workflow_type ∈ {school, event}
           //   source_type   ∈ {local_school_sync, cloud_only, hybrid}
-          // Desktop-synced galleries are recorded as cloud_only events.
-          workflow_type: "event",
-          source_type: "cloud_only",
+          workflow_type: effectiveWorkflowType,
+          source_type: effectiveSourceType,
           title,
           client_name: clientName || null,
+          linked_school_id:
+            effectiveWorkflowType === "school" && matchedSchoolId
+              ? matchedSchoolId
+              : null,
           linked_local_school_id: localProjectId || null,
           shoot_date: shootDate || null,
           event_date: shootDate || null,
@@ -354,8 +417,14 @@ export async function POST(request: NextRequest) {
       const { error: updateError } = await service
         .from("projects")
         .update({
+          workflow_type: effectiveWorkflowType,
+          source_type: effectiveSourceType,
           title,
           client_name: clientName || null,
+          linked_school_id:
+            effectiveWorkflowType === "school" && matchedSchoolId
+              ? matchedSchoolId
+              : null,
           ...(shootDate
             ? { shoot_date: shootDate, event_date: shootDate }
             : {}),
@@ -379,7 +448,7 @@ export async function POST(request: NextRequest) {
     const { data: projectRow, error: projectReadError } = await service
       .from("projects")
       .select(
-        "id,title,client_name,shoot_date,event_date,order_due_date,expiration_date,portal_status,pre_release,gallery_slug,gallery_settings,cover_photo_url,access_mode,access_pin,access_updated_at,access_updated_source,updated_at",
+        "id,title,client_name,workflow_type,linked_school_id,shoot_date,event_date,order_due_date,expiration_date,portal_status,pre_release,gallery_slug,gallery_settings,cover_photo_url,access_mode,access_pin,access_updated_at,access_updated_source,updated_at",
       )
       .eq("id", projectId)
       .single();
@@ -576,6 +645,8 @@ export async function POST(request: NextRequest) {
         id: projectId,
         title: projectRow?.title ?? title,
         client_name: projectRow?.client_name ?? clientName,
+        workflow_type: projectRow?.workflow_type ?? effectiveWorkflowType,
+        linked_school_id: projectRow?.linked_school_id ?? null,
         shoot_date: projectRow?.shoot_date ?? "",
         event_date: projectRow?.event_date ?? "",
         order_due_date: projectRow?.order_due_date ?? "",

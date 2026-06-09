@@ -26,6 +26,7 @@ type ProjectRow = {
   title?: string | null;
   client_name?: string | null;
   workflow_type?: string | null;
+  source_type?: string | null;
   status?: string | null;
   portal_status?: string | null;
   shoot_date?: string | null;
@@ -33,6 +34,8 @@ type ProjectRow = {
   cover_photo_url?: string | null;
   cover_focal_x?: number | null;
   cover_focal_y?: number | null;
+  linked_local_school_id?: string | null;
+  linked_school_id?: string | null;
 };
 
 type CollectionRow = {
@@ -46,8 +49,22 @@ type MediaRow = {
   project_id?: string | null;
 };
 
+type SchoolLookupRow = {
+  id: string;
+  school_name?: string | null;
+  local_school_id?: string | null;
+};
+
+type StudentSchoolRow = {
+  school_id?: string | null;
+};
+
 function clean(value: string | null | undefined) {
   return (value ?? "").trim();
+}
+
+function normalizeLookupName(value: string | null | undefined) {
+  return clean(value).toLowerCase().replace(/[^a-z0-9]+/g, "");
 }
 
 const VALID_PORTAL_STATUSES = ["active", "inactive", "pre_release", "closed"];
@@ -298,7 +315,7 @@ export async function GET(request: NextRequest) {
     const { data: projectRows, error: projectsError, count: totalCount } = await service
       .from("projects")
       .select(
-        "id,title,client_name,workflow_type,status,portal_status,shoot_date,event_date,cover_photo_url,cover_focal_x,cover_focal_y,gallery_slug",
+        "id,title,client_name,workflow_type,source_type,status,portal_status,shoot_date,event_date,cover_photo_url,cover_focal_x,cover_focal_y,gallery_slug,linked_local_school_id,linked_school_id",
         { count: "exact" },
       )
       .eq("photographer_id", photographerRow.id)
@@ -311,7 +328,72 @@ export async function GET(request: NextRequest) {
 
     if (projectsError) throw projectsError;
 
-    const projects = ((projectRows ?? []) as ProjectRow[]).map((project) => ({
+    const rawProjects = (projectRows ?? []) as ProjectRow[];
+    const rawIds = rawProjects.map((row) => row.id);
+
+    const [schoolLookupResult, rawMediaRows] = await Promise.all([
+      service
+        .from("schools")
+        .select("id,school_name,local_school_id")
+        .eq("photographer_id", photographerRow.id),
+      rawIds.length ? fetchMediaRowsForProjects(service, rawIds) : Promise.resolve([] as MediaRow[]),
+    ]);
+
+    if (schoolLookupResult.error) throw schoolLookupResult.error;
+
+    const schoolRows = (schoolLookupResult.data ?? []) as SchoolLookupRow[];
+    const schoolIds = schoolRows.map((row) => clean(row.id)).filter(Boolean);
+    const studentRows: StudentSchoolRow[] = [];
+
+    for (let from = 0; schoolIds.length > 0; from += 1000) {
+      const pageIds = schoolIds.slice(from, from + 1000);
+      if (!pageIds.length) break;
+      const { data, error } = await service
+        .from("students")
+        .select("school_id")
+        .in("school_id", pageIds);
+      if (error) throw error;
+      studentRows.push(...((data ?? []) as StudentSchoolRow[]));
+    }
+
+    const schoolIdsWithPeople = new Set(
+      studentRows.map((row) => clean(row.school_id)).filter(Boolean),
+    );
+    const realSchoolLocalIds = new Set<string>();
+    const realSchoolNames = new Set<string>();
+    for (const school of schoolRows) {
+      if (!schoolIdsWithPeople.has(clean(school.id))) continue;
+      const localId = clean(school.local_school_id);
+      const nameKey = normalizeLookupName(school.school_name);
+      if (localId) realSchoolLocalIds.add(localId);
+      if (nameKey) realSchoolNames.add(nameKey);
+    }
+
+    const rawImageCounts: Record<string, number> = {};
+    for (const row of rawMediaRows) {
+      const projectId = clean(row.project_id);
+      if (!projectId) continue;
+      rawImageCounts[projectId] = (rawImageCounts[projectId] ?? 0) + 1;
+    }
+
+    const filteredProjects = rawProjects.filter((project) => {
+      if (clean(project.linked_school_id)) return false;
+
+      const linkedLocalId = clean(project.linked_local_school_id);
+      if (linkedLocalId && realSchoolLocalIds.has(linkedLocalId)) return false;
+
+      const imageCount = rawImageCounts[project.id] ?? 0;
+      if (imageCount > 0) return true;
+
+      const titleKey = normalizeLookupName(project.title);
+      const clientKey = normalizeLookupName(project.client_name);
+      return !(
+        (titleKey && realSchoolNames.has(titleKey)) ||
+        (clientKey && realSchoolNames.has(clientKey))
+      );
+    });
+
+    const projects = filteredProjects.map((project) => ({
       ...project,
       cover_photo_url: resolveDashboardCoverUrl(project.cover_photo_url),
     }));
@@ -324,13 +406,13 @@ export async function GET(request: NextRequest) {
         albumCounts: {},
         imageCounts: {},
         page,
-        totalCount: totalCount ?? 0,
+        totalCount: projects.length,
       });
     }
 
     const [collectionRows, mediaRows] = await Promise.all([
       fetchCollectionRowsForProjects(service, ids),
-      fetchMediaRowsForProjects(service, ids),
+      Promise.resolve(rawMediaRows.filter((row) => ids.includes(clean(row.project_id)))),
     ]);
 
     const albumCounts: Record<string, number> = {};
@@ -355,7 +437,7 @@ export async function GET(request: NextRequest) {
       albumCounts,
       imageCounts,
       page,
-      totalCount: totalCount ?? 0,
+      totalCount: projects.length || totalCount || 0,
     });
   } catch (error) {
     console.error("[dashboard:events:GET]", error);
