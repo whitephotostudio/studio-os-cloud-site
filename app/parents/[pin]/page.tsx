@@ -4869,7 +4869,9 @@ export default function ParentGalleryPage() {
     if (!isSchoolMode) return images;
     const anyHasNobg = images.some((img) => !!nobgUrls[img.id]);
     if (!anyHasNobg) return images;
-    return images.filter((img) => !!nobgUrls[img.id]);
+    return images.filter(
+      (img) => isCompositeGalleryImage(img) || !!nobgUrls[img.id],
+    );
   })();
   const visibleImages =
     !isSchoolMode && activeEventCollectionId

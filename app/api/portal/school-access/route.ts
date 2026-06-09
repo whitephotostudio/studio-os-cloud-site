@@ -96,49 +96,72 @@ function compositeClassCandidates(
   const rawValues = Array.isArray(value) ? value : [value];
   const seen = new Set<string>();
   const result: string[] = [];
-
-  for (const raw of rawValues) {
+  const add = (raw: string | null | undefined) => {
     const candidate = clean(raw);
-    if (!candidate) continue;
+    if (!candidate) return;
     const key = candidate.toLowerCase();
-    if (seen.has(key)) continue;
+    if (seen.has(key)) return;
     seen.add(key);
     result.push(candidate);
-  }
+  };
 
+  for (const raw of rawValues) {
+    add(raw);
+    const candidate = clean(raw);
+    const kindergartenMatch = candidate.match(/^(s|j)k\s*[- ]?([a-z0-9]+)$/i);
+    if (kindergartenMatch) {
+      const level =
+        kindergartenMatch[1].toLowerCase() === "s"
+          ? "Senior Kindergarten"
+          : "Junior Kindergarten";
+      const section = kindergartenMatch[2].toUpperCase();
+      add(`${level} ${section}`);
+      add(`${level} Class ${section}`);
+      add(`${level} Class ${section} 2026`);
+    }
+  }
   return result;
+}
+
+function matchesCompositeClassCandidate(
+  value: string | null | undefined,
+  candidates: string[],
+) {
+  const normalized = clean(value);
+  if (!normalized || candidates.length === 0) return false;
+
+  const valueLower = normalized.toLowerCase();
+  const valueSlug = slugify(normalized, "composite");
+  const valueCompact = compactCompositeKey(normalized);
+
+  return candidates.some((candidate) => {
+    const candidateLower = candidate.toLowerCase();
+    const candidateSlug = slugify(candidate, "composite");
+    const candidateCompact = compactCompositeKey(candidate);
+    return (
+      valueLower === candidateLower ||
+      valueSlug === candidateSlug ||
+      valueCompact === candidateCompact ||
+      (valueSlug.length > 3 &&
+        candidateSlug.length > 3 &&
+        (valueSlug.includes(candidateSlug) ||
+          candidateSlug.includes(valueSlug))) ||
+      (valueCompact.length > 3 &&
+        candidateCompact.length > 3 &&
+        (valueCompact.includes(candidateCompact) ||
+          candidateCompact.includes(valueCompact)))
+    );
+  });
 }
 
 function compositeCollectionMatchesClass(
   row: { title?: string | null; slug?: string | null },
-  className: string,
+  classCandidates: string[],
 ) {
-  const targetSlug = slugify(className, "");
-  const targetCompact = compactCompositeKey(className);
-  if (!targetSlug) return false;
-
-  const title = clean(row.title);
-  const titleLower = title.toLowerCase();
-  const titleSlug = slugify(title, "");
-  const rowSlug = slugify(clean(row.slug), "");
-  const classLower = className.toLowerCase();
-
-  if (
-    titleLower === classLower ||
-    titleSlug === targetSlug ||
-    rowSlug === targetSlug ||
-    compactCompositeKey(title) === targetCompact ||
-    compactCompositeKey(row.slug) === targetCompact
-  ) {
-    return true;
-  }
-
-  const candidateSlugs = [titleSlug, rowSlug].filter(Boolean);
-  return candidateSlugs.some((candidate) => {
-    if (candidate.startsWith(`${targetSlug}-`)) return true;
-    if (candidate.endsWith(`-${targetSlug}`)) return true;
-    return candidate.includes(`-${targetSlug}-`);
-  });
+  return (
+    matchesCompositeClassCandidate(row.title, classCandidates) ||
+    matchesCompositeClassCandidate(row.slug, classCandidates)
+  );
 }
 
 function normalizedSchoolStatus(value: string | null | undefined) {
@@ -206,22 +229,26 @@ async function loadSchoolCompositeMedia(
 
   if (collectionError) throw collectionError;
 
-  const fallbackTitle = classCandidates[0] ?? "Class Composite";
-  let matchingCollections = classCandidates.length
-    ? (collectionRows ?? []).filter((row) =>
-        classCandidates.some((candidate) =>
-          compositeCollectionMatchesClass(row, candidate),
-        ),
-      )
-    : [];
+  let matchingCollections = (collectionRows ?? []).filter((row) =>
+    compositeCollectionMatchesClass(row, classCandidates),
+  );
+  let filterMediaByCandidate = false;
+  if (!matchingCollections.length && classCandidates.length === 0) {
+    matchingCollections = collectionRows ?? [];
+  }
   if (!matchingCollections.length && (collectionRows ?? []).length === 1) {
     matchingCollections = collectionRows ?? [];
+  }
+  if (!matchingCollections.length && classCandidates.length > 0) {
+    matchingCollections = collectionRows ?? [];
+    filterMediaByCandidate = true;
   }
   if (!matchingCollections.length) return [] as CompositeMediaRow[];
 
   const collectionIds = matchingCollections.map((row) => clean(row.id)).filter(Boolean);
+  const candidateLabels = classCandidates.length ? classCandidates : ["Class Composite"];
   const collectionTitleById = new Map(
-    matchingCollections.map((row) => [clean(row.id), clean(row.title) || fallbackTitle]),
+    matchingCollections.map((row) => [clean(row.id), clean(row.title) || candidateLabels[0]]),
   );
 
   const { data: mediaRows, error: mediaError } = await service
@@ -239,10 +266,19 @@ async function loadSchoolCompositeMedia(
     const collectionId = clean(row.collection_id);
     const storagePath = clean(row.storage_path);
     if (!collectionId) continue;
-    const key = `${collectionId}::${storagePath || clean(row.id)}`;
-    if (!uniqueRows.has(key)) {
-      uniqueRows.set(key, row);
+    if (
+      filterMediaByCandidate &&
+      !matchesCompositeClassCandidate(storagePath, classCandidates) &&
+      !matchesCompositeClassCandidate(row.filename, classCandidates) &&
+      !matchesCompositeClassCandidate(collectionTitleById.get(collectionId), classCandidates)
+    ) {
+      continue;
     }
+    const filename = clean(row.filename).toLowerCase();
+    const key = filename
+      ? `${collectionId}::filename::${filename}`
+      : `${collectionId}::${storagePath || clean(row.id)}`;
+    uniqueRows.set(key, row);
   }
 
   // 2026-04-30 — School-mode parents portal: 6h signed URLs.
@@ -260,7 +296,7 @@ async function loadSchoolCompositeMedia(
       ...row,
       preview_url: mediaUrls.previewUrl || null,
       thumbnail_url: mediaUrls.thumbnailUrl || null,
-      collection_title: collectionTitleById.get(clean(row.collection_id)) || fallbackTitle,
+      collection_title: collectionTitleById.get(clean(row.collection_id)) || candidateLabels[0],
     };
   });
 }
