@@ -826,6 +826,13 @@ function useIsMobile(breakpointPx = 640) {
   return isMobile;
 }
 
+const EVENT_PHOTO_GRID_INITIAL_LIMIT = 120;
+const EVENT_PHOTO_GRID_INITIAL_LIMIT_MOBILE = 48;
+const EVENT_PHOTO_GRID_BATCH_SIZE = 120;
+const EVENT_PHOTO_GRID_BATCH_SIZE_MOBILE = 48;
+const VIEWER_THUMBNAIL_WINDOW_SIZE = 120;
+const VIEWER_THUMBNAIL_WINDOW_SIZE_MOBILE = 60;
+
 function getSlotGridColumns(settings: EventGallerySettings, isMobile = false) {
   if (isMobile) return "repeat(2, minmax(0, 1fr))";
   switch (settings.branding.gridDensity) {
@@ -4183,6 +4190,7 @@ export default function ParentGalleryPage() {
   const [downloadingGallery, setDownloadingGallery] = useState(false);
   const [galleryDownloadProgress, setGalleryDownloadProgress] = useState<number | null>(null);
   const [eventPhotoWallWidth, setEventPhotoWallWidth] = useState(0);
+  const [eventPhotoGridLimit, setEventPhotoGridLimit] = useState(EVENT_PHOTO_GRID_INITIAL_LIMIT);
   const [downloadingFavorites, setDownloadingFavorites] = useState(false);
   const [gallerySettings, setGallerySettings] = useState<EventGallerySettings>(defaultEventGallerySettings);
   const [galleryDownloadAccess, setGalleryDownloadAccess] = useState<EventGalleryDownloadAccess>(
@@ -4975,6 +4983,36 @@ export default function ParentGalleryPage() {
   const isEventGallery = !isSchoolMode && activeView === "photos";
   const isEventLanding = isEventGallery && showAlbumOverview;
   const isEventImageStage = isEventGallery && !showAlbumOverview;
+  const eventPhotoGridInitialLimit = isMobileViewport
+    ? EVENT_PHOTO_GRID_INITIAL_LIMIT_MOBILE
+    : EVENT_PHOTO_GRID_INITIAL_LIMIT;
+  const eventPhotoGridBatchSize = isMobileViewport
+    ? EVENT_PHOTO_GRID_BATCH_SIZE_MOBILE
+    : EVENT_PHOTO_GRID_BATCH_SIZE;
+  const eventPhotoGridImages = useMemo(() => {
+    if (!showEventPhotoGrid || isSchoolMode) return visibleImages;
+    return visibleImages.slice(0, Math.min(eventPhotoGridLimit, visibleImages.length));
+  }, [eventPhotoGridLimit, isSchoolMode, showEventPhotoGrid, visibleImages]);
+  const eventPhotoGridRemainingCount = Math.max(
+    0,
+    visibleImages.length - eventPhotoGridImages.length,
+  );
+  const viewerThumbnailWindowSize = isMobileViewport
+    ? VIEWER_THUMBNAIL_WINDOW_SIZE_MOBILE
+    : VIEWER_THUMBNAIL_WINDOW_SIZE;
+  const viewerThumbnailWindow = useMemo(() => {
+    if (!showPhotoViewer || visibleImages.length <= viewerThumbnailWindowSize) {
+      return { start: 0, images: visibleImages };
+    }
+
+    const startTarget = selectedImageIndex - Math.floor(viewerThumbnailWindowSize * 0.4);
+    const maxStart = Math.max(0, visibleImages.length - viewerThumbnailWindowSize);
+    const start = Math.max(0, Math.min(startTarget, maxStart));
+    return {
+      start,
+      images: visibleImages.slice(start, start + viewerThumbnailWindowSize),
+    };
+  }, [selectedImageIndex, showPhotoViewer, viewerThumbnailWindowSize, visibleImages]);
   const eventCanvasBackground = isEventImageStage
     ? "#ffffff"
     : isEventGallery
@@ -5168,6 +5206,11 @@ export default function ParentGalleryPage() {
       setSelectedImageIndex(0);
     }
   }, [selectedImageIndex, visibleImages.length]);
+
+  useEffect(() => {
+    if (isSchoolMode) return;
+    setEventPhotoGridLimit(eventPhotoGridInitialLimit);
+  }, [activeEventCollectionId, eventPhotoGridInitialLimit, isSchoolMode, projectId]);
 
   useEffect(() => {
     if (!isCompositeSelection) return;
@@ -5933,6 +5976,7 @@ export default function ParentGalleryPage() {
   function openEventPhotoGrid(collectionId: string | null) {
     setActiveEventCollectionId(collectionId);
     setSelectedImageIndex(0);
+    setEventPhotoGridLimit(eventPhotoGridInitialLimit);
     setEventPhotoStage("grid");
     setActiveView("photos");
   }
@@ -10051,7 +10095,56 @@ export default function ParentGalleryPage() {
                     </div>
                   </div>
                   {visibleImages.length > 0 ? (
-                    renderPhotoWall(visibleImages)
+                    <>
+                      {renderPhotoWall(eventPhotoGridImages)}
+                      {eventPhotoGridRemainingCount > 0 ? (
+                        <div
+                          style={{
+                            display: "flex",
+                            justifyContent: "center",
+                            padding: isMobileViewport ? "24px 0 6px" : "34px 0 8px",
+                          }}
+                        >
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setEventPhotoGridLimit((currentLimit) =>
+                                Math.min(
+                                  visibleImages.length,
+                                  currentLimit + eventPhotoGridBatchSize,
+                                ),
+                              )
+                            }
+                            style={{
+                              border: "1px solid rgba(24,24,27,0.14)",
+                              background: "#18181b",
+                              color: "#ffffff",
+                              minHeight: 44,
+                              padding: "0 18px",
+                              fontSize: 13,
+                              fontWeight: 700,
+                              cursor: "pointer",
+                              display: "inline-flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              gap: 8,
+                              fontFamily: galleryFontFamily,
+                            }}
+                          >
+                            Load more photos
+                            <span
+                              style={{
+                                color: "rgba(255,255,255,0.72)",
+                                fontSize: 12,
+                                fontWeight: 600,
+                              }}
+                            >
+                              {eventPhotoGridRemainingCount} left
+                            </span>
+                          </button>
+                        </div>
+                      ) : null}
+                    </>
                   ) : (
                     <div
                       style={{
@@ -10670,7 +10763,8 @@ export default function ParentGalleryPage() {
                         scrollBehavior: "smooth",
                       }}
                     >
-                      {visibleImages.map((img, idx) => {
+                      {viewerThumbnailWindow.images.map((img, offset) => {
+                        const idx = viewerThumbnailWindow.start + offset;
                         const active = idx === selectedImageIndex;
                         const hasNobg = !!nobgUrls[img.id];
                         const showComposite = !!confirmedBackdrop && hasNobg;
