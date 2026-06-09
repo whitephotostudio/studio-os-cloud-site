@@ -157,16 +157,14 @@ export default function MobileHomePage() {
 
       const { data: photog } = await supabase
         .from("photographers")
-        .select("id, first_name, business_name")
+        .select("id, business_name")
         .eq("user_id", user.id)
         .maybeSingle();
       if (!photog?.id || cancelled) return;
       setPhotographerId(photog.id);
       setFirstName(
         clean(
-          (photog as { first_name?: string | null }).first_name ??
-            (photog as { business_name?: string | null }).business_name ??
-            "",
+          (photog as { business_name?: string | null }).business_name ?? "",
         ).split(" ")[0] ?? "",
       );
 
