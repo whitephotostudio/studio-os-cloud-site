@@ -143,11 +143,12 @@ export async function listScheduleItems(
   }
 
   for (const school of schoolRows) {
+    const hasPeople = schoolIdsWithPeople.has(clean(school.id));
     const localId = clean(school.local_school_id);
-    if (localId && eventLocalSchoolIds.has(localId)) continue;
-    if (eventLinkedSchoolIds.has(clean(school.id))) continue;
+    if (!hasPeople && localId && eventLocalSchoolIds.has(localId)) continue;
+    if (!hasPeople && eventLinkedSchoolIds.has(clean(school.id))) continue;
     if (
-      !schoolIdsWithPeople.has(clean(school.id)) &&
+      !hasPeople &&
       eventNameKeys.has(normalizeLookupName(school.school_name))
     ) {
       continue;

@@ -149,19 +149,15 @@ export default function MobileSchoolsPage() {
           .flatMap((p) => [normalizeLookupName(p.title), normalizeLookupName(p.client_name)])
           .filter(Boolean),
       );
-      const visibleSchools = ((schoolRows ?? []) as SchoolRow[]).filter((school) => {
-        const localId = clean(school.local_school_id);
-        if (localId && eventLocalSchoolIds.has(localId)) return false;
-        return !eventLinkedSchoolIds.has(clean(school.id));
-      });
+      const candidateSchools = (schoolRows ?? []) as SchoolRow[];
 
-      if (!visibleSchools.length) {
+      if (!candidateSchools.length) {
         setSchools([]);
         setLoading(false);
         return;
       }
 
-      const schoolIds = visibleSchools.map((s) => s.id);
+      const schoolIds = candidateSchools.map((s) => s.id);
 
       const [studentsRes, ordersRes] = await Promise.all([
         // Pull photo_url too so we can paint a hero cover on each card —
@@ -188,8 +184,11 @@ export default function MobileSchoolsPage() {
         const url = clean(row.photo_url);
         if (url && !covers[row.school_id]) covers[row.school_id] = url;
       }
-      const finalVisibleSchools = visibleSchools.filter((school) => {
+      const finalVisibleSchools = candidateSchools.filter((school) => {
         if ((stuCounts[school.id] ?? 0) > 0) return true;
+        const localId = clean(school.local_school_id);
+        if (localId && eventLocalSchoolIds.has(localId)) return false;
+        if (eventLinkedSchoolIds.has(clean(school.id))) return false;
         return !eventNameKeys.has(normalizeLookupName(school.school_name));
       });
       setSchools(finalVisibleSchools);

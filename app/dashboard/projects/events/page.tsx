@@ -233,7 +233,13 @@ export default function EventsPage() {
     try {
       await Promise.all(
         ids.map((id) =>
-          fetch(`/api/dashboard/events/${id}`, { method: "DELETE" }).then((r) => r.json())
+          fetch(`/api/dashboard/events/${id}`, { method: "DELETE" }).then(async (response) => {
+            const payload = (await response.json().catch(() => null)) as { ok?: boolean; message?: string } | null;
+            if (!response.ok || payload?.ok === false) {
+              throw new Error(payload?.message || "Delete failed.");
+            }
+            return payload;
+          })
         )
       );
       setProjects((prev) => prev.filter((p) => !ids.includes(p.id)));

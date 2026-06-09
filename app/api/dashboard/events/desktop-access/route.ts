@@ -346,6 +346,52 @@ export async function POST(request: NextRequest) {
     const effectiveSourceType =
       effectiveWorkflowType === "school" ? "hybrid" : "cloud_only";
 
+    if (!projectId && localProjectId && effectiveWorkflowType === "event") {
+      const { data: deletedProject, error: deletedProjectError } = await service
+        .from("projects")
+        .select(
+          "id,title,client_name,shoot_date,event_date,portal_status,pre_release,gallery_slug,access_mode,access_pin,access_updated_at,access_updated_source,updated_at",
+        )
+        .eq("linked_local_school_id", localProjectId)
+        .eq("photographer_id", photographerId)
+        .eq("workflow_type", "event")
+        .eq("status", "deleted")
+        .order("updated_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (deletedProjectError) throw deletedProjectError;
+      if (deletedProject?.id) {
+        return NextResponse.json({
+          ok: true,
+          deleted: true,
+          project: {
+            id: deletedProject.id,
+            title: deletedProject.title ?? title,
+            client_name: deletedProject.client_name ?? clientName,
+            workflow_type: "event",
+            status: "deleted",
+            shoot_date: deletedProject.shoot_date ?? "",
+            event_date: deletedProject.event_date ?? "",
+            portal_status: deletedProject.portal_status ?? "archived",
+            gallery_status: deletedProject.portal_status ?? "archived",
+            pre_release: deletedProject.pre_release ?? false,
+            gallery_url: "",
+            gallery_slug: deletedProject.gallery_slug ?? "",
+            cover_photo_url: null,
+            access_mode: deletedProject.access_mode ?? accessMode,
+            access_pin: deletedProject.access_pin ?? "",
+            access_updated_at: deletedProject.access_updated_at ?? "",
+            access_updated_source: deletedProject.access_updated_source ?? "cloud",
+            updated_at: deletedProject.updated_at ?? "",
+          },
+          collections: [],
+          seededVisitor: null,
+          message: "Project was deleted in Studio OS Cloud and was not recreated.",
+        });
+      }
+    }
+
     const applyIncomingProjectAccess = shouldApplyIncomingAccess({
       incomingUpdatedAt: body.accessUpdatedAt,
       existingUpdatedAt: existingProjectAccess?.access_updated_at,

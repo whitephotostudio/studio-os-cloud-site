@@ -1033,25 +1033,19 @@ export async function DELETE(
       .select("id", { count: "exact", head: true })
       .eq("project_id", projectId);
 
-    const cascade = await deleteProjectCascade(service, projectId);
-    const projectDeleted = (cascade.rows_deleted.projects ?? 0) > 0;
-
-    // If a future/unknown relationship blocks the hard delete, hide the
-    // project from every dashboard and desktop-pull path. This keeps client
-    // production safe while the cascade result tells us what still needs a
-    // schema-level cleanup.
-    if (!projectDeleted) {
-      const { error: softDeleteError } = await service
-        .from("projects")
-        .update({
-          status: "deleted",
-          portal_status: "archived",
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", projectId)
-        .eq("photographer_id", photographerRow.id);
-      if (softDeleteError) throw softDeleteError;
-    }
+    const cascade = await deleteProjectCascade(service, projectId, {
+      preserveProject: true,
+    });
+    const { error: softDeleteError } = await service
+      .from("projects")
+      .update({
+        status: "deleted",
+        portal_status: "archived",
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", projectId)
+      .eq("photographer_id", photographerRow.id);
+    if (softDeleteError) throw softDeleteError;
 
     await recordAudit({
       request,
@@ -1070,12 +1064,13 @@ export async function DELETE(
         mediaCount: mediaCount ?? 0,
         albumCount: albumCount ?? 0,
         cascade,
-        hardDeleted: projectDeleted,
+        hardDeleted: false,
+        tombstonePreserved: true,
       },
       result: "ok",
     });
 
-    return NextResponse.json({ ok: true, hardDeleted: projectDeleted });
+    return NextResponse.json({ ok: true, hardDeleted: false });
   } catch (error) {
     console.error("[DELETE /api/dashboard/events/[id]]", error);
     return NextResponse.json(

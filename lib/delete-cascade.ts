@@ -209,6 +209,7 @@ export async function deleteCollectionCascade(
 export async function deleteProjectCascade(
   service: SupabaseClient,
   projectId: string,
+  options?: { preserveProject?: boolean },
 ): Promise<CascadeResult> {
   const result = emptyResult();
   if (!projectId) return result;
@@ -311,7 +312,10 @@ export async function deleteProjectCascade(
         return { count };
       },
     ],
-    [
+  ];
+
+  if (!options?.preserveProject) {
+    cascades.push([
       "projects",
       async () => {
         const { error, count } = await service
@@ -321,8 +325,8 @@ export async function deleteProjectCascade(
         if (error) throw error;
         return { count };
       },
-    ],
-  ];
+    ]);
+  }
 
   for (const [tableLabel, fn] of cascades) {
     try {

@@ -834,11 +834,7 @@ function DashboardPageContent() {
           .flatMap((p) => [normalizeLookupName(p.title), normalizeLookupName(p.client_name)])
           .filter(Boolean),
       );
-      const schoolRows = ((schoolRes.data ?? []) as SchoolRow[]).filter((school) => {
-        const localId = clean(school.local_school_id);
-        if (localId && eventLocalSchoolIds.has(localId)) return false;
-        return !eventLinkedSchoolIds.has(clean(school.id));
-      });
+      const schoolRows = (schoolRes.data ?? []) as SchoolRow[];
       const dedupedSchools = dedupeSchools(schoolRows);
       setProjects(projectRows);
       setEventProjects(eventPayload.projects ?? []);
@@ -870,6 +866,9 @@ function DashboardPageContent() {
       );
       const visibleSchools = dedupedSchools.filter((school) => {
         if (schoolIdsWithPeople.has(clean(school.id))) return true;
+        const localId = clean(school.local_school_id);
+        if (localId && eventLocalSchoolIds.has(localId)) return false;
+        if (eventLinkedSchoolIds.has(clean(school.id))) return false;
         return !eventNameKeys.has(normalizeLookupName(school.school_name));
       });
       setSchools(visibleSchools);

@@ -225,15 +225,9 @@ export default function SchoolsPage() {
           .flatMap((p) => [normalizeLookupName(p.title), normalizeLookupName(p.client_name)])
           .filter(Boolean),
       );
-      const visibleRawSchools = rawSchools.filter((school) => {
-        const localId = clean(school.local_school_id);
-        if (localId && eventLocalSchoolIds.has(localId)) return false;
-        return !eventLinkedSchoolIds.has(clean(school.id));
-      });
-
       const deduped = new Map<string, SchoolRow>();
 
-      for (const school of visibleRawSchools) {
+      for (const school of rawSchools) {
         const localId = clean(school.local_school_id);
         const nameKey = clean(school.school_name).toLowerCase();
         const key = localId || nameKey;
@@ -315,6 +309,9 @@ export default function SchoolsPage() {
           card.classesCount === 0 &&
           card.imagesCount === 0;
         if (!isEmptyShell) return true;
+        const localId = clean(card.local_school_id);
+        if (localId && eventLocalSchoolIds.has(localId)) return false;
+        if (eventLinkedSchoolIds.has(clean(card.id))) return false;
         return !eventNameKeys.has(normalizeLookupName(card.school_name));
       });
 
