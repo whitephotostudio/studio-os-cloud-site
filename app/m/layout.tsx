@@ -15,7 +15,7 @@
 // Session enforcement mirrors app/dashboard/layout.tsx.  Non-authenticated
 // users get bounced to /sign-in?redirect=/m/…
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Bell, CalendarDays, GraduationCap, Home, PlusCircle, ShoppingBag } from "lucide-react";
@@ -31,6 +31,32 @@ type TabDef = {
   icon: React.ComponentType<{ size?: number }>;
   match: (pathname: string) => boolean;
 };
+
+type LatestOrderRow = {
+  id: string;
+  created_at: string | null;
+  parent_name: string | null;
+  customer_name: string | null;
+  package_name: string | null;
+  total_cents: number | null;
+  total_amount: number | null;
+  currency: string | null;
+  payment_status: string | null;
+  paid_at: string | null;
+  stripe_payment_intent_id: string | null;
+};
+
+type OrderAlert = {
+  id: string;
+  title: string;
+  message: string;
+  href: string;
+};
+
+type AudioCapableWindow = Window &
+  typeof globalThis & {
+    webkitAudioContext?: typeof AudioContext;
+  };
 
 const TABS: TabDef[] = [
   {
@@ -65,6 +91,41 @@ const TABS: TabDef[] = [
   },
 ];
 
+function clean(value: string | null | undefined) {
+  return (value ?? "").trim();
+}
+
+function orderTotalCents(order: LatestOrderRow) {
+  return order.total_cents != null
+    ? order.total_cents
+    : order.total_amount != null
+      ? Math.round(order.total_amount * 100)
+      : 0;
+}
+
+function moneyFromCents(cents: number, currency = "CAD") {
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency,
+  }).format(cents / 100);
+}
+
+function orderCustomerName(order: LatestOrderRow) {
+  return clean(order.parent_name) || clean(order.customer_name) || "A client";
+}
+
+function isPaidOrder(order: LatestOrderRow) {
+  const paymentStatus = clean(order.payment_status).toLowerCase();
+  return (
+    paymentStatus === "paid" ||
+    paymentStatus === "succeeded" ||
+    paymentStatus === "digital_paid" ||
+    paymentStatus === "no_payment_required" ||
+    !!clean(order.paid_at) ||
+    !!clean(order.stripe_payment_intent_id)
+  );
+}
+
 export default function MobileLayout({
   children,
 }: {
@@ -74,6 +135,19 @@ export default function MobileLayout({
   const [supabase] = useState(() => createClient());
   const [unreadCount, setUnreadCount] = useState<number>(0);
   const [checkedAuth, setCheckedAuth] = useState(false);
+  const [photographerId, setPhotographerId] = useState<string | null>(null);
+  const [notificationPermission, setNotificationPermission] = useState<
+    NotificationPermission | "unsupported"
+  >("unsupported");
+  const [soundEnabled, setSoundEnabled] = useState(false);
+  const [orderAlert, setOrderAlert] = useState<OrderAlert | null>(null);
+  const latestOrderCreatedRef = useRef<string | null>(null);
+  const latestOrderIdRef = useRef<string | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const soundEnabledRef = useRef(false);
+  const notificationPermissionRef = useRef<NotificationPermission | "unsupported">(
+    "unsupported",
+  );
 
   // ── Session guard ─────────────────────────────────────────────────
   useEffect(() => {
@@ -118,6 +192,7 @@ export default function MobileLayout({
         .maybeSingle();
       if (cancelled) return;
       if (photog?.id) {
+        setPhotographerId(photog.id);
         const { count } = await supabase
           .from("orders")
           .select("id", { count: "exact", head: true })
@@ -131,6 +206,180 @@ export default function MobileLayout({
       cancelled = true;
     };
   }, [supabase]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    setNotificationPermission(
+      "Notification" in window ? Notification.permission : "unsupported",
+    );
+  }, []);
+
+  useEffect(() => {
+    soundEnabledRef.current = soundEnabled;
+  }, [soundEnabled]);
+
+  useEffect(() => {
+    notificationPermissionRef.current = notificationPermission;
+  }, [notificationPermission]);
+
+  async function playOrderChime() {
+    if (typeof window === "undefined") return;
+    const audioWindow = window as AudioCapableWindow;
+    const AudioContextCtor =
+      audioWindow.AudioContext ?? audioWindow.webkitAudioContext;
+    if (!AudioContextCtor) return;
+
+    const ctx = audioContextRef.current ?? new AudioContextCtor();
+    audioContextRef.current = ctx;
+    if (ctx.state === "suspended") {
+      await ctx.resume();
+    }
+
+    const now = ctx.currentTime;
+    const master = ctx.createGain();
+    master.gain.setValueAtTime(0.0001, now);
+    master.gain.exponentialRampToValueAtTime(0.18, now + 0.03);
+    master.gain.exponentialRampToValueAtTime(0.0001, now + 0.72);
+    master.connect(ctx.destination);
+
+    [880, 1174.66, 1567.98].forEach((frequency, index) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      const start = now + index * 0.11;
+      osc.type = index === 2 ? "sine" : "triangle";
+      osc.frequency.setValueAtTime(frequency, start);
+      gain.gain.setValueAtTime(0.0001, start);
+      gain.gain.exponentialRampToValueAtTime(0.2, start + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.22);
+      osc.connect(gain);
+      gain.connect(master);
+      osc.start(start);
+      osc.stop(start + 0.26);
+    });
+  }
+
+  async function enableOrderAlerts() {
+    try {
+      await playOrderChime();
+      setSoundEnabled(true);
+    } catch {
+      setSoundEnabled(false);
+    }
+
+    if (typeof window !== "undefined" && "Notification" in window) {
+      if (Notification.permission === "default") {
+        const permission = await Notification.requestPermission();
+        setNotificationPermission(permission);
+      } else {
+        setNotificationPermission(Notification.permission);
+      }
+    }
+
+    setOrderAlert({
+      id: "alerts-enabled",
+      title: "Order alerts enabled",
+      message: "New paid orders will beep and show here while Studio OS Mobile is open.",
+      href: "/m/orders",
+    });
+    window.setTimeout(() => {
+      setOrderAlert((current) =>
+        current?.id === "alerts-enabled" ? null : current,
+      );
+    }, 4200);
+  }
+
+  useEffect(() => {
+    if (!photographerId) return;
+
+    let cancelled = false;
+
+    async function pollLatestOrder(initial = false) {
+      const [latestResult, unreadResult] = await Promise.all([
+        supabase
+          .from("orders")
+          .select(
+            "id,created_at,parent_name,customer_name,package_name,total_cents,total_amount,currency,payment_status,paid_at,stripe_payment_intent_id",
+          )
+          .eq("photographer_id", photographerId)
+          .order("created_at", { ascending: false })
+          .limit(10),
+        supabase
+          .from("orders")
+          .select("id", { count: "exact", head: true })
+          .eq("photographer_id", photographerId)
+          .eq("seen_by_photographer", false),
+      ]);
+
+      if (cancelled) return;
+      setUnreadCount(unreadResult.count ?? 0);
+
+      const latestOrder = ((latestResult.data ?? []) as LatestOrderRow[]).find(isPaidOrder);
+      if (!latestOrder?.id) return;
+
+      const latestOrderTime = clean(latestOrder.paid_at) || latestOrder.created_at;
+      const previousCreated = latestOrderCreatedRef.current;
+      const previousId = latestOrderIdRef.current;
+      latestOrderCreatedRef.current = latestOrderTime;
+      latestOrderIdRef.current = latestOrder.id;
+
+      const latestCreatedMs = latestOrderTime
+        ? new Date(latestOrderTime).getTime()
+        : 0;
+      const previousCreatedMs = previousCreated
+        ? new Date(previousCreated).getTime()
+        : 0;
+      const isNewOrder =
+        !initial &&
+        !!previousId &&
+        latestOrder.id !== previousId &&
+        latestCreatedMs > previousCreatedMs;
+
+      if (!isNewOrder) return;
+
+      const amount = moneyFromCents(
+        orderTotalCents(latestOrder),
+        clean(latestOrder.currency).toUpperCase() || "CAD",
+      );
+      const customer = orderCustomerName(latestOrder);
+      const alert: OrderAlert = {
+        id: latestOrder.id,
+        title: "New order placed",
+        message: `${customer} placed an order for ${amount}.`,
+        href: `/m/orders/${latestOrder.id}`,
+      };
+
+      setOrderAlert(alert);
+      window.setTimeout(() => {
+        setOrderAlert((current) => (current?.id === latestOrder.id ? null : current));
+      }, 12000);
+
+      if (soundEnabledRef.current) {
+        void playOrderChime();
+      }
+
+      if (
+        notificationPermissionRef.current === "granted" &&
+        typeof window !== "undefined" &&
+        "Notification" in window
+      ) {
+        new Notification(alert.title, {
+          body: alert.message,
+          icon: "/studio_os_logo_official_cropped.png",
+          tag: `studio-os-order-${latestOrder.id}`,
+        });
+      }
+    }
+
+    void pollLatestOrder(true);
+    const interval = window.setInterval(() => {
+      void pollLatestOrder(false);
+    }, 30_000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [photographerId, supabase]);
 
   const activeHref = useMemo(() => {
     const hit = TABS.find((t) => t.match(pathname));
@@ -266,6 +515,84 @@ export default function MobileLayout({
             </Link>
           </div>
         </header>
+
+        {checkedAuth && (!soundEnabled || notificationPermission === "default") ? (
+          <div
+            style={{
+              borderBottom: "1px solid #fde68a",
+              background: "#fffbeb",
+              color: "#92400e",
+              padding: "9px 14px",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 10,
+              fontSize: 12,
+              fontWeight: 800,
+            }}
+          >
+            <span style={{ lineHeight: 1.35 }}>
+              Enable beeps and phone banners for new orders.
+            </span>
+            <button
+              type="button"
+              onClick={() => void enableOrderAlerts()}
+              style={{
+                border: "1px solid #f59e0b",
+                background: "#fff",
+                color: "#92400e",
+                borderRadius: 999,
+                padding: "7px 10px",
+                fontSize: 12,
+                fontWeight: 900,
+                cursor: "pointer",
+                whiteSpace: "nowrap",
+              }}
+            >
+              Enable
+            </button>
+          </div>
+        ) : null}
+
+        {orderAlert ? (
+          <Link
+            href={orderAlert.href}
+            style={{
+              borderBottom: "1px solid #bbf7d0",
+              background: "#f0fdf4",
+              color: "#14532d",
+              padding: "10px 14px",
+              textDecoration: "none",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 12,
+              fontSize: 13,
+              fontWeight: 800,
+            }}
+          >
+            <span style={{ minWidth: 0 }}>
+              <span style={{ display: "block" }}>{orderAlert.title}</span>
+              <span
+                style={{
+                  display: "block",
+                  marginTop: 2,
+                  color: "#166534",
+                  fontSize: 12,
+                  fontWeight: 700,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {orderAlert.message}
+              </span>
+            </span>
+            <span style={{ fontSize: 12, fontWeight: 900, flexShrink: 0 }}>
+              Open
+            </span>
+          </Link>
+        ) : null}
 
         {/* ── Content ────────────────────────────────────────────── */}
         <main

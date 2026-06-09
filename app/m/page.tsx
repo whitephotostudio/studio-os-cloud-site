@@ -55,6 +55,21 @@ type SearchHit =
       href: string;
     };
 
+type StatsOrderRow = {
+  id: string;
+  created_at: string | null;
+  status: string | null;
+  parent_email: string | null;
+  customer_email: string | null;
+  total_cents: number | null;
+  total_amount: number | null;
+  currency: string | null;
+  payment_status: string | null;
+  paid_at: string | null;
+  stripe_checkout_session_id: string | null;
+  stripe_payment_intent_id: string | null;
+};
+
 // ── Helpers ──────────────────────────────────────────────────────────
 
 function greeting(): string {
@@ -68,6 +83,54 @@ function clean(value: string | null | undefined): string {
   return (value ?? "").trim();
 }
 
+function orderTotalCents(order: StatsOrderRow) {
+  return order.total_cents != null
+    ? order.total_cents
+    : order.total_amount != null
+      ? Math.round(order.total_amount * 100)
+      : 0;
+}
+
+function isPaidOrder(order: StatsOrderRow) {
+  const paymentStatus = clean(order.payment_status).toLowerCase();
+  return (
+    paymentStatus === "paid" ||
+    paymentStatus === "succeeded" ||
+    paymentStatus === "digital_paid" ||
+    !!clean(order.paid_at) ||
+    !!clean(order.stripe_payment_intent_id)
+  );
+}
+
+function hasStartedCheckout(order: StatsOrderRow) {
+  return !isPaidOrder(order) && !!clean(order.stripe_checkout_session_id);
+}
+
+function isCustomerOrder(order: StatsOrderRow) {
+  const buyerEmail = clean(order.parent_email ?? order.customer_email);
+  const paymentStatus = clean(order.payment_status);
+  return (
+    !!buyerEmail ||
+    orderTotalCents(order) > 0 ||
+    !!paymentStatus ||
+    !!clean(order.paid_at) ||
+    !!clean(order.stripe_checkout_session_id) ||
+    !!clean(order.stripe_payment_intent_id)
+  );
+}
+
+function isMainWorkflowOrder(order: StatsOrderRow) {
+  return !hasStartedCheckout(order);
+}
+
+function moneyFromCents(cents: number, currency = "CAD") {
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency,
+    maximumFractionDigits: cents >= 1000000 ? 0 : 2,
+  }).format(cents / 100);
+}
+
 export default function MobileHomePage() {
   const [supabase] = useState(() => createClient());
   const [photographerId, setPhotographerId] = useState<string | null>(null);
@@ -75,6 +138,9 @@ export default function MobileHomePage() {
   const [todaysOrders, setTodaysOrders] = useState(0);
   const [unreadOrders, setUnreadOrders] = useState(0);
   const [activeSchools, setActiveSchools] = useState(0);
+  const [visibleRevenueCents, setVisibleRevenueCents] = useState(0);
+  const [monthRevenueCents, setMonthRevenueCents] = useState(0);
+  const [statsCurrency, setStatsCurrency] = useState("CAD");
 
   const [search, setSearch] = useState("");
   const [hits, setHits] = useState<SearchHit[]>([]);
@@ -105,17 +171,32 @@ export default function MobileHomePage() {
       );
 
       const now = new Date();
-      const startOfToday = new Date(
+      const startOfTodayDate = new Date(
         now.getFullYear(),
         now.getMonth(),
         now.getDate(),
-      ).toISOString();
-      const [ordersToday, ordersUnread, schools] = await Promise.all([
+      );
+      const startOfMonthDate = new Date(now.getFullYear(), now.getMonth(), 1);
+      const startOfMonth = startOfMonthDate.toISOString();
+      const orderStatsSelect = `
+        id, created_at, status, parent_email, customer_email,
+        total_cents, total_amount, currency, payment_status, paid_at,
+        stripe_checkout_session_id, stripe_payment_intent_id
+      `;
+      const [recentOrders, monthOrders, ordersUnread, schools] = await Promise.all([
         supabase
           .from("orders")
-          .select("id", { count: "exact", head: true })
+          .select(orderStatsSelect)
           .eq("photographer_id", photog.id)
-          .gte("created_at", startOfToday),
+          .order("created_at", { ascending: false })
+          .limit(500),
+        supabase
+          .from("orders")
+          .select(orderStatsSelect)
+          .eq("photographer_id", photog.id)
+          .or(`created_at.gte.${startOfMonth},paid_at.gte.${startOfMonth}`)
+          .order("created_at", { ascending: false })
+          .limit(1000),
         supabase
           .from("orders")
           .select("id", { count: "exact", head: true })
@@ -127,9 +208,39 @@ export default function MobileHomePage() {
           .eq("photographer_id", photog.id),
       ]);
       if (cancelled) return;
-      setTodaysOrders(ordersToday.count ?? 0);
+      const visibleOrders = ((recentOrders.data ?? []) as StatsOrderRow[])
+        .filter(isCustomerOrder);
+      const monthOrderRows = ((monthOrders.data ?? []) as StatsOrderRow[])
+        .filter(isCustomerOrder);
+      const resolvedCurrency =
+        clean(visibleOrders.find((order) => clean(order.currency))?.currency) ||
+        clean(monthOrderRows.find((order) => clean(order.currency))?.currency) ||
+        "CAD";
+      setStatsCurrency(resolvedCurrency.toUpperCase());
+      setTodaysOrders(
+        visibleOrders.filter((order) => {
+          if (!order.created_at || !isMainWorkflowOrder(order)) return false;
+          const createdAt = new Date(order.created_at);
+          return createdAt >= startOfTodayDate;
+        }).length,
+      );
       setUnreadOrders(ordersUnread.count ?? 0);
       setActiveSchools(schools.count ?? 0);
+      setVisibleRevenueCents(
+        visibleOrders
+          .filter(isPaidOrder)
+          .reduce((sum, order) => sum + orderTotalCents(order), 0),
+      );
+      setMonthRevenueCents(
+        monthOrderRows
+          .filter((order) => {
+            if (!isPaidOrder(order)) return false;
+            const revenueDate = clean(order.paid_at) || clean(order.created_at);
+            if (!revenueDate) return false;
+            return new Date(revenueDate) >= startOfMonthDate;
+          })
+          .reduce((sum, order) => sum + orderTotalCents(order), 0),
+      );
     }
     void run();
     return () => {
@@ -406,9 +517,17 @@ export default function MobileHomePage() {
           marginBottom: 14,
         }}
       >
-        <MiniStat label="New today" value={todaysOrders} tone="red" />
-        <MiniStat label="Unread" value={unreadOrders} tone="amber" />
-        <MiniStat label="Schools" value={activeSchools} tone="blue" />
+        <MiniStat label="New Orders Today" value={todaysOrders} tone="red" />
+        <MiniStat
+          label="Visible Revenue"
+          value={moneyFromCents(visibleRevenueCents, statsCurrency)}
+          tone="amber"
+        />
+        <MiniStat
+          label="Revenue This Month"
+          value={moneyFromCents(monthRevenueCents, statsCurrency)}
+          tone="blue"
+        />
       </div>
 
       {/* Search */}
@@ -635,7 +754,7 @@ function MiniStat({
   tone,
 }: {
   label: string;
-  value: number;
+  value: number | string;
   tone: "red" | "amber" | "blue";
 }) {
   const bg =
@@ -663,10 +782,12 @@ function MiniStat({
       </div>
       <div
         style={{
-          fontSize: 20,
+          fontSize: typeof value === "string" && value.length > 8 ? 17 : 20,
           fontWeight: 900,
           color: "#111827",
           marginTop: 2,
+          lineHeight: 1.1,
+          overflowWrap: "anywhere",
         }}
       >
         {value}
