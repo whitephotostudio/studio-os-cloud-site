@@ -86,6 +86,35 @@ function slugify(value: string, fallback = "collection") {
     .replace(/^-+|-+$/g, "") || fallback;
 }
 
+function compositeCollectionMatchesClass(
+  row: { title?: string | null; slug?: string | null },
+  className: string,
+) {
+  const targetSlug = slugify(className, "");
+  if (!targetSlug) return false;
+
+  const title = clean(row.title);
+  const titleLower = title.toLowerCase();
+  const titleSlug = slugify(title, "");
+  const rowSlug = slugify(clean(row.slug), "");
+  const classLower = className.toLowerCase();
+
+  if (
+    titleLower === classLower ||
+    titleSlug === targetSlug ||
+    rowSlug === targetSlug
+  ) {
+    return true;
+  }
+
+  const candidateSlugs = [titleSlug, rowSlug].filter(Boolean);
+  return candidateSlugs.some((candidate) => {
+    if (candidate.startsWith(`${targetSlug}-`)) return true;
+    if (candidate.endsWith(`-${targetSlug}`)) return true;
+    return candidate.includes(`-${targetSlug}-`);
+  });
+}
+
 function normalizedSchoolStatus(value: string | null | undefined) {
   return clean(value).toLowerCase().replaceAll("-", "_");
 }
@@ -151,13 +180,9 @@ async function loadSchoolCompositeMedia(
 
   if (collectionError) throw collectionError;
 
-  const targetSlug = slugify(normalizedClass, "composite");
-  const normalizedLower = normalizedClass.toLowerCase();
-  const matchingCollections = (collectionRows ?? []).filter((row) => {
-    const rowTitle = clean(row.title).toLowerCase();
-    const rowSlug = clean(row.slug);
-    return rowTitle === normalizedLower || rowSlug === targetSlug;
-  });
+  const matchingCollections = (collectionRows ?? []).filter((row) =>
+    compositeCollectionMatchesClass(row, normalizedClass),
+  );
   if (!matchingCollections.length) return [] as CompositeMediaRow[];
 
   const collectionIds = matchingCollections.map((row) => clean(row.id)).filter(Boolean);
