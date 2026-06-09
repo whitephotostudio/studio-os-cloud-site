@@ -134,11 +134,35 @@ function slugify(value: string, fallback = "collection") {
     .replace(/^-+|-+$/g, "") || fallback;
 }
 
+function compactCompositeKey(value: string | null | undefined) {
+  return clean(value).toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
+
+function compositeClassCandidates(
+  value: string | null | undefined | Array<string | null | undefined>,
+) {
+  const rawValues = Array.isArray(value) ? value : [value];
+  const seen = new Set<string>();
+  const result: string[] = [];
+
+  for (const raw of rawValues) {
+    const candidate = clean(raw);
+    if (!candidate) continue;
+    const key = candidate.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(candidate);
+  }
+
+  return result;
+}
+
 function compositeCollectionMatchesClass(
   row: { title?: string | null; slug?: string | null },
   className: string,
 ) {
   const targetSlug = slugify(className, "");
+  const targetCompact = compactCompositeKey(className);
   if (!targetSlug) return false;
 
   const title = clean(row.title);
@@ -150,7 +174,9 @@ function compositeCollectionMatchesClass(
   if (
     titleLower === classLower ||
     titleSlug === targetSlug ||
-    rowSlug === targetSlug
+    rowSlug === targetSlug ||
+    compactCompositeKey(title) === targetCompact ||
+    compactCompositeKey(row.slug) === targetCompact
   ) {
     return true;
   }
@@ -166,10 +192,10 @@ function compositeCollectionMatchesClass(
 async function loadSchoolCompositeMedia(
   service: ReturnType<typeof createDashboardServiceClient>,
   school: SchoolRow | null,
-  className: string | null | undefined,
+  className: string | null | undefined | Array<string | null | undefined>,
 ) {
-  const normalizedClass = clean(className);
-  if (!school?.id || !normalizedClass) return [] as CompositeMediaRow[];
+  const classCandidates = compositeClassCandidates(className);
+  if (!school?.id) return [] as CompositeMediaRow[];
 
   const projectBySchoolId = await service
     .from("projects")
@@ -207,14 +233,22 @@ async function loadSchoolCompositeMedia(
 
   if (collectionError) throw collectionError;
 
-  const matchingCollections = (collectionRows ?? []).filter((row) =>
-    compositeCollectionMatchesClass(row, normalizedClass),
-  );
+  const fallbackTitle = classCandidates[0] ?? "Class Composite";
+  let matchingCollections = classCandidates.length
+    ? (collectionRows ?? []).filter((row) =>
+        classCandidates.some((candidate) =>
+          compositeCollectionMatchesClass(row, candidate),
+        ),
+      )
+    : [];
+  if (!matchingCollections.length && (collectionRows ?? []).length === 1) {
+    matchingCollections = collectionRows ?? [];
+  }
   if (!matchingCollections.length) return [] as CompositeMediaRow[];
 
   const collectionIds = matchingCollections.map((row) => clean(row.id)).filter(Boolean);
   const collectionTitleById = new Map(
-    matchingCollections.map((row) => [clean(row.id), clean(row.title) || normalizedClass]),
+    matchingCollections.map((row) => [clean(row.id), clean(row.title) || fallbackTitle]),
   );
 
   const { data: mediaRows, error: mediaError } = await service
@@ -251,7 +285,7 @@ async function loadSchoolCompositeMedia(
       ...row,
       preview_url: mediaUrls.previewUrl || null,
       thumbnail_url: mediaUrls.thumbnailUrl || null,
-      collection_title: collectionTitleById.get(clean(row.collection_id)) || normalizedClass,
+      collection_title: collectionTitleById.get(clean(row.collection_id)) || fallbackTitle,
     };
   });
 }
@@ -461,7 +495,7 @@ export async function POST(request: NextRequest) {
     compositeRows = await loadSchoolCompositeMedia(
       service,
       activeSchool,
-      primaryStudent.class_name,
+      [primaryStudent.class_name, primaryStudent.folder_name],
     );
     const loadedMediaRows = await loadFolderMediaRows(
       buildSchoolCandidateFolders({
