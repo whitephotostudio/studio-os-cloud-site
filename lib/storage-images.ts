@@ -229,9 +229,10 @@ export function buildStoredMediaUrls(
  */
 export function buildSignedMediaUrls(
   input: StoredMediaInput,
-  options?: { ttlSeconds?: number },
+  options?: { ttlSeconds?: number; deriveDerivatives?: boolean },
 ) {
   const ttl = options?.ttlSeconds ?? SIGNED_URL_TTL_DASHBOARD_SECONDS;
+  const deriveDerivatives = options?.deriveDerivatives !== false;
 
   // Prefer storage_path; fall back to extracting key from a stored
   // legacy URL.  Both lead to the same key shape for R2 objects
@@ -243,6 +244,15 @@ export function buildSignedMediaUrls(
 
   if (!rawKey) {
     return { originalUrl: "", previewUrl: "", thumbnailUrl: "" };
+  }
+
+  if (!deriveDerivatives) {
+    const originalUrl = r2PresignedGetUrl(rawKey, ttl);
+    return {
+      originalUrl,
+      previewUrl: originalUrl,
+      thumbnailUrl: originalUrl,
+    };
   }
 
   // Normalize: original key should end in .jpg.  Some legacy rows

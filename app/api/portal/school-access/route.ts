@@ -251,7 +251,10 @@ async function loadSchoolCompositeMedia(
       storagePath: row.storage_path,
       previewUrl: row.preview_url,
       thumbnailUrl: row.thumbnail_url,
-    }, { ttlSeconds: SIGNED_URL_TTL_PARENTS_PORTAL_SECONDS });
+    }, {
+      ttlSeconds: SIGNED_URL_TTL_PARENTS_PORTAL_SECONDS,
+      deriveDerivatives: false,
+    });
 
     return {
       ...row,
