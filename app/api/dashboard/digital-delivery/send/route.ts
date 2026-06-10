@@ -15,6 +15,7 @@ const BodySchema = z.object({
   orderId: z.string().min(1, "orderId is required."),
   recipientEmail: z.string().email("recipientEmail must be a valid email.").optional(),
   force: z.boolean().optional().default(true),
+  updateOrderEmail: z.boolean().optional().default(false),
 });
 
 export async function POST(request: NextRequest) {
@@ -67,6 +68,23 @@ export async function POST(request: NextRequest) {
         { ok: false, message: "You do not have access to this order." },
         { status: 403 },
       );
+    }
+
+    if (parsed.data.updateOrderEmail && parsed.data.recipientEmail) {
+      const { error: updateError } = await service
+        .from("orders")
+        .update({
+          parent_email: parsed.data.recipientEmail,
+          customer_email: parsed.data.recipientEmail,
+        })
+        .eq("id", parsed.data.orderId);
+
+      if (updateError) {
+        return NextResponse.json(
+          { ok: false, message: "Could not update the order email before sending." },
+          { status: 500 },
+        );
+      }
     }
 
     const result = await sendDigitalDeliveryEmailForOrder(service, parsed.data.orderId, {

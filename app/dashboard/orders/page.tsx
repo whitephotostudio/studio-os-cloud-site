@@ -222,6 +222,32 @@ function isNonProductionLineItem(item: OrderItem) {
   );
 }
 
+function isDigitalDeliveryName(value: string | null | undefined) {
+  const name = clean(value).toLowerCase();
+  if (!name || name.includes("retouch")) return false;
+  return (
+    name.includes("digital") ||
+    name.includes("download") ||
+    name.includes("original file") ||
+    name.includes("original files") ||
+    name.includes("jpg") ||
+    name.includes("jpeg") ||
+    name.includes("png")
+  );
+}
+
+function hasDigitalDeliveryItems(order: Order) {
+  const items = order.items ?? [];
+  if (items.length > 0) {
+    return items.some((item) => isDigitalDeliveryName(item.product_name) || isDigitalDeliveryName(item.sku));
+  }
+  return isDigitalDeliveryName(order.package_name);
+}
+
+function orderBuyerEmail(order: Order) {
+  return clean(order.parent_email ?? order.customer_email);
+}
+
 function buildPackageComponentSummary(groups: OrderedPhotoGroup[]): PackageComponentSummary[] {
   const map = new Map<
     string,
@@ -842,6 +868,10 @@ function OrdersPageContent() {
   const [downloadingBulk, setDownloadingBulk] = useState(false);
   const [bulkDownloadProgress, setBulkDownloadProgress] = useState("");
   const [saving, setSaving] = useState(false);
+  const [digitalDeliveryModal, setDigitalDeliveryModal] = useState<Order | null>(null);
+  const [digitalDeliveryEmail, setDigitalDeliveryEmail] = useState("");
+  const [digitalDeliveryError, setDigitalDeliveryError] = useState<string | null>(null);
+  const [sendingDigitalDeliveryId, setSendingDigitalDeliveryId] = useState<string | null>(null);
   // Status change modal
   const [statusModal, setStatusModal] = useState<{
     orderId: string;
@@ -1110,6 +1140,55 @@ function OrdersPageContent() {
 
   async function downloadOriginals(order: Order) {
     await downloadOrderZip(order);
+  }
+
+  function openDigitalDelivery(order: Order) {
+    setDigitalDeliveryModal(order);
+    setDigitalDeliveryEmail(orderBuyerEmail(order));
+    setDigitalDeliveryError(null);
+  }
+
+  async function sendDigitalDeliveryLink() {
+    if (!digitalDeliveryModal) return;
+    const recipientEmail = clean(digitalDeliveryEmail);
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipientEmail)) {
+      setDigitalDeliveryError("Enter a valid email address.");
+      return;
+    }
+
+    setSendingDigitalDeliveryId(digitalDeliveryModal.id);
+    setDigitalDeliveryError(null);
+    try {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      const response = await fetch("/api/dashboard/digital-delivery/send", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session?.access_token ?? ""}`,
+        },
+        body: JSON.stringify({
+          orderId: digitalDeliveryModal.id,
+          recipientEmail,
+          force: true,
+          updateOrderEmail: true,
+        }),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || result?.ok === false) {
+        throw new Error(result?.message || result?.reason || "Could not send the digital ZIP link.");
+      }
+
+      alert(`Digital ZIP link sent to ${recipientEmail}.`);
+      setDigitalDeliveryModal(null);
+      await load();
+    } catch (error) {
+      console.error("Digital delivery send error:", error);
+      setDigitalDeliveryError(error instanceof Error ? error.message : "Could not send the digital ZIP link.");
+    } finally {
+      setSendingDigitalDeliveryId(null);
+    }
   }
 
   async function exportAllVisible() {
@@ -2152,6 +2231,8 @@ function OrdersPageContent() {
                   const isPhotosExpanded = !!expandedPhotos[group.key];
                   const orderTotal = group.totalCents;
                   const isSelected = selectedKeys.has(group.key);
+                  const digitalDeliveryOrder = group.orders.find((row) => isPaidOrder(row) && hasDigitalDeliveryItems(row)) ?? null;
+                  const canSendDigitalLink = !isPendingGroup && !!digitalDeliveryOrder;
                   return (
                     <div
                       key={group.key}
@@ -2405,6 +2486,32 @@ function OrdersPageContent() {
                               </button>
                             )}
 
+                            {canSendDigitalLink ? (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (digitalDeliveryOrder) openDigitalDelivery(digitalDeliveryOrder);
+                                }}
+                                disabled={digitalDeliveryOrder ? sendingDigitalDeliveryId === digitalDeliveryOrder.id : true}
+                                style={{
+                                  background: "#eef2ff",
+                                  color: "#3730a3",
+                                  border: "1px solid #c7d2fe",
+                                  borderRadius: 12,
+                                  padding: "10px 14px",
+                                  display: "inline-flex",
+                                  alignItems: "center",
+                                  gap: 8,
+                                  fontWeight: 800,
+                                  cursor: digitalDeliveryOrder && sendingDigitalDeliveryId === digitalDeliveryOrder.id ? "default" : "pointer",
+                                  opacity: digitalDeliveryOrder && sendingDigitalDeliveryId === digitalDeliveryOrder.id ? 0.7 : 1,
+                                }}
+                              >
+                                <Mail size={16} /> {digitalDeliveryOrder && sendingDigitalDeliveryId === digitalDeliveryOrder.id ? "Sending…" : "Send digital link"}
+                              </button>
+                            ) : null}
+
                             <button
                               type="button"
                               onClick={(e) => {
@@ -2657,6 +2764,29 @@ function OrdersPageContent() {
                     <Download size={15} /> {downloadingId === selected.id ? "Downloading…" : "Download Summary & Photos"}
                   </button>
                 )}
+                {isPaidOrder(selected) && hasDigitalDeliveryItems(selected) ? (
+                  <button
+                    type="button"
+                    onClick={() => openDigitalDelivery(selected)}
+                    disabled={sendingDigitalDeliveryId === selected.id}
+                    style={{
+                      background: "#eef2ff",
+                      color: "#3730a3",
+                      border: "1px solid #c7d2fe",
+                      borderRadius: 6,
+                      padding: "10px 16px",
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 8,
+                      fontWeight: 700,
+                      cursor: sendingDigitalDeliveryId === selected.id ? "default" : "pointer",
+                      fontSize: 13,
+                      opacity: sendingDigitalDeliveryId === selected.id ? 0.7 : 1,
+                    }}
+                  >
+                    <Mail size={15} /> {sendingDigitalDeliveryId === selected.id ? "Sending…" : "Send digital link"}
+                  </button>
+                ) : null}
               </div>
 
               {/* ── Edit & Delete ── */}
@@ -2720,6 +2850,78 @@ function OrdersPageContent() {
           ) : null}
         </main>
       </div>
+
+      {/* ── Digital Delivery Modal ────────────────────────────────────────── */}
+      {digitalDeliveryModal ? (
+        <div style={{ position: "fixed", inset: 0, zIndex: 110, background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              void sendDigitalDeliveryLink();
+            }}
+            style={{ background: "#fff", borderRadius: 24, width: "100%", maxWidth: 520, padding: isMobile ? 20 : 28, boxShadow: "0 24px 60px rgba(0,0,0,0.25)" }}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16, marginBottom: 20 }}>
+              <div>
+                <div style={{ fontSize: 11, color: "#3730a3", fontWeight: 900, letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 6 }}>Digital Delivery</div>
+                <div style={{ fontSize: 22, fontWeight: 900, color: textPrimary, lineHeight: 1.2 }}>Send ZIP link</div>
+                <div style={{ fontSize: 13, color: textMuted, marginTop: 6 }}>Order {digitalDeliveryModal.id.slice(0, 8)} · {digitalDeliveryModal.package_name || "Digital order"}</div>
+              </div>
+              <button type="button" onClick={() => setDigitalDeliveryModal(null)} style={{ background: "#f3f4f6", border: "none", width: 36, height: 36, borderRadius: 12, cursor: "pointer", color: textMuted, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                <X size={16} />
+              </button>
+            </div>
+
+            <div style={{ background: "#f8fafc", border: `1px solid ${borderColor}`, borderRadius: 16, padding: 14, marginBottom: 16 }}>
+              <div style={{ fontSize: 12, color: textMuted, fontWeight: 800, marginBottom: 4 }}>Buyer</div>
+              <div style={{ fontSize: 15, color: textPrimary, fontWeight: 900 }}>{digitalDeliveryModal.parent_name ?? digitalDeliveryModal.customer_name ?? "Customer"}</div>
+              <div style={{ fontSize: 13, color: textMuted, marginTop: 3, wordBreak: "break-word" }}>{orderBuyerEmail(digitalDeliveryModal) || "No email saved yet"}</div>
+            </div>
+
+            <label style={{ display: "block", marginBottom: 14 }}>
+              <div style={{ fontSize: 12, color: textMuted, fontWeight: 900, letterSpacing: "0.05em", textTransform: "uppercase", marginBottom: 7 }}>Send to email</div>
+              <input
+                type="email"
+                value={digitalDeliveryEmail}
+                onChange={(event) => {
+                  setDigitalDeliveryEmail(event.target.value);
+                  setDigitalDeliveryError(null);
+                }}
+                placeholder="customer@example.com"
+                autoFocus
+                style={{ width: "100%", border: digitalDeliveryError ? "1px solid #dc2626" : `1px solid ${borderColor}`, borderRadius: 12, padding: "12px 14px", fontSize: 15, color: textPrimary, outline: "none", boxSizing: "border-box" }}
+              />
+            </label>
+
+            <div style={{ background: "#eef2ff", color: "#3730a3", border: "1px solid #c7d2fe", borderRadius: 14, padding: "10px 12px", fontSize: 13, lineHeight: 1.45, fontWeight: 700, marginBottom: 14 }}>
+              This sends the paid digital ZIP link again and updates the saved order email to the address above.
+            </div>
+
+            {digitalDeliveryError ? (
+              <div style={{ background: "#fef2f2", color: "#b91c1c", border: "1px solid #fecaca", borderRadius: 12, padding: "10px 12px", fontSize: 13, fontWeight: 800, marginBottom: 14 }}>
+                {digitalDeliveryError}
+              </div>
+            ) : null}
+
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+              <button
+                type="submit"
+                disabled={sendingDigitalDeliveryId === digitalDeliveryModal.id}
+                style={{ flex: "1 1 180px", background: "#111827", color: "#fff", border: "none", borderRadius: 12, padding: "12px 16px", fontWeight: 900, fontSize: 14, cursor: sendingDigitalDeliveryId === digitalDeliveryModal.id ? "default" : "pointer", opacity: sendingDigitalDeliveryId === digitalDeliveryModal.id ? 0.7 : 1, display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8 }}
+              >
+                <Mail size={16} /> {sendingDigitalDeliveryId === digitalDeliveryModal.id ? "Sending…" : "Send link"}
+              </button>
+              <button
+                type="button"
+                onClick={() => setDigitalDeliveryModal(null)}
+                style={{ flex: "1 1 140px", background: "#fff", color: textPrimary, border: `1px solid ${borderColor}`, borderRadius: 12, padding: "12px 16px", fontWeight: 900, fontSize: 14, cursor: "pointer" }}
+              >
+                Cancel
+              </button>
+            </div>
+          </form>
+        </div>
+      ) : null}
 
       {/* ── Edit Order Modal ──────────────────────────────────────────────── */}
       {editingOrder ? (
