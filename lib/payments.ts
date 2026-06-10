@@ -3,6 +3,7 @@ import { createDashboardServiceClient } from "@/lib/dashboard-auth";
 import { syncPhotographyKeysByPhotographerId } from "@/lib/studio-os-app";
 import { buildOrderNotificationEmail } from "@/lib/order-notification-email";
 import { buildOrderReceiptEmail } from "@/lib/order-receipt-email";
+import { sendDigitalDeliveryEmailForOrder } from "@/lib/digital-delivery";
 import { notifyOwnerForSetting } from "@/lib/admin-notification-center";
 import { ownerUrl } from "@/lib/owner-notifications";
 import { resendConfigured, sendResendEmail, resolveReplyTo } from "@/lib/resend";
@@ -2141,6 +2142,36 @@ export async function finalizePaidOrder(
             });
           } catch (receiptEmailError) {
             console.error("[order-notification] Buyer receipt failed:", receiptEmailError);
+          }
+
+          const hasDigitalDeliveryItem =
+            nextStatus === "digital_paid" ||
+            ((itemRows ?? []) as Array<{ product_name?: string | null }>).some((item) => {
+              const name = (item.product_name ?? "").toLowerCase();
+              if (name.includes("retouch")) return false;
+              return (
+                name.includes("digital") ||
+                name.includes("download") ||
+                name.includes("file") ||
+                name.includes("jpg") ||
+                name.includes("jpeg") ||
+                name.includes("png") ||
+                name.includes("usb")
+              );
+            });
+
+          if (hasDigitalDeliveryItem) {
+            try {
+              await sendDigitalDeliveryEmailForOrder(service, input.orderId, {
+                recipientEmail: buyerEmailAddress,
+                force: false,
+              });
+            } catch (digitalDeliveryError) {
+              console.error(
+                "[digital-delivery] Failed to send buyer ZIP link:",
+                digitalDeliveryError,
+              );
+            }
           }
         }
     }
