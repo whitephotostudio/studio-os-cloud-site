@@ -23,6 +23,15 @@ import {
   X,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import {
+  MOBILE_ORDER_SELECT_MONEY,
+  isMobileCompletedOrder,
+  isMobileCustomerOrder,
+  isMobileMainWorkflowOrder,
+  isMobileUnreadOrder,
+  mobileDisplayStatus,
+  mobileOrderTotalCents,
+} from "@/lib/mobile-order-utils";
 
 type OrderRow = {
   id: string;
@@ -35,12 +44,22 @@ type OrderRow = {
   package_name: string | null;
   total_cents: number | null;
   total_amount: number | null;
+  subtotal_cents: number | null;
+  package_price: number | null;
   currency: string | null;
   payment_status?: string | null;
   paid_at?: string | null;
   seen_by_photographer: boolean | null;
   stripe_checkout_session_id?: string | null;
   stripe_payment_intent_id?: string | null;
+  items?: Array<{
+    product_name?: string | null;
+    quantity?: number | null;
+    price?: number | null;
+    unit_price_cents?: number | null;
+    line_total_cents?: number | null;
+    sku?: string | null;
+  }> | null;
   student_id: string | null;
   student:
     | { first_name: string | null; last_name: string | null; photo_url: string | null }
@@ -55,37 +74,10 @@ function clean(value: string | null | undefined): string {
 }
 
 function moneyFromOrder(order: OrderRow): string {
-  const cents =
-    order.total_cents != null
-      ? order.total_cents
-      : order.total_amount != null
-        ? Math.round(order.total_amount * 100)
-        : 0;
   return new Intl.NumberFormat("en-US", {
     style: "currency",
-    currency: order.currency || "USD",
-  }).format(cents / 100);
-}
-
-function orderTotalCents(order: OrderRow) {
-  return order.total_cents != null
-    ? order.total_cents
-    : order.total_amount != null
-      ? Math.round(order.total_amount * 100)
-      : 0;
-}
-
-function isCustomerOrder(order: OrderRow): boolean {
-  const buyerEmail = clean(order.parent_email ?? order.customer_email);
-  const paymentStatus = clean(order.payment_status);
-  return (
-    !!buyerEmail ||
-    orderTotalCents(order) > 0 ||
-    !!paymentStatus ||
-    !!clean(order.paid_at) ||
-    !!clean(order.stripe_checkout_session_id) ||
-    !!clean(order.stripe_payment_intent_id)
-  );
+    currency: order.currency || "CAD",
+  }).format(mobileOrderTotalCents(order) / 100);
 }
 
 function shortId(id: string): string {
@@ -124,30 +116,8 @@ function statusPillStyle(status: string): React.CSSProperties {
   return { background: "#f3f4f6", color: "#374151" };
 }
 
-function isPaidOrder(order: OrderRow): boolean {
-  const paymentStatus = clean(order.payment_status).toLowerCase();
-  return (
-    paymentStatus === "paid" ||
-    paymentStatus === "succeeded" ||
-    paymentStatus === "digital_paid" ||
-    !!clean(order.paid_at) ||
-    !!clean(order.stripe_payment_intent_id)
-  );
-}
-
-function hasStartedCheckout(order: OrderRow): boolean {
-  return !isPaidOrder(order) && !!clean(order.stripe_checkout_session_id);
-}
-
 function displayStatus(order: OrderRow): string {
-  const status = clean(order.status).toLowerCase();
-  if (hasStartedCheckout(order)) return "payment_pending";
-  if (isPaidOrder(order)) {
-    if (status === "digital_paid") return "digital_paid";
-    if (status === "reviewed" || status === "sent_to_print" || status === "completed") return status;
-    return "paid";
-  }
-  return status || "pending";
+  return mobileDisplayStatus(order);
 }
 
 function displayStatusLabel(order: OrderRow): string {
@@ -164,12 +134,11 @@ function isPendingStatus(order: OrderRow): boolean {
 }
 
 function isMainWorkflowOrder(order: OrderRow): boolean {
-  return !isPendingStatus(order);
+  return isMobileMainWorkflowOrder(order);
 }
 
 function isCompletedStatus(order: OrderRow): boolean {
-  const v = displayStatus(order);
-  return v === "completed" || v === "paid" || v === "digital_paid" || v === "sent_to_print";
+  return isMobileCompletedOrder(order);
 }
 
 export default function MobileOrdersPage() {
@@ -202,9 +171,8 @@ export default function MobileOrdersPage() {
         .select(
           `id, created_at, status, parent_name, parent_email,
            customer_name, customer_email, package_name,
-           total_cents, total_amount, currency,
-           payment_status, paid_at,
-           seen_by_photographer, stripe_checkout_session_id, stripe_payment_intent_id, student_id,
+           ${MOBILE_ORDER_SELECT_MONEY},
+           seen_by_photographer, student_id,
            student:students(first_name,last_name,photo_url)`,
         )
         .eq("photographer_id", photog.id)
@@ -215,7 +183,7 @@ export default function MobileOrdersPage() {
         setError(qErr.message);
         setOrders([]);
       } else {
-        setOrders(((data ?? []) as OrderRow[]).filter(isCustomerOrder));
+        setOrders(((data ?? []) as OrderRow[]).filter(isMobileCustomerOrder));
       }
       setLoading(false);
     }
@@ -228,7 +196,7 @@ export default function MobileOrdersPage() {
   const filtered = useMemo(() => {
     let list = filter === "all" ? orders.filter(isMainWorkflowOrder) : orders;
     if (filter === "unread") {
-      list = list.filter((o) => o.seen_by_photographer === false && isMainWorkflowOrder(o));
+      list = list.filter(isMobileUnreadOrder);
     }
     if (filter === "pending") list = list.filter(isPendingStatus);
     if (filter === "completed") list = list.filter(isCompletedStatus);
@@ -253,7 +221,7 @@ export default function MobileOrdersPage() {
   const counts = useMemo(() => {
     return {
       all: orders.filter(isMainWorkflowOrder).length,
-      unread: orders.filter((o) => o.seen_by_photographer === false && isMainWorkflowOrder(o)).length,
+      unread: orders.filter(isMobileUnreadOrder).length,
       pending: orders.filter(isPendingStatus).length,
       completed: orders.filter(isCompletedStatus).length,
     };

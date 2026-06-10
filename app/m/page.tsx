@@ -22,6 +22,17 @@ import {
   X,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import {
+  MOBILE_ORDER_SELECT_MONEY,
+  cleanMobileOrderValue,
+  isMobileCustomerOrder,
+  isMobileMainWorkflowOrder,
+  isMobilePaidOrder,
+  isMobileUnreadOrder,
+  mobileOrderTotalCents,
+  mobileRevenueDate,
+  type MobileOrderMoneyRow,
+} from "@/lib/mobile-order-utils";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -63,12 +74,15 @@ type StatsOrderRow = {
   customer_email: string | null;
   total_cents: number | null;
   total_amount: number | null;
+  subtotal_cents: number | null;
+  package_price: number | null;
   currency: string | null;
   payment_status: string | null;
   paid_at: string | null;
+  seen_by_photographer: boolean | null;
   stripe_checkout_session_id: string | null;
   stripe_payment_intent_id: string | null;
-};
+} & MobileOrderMoneyRow;
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
@@ -81,46 +95,6 @@ function greeting(): string {
 
 function clean(value: string | null | undefined): string {
   return (value ?? "").trim();
-}
-
-function orderTotalCents(order: StatsOrderRow) {
-  return order.total_cents != null
-    ? order.total_cents
-    : order.total_amount != null
-      ? Math.round(order.total_amount * 100)
-      : 0;
-}
-
-function isPaidOrder(order: StatsOrderRow) {
-  const paymentStatus = clean(order.payment_status).toLowerCase();
-  return (
-    paymentStatus === "paid" ||
-    paymentStatus === "succeeded" ||
-    paymentStatus === "digital_paid" ||
-    !!clean(order.paid_at) ||
-    !!clean(order.stripe_payment_intent_id)
-  );
-}
-
-function hasStartedCheckout(order: StatsOrderRow) {
-  return !isPaidOrder(order) && !!clean(order.stripe_checkout_session_id);
-}
-
-function isCustomerOrder(order: StatsOrderRow) {
-  const buyerEmail = clean(order.parent_email ?? order.customer_email);
-  const paymentStatus = clean(order.payment_status);
-  return (
-    !!buyerEmail ||
-    orderTotalCents(order) > 0 ||
-    !!paymentStatus ||
-    !!clean(order.paid_at) ||
-    !!clean(order.stripe_checkout_session_id) ||
-    !!clean(order.stripe_payment_intent_id)
-  );
-}
-
-function isMainWorkflowOrder(order: StatsOrderRow) {
-  return !hasStartedCheckout(order);
 }
 
 function moneyFromCents(cents: number, currency = "CAD") {
@@ -177,11 +151,10 @@ export default function MobileHomePage() {
       const startOfMonthDate = new Date(now.getFullYear(), now.getMonth(), 1);
       const startOfMonth = startOfMonthDate.toISOString();
       const orderStatsSelect = `
-        id, created_at, status, parent_email, customer_email,
-        total_cents, total_amount, currency, payment_status, paid_at,
-        stripe_checkout_session_id, stripe_payment_intent_id
+        id, created_at, status, parent_email, customer_email, seen_by_photographer,
+        ${MOBILE_ORDER_SELECT_MONEY}
       `;
-      const [recentOrders, monthOrders, ordersUnread, schools] = await Promise.all([
+      const [recentOrders, monthOrders, schools] = await Promise.all([
         supabase
           .from("orders")
           .select(orderStatsSelect)
@@ -196,48 +169,43 @@ export default function MobileHomePage() {
           .order("created_at", { ascending: false })
           .limit(1000),
         supabase
-          .from("orders")
-          .select("id", { count: "exact", head: true })
-          .eq("photographer_id", photog.id)
-          .eq("seen_by_photographer", false),
-        supabase
           .from("schools")
           .select("id", { count: "exact", head: true })
           .eq("photographer_id", photog.id),
       ]);
       if (cancelled) return;
       const visibleOrders = ((recentOrders.data ?? []) as StatsOrderRow[])
-        .filter(isCustomerOrder);
+        .filter(isMobileCustomerOrder);
       const monthOrderRows = ((monthOrders.data ?? []) as StatsOrderRow[])
-        .filter(isCustomerOrder);
+        .filter(isMobileCustomerOrder);
       const resolvedCurrency =
-        clean(visibleOrders.find((order) => clean(order.currency))?.currency) ||
-        clean(monthOrderRows.find((order) => clean(order.currency))?.currency) ||
+        cleanMobileOrderValue(visibleOrders.find((order) => cleanMobileOrderValue(order.currency))?.currency) ||
+        cleanMobileOrderValue(monthOrderRows.find((order) => cleanMobileOrderValue(order.currency))?.currency) ||
         "CAD";
       setStatsCurrency(resolvedCurrency.toUpperCase());
       setTodaysOrders(
         visibleOrders.filter((order) => {
-          if (!order.created_at || !isMainWorkflowOrder(order)) return false;
+          if (!order.created_at || !isMobileMainWorkflowOrder(order)) return false;
           const createdAt = new Date(order.created_at);
           return createdAt >= startOfTodayDate;
         }).length,
       );
-      setUnreadOrders(ordersUnread.count ?? 0);
+      setUnreadOrders(visibleOrders.filter(isMobileUnreadOrder).length);
       setActiveSchools(schools.count ?? 0);
       setVisibleRevenueCents(
         visibleOrders
-          .filter(isPaidOrder)
-          .reduce((sum, order) => sum + orderTotalCents(order), 0),
+          .filter(isMobilePaidOrder)
+          .reduce((sum, order) => sum + mobileOrderTotalCents(order), 0),
       );
       setMonthRevenueCents(
         monthOrderRows
           .filter((order) => {
-            if (!isPaidOrder(order)) return false;
-            const revenueDate = clean(order.paid_at) || clean(order.created_at);
+            if (!isMobilePaidOrder(order)) return false;
+            const revenueDate = mobileRevenueDate(order);
             if (!revenueDate) return false;
             return new Date(revenueDate) >= startOfMonthDate;
           })
-          .reduce((sum, order) => sum + orderTotalCents(order), 0),
+          .reduce((sum, order) => sum + mobileOrderTotalCents(order), 0),
       );
     }
     void run();

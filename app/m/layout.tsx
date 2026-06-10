@@ -21,9 +21,18 @@ import { usePathname } from "next/navigation";
 import { Bell, CalendarDays, GraduationCap, Home, PlusCircle, ShoppingBag } from "lucide-react";
 import { AgreementGate } from "@/components/agreement-gate";
 import { createClient } from "@/lib/supabase/client";
+import {
+  MOBILE_ORDER_SELECT_MONEY,
+  isMobileCustomerOrder,
+  isMobilePaidOrder,
+  isMobileUnreadOrder,
+  mobileOrderTotalCents,
+  mobileRevenueDate,
+} from "@/lib/mobile-order-utils";
 
 const TRANSIENT_SESSION_FLAG = "studio-os-transient-session";
 const SESSION_STARTED_FLAG = "studio-os-session-started";
+const ORDER_ALERTS_ENABLED_KEY = "studio-os-mobile-order-alerts-enabled";
 
 type TabDef = {
   href: string;
@@ -35,15 +44,27 @@ type TabDef = {
 type LatestOrderRow = {
   id: string;
   created_at: string | null;
-  parent_name: string | null;
-  customer_name: string | null;
-  package_name: string | null;
+  parent_name?: string | null;
+  customer_name?: string | null;
+  package_name?: string | null;
   total_cents: number | null;
   total_amount: number | null;
+  subtotal_cents?: number | null;
+  package_price?: number | null;
   currency: string | null;
   payment_status: string | null;
   paid_at: string | null;
+  seen_by_photographer?: boolean | null;
+  stripe_checkout_session_id?: string | null;
   stripe_payment_intent_id: string | null;
+  items?: Array<{
+    product_name?: string | null;
+    quantity?: number | null;
+    price?: number | null;
+    unit_price_cents?: number | null;
+    line_total_cents?: number | null;
+    sku?: string | null;
+  }> | null;
 };
 
 type OrderAlert = {
@@ -95,14 +116,6 @@ function clean(value: string | null | undefined) {
   return (value ?? "").trim();
 }
 
-function orderTotalCents(order: LatestOrderRow) {
-  return order.total_cents != null
-    ? order.total_cents
-    : order.total_amount != null
-      ? Math.round(order.total_amount * 100)
-      : 0;
-}
-
 function moneyFromCents(cents: number, currency = "CAD") {
   return new Intl.NumberFormat("en-US", {
     style: "currency",
@@ -112,18 +125,6 @@ function moneyFromCents(cents: number, currency = "CAD") {
 
 function orderCustomerName(order: LatestOrderRow) {
   return clean(order.parent_name) || clean(order.customer_name) || "A client";
-}
-
-function isPaidOrder(order: LatestOrderRow) {
-  const paymentStatus = clean(order.payment_status).toLowerCase();
-  return (
-    paymentStatus === "paid" ||
-    paymentStatus === "succeeded" ||
-    paymentStatus === "digital_paid" ||
-    paymentStatus === "no_payment_required" ||
-    !!clean(order.paid_at) ||
-    !!clean(order.stripe_payment_intent_id)
-  );
 }
 
 export default function MobileLayout({
@@ -193,12 +194,17 @@ export default function MobileLayout({
       if (cancelled) return;
       if (photog?.id) {
         setPhotographerId(photog.id);
-        const { count } = await supabase
+        const { data: unreadRows } = await supabase
           .from("orders")
-          .select("id", { count: "exact", head: true })
+          .select(`id, created_at, status, parent_email, customer_email, seen_by_photographer, ${MOBILE_ORDER_SELECT_MONEY}`)
           .eq("photographer_id", photog.id)
-          .eq("seen_by_photographer", false);
-        if (!cancelled) setUnreadCount(count ?? 0);
+          .eq("seen_by_photographer", false)
+          .order("created_at", { ascending: false })
+          .limit(500);
+        const nextUnread = ((unreadRows ?? []) as LatestOrderRow[])
+          .filter(isMobileCustomerOrder)
+          .filter(isMobileUnreadOrder).length;
+        if (!cancelled) setUnreadCount(nextUnread);
       }
     }
     void guard();
@@ -212,6 +218,7 @@ export default function MobileLayout({
     setNotificationPermission(
       "Notification" in window ? Notification.permission : "unsupported",
     );
+    setSoundEnabled(window.localStorage.getItem(ORDER_ALERTS_ENABLED_KEY) === "1");
   }, []);
 
   useEffect(() => {
@@ -262,8 +269,10 @@ export default function MobileLayout({
     try {
       await playOrderChime();
       setSoundEnabled(true);
+      window.localStorage.setItem(ORDER_ALERTS_ENABLED_KEY, "1");
     } catch {
       setSoundEnabled(false);
+      window.localStorage.removeItem(ORDER_ALERTS_ENABLED_KEY);
     }
 
     if (typeof window !== "undefined" && "Notification" in window) {
@@ -298,25 +307,38 @@ export default function MobileLayout({
         supabase
           .from("orders")
           .select(
-            "id,created_at,parent_name,customer_name,package_name,total_cents,total_amount,currency,payment_status,paid_at,stripe_payment_intent_id",
+            `id, created_at, parent_name, customer_name, package_name, seen_by_photographer, ${MOBILE_ORDER_SELECT_MONEY}`,
           )
           .eq("photographer_id", photographerId)
           .order("created_at", { ascending: false })
-          .limit(10),
+          .limit(100),
         supabase
           .from("orders")
-          .select("id", { count: "exact", head: true })
+          .select(`id, created_at, status, parent_email, customer_email, seen_by_photographer, ${MOBILE_ORDER_SELECT_MONEY}`)
           .eq("photographer_id", photographerId)
-          .eq("seen_by_photographer", false),
+          .eq("seen_by_photographer", false)
+          .order("created_at", { ascending: false })
+          .limit(500),
       ]);
 
       if (cancelled) return;
-      setUnreadCount(unreadResult.count ?? 0);
+      setUnreadCount(
+        ((unreadResult.data ?? []) as LatestOrderRow[])
+          .filter(isMobileCustomerOrder)
+          .filter(isMobileUnreadOrder).length,
+      );
 
-      const latestOrder = ((latestResult.data ?? []) as LatestOrderRow[]).find(isPaidOrder);
+      const latestOrder = ((latestResult.data ?? []) as LatestOrderRow[])
+        .filter(isMobileCustomerOrder)
+        .filter(isMobilePaidOrder)
+        .sort((a, b) => {
+          const aTime = new Date(mobileRevenueDate(a) || a.created_at || 0).getTime();
+          const bTime = new Date(mobileRevenueDate(b) || b.created_at || 0).getTime();
+          return bTime - aTime;
+        })[0];
       if (!latestOrder?.id) return;
 
-      const latestOrderTime = clean(latestOrder.paid_at) || latestOrder.created_at;
+      const latestOrderTime = mobileRevenueDate(latestOrder);
       const previousCreated = latestOrderCreatedRef.current;
       const previousId = latestOrderIdRef.current;
       latestOrderCreatedRef.current = latestOrderTime;
@@ -337,7 +359,7 @@ export default function MobileLayout({
       if (!isNewOrder) return;
 
       const amount = moneyFromCents(
-        orderTotalCents(latestOrder),
+        mobileOrderTotalCents(latestOrder),
         clean(latestOrder.currency).toUpperCase() || "CAD",
       );
       const customer = orderCustomerName(latestOrder);

@@ -34,6 +34,9 @@ import {
   isWebImageUrl,
   parseOrderPhotoSelections,
   parsePackageSlotLabel,
+  resolveLineItemCents,
+  resolveOrderSubtotalCents,
+  resolveOrderTotalCents,
 } from "@/lib/order-display";
 
 type Row = {
@@ -50,6 +53,7 @@ type Row = {
   tax_cents: number | null;
   total_cents: number | null;
   total_amount: number | null;
+  package_price: number | null;
   cart_snapshot?: unknown;
   currency: string | null;
   payment_status?: string | null;
@@ -290,9 +294,7 @@ function buildComponentSummary(groups: PoseGroup[]): ComponentSummary[] {
 }
 
 function orderTotalCents(r: Row): number {
-  if (r.total_cents != null) return r.total_cents;
-  if (r.total_amount != null) return Math.round(r.total_amount * 100);
-  return 0;
+  return resolveOrderTotalCents(r, r.items);
 }
 
 function shortId(id: string): string {
@@ -387,7 +389,7 @@ export default function MobileOrderDetailPage() {
         .select(
           `id, created_at, status, parent_name, parent_email, parent_phone,
            customer_name, customer_email, package_name,
-           subtotal_cents, tax_cents, total_cents, total_amount, currency,
+           subtotal_cents, tax_cents, total_cents, total_amount, package_price, currency,
            cart_snapshot,
            payment_status, paid_at, stripe_payment_intent_id, stripe_checkout_session_id,
            special_notes, notes,
@@ -531,6 +533,7 @@ export default function MobileOrderDetailPage() {
   const items = resolveDisplayItems(order);
   const poseGroups = buildPoseGroups(items.filter((item) => !isNonProductionLineItem(item)));
   const componentSummary = buildComponentSummary(poseGroups);
+  const subtotalCents = resolveOrderSubtotalCents(order, order.items);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
@@ -1058,14 +1061,7 @@ export default function MobileOrderDetailPage() {
             </div>
             {items.map((it) => {
               const qty = it.quantity ?? 1;
-              const lineCents =
-                it.line_total_cents != null
-                  ? it.line_total_cents
-                  : it.unit_price_cents != null
-                    ? it.unit_price_cents * qty
-                    : it.price != null
-                      ? Math.round(it.price * 100 * qty)
-                      : 0;
+              const lineCents = resolveLineItemCents(it) ?? 0;
               const included = it.included || lineCents === 0;
               return (
                 <div
@@ -1128,7 +1124,7 @@ export default function MobileOrderDetailPage() {
             gap: 4,
           }}
         >
-          {order.subtotal_cents != null ? (
+          {subtotalCents > 0 ? (
             <div
               style={{
                 display: "flex",
@@ -1139,7 +1135,7 @@ export default function MobileOrderDetailPage() {
             >
               <span>Subtotal</span>
               <span style={{ fontVariantNumeric: "tabular-nums" }}>
-                {money(order.subtotal_cents, currency)}
+                {money(subtotalCents, currency)}
               </span>
             </div>
           ) : null}
