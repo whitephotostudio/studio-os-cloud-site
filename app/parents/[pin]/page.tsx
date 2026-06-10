@@ -5016,7 +5016,9 @@ export default function ParentGalleryPage() {
   const eventCanvasBackground = isEventImageStage
     ? "#ffffff"
     : isEventGallery
-      ? "#f7f3ee"
+      ? isMobileViewport
+        ? "#ffffff"
+        : "#f7f3ee"
       : galleryTone.background;
   const galleryPickerValue = showAlbumOverview
     ? "__albums__"
@@ -6200,13 +6202,18 @@ export default function ParentGalleryPage() {
     const layout = options?.layout ?? photoWallStyle;
     const isFavorited = favorites.has(img.id);
     const isEventPhotoWall = !isSchoolMode && activeView === "photos";
+    const isMobileEventPhotoWall = isEventPhotoWall && isMobileViewport;
     const imagePadding = isEventPhotoWall ? 0 : options?.featured ? 14 : layout === "subway" ? 8 : 6;
     const wallImageCandidates = buildGalleryImageCandidates(img, "wall");
     const cardImageUrl = wallImageCandidates[0] || img.downloadUrl || img.url;
     const photoReference = getPhotoReference(index, img);
     const imageLoaded = loadedGalleryImageIds.has(img.id);
     const eventImageAspectRatio = isEventPhotoWall
-      ? getEventWallAspectRatio(options?.imageAspectRatio ?? galleryImageRatios[img.id])
+      ? getEventWallAspectRatio(
+          options?.imageAspectRatio ??
+            galleryImageRatios[img.id] ??
+            (isMobileViewport ? 1.34 : undefined),
+        )
       : null;
     const canHoverDownload =
       isEventPhotoWall &&
@@ -6257,7 +6264,7 @@ export default function ParentGalleryPage() {
               position: "relative",
               borderRadius: isEventPhotoWall ? 0 : 18,
               overflow: "hidden",
-              background: isEventPhotoWall ? "#efeae2" : isLightGallery ? "#f8f8f7" : "#090909",
+              background: isEventPhotoWall ? "#ffffff" : isLightGallery ? "#f8f8f7" : "#090909",
               aspectRatio: eventImageAspectRatio ?? undefined,
             }}
           >
@@ -6267,7 +6274,7 @@ export default function ParentGalleryPage() {
                   position: "absolute",
                   inset: 0,
                   background: isEventPhotoWall
-                    ? "linear-gradient(135deg, #efe7dc 0%, #f7f2ea 45%, #efe7dc 100%)"
+                    ? "linear-gradient(135deg, #f4f4f5 0%, #ffffff 48%, #eceff3 100%)"
                     : isLightGallery
                       ? "linear-gradient(135deg, #f7f7f6 0%, #efefec 100%)"
                       : "linear-gradient(135deg, #141414 0%, #222222 100%)",
@@ -6282,7 +6289,7 @@ export default function ParentGalleryPage() {
                     flexDirection: "column",
                     alignItems: "center",
                     gap: 10,
-                    color: isEventPhotoWall ? "#8a7866" : isLightGallery ? "#98a2b3" : "#9ca3af",
+                    color: isEventPhotoWall ? "#71717a" : isLightGallery ? "#98a2b3" : "#9ca3af",
                   }}
                 >
                   <LoaderCircle size={24} />
@@ -6321,9 +6328,10 @@ export default function ParentGalleryPage() {
                 width: "100%",
                 height: isEventPhotoWall ? "100%" : "auto",
                 display: "block",
-                background: isEventPhotoWall ? "#efeae2" : isLightGallery ? "#f8f8f7" : "#090909",
+                background: isEventPhotoWall ? "#ffffff" : isLightGallery ? "#f8f8f7" : "#090909",
                 maxHeight: options?.featured && !isEventPhotoWall ? 620 : "none",
-                objectFit: "contain",
+                objectFit: isEventPhotoWall ? "cover" : "contain",
+                objectPosition: "center center",
                 margin: "0 auto",
                 filter: galleryImageFilter,
                 opacity: imageLoaded ? 1 : 0.02,
@@ -6430,9 +6438,9 @@ export default function ParentGalleryPage() {
                 display: "flex",
                 alignItems: "baseline",
                 justifyContent: "space-between",
-                gap: 10,
-                padding: "8px 2px 0",
-                color: "#6b635b",
+                gap: isMobileEventPhotoWall ? 6 : 10,
+                padding: isMobileEventPhotoWall ? "7px 0 0" : "8px 2px 0",
+                color: "#52525b",
               }}
             >
               <div
@@ -6520,7 +6528,28 @@ export default function ParentGalleryPage() {
     } as React.CSSProperties & Record<string, string>;
 
     if (isEventPhotoWall) {
-      const eventGap = Math.max(12, Math.min(galleryGap, 16));
+      const eventGap = isMobileViewport ? 8 : Math.max(12, Math.min(galleryGap, 16));
+      if (isMobileViewport) {
+        return (
+          <div
+            ref={eventPhotoWallRef}
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+              gap: `${eventGap}px`,
+              alignContent: "start",
+            }}
+          >
+            {imagesToRender.map((img, index) =>
+              renderPhotoWallCard(img, index, {
+                layout: "cascade",
+                imageAspectRatio: galleryImageRatios[img.id] ?? 1.34,
+              }),
+            )}
+          </div>
+        );
+      }
+
       const eventColumnWidth = Math.max(220, photoWallColumnWidth - 30);
       const eventTargetRowHeight = Math.max(
         210,
@@ -7796,7 +7825,7 @@ export default function ParentGalleryPage() {
               style={{
                 fontSize: 14,
                 lineHeight: 1.7,
-                color: "#7a6f63",
+                color: "#52525b",
               }}
             >
               {isSchoolMode
@@ -8440,9 +8469,7 @@ export default function ParentGalleryPage() {
         }
         @media (hover:none){
           .event-photo-actions{
-            opacity:1;
-            transform:translate(-50%,0);
-            pointer-events:auto;
+            display:none;
           }
         }
       `}</style>
@@ -8576,14 +8603,15 @@ export default function ParentGalleryPage() {
           style={{
             minHeight: isEventImageStage ? 72 : 52,
             flexShrink: 0,
-            display: isEventLanding ? "none" : "flex",
-            alignItems: "center",
+            display: isEventLanding ? "none" : isMobileViewport && isEventImageStage ? "grid" : "flex",
+            gridTemplateColumns: isMobileViewport && isEventImageStage ? "minmax(0, 1fr)" : undefined,
+            alignItems: isMobileViewport && isEventImageStage ? "stretch" : "center",
             justifyContent: "space-between",
             gap: isMobileViewport ? 8 : 18,
-            flexWrap: "wrap",
+            flexWrap: isMobileViewport && isEventImageStage ? undefined : "wrap",
             padding: isMobileViewport
               ? isEventImageStage
-                ? "10px 12px"
+                ? "8px 12px 10px"
                 : "0 12px"
               : isEventImageStage
                 ? "12px 22px"
@@ -8604,10 +8632,11 @@ export default function ParentGalleryPage() {
               style={{
                 display: "flex",
                 alignItems: "center",
-                gap: 24,
+                gap: isMobileViewport ? 10 : 24,
                 minWidth: 0,
-                flex: "1 1 540px",
-                flexWrap: "wrap",
+                flex: isMobileViewport ? "1 1 100%" : "1 1 540px",
+                flexWrap: isMobileViewport ? "nowrap" : "wrap",
+                width: isMobileViewport ? "100%" : undefined,
               }}
             >
               <button
@@ -8623,15 +8652,15 @@ export default function ParentGalleryPage() {
                   gap: 2,
                 }}
               >
-                <span style={{ fontSize: 28, lineHeight: 1, fontWeight: 400, color: "#222222" }}>
+                <span style={{ fontSize: isMobileViewport ? 21 : 28, lineHeight: 1.05, fontWeight: 500, color: "#222222" }}>
                   {galleryHeadline}
                 </span>
                 <span
                   style={{
-                    fontSize: 10,
+                    fontSize: isMobileViewport ? 9 : 10,
                     letterSpacing: "0.18em",
                     textTransform: "uppercase",
-                    color: "#8b8176",
+                    color: "#71717a",
                     fontWeight: 700,
                   }}
                 >
@@ -8643,9 +8672,11 @@ export default function ParentGalleryPage() {
                 style={{
                   display: "flex",
                   alignItems: "center",
-                  gap: 18,
-                  flexWrap: "wrap",
+                  gap: isMobileViewport ? 14 : 18,
+                  flexWrap: isMobileViewport ? "nowrap" : "wrap",
                   minWidth: 0,
+                  overflowX: isMobileViewport ? "auto" : undefined,
+                  paddingBottom: isMobileViewport ? 2 : undefined,
                 }}
               >
                 {!currentGalleryExtras.hideAllPhotosAlbum ? (
@@ -8657,7 +8688,7 @@ export default function ParentGalleryPage() {
                       border: "none",
                       padding: 0,
                       cursor: "pointer",
-                      color: !activeEventCollectionId ? "#18181b" : "#8b8176",
+                      color: !activeEventCollectionId ? "#18181b" : "#71717a",
                       fontSize: 13,
                       fontWeight: !activeEventCollectionId ? 600 : 500,
                       whiteSpace: "nowrap",
@@ -8679,7 +8710,7 @@ export default function ParentGalleryPage() {
                         border: "none",
                         padding: 0,
                         cursor: "pointer",
-                        color: isCurrent ? "#18181b" : "#8b8176",
+                        color: isCurrent ? "#18181b" : "#71717a",
                         fontSize: 13,
                         fontWeight: isCurrent ? 600 : 500,
                         whiteSpace: "nowrap",
@@ -8757,7 +8788,18 @@ export default function ParentGalleryPage() {
           )}
 
           {/* Right: cart */}
-          <div style={{ display: "flex", alignItems: "center", gap: isEventImageStage ? 16 : 10, flexWrap: "wrap", justifyContent: "flex-end" }}>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: isMobileViewport && isEventImageStage ? 14 : isEventImageStage ? 16 : 10,
+              flexWrap: "wrap",
+              justifyContent: isMobileViewport && isEventImageStage ? "flex-start" : "flex-end",
+              width: isMobileViewport && isEventImageStage ? "100%" : undefined,
+              paddingTop: isMobileViewport && isEventImageStage ? 8 : undefined,
+              borderTop: isMobileViewport && isEventImageStage ? "1px solid rgba(17,17,17,0.08)" : undefined,
+            }}
+          >
             {/* Save-with-Combine pill — always visible in the gallery top
                 bar so parents see the combine/recover entry without having
                 to open the cart drawer first.  Spec: combine-orders-and-recovery.md. */}
@@ -8770,7 +8812,7 @@ export default function ParentGalleryPage() {
                 color: "#ffffff",
                 border: "none",
                 borderRadius: 999,
-                padding: isMobileViewport ? "8px 12px" : "8px 16px",
+                padding: isMobileViewport ? "8px 13px" : "8px 16px",
                 fontSize: 12,
                 fontWeight: 800,
                 cursor: "pointer",
@@ -8791,7 +8833,7 @@ export default function ParentGalleryPage() {
                 aria-label={galleryCopy.share}
                 style={{
                   background: "transparent",
-                  color: isEventImageStage ? "#7a6f63" : galleryTone.text,
+                  color: isEventImageStage ? "#52525b" : galleryTone.text,
                   border: isEventImageStage ? "none" : `1px solid ${galleryTone.border}`,
                   borderRadius: 999,
                   padding: isMobileViewport ? "8px 10px" : isEventImageStage ? 0 : "8px 16px",
@@ -8818,7 +8860,7 @@ export default function ParentGalleryPage() {
                       ? "rgba(17,17,17,0.08)"
                       : "rgba(255,255,255,0.08)"
                     : "transparent",
-                  color: isEventImageStage ? "#7a6f63" : galleryTone.text,
+                  color: isEventImageStage ? "#52525b" : galleryTone.text,
                   border: isEventImageStage
                     ? "none"
                     : `1px solid ${blackWhitePreviewActive ? galleryTone.text : galleryTone.border}`,
@@ -8844,7 +8886,7 @@ export default function ParentGalleryPage() {
                 disabled={orderingDisabled}
                 style={{
                   background: "transparent",
-                  color: orderingDisabled ? "#777" : isEventImageStage ? "#7a6f63" : galleryTone.text,
+                  color: orderingDisabled ? "#777" : isEventImageStage ? "#52525b" : galleryTone.text,
                   border: isEventImageStage ? "none" : `1px solid ${galleryTone.border}`,
                   borderRadius: 999,
                   padding: isEventImageStage ? 0 : "8px 16px",
@@ -8880,7 +8922,7 @@ export default function ParentGalleryPage() {
                     (galleryDownloadAccess.audience === "album" && !activeEventCollectionId)
                       ? "#777"
                       : isEventImageStage
-                        ? "#7a6f63"
+                        ? "#52525b"
                         : galleryTone.text,
                   border: isEventImageStage ? "none" : `1px solid ${galleryTone.border}`,
                   borderRadius: 999,
@@ -8918,10 +8960,10 @@ export default function ParentGalleryPage() {
                 color:
                   favorites.size > 0
                     ? isEventImageStage
-                      ? "#b45309"
+                      ? "#dc2626"
                       : "#dc2626"
                     : isEventImageStage
-                      ? "#7a6f63"
+                      ? "#52525b"
                       : galleryTone.text,
                 border: isEventImageStage
                   ? "none"
@@ -9074,7 +9116,7 @@ export default function ParentGalleryPage() {
           <div
             style={{
               flexShrink: 0,
-              background: "#f7f3ee",
+              background: isMobileViewport ? "#ffffff" : "#f7f3ee",
             }}
           >
               <div
@@ -9082,7 +9124,7 @@ export default function ParentGalleryPage() {
                   position: "relative",
                   overflow: "hidden",
                   minHeight: "100svh",
-                  background: "#e9e2da",
+                  background: isMobileViewport ? "#f4f4f5" : "#e9e2da",
                 }}
               >
               {heroImageUrl ? (
@@ -9959,11 +10001,18 @@ export default function ParentGalleryPage() {
             {showAlbumOverview ? (
               <div style={{ flex: 1 }} />
             ) : showEventPhotoGrid ? (
-              <div style={{ flex: 1, overflow: "auto", padding: "12px 12px 32px" }}>
-                <div style={{ width: "100%", display: "grid", gap: 12 }}>
+              <div
+                style={{
+                  flex: 1,
+                  overflow: "auto",
+                  padding: isMobileViewport ? "8px 10px 30px" : "12px 12px 32px",
+                  background: isMobileViewport ? "#ffffff" : undefined,
+                }}
+              >
+                <div style={{ width: "100%", display: "grid", gap: isMobileViewport ? 8 : 12 }}>
                   <div
                     style={{
-                      display: "grid",
+                      display: isMobileViewport ? "none" : "grid",
                       gridTemplateColumns: isMobileViewport ? "minmax(0, 1fr)" : "minmax(0, 1fr) auto",
                       gap: isMobileViewport ? 16 : 28,
                       alignItems: "end",
@@ -9985,7 +10034,7 @@ export default function ParentGalleryPage() {
                             height: isMobileViewport ? 58 : 76,
                             flex: "0 0 auto",
                             overflow: "hidden",
-                            background: "#efe7dc",
+                            background: "#f4f4f5",
                           }}
                         >
                           <img
@@ -10006,7 +10055,7 @@ export default function ParentGalleryPage() {
                       <div style={{ minWidth: 0, display: "grid", gap: 7 }}>
                         <div
                           style={{
-                            color: "#8b8176",
+                            color: "#71717a",
                             fontSize: 10,
                             fontWeight: 700,
                             letterSpacing: "0.16em",
@@ -10028,7 +10077,7 @@ export default function ParentGalleryPage() {
                         </div>
                         <div
                           style={{
-                            color: "#756b60",
+                            color: "#52525b",
                             fontSize: 13,
                             lineHeight: 1.5,
                           }}
