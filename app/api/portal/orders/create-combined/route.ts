@@ -44,6 +44,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { createDashboardServiceClient } from "@/lib/dashboard-auth";
 import { normalizeEventGallerySettings } from "@/lib/event-gallery-settings";
+import { calculateCheckoutTaxCents } from "@/lib/checkout-tax";
 import { isOrderingWindowOpen } from "@/lib/ordering-window";
 import { getClientIp, rateLimit } from "@/lib/rate-limit";
 import { hasActiveSubscription } from "@/lib/subscription-gate";
@@ -207,6 +208,7 @@ export async function POST(request: NextRequest) {
       orderDueDate: string | null;
       isLate: boolean;
       shippingEnabled: boolean;
+      gallerySettings: unknown;
     };
 
     const resolvedGroups: ResolvedGroup[] = [];
@@ -300,6 +302,7 @@ export async function POST(request: NextRequest) {
         orderDueDate: dueDate,
         isLate,
         shippingEnabled,
+        gallerySettings: (schoolRow as { gallery_settings?: unknown }).gallery_settings,
       });
     }
 
@@ -689,7 +692,12 @@ export async function POST(request: NextRequest) {
         ? combineTotals.shipping.shippingFeeCents +
           combineTotals.shipping.handlingFeeCents
         : 0;
-      const orderTotalCents = productAfterDiscountCents + shippingPortion;
+      const orderSubtotalCents = productAfterDiscountCents + shippingPortion;
+      const taxCents = calculateCheckoutTaxCents(
+        orderSubtotalCents,
+        grp.gallerySettings,
+      );
+      const orderTotalCents = orderSubtotalCents + taxCents;
 
       // 2026-04-25: cart_snapshot — full entry payload for this lane,
       // captured for the parents-portal one-click reorder.
@@ -720,8 +728,8 @@ export async function POST(request: NextRequest) {
           notes: combinedNotes || null,
           status: "payment_pending",
           seen_by_photographer: false,
-          subtotal_cents: totalsRow.subtotalCents,
-          tax_cents: 0,
+          subtotal_cents: orderSubtotalCents,
+          tax_cents: taxCents,
           total_cents: orderTotalCents,
           total_amount: orderTotalCents / 100,
           currency: "cad",

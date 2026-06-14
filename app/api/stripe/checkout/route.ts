@@ -21,6 +21,8 @@ type OrderRow = {
   customer_email: string | null;
   package_id: string | null;
   package_name: string | null;
+  subtotal_cents: number | null;
+  tax_cents: number | null;
   total_cents: number | null;
   total_amount: number | null;
   currency: string | null;
@@ -88,7 +90,7 @@ export async function POST(req: NextRequest) {
     const { data: order, error: orderError } = await sb
       .from("orders")
       .select(
-        "id,school_id,project_id,student_id,photographer_id,parent_email,customer_email,package_id,package_name,total_cents,total_amount,currency,status,payment_status,stripe_checkout_session_id",
+        "id,school_id,project_id,student_id,photographer_id,parent_email,customer_email,package_id,package_name,subtotal_cents,tax_cents,total_cents,total_amount,currency,status,payment_status,stripe_checkout_session_id",
       )
       .eq("id", body.orderId)
       .maybeSingle<OrderRow>();
@@ -217,6 +219,10 @@ export async function POST(req: NextRequest) {
     }
 
     const totalCents = Number(order.total_cents ?? Math.round(Number(order.total_amount ?? 0) * 100));
+    const taxCents = Math.max(0, Math.round(Number(order.tax_cents ?? 0)));
+    const storedSubtotalCents = Math.round(
+      Number(order.subtotal_cents ?? totalCents - taxCents),
+    );
     if (!Number.isFinite(totalCents) || totalCents <= 0) {
       return NextResponse.json(
         { ok: false, message: "This order total is invalid." },
@@ -228,8 +234,9 @@ export async function POST(req: NextRequest) {
     // inserts the `orders` row via the anon key, which means a malicious
     // caller could set total_cents = 1 and pay a penny for any package.
     // Two cross-checks before we hand the total to Stripe:
-    //   1. Sum of order_items must match total_cents (±2¢ rounding).
-    //   2. total_cents must be at least the authoritative package price
+    //   1. Sum of order_items must match subtotal_cents (±2¢ rounding).
+    //   2. subtotal_cents + tax_cents must match total_cents.
+    //   3. subtotal_cents must be at least the authoritative package price
     //      from the `packages` table — prevents the attacker from also
     //      tampering order_items. The full fix is to move the order
     //      insert itself server-side; this is the interim guard.
@@ -262,11 +269,23 @@ export async function POST(req: NextRequest) {
       }
 
       // Allow 2¢ of wiggle for rounding across split-per-slot line items.
-      if (computedCents <= 0 || Math.abs(computedCents - totalCents) > 2) {
+      if (computedCents <= 0 || Math.abs(computedCents - storedSubtotalCents) > 2) {
         console.error("[stripe:checkout] total mismatch", {
           orderId: order.id,
-          stored: totalCents,
+          subtotal: storedSubtotalCents,
           computed: computedCents,
+        });
+        return NextResponse.json(
+          { ok: false, message: "This order total is invalid." },
+          { status: 400 },
+        );
+      }
+      if (Math.abs(storedSubtotalCents + taxCents - totalCents) > 2) {
+        console.error("[stripe:checkout] tax total mismatch", {
+          orderId: order.id,
+          subtotal: storedSubtotalCents,
+          tax: taxCents,
+          total: totalCents,
         });
         return NextResponse.json(
           { ok: false, message: "This order total is invalid." },
@@ -309,11 +328,11 @@ export async function POST(req: NextRequest) {
           if (
             Number.isFinite(authoritativePackageCents) &&
             authoritativePackageCents > 0 &&
-            totalCents + 2 < authoritativePackageCents
+            storedSubtotalCents + 2 < authoritativePackageCents
           ) {
             console.error("[stripe:checkout] below-package-floor", {
               orderId: order.id,
-              stored: totalCents,
+              stored: storedSubtotalCents,
               packageFloor: authoritativePackageCents,
             });
             return NextResponse.json(

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createDashboardServiceClient } from "@/lib/dashboard-auth";
 import { validateEventGalleryAccess } from "@/lib/event-gallery-access";
 import { normalizeEventGallerySettings } from "@/lib/event-gallery-settings";
+import { calculateCheckoutTaxCents } from "@/lib/checkout-tax";
 import { isOrderingWindowOpen } from "@/lib/ordering-window";
 import { getClientIp, rateLimit } from "@/lib/rate-limit";
 import { hasActiveSubscription } from "@/lib/subscription-gate";
@@ -455,6 +456,7 @@ export async function POST(request: NextRequest) {
     let projectId: string | null = null;
     let projectTitle: string | null = null;
     let schoolShippingEnabled = false;
+    let gallerySettingsForTax: unknown = null;
     let sb = createDashboardServiceClient();
 
     if (mode === "school") {
@@ -506,6 +508,7 @@ export async function POST(request: NextRequest) {
       schoolShippingEnabled = normalizeEventGallerySettings(
         schoolRow.gallery_settings,
       ).extras.shippingEnabled;
+      gallerySettingsForTax = schoolRow.gallery_settings;
     } else {
       const projectIdResult = validateUuid(body.projectId, "projectId");
       if (!projectIdResult.ok) {
@@ -551,6 +554,7 @@ export async function POST(request: NextRequest) {
       projectId = access.projectId;
       projectTitle = clean(access.project.title) || null;
       photographerId = access.project.photographer_id;
+      gallerySettingsForTax = access.project.gallery_settings;
     }
 
     if (delivery.method === "shipping" && !schoolShippingEnabled) {
@@ -679,13 +683,18 @@ export async function POST(request: NextRequest) {
       };
     });
 
-    const orderTotalCents = resolved.reduce((sum, e) => sum + e.lineTotalCents, 0);
-    if (!Number.isFinite(orderTotalCents) || orderTotalCents <= 0) {
+    const orderSubtotalCents = resolved.reduce((sum, e) => sum + e.lineTotalCents, 0);
+    if (!Number.isFinite(orderSubtotalCents) || orderSubtotalCents <= 0) {
       return NextResponse.json(
         { ok: false, message: "Order total is invalid." },
         { status: 400 },
       );
     }
+    const taxCents = calculateCheckoutTaxCents(
+      orderSubtotalCents,
+      gallerySettingsForTax,
+    );
+    const orderTotalCents = orderSubtotalCents + taxCents;
 
     const anyPhysical = resolved.some((e) => !e.isDigital);
     if (!anyPhysical && delivery.method === "shipping") {
@@ -801,8 +810,8 @@ export async function POST(request: NextRequest) {
       notes: combinedNotes || null,
       status: "payment_pending",
       seen_by_photographer: false,
-      subtotal_cents: orderTotalCents,
-      tax_cents: 0,
+      subtotal_cents: orderSubtotalCents,
+      tax_cents: taxCents,
       total_cents: orderTotalCents,
       total_amount: orderTotalCents / 100,
       currency: "cad",
