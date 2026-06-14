@@ -7140,7 +7140,16 @@ export default function ParentGalleryPage() {
     (sum, item) => sum + item.backdropAddOnCents,
     0,
   );
-  const checkoutTotalCents = checkoutItems.reduce((sum, item) => sum + item.lineTotalCents, 0);
+  const checkoutTaxableCents = checkoutItems.reduce((sum, item) => sum + item.lineTotalCents, 0);
+  const checkoutTaxPercent = currentGalleryExtras.taxEnabled
+    ? currentGalleryExtras.taxRatesByCountry[currentGalleryExtras.taxCountry] ??
+      currentGalleryExtras.taxPercent
+    : 0;
+  const checkoutTaxCents =
+    checkoutTaxPercent > 0
+      ? Math.round(checkoutTaxableCents * (checkoutTaxPercent / 100))
+      : 0;
+  const checkoutTotalCents = checkoutTaxableCents + checkoutTaxCents;
 
   function resetCurrentSelection() {
     setSelectedPkg(null);
@@ -7477,7 +7486,7 @@ export default function ParentGalleryPage() {
     setOrderError("");
 
     const resolvedProjectId = !isSchoolMode ? project?.id || projectId || null : null;
-    const totalCents = checkoutTotalCents;
+    const totalCents = checkoutTaxableCents;
     const firstCheckoutItem = checkoutItems[0];
 
     if (!firstCheckoutItem) {
@@ -12402,6 +12411,22 @@ export default function ParentGalleryPage() {
                         >
                           <span>Backdrop add-ons</span>
                           <span>${(checkoutBackdropTotalCents / 100).toFixed(2)}</span>
+                        </div>
+                      )}
+                      {checkoutTaxCents > 0 && (
+                        <div
+                          style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            fontSize: 12,
+                            color: "#bbb",
+                            marginBottom: 8,
+                          }}
+                        >
+                          <span>
+                            {currentGalleryExtras.taxLabel} ({checkoutTaxPercent.toFixed(3).replace(/\.?0+$/, "")}%)
+                          </span>
+                          <span>${(checkoutTaxCents / 100).toFixed(2)}</span>
                         </div>
                       )}
                       <div

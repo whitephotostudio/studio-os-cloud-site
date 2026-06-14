@@ -23,6 +23,11 @@ export type EventGalleryExtraSettings = {
   enableStore: boolean;
   shippingEnabled: boolean;
   minimumOrderAmount: string;
+  taxEnabled: boolean;
+  taxPercent: number;
+  taxLabel: string;
+  taxCountry: string;
+  taxRatesByCountry: Record<string, number>;
   allowCropping: boolean;
   enableAbandonedCartEmail: boolean;
   showBuyAllButton: boolean;
@@ -150,6 +155,11 @@ export const defaultEventGalleryExtras: EventGalleryExtraSettings = {
   enableStore: true,
   shippingEnabled: false,
   minimumOrderAmount: "",
+  taxEnabled: false,
+  taxPercent: 0,
+  taxLabel: "Tax",
+  taxCountry: "CA",
+  taxRatesByCountry: {},
   allowCropping: false,
   enableAbandonedCartEmail: true,
   showBuyAllButton: false,
@@ -237,6 +247,15 @@ function asBoolean(value: unknown, fallback: boolean) {
   return typeof value === "boolean" ? value : fallback;
 }
 
+function asNumber(value: unknown, fallback: number) {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const parsed = Number(value.trim());
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return fallback;
+}
+
 function asArray(value: unknown) {
   return Array.isArray(value) ? value : [];
 }
@@ -296,10 +315,45 @@ function normalizeSchoolClassDownloadOverrides(
   return overrides;
 }
 
+function normalizeCountryCode(value: unknown, fallback: string) {
+  const raw = asString(value, fallback).trim().toUpperCase();
+  return raw ? raw.slice(0, 2) : fallback;
+}
+
+function normalizeTaxRatesByCountry(value: unknown): Record<string, number> {
+  const source = asObject(value);
+  if (!source) return {};
+
+  const rates: Record<string, number> = {};
+  for (const [rawCountry, rawRate] of Object.entries(source)) {
+    const country = normalizeCountryCode(rawCountry, "");
+    const rate = asNumber(rawRate, -1);
+    if (country && rate >= 0) rates[country] = Math.min(100, rate);
+  }
+  return rates;
+}
+
 export function normalizeEventGallerySettings(value: unknown): EventGallerySettings {
   const source = asObject(value);
   const extrasSource = asObject(source?.extras);
   const brandingSource = asObject(source?.branding);
+  const commerceSource = asObject(source?.commerce);
+  const taxRatesByCountry = {
+    ...normalizeTaxRatesByCountry(extrasSource?.taxRatesByCountry),
+    ...normalizeTaxRatesByCountry(commerceSource?.taxRatesByCountry),
+  };
+  const taxCountry = normalizeCountryCode(
+    commerceSource?.taxCountry ?? extrasSource?.taxCountry,
+    defaultEventGalleryExtras.taxCountry,
+  );
+  const rawTaxPercent = asNumber(
+    commerceSource?.taxPercent ?? extrasSource?.taxPercent,
+    taxRatesByCountry[taxCountry] ?? defaultEventGalleryExtras.taxPercent,
+  );
+  const taxPercent = Math.min(
+    100,
+    Math.max(0, taxRatesByCountry[taxCountry] ?? rawTaxPercent),
+  );
 
   return {
     version: 1,
@@ -405,6 +459,18 @@ export function normalizeEventGallerySettings(value: unknown): EventGallerySetti
         extrasSource?.minimumOrderAmount,
         defaultEventGalleryExtras.minimumOrderAmount,
       ),
+      taxEnabled:
+        asBoolean(
+          commerceSource?.taxEnabled ?? extrasSource?.taxEnabled,
+          defaultEventGalleryExtras.taxEnabled,
+        ) && taxPercent > 0,
+      taxPercent,
+      taxLabel: asString(
+        commerceSource?.taxLabel ?? extrasSource?.taxLabel,
+        defaultEventGalleryExtras.taxLabel,
+      ),
+      taxCountry,
+      taxRatesByCountry,
       allowCropping: asBoolean(
         extrasSource?.allowCropping,
         defaultEventGalleryExtras.allowCropping,
