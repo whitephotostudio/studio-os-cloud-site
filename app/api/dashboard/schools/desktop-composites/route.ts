@@ -5,9 +5,13 @@ import {
   resolveDashboardAuth,
 } from "@/lib/dashboard-auth";
 import { parseJson } from "@/lib/api-validation";
-import { ensureSchoolCollectionId } from "@/lib/school-sync";
+import {
+  ensureSchoolCollectionId,
+  findSyncedSchoolProjectId,
+} from "@/lib/school-sync";
 import { normalizeStorageUrl } from "@/lib/storage-images";
 import { guardAgreement } from "@/lib/require-agreement";
+import { r2DeleteWithVariantsBestEffort } from "@/lib/r2";
 
 export const dynamic = "force-dynamic";
 
@@ -24,9 +28,12 @@ const CompositeItemPayloadSchema = z.object({
 const DesktopCompositesBodySchema = z.object({
   schoolId: z.string().min(1).max(128).nullable().optional(),
   items: z.array(CompositeItemPayloadSchema).max(5000).nullable().optional(),
+  deleteItems: z
+    .array(CompositeItemPayloadSchema)
+    .max(5000)
+    .nullable()
+    .optional(),
 });
-
-type CompositeItemPayload = z.infer<typeof CompositeItemPayloadSchema>;
 
 type SchoolRow = {
   id: string;
@@ -52,6 +59,15 @@ function classKey(value: string) {
   return clean(value).toLowerCase();
 }
 
+function collectionSlug(value: string) {
+  return (
+    clean(value)
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "") || "composite"
+  );
+}
+
 export async function POST(request: NextRequest) {
   try {
     const { user } = await resolveDashboardAuth(request);
@@ -75,7 +91,8 @@ export async function POST(request: NextRequest) {
     }
 
     const items = Array.isArray(body.items) ? body.items : [];
-    if (items.length === 0) {
+    const deleteItems = Array.isArray(body.deleteItems) ? body.deleteItems : [];
+    if (items.length === 0 && deleteItems.length === 0) {
       return NextResponse.json({
         ok: true,
         processed: 0,
@@ -84,6 +101,26 @@ export async function POST(request: NextRequest) {
         skipped: 0,
       });
     }
+
+    const dedupedDeleteInput = new Map<
+      string,
+      {
+        class_name: string;
+        storage_path: string;
+      }
+    >();
+    for (const item of deleteItems) {
+      const normalized = {
+        class_name: clean(item.class_name),
+        storage_path: clean(item.storage_path),
+      };
+      if (!normalized.class_name || !normalized.storage_path) continue;
+      dedupedDeleteInput.set(
+        `${classKey(normalized.class_name)}::${normalized.storage_path}`,
+        normalized,
+      );
+    }
+    const normalizedDeleteItems = Array.from(dedupedDeleteInput.values());
 
     const dedupedInput = new Map<
       string,
@@ -115,13 +152,13 @@ export async function POST(request: NextRequest) {
     }
     const normalizedItems = Array.from(dedupedInput.values());
 
-    if (normalizedItems.length === 0) {
+    if (normalizedItems.length === 0 && normalizedDeleteItems.length === 0) {
       return NextResponse.json({
         ok: true,
         processed: 0,
         inserted: 0,
         updated: 0,
-        skipped: items.length,
+        skipped: items.length + deleteItems.length,
       });
     }
 
@@ -186,7 +223,57 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    if (!cloudProjectId && normalizedDeleteItems.length > 0) {
+      cloudProjectId = clean(
+        await findSyncedSchoolProjectId(service, schoolId, {
+          localSchoolId: school.local_school_id,
+        }),
+      );
+    }
+
+    if (cloudProjectId && normalizedDeleteItems.length > 0) {
+      const { data: collectionRows, error: collectionError } = await service
+        .from("collections")
+        .select("id,title,slug")
+        .eq("project_id", cloudProjectId)
+        .eq("kind", "composite");
+      if (collectionError) throw collectionError;
+
+      const existingCompositeCollections = (collectionRows ?? []) as Array<{
+        id?: string | null;
+        title?: string | null;
+        slug?: string | null;
+      }>;
+      for (const className of Array.from(
+        new Set(normalizedDeleteItems.map((item) => item.class_name)),
+      )) {
+        if (collectionIdByClass.has(classKey(className))) continue;
+        const targetSlug = collectionSlug(className);
+        const row = existingCompositeCollections.find(
+          (candidate) =>
+            clean(candidate.slug) === targetSlug ||
+            classKey(candidate.title ?? "") === classKey(className),
+        );
+        const collectionId = clean(row?.id);
+        if (collectionId) {
+          collectionIdByClass.set(classKey(className), collectionId);
+        }
+      }
+    }
+
     if (!cloudProjectId || collectionIdByClass.size === 0) {
+      if (normalizedItems.length === 0) {
+        return NextResponse.json({
+          ok: true,
+          projectId: cloudProjectId || null,
+          processed: 0,
+          inserted: 0,
+          updated: 0,
+          deleted: 0,
+          r2Deleted: 0,
+          skipped: deleteItems.length,
+        });
+      }
       return NextResponse.json(
         { ok: false, message: "School project could not be prepared." },
         { status: 500 },
@@ -227,7 +314,45 @@ export async function POST(request: NextRequest) {
     const collectionCoverUpdates = new Map<string, string>();
     let inserted = 0;
     let updated = 0;
+    let deleted = 0;
+    let r2Deleted = 0;
     let skipped = 0;
+
+    const deletedCollectionIds = new Set<string>();
+    const deletedStoragePaths: string[] = [];
+
+    for (const item of normalizedDeleteItems) {
+      const collectionId = collectionIdByClass.get(classKey(item.class_name));
+      if (!collectionId) {
+        skipped += 1;
+        continue;
+      }
+
+      const { data: deletedRows, error } = await service
+        .from("media")
+        .delete()
+        .eq("project_id", cloudProjectId)
+        .eq("collection_id", collectionId)
+        .eq("storage_path", item.storage_path)
+        .select("id,storage_path");
+      if (error) throw error;
+
+      const rows = (deletedRows ?? []) as Array<{
+        storage_path?: string | null;
+      }>;
+      deleted += rows.length;
+      if (rows.length > 0) {
+        deletedCollectionIds.add(collectionId);
+        for (const row of rows) {
+          const storagePath = clean(row.storage_path);
+          if (storagePath) deletedStoragePaths.push(storagePath);
+        }
+      }
+    }
+
+    if (deletedStoragePaths.length > 0) {
+      r2Deleted = await r2DeleteWithVariantsBestEffort(deletedStoragePaths);
+    }
 
     for (const item of normalizedItems) {
       const collectionId = collectionIdByClass.get(classKey(item.class_name));
@@ -291,6 +416,36 @@ export async function POST(request: NextRequest) {
       if (error) throw error;
     }
 
+    for (const collectionId of deletedCollectionIds) {
+      if (collectionCoverUpdates.has(collectionId)) continue;
+      const { data: nextMedia, error: nextMediaError } = await service
+        .from("media")
+        .select("preview_url,thumbnail_url")
+        .eq("project_id", cloudProjectId)
+        .eq("collection_id", collectionId)
+        .order("sort_order", { ascending: true })
+        .limit(1)
+        .maybeSingle();
+      if (nextMediaError) throw nextMediaError;
+
+      const nextMediaRow = nextMedia as {
+        preview_url?: string | null;
+        thumbnail_url?: string | null;
+      } | null;
+      const nextCover = normalizeStorageUrl(
+        nextMediaRow?.preview_url || nextMediaRow?.thumbnail_url,
+      );
+      const { error } = await service
+        .from("collections")
+        .update({
+          cover_photo_url: nextCover || null,
+          updated_at: now,
+        })
+        .eq("id", collectionId)
+        .eq("project_id", cloudProjectId);
+      if (error) throw error;
+    }
+
     const { data: projectRow, error: projectError } = await service
       .from("projects")
       .select("cover_photo_url")
@@ -312,6 +467,8 @@ export async function POST(request: NextRequest) {
           processed: normalizedItems.length,
           inserted,
           updated,
+          deleted,
+          r2Deleted,
           skipped,
         });
       }
@@ -332,6 +489,8 @@ export async function POST(request: NextRequest) {
       processed: normalizedItems.length,
       inserted,
       updated,
+      deleted,
+      r2Deleted,
       skipped,
     });
   } catch (error) {
