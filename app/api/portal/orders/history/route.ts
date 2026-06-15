@@ -128,6 +128,14 @@ function orderHasDigitalDelivery(row: OrderRow, items: OrderItemRow[]) {
   return items.some((item) => looksDigital(item.product_name));
 }
 
+function displayOrderStatus(row: OrderRow) {
+  const status = lower(row.status);
+  if (status === "refunded") return "refunded";
+  if (status === "cancelled" || status === "canceled") return status;
+  if (isPaidEnough(row)) return "paid";
+  return row.status ?? "pending";
+}
+
 function rowEmailMatches(row: OrderRow, emailLower: string) {
   return (
     lower(row.parent_email) === emailLower ||
@@ -400,7 +408,7 @@ function formatOrder(
     shortId: row.id.slice(0, 8).toUpperCase(),
     createdAt: row.created_at,
     paidAt: row.paid_at,
-    status: row.status ?? "pending",
+    status: displayOrderStatus(row),
     totalCents: orderTotalCents,
     subtotalCents: resolveOrderSubtotalCents(row, rawItems),
     taxCents: row.tax_cents ?? null,

@@ -89,7 +89,7 @@ function formatDate(iso: string | null) {
 function statusPill(status: string) {
   const s = status.toLowerCase();
   if (s === "paid" || s === "digital_paid") {
-    return { label: "Paid", color: "#0f7a4a", bg: "rgba(15,122,74,0.14)" };
+    return { label: "Processed", color: "#0f7a4a", bg: "rgba(15,122,74,0.14)" };
   }
   if (s === "payment_pending" || s === "pending") {
     return { label: "Pending", color: "#a36b00", bg: "rgba(163,107,0,0.14)" };
