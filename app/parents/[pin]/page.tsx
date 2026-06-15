@@ -384,6 +384,7 @@ const galleryTranslations: Record<
     selectedPhotos: "selected photos",
     downloadFavorites: "Download Favorites",
     favoritesIntro: "Download only these favorites in one step.",
+    favoritesSavedIntro: "Favorites are saved here for ordering.",
     noPhotosYet: "No photos were found for this album yet.",
     orderingClosed: "Ordering Closed",
     openAlbumToDownload: "Open an album or photo view before downloading.",
@@ -438,6 +439,7 @@ const galleryTranslations: Record<
     selectedPhotos: "selected photos",
     downloadFavorites: "Download Favorites",
     favoritesIntro: "Download only these favorites in one step.",
+    favoritesSavedIntro: "Favorites are saved here for ordering.",
     noPhotosYet: "No photos were found for this album yet.",
     orderingClosed: "Ordering Closed",
     openAlbumToDownload: "Open an album or photo view before downloading.",
@@ -492,6 +494,7 @@ const galleryTranslations: Record<
     selectedPhotos: "photos selectionnees",
     downloadFavorites: "Telecharger les favoris",
     favoritesIntro: "Telechargez seulement ces favoris en une seule etape.",
+    favoritesSavedIntro: "Les favoris sont enregistres ici pour la commande.",
     noPhotosYet: "Aucune photo n'a encore ete trouvee pour cet album.",
     orderingClosed: "Commandes fermees",
     openAlbumToDownload: "Ouvrez un album ou une photo avant de telecharger.",
@@ -544,6 +547,39 @@ function defaultFavoriteDownloadAccess(
         ? "Favorites download unlocks after the full digital package is purchased."
         : null
       : "Favorites download is turned off for this gallery.",
+  };
+}
+
+function readBooleanGallerySetting(settings: unknown, key: string): boolean | null {
+  if (!settings || typeof settings !== "object") return null;
+  const record = settings as Record<string, unknown>;
+  const extras = record.extras;
+  const raw =
+    extras && typeof extras === "object"
+      ? (extras as Record<string, unknown>)[key]
+      : record[key];
+  if (typeof raw === "boolean") return raw;
+  if (typeof raw === "string") {
+    const normalized = raw.trim().toLowerCase();
+    if (normalized === "true") return true;
+    if (normalized === "false") return false;
+  }
+  return null;
+}
+
+function schoolFavoriteDownloadAccess(
+  settings: EventGallerySettings,
+  rawSettings: unknown,
+): EventFavoriteDownloadAccess {
+  const baseAccess = defaultFavoriteDownloadAccess(settings);
+  const explicitlyEnabled =
+    readBooleanGallerySetting(rawSettings, "allowClientFavoriteDownloads") === true;
+  if (explicitlyEnabled) return baseAccess;
+  return {
+    ...baseAccess,
+    enabled: false,
+    canDownload: false,
+    message: "Favorites download is turned off for this gallery.",
   };
 }
 
@@ -4663,7 +4699,12 @@ export default function ParentGalleryPage() {
           ...defaultSchoolGalleryDownloadAccess(nextGallerySettings),
           ...(contextPayload.downloadAccess ?? {}),
         });
-        setFavoriteDownloadAccess(defaultFavoriteDownloadAccess(nextGallerySettings));
+        setFavoriteDownloadAccess(
+          schoolFavoriteDownloadAccess(
+            nextGallerySettings,
+            activeSchool?.gallery_settings ?? null,
+          ),
+        );
         setImages(combinedImages);
         setSelectedImageIndex(0);
         setEventCollections([]);
@@ -5129,7 +5170,6 @@ export default function ParentGalleryPage() {
     return visibleImages;
   }, [activeEventCollectionId, images, showAlbumOverview, visibleImages]);
   const favoriteDownloadNotice =
-    !isSchoolMode &&
     favoriteDownloadAccess.enabled &&
     !favoriteDownloadAccess.canDownload &&
     favoriteDownloadAccess.message
@@ -5441,7 +5481,7 @@ export default function ParentGalleryPage() {
 
   async function downloadFavoriteImages() {
     if (favoriteImages.length === 0 || downloadingFavorites) return;
-    if (!isSchoolMode && !favoriteDownloadAccess.canDownload) {
+    if (!favoriteDownloadAccess.canDownload) {
       setFavoriteMessage(
         favoriteDownloadAccess.message || "Favorite downloads are not enabled for this gallery.",
       );
@@ -9860,10 +9900,12 @@ export default function ParentGalleryPage() {
                       {favoriteImages.length} {galleryCopy.selectedPhotos}
                     </div>
                     <div style={{ fontSize: 13, color: galleryTone.mutedText }}>
-                      {galleryCopy.favoritesIntro}
+                      {favoriteDownloadAccess.canDownload
+                        ? galleryCopy.favoritesIntro
+                        : galleryCopy.favoritesSavedIntro}
                     </div>
                   </div>
-                  {(isSchoolMode || favoriteDownloadAccess.canDownload) ? (
+                  {favoriteDownloadAccess.canDownload ? (
                     <button
                       type="button"
                       onClick={downloadFavoriteImages}
