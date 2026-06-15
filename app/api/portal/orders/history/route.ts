@@ -195,6 +195,7 @@ export async function POST(request: NextRequest) {
         .from("orders")
         .select("id")
         .eq("school_id", body.schoolId)
+        .eq("student_id", studentRow.id)
         .or(
           `parent_email.ilike.${emailLower},customer_email.ilike.${emailLower}`,
         )
@@ -220,6 +221,7 @@ export async function POST(request: NextRequest) {
          order_items(product_name,quantity,line_total_cents,unit_price_cents,sku)`,
       )
       .eq("school_id", body.schoolId)
+      .eq("student_id", studentRow.id)
       .or(
         `parent_email.ilike.${emailLower},customer_email.ilike.${emailLower}`,
       )
