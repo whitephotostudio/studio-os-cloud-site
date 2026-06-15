@@ -40,6 +40,11 @@ export type OrderHistoryRow = {
   parentEmail?: string | null;
   parentPhone?: string | null;
   specialNotes?: string | null;
+  digitalDownload?: {
+    available: boolean;
+    url: string | null;
+    message?: string | null;
+  } | null;
 };
 
 type Props = {
@@ -297,6 +302,7 @@ export default function OrdersHistoryPanel({
             const visibleItems = order.items.filter((i) => i.lineTotalCents >= 0);
             const discountItems = order.items.filter((i) => i.lineTotalCents < 0);
             const reorderable = !!order.cartSnapshot;
+            const download = order.digitalDownload ?? null;
             const expanded = expandedId === order.id;
             return (
               <div
@@ -519,6 +525,47 @@ export default function OrdersHistoryPanel({
                           </div>
                         </div>
                       )}
+
+                      {download ? (
+                        <div style={{ display: "flex", flexDirection: "column", gap: 8, paddingTop: 4 }}>
+                          <div
+                            style={{
+                              fontSize: 10,
+                              fontWeight: 800,
+                              color: tone.mutedText,
+                              letterSpacing: "0.08em",
+                              textTransform: "uppercase",
+                            }}
+                          >
+                            Digital delivery
+                          </div>
+                          {download.available && download.url ? (
+                            <a
+                              href={download.url}
+                              style={{
+                                display: "inline-flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                alignSelf: "flex-start",
+                                borderRadius: 999,
+                                border: "none",
+                                background: "#16a34a",
+                                color: "#ffffff",
+                                fontSize: compact ? 12 : 13,
+                                fontWeight: 800,
+                                padding: compact ? "9px 13px" : "10px 16px",
+                                textDecoration: "none",
+                              }}
+                            >
+                              Download digital files
+                            </a>
+                          ) : (
+                            <div style={{ color: tone.mutedText }}>
+                              {download.message || "Digital files are being prepared."}
+                            </div>
+                          )}
+                        </div>
+                      ) : null}
 
                       {(order.parentName || order.parentEmail || order.parentPhone) && (
                         <div style={{ display: "flex", flexDirection: "column", gap: 2, paddingTop: 4 }}>

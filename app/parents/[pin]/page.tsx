@@ -3842,6 +3842,8 @@ export default function ParentGalleryPage() {
   // don't pester the parent again on subsequent submit clicks.  Reset on
   // cart clear / continueShoppingAfterCheckout.
   const [retouchUpsellShown, setRetouchUpsellShown] = useState(false);
+  const [groupPhotoDigitalNoticeOpen, setGroupPhotoDigitalNoticeOpen] = useState(false);
+  const [pendingDigitalPackage, setPendingDigitalPackage] = useState<PackageRow | null>(null);
 
   // Pre-release capture
   const [captureEmail, setCaptureEmail] = useState("");
@@ -4885,6 +4887,11 @@ export default function ParentGalleryPage() {
     !isSchoolMode && activeEventCollectionId
       ? images.filter((img) => clean(img.collectionId) === activeEventCollectionId)
       : schoolModeVisibleImages;
+  const compositeGalleryImages = useMemo(
+    () => images.filter((img) => isCompositeGalleryImage(img)),
+    [images],
+  );
+  const firstCompositeGalleryImage = compositeGalleryImages[0] ?? null;
   const selectedImage = visibleImages[selectedImageIndex] ?? null;
   const isCompositeSelection = isSchoolMode && isCompositeGalleryImage(selectedImage);
   const selectedImageAspectRatio = useImageAspectRatio(
@@ -6749,8 +6756,20 @@ export default function ParentGalleryPage() {
     setPackageQuantities((prev) => ({ ...prev, [pkgId]: Math.max(1, nextQty) }));
   }
 
-  function selectPackage(pkg: PackageRow) {
+  function selectPackage(pkg: PackageRow, options?: { skipGroupPhotoNotice?: boolean }) {
     if (orderingDisabled) return;
+
+    if (
+      !options?.skipGroupPhotoNotice &&
+      isSchoolMode &&
+      !isCompositeSelection &&
+      compositeGalleryImages.length > 0 &&
+      isAllDigitalsPackage(pkg)
+    ) {
+      setPendingDigitalPackage(pkg);
+      setGroupPhotoDigitalNoticeOpen(true);
+      return;
+    }
 
     const chosenQty = getChosenQty(pkg.id);
     const compositeSelectedImage =
@@ -6789,6 +6808,46 @@ export default function ParentGalleryPage() {
     openBuyDrawer();
     setActiveCategoryKey(getCategory(buyAllPackage));
     selectPackage(buyAllPackage);
+  }
+
+  function closeGroupPhotoDigitalNotice() {
+    setGroupPhotoDigitalNoticeOpen(false);
+    setPendingDigitalPackage(null);
+  }
+
+  function continuePendingDigitalPackage() {
+    const pkg = pendingDigitalPackage;
+    setGroupPhotoDigitalNoticeOpen(false);
+    setPendingDigitalPackage(null);
+    if (!pkg) return;
+    openBuyDrawer();
+    setActiveCategoryKey(getCategory(pkg));
+    selectPackage(pkg, { skipGroupPhotoNotice: true });
+  }
+
+  function shopGroupPhotoPrints() {
+    const compositeImage = firstCompositeGalleryImage;
+    const eligiblePrints = packages
+      .filter((pkg) => !pkg.is_retouch_addon)
+      .filter((pkg) => isCompositeEligiblePackage(pkg));
+
+    setGroupPhotoDigitalNoticeOpen(false);
+    setPendingDigitalPackage(null);
+
+    if (!compositeImage || eligiblePrints.length === 0) {
+      showGalleryActionNotice("Group photo print options are not available yet.");
+      return;
+    }
+
+    const nextIndex = visibleImages.findIndex((img) => img.id === compositeImage.id);
+    if (nextIndex >= 0) {
+      setSelectedImageIndex(nextIndex);
+    }
+    setBackdropPickerOpen(false);
+    setActiveSlotIndex(null);
+    setActiveCategoryKey(getCategory(eligiblePrints[0]));
+    setDrawerView("category-list");
+    setDrawerOpen(true);
   }
 
   function assignImageToSlot(imageUrl: string) {
@@ -8595,6 +8654,16 @@ export default function ParentGalleryPage() {
         onSkip={dismissRetouchUpsell}
       />
 
+      <GroupPhotoDigitalNoticeModal
+        open={groupPhotoDigitalNoticeOpen}
+        onContinue={continuePendingDigitalPackage}
+        onShopPrints={shopGroupPhotoPrints}
+        onClose={closeGroupPhotoDigitalNotice}
+        hasPrintOptions={packages.some(
+          (pkg) => !pkg.is_retouch_addon && isCompositeEligiblePackage(pkg),
+        )}
+      />
+
       <div
         style={{
           position: "fixed",
@@ -9643,7 +9712,7 @@ export default function ParentGalleryPage() {
         {activeView === "orders" && (
           <OrdersHistoryPanel
             pin={pin}
-            email={parentEmail || eventEmail || ""}
+            email={parentEmail || schoolViewerEmail || eventEmail || ""}
             schoolId={isSchoolMode ? student?.school_id ?? null : null}
             projectId={!isSchoolMode ? project?.id || projectId || null : null}
             compact={isMobileViewport}
@@ -13499,6 +13568,198 @@ export default function ParentGalleryPage() {
         )}
       </div>
     </>
+  );
+}
+
+function GroupPhotoDigitalNoticeModal({
+  open,
+  onContinue,
+  onShopPrints,
+  onClose,
+  hasPrintOptions,
+}: {
+  open: boolean;
+  onContinue: () => void;
+  onShopPrints: () => void;
+  onClose: () => void;
+  hasPrintOptions: boolean;
+}) {
+  useEffect(() => {
+    if (!open) return;
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => {
+      document.body.style.overflow = previous;
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [onClose, open]);
+
+  if (typeof document === "undefined") return null;
+  if (!open) return null;
+
+  return createPortal(
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="group-photo-digital-title"
+      onClick={onClose}
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(7, 9, 14, 0.78)",
+        backdropFilter: "blur(6px)",
+        WebkitBackdropFilter: "blur(6px)",
+        zIndex: 100000,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: 20,
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          width: "100%",
+          maxWidth: 520,
+          background: "linear-gradient(180deg, #171717 0%, #0d0d0d 100%)",
+          color: "#fff",
+          borderRadius: 22,
+          border: "1px solid #2a2a2a",
+          boxShadow: "0 24px 80px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.03) inset",
+          padding: "24px 24px 22px",
+          maxHeight: "90vh",
+          overflowY: "auto",
+        }}
+      >
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 14, marginBottom: 16 }}>
+          <div
+            aria-hidden
+            style={{
+              width: 42,
+              height: 42,
+              borderRadius: 999,
+              background: "rgba(250, 204, 21, 0.14)",
+              border: "1px solid rgba(250, 204, 21, 0.35)",
+              display: "grid",
+              placeItems: "center",
+              flexShrink: 0,
+            }}
+          >
+            <Info size={22} color="#facc15" />
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close group photo notice"
+            style={{
+              background: "transparent",
+              border: "none",
+              color: "#9ca3af",
+              cursor: "pointer",
+              padding: 4,
+              lineHeight: 1,
+              display: "flex",
+              alignSelf: "flex-start",
+            }}
+          >
+            <X size={20} />
+          </button>
+        </div>
+
+        <h2
+          id="group-photo-digital-title"
+          style={{
+            margin: "0 0 10px",
+            fontSize: 23,
+            fontWeight: 850,
+            color: "#fff",
+            letterSpacing: 0,
+          }}
+        >
+          Group photo is print-only
+        </h2>
+        <p
+          style={{
+            margin: 0,
+            fontSize: 14,
+            lineHeight: 1.6,
+            color: "#d4d4d4",
+          }}
+        >
+          All digital images include the individual portraits from this gallery. The group
+          photo is not sold as a digital download because it includes other students.
+        </p>
+
+        <div
+          style={{
+            margin: "18px 0",
+            background: "rgba(255,255,255,0.06)",
+            border: "1px solid rgba(255,255,255,0.10)",
+            borderRadius: 14,
+            padding: "13px 14px",
+            color: "#e5e7eb",
+            fontSize: 13,
+            lineHeight: 1.55,
+          }}
+        >
+          You can still order the group photo as a printed product, starting at 8x10 where
+          the studio has print options available.
+        </div>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          <button
+            type="button"
+            onClick={onShopPrints}
+            disabled={!hasPrintOptions}
+            style={{
+              width: "100%",
+              border: "none",
+              borderRadius: 999,
+              padding: "13px 18px",
+              background: hasPrintOptions ? "#ffffff" : "rgba(255,255,255,0.12)",
+              color: hasPrintOptions ? "#111111" : "#9ca3af",
+              fontSize: 14,
+              fontWeight: 850,
+              cursor: hasPrintOptions ? "pointer" : "not-allowed",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 8,
+            }}
+          >
+            <ShoppingBag size={17} />
+            Shop group photo prints
+          </button>
+          <button
+            type="button"
+            onClick={onContinue}
+            style={{
+              width: "100%",
+              border: "1px solid rgba(255,255,255,0.18)",
+              borderRadius: 999,
+              padding: "12px 18px",
+              background: "transparent",
+              color: "#ffffff",
+              fontSize: 13,
+              fontWeight: 800,
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 8,
+            }}
+          >
+            <Download size={16} />
+            Continue with digital portraits
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
   );
 }
 

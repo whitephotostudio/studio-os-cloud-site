@@ -40,6 +40,7 @@ import {
   resolveOrderSubtotalCents,
   resolveOrderTotalCents,
 } from "@/lib/order-display";
+import { createDigitalDeliveryDownloadUrl } from "@/lib/digital-delivery";
 
 export const dynamic = "force-dynamic";
 
@@ -63,6 +64,7 @@ type OrderRow = {
   created_at: string | null;
   paid_at: string | null;
   status: string | null;
+  payment_status: string | null;
   total_cents: number | null;
   total_amount: number | null;
   subtotal_cents: number | null;
@@ -86,6 +88,44 @@ type OrderRow = {
 
 function clean(v: string | null | undefined) {
   return (v ?? "").trim();
+}
+
+function lower(v: string | null | undefined) {
+  return clean(v).toLowerCase();
+}
+
+function looksDigital(value: string | null | undefined) {
+  const text = lower(value);
+  if (!text || text.includes("retouch")) return false;
+  return (
+    text.includes("digital") ||
+    text.includes("download") ||
+    text.includes("file") ||
+    text.includes("jpg") ||
+    text.includes("jpeg") ||
+    text.includes("png") ||
+    text.includes("usb")
+  );
+}
+
+function isPaidEnough(row: OrderRow) {
+  const status = lower(row.status);
+  const paymentStatus = lower(row.payment_status);
+  if (row.paid_at) return true;
+  if (paymentStatus === "paid" || paymentStatus === "succeeded") return true;
+  return [
+    "paid",
+    "digital_paid",
+    "digital_sent",
+    "reviewed",
+    "sent_to_print",
+    "completed",
+  ].includes(status);
+}
+
+function orderHasDigitalDelivery(row: OrderRow, items: OrderItemRow[]) {
+  if (looksDigital(row.package_name) || looksDigital(row.status)) return true;
+  return items.some((item) => looksDigital(item.product_name));
 }
 
 export async function POST(request: NextRequest) {
@@ -155,7 +195,6 @@ export async function POST(request: NextRequest) {
         .from("orders")
         .select("id")
         .eq("school_id", body.schoolId)
-        .eq("student_id", studentRow.id)
         .or(
           `parent_email.ilike.${emailLower},customer_email.ilike.${emailLower}`,
         )
@@ -173,6 +212,7 @@ export async function POST(request: NextRequest) {
       .from("orders")
       .select(
         `id,created_at,paid_at,status,total_cents,subtotal_cents,tax_cents,currency,package_name,
+         payment_status,
          total_amount,
          parent_name,parent_email,parent_phone,customer_email,special_notes,notes,
          cart_snapshot,photographer_id,
@@ -180,7 +220,6 @@ export async function POST(request: NextRequest) {
          order_items(product_name,quantity,line_total_cents,unit_price_cents,sku)`,
       )
       .eq("school_id", body.schoolId)
-      .eq("student_id", studentRow.id)
       .or(
         `parent_email.ilike.${emailLower},customer_email.ilike.${emailLower}`,
       )
@@ -248,6 +287,7 @@ export async function POST(request: NextRequest) {
     .from("orders")
     .select(
       `id,created_at,paid_at,status,total_cents,subtotal_cents,tax_cents,currency,package_name,
+       payment_status,
        total_amount,
        parent_name,parent_email,parent_phone,customer_email,special_notes,notes,
        cart_snapshot,photographer_id,
@@ -289,6 +329,36 @@ function formatOrder(
     sku: photo.url,
   }))) ?? [];
   const orderTotalCents = resolveOrderTotalCents(row, rawItems);
+  const recipientEmail = clean(row.customer_email) || clean(row.parent_email);
+  const hasDigitalDelivery = orderHasDigitalDelivery(row, rawItems);
+  let digitalDownload: {
+    available: boolean;
+    url: string | null;
+    message: string;
+  } | null = null;
+  if (hasDigitalDelivery) {
+    digitalDownload = {
+      available: false,
+      url: null,
+      message: isPaidEnough(row)
+        ? "Digital files are being prepared."
+        : "Digital download unlocks after payment.",
+    };
+    if (recipientEmail && isPaidEnough(row)) {
+      try {
+        digitalDownload = {
+          available: true,
+          url: createDigitalDeliveryDownloadUrl(row.id, recipientEmail),
+          message: "Download digital files",
+        };
+      } catch (error) {
+        console.error("[orders-history] failed to create digital download link", {
+          orderId: row.id,
+          error,
+        });
+      }
+    }
+  }
   const items = rawItems.map((it, index) => ({
     productName: it.product_name ?? "Item",
     quantity: it.quantity ?? 1,
@@ -324,5 +394,6 @@ function formatOrder(
     parentEmail: row.parent_email ?? row.customer_email ?? null,
     parentPhone: row.parent_phone ?? null,
     specialNotes: row.special_notes ?? row.notes ?? null,
+    digitalDownload,
   };
 }

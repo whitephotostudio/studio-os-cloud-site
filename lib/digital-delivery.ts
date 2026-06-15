@@ -249,6 +249,21 @@ function tokenDownloadUrl(payload: DigitalDeliveryTokenPayload) {
   return `${siteBaseUrl()}/api/portal/digital-delivery?token=${encodeURIComponent(token)}`;
 }
 
+export function createDigitalDeliveryDownloadUrl(
+  orderId: string,
+  recipientEmail: string,
+  options?: { expiresInDays?: number },
+) {
+  const days = Math.max(1, Math.min(90, options?.expiresInDays ?? 30));
+  return tokenDownloadUrl({
+    v: 1,
+    kind: "digital-order-delivery",
+    orderId,
+    recipientEmail: recipientEmail.toLowerCase(),
+    exp: Date.now() + 1000 * 60 * 60 * 24 * days,
+  });
+}
+
 function isPaidEnough(order: OrderRow) {
   const status = lower(order.status);
   const paymentStatus = lower(order.payment_status);
