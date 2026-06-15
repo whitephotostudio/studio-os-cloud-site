@@ -6843,6 +6843,9 @@ export default function ParentGalleryPage() {
     if (nextIndex >= 0) {
       setSelectedImageIndex(nextIndex);
     }
+    setSelectedPkg(null);
+    setSlots([]);
+    setSelectedOrderQty(1);
     setBackdropPickerOpen(false);
     setActiveSlotIndex(null);
     setActiveCategoryKey(getCategory(eligiblePrints[0]));
