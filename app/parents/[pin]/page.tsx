@@ -6827,6 +6827,7 @@ export default function ParentGalleryPage() {
 
   function shopGroupPhotoPrints() {
     const compositeImage = firstCompositeGalleryImage;
+    const digitalPackage = pendingDigitalPackage;
     const eligiblePrints = packages
       .filter((pkg) => !pkg.is_retouch_addon)
       .filter((pkg) => isCompositeEligiblePackage(pkg));
@@ -6837,6 +6838,56 @@ export default function ParentGalleryPage() {
     if (!compositeImage || eligiblePrints.length === 0) {
       showGalleryActionNotice("Group photo print options are not available yet.");
       return;
+    }
+
+    if (digitalPackage) {
+      const category = getCategory(digitalPackage);
+      const quantity = getChosenQty(digitalPackage.id);
+      const selectedDigitalImage =
+        selectedImage && !isCompositeGalleryImage(selectedImage)
+          ? selectedImage
+          : visibleImages.find((img) => !isCompositeGalleryImage(img)) ?? null;
+      const selectedImageUrl =
+        selectedDigitalImage?.downloadUrl ??
+        selectedDigitalImage?.previewUrl ??
+        selectedDigitalImage?.url ??
+        null;
+      const packageSubtotalCents = digitalPackage.price_cents * quantity;
+      const digitalLine: CartLineItem = {
+        id:
+          typeof crypto !== "undefined" && "randomUUID" in crypto
+            ? crypto.randomUUID()
+            : `cart_${Date.now()}_${cartItems.length + 1}`,
+        packageId: digitalPackage.id,
+        packageName: digitalPackage.name,
+        category,
+        quantity,
+        packageSubtotalCents,
+        backdropAddOnCents: 0,
+        lineTotalCents: packageSubtotalCents,
+        slots: [],
+        selectedImageUrl,
+        isCompositeOrder: false,
+        compositeTitle: null,
+        backdrop: null,
+        orientation: "portrait",
+        laneKey: currentLane?.laneKey,
+        laneSchoolId: currentLane?.schoolId,
+        laneStudentId: currentLane?.studentId,
+        lanePin: currentLane?.pin,
+        laneEmail: currentLane?.email,
+        laneSchoolName: currentLane?.schoolName,
+        laneStudentName: currentLane?.studentName,
+      };
+      setCartItems((prev) => {
+        const alreadySaved = prev.some(
+          (item) =>
+            item.packageId === digitalPackage.id &&
+            item.category === category &&
+            item.laneKey === currentLane?.laneKey,
+        );
+        return alreadySaved ? prev : [...prev, digitalLine];
+      });
     }
 
     const nextIndex = visibleImages.findIndex((img) => img.id === compositeImage.id);
