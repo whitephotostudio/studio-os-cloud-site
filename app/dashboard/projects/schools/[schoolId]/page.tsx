@@ -380,7 +380,10 @@ export default function SchoolsSchoolDetailPage() {
   const [shareRecipientInput, setShareRecipientInput] = useState("");
   const [shareSubject, setShareSubject] = useState("");
   const [shareHeadline, setShareHeadline] = useState("");
+  const [shareButtonLabel, setShareButtonLabel] = useState("");
   const [shareMessage, setShareMessage] = useState("");
+  const [shareCcOpen, setShareCcOpen] = useState(false);
+  const [shareCcInput, setShareCcInput] = useState("");
   const [shareSending, setShareSending] = useState(false);
   const [shareResult, setShareResult] = useState<{ sent: number; failed: number; recipients: number } | null>(null);
 
@@ -921,9 +924,12 @@ export default function SchoolsSchoolDetailPage() {
     const schoolName = clean(school?.school_name) || "your school gallery";
     setShareRecipientMode(mode);
     setShareRecipientInput("");
-    setShareSubject(`${schoolName} photos are ready`);
+    setShareSubject("Your Gallery is Ready!");
     setShareHeadline(`${schoolName} gallery`);
-    setShareMessage("Your photo gallery is ready. Use the button below to view the gallery and place an order.");
+    setShareButtonLabel("View Gallery");
+    setShareMessage(`Hi!\n\nYour gallery is ready to be viewed.\n\nThanks,\nWHITEPHOTO`);
+    setShareCcOpen(false);
+    setShareCcInput("");
     setShareResult(null);
     setShareView("compose");
   }
@@ -951,8 +957,10 @@ export default function SchoolsSchoolDetailPage() {
         body: JSON.stringify({
           recipientMode: shareRecipientMode,
           recipients: shareRecipientMode === "others" ? shareRecipientInput : undefined,
+          ccRecipients: shareCcOpen ? shareCcInput : undefined,
           subject: shareSubject,
           headline: shareHeadline,
+          buttonLabel: shareButtonLabel,
           message: shareMessage,
         }),
       });
@@ -2473,12 +2481,12 @@ export default function SchoolsSchoolDetailPage() {
 
       {/* ── Share Gallery Modal ── */}
       {shareModalOpen ? (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.55)", display: "grid", placeItems: "center", zIndex: 78, padding: 24 }}>
-          <div style={{ width: "100%", maxWidth: shareView === "compose" ? 940 : 580, maxHeight: "88vh", background: "#fff", borderRadius: 24, border: "1px solid #e5e7eb", boxShadow: "0 30px 60px rgba(15,23,42,0.25)", display: "flex", flexDirection: "column", overflow: "hidden" }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "18px 22px", borderBottom: "1px solid #eef2f7" }}>
+        <div style={shareView === "compose" ? { position: "fixed", inset: 0, background: "#eef0f3", zIndex: 78, display: "flex", flexDirection: "column" } : { position: "fixed", inset: 0, background: "rgba(15,23,42,0.55)", display: "grid", placeItems: "center", zIndex: 78, padding: 24 }}>
+          <div style={shareView === "compose" ? { width: "100%", height: "100%", background: "#fff", display: "flex", flexDirection: "column", overflow: "hidden" } : { width: "100%", maxWidth: 580, maxHeight: "88vh", background: "#fff", borderRadius: 24, border: "1px solid #e5e7eb", boxShadow: "0 30px 60px rgba(15,23,42,0.25)", display: "flex", flexDirection: "column", overflow: "hidden" }}>
+            <div style={shareView === "compose" ? { height: 64, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, padding: "0 26px", borderBottom: "1px solid #e5e7eb", background: "#fff" } : { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "18px 22px", borderBottom: "1px solid #eef2f7" }}>
               <div>
                 <div style={{ fontSize: 16, fontWeight: 900, color: "#111111" }}>
-                  {shareView === "compose" ? "Compose Gallery Email" : "Share Gallery"}
+                  {shareView === "compose" ? "Share Gallery with Visitors" : "Share Gallery"}
                 </div>
                 <div style={{ color: "#4b5563", fontSize: 13, marginTop: 4 }}>
                   {shareView === "compose"
@@ -2488,9 +2496,16 @@ export default function SchoolsSchoolDetailPage() {
                     : `Share the ${school?.school_name || "school"} gallery`}
                 </div>
               </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                {shareView === "compose" ? (
+                  <button type="button" onClick={sendSchoolShareEmail} disabled={shareSending || !clean(shareSubject) || !clean(shareHeadline) || !clean(shareButtonLabel) || !clean(shareMessage) || (shareRecipientMode === "others" && !clean(shareRecipientInput))} style={{ borderRadius: 8, border: 0, background: shareSending ? "#8aa1b5" : "#1f5b88", color: "#fff", padding: "10px 18px", fontWeight: 800, cursor: shareSending ? "wait" : "pointer", opacity: !clean(shareSubject) || !clean(shareHeadline) || !clean(shareButtonLabel) || !clean(shareMessage) || (shareRecipientMode === "others" && !clean(shareRecipientInput)) ? 0.55 : 1 }}>
+                    {shareSending ? "Sending..." : "Send"}
+                  </button>
+                ) : null}
               <button onClick={closeShareModal} style={{ border: 0, background: "transparent", cursor: "pointer", color: "#6b7280" }}>
                 <X size={22} />
               </button>
+              </div>
             </div>
             {shareView === "menu" ? (
               <div style={{ padding: 24, display: "grid", gap: 16 }}>
@@ -2552,47 +2567,100 @@ export default function SchoolsSchoolDetailPage() {
                 </button>
               </div>
             ) : (
-              <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(280px,0.8fr)", gap: 0, overflowY: "auto" }}>
-                <div style={{ padding: 24, display: "grid", gap: 16, borderRight: "1px solid #eef2f7" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "minmax(320px, 430px) minmax(0,1fr)", gap: 0, minHeight: 0, flex: 1, overflow: "hidden" }}>
+                <div style={{ padding: "18px 22px 32px", display: "grid", gap: 18, borderRight: "1px solid #e5e7eb", background: "#fff", overflowY: "auto" }}>
+                  <label style={{ display: "grid", gap: 8 }}>
+                    <span style={{ color: "#344054", fontSize: 12, fontWeight: 800 }}>To</span>
+                    <select value={shareRecipientMode} onChange={(event) => setShareRecipientMode(event.target.value as "visitors" | "others")} style={{ width: "100%", boxSizing: "border-box", borderRadius: 6, border: "1px solid #cbd5e1", padding: "12px 14px", background: "#fff", color: "#111827", fontSize: 14, outline: "none" }}>
+                      <option value="visitors">All Visitors</option>
+                      <option value="others">Custom Recipients</option>
+                    </select>
+                  </label>
                   {shareRecipientMode === "others" ? (
                     <label style={{ display: "grid", gap: 8 }}>
-                      <span style={{ color: "#111111", fontSize: 13, fontWeight: 800 }}>Recipients</span>
-                      <textarea value={shareRecipientInput} onChange={(event) => setShareRecipientInput(event.target.value)} placeholder="client@example.com, parent@example.com" rows={4} style={{ width: "100%", boxSizing: "border-box", borderRadius: 12, border: "1px solid #d0d5dd", padding: "12px 14px", fontSize: 14, color: "#111111", fontFamily: "inherit", resize: "vertical" }} />
+                      <span style={{ color: "#344054", fontSize: 12, fontWeight: 800 }}>Recipients</span>
+                      <textarea value={shareRecipientInput} onChange={(event) => setShareRecipientInput(event.target.value)} placeholder="client@example.com, parent@example.com" rows={4} style={{ width: "100%", boxSizing: "border-box", borderRadius: 6, border: "1px solid #cbd5e1", padding: "12px 14px", fontSize: 14, color: "#111111", fontFamily: "inherit", resize: "vertical", outline: "none" }} />
                     </label>
-                  ) : (
-                    <div style={{ borderRadius: 12, background: "#f9fafb", border: "1px solid #e5e7eb", padding: "12px 14px", color: "#344054", fontSize: 13 }}>
-                      Sending to gallery visitors and registered parents.
+                  ) : null}
+                  <button type="button" onClick={() => setShareCcOpen((value) => !value)} style={{ border: 0, background: "transparent", color: "#344054", fontSize: 13, fontWeight: 800, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 12, justifySelf: "start", padding: 0 }}>
+                    <span style={{ width: 30, height: 18, borderRadius: 999, background: shareCcOpen ? "#1f5b88" : "#cbd5e1", display: "inline-flex", alignItems: "center", padding: 2, boxSizing: "border-box" }}>
+                      <span style={{ width: 14, height: 14, borderRadius: 999, background: "#fff", transform: shareCcOpen ? "translateX(12px)" : "translateX(0)", transition: "transform 120ms ease" }} />
+                    </span>
+                    Add CC
+                  </button>
+                  {shareCcOpen ? (
+                    <label style={{ display: "grid", gap: 8 }}>
+                      <span style={{ color: "#344054", fontSize: 12, fontWeight: 800 }}>CC</span>
+                      <input value={shareCcInput} onChange={(event) => setShareCcInput(event.target.value)} placeholder="Optional copy email" style={{ width: "100%", boxSizing: "border-box", borderRadius: 6, border: "1px solid #cbd5e1", padding: "12px 14px", fontSize: 14, color: "#111111", outline: "none" }} />
+                    </label>
+                  ) : null}
+                  <label style={{ display: "grid", gap: 8 }}>
+                    <span style={{ color: "#344054", fontSize: 12, fontWeight: 800 }}>Template</span>
+                    <select value="default" disabled style={{ width: "100%", boxSizing: "border-box", borderRadius: 6, border: "1px solid #cbd5e1", padding: "12px 14px", background: "#fff", color: "#111827", fontSize: 14 }}>
+                      <option value="default">Default</option>
+                    </select>
+                  </label>
+                  <label style={{ display: "grid", gap: 8 }}>
+                    <span style={{ color: "#344054", fontSize: 12, fontWeight: 800 }}>Subject</span>
+                    <input value={shareSubject} onChange={(event) => setShareSubject(event.target.value)} style={{ width: "100%", boxSizing: "border-box", borderRadius: 6, border: "1px solid #cbd5e1", padding: "12px 14px", fontSize: 14, color: "#111111", outline: "none" }} />
+                  </label>
+                  <label style={{ display: "grid", gap: 8 }}>
+                    <span style={{ color: "#344054", fontSize: 12, fontWeight: 800 }}>Headline</span>
+                    <input value={shareHeadline} onChange={(event) => setShareHeadline(event.target.value)} style={{ width: "100%", boxSizing: "border-box", borderRadius: 6, border: "1px solid #cbd5e1", padding: "12px 14px", fontSize: 14, color: "#111111", outline: "none" }} />
+                  </label>
+                  <label style={{ display: "grid", gap: 8 }}>
+                    <span style={{ color: "#344054", fontSize: 12, fontWeight: 800 }}>Button Text</span>
+                    <input value={shareButtonLabel} onChange={(event) => setShareButtonLabel(event.target.value)} style={{ width: "100%", boxSizing: "border-box", borderRadius: 6, border: "1px solid #cbd5e1", padding: "12px 14px", fontSize: 14, color: "#111111", outline: "none" }} />
+                    <span style={{ color: "#64748b", fontSize: 12 }}>This text appears on the call-to-action button in the email.</span>
+                  </label>
+                  <label style={{ display: "grid", gap: 8 }}>
+                    <span style={{ color: "#344054", fontSize: 12, fontWeight: 800 }}>Message</span>
+                    <div style={{ borderRadius: 6, border: "1px solid #cbd5e1", overflow: "hidden", background: "#fff" }}>
+                      <div style={{ minHeight: 38, borderBottom: "1px solid #e5e7eb", display: "flex", alignItems: "center", gap: 18, padding: "0 12px", color: "#334155", fontWeight: 800 }}>
+                        <span style={{ fontSize: 22, lineHeight: 1 }}>+</span>
+                        <span style={{ fontSize: 18, lineHeight: 1 }}>¶</span>
+                        <span>B</span>
+                        <span style={{ fontStyle: "italic" }}>I</span>
+                        <span style={{ textDecoration: "line-through" }}>S</span>
+                        <span style={{ textDecoration: "underline" }}>U</span>
+                        <span>...</span>
+                      </div>
+                      <textarea value={shareMessage} onChange={(event) => setShareMessage(event.target.value)} rows={11} maxLength={10000} style={{ width: "100%", boxSizing: "border-box", border: 0, padding: "16px 18px", fontSize: 14, color: "#111111", fontFamily: "inherit", resize: "vertical", outline: "none", lineHeight: 1.6 }} />
+                      <div style={{ padding: "0 18px 12px", color: "#64748b", fontSize: 12 }}>{shareMessage.length}/10000</div>
                     </div>
-                  )}
-                  <label style={{ display: "grid", gap: 8 }}>
-                    <span style={{ color: "#111111", fontSize: 13, fontWeight: 800 }}>Subject</span>
-                    <input value={shareSubject} onChange={(event) => setShareSubject(event.target.value)} style={{ width: "100%", boxSizing: "border-box", borderRadius: 12, border: "1px solid #d0d5dd", padding: "12px 14px", fontSize: 14, color: "#111111" }} />
                   </label>
-                  <label style={{ display: "grid", gap: 8 }}>
-                    <span style={{ color: "#111111", fontSize: 13, fontWeight: 800 }}>Headline</span>
-                    <input value={shareHeadline} onChange={(event) => setShareHeadline(event.target.value)} style={{ width: "100%", boxSizing: "border-box", borderRadius: 12, border: "1px solid #d0d5dd", padding: "12px 14px", fontSize: 14, color: "#111111" }} />
-                  </label>
-                  <label style={{ display: "grid", gap: 8 }}>
-                    <span style={{ color: "#111111", fontSize: 13, fontWeight: 800 }}>Message</span>
-                    <textarea value={shareMessage} onChange={(event) => setShareMessage(event.target.value)} rows={7} style={{ width: "100%", boxSizing: "border-box", borderRadius: 12, border: "1px solid #d0d5dd", padding: "12px 14px", fontSize: 14, color: "#111111", fontFamily: "inherit", resize: "vertical" }} />
-                  </label>
-                  <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
-                    <button type="button" onClick={() => setShareView("menu")} style={{ borderRadius: 14, border: "1px solid #d0d5dd", background: "#fff", color: "#111111", padding: "12px 16px", fontWeight: 800, cursor: "pointer" }}>
-                      Back
-                    </button>
-                    <button type="button" onClick={sendSchoolShareEmail} disabled={shareSending || !clean(shareSubject) || !clean(shareMessage) || (shareRecipientMode === "others" && !clean(shareRecipientInput))} style={{ borderRadius: 14, border: 0, background: shareSending ? "#9ca3af" : "#111111", color: "#fff", padding: "12px 18px", fontWeight: 800, cursor: shareSending ? "wait" : "pointer", opacity: !clean(shareSubject) || !clean(shareMessage) || (shareRecipientMode === "others" && !clean(shareRecipientInput)) ? 0.55 : 1 }}>
-                      {shareSending ? "Sending..." : shareRecipientMode === "visitors" ? "Send to Visitors" : "Send Email"}
-                    </button>
-                  </div>
                 </div>
-                <div style={{ padding: 24, background: "#fafafa" }}>
-                  <div style={{ color: "#6b7280", fontSize: 12, fontWeight: 900, letterSpacing: "0.12em", textTransform: "uppercase", marginBottom: 12 }}>Preview</div>
-                  <div style={{ borderRadius: 18, background: "#fff", border: "1px solid #e5e7eb", overflow: "hidden", boxShadow: "0 10px 30px rgba(15,23,42,0.08)" }}>
-                    <div style={{ padding: "22px 20px", background: "#111111", color: "#fff", fontWeight: 900 }}>{clean(school?.school_name) || "School Gallery"}</div>
-                    <div style={{ padding: 20 }}>
-                      <div style={{ color: "#111111", fontSize: 20, fontWeight: 900, marginBottom: 10 }}>{shareHeadline || "Gallery update"}</div>
-                      <div style={{ color: "#4b5563", fontSize: 14, lineHeight: 1.55, whiteSpace: "pre-wrap" }}>{shareMessage || "Write your message to preview it here."}</div>
-                      <div style={{ marginTop: 18, borderRadius: 999, background: "#111111", color: "#fff", display: "inline-block", padding: "11px 16px", fontSize: 13, fontWeight: 800 }}>View Gallery</div>
+                <div style={{ padding: "14px 22px 56px", background: "#e9eaec", overflowY: "auto" }}>
+                  <div style={{ width: "100%", maxWidth: 500, margin: "0 auto" }}>
+                    <div style={{ background: "#fff", boxShadow: "0 1px 2px rgba(15,23,42,0.08)", overflow: "hidden" }}>
+                      <div style={{ width: "100%", aspectRatio: "1.62 / 1", background: grouped.schoolCover ? `url(${grouped.schoolCover}) ${Math.round(focalX * 100)}% ${Math.round(focalY * 100)}%/cover no-repeat` : "linear-gradient(135deg,#1f2937,#94a3b8)", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontSize: 24, fontWeight: 900, letterSpacing: "0.04em" }}>
+                        {!grouped.schoolCover ? "WHITEPHOTO" : null}
+                      </div>
+                      <div style={{ padding: "42px 28px 30px", textAlign: "center" }}>
+                        <div style={{ fontSize: 28, lineHeight: 1, fontWeight: 900, color: "#cbd5e1", textShadow: "0 1px 0 #fff" }}>
+                          WHITE<span style={{ color: "#ef4444", textShadow: "none" }}>PHOTO</span>
+                        </div>
+                        <div style={{ color: "#94a3b8", fontSize: 10, marginTop: 2 }}>Digital Photography</div>
+                        <div style={{ marginTop: 28, color: "#111111", fontSize: 26, lineHeight: 1.15, fontWeight: 500, textTransform: "uppercase" }}>{clean(shareHeadline) || clean(school?.school_name) || "School Gallery"}</div>
+                        <div style={{ marginTop: 26, display: "flex", justifyContent: "center" }}>
+                          <div style={{ background: "#3f3f46", color: "#fff", padding: "15px 24px", fontSize: 12, fontWeight: 800, textTransform: "uppercase" }}>{clean(shareButtonLabel) || "View Gallery"}</div>
+                        </div>
+                        <div style={{ marginTop: 44, background: "#f8fafc", textAlign: "left", padding: "26px 24px", color: "#111827", fontSize: 14, lineHeight: 1.75, whiteSpace: "pre-line" }}>
+                          {shareMessage}
+                        </div>
+                      </div>
+                    </div>
+                    <div style={{ display: "flex", justifyContent: "center", gap: 12, marginTop: 26, color: "#cbd5e1" }}>
+                      {["f", "x", "ig", "p"].map((item) => (
+                        <span key={item} style={{ width: 28, height: 28, borderRadius: 999, background: "#d1d5db", color: "#fff", display: "grid", placeItems: "center", fontSize: 11, fontWeight: 900 }}>{item}</span>
+                      ))}
+                    </div>
+                    <div style={{ color: "#c4c4c4", fontSize: 11, textAlign: "center", marginTop: 34, lineHeight: 1.5 }}>
+                      Copyright © 2026 WHITEPHOTO
+                      <br />
+                      2650 John Street
+                      <br />
+                      Markham ON L3R 2W6
                     </div>
                   </div>
                 </div>

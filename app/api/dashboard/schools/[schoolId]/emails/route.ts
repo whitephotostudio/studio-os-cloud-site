@@ -21,6 +21,7 @@ export const dynamic = "force-dynamic";
 const SendCampaignBodySchema = z.object({
   recipientMode: z.enum(["visitors", "others"]).optional(),
   recipients: z.union([z.array(z.string().max(320)), z.string().max(20_000)]).optional(),
+  ccRecipients: z.union([z.array(z.string().max(320)), z.string().max(20_000)]).optional(),
   subject: z.string().max(500).optional(),
   headline: z.string().max(500).optional(),
   buttonLabel: z.string().max(200).optional(),
@@ -123,10 +124,12 @@ export async function POST(
       );
     }
 
-    const recipients =
+    const primaryRecipients =
       body.recipientMode === "others"
         ? parseRecipients(body.recipients)
         : await collectSchoolRecipientEmails(service, schoolId);
+    const ccRecipients = parseRecipients(body.ccRecipients);
+    const recipients = Array.from(new Set([...primaryRecipients, ...ccRecipients]));
 
     if (!recipients.length) {
       return NextResponse.json(
