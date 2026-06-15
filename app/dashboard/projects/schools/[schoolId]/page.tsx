@@ -888,7 +888,19 @@ export default function SchoolsSchoolDetailPage() {
       url = `${origin}/parents?${params.toString()}`;
     }
     try {
-      await navigator.clipboard.writeText(url);
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(url);
+      } else {
+        const helper = document.createElement("textarea");
+        helper.value = url;
+        helper.style.position = "fixed";
+        helper.style.opacity = "0";
+        document.body.appendChild(helper);
+        helper.select();
+        const copied = document.execCommand("copy");
+        document.body.removeChild(helper);
+        if (!copied) throw new Error("Copy failed.");
+      }
       setShareNotice("School link copied");
       window.setTimeout(() => setShareNotice(""), 2200);
     } catch {

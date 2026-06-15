@@ -210,7 +210,7 @@ export async function POST(request: NextRequest) {
       pin?: string;
       downloadPin?: string;
       mediaIds?: string[];
-      downloadType?: "gallery";
+      downloadType?: "gallery" | "favorites";
     };
 
     const access = await validateSchoolDownloadAccess({
@@ -238,6 +238,7 @@ export async function POST(request: NextRequest) {
       );
     }
     const mediaIds = mediaIdsResult.value;
+    const downloadType = body.downloadType === "favorites" ? "favorites" : "gallery";
 
     const downloadAccess = await buildSchoolGalleryDownloadAccess({
       service: access.service,
@@ -332,7 +333,7 @@ export async function POST(request: NextRequest) {
       .insert({
         school_id: access.schoolId,
         viewer_email: access.viewerEmail,
-        download_type: "gallery",
+        download_type: downloadType,
         download_count: allowedMediaIds.length,
         media_ids: allowedMediaIds,
       });

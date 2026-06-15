@@ -4790,6 +4790,40 @@ export default function ParentGalleryPage() {
           phone: "",
           email: "",
         };
+        const favoriteSchoolId = activeSchool?.id ?? currentSchool?.id ?? schoolId;
+        const schoolFavoritesStorageKey = favoriteStorageKey(
+          favoriteSchoolId ? `school:${favoriteSchoolId}` : "",
+          schoolViewerEmail,
+          pin,
+        );
+        const storedSchoolFavorites = readStoredFavorites(schoolFavoritesStorageKey);
+        let nextSchoolFavorites = storedSchoolFavorites;
+        let schoolFavoritesUnavailable = false;
+        if (favoriteSchoolId && schoolViewerEmail) {
+          const schoolFavoritesParams = new URLSearchParams({
+            schoolId: favoriteSchoolId,
+            email: schoolViewerEmail,
+            pin,
+          });
+          const schoolFavoritesResponse = await fetch(
+            `/api/portal/school-favorites?${schoolFavoritesParams.toString()}`,
+            { cache: "no-store" },
+          );
+          const schoolFavoritesPayload = (await schoolFavoritesResponse.json().catch(() => ({}))) as {
+            ok?: boolean;
+            mediaIds?: string[];
+            unavailable?: boolean;
+          };
+          schoolFavoritesUnavailable = schoolFavoritesPayload.unavailable === true;
+          if (schoolFavoritesResponse.ok && schoolFavoritesPayload.ok !== false) {
+            nextSchoolFavorites = new Set([
+              ...storedSchoolFavorites,
+              ...(schoolFavoritesPayload.mediaIds ?? [])
+                .map((value) => clean(value))
+                .filter(Boolean),
+            ]);
+          }
+        }
 
         if (!mounted) return;
 
@@ -4818,8 +4852,8 @@ export default function ParentGalleryPage() {
         setBlackWhitePreviewEnabled(false);
         setPackages(packageRows);
         setBackdrops(backdropRows);
-        setFavorites(new Set());
-        setEventFavoritesAvailable(true);
+        setFavorites(nextSchoolFavorites);
+        setEventFavoritesAvailable(!schoolFavoritesUnavailable);
         setNobgUrls({});
         setNobgStatus("idle");
         setPhotographerId(resolvedPhotographerId);
@@ -5323,6 +5357,29 @@ export default function ParentGalleryPage() {
     }, 3200);
   }
 
+  async function copyShareTextToClipboard(text: string) {
+    const browserNavigator = window.navigator as Navigator & {
+      clipboard?: Clipboard;
+    };
+    const clipboardApi = browserNavigator.clipboard;
+    if (clipboardApi?.writeText) {
+      await clipboardApi.writeText(text);
+      return;
+    }
+
+    const helper = document.createElement("textarea");
+    helper.value = text;
+    helper.style.position = "fixed";
+    helper.style.opacity = "0";
+    document.body.appendChild(helper);
+    helper.select();
+    const copied = document.execCommand("copy");
+    document.body.removeChild(helper);
+    if (!copied) {
+      throw new Error("Copy failed.");
+    }
+  }
+
   async function handleShareGallery() {
     if (!currentGalleryExtras.allowSocialSharing) return;
 
@@ -5331,13 +5388,13 @@ export default function ParentGalleryPage() {
       "Check out the photos from this gallery!";
     const shareTitle = galleryHeaderTitle || galleryHeadline;
     const shareUrl = window.location.href;
+    const sharePayload = `${shareText}\n\n${shareUrl}`;
     const browserNavigator = window.navigator as Navigator & {
-      clipboard?: Clipboard;
       share?: (data?: ShareData) => Promise<void>;
     };
 
-    try {
-      if (typeof browserNavigator.share === "function") {
+    if (typeof browserNavigator.share === "function") {
+      try {
         await browserNavigator.share({
           title: shareTitle,
           text: shareText,
@@ -5345,29 +5402,18 @@ export default function ParentGalleryPage() {
         });
         showGalleryActionNotice(galleryCopy.shareSheetOpened);
         return;
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") {
+          return;
+        }
       }
+    }
 
-      const clipboardApi = browserNavigator.clipboard;
-      if (clipboardApi?.writeText) {
-        await clipboardApi.writeText(`${shareText}\n\n${shareUrl}`);
-        showGalleryActionNotice(galleryCopy.galleryLinkCopied);
-        return;
-      }
-
-      const helper = document.createElement("textarea");
-      helper.value = `${shareText}\n\n${shareUrl}`;
-      helper.style.position = "fixed";
-      helper.style.opacity = "0";
-      document.body.appendChild(helper);
-      helper.select();
-      document.execCommand("copy");
-      document.body.removeChild(helper);
+    try {
+      await copyShareTextToClipboard(sharePayload);
       showGalleryActionNotice(galleryCopy.galleryLinkCopied);
-    } catch (error) {
-      if (error instanceof DOMException && error.name === "AbortError") {
-        return;
-      }
-      showGalleryActionNotice("Could not open share right now.");
+    } catch {
+      showGalleryActionNotice("Could not copy link right now.");
     }
   }
 
@@ -5577,8 +5623,43 @@ export default function ParentGalleryPage() {
     }
   }
 
+  async function syncSchoolFavorite(imageId: string, favorited: boolean) {
+    const response = await fetch("/api/portal/school-favorites", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        schoolId: student?.school_id ?? schoolId,
+        email: schoolViewerEmail,
+        pin,
+        mediaId: imageId,
+        favorited,
+      }),
+    });
+
+    const payload = (await response.json().catch(() => ({}))) as {
+      ok?: boolean;
+      message?: string;
+      unavailable?: boolean;
+    };
+
+    if (payload.unavailable === true) {
+      setEventFavoritesAvailable(false);
+      return;
+    }
+
+    if (!response.ok || payload.ok === false) {
+      throw new Error(payload.message || "Could not save favorite.");
+    }
+  }
+
   function toggleFavorite(imageId: string) {
-    const storageKey = favoriteStorageKey(projectId, eventEmail, pin);
+    const storageKey = favoriteStorageKey(
+      isSchoolMode ? `school:${student?.school_id ?? schoolId}` : projectId,
+      isSchoolMode ? schoolViewerEmail : eventEmail,
+      pin,
+    );
     let nextFavorited = false;
     let nextSetSnapshot = new Set<string>();
     setFavorites((prev) => {
@@ -5597,6 +5678,13 @@ export default function ParentGalleryPage() {
 
     if (!isSchoolMode && projectId && eventEmail && eventFavoritesAvailable) {
       void syncEventFavorite(imageId, nextFavorited).catch(() => {
+        writeStoredFavorites(storageKey, nextSetSnapshot);
+        setFavoriteMessage("Favorite saved only in this browser for now.");
+        window.setTimeout(() => setFavoriteMessage(""), 2800);
+      });
+    }
+    if (isSchoolMode && (student?.school_id || schoolId) && schoolViewerEmail && eventFavoritesAvailable) {
+      void syncSchoolFavorite(imageId, nextFavorited).catch(() => {
         writeStoredFavorites(storageKey, nextSetSnapshot);
         setFavoriteMessage("Favorite saved only in this browser for now.");
         window.setTimeout(() => setFavoriteMessage(""), 2800);
@@ -5624,6 +5712,36 @@ export default function ParentGalleryPage() {
           body: JSON.stringify({
             projectId,
             email: eventEmail,
+            pin,
+            mediaIds: favoriteImages.map((image) => image.id),
+            downloadType: "favorites",
+          }),
+        });
+        const payload = (await response.json().catch(() => ({}))) as {
+          ok?: boolean;
+          message?: string;
+          allowedMediaIds?: string[];
+        };
+
+        if (!response.ok || payload.ok === false) {
+          throw new Error(payload.message || "Could not prepare favorite downloads.");
+        }
+
+        const allowedIds = new Set(
+          (payload.allowedMediaIds ?? []).map((value) => clean(value)).filter(Boolean),
+        );
+        allowedImages = favoriteImages.filter((image) => allowedIds.has(image.id));
+        if (!allowedImages.length) {
+          throw new Error("There are no favorite downloads available right now.");
+        }
+      }
+      if (isSchoolMode && (student?.school_id || schoolId) && schoolViewerEmail) {
+        const response = await fetch("/api/portal/school-downloads", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            schoolId: student?.school_id ?? schoolId,
+            email: schoolViewerEmail,
             pin,
             mediaIds: favoriteImages.map((image) => image.id),
             downloadType: "favorites",
@@ -6196,13 +6314,13 @@ export default function ParentGalleryPage() {
       `Please ask the photographer about ${reference.full}.`;
     const shareTitle = `${galleryHeaderTitle || galleryHeadline} · ${reference.number}`;
     const shareUrl = window.location.href;
+    const sharePayload = `${reference.full}\n${shareText}\n\n${shareUrl}`;
     const browserNavigator = window.navigator as Navigator & {
-      clipboard?: Clipboard;
       share?: (data?: ShareData) => Promise<void>;
     };
 
-    try {
-      if (typeof browserNavigator.share === "function") {
+    if (typeof browserNavigator.share === "function") {
+      try {
         await browserNavigator.share({
           title: shareTitle,
           text: `${shareText}\n${reference.full}`,
@@ -6210,29 +6328,18 @@ export default function ParentGalleryPage() {
         });
         showGalleryActionNotice(galleryCopy.shareSheetOpened);
         return;
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") {
+          return;
+        }
       }
+    }
 
-      const sharePayload = `${reference.full}\n${shareText}\n\n${shareUrl}`;
-      if (browserNavigator.clipboard?.writeText) {
-        await browserNavigator.clipboard.writeText(sharePayload);
-        showGalleryActionNotice(`${reference.number} copied.`);
-        return;
-      }
-
-      const helper = document.createElement("textarea");
-      helper.value = sharePayload;
-      helper.style.position = "fixed";
-      helper.style.opacity = "0";
-      document.body.appendChild(helper);
-      helper.select();
-      document.execCommand("copy");
-      document.body.removeChild(helper);
+    try {
+      await copyShareTextToClipboard(sharePayload);
       showGalleryActionNotice(`${reference.number} copied.`);
-    } catch (error) {
-      if (error instanceof DOMException && error.name === "AbortError") {
-        return;
-      }
-      showGalleryActionNotice("Could not share this photo right now.");
+    } catch {
+      showGalleryActionNotice("Could not copy this photo right now.");
     }
   }
 

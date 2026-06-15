@@ -327,6 +327,21 @@ export async function POST(request: NextRequest) {
         }
       }
 
+      const { error: insertError } = await access.service
+        .from("event_gallery_downloads")
+        .insert({
+          project_id: access.projectId,
+          collection_id: clean(body.collectionId) || null,
+          viewer_email: access.email,
+          download_type: "favorites",
+          download_count: mediaIds.length,
+          media_ids: mediaIds,
+        });
+
+      if (insertError && !isMissingDownloadsTable(insertError)) {
+        throw insertError;
+      }
+
       return NextResponse.json({ ok: true, allowedMediaIds: mediaIds });
     }
 

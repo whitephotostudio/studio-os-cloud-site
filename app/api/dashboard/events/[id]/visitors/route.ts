@@ -36,6 +36,16 @@ type DownloadMediaPreview = {
   filename: string | null;
 };
 
+type OrderItemRow = {
+  id?: string | null;
+  product_name?: string | null;
+  quantity?: number | null;
+  price?: number | null;
+  unit_price_cents?: number | null;
+  line_total_cents?: number | null;
+  sku?: string | null;
+};
+
 function clean(value: string | null | undefined) {
   return (value ?? "").trim();
 }
@@ -162,7 +172,12 @@ export async function GET(
         .order("created_at", { ascending: false }),
       service
         .from("orders")
-        .select("id, status, total_cents, created_at, parent_email, customer_email, special_notes")
+        .select(`
+          id, status, total_cents, subtotal_cents, tax_cents, currency,
+          created_at, parent_email, customer_email, customer_name, parent_name,
+          package_name, cart_snapshot, special_notes,
+          items:order_items(id, product_name, quantity, price, unit_price_cents, line_total_cents, sku)
+        `)
         .eq("project_id", projectId)
         .order("created_at", { ascending: false }),
     ]);
@@ -179,7 +194,16 @@ export async function GET(
         ),
       ),
     );
-    const queryableMediaIds = downloadedMediaIds.filter(looksLikeUuid);
+    const favoriteMediaIds = Array.from(
+      new Set(
+        (favorites ?? [])
+          .map((f: Record<string, unknown>) => clean(f.media_id as string | null))
+          .filter(Boolean),
+      ),
+    );
+    const queryableMediaIds = Array.from(
+      new Set([...downloadedMediaIds, ...favoriteMediaIds].filter(looksLikeUuid)),
+    );
     const mediaRowsResult = queryableMediaIds.length
       ? await service
           .from("media")
@@ -190,7 +214,7 @@ export async function GET(
 
     if (mediaRowsResult.error) throw mediaRowsResult.error;
 
-    const downloadedMediaById = new Map(
+    const mediaById = new Map(
       ((mediaRowsResult.data ?? []) as MediaRow[]).map((row) => [
         row.id,
         previewFromEventMediaRow(row),
@@ -210,6 +234,22 @@ export async function GET(
           id: o.id,
           status: o.status,
           totalCents: o.total_cents,
+          subtotalCents: o.subtotal_cents,
+          taxCents: o.tax_cents,
+          currency: o.currency,
+          packageName: o.package_name,
+          customerName: o.customer_name,
+          parentName: o.parent_name,
+          cartSnapshot: o.cart_snapshot ?? null,
+          items: ((o.items ?? []) as OrderItemRow[]).map((item) => ({
+            id: item.id ?? null,
+            productName: item.product_name ?? "Item",
+            quantity: item.quantity ?? 1,
+            price: item.price ?? null,
+            unitPriceCents: item.unit_price_cents ?? null,
+            lineTotalCents: item.line_total_cents ?? null,
+            sku: item.sku ?? null,
+          })),
           createdAt: o.created_at,
         }));
 
@@ -226,7 +266,7 @@ export async function GET(
             mediaIds,
             media: mediaIds.map(
               (mediaId) =>
-                downloadedMediaById.get(mediaId) ?? {
+                mediaById.get(mediaId) ?? {
                   id: mediaId,
                   thumbnailUrl: null,
                   filename: mediaId,
@@ -243,6 +283,11 @@ export async function GET(
         .map((f: Record<string, unknown>) => ({
           id: f.id,
           mediaId: f.media_id,
+          media: mediaById.get(clean(f.media_id as string | null)) ?? {
+            id: clean(f.media_id as string | null),
+            thumbnailUrl: null,
+            filename: clean(f.media_id as string | null),
+          },
           createdAt: f.created_at,
         }));
 

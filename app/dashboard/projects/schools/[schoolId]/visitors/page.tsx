@@ -13,6 +13,7 @@ import {
   Mail,
   Search,
   ShoppingCart,
+  Star,
   Users,
   X,
 } from "lucide-react";
@@ -31,9 +32,26 @@ type VisitorOrder = {
   id: string;
   status: string;
   totalCents: number;
+  subtotalCents?: number | null;
+  taxCents?: number | null;
+  currency?: string | null;
+  packageName?: string | null;
+  customerName?: string | null;
+  parentName?: string | null;
+  items?: VisitorOrderItem[];
   createdAt: string;
   studentName: string;
   className: string;
+};
+
+type VisitorOrderItem = {
+  id: string | null;
+  productName: string;
+  quantity: number;
+  price: number | null;
+  unitPriceCents: number | null;
+  lineTotalCents: number | null;
+  sku: string | null;
 };
 
 type VisitorDownload = {
@@ -58,14 +76,23 @@ type Visitor = {
   lastVisit: string;
   orders: VisitorOrder[];
   downloads: VisitorDownload[];
+  favorites: VisitorFavorite[];
   orderCount: number;
   downloadCount: number;
+  favoriteCount: number;
   /** True when this entry is only a pre-release registrant (hasn't opened
    *  the gallery yet). Never combined with orders/downloads. */
   preRelease?: boolean;
   /** True when the visitor also registered during pre-release (they later
    *  opened the gallery). Used to show a small secondary badge. */
   alsoPreRelease?: boolean;
+};
+
+type VisitorFavorite = {
+  id: string;
+  mediaId: string;
+  media?: DownloadMediaPreview;
+  createdAt: string;
 };
 
 /* ── helpers ─────────────────────────────────────────────────── */
@@ -201,6 +228,114 @@ function DownloadPreviewGrid({
           +{media.length - maxItems}
         </div>
       )}
+    </div>
+  );
+}
+
+function isImageUrl(value: string | null | undefined) {
+  const candidate = (value ?? "").trim();
+  return (
+    candidate.startsWith("/") ||
+    candidate.startsWith("data:") ||
+    /^https?:\/\//i.test(candidate)
+  );
+}
+
+function imageUrlFromSku(value: string | null | undefined) {
+  const candidate = (value ?? "").trim();
+  if (!candidate) return null;
+  if (isImageUrl(candidate)) return candidate;
+  if (!/\.(jpe?g|png|webp|avif)(?:$|\?)/i.test(candidate)) return null;
+  return `/api/r2/img/${candidate.split("/").map(encodeURIComponent).join("/")}`;
+}
+
+function FavoritePreviewGrid({
+  favorites,
+  maxItems = 12,
+}: {
+  favorites: VisitorFavorite[];
+  maxItems?: number;
+}) {
+  if (!favorites.length) return null;
+
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(64px, 1fr))", gap: 8 }}>
+      {favorites.slice(0, maxItems).map((favorite, index) => {
+        const media = favorite.media;
+        return (
+          <div
+            key={`${favorite.id}-${index}`}
+            title={media?.filename ?? favorite.mediaId}
+            style={{
+              position: "relative",
+              aspectRatio: "1 / 1",
+              borderRadius: 8,
+              overflow: "hidden",
+              border: `1px solid ${borderColor}`,
+              background: "#f3f4f6",
+            }}
+          >
+            <ImageIcon size={18} style={{ position: "absolute", inset: 0, margin: "auto", color: "#9ca3af" }} />
+            {media?.thumbnailUrl && (
+              <div
+                aria-label={media.filename ?? "Favorite photo preview"}
+                role="img"
+                style={{
+                  position: "absolute",
+                  inset: 0,
+                  backgroundImage: `url(${JSON.stringify(media.thumbnailUrl)})`,
+                  backgroundPosition: "center",
+                  backgroundSize: "cover",
+                }}
+              />
+            )}
+          </div>
+        );
+      })}
+      {favorites.length > maxItems && (
+        <div style={{ aspectRatio: "1 / 1", borderRadius: 8, border: `1px solid ${borderColor}`, background: "#f9fafb", color: textMuted, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 800 }}>
+          +{favorites.length - maxItems}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function OrderItemsList({ order }: { order: VisitorOrder }) {
+  const items = order.items ?? [];
+  if (!items.length) return null;
+
+  return (
+    <div style={{ marginTop: 10, display: "grid", gap: 8 }}>
+      {items.slice(0, 8).map((item, index) => {
+        const imageUrl = imageUrlFromSku(item.sku);
+        return (
+          <div key={`${order.id}-${item.id ?? index}`} style={{ display: "grid", gridTemplateColumns: "42px 1fr auto", gap: 10, alignItems: "center", padding: 8, background: "#fff", border: `1px solid ${borderColor}`, borderRadius: 8 }}>
+            <div style={{ position: "relative", width: 42, height: 42, borderRadius: 6, overflow: "hidden", background: "#eef0f3", border: `1px solid ${borderColor}` }}>
+              <ImageIcon size={16} style={{ position: "absolute", inset: 0, margin: "auto", color: "#9ca3af" }} />
+              {imageUrl && (
+                <div
+                  role="img"
+                  aria-label={item.productName}
+                  style={{
+                    position: "absolute",
+                    inset: 0,
+                    backgroundImage: `url(${JSON.stringify(imageUrl)})`,
+                    backgroundSize: "cover",
+                    backgroundPosition: "center",
+                  }}
+                />
+              )}
+            </div>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontSize: 12, fontWeight: 800, color: textPrimary, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{item.productName}</div>
+              {item.sku ? <div style={{ fontSize: 10, color: textMuted, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{item.sku.split("/").pop()}</div> : null}
+            </div>
+            <div style={{ fontSize: 11, fontWeight: 800, color: textMuted }}>Qty {item.quantity || 1}</div>
+          </div>
+        );
+      })}
+      {items.length > 8 ? <div style={{ fontSize: 11, color: textMuted }}>+{items.length - 8} more item{items.length - 8 === 1 ? "" : "s"}</div> : null}
     </div>
   );
 }
@@ -478,7 +613,7 @@ export default function SchoolVisitorsPage() {
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: "40px 1fr 1fr 100px 100px 120px",
+              gridTemplateColumns: "40px 1fr 1fr 80px 100px 100px 120px",
               padding: "12px 16px",
               background: "#fafafa",
               borderBottom: `1px solid ${borderColor}`,
@@ -499,6 +634,7 @@ export default function SchoolVisitorsPage() {
             </div>
             <div>Visitor</div>
             <div>Last Activity</div>
+            <div>Favs</div>
             <div>Orders</div>
             <div>Downloads</div>
             <div>Actions</div>
@@ -515,7 +651,7 @@ export default function SchoolVisitorsPage() {
                 key={v.id}
                 style={{
                   display: "grid",
-                  gridTemplateColumns: "40px 1fr 1fr 100px 100px 120px",
+                  gridTemplateColumns: "40px 1fr 1fr 80px 100px 100px 120px",
                   padding: "14px 16px",
                   borderBottom: `1px solid ${borderColor}`,
                   alignItems: "center",
@@ -608,6 +744,16 @@ export default function SchoolVisitorsPage() {
                     : fmtDateTime(v.lastVisit)}
                 </div>
                 <div>
+                  {(v.favoriteCount || 0) > 0 ? (
+                    <span style={{ fontSize: 12, fontWeight: 700, color: "#e11d48" }}>
+                      <Star size={12} style={{ marginRight: 4, verticalAlign: "middle" }} />
+                      {v.favoriteCount}
+                    </span>
+                  ) : (
+                    <span style={{ fontSize: 12, color: "#ccc" }}>-</span>
+                  )}
+                </div>
+                <div>
                   {v.orderCount > 0 ? (
                     <span style={{ fontSize: 12, fontWeight: 700, color: "#166534" }}>
                       <ShoppingCart size={12} style={{ marginRight: 4, verticalAlign: "middle" }} />
@@ -680,7 +826,11 @@ export default function SchoolVisitorsPage() {
           </div>
 
           {/* Stats */}
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 1, background: borderColor }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 1, background: borderColor }}>
+            <div style={{ background: cardBg, padding: "16px 20px", textAlign: "center" }}>
+              <div style={{ fontSize: 20, fontWeight: 800, color: textPrimary }}>{selectedVisitor.favoriteCount || 0}</div>
+              <div style={{ fontSize: 11, color: textMuted, marginTop: 2 }}>Favorites</div>
+            </div>
             <div style={{ background: cardBg, padding: "16px 20px", textAlign: "center" }}>
               <div style={{ fontSize: 20, fontWeight: 800, color: textPrimary }}>{selectedVisitor.orderCount}</div>
               <div style={{ fontSize: 11, color: textMuted, marginTop: 2 }}>Orders</div>
@@ -699,8 +849,21 @@ export default function SchoolVisitorsPage() {
             </div>
           </div>
 
-          {/* Orders section */}
+          {/* Favorites section */}
           <div style={{ padding: "20px 24px" }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: textPrimary, marginBottom: 12 }}>
+              <Star size={14} style={{ marginRight: 6, verticalAlign: "middle" }} />
+              Favorites ({selectedVisitor.favorites?.length ?? 0})
+            </div>
+            {!selectedVisitor.favorites?.length ? (
+              <div style={{ fontSize: 13, color: textMuted, padding: "12px 0" }}>No favorites.</div>
+            ) : (
+              <FavoritePreviewGrid favorites={selectedVisitor.favorites} />
+            )}
+          </div>
+
+          {/* Orders section */}
+          <div style={{ padding: "0 24px 20px" }}>
             <div style={{ fontSize: 13, fontWeight: 700, color: textPrimary, marginBottom: 12 }}>
               <ShoppingCart size={14} style={{ marginRight: 6, verticalAlign: "middle" }} />
               Orders ({selectedVisitor.orders.length})
@@ -733,6 +896,7 @@ export default function SchoolVisitorsPage() {
                     <span>{fmtDate(o.createdAt)}</span>
                     <span style={{ fontWeight: 700, color: textPrimary }}>{o.totalCents > 0 ? fmtMoney(o.totalCents) : "-"}</span>
                   </div>
+                  <OrderItemsList order={o} />
                 </Link>
               ))
             )}
