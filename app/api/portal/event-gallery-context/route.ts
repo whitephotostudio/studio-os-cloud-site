@@ -157,6 +157,8 @@ type PhotographerRow = {
   studio_address: string | null;
   studio_phone: string | null;
   studio_email: string | null;
+  shipping_fee_cents?: number | null;
+  late_handling_fee_percent?: number | null;
   is_platform_admin?: boolean | null;
   subscription_status?: string | null;
   trial_starts_at?: string | null;
@@ -513,6 +515,11 @@ export async function POST(request: NextRequest) {
       phone: "",
       email: "",
     };
+    let lateOrderPolicy = {
+      orderDueDate: projectRow.order_due_date ?? null,
+      shippingFeeCents: 0,
+      lateHandlingFeePercent: 0,
+    };
 
     if (projectRow.photographer_id) {
       const [packagesResult, photographerResult] = await Promise.all([
@@ -525,7 +532,7 @@ export async function POST(request: NextRequest) {
         service
           .from("photographers")
           .select(
-            "id,watermark_enabled,watermark_logo_url,logo_url,business_name,studio_address,studio_phone,studio_email,default_package_profile_id,is_platform_admin,subscription_status,trial_starts_at,trial_ends_at,created_at",
+            "id,watermark_enabled,watermark_logo_url,logo_url,business_name,studio_address,studio_phone,studio_email,default_package_profile_id,is_platform_admin,subscription_status,trial_starts_at,trial_ends_at,created_at,shipping_fee_cents,late_handling_fee_percent",
           )
           .eq("id", projectRow.photographer_id)
           .maybeSingle<PhotographerRow>(),
@@ -568,6 +575,14 @@ export async function POST(request: NextRequest) {
           address: photographer.studio_address || "",
           phone: photographer.studio_phone || "",
           email: photographer.studio_email || "",
+        };
+        lateOrderPolicy = {
+          orderDueDate: projectRow.order_due_date ?? null,
+          shippingFeeCents: Math.max(0, Number(photographer.shipping_fee_cents ?? 0) || 0),
+          lateHandlingFeePercent: Math.max(
+            0,
+            Number(photographer.late_handling_fee_percent ?? 0) || 0,
+          ),
         };
       }
     }
@@ -742,6 +757,7 @@ export async function POST(request: NextRequest) {
       watermarkEnabled,
       watermarkLogoUrl,
       studioInfo,
+      lateOrderPolicy,
       screenshotProtection,
     });
   } catch (error) {

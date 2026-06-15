@@ -46,6 +46,7 @@ export const dynamic = "force-dynamic";
 const MAX_ENTRIES = 10;
 const MAX_QUANTITY = 20;
 const MAX_SLOTS = 20;
+const MAX_DIGITAL_SELECTIONS = 100;
 const MAX_NOTES_LENGTH = 2000;
 const MAX_IMAGE_URL_LENGTH = 2048;
 const MAX_LABEL_LENGTH = 120;
@@ -55,6 +56,12 @@ const MAX_BACKDROP_BLUR_PX = 24;
 const DEFAULT_BACKDROP_BLUR_PX = 4;
 
 type SlotPayload = { label: string; assignedImageUrl: string | null };
+type DigitalSelectionPayload = {
+  mediaId: string;
+  url: string | null;
+  filename: string | null;
+  thumbnailUrl: string | null;
+};
 
 type EntryPayload = {
   packageId: string;
@@ -66,6 +73,7 @@ type EntryPayload = {
   } | null;
   slots: SlotPayload[];
   selectedImageUrl: string | null;
+  digitalSelections: DigitalSelectionPayload[];
   isComposite: boolean;
   compositeTitle: string | null;
   /** 2026-04-25: parent's portrait/landscape pick.  Defaults to portrait
@@ -112,7 +120,16 @@ type PackageRow = {
   price_cents: number | null;
   photographer_id: string | null;
   category: string | null;
+  items?: Array<string | { qty?: number | string | null; name?: string | null; type?: string | null; size?: string | null; finish?: string | null }> | null;
   active: boolean | null;
+};
+
+type EventMediaRow = {
+  id: string;
+  storage_path: string | null;
+  preview_url?: string | null;
+  thumbnail_url?: string | null;
+  filename?: string | null;
 };
 
 type BackdropRow = {
@@ -153,6 +170,68 @@ function isDigitalCategory(pkg: Pick<PackageRow, "category" | "name">) {
   if (cat === "digital") return true;
   const name = clean(pkg.name).toLowerCase();
   return name.includes("digital") || name.includes("download") || name.includes("usb");
+}
+
+function looksDigitalText(value: string | null | undefined) {
+  const text = clean(value).toLowerCase();
+  return /digital|download|downloads|file|files|jpeg|jpg|png/.test(text);
+}
+
+function packageSearchText(pkg: Pick<PackageRow, "name" | "category" | "items">) {
+  const itemText = (pkg.items ?? [])
+    .map((item) => {
+      if (typeof item === "string") return item;
+      if (!item) return "";
+      return [item.qty, item.name, item.type, item.size, item.finish]
+        .map((value) => clean(String(value ?? "")))
+        .filter(Boolean)
+        .join(" ");
+    })
+    .join(" ");
+  return [pkg.name, pkg.category, itemText]
+    .map((value) => clean(value).toLowerCase())
+    .filter(Boolean)
+    .join(" ");
+}
+
+function isAllDigitalsPackage(pkg: Pick<PackageRow, "name" | "category" | "items">) {
+  const haystack = packageSearchText(pkg);
+  if (!looksDigitalText(haystack)) return false;
+  return (
+    /(all|full|entire|complete)\s+(digital|digitals|downloads|files|gallery|album|collection|photos|images)/.test(haystack) ||
+    /(digital|digitals|downloads|files)\s+(all|full|entire|complete)/.test(haystack) ||
+    /buy all|all photos|all images|all files/.test(haystack)
+  );
+}
+
+function parsePositiveQty(value: unknown): number | null {
+  const parsed =
+    typeof value === "number"
+      ? value
+      : typeof value === "string"
+        ? Number.parseInt(value, 10)
+        : NaN;
+  if (!Number.isFinite(parsed) || parsed < 1) return null;
+  return Math.round(parsed);
+}
+
+function getDigitalFavoritesPackLimit(pkg: PackageRow): number | null {
+  if (!isDigitalCategory(pkg) || isAllDigitalsPackage(pkg)) return null;
+  const itemLimits = (pkg.items ?? [])
+    .map((item) => {
+      if (typeof item !== "object" || !item) return null;
+      const itemText = [item.name, item.type, item.size, item.finish]
+        .map((value) => clean(value).toLowerCase())
+        .join(" ");
+      if (!looksDigitalText(itemText)) return null;
+      return parsePositiveQty(item.qty);
+    })
+    .filter((value): value is number => value !== null);
+  const explicit = itemLimits.length ? Math.max(...itemLimits) : null;
+  if (explicit && explicit > 1) return explicit;
+  const match = packageSearchText(pkg).match(/\b(\d{1,3})\s*(digital|digitals|downloads|files|photos|images)\b/);
+  const parsed = match ? parsePositiveQty(match[1]) : null;
+  return parsed && parsed > 1 ? parsed : null;
 }
 
 function validateOptionalString(
@@ -204,6 +283,52 @@ function validateSlots(
       return { ok: false, message: `A ${field} image URL must be a string.` };
     }
     out.push({ label: label || "Item", assignedImageUrl });
+  }
+  return { ok: true, value: out };
+}
+
+function validateDigitalSelections(
+  raw: unknown,
+  field: string,
+): { ok: true; value: DigitalSelectionPayload[] } | { ok: false; message: string } {
+  if (raw === undefined || raw === null) return { ok: true, value: [] };
+  if (!Array.isArray(raw)) {
+    return { ok: false, message: `${field} must be an array.` };
+  }
+  if (raw.length > MAX_DIGITAL_SELECTIONS) {
+    return {
+      ok: false,
+      message: `${field} has too many items (max ${MAX_DIGITAL_SELECTIONS}).`,
+    };
+  }
+  const out: DigitalSelectionPayload[] = [];
+  for (let index = 0; index < raw.length; index++) {
+    const entry = raw[index];
+    if (entry === null || typeof entry !== "object" || Array.isArray(entry)) {
+      return { ok: false, message: `${field}[${index}] must be an object.` };
+    }
+    const row = entry as Record<string, unknown>;
+    const mediaId = validateOptionalString(row.mediaId, `${field}[${index}].mediaId`, 120);
+    if (!mediaId.ok) return mediaId;
+    if (!mediaId.value) {
+      return { ok: false, message: `${field}[${index}].mediaId is required.` };
+    }
+    const url = validateOptionalString(row.url, `${field}[${index}].url`, MAX_IMAGE_URL_LENGTH);
+    if (!url.ok) return url;
+    const filename = validateOptionalString(row.filename, `${field}[${index}].filename`, 240);
+    if (!filename.ok) return filename;
+    const thumbnailUrl = validateOptionalString(
+      row.thumbnailUrl,
+      `${field}[${index}].thumbnailUrl`,
+      MAX_IMAGE_URL_LENGTH,
+    );
+    if (!thumbnailUrl.ok) return thumbnailUrl;
+    out.push({
+      mediaId: mediaId.value,
+      url: url.value || null,
+      filename: filename.value || null,
+      thumbnailUrl: thumbnailUrl.value || null,
+    });
   }
   return { ok: true, value: out };
 }
@@ -334,6 +459,12 @@ function validateEntries(
     const slotsResult = validateSlots(entry.slots, `entries[${i}].slots`);
     if (!slotsResult.ok) return slotsResult;
 
+    const digitalSelectionsResult = validateDigitalSelections(
+      entry.digitalSelections,
+      `entries[${i}].digitalSelections`,
+    );
+    if (!digitalSelectionsResult.ok) return digitalSelectionsResult;
+
     const selectedImage = validateOptionalString(
       entry.selectedImageUrl,
       `entries[${i}].selectedImageUrl`,
@@ -354,6 +485,7 @@ function validateEntries(
       backdrop,
       slots: slotsResult.value,
       selectedImageUrl: selectedImage.value || null,
+      digitalSelections: digitalSelectionsResult.value,
       isComposite: entry.isComposite === true,
       compositeTitle: compositeTitle.value || null,
       orientation:
@@ -588,7 +720,7 @@ export async function POST(request: NextRequest) {
 
     const { data: packageRows, error: packageError } = await sb
       .from("packages")
-      .select("id,name,price_cents,photographer_id,category,active")
+      .select("id,name,price_cents,photographer_id,category,items,active")
       .in("id", packageIds);
     if (packageError) throw packageError;
 
@@ -647,7 +779,38 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    const digitalMediaIds = Array.from(
+      new Set(
+        entries
+          .flatMap((entry) => entry.digitalSelections.map((selection) => clean(selection.mediaId)))
+          .filter((value) => value.length > 0),
+      ),
+    );
+    const eventMediaMap = new Map<string, EventMediaRow>();
+    if (mode === "event" && projectId && digitalMediaIds.length > 0) {
+      const { data: mediaRows, error: mediaError } = await sb
+        .from("media")
+        .select("id,storage_path,preview_url,thumbnail_url,filename")
+        .eq("project_id", projectId)
+        .in("id", digitalMediaIds);
+      if (mediaError) throw mediaError;
+      for (const row of (mediaRows ?? []) as EventMediaRow[]) {
+        eventMediaMap.set(clean(row.id), row);
+      }
+      if (eventMediaMap.size !== digitalMediaIds.length) {
+        return NextResponse.json(
+          { ok: false, message: "One or more selected digital photos are no longer available." },
+          { status: 400 },
+        );
+      }
+    }
+
     // ── compute per-entry totals from authoritative rows ────────────────
+    type ResolvedDigitalSelection = DigitalSelectionPayload & {
+      sku: string | null;
+      displayUrl: string | null;
+      label: string;
+    };
     type ResolvedEntry = EntryPayload & {
       pkg: PackageRow;
       backdropRow: BackdropRow | null;
@@ -655,12 +818,36 @@ export async function POST(request: NextRequest) {
       backdropAddOnCents: number;
       lineTotalCents: number;
       isDigital: boolean;
+      digitalLimit: number | null;
+      resolvedDigitalSelections: ResolvedDigitalSelection[];
     };
 
-    const resolved: ResolvedEntry[] = entries.map((entry) => {
+    const resolved: ResolvedEntry[] = [];
+    for (const entry of entries) {
       const pkg = packageMap.get(entry.packageId) as PackageRow;
       const packagePriceCents = Math.round(Number(pkg.price_cents));
-      const packageSubtotalCents = packagePriceCents * entry.quantity;
+      const isDigital = isDigitalCategory(pkg);
+      const digitalLimit = getDigitalFavoritesPackLimit(pkg);
+      const effectiveQuantity = digitalLimit ? 1 : entry.quantity;
+      const packageSubtotalCents = packagePriceCents * effectiveQuantity;
+      if (isDigital && digitalLimit) {
+        const count = entry.digitalSelections.length;
+        if (count < 1) {
+          return NextResponse.json(
+            { ok: false, message: `${clean(pkg.name) || "Digital package"} requires selected favorite photos.` },
+            { status: 400 },
+          );
+        }
+        if (count > digitalLimit) {
+          return NextResponse.json(
+            {
+              ok: false,
+              message: `${clean(pkg.name) || "Digital package"} includes ${digitalLimit} digital image${digitalLimit === 1 ? "" : "s"}, but ${count} were selected.`,
+            },
+            { status: 400 },
+          );
+        }
+      }
       let backdropRow: BackdropRow | null = null;
       let backdropAddOnCents = 0;
       if (entry.backdrop) {
@@ -672,16 +859,39 @@ export async function POST(request: NextRequest) {
             Number.isFinite(cents) && cents > 0 ? Math.round(cents) : 0;
         }
       }
-      return {
+      const resolvedDigitalSelections = entry.digitalSelections.map((selection, index) => {
+        const media = eventMediaMap.get(clean(selection.mediaId));
+        const sku = clean(media?.storage_path) || clean(selection.url) || null;
+        const displayUrl =
+          clean(selection.thumbnailUrl) ||
+          clean(media?.thumbnail_url) ||
+          clean(media?.preview_url) ||
+          clean(selection.url) ||
+          sku;
+        const label =
+          clean(selection.filename) ||
+          clean(media?.filename) ||
+          `Photo ${index + 1}`;
+        return {
+          ...selection,
+          sku,
+          displayUrl: displayUrl || null,
+          label,
+        };
+      });
+      resolved.push({
         ...entry,
+        quantity: effectiveQuantity,
         pkg,
         backdropRow,
         packageSubtotalCents,
         backdropAddOnCents,
         lineTotalCents: packageSubtotalCents + backdropAddOnCents,
-        isDigital: isDigitalCategory(pkg),
-      };
-    });
+        isDigital,
+        digitalLimit,
+        resolvedDigitalSelections,
+      });
+    }
 
     const orderSubtotalCents = resolved.reduce((sum, e) => sum + e.lineTotalCents, 0);
     if (!Number.isFinite(orderSubtotalCents) || orderSubtotalCents <= 0) {
@@ -723,7 +933,9 @@ export async function POST(request: NextRequest) {
           }`
         : "";
       const slotsSummary = entry.isDigital
-        ? `Digital download order x${entry.quantity}`
+        ? entry.digitalLimit
+          ? `Digital favorites selected: ${entry.resolvedDigitalSelections.length} of ${entry.digitalLimit}`
+          : `Digital download order x${entry.quantity}`
         : entry.slots.length > 0
           ? entry.slots
               .map(
@@ -785,12 +997,14 @@ export async function POST(request: NextRequest) {
     // 2026-04-25: cart_snapshot — captures the full entry payload so the
     // parents portal can offer one-click reorder.  Strip server-derived
     // fields and keep only what the client originally posted.
-    const cartSnapshot = entries.map((entry) => ({
+    const cartSnapshot = resolved.map((entry) => ({
       packageId: entry.packageId,
       quantity: entry.quantity,
       backdrop: entry.backdrop ?? null,
       slots: entry.slots ?? [],
       selectedImageUrl: entry.selectedImageUrl ?? null,
+      digitalSelections: entry.digitalSelections ?? [],
+      digitalLimit: entry.digitalLimit,
       isComposite: !!entry.isComposite,
       compositeTitle: entry.compositeTitle ?? null,
       orientation: (entry as { orientation?: "portrait" | "landscape" }).orientation ?? "portrait",
@@ -851,17 +1065,34 @@ export async function POST(request: NextRequest) {
           ? " (Landscape)"
           : "";
       if (entry.isDigital) {
-        itemsToInsert.push({
-          order_id: orderId,
-          product_name: (entry.isComposite ? `Composite • ${pkgName}` : pkgName) + orientationSuffix,
-          quantity: entry.quantity,
-          price: entry.packageSubtotalCents / 100,
-          unit_price_cents: Math.round(
-            entry.packageSubtotalCents / Math.max(entry.quantity, 1),
-          ),
-          line_total_cents: entry.packageSubtotalCents,
-          sku: entry.selectedImageUrl,
-        });
+        if (entry.resolvedDigitalSelections.length > 0) {
+          entry.resolvedDigitalSelections.forEach((selection, index) => {
+            const lineTotal = index === 0 ? entry.packageSubtotalCents : 0;
+            itemsToInsert.push({
+              order_id: orderId,
+              product_name:
+                `${entry.isComposite ? `Composite • ${pkgName}` : pkgName} • ${selection.label}` +
+                orientationSuffix,
+              quantity: 1,
+              price: lineTotal / 100,
+              unit_price_cents: lineTotal,
+              line_total_cents: lineTotal,
+              sku: selection.sku || selection.displayUrl || entry.selectedImageUrl,
+            });
+          });
+        } else {
+          itemsToInsert.push({
+            order_id: orderId,
+            product_name: (entry.isComposite ? `Composite • ${pkgName}` : pkgName) + orientationSuffix,
+            quantity: entry.quantity,
+            price: entry.packageSubtotalCents / 100,
+            unit_price_cents: Math.round(
+              entry.packageSubtotalCents / Math.max(entry.quantity, 1),
+            ),
+            line_total_cents: entry.packageSubtotalCents,
+            sku: entry.selectedImageUrl,
+          });
+        }
       } else if (entry.slots.length > 0) {
         for (const slot of entry.slots) {
           const perSlot = Math.round(

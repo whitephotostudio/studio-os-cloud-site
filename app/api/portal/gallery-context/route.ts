@@ -464,6 +464,11 @@ export async function POST(request: NextRequest) {
       phone: "",
       email: "",
     };
+    let lateOrderPolicy = {
+      orderDueDate: activeSchool?.order_due_date ?? null,
+      shippingFeeCents: 0,
+      lateHandlingFeePercent: 0,
+    };
 
     if (activeSchool?.photographer_id) {
       const [packagesResult, backdropsResult, photographerResult] = await Promise.all([
@@ -481,7 +486,7 @@ export async function POST(request: NextRequest) {
           .order("sort_order", { ascending: true }),
         service
           .from("photographers")
-          .select("id,watermark_enabled,watermark_logo_url,logo_url,business_name,studio_address,studio_phone,studio_email,default_package_profile_id,is_platform_admin,subscription_status,trial_starts_at,trial_ends_at,created_at")
+          .select("id,watermark_enabled,watermark_logo_url,logo_url,business_name,studio_address,studio_phone,studio_email,default_package_profile_id,is_platform_admin,subscription_status,trial_starts_at,trial_ends_at,created_at,shipping_fee_cents,late_handling_fee_percent")
           .eq("id", activeSchool.photographer_id)
           .maybeSingle(),
       ]);
@@ -527,6 +532,17 @@ export async function POST(request: NextRequest) {
           address: photographer.studio_address || "",
           phone: photographer.studio_phone || "",
           email: photographer.studio_email || "",
+        };
+        lateOrderPolicy = {
+          orderDueDate: activeSchool.order_due_date ?? null,
+          shippingFeeCents: Math.max(
+            0,
+            Number((photographer as { shipping_fee_cents?: number | null }).shipping_fee_cents ?? 0) || 0,
+          ),
+          lateHandlingFeePercent: Math.max(
+            0,
+            Number((photographer as { late_handling_fee_percent?: number | null }).late_handling_fee_percent ?? 0) || 0,
+          ),
         };
       }
     }
@@ -596,6 +612,7 @@ export async function POST(request: NextRequest) {
       watermarkEnabled,
       watermarkLogoUrl,
       studioInfo,
+      lateOrderPolicy,
       screenshotProtection,
       groupLabel,
     });

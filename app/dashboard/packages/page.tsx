@@ -148,8 +148,10 @@ const PACKAGE_PACKS: PackagePack[] = [
     label: "Digital Download Bundles",
     description: "Digital-only packages for clients who want files, not prints.",
     presets: [
-      { name: "Single Digital", description: "One high-resolution digital download", priceCents: 1500, items: [{ name: "High-Res Digital Download", qty: 1 }] },
-      { name: "5 Digitals Bundle", description: "Five retouched digital files", priceCents: 5000, items: [{ name: "High-Res Digital Download", qty: 5 }] },
+      { name: "Single Digital", description: "One high-resolution digital download", priceCents: 1567, items: [{ name: "High-Res Digital Download", qty: 1 }] },
+      { name: "5 Digital Favorites Pack", description: "Client chooses up to five favorited digital files", priceCents: 6767, items: [{ name: "High-Res Digital Download", qty: 5 }] },
+      { name: "10 Digital Favorites Pack", description: "Client chooses up to ten favorited digital files", priceCents: 11767, items: [{ name: "High-Res Digital Download", qty: 10 }] },
+      { name: "20 Digital Favorites Pack", description: "Client chooses up to twenty favorited digital files", priceCents: 19767, items: [{ name: "High-Res Digital Download", qty: 20 }] },
       { name: "Full Gallery Digital", description: "All images from the session as digital downloads", priceCents: 12000, items: [{ name: "Full Gallery Digital Download", qty: 1 }] },
     ],
   },

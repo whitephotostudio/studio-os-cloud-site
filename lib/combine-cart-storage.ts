@@ -60,6 +60,13 @@ export type PersistedCartItem = {
   backdropAddOnCents: number;
   lineTotalCents: number;
   selectedImageUrl: string | null;
+  digitalSelections?: Array<{
+    mediaId: string;
+    url: string;
+    filename?: string | null;
+    thumbnailUrl?: string | null;
+  }>;
+  digitalLimit?: number | null;
   isCompositeOrder: boolean;
   compositeTitle: string | null;
   slots: Array<{

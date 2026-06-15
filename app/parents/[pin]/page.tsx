@@ -106,6 +106,12 @@ type ProjectRow = {
   access_pin?: string | null;
 };
 
+type LateOrderPolicy = {
+  orderDueDate?: string | null;
+  shippingFeeCents?: number | null;
+  lateHandlingFeePercent?: number | null;
+};
+
 type EventCollectionRow = {
   id: string;
   title?: string | null;
@@ -195,6 +201,7 @@ type GalleryContextPayload = {
     phone: string;
     email: string;
   };
+  lateOrderPolicy?: LateOrderPolicy;
   screenshotProtection?: {
     desktop: boolean;
     mobile: boolean;
@@ -229,6 +236,7 @@ type EventGalleryContextPayload = {
     phone: string;
     email: string;
   };
+  lateOrderPolicy?: LateOrderPolicy;
   screenshotProtection?: {
     desktop: boolean;
     mobile: boolean;
@@ -292,6 +300,12 @@ type DrawerView =
   | "build-package"
   | "checkout";
 type ItemSlot = { label: string; assignedImageUrl: string | null; composite?: boolean };
+type DigitalSelection = {
+  mediaId: string;
+  url: string;
+  filename?: string | null;
+  thumbnailUrl?: string | null;
+};
 type CartBackdropSelection = Pick<
   BackdropRow,
   "id" | "name" | "image_url" | "tier" | "price_cents"
@@ -315,6 +329,8 @@ type CartLineItem = {
   lineTotalCents: number;
   slots: ItemSlot[];
   selectedImageUrl: string | null;
+  digitalSelections?: DigitalSelection[];
+  digitalLimit?: number | null;
   isCompositeOrder: boolean;
   compositeTitle: string | null;
   backdrop: CartBackdropSelection | null;
@@ -785,6 +801,40 @@ function formatEventDateLabel(value: string | null | undefined) {
     day: "numeric",
     year: "numeric",
   }).format(parsed);
+}
+
+function formatGalleryMoney(cents: number | null | undefined) {
+  const amount = Math.max(0, Number(cents ?? 0) || 0) / 100;
+  return `$${amount.toFixed(2)}`;
+}
+
+function buildLateOrderNotice(policy: LateOrderPolicy | null | undefined) {
+  const dueDate = clean(policy?.orderDueDate);
+  if (!dueDate) return null;
+
+  const deadline = formatEventDateLabel(dueDate);
+  const parsedDueDate = new Date(dueDate);
+  const isPastDue =
+    !Number.isNaN(parsedDueDate.getTime()) && new Date() > parsedDueDate;
+  const shippingFeeCents = Math.max(0, Number(policy?.shippingFeeCents ?? 0) || 0);
+  const lateHandlingPercent = Math.max(
+    0,
+    Number(policy?.lateHandlingFeePercent ?? 0) || 0,
+  );
+  const feeParts = [
+    shippingFeeCents > 0 ? `${formatGalleryMoney(shippingFeeCents)} shipping` : "",
+    lateHandlingPercent > 0 ? `${lateHandlingPercent}% handling` : "",
+  ].filter(Boolean);
+  const feeText = feeParts.length
+    ? feeParts.join(" plus ")
+    : "shipping and handling";
+
+  return {
+    title: isPastDue ? "Deadline passed" : `Order deadline: ${deadline}`,
+    body: isPastDue
+      ? `School pickup is closed. Late orders may require ${feeText}.`
+      : `After this date, school pickup closes and late orders may require ${feeText}.`,
+  };
 }
 
 function isProtectedAccessMode(
@@ -1853,8 +1903,47 @@ function isAllDigitalsPackage(pkg: PackageRow) {
     (isDigitalPackageText(pkg.name, pkg.description, pkg.category) &&
       /full gallery|entire gallery|complete gallery|all photos|all images/.test(
         haystack,
-      ))
+    ))
   );
+}
+
+function parsePositiveQty(value: unknown): number | null {
+  const parsed =
+    typeof value === "number"
+      ? value
+      : typeof value === "string"
+        ? Number.parseInt(value, 10)
+        : NaN;
+  if (!Number.isFinite(parsed) || parsed < 1) return null;
+  return Math.round(parsed);
+}
+
+function getDigitalFavoritesPackLimit(pkg: PackageRow | null | undefined): number | null {
+  if (!pkg || getCategory(pkg) !== "digital" || isAllDigitalsPackage(pkg)) return null;
+
+  const itemLimits = (pkg.items ?? [])
+    .map((item) => {
+      if (typeof item !== "object" || !item) return null;
+      const itemText = [
+        item.name,
+        item.type,
+        item.size,
+        item.finish,
+      ]
+        .map((value) => clean(value).toLowerCase())
+        .join(" ");
+      if (!isDigitalPackageText(itemText)) return null;
+      return parsePositiveQty(item.qty);
+    })
+    .filter((value): value is number => value !== null);
+
+  const explicitLimit = itemLimits.length ? Math.max(...itemLimits) : null;
+  if (explicitLimit && explicitLimit > 1) return explicitLimit;
+
+  const haystack = packageSearchText(pkg);
+  const match = haystack.match(/\b(\d{1,3})\s*(digital|digitals|downloads|files|photos|images)\b/);
+  const parsed = match ? parsePositiveQty(match[1]) : null;
+  return parsed && parsed > 1 ? parsed : null;
 }
 
 function buildSlots(pkg: PackageRow, orderQty: number = 1, compositeImageUrl?: string | null): ItemSlot[] {
@@ -3814,6 +3903,8 @@ export default function ParentGalleryPage() {
         backdropAddOnCents: item.backdropAddOnCents,
         lineTotalCents: item.lineTotalCents,
         selectedImageUrl: item.selectedImageUrl,
+        digitalSelections: item.digitalSelections ?? [],
+        digitalLimit: item.digitalLimit ?? null,
         isCompositeOrder: item.isCompositeOrder,
         compositeTitle: item.compositeTitle,
         slots: item.slots.map((s) => ({
@@ -3978,6 +4069,8 @@ export default function ParentGalleryPage() {
               assignedImageUrl: s.assignedImageUrl,
             })) as ItemSlot[],
             selectedImageUrl: i.selectedImageUrl,
+            digitalSelections: i.digitalSelections ?? [],
+            digitalLimit: i.digitalLimit ?? null,
             isCompositeOrder: i.isCompositeOrder,
             compositeTitle: i.compositeTitle,
             backdrop: i.backdrop
@@ -4076,6 +4169,8 @@ export default function ParentGalleryPage() {
       backdrop?: { id?: string; blurred?: boolean; blurAmount?: number } | null;
       slots?: Array<{ label?: string; assignedImageUrl?: string | null }>;
       selectedImageUrl?: string | null;
+      digitalSelections?: DigitalSelection[];
+      digitalLimit?: number | null;
       isComposite?: boolean;
       compositeTitle?: string | null;
       orientation?: "portrait" | "landscape";
@@ -4130,6 +4225,8 @@ export default function ParentGalleryPage() {
           assignedImageUrl: s.assignedImageUrl ?? null,
         })) as ItemSlot[],
         selectedImageUrl: raw.selectedImageUrl ?? null,
+        digitalSelections: raw.digitalSelections ?? [],
+        digitalLimit: raw.digitalLimit ?? null,
         isCompositeOrder: !!raw.isComposite,
         compositeTitle: raw.compositeTitle ?? null,
         backdrop: backdropSelection,
@@ -4248,6 +4345,7 @@ export default function ParentGalleryPage() {
     phone: string;
     email: string;
   }>({ businessName: "", logoUrl: "", address: "", phone: "", email: "" });
+  const [lateOrderPolicy, setLateOrderPolicy] = useState<LateOrderPolicy | null>(null);
 
   // ── Combine-orders drawer state (Phase 1 chunk 3d) ──────────────────────
   // Opened when the parent clicks the "Unlock another gallery" pill.  The
@@ -4530,6 +4628,11 @@ export default function ParentGalleryPage() {
           setWatermarkEnabled(nextWatermarkEnabled);
           setWatermarkLogoUrl(nextWatermarkLogoUrl);
           setStudioInfo(nextStudioInfo);
+          setLateOrderPolicy(contextPayload.lateOrderPolicy ?? {
+            orderDueDate: activeProject?.order_due_date ?? null,
+            shippingFeeCents: 0,
+            lateHandlingFeePercent: 0,
+          });
           setScreenshotProtection({
             desktop: Boolean(contextPayload.screenshotProtection?.desktop),
             mobile: Boolean(contextPayload.screenshotProtection?.mobile),
@@ -4723,6 +4826,11 @@ export default function ParentGalleryPage() {
         setWatermarkEnabled(nextWatermarkEnabled);
         setWatermarkLogoUrl(nextWatermarkLogoUrl);
         setStudioInfo(nextStudioInfo);
+        setLateOrderPolicy(contextPayload.lateOrderPolicy ?? {
+          orderDueDate: activeProject?.order_due_date ?? null,
+          shippingFeeCents: 0,
+          lateHandlingFeePercent: 0,
+        });
         setScreenshotProtection({
           desktop: Boolean(contextPayload?.screenshotProtection?.desktop),
           mobile: Boolean(contextPayload?.screenshotProtection?.mobile),
@@ -5006,6 +5114,10 @@ export default function ParentGalleryPage() {
   const orderingDisabled =
     !!project?.order_due_date &&
     new Date() > new Date(project.order_due_date);
+  const lateOrderNotice = useMemo(
+    () => buildLateOrderNotice(lateOrderPolicy),
+    [lateOrderPolicy],
+  );
   const galleryTabs = useMemo(
     () =>
       [
@@ -5161,6 +5273,19 @@ export default function ParentGalleryPage() {
   const favoriteImages = useMemo(
     () => images.filter((img) => favorites.has(img.id)),
     [favorites, images],
+  );
+  const favoriteDigitalSelections = useMemo<DigitalSelection[]>(
+    () =>
+      favoriteImages
+        .filter((img) => !isCompositeGalleryImage(img))
+        .map((img) => ({
+          mediaId: img.id,
+          url: img.downloadUrl ?? img.previewUrl ?? img.url,
+          filename: img.filename ?? null,
+          thumbnailUrl: img.thumbnailUrl ?? img.previewUrl ?? img.url,
+        }))
+        .filter((selection) => !!selection.mediaId && !!selection.url),
+    [favoriteImages],
   );
   const visibleDownloadImages = useMemo(() => {
     if (showAlbumOverview) return [];
@@ -6882,18 +7007,24 @@ export default function ParentGalleryPage() {
 
     if (digitalPackage) {
       const category = getCategory(digitalPackage);
-      const quantity = getChosenQty(digitalPackage.id);
+      const digitalLimit = getDigitalFavoritesPackLimit(digitalPackage);
+      const quantity = digitalLimit ? 1 : getChosenQty(digitalPackage.id);
       const selectedDigitalImage =
         selectedImage && !isCompositeGalleryImage(selectedImage)
           ? selectedImage
           : visibleImages.find((img) => !isCompositeGalleryImage(img)) ?? null;
+      const digitalSelections = digitalLimit ? favoriteDigitalSelections : [];
+      const canCarryDigitalLine =
+        !digitalLimit ||
+        (digitalSelections.length > 0 && digitalSelections.length <= digitalLimit);
       const selectedImageUrl =
+        digitalSelections[0]?.url ??
         selectedDigitalImage?.downloadUrl ??
         selectedDigitalImage?.previewUrl ??
         selectedDigitalImage?.url ??
         null;
       const packageSubtotalCents = digitalPackage.price_cents * quantity;
-      const digitalLine: CartLineItem = {
+      const digitalLine: CartLineItem | null = canCarryDigitalLine ? {
         id:
           typeof crypto !== "undefined" && "randomUUID" in crypto
             ? crypto.randomUUID()
@@ -6907,6 +7038,8 @@ export default function ParentGalleryPage() {
         lineTotalCents: packageSubtotalCents,
         slots: [],
         selectedImageUrl,
+        digitalSelections,
+        digitalLimit,
         isCompositeOrder: false,
         compositeTitle: null,
         backdrop: null,
@@ -6918,16 +7051,24 @@ export default function ParentGalleryPage() {
         laneEmail: currentLane?.email,
         laneSchoolName: currentLane?.schoolName,
         laneStudentName: currentLane?.studentName,
-      };
-      setCartItems((prev) => {
-        const alreadySaved = prev.some(
-          (item) =>
-            item.packageId === digitalPackage.id &&
-            item.category === category &&
-            item.laneKey === currentLane?.laneKey,
+      } : null;
+      if (digitalLine) {
+        setCartItems((prev) => {
+          const alreadySaved = prev.some(
+            (item) =>
+              item.packageId === digitalPackage.id &&
+              item.category === category &&
+              item.laneKey === currentLane?.laneKey,
+          );
+          return alreadySaved ? prev : [...prev, digitalLine];
+        });
+      } else if (digitalLimit) {
+        showGalleryActionNotice(
+          digitalSelections.length > digitalLimit
+            ? `Remove ${digitalSelections.length - digitalLimit} favorite${digitalSelections.length - digitalLimit === 1 ? "" : "s"} before adding that digital pack.`
+            : "Favorite the digital photos you want before adding that pack.",
         );
-        return alreadySaved ? prev : [...prev, digitalLine];
-      });
+      }
     }
 
     const nextIndex = visibleImages.findIndex((img) => img.id === compositeImage.id);
@@ -7224,9 +7365,17 @@ export default function ParentGalleryPage() {
     const isDigital = category === "digital";
     if (!isDigital && slots.some((slot) => !slot.assignedImageUrl)) return null;
 
+    const digitalLimit = getDigitalFavoritesPackLimit(selectedPkg);
+    const digitalSelections =
+      isDigital && digitalLimit ? favoriteDigitalSelections : [];
     const selectedImageUrl =
-      selectedImage?.downloadUrl ?? selectedImage?.previewUrl ?? selectedImage?.url ?? null;
-    const packageSubtotalCents = selectedPkg.price_cents * selectedOrderQty;
+      digitalSelections[0]?.url ??
+      selectedImage?.downloadUrl ??
+      selectedImage?.previewUrl ??
+      selectedImage?.url ??
+      null;
+    const effectiveOrderQty = digitalLimit ? 1 : selectedOrderQty;
+    const packageSubtotalCents = selectedPkg.price_cents * effectiveOrderQty;
     const backdropSnapshot = confirmedBackdrop
       ? {
           id: confirmedBackdrop.id,
@@ -7253,12 +7402,14 @@ export default function ParentGalleryPage() {
       packageId: selectedPkg.id,
       packageName: selectedPkg.name,
       category,
-      quantity: selectedOrderQty,
+      quantity: effectiveOrderQty,
       packageSubtotalCents,
       backdropAddOnCents: premiumBackdropCents,
       lineTotalCents: packageSubtotalCents + premiumBackdropCents,
       slots: slots.map((slot) => ({ ...slot })),
       selectedImageUrl,
+      digitalSelections,
+      digitalLimit,
       isCompositeOrder: isSchoolMode && isCompositeSelection,
       compositeTitle: selectedImage?.title || student?.class_name || null,
       backdrop: backdropSnapshot,
@@ -7272,6 +7423,7 @@ export default function ParentGalleryPage() {
     isCompositeSelection,
     isSchoolMode,
     premiumBackdropCents,
+    favoriteDigitalSelections,
     selectedImage,
     selectedOrderQty,
     selectedPkg,
@@ -7283,6 +7435,20 @@ export default function ParentGalleryPage() {
     () => (currentDraftCartItem ? [...cartItems, currentDraftCartItem] : cartItems),
     [cartItems, currentDraftCartItem],
   );
+  const digitalFavoritesPackIssue = useMemo(() => {
+    for (const item of checkoutItems) {
+      const limit = item.digitalLimit ?? null;
+      if (!limit) continue;
+      const count = item.digitalSelections?.length ?? 0;
+      if (count < 1) {
+        return `Favorite the photos you want before checking out with ${item.packageName}.`;
+      }
+      if (count > limit) {
+        return `${item.packageName} includes ${limit} digital image${limit === 1 ? "" : "s"}, but ${count} favorites are selected. Remove ${count - limit} favorite${count - limit === 1 ? "" : "s"} or choose a larger digital pack.`;
+      }
+    }
+    return "";
+  }, [checkoutItems]);
   const basketItemCount = cartItems.length;
   const anyPhysicalCheckoutItem = checkoutItems.some((item) => item.category !== "digital");
   const checkoutSubtotalCents = checkoutItems.reduce(
@@ -7320,6 +7486,19 @@ export default function ParentGalleryPage() {
 
   function addCurrentSelectionToCart() {
     if (!currentDraftCartItem) return;
+    if (currentDraftCartItem.digitalLimit) {
+      const count = currentDraftCartItem.digitalSelections?.length ?? 0;
+      if (count < 1) {
+        setOrderError(`Favorite the photos you want before adding ${currentDraftCartItem.packageName}.`);
+        return;
+      }
+      if (count > currentDraftCartItem.digitalLimit) {
+        setOrderError(
+          `${currentDraftCartItem.packageName} includes ${currentDraftCartItem.digitalLimit} digital image${currentDraftCartItem.digitalLimit === 1 ? "" : "s"}, but ${count} favorites are selected.`,
+        );
+        return;
+      }
+    }
     setCartItems((prev) => [
       ...prev,
       {
@@ -7595,6 +7774,10 @@ export default function ParentGalleryPage() {
       setOrderError("Email is required.");
       return;
     }
+    if (digitalFavoritesPackIssue) {
+      setOrderError(digitalFavoritesPackIssue);
+      return;
+    }
 
     // 2026-04-26: Retouching upsell intercept.  Before we send the parent
     // to Stripe, surface the retouching add-on modal — UNLESS we've already
@@ -7690,6 +7873,7 @@ export default function ParentGalleryPage() {
         assignedImageUrl: slot.assignedImageUrl ?? null,
       })),
       selectedImageUrl: entry.selectedImageUrl ?? null,
+      digitalSelections: entry.digitalSelections ?? [],
       isComposite: !!entry.isCompositeOrder,
       compositeTitle: entry.compositeTitle ?? null,
       orientation: entry.orientation ?? "portrait",
@@ -7778,6 +7962,7 @@ export default function ParentGalleryPage() {
               assignedImageUrl: slot.assignedImageUrl ?? null,
             })),
             selectedImageUrl: entry.selectedImageUrl ?? null,
+            digitalSelections: entry.digitalSelections ?? [],
             isComposite: !!entry.isCompositeOrder,
             compositeTitle: entry.compositeTitle ?? null,
             orientation: entry.orientation ?? "portrait",
@@ -10498,6 +10683,56 @@ export default function ParentGalleryPage() {
                       </div>
                     ) : null}
                   </div>
+                  {lateOrderNotice ? (
+                    <div
+                      role="note"
+                      aria-label="Order deadline notice"
+                      style={{
+                        position: "absolute",
+                        left: isMobileViewport ? 16 : "clamp(18px, 3.6vw, 64px)",
+                        right: isMobileViewport ? 16 : undefined,
+                        top: isMobileViewport ? 76 : "30%",
+                        width: isMobileViewport ? undefined : 236,
+                        zIndex: 4,
+                        border: "1px solid rgba(248,113,113,0.52)",
+                        background: "rgba(69,10,10,0.76)",
+                        color: "#fee2e2",
+                        borderRadius: 16,
+                        padding: isMobileViewport ? "10px 12px" : "13px 14px",
+                        boxShadow: "0 18px 46px rgba(0,0,0,0.32)",
+                        backdropFilter: "blur(12px)",
+                        fontFamily: galleryFontFamily,
+                        pointerEvents: "none",
+                      }}
+                    >
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 8,
+                          color: "#fca5a5",
+                          fontSize: 11,
+                          fontWeight: 900,
+                          letterSpacing: "0.08em",
+                          textTransform: "uppercase",
+                          marginBottom: 6,
+                        }}
+                      >
+                        <Clock3 size={14} strokeWidth={2.2} />
+                        <span>{lateOrderNotice.title}</span>
+                      </div>
+                      <div
+                        style={{
+                          color: "#fecaca",
+                          fontSize: isMobileViewport ? 12 : 13,
+                          lineHeight: 1.45,
+                          fontWeight: 650,
+                        }}
+                      >
+                        {lateOrderNotice.body}
+                      </div>
+                    </div>
+                  ) : null}
                   {visibleImages.length > 1 && (
                     <button
                       type="button"
@@ -11551,6 +11786,7 @@ export default function ParentGalleryPage() {
                       const previewKind = getPreviewKind(getCategory(pkg));
                       const previewVariant = cardPreviewVariant[pkg.id] ?? 0;
                       const chosenQty = getChosenQty(pkg.id);
+                      const digitalPackLimit = getDigitalFavoritesPackLimit(pkg);
                       return (
                       <div
                         key={pkg.id}
@@ -11666,26 +11902,38 @@ export default function ParentGalleryPage() {
                             }}
                           >
                             <div>
-                              <div style={{ fontSize: 10, fontWeight: 800, color: "#8d8d8d", letterSpacing: "0.08em", textTransform: "uppercase" }}>Quantity</div>
-                              <div style={{ fontSize: 12, color: "#bfbfbf", marginTop: 2 }}>Choose how many of this item to order.</div>
+                              <div style={{ fontSize: 10, fontWeight: 800, color: "#8d8d8d", letterSpacing: "0.08em", textTransform: "uppercase" }}>
+                                {digitalPackLimit ? "Favorites Pack" : "Quantity"}
+                              </div>
+                              <div style={{ fontSize: 12, color: "#bfbfbf", marginTop: 2 }}>
+                                {digitalPackLimit
+                                  ? `Includes up to ${digitalPackLimit} favorited digital image${digitalPackLimit === 1 ? "" : "s"}.`
+                                  : "Choose how many of this item to order."}
+                              </div>
                             </div>
-                            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                              <button
-                                type="button"
-                                onClick={() => setChosenQty(pkg.id, chosenQty - 1)}
-                                style={{ width: 32, height: 32, borderRadius: 999, border: "1px solid rgba(255,255,255,0.12)", background: "transparent", color: "#fff", fontSize: 18, cursor: "pointer" }}
-                              >
-                                -
-                              </button>
-                              <div style={{ minWidth: 20, textAlign: "center", color: "#fff", fontWeight: 700 }}>{chosenQty}</div>
-                              <button
-                                type="button"
-                                onClick={() => setChosenQty(pkg.id, chosenQty + 1)}
-                                style={{ width: 32, height: 32, borderRadius: 999, border: "1px solid rgba(255,255,255,0.12)", background: "transparent", color: "#fff", fontSize: 18, cursor: "pointer" }}
-                              >
-                                +
-                              </button>
-                            </div>
+                            {digitalPackLimit ? (
+                              <div style={{ fontSize: 14, color: "#fff", fontWeight: 800 }}>
+                                {favoriteDigitalSelections.length}/{digitalPackLimit}
+                              </div>
+                            ) : (
+                              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                                <button
+                                  type="button"
+                                  onClick={() => setChosenQty(pkg.id, chosenQty - 1)}
+                                  style={{ width: 32, height: 32, borderRadius: 999, border: "1px solid rgba(255,255,255,0.12)", background: "transparent", color: "#fff", fontSize: 18, cursor: "pointer" }}
+                                >
+                                  -
+                                </button>
+                                <div style={{ minWidth: 20, textAlign: "center", color: "#fff", fontWeight: 700 }}>{chosenQty}</div>
+                                <button
+                                  type="button"
+                                  onClick={() => setChosenQty(pkg.id, chosenQty + 1)}
+                                  style={{ width: 32, height: 32, borderRadius: 999, border: "1px solid rgba(255,255,255,0.12)", background: "transparent", color: "#fff", fontSize: 18, cursor: "pointer" }}
+                                >
+                                  +
+                                </button>
+                              </div>
+                            )}
                           </div>
 
                           <div style={{ marginTop: 14 }}>
@@ -12122,6 +12370,8 @@ export default function ParentGalleryPage() {
                             // backdrop preview as a last resort for digital
                             // composites that didn't capture a photo URL.
                             const thumbSrc =
+                              item.digitalSelections?.[0]?.thumbnailUrl ||
+                              item.digitalSelections?.[0]?.url ||
                               item.slots.find((s) => !!s.assignedImageUrl)?.assignedImageUrl ||
                               item.selectedImageUrl ||
                               item.backdrop?.image_url ||
@@ -12182,7 +12432,9 @@ export default function ParentGalleryPage() {
                                   </div>
                                   <div style={{ fontSize: 11, color: "#8a8a8a", lineHeight: 1.6 }}>
                                     {item.category === "digital"
-                                      ? `${item.quantity} digital download${item.quantity === 1 ? "" : "s"}`
+                                      ? item.digitalLimit
+                                        ? `${item.digitalSelections?.length ?? 0} of ${item.digitalLimit} digital image${item.digitalLimit === 1 ? "" : "s"} selected`
+                                        : `${item.quantity} digital download${item.quantity === 1 ? "" : "s"}`
                                       : `${item.slots.length} print slot${item.slots.length === 1 ? "" : "s"}`}
                                     {item.laneStudentName ? ` • ${item.laneStudentName}` : ""}
                                     {item.compositeTitle ? ` • ${item.compositeTitle}` : ""}
@@ -12344,10 +12596,57 @@ export default function ParentGalleryPage() {
                         )}
 
                         {currentDraftCartItem.category === "digital" && (
-                          <div style={{ fontSize: 12, color: "#666", marginTop: 4 }}>
-                            {currentDraftCartItem.isCompositeOrder
-                              ? "Composite orders are print-only."
-                              : "Digital download — photos will be emailed to you"}
+                          <div style={{ marginTop: 8, display: "grid", gap: 8 }}>
+                            <div style={{ fontSize: 12, color: "#8d8d8d", lineHeight: 1.55 }}>
+                              {currentDraftCartItem.digitalLimit
+                                ? `${currentDraftCartItem.digitalSelections?.length ?? 0} of ${currentDraftCartItem.digitalLimit} favorited digital image${currentDraftCartItem.digitalLimit === 1 ? "" : "s"} selected.`
+                                : currentDraftCartItem.isCompositeOrder
+                                  ? "Composite orders are print-only."
+                                  : "Digital download — photos will be emailed to you"}
+                            </div>
+                            {currentDraftCartItem.digitalLimit &&
+                              (currentDraftCartItem.digitalSelections?.length ?? 0) > 0 &&
+                              (currentDraftCartItem.digitalSelections?.length ?? 0) <
+                                currentDraftCartItem.digitalLimit ? (
+                                <div
+                                  style={{
+                                    background: "rgba(245,158,11,0.12)",
+                                    border: "1px solid rgba(245,158,11,0.22)",
+                                    color: "#fbbf24",
+                                    borderRadius: 8,
+                                    padding: "8px 10px",
+                                    fontSize: 12,
+                                    lineHeight: 1.45,
+                                  }}
+                                >
+                                  You can still choose {currentDraftCartItem.digitalLimit - (currentDraftCartItem.digitalSelections?.length ?? 0)} more favorite photo{currentDraftCartItem.digitalLimit - (currentDraftCartItem.digitalSelections?.length ?? 0) === 1 ? "" : "s"}, or continue with the current selection.
+                                </div>
+                              ) : null}
+                            {currentDraftCartItem.digitalSelections?.length ? (
+                              <div
+                                style={{
+                                  display: "grid",
+                                  gridTemplateColumns: "repeat(5, minmax(0, 1fr))",
+                                  gap: 6,
+                                }}
+                              >
+                                {currentDraftCartItem.digitalSelections.slice(0, 10).map((selection) => (
+                                  <img
+                                    key={selection.mediaId}
+                                    src={selection.thumbnailUrl || selection.url}
+                                    alt=""
+                                    style={{
+                                      width: "100%",
+                                      aspectRatio: "1",
+                                      objectFit: "cover",
+                                      borderRadius: 6,
+                                      border: "1px solid #2f2f2f",
+                                      background: "#111",
+                                    }}
+                                  />
+                                ))}
+                              </div>
+                            ) : null}
                           </div>
                         )}
                       </div>
@@ -12519,7 +12818,7 @@ export default function ParentGalleryPage() {
                       </div>
                     ) : null}
 
-                    {orderError && (
+                    {(digitalFavoritesPackIssue || orderError) && (
                       <div
                         style={{
                           background: "#1e0a0a",
@@ -12530,7 +12829,7 @@ export default function ParentGalleryPage() {
                           fontSize: 12,
                         }}
                       >
-                        {orderError}
+                        {orderError || digitalFavoritesPackIssue}
                       </div>
                     )}
 
@@ -12635,20 +12934,40 @@ export default function ParentGalleryPage() {
 
                     <button
                       type="submit"
-                      disabled={placing || orderingDisabled || checkoutItems.length === 0}
+                      disabled={
+                        placing ||
+                        orderingDisabled ||
+                        checkoutItems.length === 0 ||
+                        !!digitalFavoritesPackIssue
+                      }
                       style={{
                         width: "100%",
                         background:
-                          placing || orderingDisabled || checkoutItems.length === 0 ? "#222" : "#fff",
+                          placing ||
+                          orderingDisabled ||
+                          checkoutItems.length === 0 ||
+                          !!digitalFavoritesPackIssue
+                            ? "#222"
+                            : "#fff",
                         color:
-                          placing || orderingDisabled || checkoutItems.length === 0 ? "#555" : "#000",
+                          placing ||
+                          orderingDisabled ||
+                          checkoutItems.length === 0 ||
+                          !!digitalFavoritesPackIssue
+                            ? "#555"
+                            : "#000",
                         border: "none",
                         borderRadius: 999,
                         padding: "15px",
                         fontSize: 15,
                         fontWeight: 800,
                         cursor:
-                          placing || orderingDisabled || checkoutItems.length === 0 ? "not-allowed" : "pointer",
+                          placing ||
+                          orderingDisabled ||
+                          checkoutItems.length === 0 ||
+                          !!digitalFavoritesPackIssue
+                            ? "not-allowed"
+                            : "pointer",
                       }}
                     >
                       {placing
