@@ -128,6 +128,13 @@ function orderHasDigitalDelivery(row: OrderRow, items: OrderItemRow[]) {
   return items.some((item) => looksDigital(item.product_name));
 }
 
+function rowEmailMatches(row: OrderRow, emailLower: string) {
+  return (
+    lower(row.parent_email) === emailLower ||
+    lower(row.customer_email) === emailLower
+  );
+}
+
 export async function POST(request: NextRequest) {
   // 5 fetches per minute per IP; orders history isn't a hot loop.
   try {
@@ -187,27 +194,11 @@ export async function POST(request: NextRequest) {
       .ilike("viewer_email", emailLower)
       .maybeSingle();
 
-    if (!visitorRow) {
-      // Falls back to checking parent_email/customer_email on prior
-      // orders in this school — covers cases where the visitor row was
-      // pruned but the parent placed an order with that email.
-      const { data: priorOrder } = await sb
-        .from("orders")
-        .select("id")
-        .eq("school_id", body.schoolId)
-        .eq("student_id", studentRow.id)
-        .or(
-          `parent_email.ilike.${emailLower},customer_email.ilike.${emailLower}`,
-        )
-        .limit(1)
-        .maybeSingle();
-      if (!priorOrder) {
-        return NextResponse.json(
-          { ok: false, message: "We couldn't find any orders for that email + PIN combination." },
-          { status: 404 },
-        );
-      }
-    }
+    // Visitor rows are best-effort tracking.  Older paid orders can exist
+    // without one, so the actual order query below still runs for a valid
+    // student PIN.  Contact details + digital download links remain gated
+    // by an exact purchase-email match in formatOrder().
+    void visitorRow;
 
     const { data: orders, error } = await sb
       .from("orders")
@@ -235,13 +226,40 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    let historyRows = (orders ?? []) as unknown as OrderRow[];
+    if (historyRows.length === 0) {
+      const { data: fallbackOrders, error: fallbackError } = await sb
+        .from("orders")
+        .select(
+          `id,created_at,paid_at,status,total_cents,subtotal_cents,tax_cents,currency,package_name,
+           payment_status,
+           total_amount,
+           parent_name,parent_email,parent_phone,customer_email,special_notes,notes,
+           cart_snapshot,photographer_id,
+           school_id,project_id,student_id,order_group_id,
+           order_items(product_name,quantity,line_total_cents,unit_price_cents,sku)`,
+        )
+        .eq("school_id", body.schoolId)
+        .eq("student_id", studentRow.id)
+        .order("created_at", { ascending: false })
+        .limit(50);
+      if (fallbackError) {
+        return NextResponse.json(
+          { ok: false, message: "Failed to load order history." },
+          { status: 500 },
+        );
+      }
+      historyRows = (fallbackOrders ?? []) as unknown as OrderRow[];
+    }
+
     return NextResponse.json({
       ok: true,
-      orders: (orders ?? []).map((row) => formatOrder(row as unknown as OrderRow, {
+      orders: historyRows.map((row) => formatOrder(row, {
         student_name: [
           clean((studentRow as { first_name?: string }).first_name),
           clean((studentRow as { last_name?: string }).last_name),
         ].filter(Boolean).join(" ") || null,
+        allow_private_details: rowEmailMatches(row, emailLower),
       })),
     });
   }
@@ -320,8 +338,9 @@ export async function POST(request: NextRequest) {
 
 function formatOrder(
   row: OrderRow,
-  ctx: { student_name: string | null },
+  ctx: { student_name: string | null; allow_private_details?: boolean },
 ) {
+  const allowPrivateDetails = ctx.allow_private_details !== false;
   const notePhotos = parseOrderPhotoSelections(row.special_notes ?? row.notes);
   const rawItems = (row.order_items?.length ? row.order_items : notePhotos.map((photo) => ({
     product_name: photo.label,
@@ -342,11 +361,13 @@ function formatOrder(
     digitalDownload = {
       available: false,
       url: null,
-      message: isPaidEnough(row)
+      message: !allowPrivateDetails
+        ? "Use the purchase email to download digital files."
+        : isPaidEnough(row)
         ? "Digital files are being prepared."
         : "Digital download unlocks after payment.",
     };
-    if (recipientEmail && isPaidEnough(row)) {
+    if (allowPrivateDetails && recipientEmail && isPaidEnough(row)) {
       try {
         digitalDownload = {
           available: true,
@@ -392,9 +413,9 @@ function formatOrder(
     studentId: row.student_id,
     orderGroupId: row.order_group_id,
     studentName: ctx.student_name,
-    parentName: row.parent_name ?? null,
-    parentEmail: row.parent_email ?? row.customer_email ?? null,
-    parentPhone: row.parent_phone ?? null,
+    parentName: allowPrivateDetails ? row.parent_name ?? null : null,
+    parentEmail: allowPrivateDetails ? row.parent_email ?? row.customer_email ?? null : null,
+    parentPhone: allowPrivateDetails ? row.parent_phone ?? null : null,
     specialNotes: row.special_notes ?? row.notes ?? null,
     digitalDownload,
   };
