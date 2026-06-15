@@ -375,6 +375,14 @@ export default function SchoolsSchoolDetailPage() {
   const [focalY, setFocalY] = useState(0.5);
   const [savingFocal, setSavingFocal] = useState(false);
   const [shareModalOpen, setShareModalOpen] = useState(false);
+  const [shareView, setShareView] = useState<"menu" | "compose">("menu");
+  const [shareRecipientMode, setShareRecipientMode] = useState<"visitors" | "others">("visitors");
+  const [shareRecipientInput, setShareRecipientInput] = useState("");
+  const [shareSubject, setShareSubject] = useState("");
+  const [shareHeadline, setShareHeadline] = useState("");
+  const [shareMessage, setShareMessage] = useState("");
+  const [shareSending, setShareSending] = useState(false);
+  const [shareResult, setShareResult] = useState<{ sent: number; failed: number; recipients: number } | null>(null);
 
   useEffect(() => {
     if (!schoolId || typeof window === "undefined") return;
@@ -906,6 +914,68 @@ export default function SchoolsSchoolDetailPage() {
     } catch {
       setShareNotice("Could not copy link");
       window.setTimeout(() => setShareNotice(""), 2200);
+    }
+  }
+
+  function openShareComposer(mode: "visitors" | "others") {
+    const schoolName = clean(school?.school_name) || "your school gallery";
+    setShareRecipientMode(mode);
+    setShareRecipientInput("");
+    setShareSubject(`${schoolName} photos are ready`);
+    setShareHeadline(`${schoolName} gallery`);
+    setShareMessage("Your photo gallery is ready. Use the button below to view the gallery and place an order.");
+    setShareResult(null);
+    setShareView("compose");
+  }
+
+  function closeShareModal() {
+    setShareModalOpen(false);
+    setShareView("menu");
+    setShareResult(null);
+    setShareSending(false);
+  }
+
+  async function sendSchoolShareEmail() {
+    setShareSending(true);
+    setError("");
+    try {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      const response = await fetch(`/api/dashboard/schools/${schoolId}/emails`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session?.access_token ?? ""}`,
+        },
+        body: JSON.stringify({
+          recipientMode: shareRecipientMode,
+          recipients: shareRecipientMode === "others" ? shareRecipientInput : undefined,
+          subject: shareSubject,
+          headline: shareHeadline,
+          message: shareMessage,
+        }),
+      });
+      const payload = (await response.json().catch(() => ({}))) as {
+        ok?: boolean;
+        message?: string;
+        sent?: number;
+        failed?: number;
+        recipients?: number;
+      };
+      if (!response.ok || payload.ok === false) {
+        throw new Error(payload.message || "Could not send gallery email.");
+      }
+      setShareResult({
+        sent: payload.sent ?? 0,
+        failed: payload.failed ?? 0,
+        recipients: payload.recipients ?? 0,
+      });
+    } catch (err) {
+      setShareNotice(err instanceof Error ? err.message : "Could not send gallery email.");
+      window.setTimeout(() => setShareNotice(""), 3200);
+    } finally {
+      setShareSending(false);
     }
   }
 
@@ -2404,61 +2474,130 @@ export default function SchoolsSchoolDetailPage() {
       {/* ── Share Gallery Modal ── */}
       {shareModalOpen ? (
         <div style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.55)", display: "grid", placeItems: "center", zIndex: 78, padding: 24 }}>
-          <div style={{ width: "100%", maxWidth: 580, background: "#fff", borderRadius: 24, border: "1px solid #e5e7eb", boxShadow: "0 30px 60px rgba(15,23,42,0.25)", display: "flex", flexDirection: "column", overflow: "hidden" }}>
+          <div style={{ width: "100%", maxWidth: shareView === "compose" ? 940 : 580, maxHeight: "88vh", background: "#fff", borderRadius: 24, border: "1px solid #e5e7eb", boxShadow: "0 30px 60px rgba(15,23,42,0.25)", display: "flex", flexDirection: "column", overflow: "hidden" }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "18px 22px", borderBottom: "1px solid #eef2f7" }}>
               <div>
-                <div style={{ fontSize: 16, fontWeight: 900, color: "#111111" }}>Share Gallery</div>
-                <div style={{ color: "#4b5563", fontSize: 13, marginTop: 4 }}>Share the {school?.school_name || "school"} gallery</div>
+                <div style={{ fontSize: 16, fontWeight: 900, color: "#111111" }}>
+                  {shareView === "compose" ? "Compose Gallery Email" : "Share Gallery"}
+                </div>
+                <div style={{ color: "#4b5563", fontSize: 13, marginTop: 4 }}>
+                  {shareView === "compose"
+                    ? shareRecipientMode === "visitors"
+                      ? "Send to gallery visitors and registered parents."
+                      : "Send this gallery link to custom recipients."
+                    : `Share the ${school?.school_name || "school"} gallery`}
+                </div>
               </div>
-              <button onClick={() => setShareModalOpen(false)} style={{ border: 0, background: "transparent", cursor: "pointer", color: "#6b7280" }}>
+              <button onClick={closeShareModal} style={{ border: 0, background: "transparent", cursor: "pointer", color: "#6b7280" }}>
                 <X size={22} />
               </button>
             </div>
-            <div style={{ padding: 24, display: "grid", gap: 16 }}>
-              <a href={`/dashboard/projects/schools/${schoolId}/visitors`} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, borderRadius: 18, border: "1px solid #e5e7eb", background: "#fff", padding: "18px 20px", cursor: "pointer", textAlign: "left", textDecoration: "none" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-                  <div style={{ width: 44, height: 44, borderRadius: 999, background: "#fff3e8", color: "#f97316", display: "grid", placeItems: "center" }}><Mail size={20} /></div>
-                  <div>
-                    <div style={{ color: "#111111", fontWeight: 800 }}>Email Gallery Visitors</div>
-                    <div style={{ color: "#4b5563", fontSize: 13, marginTop: 4 }}>Send to everyone on your list — gallery visitors plus parents who registered during pre-release.</div>
+            {shareView === "menu" ? (
+              <div style={{ padding: 24, display: "grid", gap: 16 }}>
+                <button type="button" onClick={() => openShareComposer("visitors")} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, borderRadius: 18, border: "1px solid #e5e7eb", background: "#fff", padding: "18px 20px", cursor: "pointer", textAlign: "left" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+                    <div style={{ width: 44, height: 44, borderRadius: 999, background: "#fff3e8", color: "#f97316", display: "grid", placeItems: "center" }}><Mail size={20} /></div>
+                    <div>
+                      <div style={{ color: "#111111", fontWeight: 800 }}>Email Gallery Visitors</div>
+                      <div style={{ color: "#4b5563", fontSize: 13, marginTop: 4 }}>Send to everyone on your list — gallery visitors plus parents who registered during pre-release.</div>
+                    </div>
                   </div>
-                </div>
-                <ExternalLink size={18} color="#6b7280" />
-              </a>
+                  <ChevronRight size={18} color="#6b7280" />
+                </button>
 
-              <a href={`/dashboard/projects/schools/${schoolId}/visitors`} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, borderRadius: 18, border: "1px solid #e5e7eb", background: "#fff", padding: "18px 20px", cursor: "pointer", textAlign: "left", textDecoration: "none" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-                  <div style={{ width: 44, height: 44, borderRadius: 999, background: "#eef2ff", color: "#4f46e5", display: "grid", placeItems: "center" }}><Send size={20} /></div>
-                  <div>
-                    <div style={{ color: "#111111", fontWeight: 800 }}>Email Others</div>
-                    <div style={{ color: "#4b5563", fontSize: 13, marginTop: 4 }}>Compose a gallery email for custom recipients.</div>
+                <button type="button" onClick={() => openShareComposer("others")} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, borderRadius: 18, border: "1px solid #e5e7eb", background: "#fff", padding: "18px 20px", cursor: "pointer", textAlign: "left" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+                    <div style={{ width: 44, height: 44, borderRadius: 999, background: "#eef2ff", color: "#4f46e5", display: "grid", placeItems: "center" }}><Send size={20} /></div>
+                    <div>
+                      <div style={{ color: "#111111", fontWeight: 800 }}>Email Others</div>
+                      <div style={{ color: "#4b5563", fontSize: 13, marginTop: 4 }}>Compose a gallery email for custom recipients.</div>
+                    </div>
                   </div>
-                </div>
-                <ExternalLink size={18} color="#6b7280" />
-              </a>
+                  <ChevronRight size={18} color="#6b7280" />
+                </button>
 
-              <button onClick={() => { void copySchoolLink(); setShareModalOpen(false); }} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, borderRadius: 18, border: "1px solid #e5e7eb", background: "#fff", padding: "18px 20px", cursor: "pointer", textAlign: "left" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-                  <div style={{ width: 44, height: 44, borderRadius: 999, background: "#fff1f2", color: "#dc2626", display: "grid", placeItems: "center" }}><Copy size={20} /></div>
-                  <div>
-                    <div style={{ color: "#111111", fontWeight: 800 }}>Copy Gallery Link</div>
-                    <div style={{ color: "#4b5563", fontSize: 13, marginTop: 4 }}>Copies the school gallery access link.</div>
+                <button onClick={() => { void copySchoolLink(); closeShareModal(); }} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, borderRadius: 18, border: "1px solid #e5e7eb", background: "#fff", padding: "18px 20px", cursor: "pointer", textAlign: "left" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+                    <div style={{ width: 44, height: 44, borderRadius: 999, background: "#fff1f2", color: "#dc2626", display: "grid", placeItems: "center" }}><Copy size={20} /></div>
+                    <div>
+                      <div style={{ color: "#111111", fontWeight: 800 }}>Copy Gallery Link</div>
+                      <div style={{ color: "#4b5563", fontSize: 13, marginTop: 4 }}>Copies the school gallery access link.</div>
+                    </div>
                   </div>
-                </div>
-                <ExternalLink size={18} color="#6b7280" />
-              </button>
+                  <ExternalLink size={18} color="#6b7280" />
+                </button>
 
-              <a href={`/dashboard/projects/schools/${schoolId}/visitors`} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, borderRadius: 18, border: "1px solid #e5e7eb", background: "#fff", padding: "18px 20px", cursor: "pointer", textAlign: "left", textDecoration: "none" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-                  <div style={{ width: 44, height: 44, borderRadius: 999, background: "#eff6ff", color: "#0284c7", display: "grid", placeItems: "center" }}><Heart size={20} /></div>
-                  <div>
-                    <div style={{ color: "#111111", fontWeight: 800 }}>Gallery Visitors</div>
-                    <div style={{ color: "#4b5563", fontSize: 13, marginTop: 4 }}>See visitor activity, favorites, and export a quick report.</div>
+                <a href={`/dashboard/projects/schools/${schoolId}/visitors`} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, borderRadius: 18, border: "1px solid #e5e7eb", background: "#fff", padding: "18px 20px", cursor: "pointer", textAlign: "left", textDecoration: "none" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+                    <div style={{ width: 44, height: 44, borderRadius: 999, background: "#eff6ff", color: "#0284c7", display: "grid", placeItems: "center" }}><Heart size={20} /></div>
+                    <div>
+                      <div style={{ color: "#111111", fontWeight: 800 }}>Gallery Visitors</div>
+                      <div style={{ color: "#4b5563", fontSize: 13, marginTop: 4 }}>See visitor activity, favorites, and export a quick report.</div>
+                    </div>
+                  </div>
+                  <ExternalLink size={18} color="#6b7280" />
+                </a>
+              </div>
+            ) : shareResult ? (
+              <div style={{ padding: 34, textAlign: "center" }}>
+                <div style={{ width: 58, height: 58, borderRadius: 999, background: "#dcfce7", color: "#166534", display: "grid", placeItems: "center", margin: "0 auto 16px", fontWeight: 900 }}>✓</div>
+                <div style={{ fontSize: 20, color: "#111111", fontWeight: 900 }}>Emails sent</div>
+                <div style={{ color: "#4b5563", fontSize: 14, marginTop: 8 }}>
+                  {shareResult.sent} sent successfully
+                  {shareResult.failed ? `, ${shareResult.failed} failed` : ""}
+                  {shareResult.recipients ? ` out of ${shareResult.recipients}` : ""}.
+                </div>
+                <button type="button" onClick={closeShareModal} style={{ marginTop: 22, borderRadius: 14, border: 0, background: "#111111", color: "#fff", padding: "12px 18px", fontWeight: 800, cursor: "pointer" }}>
+                  Done
+                </button>
+              </div>
+            ) : (
+              <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(280px,0.8fr)", gap: 0, overflowY: "auto" }}>
+                <div style={{ padding: 24, display: "grid", gap: 16, borderRight: "1px solid #eef2f7" }}>
+                  {shareRecipientMode === "others" ? (
+                    <label style={{ display: "grid", gap: 8 }}>
+                      <span style={{ color: "#111111", fontSize: 13, fontWeight: 800 }}>Recipients</span>
+                      <textarea value={shareRecipientInput} onChange={(event) => setShareRecipientInput(event.target.value)} placeholder="client@example.com, parent@example.com" rows={4} style={{ width: "100%", boxSizing: "border-box", borderRadius: 12, border: "1px solid #d0d5dd", padding: "12px 14px", fontSize: 14, color: "#111111", fontFamily: "inherit", resize: "vertical" }} />
+                    </label>
+                  ) : (
+                    <div style={{ borderRadius: 12, background: "#f9fafb", border: "1px solid #e5e7eb", padding: "12px 14px", color: "#344054", fontSize: 13 }}>
+                      Sending to gallery visitors and registered parents.
+                    </div>
+                  )}
+                  <label style={{ display: "grid", gap: 8 }}>
+                    <span style={{ color: "#111111", fontSize: 13, fontWeight: 800 }}>Subject</span>
+                    <input value={shareSubject} onChange={(event) => setShareSubject(event.target.value)} style={{ width: "100%", boxSizing: "border-box", borderRadius: 12, border: "1px solid #d0d5dd", padding: "12px 14px", fontSize: 14, color: "#111111" }} />
+                  </label>
+                  <label style={{ display: "grid", gap: 8 }}>
+                    <span style={{ color: "#111111", fontSize: 13, fontWeight: 800 }}>Headline</span>
+                    <input value={shareHeadline} onChange={(event) => setShareHeadline(event.target.value)} style={{ width: "100%", boxSizing: "border-box", borderRadius: 12, border: "1px solid #d0d5dd", padding: "12px 14px", fontSize: 14, color: "#111111" }} />
+                  </label>
+                  <label style={{ display: "grid", gap: 8 }}>
+                    <span style={{ color: "#111111", fontSize: 13, fontWeight: 800 }}>Message</span>
+                    <textarea value={shareMessage} onChange={(event) => setShareMessage(event.target.value)} rows={7} style={{ width: "100%", boxSizing: "border-box", borderRadius: 12, border: "1px solid #d0d5dd", padding: "12px 14px", fontSize: 14, color: "#111111", fontFamily: "inherit", resize: "vertical" }} />
+                  </label>
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
+                    <button type="button" onClick={() => setShareView("menu")} style={{ borderRadius: 14, border: "1px solid #d0d5dd", background: "#fff", color: "#111111", padding: "12px 16px", fontWeight: 800, cursor: "pointer" }}>
+                      Back
+                    </button>
+                    <button type="button" onClick={sendSchoolShareEmail} disabled={shareSending || !clean(shareSubject) || !clean(shareMessage) || (shareRecipientMode === "others" && !clean(shareRecipientInput))} style={{ borderRadius: 14, border: 0, background: shareSending ? "#9ca3af" : "#111111", color: "#fff", padding: "12px 18px", fontWeight: 800, cursor: shareSending ? "wait" : "pointer", opacity: !clean(shareSubject) || !clean(shareMessage) || (shareRecipientMode === "others" && !clean(shareRecipientInput)) ? 0.55 : 1 }}>
+                      {shareSending ? "Sending..." : shareRecipientMode === "visitors" ? "Send to Visitors" : "Send Email"}
+                    </button>
                   </div>
                 </div>
-                <ExternalLink size={18} color="#6b7280" />
-              </a>
-            </div>
+                <div style={{ padding: 24, background: "#fafafa" }}>
+                  <div style={{ color: "#6b7280", fontSize: 12, fontWeight: 900, letterSpacing: "0.12em", textTransform: "uppercase", marginBottom: 12 }}>Preview</div>
+                  <div style={{ borderRadius: 18, background: "#fff", border: "1px solid #e5e7eb", overflow: "hidden", boxShadow: "0 10px 30px rgba(15,23,42,0.08)" }}>
+                    <div style={{ padding: "22px 20px", background: "#111111", color: "#fff", fontWeight: 900 }}>{clean(school?.school_name) || "School Gallery"}</div>
+                    <div style={{ padding: 20 }}>
+                      <div style={{ color: "#111111", fontSize: 20, fontWeight: 900, marginBottom: 10 }}>{shareHeadline || "Gallery update"}</div>
+                      <div style={{ color: "#4b5563", fontSize: 14, lineHeight: 1.55, whiteSpace: "pre-wrap" }}>{shareMessage || "Write your message to preview it here."}</div>
+                      <div style={{ marginTop: 18, borderRadius: 999, background: "#111111", color: "#fff", display: "inline-block", padding: "11px 16px", fontSize: 13, fontWeight: 800 }}>View Gallery</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       ) : null}
