@@ -389,7 +389,12 @@ function dashboardPhotoUrl(value: string | null | undefined) {
   const raw = clean(value);
   if (!raw) return "";
   if (raw.startsWith("/api/r2/img/")) return raw;
-  if (!/^https?:\/\//i.test(raw)) return "";
+  if (!/^https?:\/\//i.test(raw)) {
+    const key = raw.replace(/^\/+/, "");
+    return /\.(png|jpe?g|webp|gif|avif)(?:[?#].*)?$/i.test(key)
+      ? `/api/r2/img/${encodeStoragePath(key)}`
+      : "";
+  }
 
   if (isWebImageUrl(raw)) {
     try {
@@ -414,9 +419,12 @@ function extractImageUrls(order: Order | null) {
   if (!order) return [] as string[];
   const urls = new Set<string>();
   const noteUrls = extractOrderPhotoUrls(noteTextForOrder(order));
+  const snapshotItems = cartSnapshotToOrderItems(order.cart_snapshot);
   const orderedUrls = noteUrls.length > 0
     ? noteUrls
-    : (order.items ?? []).map((item) => clean(item.sku)).filter((url) => !!dashboardPhotoUrl(url));
+    : snapshotItems.length > 0
+      ? snapshotItems.map((item) => clean(item.sku)).filter((url) => !!dashboardPhotoUrl(url))
+      : (order.items ?? []).map((item) => clean(item.sku)).filter((url) => !!dashboardPhotoUrl(url));
 
   for (const url of orderedUrls) {
     const displayUrl = dashboardPhotoUrl(url);

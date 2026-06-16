@@ -32,9 +32,18 @@ export type CartSnapshotSlotLike = {
   assignedImageUrl?: string | null;
 };
 
+export type CartSnapshotDigitalSelectionLike = {
+  url?: string | null;
+  filename?: string | null;
+  mediaId?: string | null;
+  thumbnailUrl?: string | null;
+};
+
 export type CartSnapshotEntryLike = {
   slots?: CartSnapshotSlotLike[] | null;
   selectedImageUrl?: string | null;
+  digitalSelections?: CartSnapshotDigitalSelectionLike[] | null;
+  digitalLimit?: number | null;
   quantity?: number | null;
   packageName?: string | null;
 };
@@ -190,6 +199,28 @@ export function cartSnapshotToOrderItems(
 
   const items: CartSnapshotItem[] = [];
   for (const entry of snapshot as CartSnapshotEntryLike[]) {
+    const digitalSelections = Array.isArray(entry?.digitalSelections)
+      ? entry.digitalSelections
+      : [];
+    if (digitalSelections.length > 0) {
+      digitalSelections.forEach((selection, index) => {
+        const fileLabel = clean(selection?.filename);
+        items.push({
+          product_name:
+            [
+              clean(entry?.packageName) || "Digital Favorites Pack",
+              fileLabel,
+            ]
+              .filter(Boolean)
+              .join(" • ") ||
+            `Digital Selection ${index + 1}`,
+          quantity: 1,
+          sku: clean(selection?.url) || clean(selection?.thumbnailUrl) || null,
+        });
+      });
+      continue;
+    }
+
     const slots = Array.isArray(entry?.slots) ? entry.slots : [];
     if (slots.length > 0) {
       for (const slot of slots) {
