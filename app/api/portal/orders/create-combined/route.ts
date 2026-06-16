@@ -716,10 +716,21 @@ export async function POST(request: NextRequest) {
 
       // 2026-04-25: cart_snapshot — full entry payload for this lane,
       // captured for the parents-portal one-click reorder.
-      const laneCartSnapshot = grp.input.entries.map((entry) => ({
+      const laneCartSnapshot = groupEntries.map((entry) => ({
         packageId: entry.packageId,
+        packageName: entry.packageName,
         quantity: entry.quantity,
-        backdrop: entry.backdrop ?? null,
+        backdrop: entry.backdrop
+          ? {
+              id: entry.backdrop.id,
+              name: entry.backdrop.name,
+              image_url: entry.backdrop.imageUrl,
+              tier: entry.backdrop.tier,
+              price_cents: entry.backdropAddOnCents,
+              blurred: entry.backdrop.blurred,
+              blurAmount: entry.backdrop.blurAmount,
+            }
+          : null,
         slots: entry.slots ?? [],
         selectedImageUrl: entry.selectedImageUrl ?? null,
         isComposite: !!entry.isComposite,

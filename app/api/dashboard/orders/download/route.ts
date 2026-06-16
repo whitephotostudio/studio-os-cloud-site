@@ -6,11 +6,18 @@ import {
 import {
   cartSnapshotToOrderItems,
   cleanOrderCustomerNote,
+  type CartSnapshotBackdropLike,
   isWebImageUrl,
   parsePackageSlotLabel,
   parseOrderPhotoSelections,
 } from "@/lib/order-display";
 import { r2KeyFromAnyUrl, r2PresignedGetUrl } from "@/lib/r2-signed-urls";
+import {
+  backdropCompositeFileName,
+  composeBackdropImage,
+  hasBackdropCompositeSelection,
+  type BackdropCompositeSelection,
+} from "@/lib/backdrop-composites";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 120; // allow up to 2 minutes for large downloads
@@ -207,19 +214,33 @@ function shortOrderId(id: string) {
 
 /** Resolve display items for an order (from DB items, parsed notes, or student photo) */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function resolveOrderDisplayItems(order: any): { productName: string; photoUrl: string; quantity: number }[] {
+type OrderDisplayItem = {
+  productName: string;
+  photoUrl: string;
+  quantity: number;
+  backdrop?: CartSnapshotBackdropLike | null;
+  orientation?: "portrait" | "landscape";
+};
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function resolveOrderDisplayItems(order: any): OrderDisplayItem[] {
   const dbItems = order.items ?? [];
   const snapshotItems = cartSnapshotToOrderItems(order.cart_snapshot);
   const notesText = clean(order.special_notes) || clean(order.notes);
   const parsedFromNotes = parseNotesItems(notesText);
   const imageDbItems = dbItems.filter((item: { sku?: string }) => isWebImageUrl(item.sku));
-  const sourceItems = snapshotItems.length > imageDbItems.length ? snapshotItems : dbItems;
+  const snapshotHasBackdrop = snapshotItems.some((item) => item.backdrop);
+  const sourceItems = snapshotHasBackdrop || snapshotItems.length > imageDbItems.length
+    ? snapshotItems
+    : dbItems;
 
   if (sourceItems.length > 0) {
-    return sourceItems.map((item: { product_name?: string; quantity?: number; sku?: string }, index: number) => ({
+    return sourceItems.map((item: { product_name?: string; quantity?: number; sku?: string; backdrop?: CartSnapshotBackdropLike | null; orientation?: "portrait" | "landscape" }, index: number) => ({
       productName: item.product_name ?? parsedFromNotes[index]?.productName ?? "Item",
       photoUrl: isWebImageUrl(item.sku) ? (item.sku ?? "") : (parsedFromNotes[index]?.photoUrl ?? ""),
       quantity: item.quantity ?? 1,
+      backdrop: item.backdrop ?? null,
+      orientation: item.orientation ?? "portrait",
     }));
   }
   if (parsedFromNotes.length > 0) return parsedFromNotes;
@@ -227,6 +248,32 @@ function resolveOrderDisplayItems(order: any): { productName: string; photoUrl: 
     return [{ productName: order.package_name ?? "Package", photoUrl: order.student.photo_url, quantity: 1 }];
   }
   return [];
+}
+
+async function resolveBackdropForDownload(
+  service: { from: (table: string) => any },
+  photographerId: string,
+  backdrop: BackdropCompositeSelection | null | undefined,
+) {
+  if (!backdrop) return null;
+  if (hasBackdropCompositeSelection(backdrop)) return backdrop;
+  const id = clean(backdrop.id);
+  if (!id) return backdrop;
+  const { data, error } = await service
+    .from("backdrop_catalog")
+    .select("id,name,image_url,tier,price_cents")
+    .eq("photographer_id", photographerId)
+    .eq("id", id)
+    .maybeSingle();
+  if (error || !data) return backdrop;
+  return {
+    ...backdrop,
+    id: clean((data as Record<string, unknown>).id as string),
+    name: clean((data as Record<string, unknown>).name as string),
+    image_url: clean((data as Record<string, unknown>).image_url as string),
+    tier: clean((data as Record<string, unknown>).tier as string),
+    price_cents: Number((data as Record<string, unknown>).price_cents ?? 0) || 0,
+  };
 }
 
 function itemQuantity(value: number | null | undefined) {
@@ -463,33 +510,48 @@ export async function GET(request: NextRequest) {
       const schoolName = slug(order.school?.school_name, "School");
       const prefix = multiOrder ? `${schoolName}_${studentName}_${order.id.slice(0, 8)}/` : "";
 
-      // Collect ALL photo URLs for this order
-      const photoUrls = new Set<string>();
       const displayItems = resolveOrderDisplayItems(order);
-      for (const item of displayItems) {
-        if (item.photoUrl) photoUrls.add(item.photoUrl);
+      if (displayItems.length === 0 && clean(order.student?.photo_url)) {
+        displayItems.push({
+          productName: order.package_name ?? "Package",
+          photoUrl: order.student.photo_url,
+          quantity: 1,
+        });
       }
-      // Also include student photo if not already covered
-      if (clean(order.student?.photo_url)) photoUrls.add(order.student.photo_url);
 
       // Download photos FIRST, track URL → local filename mapping
       const photoFileMap = new Map<string, string>();
       let photoIndex = 0;
-      for (const url of photoUrls) {
+      for (const item of displayItems) {
+        const url = item.photoUrl;
+        if (!url) continue;
         photoIndex++;
         try {
-          const fetchUrl = downloadPhotoUrl(url);
-          if (!fetchUrl) continue;
-          const resp = await fetch(fetchUrl);
-          if (!resp.ok) {
-            console.error(`Failed to download photo ${url}: ${resp.status}`);
-            continue;
+          const backdrop = await resolveBackdropForDownload(service, pgRow.id, item.backdrop);
+          const composite = backdrop
+            ? await composeBackdropImage({
+                originalUrlOrKey: url,
+                backdrop,
+                orientation: item.orientation,
+              })
+            : null;
+          const fileName = composite
+            ? backdropCompositeFileName(fileNameFromUrl(url, `photo-${photoIndex}.jpg`), backdrop)
+            : fileNameFromUrl(url, `photo-${photoIndex}.jpg`);
+          let data: Uint8Array | null = composite?.buffer ?? null;
+          if (!data) {
+            const fetchUrl = downloadPhotoUrl(url);
+            if (!fetchUrl) continue;
+            const resp = await fetch(fetchUrl);
+            if (!resp.ok) {
+              console.error(`Failed to download photo ${url}: ${resp.status}`);
+              continue;
+            }
+            data = new Uint8Array(await resp.arrayBuffer());
           }
-          const arrayBuf = await resp.arrayBuffer();
-          const fileName = fileNameFromUrl(url, `photo-${photoIndex}.jpg`);
           zipEntries.push({
             name: `${prefix}${fileName}`,
-            data: new Uint8Array(arrayBuf),
+            data,
           });
           // Map original URL → local filename (relative to HTML in same folder)
           photoFileMap.set(url, multiOrder ? fileName : fileName);

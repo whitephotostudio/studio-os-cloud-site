@@ -56,6 +56,7 @@ import {
   resolveOrderItemDisplayCents,
   resolveOrderTotalCents,
 } from "@/lib/order-display";
+import type { CartSnapshotBackdropLike } from "@/lib/order-display";
 
 type OrderItem = {
   id?: string;
@@ -65,6 +66,9 @@ type OrderItem = {
   unit_price_cents: number | null;
   line_total_cents: number | null;
   sku: string | null;
+  backdrop?: CartSnapshotBackdropLike | null;
+  orientation?: "portrait" | "landscape";
+  snapshotIndex?: number;
 };
 
 type EventProject = {
@@ -409,6 +413,12 @@ function dashboardPhotoUrl(value: string | null | undefined) {
   if (key) return `/api/r2/img/${encodeStoragePath(key)}`;
 
   return isWebImageUrl(raw) ? encodeExternalImageUrl(raw) : "";
+}
+
+function dashboardCompositeUrl(orderId: string, item: OrderItem, index: number) {
+  if (!clean(item.sku) || !item.backdrop) return "";
+  const itemIndex = item.snapshotIndex ?? index;
+  return `/api/dashboard/orders/composite?orderId=${encodeURIComponent(orderId)}&item=${encodeURIComponent(String(itemIndex))}`;
 }
 
 function noteTextForOrder(order: Order | null) {
@@ -1419,12 +1429,16 @@ function OrdersPageContent() {
         unit_price_cents: null,
         line_total_cents: 0,
         sku: item.sku,
+        backdrop: item.backdrop ?? null,
+        orientation: item.orientation ?? "portrait",
+        snapshotIndex: index,
       }),
     );
     const imageItemCount = (selected.items ?? []).filter((item) =>
       isWebImageUrl(item.sku),
     ).length;
-    const baseItems: OrderItem[] = snapshotItems.length > imageItemCount
+    const snapshotHasBackdrop = snapshotItems.some((item) => item.backdrop);
+    const baseItems: OrderItem[] = snapshotHasBackdrop || snapshotItems.length > imageItemCount
       ? snapshotItems
       : selected.items?.length
       ? selected.items
@@ -1467,8 +1481,10 @@ function OrdersPageContent() {
       const noteSelection =
         noteSelections.find((entry) => entry.itemIndex === index) ?? noteSelections[index];
       const rawUrl = dashboardPhotoUrl(rawSku) ? rawSku : clean(noteSelection?.url);
-      const displayUrl = dashboardPhotoUrl(rawUrl);
-      const fallbackUrl = displayUrl ? studentFallbackUrl : "";
+      const originalDisplayUrl = dashboardPhotoUrl(rawUrl);
+      const compositeUrl = dashboardCompositeUrl(selected.id, item, index);
+      const displayUrl = compositeUrl || originalDisplayUrl;
+      const fallbackUrl = compositeUrl ? originalDisplayUrl || studentFallbackUrl : displayUrl ? studentFallbackUrl : "";
       const key = displayUrl || studentFallbackUrl || `no-image-${selected.id}-${index}`;
       const existing = buckets.get(key);
       if (existing) {
@@ -2706,7 +2722,7 @@ function OrdersPageContent() {
                           )}
                         </div>
                         {photoGroup.url ? (
-                          <a href={photoGroup.url} target="_blank" rel="noopener noreferrer" style={{ color: "#0ea5e9", fontSize: 12, fontWeight: 600, textDecoration: "none", display: "block", marginTop: 6 }}>
+                          <a href={dashboardPhotoUrl(photoGroup.originalUrl) || photoGroup.url} target="_blank" rel="noopener noreferrer" style={{ color: "#0ea5e9", fontSize: 12, fontWeight: 600, textDecoration: "none", display: "block", marginTop: 6 }}>
                             Download Original
                           </a>
                         ) : null}

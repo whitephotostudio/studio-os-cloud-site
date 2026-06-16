@@ -32,6 +32,18 @@ export type CartSnapshotSlotLike = {
   assignedImageUrl?: string | null;
 };
 
+export type CartSnapshotBackdropLike = {
+  id?: string | null;
+  name?: string | null;
+  image_url?: string | null;
+  imageUrl?: string | null;
+  tier?: string | null;
+  price_cents?: number | null;
+  priceCents?: number | null;
+  blurred?: boolean | null;
+  blurAmount?: number | null;
+};
+
 export type CartSnapshotDigitalSelectionLike = {
   url?: string | null;
   filename?: string | null;
@@ -46,12 +58,16 @@ export type CartSnapshotEntryLike = {
   digitalLimit?: number | null;
   quantity?: number | null;
   packageName?: string | null;
+  backdrop?: CartSnapshotBackdropLike | null;
+  orientation?: "portrait" | "landscape" | string | null;
 };
 
 export type CartSnapshotItem = {
   product_name: string;
   quantity: number;
   sku: string | null;
+  backdrop?: CartSnapshotBackdropLike | null;
+  orientation?: "portrait" | "landscape";
 };
 
 function clean(value: string | null | undefined) {
@@ -199,6 +215,8 @@ export function cartSnapshotToOrderItems(
 
   const items: CartSnapshotItem[] = [];
   for (const entry of snapshot as CartSnapshotEntryLike[]) {
+    const backdrop = entry?.backdrop ?? null;
+    const orientation = entry?.orientation === "landscape" ? "landscape" : "portrait";
     const digitalSelections = Array.isArray(entry?.digitalSelections)
       ? entry.digitalSelections
       : [];
@@ -216,6 +234,8 @@ export function cartSnapshotToOrderItems(
             `Digital Selection ${index + 1}`,
           quantity: 1,
           sku: clean(selection?.url) || clean(selection?.thumbnailUrl) || null,
+          backdrop,
+          orientation,
         });
       });
       continue;
@@ -228,6 +248,8 @@ export function cartSnapshotToOrderItems(
           product_name: clean(slot?.label) || clean(entry?.packageName) || "Item",
           quantity: 1,
           sku: clean(slot?.assignedImageUrl) || null,
+          backdrop,
+          orientation,
         });
       }
       continue;
@@ -239,6 +261,8 @@ export function cartSnapshotToOrderItems(
         product_name: clean(entry?.packageName) || "Package",
         quantity: Number.isFinite(qty) && qty > 0 ? qty : 1,
         sku: clean(entry?.selectedImageUrl),
+        backdrop,
+        orientation,
       });
     }
   }

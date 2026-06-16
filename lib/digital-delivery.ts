@@ -13,6 +13,12 @@ import {
 import { resendConfigured, resolveReplyTo, sendResendEmail } from "@/lib/resend";
 import { cartSnapshotToOrderItems } from "@/lib/order-display";
 import { createZipStream, type ZipStreamEntry } from "@/lib/zip";
+import {
+  backdropCompositeFileName,
+  composeBackdropImage,
+  hasBackdropCompositeSelection,
+  type BackdropCompositeSelection,
+} from "@/lib/backdrop-composites";
 
 type ServiceClient = {
   from: (table: string) => any;
@@ -41,6 +47,11 @@ type OrderItemRow = {
   product_name?: string | null;
   quantity?: number | null;
   sku?: string | null;
+};
+
+type DeliveryOrderItemRow = OrderItemRow & {
+  backdrop?: BackdropCompositeSelection | null;
+  orientation?: "portrait" | "landscape";
 };
 
 type PhotographerRow = {
@@ -85,8 +96,13 @@ type MediaRow = {
 };
 
 export type DigitalDeliveryFile = {
-  key: string;
+  key?: string;
   fileName: string;
+  composite?: {
+    originalUrlOrKey: string;
+    backdrop: BackdropCompositeSelection;
+    orientation?: "portrait" | "landscape";
+  };
 };
 
 export type DigitalDeliveryContext = {
@@ -163,12 +179,22 @@ function uniqueFiles(files: DigitalDeliveryFile[]) {
   const seen = new Set<string>();
   const out: DigitalDeliveryFile[] = [];
   for (const file of files) {
-    const key = normalizeKey(file.key);
-    if (!key || seen.has(key) || !isImageKey(key)) continue;
-    seen.add(key);
+    const key = normalizeKey(file.key || file.composite?.originalUrlOrKey);
+    if (!key || !isImageKey(key)) continue;
+    const fingerprint = file.composite
+      ? `composite:${key}:${clean(file.composite.backdrop.id)}:${clean(file.composite.backdrop.image_url) || clean(file.composite.backdrop.imageUrl)}:${file.composite.orientation ?? "portrait"}`
+      : `file:${key}`;
+    if (seen.has(fingerprint)) continue;
+    seen.add(fingerprint);
     out.push({
       key,
       fileName: clean(file.fileName) || fileNameFromKey(key),
+      composite: file.composite
+        ? {
+            ...file.composite,
+            originalUrlOrKey: key,
+          }
+        : undefined,
     });
   }
   return out;
@@ -370,12 +396,23 @@ async function resolveDeliveryFiles(params: {
   project: ProjectRow | null;
 }) {
   const files: DigitalDeliveryFile[] = [];
-  const snapshotItems = cartSnapshotToOrderItems(params.order.cart_snapshot).map((item) => ({
+  const snapshotItems: DeliveryOrderItemRow[] = cartSnapshotToOrderItems(params.order.cart_snapshot).map((item) => ({
     product_name: item.product_name,
     quantity: item.quantity,
     sku: item.sku,
-  } satisfies OrderItemRow));
-  const sourceItems = [...params.items, ...snapshotItems];
+    backdrop: item.backdrop ?? null,
+    orientation: item.orientation ?? "portrait",
+  }));
+  const sourceItems: DeliveryOrderItemRow[] = snapshotItems.length
+    ? snapshotItems
+    : params.items;
+  const snapshotBackdrop =
+    snapshotItems.find((item) => item.backdrop)?.backdrop ?? null;
+  const allDigitalBackdrop = await resolveBackdropForDelivery(
+    params.service,
+    params.order.photographer_id,
+    snapshotBackdrop,
+  );
   const orderPackageLooksDigital = looksDigital(params.order.package_name);
   const digitalItems = sourceItems.filter((item) =>
     looksDigital(item.product_name) ||
@@ -401,9 +438,19 @@ async function resolveDeliveryFiles(params: {
       }),
     );
     for (const row of rows) {
+      const key = row.storage_path;
       files.push({
-        key: row.storage_path,
-        fileName: row.filename || fileNameFromKey(row.storage_path),
+        key,
+        fileName: allDigitalBackdrop
+          ? backdropCompositeFileName(row.filename || fileNameFromKey(key), allDigitalBackdrop)
+          : row.filename || fileNameFromKey(key),
+        composite: allDigitalBackdrop
+          ? {
+              originalUrlOrKey: key,
+              backdrop: allDigitalBackdrop,
+              orientation: "portrait",
+            }
+          : undefined,
       });
     }
   } else if (wantsAll && params.order.project_id) {
@@ -413,7 +460,16 @@ async function resolveDeliveryFiles(params: {
       if (!key) continue;
       files.push({
         key,
-        fileName: clean(row.filename) || fileNameFromKey(key),
+        fileName: allDigitalBackdrop
+          ? backdropCompositeFileName(clean(row.filename) || fileNameFromKey(key), allDigitalBackdrop)
+          : clean(row.filename) || fileNameFromKey(key),
+        composite: allDigitalBackdrop
+          ? {
+              originalUrlOrKey: key,
+              backdrop: allDigitalBackdrop,
+              orientation: "portrait",
+            }
+          : undefined,
       });
     }
   }
@@ -422,13 +478,54 @@ async function resolveDeliveryFiles(params: {
     if (looksAllDigital(item.product_name, params.order.package_name)) continue;
     const key = normalizeKey(item.sku);
     if (!key) continue;
+    const backdrop = await resolveBackdropForDelivery(
+      params.service,
+      params.order.photographer_id,
+      (item as { backdrop?: BackdropCompositeSelection | null }).backdrop,
+    );
     files.push({
       key,
-      fileName: fileNameFromKey(key),
+      fileName: backdrop
+        ? backdropCompositeFileName(fileNameFromKey(key), backdrop)
+        : fileNameFromKey(key),
+      composite: backdrop
+        ? {
+            originalUrlOrKey: key,
+            backdrop,
+            orientation: (item as { orientation?: "portrait" | "landscape" }).orientation ?? "portrait",
+          }
+        : undefined,
     });
   }
 
   return uniqueFiles(files);
+}
+
+async function resolveBackdropForDelivery(
+  service: ServiceClient,
+  photographerId: string | null | undefined,
+  backdrop: BackdropCompositeSelection | null | undefined,
+) {
+  if (!backdrop) return null;
+  if (hasBackdropCompositeSelection(backdrop)) return backdrop;
+  const id = clean(backdrop.id);
+  const studioId = clean(photographerId);
+  if (!id || !studioId) return backdrop;
+  const { data, error } = await service
+    .from("backdrop_catalog")
+    .select("id,name,image_url,tier,price_cents")
+    .eq("photographer_id", studioId)
+    .eq("id", id)
+    .maybeSingle();
+  if (error || !data) return backdrop;
+  return {
+    ...backdrop,
+    id: clean((data as Record<string, unknown>).id as string),
+    name: clean((data as Record<string, unknown>).name as string),
+    image_url: clean((data as Record<string, unknown>).image_url as string),
+    tier: clean((data as Record<string, unknown>).tier as string),
+    price_cents: Number((data as Record<string, unknown>).price_cents ?? 0) || 0,
+  };
 }
 
 export async function resolveDigitalDeliveryContext(
@@ -518,6 +615,15 @@ async function fetchR2Stream(key: string) {
   return response.body;
 }
 
+function uint8ArrayToReadableStream(bytes: Uint8Array) {
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(bytes);
+      controller.close();
+    },
+  });
+}
+
 export async function* buildDigitalDeliveryZipEntries(
   files: DigitalDeliveryFile[],
 ): AsyncGenerator<ZipStreamEntry> {
@@ -526,15 +632,24 @@ export async function* buildDigitalDeliveryZipEntries(
 
   for (const file of files) {
     try {
-      const stream = await fetchR2Stream(file.key);
+      const composite = file.composite
+        ? await composeBackdropImage({
+            originalUrlOrKey: file.composite.originalUrlOrKey,
+            backdrop: file.composite.backdrop,
+            orientation: file.composite.orientation,
+          })
+        : null;
+      const stream = composite
+        ? uint8ArrayToReadableStream(composite.buffer)
+        : await fetchR2Stream(file.key ?? "");
       yield {
         name: uniqueDownloadName(file.fileName, usedNames),
         stream,
       };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      console.error(`[digital-delivery] skipping ${file.key}: ${message}`);
-      skipped.push(file.fileName || file.key);
+      console.error(`[digital-delivery] skipping ${file.key || file.fileName}: ${message}`);
+      skipped.push(file.fileName || file.key || "photo");
     }
   }
 

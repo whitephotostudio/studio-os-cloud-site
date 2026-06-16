@@ -3,7 +3,6 @@ import { createDashboardServiceClient } from "@/lib/dashboard-auth";
 import { syncPhotographyKeysByPhotographerId } from "@/lib/studio-os-app";
 import { buildOrderNotificationEmail } from "@/lib/order-notification-email";
 import { buildOrderReceiptEmail } from "@/lib/order-receipt-email";
-import { sendDigitalDeliveryEmailForOrder } from "@/lib/digital-delivery";
 import { notifyOwnerForSetting } from "@/lib/admin-notification-center";
 import { ownerUrl } from "@/lib/owner-notifications";
 import { resendConfigured, sendResendEmail, resolveReplyTo } from "@/lib/resend";
@@ -2162,6 +2161,7 @@ export async function finalizePaidOrder(
 
           if (hasDigitalDeliveryItem) {
             try {
+              const { sendDigitalDeliveryEmailForOrder } = await import("@/lib/digital-delivery");
               await sendDigitalDeliveryEmailForOrder(service, input.orderId, {
                 recipientEmail: buyerEmailAddress,
                 force: false,

@@ -1022,8 +1022,21 @@ export async function POST(request: NextRequest) {
     // fields and keep only what the client originally posted.
     const cartSnapshot = resolved.map((entry) => ({
       packageId: entry.packageId,
+      packageName: clean(entry.pkg.name) || "Package",
       quantity: entry.quantity,
-      backdrop: entry.backdrop ?? null,
+      backdrop: entry.backdropRow
+        ? {
+            id: entry.backdropRow.id,
+            name: clean(entry.backdropRow.name) || "Backdrop",
+            image_url: clean(entry.backdropRow.image_url) || null,
+            tier: clean(entry.backdropRow.tier) || null,
+            price_cents: entry.backdropAddOnCents,
+            blurred: !!entry.backdrop?.blurred,
+            blurAmount: entry.backdrop?.blurred
+              ? entry.backdrop.blurAmount || DEFAULT_BACKDROP_BLUR_PX
+              : 0,
+          }
+        : null,
       slots: entry.slots ?? [],
       selectedImageUrl: entry.selectedImageUrl ?? null,
       digitalSelections: entry.digitalSelections ?? [],
