@@ -421,6 +421,18 @@ function dashboardCompositeUrl(orderId: string, item: OrderItem, index: number) 
   return `/api/dashboard/orders/composite?orderId=${encodeURIComponent(orderId)}&item=${encodeURIComponent(String(itemIndex))}`;
 }
 
+function isDashboardImageReference(value: string | null | undefined) {
+  const raw = clean(value);
+  return raw.startsWith("/api/dashboard/orders/composite") || !!dashboardPhotoUrl(raw);
+}
+
+function dashboardImageReference(value: string | null | undefined) {
+  const raw = clean(value);
+  return raw.startsWith("/api/dashboard/orders/composite")
+    ? raw
+    : dashboardPhotoUrl(raw);
+}
+
 function isBackdropOrderItem(item: Pick<OrderItem, "product_name">) {
   const name = clean(item.product_name).toLowerCase();
   return name.startsWith("★") || name.includes("premium backdrop") || name.includes("backdrop:");
@@ -436,6 +448,13 @@ function extractImageUrls(order: Order | null) {
   const noteUrls = extractOrderPhotoUrls(noteTextForOrder(order));
   const snapshotItems = cartSnapshotToOrderItems(order.cart_snapshot);
   const snapshotHasBackdrop = snapshotItems.some((item) => item.backdrop);
+  const dbImageUrls = (order.items ?? [])
+    .filter((item) => !isBackdropOrderItem(item))
+    .map((item) => clean(item.sku))
+    .filter(isDashboardImageReference);
+  const snapshotImageUrls = snapshotItems
+    .map((item) => clean(item.sku))
+    .filter(isDashboardImageReference);
   const orderedUrls = snapshotHasBackdrop
     ? snapshotItems
         .map((item, index) => dashboardCompositeUrl(order.id, {
@@ -445,17 +464,17 @@ function extractImageUrls(order: Order | null) {
           line_total_cents: null,
           snapshotIndex: index,
         }, index) || clean(item.sku))
-        .filter((url) => !!dashboardPhotoUrl(url))
+        .filter(isDashboardImageReference)
+    : dbImageUrls.length >= snapshotImageUrls.length && dbImageUrls.length > 0
+      ? dbImageUrls
     : noteUrls.length > 0
       ? noteUrls
-      : snapshotItems.length > 0
-        ? snapshotItems.map((item) => clean(item.sku)).filter((url) => !!dashboardPhotoUrl(url))
-        : (order.items ?? []).map((item) => clean(item.sku)).filter((url) => !!dashboardPhotoUrl(url));
+      : snapshotImageUrls.length > 0
+        ? snapshotImageUrls
+        : dbImageUrls;
 
   for (const url of orderedUrls) {
-    const displayUrl = url.startsWith("/api/dashboard/orders/composite")
-      ? url
-      : dashboardPhotoUrl(url);
+    const displayUrl = dashboardImageReference(url);
     if (displayUrl) urls.add(displayUrl);
   }
 
