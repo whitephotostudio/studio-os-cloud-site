@@ -189,6 +189,9 @@ type PaymentBreakdownLine = {
   detail: string;
   cents: number;
   isBackdrop?: boolean;
+  slotCount?: number;
+  photoKeys?: string[];
+  mergeKey?: string;
 };
 
 const STATUS_COLORS: Record<string, { bg: string; color: string; label: string }> = {
@@ -659,6 +662,72 @@ function packageLabelFromSlotLabels(labels: string[]) {
     .join(" + ");
 }
 
+function photoKeyForPaymentLine(value: string | null | undefined) {
+  const raw = clean(value);
+  return r2KeyFromBrowserUrl(raw) || raw;
+}
+
+function paymentDetailForCounts(slotCount: number | null | undefined, photoKeys: string[] | null | undefined, fallback: string) {
+  const slots = Number(slotCount ?? 0) || 0;
+  const photos = Array.from(new Set((photoKeys ?? []).map((key) => clean(key)).filter(Boolean))).length;
+  if (slots > 0 && photos > 0) {
+    const printText = `${slots} print${slots === 1 ? "" : "s"}`;
+    return photos === slots
+      ? printText
+      : `${printText} from ${photos} photo${photos === 1 ? "" : "s"}`;
+  }
+  if (slots > 0) return `${slots} print${slots === 1 ? "" : "s"}`;
+  if (photos > 0) return `${photos} photo${photos === 1 ? "" : "s"}`;
+  return fallback;
+}
+
+function reconcilePaymentBreakdownLines(order: Order, lines: PaymentBreakdownLine[]) {
+  const merged: PaymentBreakdownLine[] = [];
+  const byKey = new Map<string, PaymentBreakdownLine>();
+
+  for (const line of lines) {
+    const mergeKey = line.mergeKey && !line.isBackdrop ? line.mergeKey : "";
+    if (!mergeKey) {
+      merged.push(line);
+      continue;
+    }
+
+    const existing = byKey.get(mergeKey);
+    if (existing) {
+      existing.cents += line.cents;
+      existing.slotCount = (existing.slotCount ?? 0) + (line.slotCount ?? 0);
+      existing.photoKeys = [...(existing.photoKeys ?? []), ...(line.photoKeys ?? [])];
+      continue;
+    }
+
+    const next = { ...line };
+    byKey.set(mergeKey, next);
+    merged.push(next);
+  }
+
+  for (const line of merged) {
+    if (!line.isBackdrop) {
+      line.detail = paymentDetailForCounts(line.slotCount, line.photoKeys, line.detail);
+    }
+  }
+
+  const subtotalCents = resolveOrderSubtotalCents(order, order.items);
+  if (subtotalCents > 0) {
+    const backdropCents = merged
+      .filter((line) => line.isBackdrop)
+      .reduce((sum, line) => sum + line.cents, 0);
+    const packageLines = merged.filter((line) => !line.isBackdrop);
+    const packageTarget = Math.max(0, subtotalCents - backdropCents);
+    const packageSum = packageLines.reduce((sum, line) => sum + line.cents, 0);
+    const delta = packageTarget - packageSum;
+    if (delta !== 0 && packageLines.length > 0 && Math.abs(delta) <= packageLines.length * 2) {
+      packageLines[packageLines.length - 1].cents += delta;
+    }
+  }
+
+  return merged;
+}
+
 function orderPaymentBreakdownLines(order: Order): PaymentBreakdownLine[] {
   const items = order.items ?? [];
   const usedItemIds = new Set<string>();
@@ -688,10 +757,11 @@ function orderPaymentBreakdownLines(order: Order): PaymentBreakdownLine[] {
       lines.push({
         key: `${order.id}-snapshot-payment-${entryIndex}`,
         label,
-        detail: matchedItems.length > 0
-          ? `${matchedItems.length} photo${matchedItems.length === 1 ? "" : "s"}`
-          : "Package",
+        detail: "Package",
         cents,
+        slotCount: matchedItems.length || urls.length,
+        photoKeys: matchedItems.map((item) => photoKeyForPaymentLine(item.sku)),
+        mergeKey: clean(label).toLowerCase(),
       });
     }
   });
@@ -715,17 +785,20 @@ function orderPaymentBreakdownLines(order: Order): PaymentBreakdownLine[] {
         label: orderItemBaseLabel(item),
         detail: packageSlotText(item) || `Qty ${orderItemQuantity(item)}`,
         cents: financialLineItemAmountCents(item),
+        slotCount: orderItemQuantity(item),
+        photoKeys: clean(item.sku) ? [photoKeyForPaymentLine(item.sku)] : [],
+        mergeKey: clean(orderItemBaseLabel(item)).toLowerCase(),
       });
     }
   }
 
-  if (lines.length > 0) return lines;
-  return [{
+  if (lines.length > 0) return reconcilePaymentBreakdownLines(order, lines);
+  return reconcilePaymentBreakdownLines(order, [{
     key: `${order.id}-package`,
     label: order.package_name || "Package",
     detail: "Package",
     cents: resolveOrderSubtotalCents(order, items),
-  }];
+  }]);
 }
 
 function orderFinancialLines(order: Order) {
