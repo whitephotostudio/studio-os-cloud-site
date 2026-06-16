@@ -456,6 +456,27 @@ function dashboardImageReference(value: string | null | undefined) {
     : dashboardPhotoUrl(raw);
 }
 
+function thumbnailKeyForStoragePath(storagePath: string | null | undefined) {
+  const key = clean(storagePath)
+    .replace(/^\/+/, "")
+    .split("?")[0]
+    .split("#")[0];
+  const match = key.match(/\.(png|jpe?g|webp|gif|avif)$/i);
+  if (!key || !match) return "";
+  const ext = match[0];
+  const base = key.slice(0, -ext.length);
+  if (/_(thumbnail|preview)$/i.test(base)) return key;
+  return `${base}_thumbnail.jpg`;
+}
+
+function dashboardThumbnailUrl(value: string | null | undefined) {
+  const raw = clean(value);
+  if (!raw || isDashboardCompositeReference(raw)) return dashboardImageReference(raw);
+  const key = r2KeyFromBrowserUrl(raw) || (!/^https?:\/\//i.test(raw) ? raw.replace(/^\/+/, "") : "");
+  const thumbnailKey = thumbnailKeyForStoragePath(key);
+  return thumbnailKey ? dashboardPhotoUrl(thumbnailKey) : dashboardPhotoUrl(raw);
+}
+
 function isBackdropOrderItem(item: Pick<OrderItem, "product_name">) {
   const name = clean(item.product_name).toLowerCase();
   return name.startsWith("★") || name.includes("premium backdrop") || name.includes("backdrop:");
@@ -485,14 +506,17 @@ function makeOrderImagePreview(
   originalUrl: string | null = null,
   index: number = 0,
 ): OrderImagePreview | null {
-  const displayUrl = dashboardImageReference(url);
-  if (!displayUrl) return null;
+  const originalDisplayUrl = dashboardImageReference(url);
+  if (!originalDisplayUrl) return null;
+  const displayUrl = isDashboardCompositeReference(originalDisplayUrl)
+    ? originalDisplayUrl
+    : dashboardThumbnailUrl(url) || originalDisplayUrl;
   const fallback = fallbackUrl ? dashboardPhotoUrl(fallbackUrl) : "";
   const rawOriginal = clean(originalUrl) || clean(fallbackUrl) || clean(url);
   return {
     url: displayUrl,
     originalUrl: rawOriginal || null,
-    fallbackUrl: fallback || null,
+    fallbackUrl: fallback || (displayUrl !== originalDisplayUrl ? originalDisplayUrl : null),
     label: previewFileName(displayUrl, `print-preview-${index + 1}.jpg`),
     printReady: isDashboardCompositeReference(displayUrl),
   };
