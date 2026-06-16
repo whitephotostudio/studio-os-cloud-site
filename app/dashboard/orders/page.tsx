@@ -174,6 +174,14 @@ type BackdropAddOnSummary = {
   appliedPhotoCount: number;
 };
 
+type PaymentBreakdownLine = {
+  key: string;
+  label: string;
+  detail: string;
+  cents: number;
+  isBackdrop?: boolean;
+};
+
 const STATUS_COLORS: Record<string, { bg: string; color: string; label: string }> = {
   new: { bg: "#fef2f2", color: "#ef4444", label: "New" },
   reviewed: { bg: "#fffbeb", color: "#d97706", label: "Reviewed" },
@@ -411,15 +419,6 @@ function dashboardPhotoUrl(value: string | null | undefined) {
       : "";
   }
 
-  if (isWebImageUrl(raw)) {
-    try {
-      const parsed = new URL(raw);
-      if (/\.r2\.dev$/i.test(parsed.host)) return encodeExternalImageUrl(raw);
-    } catch {
-      // Fall through to the normal URL handling below.
-    }
-  }
-
   const key = r2KeyFromBrowserUrl(raw);
   if (key) return `/api/r2/img/${encodeStoragePath(key)}`;
 
@@ -537,6 +536,123 @@ function financialLineItemAmountCents(item: OrderItem) {
   const price = Number(item.price);
   if (Number.isFinite(price) && price !== 0) return Math.round(price * 100 * qty);
   return 0;
+}
+
+function cartSnapshotEntries(snapshot: unknown) {
+  return Array.isArray(snapshot) ? snapshot as Array<Record<string, unknown>> : [];
+}
+
+function snapshotEntryImageUrls(entry: Record<string, unknown>) {
+  const urls: string[] = [];
+  const slots = Array.isArray(entry.slots) ? entry.slots as Array<Record<string, unknown>> : [];
+  for (const slot of slots) {
+    const url = clean(slot.assignedImageUrl as string);
+    if (url) urls.push(url);
+  }
+  const selections = Array.isArray(entry.digitalSelections) ? entry.digitalSelections as Array<Record<string, unknown>> : [];
+  for (const selection of selections) {
+    const url = clean(selection.url as string) || clean(selection.thumbnailUrl as string);
+    if (url) urls.push(url);
+  }
+  const selectedUrl = clean(entry.selectedImageUrl as string);
+  if (selectedUrl && urls.length === 0) urls.push(selectedUrl);
+  return urls;
+}
+
+function snapshotEntrySlotLabels(entry: Record<string, unknown>) {
+  const slots = Array.isArray(entry.slots) ? entry.slots as Array<Record<string, unknown>> : [];
+  return slots.map((slot) => clean(slot.label as string)).filter(Boolean);
+}
+
+function shortPrintLabel(label: string) {
+  return clean(label)
+    .replace(/\s+Lustre$/i, "")
+    .replace(/\s+Glossy$/i, "")
+    .replace(/\s+Matte$/i, "");
+}
+
+function packageLabelFromSlotLabels(labels: string[]) {
+  if (labels.length === 0) return "Package";
+  if (labels.length === 1) return parsePackageSlotLabel(labels[0]).baseLabel || labels[0];
+
+  const counts = new Map<string, number>();
+  for (const label of labels) {
+    const parsed = parsePackageSlotLabel(label);
+    const base = shortPrintLabel(parsed.baseLabel || label);
+    counts.set(base, (counts.get(base) ?? 0) + 1);
+  }
+  return Array.from(counts.entries())
+    .map(([label, count]) => `${count}-${label}`)
+    .join(" + ");
+}
+
+function orderPaymentBreakdownLines(order: Order): PaymentBreakdownLine[] {
+  const items = order.items ?? [];
+  const usedItemIds = new Set<string>();
+  const lines: PaymentBreakdownLine[] = [];
+
+  cartSnapshotEntries(order.cart_snapshot).forEach((entry, entryIndex) => {
+    const urls = snapshotEntryImageUrls(entry);
+    const matchedItems: OrderItem[] = [];
+    for (const url of urls) {
+      const match = items.find((item) =>
+        !usedItemIds.has(item.id ?? "") &&
+        !isBackdropOrderItem(item) &&
+        clean(item.sku) === url
+      );
+      if (match) {
+        if (match.id) usedItemIds.add(match.id);
+        matchedItems.push(match);
+      }
+    }
+
+    const label =
+      clean(entry.packageName as string) ||
+      packageLabelFromSlotLabels(snapshotEntrySlotLabels(entry)) ||
+      `Package ${entryIndex + 1}`;
+    const cents = matchedItems.reduce((sum, item) => sum + financialLineItemAmountCents(item), 0);
+    if (cents > 0 || matchedItems.length > 0) {
+      lines.push({
+        key: `${order.id}-snapshot-payment-${entryIndex}`,
+        label,
+        detail: matchedItems.length > 0
+          ? `${matchedItems.length} photo${matchedItems.length === 1 ? "" : "s"}`
+          : "Package",
+        cents,
+      });
+    }
+  });
+
+  for (const item of items) {
+    if (item.id && usedItemIds.has(item.id)) continue;
+    if (isNonProductionLineItem(item)) continue;
+    if (isBackdropOrderItem(item)) {
+      lines.push({
+        key: item.id ?? `${order.id}-backdrop-payment`,
+        label: "Premium Backdrop",
+        detail: orderItemBaseLabel(item).replace(/^★\s*/, ""),
+        cents: financialLineItemAmountCents(item),
+        isBackdrop: true,
+      });
+      continue;
+    }
+    if (lines.length === 0 || financialLineItemAmountCents(item) > 0) {
+      lines.push({
+        key: item.id ?? `${order.id}-${item.product_name}`,
+        label: orderItemBaseLabel(item),
+        detail: packageSlotText(item) || `Qty ${orderItemQuantity(item)}`,
+        cents: financialLineItemAmountCents(item),
+      });
+    }
+  }
+
+  if (lines.length > 0) return lines;
+  return [{
+    key: `${order.id}-package`,
+    label: order.package_name || "Package",
+    detail: "Package",
+    cents: resolveOrderSubtotalCents(order, items),
+  }];
 }
 
 function orderFinancialLines(order: Order) {
@@ -1577,7 +1693,6 @@ function OrdersPageContent() {
     const buckets = new Map<string, OrderedPhotoGroup>();
     const orderTotalCents = resolveOrderTotalCents(selected, selected.items);
     const noteSelections = parseOrderPhotoSelections(noteTextForOrder(selected));
-    const studentFallbackUrl = dashboardPhotoUrl(selected.student?.photo_url);
     const snapshotItems: OrderItem[] = cartSnapshotToOrderItems(selected.cart_snapshot).map(
       (item, index) => ({
         id: `${selected.id}-cart-snapshot-${index}`,
@@ -1642,14 +1757,14 @@ function OrdersPageContent() {
       const originalDisplayUrl = dashboardPhotoUrl(rawUrl);
       const compositeUrl = dashboardCompositeUrl(selected.id, item, index);
       const displayUrl = compositeUrl || originalDisplayUrl;
-      const fallbackUrl = compositeUrl ? originalDisplayUrl || studentFallbackUrl : displayUrl ? studentFallbackUrl : "";
-      const key = displayUrl || studentFallbackUrl || `no-image-${selected.id}-${index}`;
+      const fallbackUrl = compositeUrl ? originalDisplayUrl : "";
+      const key = displayUrl || `no-image-${selected.id}-${index}`;
       const existing = buckets.get(key);
       if (existing) {
         existing.items.push(item);
       } else {
         buckets.set(key, {
-          url: displayUrl || studentFallbackUrl || null,
+          url: displayUrl || null,
           originalUrl: rawUrl || selected.student?.photo_url || null,
           fallbackUrl: fallbackUrl || null,
           fileName: rawUrl ? fileNameFromUrl(rawUrl, selected.student?.folder_name || "photo.jpg") : selected.student?.folder_name || `${selected.student?.first_name ?? "student"}-${selected.id.slice(0, 6)}.jpg`,
@@ -1674,7 +1789,7 @@ function OrdersPageContent() {
       buckets.set(displayUrl, {
         url: displayUrl,
         originalUrl: entry.url,
-        fallbackUrl: studentFallbackUrl || null,
+        fallbackUrl: null,
         fileName: fileNameFromUrl(entry.url, `photo-${index + 1}.jpg`),
         items: [item],
       });
@@ -2615,11 +2730,7 @@ function OrdersPageContent() {
                                           alt=""
                                           style={{ width: "100%", height: "100%", objectFit: "cover" }}
                                           onError={(event) => {
-                                            if (studentImageUrl && event.currentTarget.src !== studentImageUrl) {
-                                              event.currentTarget.src = studentImageUrl;
-                                            } else {
-                                              event.currentTarget.style.display = "none";
-                                            }
+                                            event.currentTarget.style.display = "none";
                                           }}
                                         />
                                       </div>
@@ -2637,11 +2748,7 @@ function OrdersPageContent() {
                                         alt=""
                                         style={{ width: "100%", height: "100%", objectFit: "cover" }}
                                         onError={(event) => {
-                                          if (studentImageUrl && event.currentTarget.src !== studentImageUrl) {
-                                            event.currentTarget.src = studentImageUrl;
-                                          } else {
-                                            event.currentTarget.style.display = "none";
-                                          }
+                                          event.currentTarget.style.display = "none";
                                         }}
                                       />
                                     </div>
@@ -2850,7 +2957,7 @@ function OrdersPageContent() {
                 const subtotalCents = resolveOrderSubtotalCents(selected, selected.items);
                 const taxCents = Number(selected.tax_cents ?? 0) || 0;
                 const totalCents = resolveOrderTotalCents(selected, selected.items);
-                const financialLines = orderFinancialLines(selected);
+                const financialLines = orderPaymentBreakdownLines(selected);
                 return (
                   <div style={{ background: "#f8fafc", border: `1px solid ${borderColor}`, borderRadius: 16, padding: 14, marginBottom: 16 }}>
                     <div style={{ fontSize: 11, color: textMuted, fontWeight: 900, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 10 }}>Payment Breakdown</div>
@@ -2859,10 +2966,10 @@ function OrdersPageContent() {
                         <div key={line.key} style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start" }}>
                           <div style={{ minWidth: 0 }}>
                             <div style={{ fontSize: 13, fontWeight: 800, color: textPrimary, lineHeight: 1.35 }}>
-                              {line.isBackdrop ? "Premium Backdrop" : line.label}
+                              {line.label}
                             </div>
                             <div style={{ fontSize: 11, color: textMuted, marginTop: 2, lineHeight: 1.35 }}>
-                              {line.isBackdrop ? line.label.replace(/^★\s*/, "") : line.detail || `Qty ${line.quantity}`}
+                              {line.detail}
                             </div>
                           </div>
                           <div style={{ flexShrink: 0, fontSize: 13, fontWeight: 900, color: textPrimary }}>
@@ -2894,9 +3001,6 @@ function OrdersPageContent() {
               {/* ── Package info ── */}
               <div style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "baseline", marginBottom: 4 }}>
                 <div style={{ fontSize: 18, fontWeight: 800, color: textPrimary }}>{selected.package_name || "Package"}</div>
-                <div style={{ fontSize: 16, fontWeight: 900, color: textPrimary, whiteSpace: "nowrap" }}>
-                  {moneyFromCents(resolveOrderTotalCents(selected, selected.items), selected.currency?.toUpperCase() || "CAD")}
-                </div>
               </div>
               <div style={{ fontSize: 13, color: textMuted, marginBottom: 16 }}>
                 {selectedOrderedPhotoGroups.reduce((sum, g) => sum + g.items.length, 0)} included item{selectedOrderedPhotoGroups.reduce((sum, g) => sum + g.items.length, 0) === 1 ? "" : "s"}

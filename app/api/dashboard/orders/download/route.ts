@@ -8,10 +8,8 @@ import {
   cleanOrderCustomerNote,
   type CartSnapshotBackdropLike,
   isWebImageUrl,
-  isPackageComponentItem,
   parsePackageSlotLabel,
   parseOrderPhotoSelections,
-  resolveOrderItemDisplayCents,
   resolveOrderSubtotalCents,
   resolveOrderTotalCents,
 } from "@/lib/order-display";
@@ -256,6 +254,135 @@ function financialLineAmountCents(item: {
   return 0;
 }
 
+function cartSnapshotEntries(snapshot: unknown) {
+  return Array.isArray(snapshot) ? snapshot as Array<Record<string, unknown>> : [];
+}
+
+function snapshotEntryImageUrls(entry: Record<string, unknown>) {
+  const urls: string[] = [];
+  const slots = Array.isArray(entry.slots) ? entry.slots as Array<Record<string, unknown>> : [];
+  for (const slot of slots) {
+    const url = clean(slot.assignedImageUrl as string);
+    if (url) urls.push(url);
+  }
+  const selections = Array.isArray(entry.digitalSelections) ? entry.digitalSelections as Array<Record<string, unknown>> : [];
+  for (const selection of selections) {
+    const url = clean(selection.url as string) || clean(selection.thumbnailUrl as string);
+    if (url) urls.push(url);
+  }
+  const selectedUrl = clean(entry.selectedImageUrl as string);
+  if (selectedUrl && urls.length === 0) urls.push(selectedUrl);
+  return urls;
+}
+
+function snapshotEntrySlotLabels(entry: Record<string, unknown>) {
+  const slots = Array.isArray(entry.slots) ? entry.slots as Array<Record<string, unknown>> : [];
+  return slots.map((slot) => clean(slot.label as string)).filter(Boolean);
+}
+
+function shortPrintLabel(label: string) {
+  return clean(label)
+    .replace(/\s+Lustre$/i, "")
+    .replace(/\s+Glossy$/i, "")
+    .replace(/\s+Matte$/i, "");
+}
+
+function packageLabelFromSlotLabels(labels: string[]) {
+  if (labels.length === 0) return "Package";
+  if (labels.length === 1) return parsePackageSlotLabel(labels[0]).baseLabel || labels[0];
+
+  const counts = new Map<string, number>();
+  for (const label of labels) {
+    const parsed = parsePackageSlotLabel(label);
+    const base = shortPrintLabel(parsed.baseLabel || label);
+    counts.set(base, (counts.get(base) ?? 0) + 1);
+  }
+  return Array.from(counts.entries())
+    .map(([label, count]) => `${count}-${label}`)
+    .join(" + ");
+}
+
+function orderPaymentBreakdownLines(order: {
+  id: string;
+  package_name?: string | null;
+  subtotal_cents?: number | null;
+  cart_snapshot?: unknown;
+  items?: Array<{
+    id?: string | null;
+    product_name?: string | null;
+    quantity?: number | null;
+    price?: number | null;
+    unit_price_cents?: number | null;
+    line_total_cents?: number | null;
+    sku?: string | null;
+  }> | null;
+}) {
+  const items = order.items ?? [];
+  const usedItemIds = new Set<string>();
+  const lines: Array<{ key: string; label: string; detail: string; cents: number }> = [];
+
+  cartSnapshotEntries(order.cart_snapshot).forEach((entry, entryIndex) => {
+    const urls = snapshotEntryImageUrls(entry);
+    const matchedItems: typeof items = [];
+    for (const url of urls) {
+      const match = items.find((item) =>
+        !usedItemIds.has(item.id ?? "") &&
+        !isBackdropOrderItem(item) &&
+        clean(item.sku) === url
+      );
+      if (match) {
+        if (match.id) usedItemIds.add(match.id);
+        matchedItems.push(match);
+      }
+    }
+
+    const label =
+      clean(entry.packageName as string) ||
+      packageLabelFromSlotLabels(snapshotEntrySlotLabels(entry)) ||
+      `Package ${entryIndex + 1}`;
+    const cents = matchedItems.reduce((sum, item) => sum + financialLineAmountCents(item), 0);
+    if (cents > 0 || matchedItems.length > 0) {
+      lines.push({
+        key: `${order.id}-snapshot-payment-${entryIndex}`,
+        label,
+        detail: matchedItems.length > 0
+          ? `${matchedItems.length} photo${matchedItems.length === 1 ? "" : "s"}`
+          : "Package",
+        cents,
+      });
+    }
+  });
+
+  for (const item of items) {
+    if (item.id && usedItemIds.has(item.id)) continue;
+    if (isBackdropOrderItem(item)) {
+      lines.push({
+        key: item.id ?? `${order.id}-backdrop-payment`,
+        label: "Premium Backdrop",
+        detail: clean(item.product_name).replace(/^★\s*/, ""),
+        cents: financialLineAmountCents(item),
+      });
+      continue;
+    }
+    if (lines.length === 0 || financialLineAmountCents(item) > 0) {
+      lines.push({
+        key: item.id ?? `${order.id}-${item.product_name}`,
+        label: parsePackageSlotLabel(item.product_name).baseLabel || clean(item.product_name) || "Item",
+        detail: `Qty ${itemQuantity(item.quantity)}`,
+        cents: financialLineAmountCents(item),
+      });
+    }
+  }
+
+  if (lines.length > 0) return lines;
+  return [{
+    key: `${order.id}-package`,
+    label: order.package_name || "Package",
+    detail: "Package",
+    cents: resolveOrderSubtotalCents(order, items),
+  }];
+}
+
 /** Resolve display items for an order (from DB items, parsed notes, or student photo) */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type OrderDisplayItem = {
@@ -349,16 +476,7 @@ function buildOrderSummaryHtml(order: any, branding: StudioBranding, photoFileMa
   const totalCents = resolveOrderTotalCents(order, order.items);
 
   const displayItems = resolveOrderDisplayItems(order);
-  const financialItems = Array.isArray(order.items) && order.items.length
-    ? order.items
-    : [{
-        product_name: order.package_name || "Package",
-        quantity: 1,
-        price: order.package_price,
-        unit_price_cents: null,
-        line_total_cents: subtotalCents,
-        sku: null,
-      }];
+  const paymentLines = orderPaymentBreakdownLines(order);
 
   // Build photo cards — reference local files from the ZIP
   let photoCardsHtml = "";
@@ -403,30 +521,10 @@ function buildOrderSummaryHtml(order: any, branding: StudioBranding, photoFileMa
     </tr>`;
   }).join("");
 
-  const financialRowsHtml = financialItems.map((item: {
-    product_name?: string | null;
-    quantity?: number | null;
-    price?: number | null;
-    unit_price_cents?: number | null;
-    line_total_cents?: number | null;
-    sku?: string | null;
-  }, index: number) => {
-    const parsedLabel = parsePackageSlotLabel(item.product_name);
-    const label = isBackdropOrderItem(item)
-      ? "Premium Backdrop"
-      : parsedLabel.baseLabel || clean(item.product_name) || "Item";
-    const detail = isBackdropOrderItem(item)
-      ? clean(item.product_name).replace(/^★\s*/, "")
-      : parsedLabel.slotIndex != null && parsedLabel.slotTotal != null
-        ? `Package slot ${parsedLabel.slotIndex} of ${parsedLabel.slotTotal}`
-        : `Qty ${itemQuantity(item.quantity)}`;
-    const cents = financialLineAmountCents(item) || resolveOrderItemDisplayCents(item, financialItems, subtotalCents, index);
-    const amount = isPackageComponentItem(order, item, financialItems) && cents === 0
-      ? "Included"
-      : moneyFromCents(cents, currency);
+  const financialRowsHtml = paymentLines.map((line) => {
     return `<tr>
-      <td style="padding:7px 0;color:#111;font-weight:700;">${esc(label)}<div style="font-size:11px;color:#777;font-weight:500;">${esc(detail)}</div></td>
-      <td style="padding:7px 0;text-align:right;color:#111;font-weight:800;">${esc(amount)}</td>
+      <td style="padding:7px 0;color:#111;font-weight:700;">${esc(line.label)}<div style="font-size:11px;color:#777;font-weight:500;">${esc(line.detail)}</div></td>
+      <td style="padding:7px 0;text-align:right;color:#111;font-weight:800;">${esc(moneyFromCents(line.cents, currency))}</td>
     </tr>`;
   }).join("");
 
