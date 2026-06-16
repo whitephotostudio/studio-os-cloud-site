@@ -360,6 +360,10 @@ export default function SettingsPage() {
   const [siblingTier3Percent, setSiblingTier3Percent] = useState<number>(10);
   const [shippingFeeCents, setShippingFeeCents] = useState<number>(0);
   const [lateHandlingFeePercent, setLateHandlingFeePercent] = useState<number>(10);
+  const [studioTaxEnabled, setStudioTaxEnabled] = useState(false);
+  const [studioTaxPercent, setStudioTaxPercent] = useState<number>(13);
+  const [studioTaxLabel, setStudioTaxLabel] = useState("HST");
+  const [studioTaxCountry, setStudioTaxCountry] = useState("CA");
 
   // Dismissal hook for the "what's new" blue dot on the commerce card.
   // The dot disappears the first time the photographer interacts with
@@ -538,13 +542,28 @@ export default function SettingsPage() {
       // applied below match the photographers DB defaults.
       try {
         if (session?.user?.id) {
-          const { data: commerceRow } = await supabase
+          let commerceResult = await supabase
             .from("photographers")
             .select(
-              "sibling_discount_tiers, shipping_fee_cents, late_handling_fee_percent",
+              "sibling_discount_tiers, shipping_fee_cents, late_handling_fee_percent, tax_enabled, tax_percent, tax_label, tax_country, tax_rates_by_country",
             )
             .eq("user_id", session.user.id)
             .maybeSingle();
+          if (
+            commerceResult.error &&
+            /tax_(enabled|percent|label|country|rates_by_country)/i.test(
+              commerceResult.error.message,
+            )
+          ) {
+            commerceResult = await supabase
+              .from("photographers")
+              .select(
+                "sibling_discount_tiers, shipping_fee_cents, late_handling_fee_percent",
+              )
+              .eq("user_id", session.user.id)
+              .maybeSingle();
+          }
+          const { data: commerceRow } = commerceResult;
           if (commerceRow) {
             const tiers = (commerceRow.sibling_discount_tiers ?? {}) as Record<string, number>;
             setSiblingTier2Percent(typeof tiers["2"] === "number" ? tiers["2"] : 5);
@@ -554,6 +573,19 @@ export default function SettingsPage() {
             const handling = Number(commerceRow.late_handling_fee_percent);
             setLateHandlingFeePercent(
               Number.isFinite(handling) && handling >= 0 ? handling : 10,
+            );
+            setStudioTaxEnabled(Boolean(commerceRow.tax_enabled));
+            const taxPercent = Number(commerceRow.tax_percent);
+            setStudioTaxPercent(Number.isFinite(taxPercent) && taxPercent >= 0 ? taxPercent : 13);
+            setStudioTaxLabel(
+              typeof commerceRow.tax_label === "string" && commerceRow.tax_label.trim()
+                ? commerceRow.tax_label.trim()
+                : "HST",
+            );
+            setStudioTaxCountry(
+              typeof commerceRow.tax_country === "string" && commerceRow.tax_country.trim()
+                ? commerceRow.tax_country.trim().toUpperCase().slice(0, 2)
+                : "CA",
             );
           }
         }
@@ -749,6 +781,14 @@ export default function SettingsPage() {
             ),
             shipping_fee_cents: clampShippingFeeCents(shippingFeeCents),
             late_handling_fee_percent: clampPercent(lateHandlingFeePercent),
+            tax_enabled: studioTaxEnabled,
+            tax_percent: clampPercent(studioTaxPercent),
+            tax_label: studioTaxLabel.trim() || "Tax",
+            tax_country: (studioTaxCountry.trim().toUpperCase().slice(0, 2) || "CA"),
+            tax_rates_by_country: {
+              [(studioTaxCountry.trim().toUpperCase().slice(0, 2) || "CA")]:
+                clampPercent(studioTaxPercent),
+            },
           })
           .select("id, studio_id")
           .single();
@@ -777,6 +817,14 @@ export default function SettingsPage() {
             ),
             shipping_fee_cents: clampShippingFeeCents(shippingFeeCents),
             late_handling_fee_percent: clampPercent(lateHandlingFeePercent),
+            tax_enabled: studioTaxEnabled,
+            tax_percent: clampPercent(studioTaxPercent),
+            tax_label: studioTaxLabel.trim() || "Tax",
+            tax_country: (studioTaxCountry.trim().toUpperCase().slice(0, 2) || "CA"),
+            tax_rates_by_country: {
+              [(studioTaxCountry.trim().toUpperCase().slice(0, 2) || "CA")]:
+                clampPercent(studioTaxPercent),
+            },
           })
           .eq("id", nextPhotographerId);
 
@@ -1415,6 +1463,115 @@ export default function SettingsPage() {
                 }}
               >
                 {saving ? "Saving…" : "Save commerce settings"}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* ── Row 1.6: Studio-wide tax fallback ──────────────────────── */}
+        <div style={{ marginTop: 20 }}>
+          <div style={cardStyle}>
+            <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 16 }}>
+              <div style={{ width: 54, height: 54, borderRadius: 16, background: "#fff7ed", display: "grid", placeItems: "center" }}>
+                <Receipt size={24} color="#ea580c" />
+              </div>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 800, letterSpacing: "0.14em", textTransform: "uppercase", color: "#64748b" }}>
+                  Checkout tax
+                </div>
+                <div style={{ fontSize: 20, fontWeight: 900, color: "#0f172a", marginTop: 2 }}>Studio tax default</div>
+              </div>
+            </div>
+
+            <p style={{ fontSize: 13, color: "#475569", margin: "0 0 18px 0", lineHeight: 1.55 }}>
+              This applies to every school and event checkout unless that gallery already has its own tax setting. Use it for HST so new carts do not need per-gallery setup.
+            </p>
+
+            <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 18 }}>
+              <button
+                type="button"
+                onClick={() => setStudioTaxEnabled(!studioTaxEnabled)}
+                style={{
+                  width: 52,
+                  height: 28,
+                  borderRadius: 14,
+                  border: "none",
+                  background: studioTaxEnabled ? "#22c55e" : "#d1d5db",
+                  position: "relative",
+                  cursor: "pointer",
+                  transition: "background 0.2s",
+                  flexShrink: 0,
+                }}
+                aria-label="Toggle studio tax"
+              >
+                <div
+                  style={{
+                    width: 22,
+                    height: 22,
+                    borderRadius: 11,
+                    background: "#fff",
+                    position: "absolute",
+                    top: 3,
+                    left: studioTaxEnabled ? 27 : 3,
+                    transition: "left 0.2s",
+                    boxShadow: "0 1px 3px rgba(0,0,0,0.2)",
+                  }}
+                />
+              </button>
+              <div>
+                <div style={{ fontWeight: 900, color: "#0f172a" }}>
+                  {studioTaxEnabled ? "Tax is applied to checkout" : "Tax is off by default"}
+                </div>
+                <div style={{ fontSize: 13, color: "#64748b", marginTop: 2 }}>
+                  Gallery-specific tax still overrides this studio default.
+                </div>
+              </div>
+            </div>
+
+            <div style={{ display: "grid", gap: 16, gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))" }}>
+              <Field
+                label="Tax label"
+                value={studioTaxLabel}
+                onChange={setStudioTaxLabel}
+                placeholder="HST"
+                icon={<Receipt size={14} color="#94a3b8" />}
+              />
+              <NumberField
+                label="Tax percentage"
+                suffix="%"
+                value={studioTaxPercent}
+                onChange={setStudioTaxPercent}
+                min={0}
+                max={100}
+                step={0.01}
+                helper="Ontario HST is 13%"
+              />
+              <Field
+                label="Country"
+                value={studioTaxCountry}
+                onChange={(value) => setStudioTaxCountry(value.toUpperCase().slice(0, 2))}
+                placeholder="CA"
+              />
+            </div>
+
+            <div style={{ marginTop: 18, display: "flex", justifyContent: "flex-end" }}>
+              <button
+                type="button"
+                onClick={saveBranding}
+                disabled={saving}
+                style={{
+                  borderRadius: 12,
+                  background: saving ? "#94a3b8" : "#0f172a",
+                  color: "#fff",
+                  border: "none",
+                  padding: "12px 22px",
+                  fontWeight: 800,
+                  fontSize: 14,
+                  cursor: saving ? "wait" : "pointer",
+                  letterSpacing: "0.02em",
+                }}
+              >
+                {saving ? "Saving…" : "Save tax settings"}
               </button>
             </div>
           </div>

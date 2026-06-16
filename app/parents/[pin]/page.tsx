@@ -62,6 +62,7 @@ import {
   type PersistedCartItem,
 } from "@/lib/combine-cart-storage";
 import OrdersHistoryPanel from "@/components/parents/orders-history-panel";
+import { hasCalendarBoundaryPassed } from "@/lib/calendar-dates";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 type StudentRow = {
@@ -5146,8 +5147,7 @@ export default function ParentGalleryPage() {
     || schoolName
     || "Event Gallery";
   const orderingDisabled =
-    !!project?.order_due_date &&
-    new Date() > new Date(project.order_due_date);
+    hasCalendarBoundaryPassed(project?.order_due_date);
   const lateOrderNotice = useMemo(
     () => buildLateOrderNotice(lateOrderPolicy),
     [lateOrderPolicy],
@@ -8842,8 +8842,7 @@ export default function ParentGalleryPage() {
   }
 
   if (
-    project?.expiration_date &&
-    new Date() > new Date(project.expiration_date)
+    hasCalendarBoundaryPassed(project?.expiration_date)
   ) {
     return (
       <div

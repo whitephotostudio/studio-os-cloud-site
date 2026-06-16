@@ -28,6 +28,7 @@ import {
   type EventGalleryShareSettings,
 } from "@/lib/event-gallery-settings";
 import { resolvePackageProfileId } from "@/lib/package-profile-selection";
+import { calendarDateInputValue, cleanCalendarDateInput } from "@/lib/calendar-dates";
 
 type ProjectRow = Record<string, unknown>;
 type PackageProfileRow = {
@@ -607,9 +608,9 @@ export default function ProjectSettingsPage() {
       setProject(projectData);
       setProjectName(projectData.project_name || projectData.name || projectData.title || "");
       setPortalStatus(projectData.portal_status || projectData.status || "inactive");
-      setShootDate(projectData.shoot_date || projectData.event_date || "");
-      setOrderDueDate(projectData.order_due_date || "");
-      setExpirationDate(projectData.expiration_date || "");
+      setShootDate(calendarDateInputValue((projectData.shoot_date || projectData.event_date) as string | null | undefined));
+      setOrderDueDate(calendarDateInputValue(projectData.order_due_date as string | null | undefined));
+      setExpirationDate(calendarDateInputValue(projectData.expiration_date as string | null | undefined));
       const normalizedStoredSettings = normalizeEventGallerySettings(
         projectData.gallery_settings,
       );
@@ -689,9 +690,9 @@ export default function ProjectSettingsPage() {
 
     const payload: Record<string, unknown> = {
       portal_status: portalStatus,
-      shoot_date: shootDate || null,
-      order_due_date: orderDueDate || null,
-      expiration_date: expirationDate || null,
+      shoot_date: cleanCalendarDateInput(shootDate),
+      order_due_date: cleanCalendarDateInput(orderDueDate),
+      expiration_date: cleanCalendarDateInput(expirationDate),
       package_profile_id: packageProfileId || null,
       email_required: emailRequired,
       checkout_contact_required: checkoutContactRequired,

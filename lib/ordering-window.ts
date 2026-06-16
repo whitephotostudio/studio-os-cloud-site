@@ -1,3 +1,5 @@
+import { calendarBoundaryEnd } from "@/lib/calendar-dates";
+
 /**
  * Shared "is ordering still open?" check for the parents portal.
  *
@@ -7,9 +9,9 @@
  * caller hitting /api/portal/orders/create directly bypasses the UI.
  * This helper is the authoritative server-side gate.
  *
- * Both fields are optional. `order_due_date` means "no new orders after
- * this". `expiration_date` means "the whole gallery is archived". If
- * either has passed, ordering is closed.
+ * Both fields are optional. A selected calendar date stays open through
+ * the end of that studio business day. If either boundary has passed,
+ * ordering is closed.
  */
 export type OrderingWindowRow = {
   order_due_date?: string | null;
@@ -32,26 +34,9 @@ export function isOrderingWindowOpen(
 }
 
 /**
- * Parse a date string from Postgres. Accepts both `timestamp with time
- * zone` (projects uses these for shoot/event dates, schools for
- * everything) and plain `date` values (projects uses these for
- * order_due_date / expiration_date, which come back as "YYYY-MM-DD").
- *
- * For a bare "YYYY-MM-DD", we treat it as end-of-day in UTC — parents
- * anywhere in the world get the full calendar day to finish their order,
- * rather than having ordering snap shut at 00:00 UTC on the due date.
+ * Parse a date string from Postgres. Bare date values are treated as the
+ * end of that calendar day in the studio business timezone.
  */
 function parseBoundary(value: string | null | undefined): Date | null {
-  if (!value) return null;
-  const trimmed = value.trim();
-  if (!trimmed) return null;
-
-  // Bare date (YYYY-MM-DD): treat as 23:59:59.999 UTC that day.
-  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
-    const parsed = new Date(`${trimmed}T23:59:59.999Z`);
-    return Number.isNaN(parsed.getTime()) ? null : parsed;
-  }
-
-  const parsed = new Date(trimmed);
-  return Number.isNaN(parsed.getTime()) ? null : parsed;
+  return calendarBoundaryEnd(value);
 }

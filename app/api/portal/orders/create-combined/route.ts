@@ -45,6 +45,7 @@ import { z } from "zod";
 import { createDashboardServiceClient } from "@/lib/dashboard-auth";
 import { normalizeEventGallerySettings } from "@/lib/event-gallery-settings";
 import { calculateCheckoutTaxCents } from "@/lib/checkout-tax";
+import { hasCalendarBoundaryPassed } from "@/lib/calendar-dates";
 import { isOrderingWindowOpen } from "@/lib/ordering-window";
 import { getClientIp, rateLimit } from "@/lib/rate-limit";
 import { hasActiveSubscription } from "@/lib/subscription-gate";
@@ -157,10 +158,7 @@ function isDigitalCategory(category: string | null | undefined, name: string | n
 
 /** Past order_due_date? Returns true to force shipping + handling fee. */
 function isPastDueDate(dueDate: string | null | undefined): boolean {
-  if (!dueDate) return false;
-  const ms = Date.parse(dueDate);
-  if (!Number.isFinite(ms)) return false;
-  return ms < Date.now();
+  return hasCalendarBoundaryPassed(dueDate);
 }
 
 // ── Route handler ─────────────────────────────────────────────────────
@@ -314,13 +312,28 @@ export async function POST(request: NextRequest) {
     }
 
     // ── Photographer subscription gate + commerce knobs ─────────────────
-    const { data: photographer, error: photographerErr } = await sb
+    const photographerSelect =
+      "id, is_platform_admin, subscription_status, trial_starts_at, trial_ends_at, created_at, sibling_discount_tiers, shipping_fee_cents, late_handling_fee_percent, tax_enabled, tax_percent, tax_label, tax_country, tax_rates_by_country";
+    const photographerBaseSelect =
+      "id, is_platform_admin, subscription_status, trial_starts_at, trial_ends_at, created_at, sibling_discount_tiers, shipping_fee_cents, late_handling_fee_percent";
+    let photographerResult = await sb
       .from("photographers")
-      .select(
-        "id, is_platform_admin, subscription_status, trial_starts_at, trial_ends_at, created_at, sibling_discount_tiers, shipping_fee_cents, late_handling_fee_percent",
-      )
+      .select(photographerSelect)
       .eq("id", sharedPhotographerId)
       .maybeSingle();
+    if (
+      photographerResult.error &&
+      /tax_(enabled|percent|label|country|rates_by_country)/i.test(
+        photographerResult.error.message,
+      )
+    ) {
+      photographerResult = await sb
+        .from("photographers")
+        .select(photographerBaseSelect)
+        .eq("id", sharedPhotographerId)
+        .maybeSingle();
+    }
+    const { data: photographer, error: photographerErr } = photographerResult;
     if (photographerErr) throw photographerErr;
     if (!hasActiveSubscription(photographer)) {
       return NextResponse.json(
@@ -696,6 +709,8 @@ export async function POST(request: NextRequest) {
       const taxCents = calculateCheckoutTaxCents(
         orderSubtotalCents,
         grp.gallerySettings,
+        null,
+        photographer,
       );
       const orderTotalCents = orderSubtotalCents + taxCents;
 

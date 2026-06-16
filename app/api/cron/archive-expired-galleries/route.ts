@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { hasCalendarBoundaryPassed } from "@/lib/calendar-dates";
 import { createDashboardServiceClient } from "@/lib/dashboard-auth";
 import { normalizeEventGallerySettings } from "@/lib/event-gallery-settings";
 
@@ -38,9 +39,7 @@ function isEventProject(value: string | null | undefined) {
 }
 
 function isExpired(value: string | null | undefined) {
-  const dateValue = clean(value);
-  if (!dateValue) return false;
-  return new Date(dateValue) < new Date();
+  return hasCalendarBoundaryPassed(value);
 }
 
 export async function GET(request: NextRequest) {

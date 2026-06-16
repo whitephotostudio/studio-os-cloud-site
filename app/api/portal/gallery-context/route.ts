@@ -11,6 +11,7 @@ import {
   loadNoBgUrlMapForMediaRows,
 } from "@/lib/storage-folder";
 import { hasActiveSubscription } from "@/lib/subscription-gate";
+import { applyCheckoutTaxFallbackToSettings } from "@/lib/checkout-tax";
 import {
   buildSignedMediaUrls,
   SIGNED_URL_TTL_PARENTS_PORTAL_SECONDS,
@@ -435,7 +436,7 @@ export async function POST(request: NextRequest) {
           expiration_date: activeSchool.expiration_date ?? null,
         }
       : null;
-    const publicGallerySettings = sanitizeEventGallerySettingsForClient(
+    let publicGallerySettings = sanitizeEventGallerySettingsForClient(
       activeSchool?.gallery_settings,
     );
     const downloadAccess = activeSchool
@@ -507,6 +508,17 @@ export async function POST(request: NextRequest) {
       }
 
       const photographerDefaultProfileId = ((photographerResult.data as Record<string, unknown> | null)?.default_package_profile_id as string | null) ?? null;
+      const { data: taxRow, error: taxError } = await service
+        .from("photographers")
+        .select("tax_enabled,tax_percent,tax_label,tax_country,tax_rates_by_country")
+        .eq("id", activeSchool.photographer_id)
+        .maybeSingle();
+      if (!taxError) {
+        publicGallerySettings = applyCheckoutTaxFallbackToSettings(
+          publicGallerySettings,
+          (taxRow as Record<string, unknown> | null) ?? null,
+        );
+      }
       const availablePackages = (packagesResult.data ?? []) as PackageRow[];
       packageRows = filterPackagesForProfile(availablePackages, {
         selectedProfileId:

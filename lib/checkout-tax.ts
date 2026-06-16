@@ -6,6 +6,19 @@ export type CheckoutTaxSettings = {
   ratesByCountry: Record<string, number>;
 };
 
+export type StudioTaxSettingsSource = {
+  tax_enabled?: unknown;
+  tax_percent?: unknown;
+  tax_label?: unknown;
+  tax_country?: unknown;
+  tax_rates_by_country?: unknown;
+  taxEnabled?: unknown;
+  taxPercent?: unknown;
+  taxLabel?: unknown;
+  taxCountry?: unknown;
+  taxRatesByCountry?: unknown;
+} | null | undefined;
+
 function asObject(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -47,6 +60,7 @@ function parseRates(value: unknown): Record<string, number> {
 export function resolveCheckoutTaxSettings(
   gallerySettings: unknown,
   countryOverride?: string | null,
+  fallbackSettings?: StudioTaxSettingsSource,
 ): CheckoutTaxSettings {
   const settings = asObject(gallerySettings);
   const commerce = asObject(settings.commerce);
@@ -67,13 +81,46 @@ export function resolveCheckoutTaxSettings(
     100,
     Math.max(0, ratesByCountry[country] ?? basePercent),
   );
-
-  return {
+  const galleryTax: CheckoutTaxSettings = {
     enabled: asBoolean(commerce.taxEnabled ?? extras.taxEnabled, false) && percent > 0,
     percent,
     label: asString(commerce.taxLabel ?? extras.taxLabel, "Tax"),
     country,
     ratesByCountry,
+  };
+
+  if (galleryTax.enabled || !fallbackSettings) return galleryTax;
+
+  const fallback = asObject(fallbackSettings);
+  const fallbackRatesByCountry = {
+    ...parseRates(fallback.tax_rates_by_country),
+    ...parseRates(fallback.taxRatesByCountry),
+  };
+  const fallbackCountry = normalizeCountry(
+    countryOverride ||
+      fallback.tax_country ||
+      fallback.taxCountry ||
+      commerce.taxCountry ||
+      extras.taxCountry,
+    "CA",
+  );
+  const fallbackBasePercent = asNumber(
+    fallback.tax_percent ?? fallback.taxPercent,
+    fallbackRatesByCountry[fallbackCountry] ?? 0,
+  );
+  const fallbackPercent = Math.min(
+    100,
+    Math.max(0, fallbackRatesByCountry[fallbackCountry] ?? fallbackBasePercent),
+  );
+
+  return {
+    enabled:
+      asBoolean(fallback.tax_enabled ?? fallback.taxEnabled, false) &&
+      fallbackPercent > 0,
+    percent: fallbackPercent,
+    label: asString(fallback.tax_label ?? fallback.taxLabel, galleryTax.label),
+    country: fallbackCountry,
+    ratesByCountry: fallbackRatesByCountry,
   };
 }
 
@@ -81,8 +128,45 @@ export function calculateCheckoutTaxCents(
   taxableCents: number,
   gallerySettings: unknown,
   countryOverride?: string | null,
+  fallbackSettings?: StudioTaxSettingsSource,
 ) {
-  const tax = resolveCheckoutTaxSettings(gallerySettings, countryOverride);
+  const tax = resolveCheckoutTaxSettings(
+    gallerySettings,
+    countryOverride,
+    fallbackSettings,
+  );
   if (!tax.enabled || taxableCents <= 0) return 0;
   return Math.round(taxableCents * (tax.percent / 100));
+}
+
+export function applyCheckoutTaxFallbackToSettings<TSettings>(
+  gallerySettings: TSettings,
+  fallbackSettings?: StudioTaxSettingsSource,
+) {
+  const tax = resolveCheckoutTaxSettings(gallerySettings, null, fallbackSettings);
+  if (!tax.enabled) return gallerySettings;
+
+  const settings = asObject(gallerySettings);
+  const extras = asObject(settings.extras);
+  const commerce = asObject(settings.commerce);
+
+  return {
+    ...settings,
+    extras: {
+      ...extras,
+      taxEnabled: tax.enabled,
+      taxPercent: tax.percent,
+      taxLabel: tax.label,
+      taxCountry: tax.country,
+      taxRatesByCountry: tax.ratesByCountry,
+    },
+    commerce: {
+      ...commerce,
+      taxEnabled: tax.enabled,
+      taxPercent: tax.percent,
+      taxLabel: tax.label,
+      taxCountry: tax.country,
+      taxRatesByCountry: tax.ratesByCountry,
+    },
+  } as TSettings;
 }

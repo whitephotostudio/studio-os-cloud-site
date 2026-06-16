@@ -8,6 +8,7 @@ import {
   buildSchoolCandidateFolders,
   loadFolderMediaRows,
 } from "@/lib/storage-folder";
+import { hasCalendarBoundaryPassed } from "@/lib/calendar-dates";
 
 export const dynamic = "force-dynamic";
 
@@ -62,7 +63,7 @@ async function validateSchoolDownloadAccess(params: {
     return { ok: false as const, status: 404, message: "School gallery not found." };
   }
 
-  if (schoolRow.expiration_date && new Date(schoolRow.expiration_date) < new Date()) {
+  if (hasCalendarBoundaryPassed(schoolRow.expiration_date)) {
     return { ok: false as const, status: 409, message: "This gallery has expired." };
   }
 

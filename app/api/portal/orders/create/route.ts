@@ -149,6 +149,11 @@ type PhotographerGateRow = {
   trial_starts_at?: string | null;
   trial_ends_at?: string | null;
   created_at?: string | null;
+  tax_enabled?: boolean | null;
+  tax_percent?: number | null;
+  tax_label?: string | null;
+  tax_country?: string | null;
+  tax_rates_by_country?: Record<string, number> | null;
 };
 
 type OrderItemInsert = {
@@ -696,14 +701,30 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { data: photographer, error: photographerError } = await sb
+    const photographerSelect =
+      "id,is_platform_admin,subscription_status,trial_starts_at,trial_ends_at,created_at,tax_enabled,tax_percent,tax_label,tax_country,tax_rates_by_country";
+    const photographerBaseSelect =
+      "id,is_platform_admin,subscription_status,trial_starts_at,trial_ends_at,created_at";
+    let photographerResult = await sb
       .from("photographers")
-      .select(
-        "id,is_platform_admin,subscription_status,trial_starts_at,trial_ends_at,created_at",
-      )
+      .select(photographerSelect)
       .eq("id", photographerId)
       .maybeSingle<PhotographerGateRow>();
 
+    if (
+      photographerResult.error &&
+      /tax_(enabled|percent|label|country|rates_by_country)/i.test(
+        photographerResult.error.message,
+      )
+    ) {
+      photographerResult = await sb
+        .from("photographers")
+        .select(photographerBaseSelect)
+        .eq("id", photographerId)
+        .maybeSingle<PhotographerGateRow>();
+    }
+
+    const { data: photographer, error: photographerError } = photographerResult;
     if (photographerError) throw photographerError;
     if (!hasActiveSubscription(photographer)) {
       return NextResponse.json(
@@ -903,6 +924,8 @@ export async function POST(request: NextRequest) {
     const taxCents = calculateCheckoutTaxCents(
       orderSubtotalCents,
       gallerySettingsForTax,
+      null,
+      photographer,
     );
     const orderTotalCents = orderSubtotalCents + taxCents;
 

@@ -11,6 +11,7 @@ import {
 } from "@/lib/storage-images";
 import { filterPackagesForProfile } from "@/lib/package-profile-selection";
 import { hasActiveSubscription } from "@/lib/subscription-gate";
+import { applyCheckoutTaxFallbackToSettings } from "@/lib/checkout-tax";
 
 export const dynamic = "force-dynamic";
 
@@ -456,7 +457,7 @@ export async function POST(request: NextRequest) {
     const normalizedGallerySettings = normalizeEventGallerySettings(
       projectRow.gallery_settings,
     );
-    const publicGallerySettings = sanitizeEventGallerySettingsForClient(
+    let publicGallerySettings = sanitizeEventGallerySettingsForClient(
       projectRow.gallery_settings,
     );
     let packages: PackageRow[] = [];
@@ -553,6 +554,21 @@ export async function POST(request: NextRequest) {
 
       const photographerDefaultProfileId = ((photographerResult.data as Record<string, unknown> | null)?.default_package_profile_id as string | null) ?? null;
       const availablePackages = (packagesResult.data ?? []) as PackageRow[];
+      let studioTaxSettings: Record<string, unknown> | null = null;
+      if (projectRow.photographer_id) {
+        const { data: taxRow, error: taxError } = await service
+          .from("photographers")
+          .select("tax_enabled,tax_percent,tax_label,tax_country,tax_rates_by_country")
+          .eq("id", projectRow.photographer_id)
+          .maybeSingle();
+        if (!taxError) {
+          studioTaxSettings = (taxRow as Record<string, unknown> | null) ?? null;
+          publicGallerySettings = applyCheckoutTaxFallbackToSettings(
+            publicGallerySettings,
+            studioTaxSettings,
+          );
+        }
+      }
       packages = filterPackagesForProfile(availablePackages, {
         selectedProfileId:
           projectRow.package_profile_id ||

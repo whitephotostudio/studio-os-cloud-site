@@ -25,6 +25,7 @@ import {
 } from "@/lib/event-gallery-settings";
 import { resolvePackageProfileId } from "@/lib/package-profile-selection";
 import { WhatsNewDot } from "@/components/whats-new-dot";
+import { calendarDateInputValue, cleanCalendarDateInput } from "@/lib/calendar-dates";
 
 type SchoolRow = {
   school_name?: string | null;
@@ -259,10 +260,10 @@ export default function SchoolSettingsPage() {
       const storedSettings = normalizeEventGallerySettings(schoolData.gallery_settings);
       setSchoolName(schoolData.school_name || "");
       setPortalStatus(schoolData.status || "inactive");
-      setShootDate(schoolData.shoot_date || "");
-      setOrderDueDate(schoolData.order_due_date || "");
-      setArchiveDate(((schoolData as { archive_date?: string | null }).archive_date as string | null) || "");
-      setExpirationDate(schoolData.expiration_date || "");
+      setShootDate(calendarDateInputValue(schoolData.shoot_date));
+      setOrderDueDate(calendarDateInputValue(schoolData.order_due_date));
+      setArchiveDate(calendarDateInputValue(((schoolData as { archive_date?: string | null }).archive_date as string | null) || ""));
+      setExpirationDate(calendarDateInputValue(schoolData.expiration_date));
       setPackageProfileId(
         resolvePackageProfileId({
           selectedProfileId:
@@ -340,10 +341,10 @@ export default function SchoolSettingsPage() {
     const payload: Partial<SchoolRow> = {
       school_name: schoolName || null,
       status: portalStatus || null,
-      shoot_date: shootDate || null,
-      order_due_date: orderDueDate || null,
-      archive_date: archiveDate || null,
-      expiration_date: expirationDate || null,
+      shoot_date: cleanCalendarDateInput(shootDate),
+      order_due_date: cleanCalendarDateInput(orderDueDate),
+      archive_date: cleanCalendarDateInput(archiveDate),
+      expiration_date: cleanCalendarDateInput(expirationDate),
       package_profile_id: packageProfileId || null,
       email_required: true,
       checkout_contact_required: checkoutContactRequired,

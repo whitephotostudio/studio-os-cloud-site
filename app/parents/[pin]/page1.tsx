@@ -26,6 +26,7 @@ import {
   Eye,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { hasCalendarBoundaryPassed } from "@/lib/calendar-dates";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 type StudentRow = {
@@ -1596,9 +1597,7 @@ export default function ParentGalleryPage() {
   }, [checkoutStatus, sessionId, placed]);
 
   const selectedImage = images[selectedImageIndex] ?? null;
-  const orderingDisabled =
-    !!project?.order_due_date &&
-    new Date() > new Date(project.order_due_date);
+  const orderingDisabled = hasCalendarBoundaryPassed(project?.order_due_date);
 
   function goBack() {
     router.push("/parents");
@@ -2487,10 +2486,7 @@ export default function ParentGalleryPage() {
     );
   }
 
-  if (
-    project?.expiration_date &&
-    new Date() > new Date(project.expiration_date)
-  ) {
+  if (hasCalendarBoundaryPassed(project?.expiration_date)) {
     return (
       <div
         style={{

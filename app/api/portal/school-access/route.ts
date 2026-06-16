@@ -4,6 +4,7 @@ import { getClientIp, rateLimit } from "@/lib/rate-limit";
 import {
   sanitizeEventGallerySettingsForClient,
 } from "@/lib/event-gallery-settings";
+import { applyCheckoutTaxFallbackToSettings } from "@/lib/checkout-tax";
 import { buildSchoolGalleryDownloadAccess } from "@/lib/school-gallery-downloads";
 import {
   buildSignedMediaUrls,
@@ -15,6 +16,7 @@ import {
   loadFolderMediaRows,
   loadNoBgUrlMapForMediaRows,
 } from "@/lib/storage-folder";
+import { hasCalendarBoundaryPassed } from "@/lib/calendar-dates";
 
 export const dynamic = "force-dynamic";
 
@@ -363,7 +365,7 @@ export async function POST(request: NextRequest) {
       order_due_date: string | null;
     };
 
-    if (selectedSchool.expiration_date && new Date(selectedSchool.expiration_date) < new Date()) {
+    if (hasCalendarBoundaryPassed(selectedSchool.expiration_date)) {
       return NextResponse.json({ ok: false, step: "school_closed" }, { status: 409 });
     }
 
@@ -537,7 +539,7 @@ export async function POST(request: NextRequest) {
           [primaryStudent?.class_name, primaryStudent?.folder_name],
         );
 
-        const publicGallerySettings = sanitizeEventGallerySettingsForClient(
+        let publicGallerySettings = sanitizeEventGallerySettingsForClient(
           gallerySchool.gallery_settings,
         );
         const photographerDefaultProfileId = ((photographerResult.data as Record<string, unknown> | null)?.default_package_profile_id as string | null) ?? null;
@@ -550,6 +552,17 @@ export async function POST(request: NextRequest) {
         }).packages;
 
         const photographer = photographerResult.data;
+        const { data: taxRow, error: taxError } = await service
+          .from("photographers")
+          .select("tax_enabled,tax_percent,tax_label,tax_country,tax_rates_by_country")
+          .eq("id", gallerySchool.photographer_id)
+          .maybeSingle();
+        if (!taxError) {
+          publicGallerySettings = applyCheckoutTaxFallbackToSettings(
+            publicGallerySettings,
+            (taxRow as Record<string, unknown> | null) ?? null,
+          );
+        }
         const watermarkEnabled = photographer?.watermark_enabled !== false;
         const resolvedLogoUrl = looksLikeImageAssetUrl(photographer?.watermark_logo_url)
           ? photographer?.watermark_logo_url
