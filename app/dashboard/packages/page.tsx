@@ -17,6 +17,7 @@ import {
 type PackageItem =
   | { name?: string; qty?: number | string; type?: string; size?: string; finish?: string; composite?: boolean | null }
   | string;
+type PackageItemLike = PackageItem | { name: string; qty: number; composite?: boolean };
 
 type Pkg = {
   id: string;
@@ -186,6 +187,26 @@ function isCompositePackageItem(item: PackageItem): boolean {
 
 function packageHasCompositeItems(pkg: Pkg): boolean {
   return (pkg.items ?? []).some(isCompositePackageItem);
+}
+
+function packageItemQty(item: PackageItemLike): number {
+  if (typeof item === "string") return 1;
+  const qty = Number.parseInt(String(item.qty ?? 1), 10);
+  return Number.isFinite(qty) && qty > 0 ? qty : 1;
+}
+
+function packageIncludedItemCount(items: PackageItemLike[]) {
+  return items.reduce((sum, item) => sum + packageItemQty(item), 0);
+}
+
+function packageSetSummary(items: PackageItemLike[]) {
+  const validItems = items.filter((item) => {
+    if (typeof item === "string") return item.trim();
+    return (item.name ?? "").trim();
+  });
+  const count = packageIncludedItemCount(validItems);
+  if (count <= 0) return "Add contents to define what one package set includes.";
+  return `One package set includes ${count} item${count === 1 ? "" : "s"}. Client quantity multiplies this set and the price.`;
 }
 
 function genProfileId(): string {
@@ -1488,7 +1509,10 @@ export default function PackagesPage() {
               {/* Contents */}
               <div style={{ marginBottom: 24 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-                  <label style={{ fontSize: 13, fontWeight: 600, color: "#333" }}>Package Contents</label>
+                  <label style={{ fontSize: 13, fontWeight: 600, color: "#333" }}>Package Contents (inside one set)</label>
+                </div>
+                <div style={{ background: "#f8fafc", border: "1px solid #e5e7eb", borderRadius: 10, padding: "10px 12px", marginBottom: 12, fontSize: 12, color: "#475569", lineHeight: 1.45 }}>
+                  {packageSetSummary(editItems)}
                 </div>
                 {editItems.map((item, i) => {
                   const isCompositeItem = !!item.composite;
@@ -1542,7 +1566,7 @@ export default function PackagesPage() {
                       )}
                     </div>
                     <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                      <span style={{ fontSize: 12, color: "#888", fontWeight: 500 }}>Qty</span>
+                      <span style={{ fontSize: 12, color: "#888", fontWeight: 500 }}>Inside set</span>
                       <select
                         value={item.qty}
                         onChange={e => { const n = [...editItems]; n[i] = { ...n[i], qty: parseInt(e.target.value) || 1 }; setEditItems(n); }}
@@ -1791,11 +1815,16 @@ export default function PackagesPage() {
                     )}
                   </div>
                   {pkg.items?.length > 0 && (
-                    <div style={{ fontSize: 13, color: "#888" }}>
-                      {(pkg.items as PackageItem[]).map((item, j) => (
-                        <span key={j}>{formatItem(item)}{j < pkg.items.length - 1 ? " · " : ""}</span>
-                      ))}
-                    </div>
+                    <>
+                      <div style={{ fontSize: 13, color: "#888" }}>
+                        {(pkg.items as PackageItem[]).map((item, j) => (
+                          <span key={j}>{formatItem(item)}{j < pkg.items.length - 1 ? " · " : ""}</span>
+                        ))}
+                      </div>
+                      <div style={{ fontSize: 11, color: "#999", marginTop: 3 }}>
+                        {packageSetSummary(pkg.items as PackageItem[])}
+                      </div>
+                    </>
                   )}
                   {pkg.description && (
                     <div style={{ fontSize: 12, color: "#aaa", marginTop: 2 }}>{pkg.description}</div>

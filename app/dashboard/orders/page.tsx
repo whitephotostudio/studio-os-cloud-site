@@ -618,6 +618,20 @@ function cartSnapshotEntries(snapshot: unknown) {
   return Array.isArray(snapshot) ? snapshot as Array<Record<string, unknown>> : [];
 }
 
+function snapshotEntryQuantity(entry: Record<string, unknown>) {
+  const quantity = Number(entry.quantity ?? 1);
+  return Number.isFinite(quantity) && quantity > 0 ? Math.round(quantity) : 1;
+}
+
+function orderPackageSetQuantity(order: Order | null | undefined) {
+  if (!order) return 1;
+  const quantities = cartSnapshotEntries(order.cart_snapshot)
+    .map(snapshotEntryQuantity)
+    .filter((qty) => qty > 0);
+  if (quantities.length === 0) return 1;
+  return quantities.reduce((sum, qty) => sum + qty, 0);
+}
+
 function snapshotEntryImageUrls(entry: Record<string, unknown>) {
   const urls: string[] = [];
   const slots = Array.isArray(entry.slots) ? entry.slots as Array<Record<string, unknown>> : [];
@@ -707,7 +721,9 @@ function reconcilePaymentBreakdownLines(order: Order, lines: PaymentBreakdownLin
 
   for (const line of merged) {
     if (!line.isBackdrop) {
-      line.detail = paymentDetailForCounts(line.slotCount, line.photoKeys, line.detail);
+      if (!/package sets?/i.test(line.detail)) {
+        line.detail = paymentDetailForCounts(line.slotCount, line.photoKeys, line.detail);
+      }
     }
   }
 
@@ -754,10 +770,18 @@ function orderPaymentBreakdownLines(order: Order): PaymentBreakdownLine[] {
       `Package ${entryIndex + 1}`;
     const cents = matchedItems.reduce((sum, item) => sum + financialLineItemAmountCents(item), 0);
     if (cents > 0 || matchedItems.length > 0) {
+      const setQuantity = snapshotEntryQuantity(entry);
+      const printDetail = paymentDetailForCounts(
+        matchedItems.length || urls.length,
+        matchedItems.map((item) => photoKeyForPaymentLine(item.sku)),
+        "Package",
+      );
       lines.push({
         key: `${order.id}-snapshot-payment-${entryIndex}`,
         label,
-        detail: "Package",
+        detail: setQuantity > 1
+          ? `${setQuantity} package sets - ${printDetail}`
+          : printDetail,
         cents,
         slotCount: matchedItems.length || urls.length,
         photoKeys: matchedItems.map((item) => photoKeyForPaymentLine(item.sku)),
@@ -1947,6 +1971,10 @@ function OrdersPageContent() {
   const selectedPackageComponents = useMemo(
     () => buildPackageComponentSummary(selectedOrderedPhotoGroups),
     [selectedOrderedPhotoGroups],
+  );
+  const selectedPackageSetQuantity = useMemo(
+    () => orderPackageSetQuantity(selected),
+    [selected],
   );
   const selectedBackdropAddOns = useMemo(
     () => (selected ? orderBackdropAddOns(selected) : []),
@@ -3182,6 +3210,7 @@ function OrdersPageContent() {
                 <div style={{ fontSize: 18, fontWeight: 800, color: textPrimary }}>{selected.package_name || "Package"}</div>
               </div>
               <div style={{ fontSize: 13, color: textMuted, marginBottom: 16 }}>
+                {selectedPackageSetQuantity > 1 ? `${selectedPackageSetQuantity} package sets · ` : ""}
                 {selectedOrderedPhotoGroups.reduce((sum, g) => sum + g.items.length, 0)} included item{selectedOrderedPhotoGroups.reduce((sum, g) => sum + g.items.length, 0) === 1 ? "" : "s"}
                 {" · "}{selectedOrderedPhotoGroups.length} photo{selectedOrderedPhotoGroups.length === 1 ? "" : "s"}
               </div>
@@ -3195,11 +3224,13 @@ function OrdersPageContent() {
                         <div style={{ minWidth: 0 }}>
                           <div style={{ fontSize: 13, fontWeight: 800, color: textPrimary, lineHeight: 1.35 }}>{component.label}</div>
                           <div style={{ fontSize: 11, color: textMuted, marginTop: 2 }}>
-                            {component.slotTotal && component.assignedSlots <= component.slotTotal
-                              ? `${component.assignedSlots} of ${component.slotTotal} package slot${component.slotTotal === 1 ? "" : "s"} assigned`
-                              : component.slotTotal
-                                ? `${component.assignedSlots} package slot${component.assignedSlots === 1 ? "" : "s"} assigned`
-                              : `Qty ${component.assignedSlots}`}
+                            {selectedPackageSetQuantity > 1 && component.slotTotal && component.slotTotal % selectedPackageSetQuantity === 0
+                              ? `${selectedPackageSetQuantity} package sets x ${component.slotTotal / selectedPackageSetQuantity} slot${component.slotTotal / selectedPackageSetQuantity === 1 ? "" : "s"} = ${component.slotTotal} total`
+                              : component.slotTotal && component.assignedSlots <= component.slotTotal
+                                ? `${component.assignedSlots} of ${component.slotTotal} package slot${component.slotTotal === 1 ? "" : "s"} assigned`
+                                : component.slotTotal
+                                  ? `${component.assignedSlots} package slot${component.assignedSlots === 1 ? "" : "s"} assigned`
+                                  : `Qty ${component.assignedSlots}`}
                           </div>
                           {component.assignments.length > 0 ? (
                             <div style={{ display: "flex", flexDirection: "column", gap: 3, marginTop: 6 }}>

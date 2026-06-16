@@ -1984,6 +1984,31 @@ function buildSlots(pkg: PackageRow, orderQty: number = 1, compositeImageUrl?: s
   return slots;
 }
 
+function packageConfiguredItemCount(pkg: PackageRow | null | undefined) {
+  if (!pkg) return 0;
+  return (pkg.items ?? []).reduce((sum, item) => {
+    if (typeof item === "string") return sum + 1;
+    if (!item) return sum;
+    return sum + (parsePositiveQty(item.qty) ?? 1);
+  }, 0);
+}
+
+function packageQuantitySummary(pkg: PackageRow, orderQty: number) {
+  const setCount = Math.max(1, orderQty);
+  const includedCount = packageConfiguredItemCount(pkg);
+  if (includedCount <= 0) {
+    return setCount > 1
+      ? `${setCount} copies. Price updates with quantity.`
+      : "Choose how many of this item to order.";
+  }
+
+  const includedLabel = `included item${includedCount === 1 ? "" : "s"}`;
+  if (setCount === 1) return `1 package set includes ${includedCount} ${includedLabel}.`;
+
+  const total = includedCount * setCount;
+  return `${setCount} package sets x ${includedCount} ${includedLabel} = ${total} total item${total === 1 ? "" : "s"}.`;
+}
+
 function deduplicatePackages(pkgs: PackageRow[]): PackageRow[] {
   const seen = new Set<string>();
   return pkgs.filter((pkg) => {
@@ -11939,6 +11964,7 @@ export default function ParentGalleryPage() {
                       const previewVariant = cardPreviewVariant[pkg.id] ?? 0;
                       const chosenQty = getChosenQty(pkg.id);
                       const digitalPackLimit = getDigitalFavoritesPackLimit(pkg);
+                      const packageLineTotalCents = pkg.price_cents * Math.max(1, chosenQty);
                       return (
                       <div
                         key={pkg.id}
@@ -12060,7 +12086,7 @@ export default function ParentGalleryPage() {
                               <div style={{ fontSize: 12, color: "#bfbfbf", marginTop: 2 }}>
                                 {digitalPackLimit
                                   ? `Includes up to ${digitalPackLimit} favorited digital image${digitalPackLimit === 1 ? "" : "s"}.`
-                                  : "Choose how many of this item to order."}
+                                  : packageQuantitySummary(pkg, chosenQty)}
                               </div>
                             </div>
                             {digitalPackLimit ? (
@@ -12087,6 +12113,13 @@ export default function ParentGalleryPage() {
                               </div>
                             )}
                           </div>
+
+                          {!digitalPackLimit && chosenQty > 1 ? (
+                            <div style={{ marginTop: 10, display: "flex", justifyContent: "space-between", gap: 12, fontSize: 12, color: "#d7d7d7", lineHeight: 1.35 }}>
+                              <span>${(pkg.price_cents / 100).toFixed(2)} per package set</span>
+                              <strong style={{ color: "#fff" }}>${(packageLineTotalCents / 100).toFixed(2)} total</strong>
+                            </div>
+                          ) : null}
 
                           <div style={{ marginTop: 14 }}>
                             <button
@@ -12671,7 +12704,9 @@ export default function ParentGalleryPage() {
                                       ? item.digitalLimit
                                         ? `${item.digitalSelections?.length ?? 0} of ${item.digitalLimit} digital image${item.digitalLimit === 1 ? "" : "s"} selected`
                                         : `${item.quantity} digital download${item.quantity === 1 ? "" : "s"}`
-                                      : `${item.slots.length} print slot${item.slots.length === 1 ? "" : "s"}`}
+                                      : item.quantity > 1
+                                        ? `${item.quantity} package sets • ${item.slots.length} print slot${item.slots.length === 1 ? "" : "s"} total`
+                                        : `${item.slots.length} print slot${item.slots.length === 1 ? "" : "s"}`}
                                     {item.laneStudentName ? ` • ${item.laneStudentName}` : ""}
                                     {item.compositeTitle ? ` • ${item.compositeTitle}` : ""}
                                     {item.backdrop ? ` • ${item.backdrop.name}` : ""}
@@ -12777,6 +12812,12 @@ export default function ParentGalleryPage() {
                             ${(currentDraftCartItem.lineTotalCents / 100).toFixed(2)}
                           </div>
                         </div>
+                        {currentDraftCartItem.category !== "digital" && currentDraftCartItem.quantity > 1 ? (
+                          <div style={{ marginTop: -4, marginBottom: 10, fontSize: 12, color: "#bfbfbf", lineHeight: 1.5 }}>
+                            {currentDraftCartItem.quantity} package sets x ${(currentDraftCartItem.packageSubtotalCents / Math.max(currentDraftCartItem.quantity, 1) / 100).toFixed(2)}
+                            {" = "}${(currentDraftCartItem.packageSubtotalCents / 100).toFixed(2)} before add-ons.
+                          </div>
+                        ) : null}
 
                         {currentDraftCartItem.category !== "digital" && (
                           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
