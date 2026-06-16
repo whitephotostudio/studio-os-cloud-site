@@ -165,6 +165,15 @@ type PackageComponentSummary = {
   assignments: Array<{ poseIndex: number; fileName: string; slotText: string }>;
 };
 
+type BackdropAddOnSummary = {
+  key: string;
+  label: string;
+  detail: string;
+  imageUrl: string;
+  cents: number;
+  appliedPhotoCount: number;
+};
+
 const STATUS_COLORS: Record<string, { bg: string; color: string; label: string }> = {
   new: { bg: "#fef2f2", color: "#ef4444", label: "New" },
   reviewed: { bg: "#fffbeb", color: "#d97706", label: "Reviewed" },
@@ -554,6 +563,47 @@ function orderFinancialLines(order: Order) {
     isBackdrop: false,
     isIncluded: false,
   }];
+}
+
+function backdropNameFromOrder(order: Order) {
+  const noteMatch = noteTextForOrder(order).match(/BACKDROP:\s*([^\n(]+)/i);
+  return clean(noteMatch?.[1]);
+}
+
+function orderBackdropAddOns(order: Order) {
+  const appliedPhotoCount = cartSnapshotToOrderItems(order.cart_snapshot).filter((item) => item.backdrop && clean(item.sku)).length;
+  const noteName = backdropNameFromOrder(order);
+  const items = (order.items ?? []).filter(isBackdropOrderItem);
+  const addOns = items.map((item, index) => {
+    const rawLabel = orderItemBaseLabel(item).replace(/^★\s*/, "");
+    const label = rawLabel
+      .replace(/^premium\s+backdrop\s*:?\s*/i, "")
+      .trim() || noteName || "Backdrop";
+    return {
+      key: item.id ?? `${order.id}-backdrop-${index}`,
+      label,
+      detail: rawLabel || `Backdrop: ${label}`,
+      imageUrl: dashboardPhotoUrl(item.sku),
+      cents: financialLineItemAmountCents(item),
+      appliedPhotoCount,
+    };
+  });
+
+  if (addOns.length > 0) return addOns;
+  const snapshotBackdrop = cartSnapshotToOrderItems(order.cart_snapshot).find((item) => item.backdrop)?.backdrop;
+  const snapshotImageUrl = dashboardPhotoUrl(snapshotBackdrop?.image_url ?? snapshotBackdrop?.imageUrl);
+  if (snapshotBackdrop || noteName) {
+    return [{
+      key: `${order.id}-snapshot-backdrop`,
+      label: noteName || clean(snapshotBackdrop?.name) || "Backdrop",
+      detail: "Selected backdrop",
+      imageUrl: snapshotImageUrl,
+      cents: Number(snapshotBackdrop?.price_cents ?? snapshotBackdrop?.priceCents ?? 0) || 0,
+      appliedPhotoCount,
+    }];
+  }
+
+  return [] as BackdropAddOnSummary[];
 }
 
 async function triggerDownload(url: string, filename?: string) {
@@ -1636,6 +1686,10 @@ function OrdersPageContent() {
   const selectedPackageComponents = useMemo(
     () => buildPackageComponentSummary(selectedOrderedPhotoGroups),
     [selectedOrderedPhotoGroups],
+  );
+  const selectedBackdropAddOns = useMemo(
+    () => (selected ? orderBackdropAddOns(selected) : []),
+    [selected],
   );
 
   const combinedRows = useMemo<CombinedOrderGroup[]>(() => {
@@ -2751,6 +2805,46 @@ function OrdersPageContent() {
 
               <div style={{ borderTop: `1px solid ${borderColor}`, marginBottom: 16 }} />
 
+              {selectedBackdropAddOns.length > 0 ? (
+                <div style={{ background: "#111827", color: "#fff", borderRadius: 16, padding: 14, marginBottom: 16 }}>
+                  <div style={{ fontSize: 11, color: "#cbd5e1", fontWeight: 900, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 10 }}>Selected Backdrop</div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                    {selectedBackdropAddOns.map((backdrop) => (
+                      <div key={backdrop.key} style={{ display: "flex", gap: 12, alignItems: "center" }}>
+                        <div style={{ width: 58, height: 74, borderRadius: 10, overflow: "hidden", background: "#1f2937", border: "1px solid rgba(255,255,255,0.16)", flexShrink: 0 }}>
+                          {backdrop.imageUrl ? (
+                            <img
+                              loading="lazy"
+                              src={backdrop.imageUrl}
+                              alt=""
+                              style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                              onError={(event) => {
+                                event.currentTarget.style.display = "none";
+                              }}
+                            />
+                          ) : (
+                            <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "#94a3b8" }}>
+                              <ImageIcon size={20} />
+                            </div>
+                          )}
+                        </div>
+                        <div style={{ minWidth: 0, flex: 1 }}>
+                          <div style={{ fontSize: 15, fontWeight: 900, lineHeight: 1.25 }}>Backdrop: {backdrop.label}</div>
+                          <div style={{ fontSize: 12, color: "#cbd5e1", marginTop: 3, lineHeight: 1.4 }}>
+                            Applied to {backdrop.appliedPhotoCount || selectedOrderedPhotoGroups.filter((group) => isDashboardCompositeReference(group.url)).length || "selected"} photo{(backdrop.appliedPhotoCount || selectedOrderedPhotoGroups.filter((group) => isDashboardCompositeReference(group.url)).length) === 1 ? "" : "s"}
+                          </div>
+                        </div>
+                        {backdrop.cents > 0 ? (
+                          <div style={{ flexShrink: 0, fontSize: 14, fontWeight: 900 }}>
+                            {moneyFromCents(backdrop.cents, selected.currency?.toUpperCase() || "CAD")}
+                          </div>
+                        ) : null}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+
               {(() => {
                 const currency = selected.currency?.toUpperCase() || "CAD";
                 const subtotalCents = resolveOrderSubtotalCents(selected, selected.items);
@@ -2892,6 +2986,11 @@ function OrdersPageContent() {
                           <a href={isDashboardCompositeReference(photoGroup.url) ? photoGroup.url : dashboardPhotoUrl(photoGroup.originalUrl) || photoGroup.url} target="_blank" rel="noopener noreferrer" style={{ color: "#0ea5e9", fontSize: 12, fontWeight: 600, textDecoration: "none", display: "block", marginTop: 6 }}>
                             {isDashboardCompositeReference(photoGroup.url) ? "Download Print File" : "Download Original"}
                           </a>
+                        ) : null}
+                        {isDashboardCompositeReference(photoGroup.url) && selectedBackdropAddOns[0] ? (
+                          <div style={{ marginTop: 5, fontSize: 11, color: "#111827", fontWeight: 900, lineHeight: 1.3 }}>
+                            Backdrop: {selectedBackdropAddOns[0].label} applied
+                          </div>
                         ) : null}
                       </div>
 
