@@ -62,7 +62,7 @@ import {
   type PersistedCartItem,
 } from "@/lib/combine-cart-storage";
 import OrdersHistoryPanel from "@/components/parents/orders-history-panel";
-import { hasCalendarBoundaryPassed } from "@/lib/calendar-dates";
+import { calendarDateInputValue, hasCalendarBoundaryPassed } from "@/lib/calendar-dates";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 type StudentRow = {
@@ -795,7 +795,8 @@ function getHeroOverlayOpacity(settings: EventGallerySettings) {
 function formatEventDateLabel(value: string | null | undefined) {
   const raw = clean(value);
   if (!raw) return "";
-  const parsed = new Date(raw);
+  const calendarDate = calendarDateInputValue(raw);
+  const parsed = calendarDate ? new Date(`${calendarDate}T12:00:00`) : new Date(raw);
   if (Number.isNaN(parsed.getTime())) return raw;
   return new Intl.DateTimeFormat("en-CA", {
     month: "long",
@@ -814,9 +815,7 @@ function buildLateOrderNotice(policy: LateOrderPolicy | null | undefined) {
   if (!dueDate) return null;
 
   const deadline = formatEventDateLabel(dueDate);
-  const parsedDueDate = new Date(dueDate);
-  const isPastDue =
-    !Number.isNaN(parsedDueDate.getTime()) && new Date() > parsedDueDate;
+  const isPastDue = hasCalendarBoundaryPassed(dueDate);
   const shippingFeeCents = Math.max(0, Number(policy?.shippingFeeCents ?? 0) || 0);
   const lateHandlingPercent = Math.max(
     0,
