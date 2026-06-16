@@ -139,6 +139,7 @@ type CombinedOrderGroup = {
   representative: Order;
   orders: Order[];
   imageUrls: string[];
+  imagePreviews: OrderImagePreview[];
   hasBackdrop: boolean;
   totalCents: number;
   itemsCount: number;
@@ -146,6 +147,14 @@ type CombinedOrderGroup = {
   combinedStatus: string;
   packageSummary: string;
   isAnyNew: boolean;
+};
+
+type OrderImagePreview = {
+  url: string;
+  originalUrl: string | null;
+  fallbackUrl: string | null;
+  label: string;
+  printReady: boolean;
 };
 
 type OrderedPhotoGroup = {
@@ -461,18 +470,47 @@ function orderHasBackdropPreview(order: Order | null) {
   return cartSnapshotToOrderItems(order.cart_snapshot).some((item) => item.backdrop && clean(item.sku));
 }
 
-function prioritizeBackdropPreviews(urls: string[]) {
-  return [...urls].sort((left, right) => {
-    const leftComposite = isDashboardCompositeReference(left);
-    const rightComposite = isDashboardCompositeReference(right);
+function prioritizeBackdropPreviews<T extends { url: string }>(items: T[]) {
+  return [...items].sort((left, right) => {
+    const leftComposite = isDashboardCompositeReference(left.url);
+    const rightComposite = isDashboardCompositeReference(right.url);
     if (leftComposite === rightComposite) return 0;
     return leftComposite ? -1 : 1;
   });
 }
 
+function makeOrderImagePreview(
+  url: string,
+  fallbackUrl: string | null = null,
+  originalUrl: string | null = null,
+  index: number = 0,
+): OrderImagePreview | null {
+  const displayUrl = dashboardImageReference(url);
+  if (!displayUrl) return null;
+  const fallback = fallbackUrl ? dashboardPhotoUrl(fallbackUrl) : "";
+  const rawOriginal = clean(originalUrl) || clean(fallbackUrl) || clean(url);
+  return {
+    url: displayUrl,
+    originalUrl: rawOriginal || null,
+    fallbackUrl: fallback || null,
+    label: previewFileName(displayUrl, `print-preview-${index + 1}.jpg`),
+    printReady: isDashboardCompositeReference(displayUrl),
+  };
+}
+
 function extractImageUrls(order: Order | null) {
-  if (!order) return [] as string[];
-  const urls = new Set<string>();
+  return extractImagePreviews(order).map((preview) => preview.url);
+}
+
+function extractImagePreviews(order: Order | null) {
+  if (!order) return [] as OrderImagePreview[];
+  const previews: OrderImagePreview[] = [];
+  const seen = new Set<string>();
+  const addPreview = (preview: OrderImagePreview | null) => {
+    if (!preview || seen.has(preview.url)) return;
+    seen.add(preview.url);
+    previews.push(preview);
+  };
   const noteUrls = extractOrderPhotoUrls(noteTextForOrder(order));
   const snapshotItems = cartSnapshotToOrderItems(order.cart_snapshot);
   const snapshotHasBackdrop = snapshotItems.some((item) => item.backdrop);
@@ -485,32 +523,43 @@ function extractImageUrls(order: Order | null) {
     .filter(isDashboardImageReference);
   const orderedUrls = snapshotHasBackdrop
     ? snapshotItems
-        .map((item, index) => dashboardCompositeUrl(order.id, {
+        .map((item, index) => ({
+          displayUrl: dashboardCompositeUrl(order.id, {
           ...item,
           price: null,
           unit_price_cents: null,
           line_total_cents: null,
           snapshotIndex: index,
-        }, index) || clean(item.sku))
-        .filter(isDashboardImageReference)
+          }, index) || clean(item.sku),
+          originalUrl: clean(item.sku),
+        }))
+        .filter((entry) => isDashboardImageReference(entry.displayUrl))
     : dbImageUrls.length >= snapshotImageUrls.length && dbImageUrls.length > 0
-      ? dbImageUrls
+      ? dbImageUrls.map((url) => ({ displayUrl: url, originalUrl: url }))
     : noteUrls.length > 0
-      ? noteUrls
+      ? noteUrls.map((url) => ({ displayUrl: url, originalUrl: url }))
       : snapshotImageUrls.length > 0
-        ? snapshotImageUrls
-        : dbImageUrls;
+        ? snapshotImageUrls.map((url) => ({ displayUrl: url, originalUrl: url }))
+        : dbImageUrls.map((url) => ({ displayUrl: url, originalUrl: url }));
 
-  for (const url of orderedUrls) {
-    const displayUrl = dashboardImageReference(url);
-    if (displayUrl) urls.add(displayUrl);
+  orderedUrls.forEach((entry, index) => {
+    addPreview(makeOrderImagePreview(
+      entry.displayUrl,
+      isDashboardCompositeReference(entry.displayUrl) ? entry.originalUrl : null,
+      entry.originalUrl,
+      index,
+    ));
+  });
+
+  if (previews.length === 0) {
+    const studentRaw = clean(order.student?.photo_url);
+    const studentUrl = dashboardPhotoUrl(studentRaw);
+    if (studentUrl) {
+      addPreview(makeOrderImagePreview(studentUrl, null, studentRaw, 0));
+    }
   }
 
-  if (urls.size === 0) {
-    const studentUrl = dashboardPhotoUrl(order.student?.photo_url);
-    if (studentUrl) urls.add(studentUrl);
-  }
-  return prioritizeBackdropPreviews(Array.from(urls));
+  return prioritizeBackdropPreviews(previews);
 }
 
 function previewFileName(url: string, fallback: string) {
@@ -1818,7 +1867,12 @@ function OrdersPageContent() {
 
     return Array.from(groups.entries()).map(([key, groupOrders]) => {
       const representative = groupOrders[0];
-      const imageUrls = prioritizeBackdropPreviews(Array.from(new Set(groupOrders.flatMap((order) => extractImageUrls(order)))));
+      const previewMap = new Map<string, OrderImagePreview>();
+      groupOrders.flatMap((order) => extractImagePreviews(order)).forEach((preview) => {
+        if (!previewMap.has(preview.url)) previewMap.set(preview.url, preview);
+      });
+      const imagePreviews = prioritizeBackdropPreviews(Array.from(previewMap.values()));
+      const imageUrls = imagePreviews.map((preview) => preview.url);
       const hasBackdrop = groupOrders.some(orderHasBackdropPreview);
       const totalCents = groupOrders.reduce((sum, order) => sum + resolveOrderTotalCents(order, order.items), 0);
       const itemsCount = groupOrders.reduce((sum, order) => sum + ((order.items?.length || 0) > 0 ? order.items!.length : 1), 0);
@@ -1827,6 +1881,7 @@ function OrdersPageContent() {
         representative,
         orders: groupOrders,
         imageUrls,
+        imagePreviews,
         hasBackdrop,
         totalCents,
         itemsCount,
@@ -2395,7 +2450,9 @@ function OrdersPageContent() {
                   const order = group.representative;
                   const cfg = STATUS_COLORS[group.combinedStatus] ?? STATUS_COLORS.new;
                   const studentImageUrl = dashboardPhotoUrl(order.student?.photo_url);
-                  const primaryUrl = group.imageUrls[0] ?? studentImageUrl;
+                  const primaryPreview = group.imagePreviews[0] ?? null;
+                  const primaryUrl = primaryPreview?.url ?? studentImageUrl;
+                  const primaryFallbackUrl = primaryPreview?.fallbackUrl || studentImageUrl;
                   const isSelected = selectedKeys.has(group.key);
                   const currency = order.currency?.toUpperCase() || "CAD";
                   return (
@@ -2414,10 +2471,12 @@ function OrdersPageContent() {
                               alt=""
                               style={{ width: "100%", height: "100%", objectFit: "cover" }}
                               onError={(event) => {
-                                if (studentImageUrl && event.currentTarget.src !== studentImageUrl) {
-                                  event.currentTarget.src = studentImageUrl;
+                                const img = event.currentTarget;
+                                if (primaryFallbackUrl && img.dataset.fallbackUsed !== "1") {
+                                  img.dataset.fallbackUsed = "1";
+                                  img.src = primaryFallbackUrl;
                                 } else {
-                                  event.currentTarget.style.display = "none";
+                                  img.style.display = "none";
                                 }
                               }}
                             />
@@ -2469,7 +2528,9 @@ function OrdersPageContent() {
                   const order = group.representative;
                   const cfg = STATUS_COLORS[group.combinedStatus] ?? STATUS_COLORS.new;
                   const studentImageUrl = dashboardPhotoUrl(order.student?.photo_url);
-                  const primaryUrl = group.imageUrls[0] ?? studentImageUrl;
+                  const primaryPreview = group.imagePreviews[0] ?? null;
+                  const primaryUrl = primaryPreview?.url ?? studentImageUrl;
+                  const primaryFallbackUrl = primaryPreview?.fallbackUrl || studentImageUrl;
                   const isSelected = selectedKeys.has(group.key);
                   const currency = order.currency?.toUpperCase() || "CAD";
                   return (
@@ -2493,10 +2554,12 @@ function OrdersPageContent() {
                               alt=""
                               style={{ width: "100%", height: "100%", objectFit: "cover" }}
                               onError={(event) => {
-                                if (studentImageUrl && event.currentTarget.src !== studentImageUrl) {
-                                  event.currentTarget.src = studentImageUrl;
+                                const img = event.currentTarget;
+                                if (primaryFallbackUrl && img.dataset.fallbackUsed !== "1") {
+                                  img.dataset.fallbackUsed = "1";
+                                  img.src = primaryFallbackUrl;
                                 } else {
-                                  event.currentTarget.style.display = "none";
+                                  img.style.display = "none";
                                 }
                               }}
                             />
@@ -2534,9 +2597,11 @@ function OrdersPageContent() {
                   const isPendingGroup = group.combinedStatus === "payment_pending";
                   const isNew = group.isAnyNew;
                   const currency = order.currency?.toUpperCase() || "CAD";
-                  const imageUrls = group.imageUrls;
+                  const imagePreviews = group.imagePreviews;
                   const studentImageUrl = dashboardPhotoUrl(order.student?.photo_url);
-                  const primaryImageUrl = imageUrls[0] ?? studentImageUrl;
+                  const primaryPreview = imagePreviews[0] ?? null;
+                  const primaryImageUrl = primaryPreview?.url ?? studentImageUrl;
+                  const primaryFallbackUrl = primaryPreview?.fallbackUrl || studentImageUrl;
                   const isPhotosExpanded = !!expandedPhotos[group.key];
                   const orderTotal = group.totalCents;
                   const isSelected = selectedKeys.has(group.key);
@@ -2585,10 +2650,12 @@ function OrdersPageContent() {
                                 alt=""
                                 style={{ width: "100%", height: "100%", objectFit: "cover" }}
                                 onError={(event) => {
-                                  if (studentImageUrl && event.currentTarget.src !== studentImageUrl) {
-                                    event.currentTarget.src = studentImageUrl;
+                                  const img = event.currentTarget;
+                                  if (primaryFallbackUrl && img.dataset.fallbackUsed !== "1") {
+                                    img.dataset.fallbackUsed = "1";
+                                    img.src = primaryFallbackUrl;
                                   } else {
-                                    event.currentTarget.style.display = "none";
+                                    img.style.display = "none";
                                   }
                                 }}
                               />
@@ -2669,7 +2736,7 @@ function OrdersPageContent() {
 
                             <div style={{ background: "#f9fafb", border: `1px solid ${borderColor}`, borderRadius: isMobile ? 12 : 18, padding: isMobile ? 10 : 14 }}>
                               <div style={{ fontSize: isMobile ? 10 : 11, color: textMuted, fontWeight: 900, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: isMobile ? 4 : 8 }}>Original Files</div>
-                              <div style={{ fontSize: isMobile ? 14 : 18, fontWeight: 900, color: textPrimary }}>{imageUrls.length}</div>
+                              <div style={{ fontSize: isMobile ? 14 : 18, fontWeight: 900, color: textPrimary }}>{imagePreviews.length}</div>
                               <div style={{ fontSize: isMobile ? 11 : 13, color: textMuted, marginTop: isMobile ? 2 : 6 }}>{isPendingGroup ? "Waiting for payment" : "Ready for lab export"}</div>
                             </div>
 
@@ -2679,7 +2746,7 @@ function OrdersPageContent() {
                             </div>
                           </div>
 
-                          {imageUrls.length > 1 ? (
+                          {imagePreviews.length > 1 ? (
                             <button
                               type="button"
                               onClick={(e) => {
@@ -2706,7 +2773,7 @@ function OrdersPageContent() {
                                   </div>
                                   <div style={{ minWidth: 0 }}>
                                     <div style={{ fontSize: 13, fontWeight: 900, color: textPrimary }}>
-                                      {imageUrls.length} ordered photo{imageUrls.length === 1 ? "" : "s"}
+                                      {imagePreviews.length} ordered photo{imagePreviews.length === 1 ? "" : "s"}
                                     </div>
                                     <div style={{ fontSize: 12, color: textMuted }}>
                                       Click to {isPhotosExpanded ? "collapse" : "expand"} and review all photo thumbnails
@@ -2721,41 +2788,56 @@ function OrdersPageContent() {
 
                               {isPhotosExpanded ? (
                                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(92px, 1fr))", gap: 10 }}>
-                                  {imageUrls.map((url, index) => (
+                                  {imagePreviews.map((preview, index) => (
                                     <div key={`${group.key}-photo-${index}`} style={{ background: "#fff", border: `1px solid ${borderColor}`, borderRadius: 14, padding: 8 }}>
                                       <div style={{ width: "100%", aspectRatio: "3 / 4", overflow: "hidden", borderRadius: 10, background: "#f3f4f6", marginBottom: 6 }}>
                                         <img
                                           loading="lazy"
-                                          src={url}
+                                          src={preview.url}
                                           alt=""
                                           style={{ width: "100%", height: "100%", objectFit: "cover" }}
                                           onError={(event) => {
-                                            event.currentTarget.style.display = "none";
+                                            const img = event.currentTarget;
+                                            if (preview.fallbackUrl && img.dataset.fallbackUsed !== "1") {
+                                              img.dataset.fallbackUsed = "1";
+                                              img.src = preview.fallbackUrl;
+                                            } else {
+                                              img.style.display = "none";
+                                            }
                                           }}
                                         />
                                       </div>
-                                      <div style={{ fontSize: 11, color: textMuted, lineHeight: 1.35, wordBreak: "break-word" }}>{previewFileName(url, `print-preview-${index + 1}.jpg`)}</div>
+                                      {preview.printReady ? (
+                                        <div style={{ fontSize: 10, color: "#111827", fontWeight: 900, marginBottom: 3 }}>Print preview</div>
+                                      ) : null}
+                                      <div style={{ fontSize: 11, color: textMuted, lineHeight: 1.35, wordBreak: "break-word" }}>{preview.label}</div>
                                     </div>
                                   ))}
                                 </div>
                               ) : (
                                 <div style={{ display: "flex", alignItems: "center", gap: 8, overflow: "hidden" }}>
-                                  {imageUrls.slice(0, 4).map((url, index) => (
+                                  {imagePreviews.slice(0, 4).map((preview, index) => (
                                     <div key={`${group.key}-photo-preview-${index}`} style={{ width: 46, height: 58, borderRadius: 10, overflow: "hidden", border: `1px solid ${borderColor}`, background: "#fff", flexShrink: 0 }}>
                                       <img
                                         loading="lazy"
-                                        src={url}
+                                        src={preview.url}
                                         alt=""
                                         style={{ width: "100%", height: "100%", objectFit: "cover" }}
                                         onError={(event) => {
-                                          event.currentTarget.style.display = "none";
+                                          const img = event.currentTarget;
+                                          if (preview.fallbackUrl && img.dataset.fallbackUsed !== "1") {
+                                            img.dataset.fallbackUsed = "1";
+                                            img.src = preview.fallbackUrl;
+                                          } else {
+                                            img.style.display = "none";
+                                          }
                                         }}
                                       />
                                     </div>
                                   ))}
-                                  {imageUrls.length > 4 ? (
+                                  {imagePreviews.length > 4 ? (
                                     <div style={{ minWidth: 46, height: 58, borderRadius: 10, border: `1px dashed ${borderColor}`, background: "#fff", display: "flex", alignItems: "center", justifyContent: "center", padding: "0 10px", color: textMuted, fontSize: 12, fontWeight: 800 }}>
-                                      +{imageUrls.length - 4}
+                                      +{imagePreviews.length - 4}
                                     </div>
                                   ) : null}
                                 </div>
