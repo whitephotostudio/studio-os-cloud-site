@@ -138,6 +138,7 @@ type CombinedOrderGroup = {
   representative: Order;
   orders: Order[];
   imageUrls: string[];
+  hasBackdrop: boolean;
   totalCents: number;
   itemsCount: number;
   orderCount: number;
@@ -421,14 +422,18 @@ function dashboardCompositeUrl(orderId: string, item: OrderItem, index: number) 
   return `/api/dashboard/orders/composite?orderId=${encodeURIComponent(orderId)}&item=${encodeURIComponent(String(itemIndex))}`;
 }
 
+function isDashboardCompositeReference(value: string | null | undefined) {
+  return clean(value).startsWith("/api/dashboard/orders/composite");
+}
+
 function isDashboardImageReference(value: string | null | undefined) {
   const raw = clean(value);
-  return raw.startsWith("/api/dashboard/orders/composite") || !!dashboardPhotoUrl(raw);
+  return isDashboardCompositeReference(raw) || !!dashboardPhotoUrl(raw);
 }
 
 function dashboardImageReference(value: string | null | undefined) {
   const raw = clean(value);
-  return raw.startsWith("/api/dashboard/orders/composite")
+  return isDashboardCompositeReference(raw)
     ? raw
     : dashboardPhotoUrl(raw);
 }
@@ -440,6 +445,20 @@ function isBackdropOrderItem(item: Pick<OrderItem, "product_name">) {
 
 function noteTextForOrder(order: Order | null) {
   return [order?.special_notes, order?.notes].map(clean).filter(Boolean).join("\n");
+}
+
+function orderHasBackdropPreview(order: Order | null) {
+  if (!order) return false;
+  return cartSnapshotToOrderItems(order.cart_snapshot).some((item) => item.backdrop && clean(item.sku));
+}
+
+function prioritizeBackdropPreviews(urls: string[]) {
+  return [...urls].sort((left, right) => {
+    const leftComposite = isDashboardCompositeReference(left);
+    const rightComposite = isDashboardCompositeReference(right);
+    if (leftComposite === rightComposite) return 0;
+    return leftComposite ? -1 : 1;
+  });
 }
 
 function extractImageUrls(order: Order | null) {
@@ -482,7 +501,11 @@ function extractImageUrls(order: Order | null) {
     const studentUrl = dashboardPhotoUrl(order.student?.photo_url);
     if (studentUrl) urls.add(studentUrl);
   }
-  return Array.from(urls);
+  return prioritizeBackdropPreviews(Array.from(urls));
+}
+
+function previewFileName(url: string, fallback: string) {
+  return isDashboardCompositeReference(url) ? fallback : fileNameFromUrl(url, fallback);
 }
 
 async function triggerDownload(url: string, filename?: string) {
@@ -762,7 +785,7 @@ function buildOrderSummaryHtml(order: Order) {
       (url) => `
       <div class="thumb">
         <img src="${url}" alt="" />
-        <div class="thumb-name">${fileNameFromUrl(url, "image.jpg")}</div>
+        <div class="thumb-name">${previewFileName(url, "print-preview.jpg")}</div>
       </div>`,
     )
     .join("");
@@ -1579,7 +1602,8 @@ function OrdersPageContent() {
 
     return Array.from(groups.entries()).map(([key, groupOrders]) => {
       const representative = groupOrders[0];
-      const imageUrls = Array.from(new Set(groupOrders.flatMap((order) => extractImageUrls(order))));
+      const imageUrls = prioritizeBackdropPreviews(Array.from(new Set(groupOrders.flatMap((order) => extractImageUrls(order)))));
+      const hasBackdrop = groupOrders.some(orderHasBackdropPreview);
       const totalCents = groupOrders.reduce((sum, order) => sum + resolveOrderTotalCents(order, order.items), 0);
       const itemsCount = groupOrders.reduce((sum, order) => sum + ((order.items?.length || 0) > 0 ? order.items!.length : 1), 0);
       return {
@@ -1587,6 +1611,7 @@ function OrdersPageContent() {
         representative,
         orders: groupOrders,
         imageUrls,
+        hasBackdrop,
         totalCents,
         itemsCount,
         orderCount: groupOrders.length,
@@ -2195,6 +2220,7 @@ function OrdersPageContent() {
                         {/* Status badge */}
                         <div style={{ position: "absolute", top: 8, right: 8, background: cfg.bg, color: cfg.color, fontSize: 10, fontWeight: 900, borderRadius: 999, padding: "3px 7px" }}>{cfg.label}</div>
                         {group.isAnyNew && <div style={{ position: "absolute", bottom: 8, left: 8, background: "#ef4444", color: "#fff", fontSize: 10, fontWeight: 900, borderRadius: 999, padding: "3px 7px" }}>NEW</div>}
+                        {group.hasBackdrop && <div style={{ position: "absolute", bottom: 8, right: 8, background: "#111827", color: "#fff", fontSize: 10, fontWeight: 900, borderRadius: 999, padding: "3px 7px" }}>Backdrop</div>}
                       </div>
                       <div style={{ padding: "10px 12px" }}>
                         <div style={{ fontSize: 13, fontWeight: 800, color: textPrimary, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
@@ -2266,7 +2292,12 @@ function OrdersPageContent() {
                         <div style={{ fontSize: 12, color: textMuted, marginTop: 2 }}>{formatDate(order.created_at)}</div>
                       </div>
                       <div style={{ fontSize: 13, color: textMuted }}>{order.school?.school_name ?? "Event"}</div>
-                      <div style={{ fontSize: 13, color: textPrimary, fontWeight: 600 }}>{group.packageSummary}</div>
+                      <div>
+                        <div style={{ fontSize: 13, color: textPrimary, fontWeight: 600 }}>{group.packageSummary}</div>
+                        {group.hasBackdrop ? (
+                          <div style={{ fontSize: 11, color: "#111827", fontWeight: 800, marginTop: 3 }}>Backdrop applied</div>
+                        ) : null}
+                      </div>
                       <div style={{ fontSize: 14, fontWeight: 900, color: textPrimary }}>{moneyFromCents(group.totalCents, currency)}</div>
                       <div><span style={{ background: cfg.bg, color: cfg.color, fontSize: 11, fontWeight: 800, borderRadius: 999, padding: "4px 9px" }}>{cfg.label}</span></div>
                       <div onClick={(e) => e.stopPropagation()}>
@@ -2379,6 +2410,11 @@ function OrdersPageContent() {
                                 <span style={{ background: cfg.bg, color: cfg.color, borderRadius: 999, padding: "4px 10px", fontSize: 12, fontWeight: 800 }}>
                                   {cfg.label}
                                 </span>
+                                {group.hasBackdrop ? (
+                                  <span style={{ background: "#111827", color: "#ffffff", borderRadius: 999, padding: "4px 10px", fontSize: 12, fontWeight: 800 }}>
+                                    Backdrop applied
+                                  </span>
+                                ) : null}
                                 {group.orderCount > 1 ? (
                                   <span style={{ background: "#111827", color: "#ffffff", borderRadius: 999, padding: "4px 10px", fontSize: 12, fontWeight: 800 }}>
                                     {group.orderCount} orders combined
@@ -2486,7 +2522,7 @@ function OrdersPageContent() {
                                           }}
                                         />
                                       </div>
-                                      <div style={{ fontSize: 11, color: textMuted, lineHeight: 1.35, wordBreak: "break-word" }}>{fileNameFromUrl(url, `photo-${index + 1}.jpg`)}</div>
+                                      <div style={{ fontSize: 11, color: textMuted, lineHeight: 1.35, wordBreak: "break-word" }}>{previewFileName(url, `print-preview-${index + 1}.jpg`)}</div>
                                     </div>
                                   ))}
                                 </div>
@@ -2760,8 +2796,8 @@ function OrdersPageContent() {
                           )}
                         </div>
                         {photoGroup.url ? (
-                          <a href={dashboardPhotoUrl(photoGroup.originalUrl) || photoGroup.url} target="_blank" rel="noopener noreferrer" style={{ color: "#0ea5e9", fontSize: 12, fontWeight: 600, textDecoration: "none", display: "block", marginTop: 6 }}>
-                            Download Original
+                          <a href={isDashboardCompositeReference(photoGroup.url) ? photoGroup.url : dashboardPhotoUrl(photoGroup.originalUrl) || photoGroup.url} target="_blank" rel="noopener noreferrer" style={{ color: "#0ea5e9", fontSize: 12, fontWeight: 600, textDecoration: "none", display: "block", marginTop: 6 }}>
+                            {isDashboardCompositeReference(photoGroup.url) ? "Download Print File" : "Download Original"}
                           </a>
                         ) : null}
                       </div>
