@@ -8,8 +8,12 @@ import {
   cleanOrderCustomerNote,
   type CartSnapshotBackdropLike,
   isWebImageUrl,
+  isPackageComponentItem,
   parsePackageSlotLabel,
   parseOrderPhotoSelections,
+  resolveOrderItemDisplayCents,
+  resolveOrderSubtotalCents,
+  resolveOrderTotalCents,
 } from "@/lib/order-display";
 import { r2KeyFromAnyUrl, r2PresignedGetUrl } from "@/lib/r2-signed-urls";
 import {
@@ -189,7 +193,9 @@ function downloadPhotoUrl(url: string): string {
   try {
     const parsed = new URL(raw);
     if (/\.r2\.dev$/i.test(parsed.host)) {
-      return encodePhotoUrl(raw);
+      const key = r2KeyFromAnyUrl(raw);
+      const signed = key ? r2PresignedGetUrl(key, 60 * 60) : "";
+      return signed || encodePhotoUrl(raw);
     }
     if (/\.r2\.cloudflarestorage\.com$/i.test(parsed.host) || parsed.pathname.startsWith("/api/r2/img/")) {
       const key = r2KeyFromAnyUrl(raw);
@@ -209,6 +215,45 @@ function formatDate(d: string) {
 
 function shortOrderId(id: string) {
   return id.replace(/-/g, "").slice(0, 6).toUpperCase();
+}
+
+function moneyFromCents(cents: number | null | undefined, currency = "CAD") {
+  const amount = (Number(cents ?? 0) || 0) / 100;
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: currency.toUpperCase(),
+  }).format(amount);
+}
+
+function taxLabelForOrder(order: { subtotal_cents?: number | null; tax_cents?: number | null; currency?: string | null }) {
+  const subtotal = Number(order.subtotal_cents ?? 0);
+  const tax = Number(order.tax_cents ?? 0);
+  const rate = subtotal > 0 && tax > 0 ? (tax / subtotal) * 100 : 0;
+  const rounded = rate > 0 ? Math.round(rate * 10) / 10 : 0;
+  const isCad = clean(order.currency).toLowerCase() === "cad";
+  const label = isCad && rounded >= 12.5 && rounded <= 13.5 ? "HST" : "Tax";
+  return rounded > 0 ? `${label} (${rounded.toFixed(rounded % 1 === 0 ? 0 : 1)}%)` : label;
+}
+
+function isBackdropOrderItem(item: { product_name?: string | null }) {
+  const name = clean(item.product_name).toLowerCase();
+  return name.startsWith("★") || name.includes("premium backdrop") || name.includes("backdrop:");
+}
+
+function financialLineAmountCents(item: {
+  quantity?: number | null;
+  price?: number | null;
+  unit_price_cents?: number | null;
+  line_total_cents?: number | null;
+}) {
+  const line = Number(item.line_total_cents);
+  if (Number.isFinite(line) && line !== 0) return Math.round(line);
+  const qty = itemQuantity(item.quantity);
+  const unit = Number(item.unit_price_cents);
+  if (Number.isFinite(unit) && unit !== 0) return Math.round(unit * qty);
+  const price = Number(item.price);
+  if (Number.isFinite(price) && price !== 0) return Math.round(price * 100 * qty);
+  return 0;
 }
 
 /** Resolve display items for an order (from DB items, parsed notes, or student photo) */
@@ -298,12 +343,26 @@ function buildOrderSummaryHtml(order: any, branding: StudioBranding, photoFileMa
   const status = (order.status ?? "new").toUpperCase().replace(/_/g, " ");
   const rawNotes = clean(order.special_notes) || clean(order.notes);
   const cleanedNotes = cleanOrderCustomerNote(rawNotes);
+  const currency = clean(order.currency).toUpperCase() || "CAD";
+  const subtotalCents = resolveOrderSubtotalCents(order, order.items);
+  const taxCents = Number(order.tax_cents ?? 0) || 0;
+  const totalCents = resolveOrderTotalCents(order, order.items);
 
   const displayItems = resolveOrderDisplayItems(order);
+  const financialItems = Array.isArray(order.items) && order.items.length
+    ? order.items
+    : [{
+        product_name: order.package_name || "Package",
+        quantity: 1,
+        price: order.package_price,
+        unit_price_cents: null,
+        line_total_cents: subtotalCents,
+        sku: null,
+      }];
 
   // Build photo cards — reference local files from the ZIP
   let photoCardsHtml = "";
-  displayItems.forEach((item: { productName: string; photoUrl: string; quantity: number }, i: number) => {
+  displayItems.forEach((item: { productName: string; photoUrl: string; quantity: number; backdrop?: CartSnapshotBackdropLike | null }, i: number) => {
     // Look up local filename; fall back to encoded remote URL
     const localFile = photoFileMap.get(item.photoUrl) ?? "";
     const imgSrc = localFile || (item.photoUrl ? encodePhotoUrl(item.photoUrl) : "");
@@ -313,12 +372,13 @@ function buildOrderSummaryHtml(order: any, branding: StudioBranding, photoFileMa
       parsedLabel.slotIndex != null && parsedLabel.slotTotal != null
         ? `Package slot ${parsedLabel.slotIndex} of ${parsedLabel.slotTotal}`
         : "";
-    const poseFile = item.photoUrl ? fileNameFromUrl(item.photoUrl, `photo-${i + 1}.jpg`) : "";
+    const poseFile = localFile || (item.photoUrl ? fileNameFromUrl(item.photoUrl, `photo-${i + 1}.jpg`) : "");
     photoCardsHtml += `
       <div style="display:inline-block;vertical-align:top;margin:0 24px 24px 0;text-align:center;width:200px;">
         ${imgSrc ? `<img src="${esc(imgSrc)}" style="width:190px;height:230px;object-fit:cover;border-radius:4px;border:1px solid #ddd;background:#f5f5f5;" />` : `<div style="width:190px;height:230px;background:#f5f5f5;border-radius:4px;border:1px solid #ddd;display:flex;align-items:center;justify-content:center;color:#999;font-size:13px;">No photo</div>`}
         <div style="margin-top:8px;font-size:14px;font-weight:700;color:#111;">Pose ${i + 1}</div>
         <div style="font-size:13px;font-weight:600;color:#333;line-height:1.35;">${esc(productName)}</div>
+        ${item.backdrop ? `<div style="font-size:12px;color:#111;font-weight:800;">Backdrop applied · print-ready</div>` : ""}
         ${slotLabel ? `<div style="font-size:12px;color:#0f766e;font-weight:700;">${esc(slotLabel)}</div>` : ""}
         ${poseFile ? `<div style="font-size:11px;color:#777;word-break:break-word;">${esc(poseFile)}</div>` : ""}
         <div style="font-size:13px;color:#555;">Qty ${itemQuantity(item.quantity)}</div>
@@ -332,13 +392,41 @@ function buildOrderSummaryHtml(order: any, branding: StudioBranding, photoFileMa
       parsedLabel.slotIndex != null && parsedLabel.slotTotal != null
         ? `Package slot ${parsedLabel.slotIndex} of ${parsedLabel.slotTotal}`
         : "—";
-    const poseFile = item.photoUrl ? fileNameFromUrl(item.photoUrl, `photo-${index + 1}.jpg`) : "—";
+    const localFile = photoFileMap.get(item.photoUrl) ?? "";
+    const poseFile = localFile || (item.photoUrl ? fileNameFromUrl(item.photoUrl, `photo-${index + 1}.jpg`) : "—");
     return `<tr>
       <td>${esc(productName)}</td>
       <td>${itemQuantity(item.quantity)}</td>
       <td>${esc(slotLabel)}</td>
       <td>Pose ${index + 1}</td>
-      <td>${esc(poseFile)}</td>
+      <td>${esc(poseFile)}${item.backdrop ? " · backdrop applied" : ""}</td>
+    </tr>`;
+  }).join("");
+
+  const financialRowsHtml = financialItems.map((item: {
+    product_name?: string | null;
+    quantity?: number | null;
+    price?: number | null;
+    unit_price_cents?: number | null;
+    line_total_cents?: number | null;
+    sku?: string | null;
+  }, index: number) => {
+    const parsedLabel = parsePackageSlotLabel(item.product_name);
+    const label = isBackdropOrderItem(item)
+      ? "Premium Backdrop"
+      : parsedLabel.baseLabel || clean(item.product_name) || "Item";
+    const detail = isBackdropOrderItem(item)
+      ? clean(item.product_name).replace(/^★\s*/, "")
+      : parsedLabel.slotIndex != null && parsedLabel.slotTotal != null
+        ? `Package slot ${parsedLabel.slotIndex} of ${parsedLabel.slotTotal}`
+        : `Qty ${itemQuantity(item.quantity)}`;
+    const cents = financialLineAmountCents(item) || resolveOrderItemDisplayCents(item, financialItems, subtotalCents, index);
+    const amount = isPackageComponentItem(order, item, financialItems) && cents === 0
+      ? "Included"
+      : moneyFromCents(cents, currency);
+    return `<tr>
+      <td style="padding:7px 0;color:#111;font-weight:700;">${esc(label)}<div style="font-size:11px;color:#777;font-weight:500;">${esc(detail)}</div></td>
+      <td style="padding:7px 0;text-align:right;color:#111;font-weight:800;">${esc(amount)}</td>
     </tr>`;
   }).join("");
 
@@ -405,6 +493,31 @@ function buildOrderSummaryHtml(order: any, branding: StudioBranding, photoFileMa
       </thead>
       <tbody>${itemRowsHtml || '<tr><td colspan="5" style="padding:12px;color:#999;">No item rows found.</td></tr>'}</tbody>
     </table>
+  </div>
+
+  <!-- Payment breakdown -->
+  <div style="margin:0 36px 24px;border:1px solid #e0e0e0;border-radius:10px;overflow:hidden;">
+    <div style="padding:10px 14px;background:#f8fafc;font-size:11px;text-transform:uppercase;letter-spacing:0.08em;color:#555;font-weight:800;">Payment Breakdown</div>
+    <div style="padding:12px 16px;">
+      <table style="width:100%;border-collapse:collapse;font-size:13px;">
+        <tbody>
+          ${financialRowsHtml || `<tr><td style="padding:7px 0;color:#777;">${esc(order.package_name || "Package")}</td><td style="padding:7px 0;text-align:right;">${moneyFromCents(subtotalCents, currency)}</td></tr>`}
+          <tr><td colspan="2" style="border-top:1px solid #e5e7eb;padding-top:8px;"></td></tr>
+          <tr>
+            <td style="padding:4px 0;color:#555;">Subtotal</td>
+            <td style="padding:4px 0;text-align:right;color:#111;font-weight:800;">${moneyFromCents(subtotalCents, currency)}</td>
+          </tr>
+          ${taxCents > 0 ? `<tr>
+            <td style="padding:4px 0;color:#555;">${esc(taxLabelForOrder(order))}</td>
+            <td style="padding:4px 0;text-align:right;color:#111;font-weight:800;">${moneyFromCents(taxCents, currency)}</td>
+          </tr>` : ""}
+          <tr>
+            <td style="padding:8px 0 0;color:#111;font-weight:900;font-size:15px;border-top:1px solid #e5e7eb;">Total paid</td>
+            <td style="padding:8px 0 0;text-align:right;color:#111;font-weight:900;font-size:15px;border-top:1px solid #e5e7eb;">${moneyFromCents(totalCents, currency)}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
   </div>
 
   <!-- Customer / Parent info -->

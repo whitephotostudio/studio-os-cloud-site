@@ -54,6 +54,7 @@ import {
   parsePackageSlotLabel,
   parseOrderPhotoSelections,
   resolveOrderItemDisplayCents,
+  resolveOrderSubtotalCents,
   resolveOrderTotalCents,
 } from "@/lib/order-display";
 import type { CartSnapshotBackdropLike } from "@/lib/order-display";
@@ -506,6 +507,53 @@ function extractImageUrls(order: Order | null) {
 
 function previewFileName(url: string, fallback: string) {
   return isDashboardCompositeReference(url) ? fallback : fileNameFromUrl(url, fallback);
+}
+
+function taxLabelForOrder(order: Pick<Order, "subtotal_cents" | "tax_cents" | "currency">) {
+  const subtotal = Number(order.subtotal_cents ?? 0);
+  const tax = Number(order.tax_cents ?? 0);
+  const rate = subtotal > 0 && tax > 0 ? (tax / subtotal) * 100 : 0;
+  const rounded = rate > 0 ? Math.round(rate * 10) / 10 : 0;
+  const isCad = clean(order.currency).toLowerCase() === "cad";
+  const label = isCad && rounded >= 12.5 && rounded <= 13.5 ? "HST" : "Tax";
+  return rounded > 0 ? `${label} (${rounded.toFixed(rounded % 1 === 0 ? 0 : 1)}%)` : label;
+}
+
+function financialLineItemAmountCents(item: OrderItem) {
+  const line = Number(item.line_total_cents);
+  if (Number.isFinite(line) && line !== 0) return Math.round(line);
+  const unit = Number(item.unit_price_cents);
+  const qty = orderItemQuantity(item);
+  if (Number.isFinite(unit) && unit !== 0) return Math.round(unit * qty);
+  const price = Number(item.price);
+  if (Number.isFinite(price) && price !== 0) return Math.round(price * 100 * qty);
+  return 0;
+}
+
+function orderFinancialLines(order: Order) {
+  const items = order.items ?? [];
+  const lines = items
+    .map((item, index) => ({
+      key: item.id ?? `${item.product_name ?? "item"}-${index}`,
+      label: orderItemBaseLabel(item),
+      detail: packageSlotText(item),
+      quantity: orderItemQuantity(item),
+      cents: financialLineItemAmountCents(item),
+      isBackdrop: isBackdropOrderItem(item),
+      isIncluded: isPackageComponentItem(order, item, items),
+    }))
+    .filter((line) => line.label || line.cents !== 0);
+
+  if (lines.length > 0) return lines;
+  return [{
+    key: `${order.id}-package`,
+    label: order.package_name || "Package",
+    detail: "",
+    quantity: 1,
+    cents: resolveOrderSubtotalCents(order, items),
+    isBackdrop: false,
+    isIncluded: false,
+  }];
 }
 
 async function triggerDownload(url: string, filename?: string) {
@@ -1498,11 +1546,10 @@ function OrdersPageContent() {
       isWebImageUrl(item.sku),
     ).length;
     const snapshotHasBackdrop = snapshotItems.some((item) => item.backdrop);
-    const dbBackdropItems = (selected.items ?? []).filter(isBackdropOrderItem);
     const baseItems: OrderItem[] = snapshotHasBackdrop || snapshotItems.length > imageItemCount
-      ? [...snapshotItems, ...dbBackdropItems]
+      ? snapshotItems
       : selected.items?.length
-        ? selected.items
+        ? selected.items.filter((item) => !isBackdropOrderItem(item))
         : noteSelections.length
         ? noteSelections.map((entry, index) => ({
             id: `${selected.id}-note-${index}`,
@@ -2703,6 +2750,52 @@ function OrdersPageContent() {
               </div>
 
               <div style={{ borderTop: `1px solid ${borderColor}`, marginBottom: 16 }} />
+
+              {(() => {
+                const currency = selected.currency?.toUpperCase() || "CAD";
+                const subtotalCents = resolveOrderSubtotalCents(selected, selected.items);
+                const taxCents = Number(selected.tax_cents ?? 0) || 0;
+                const totalCents = resolveOrderTotalCents(selected, selected.items);
+                const financialLines = orderFinancialLines(selected);
+                return (
+                  <div style={{ background: "#f8fafc", border: `1px solid ${borderColor}`, borderRadius: 16, padding: 14, marginBottom: 16 }}>
+                    <div style={{ fontSize: 11, color: textMuted, fontWeight: 900, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 10 }}>Payment Breakdown</div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                      {financialLines.map((line) => (
+                        <div key={line.key} style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start" }}>
+                          <div style={{ minWidth: 0 }}>
+                            <div style={{ fontSize: 13, fontWeight: 800, color: textPrimary, lineHeight: 1.35 }}>
+                              {line.isBackdrop ? "Premium Backdrop" : line.label}
+                            </div>
+                            <div style={{ fontSize: 11, color: textMuted, marginTop: 2, lineHeight: 1.35 }}>
+                              {line.isBackdrop ? line.label.replace(/^★\s*/, "") : line.detail || `Qty ${line.quantity}`}
+                            </div>
+                          </div>
+                          <div style={{ flexShrink: 0, fontSize: 13, fontWeight: 900, color: textPrimary }}>
+                            {moneyFromCents(line.cents, currency)}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    <div style={{ borderTop: `1px solid ${borderColor}`, marginTop: 12, paddingTop: 10, display: "flex", flexDirection: "column", gap: 6 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, fontSize: 13, color: textMuted, fontWeight: 700 }}>
+                        <span>Subtotal</span>
+                        <span style={{ color: textPrimary, fontWeight: 900 }}>{moneyFromCents(subtotalCents, currency)}</span>
+                      </div>
+                      {taxCents > 0 ? (
+                        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, fontSize: 13, color: textMuted, fontWeight: 700 }}>
+                          <span>{taxLabelForOrder(selected)}</span>
+                          <span style={{ color: textPrimary, fontWeight: 900 }}>{moneyFromCents(taxCents, currency)}</span>
+                        </div>
+                      ) : null}
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, fontSize: 15, color: textPrimary, fontWeight: 900, paddingTop: 4 }}>
+                        <span>Total paid</span>
+                        <span>{moneyFromCents(totalCents, currency)}</span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
 
               {/* ── Package info ── */}
               <div style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "baseline", marginBottom: 4 }}>
