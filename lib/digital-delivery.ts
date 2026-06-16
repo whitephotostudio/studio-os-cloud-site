@@ -11,6 +11,7 @@ import {
   r2PresignedGetUrl,
 } from "@/lib/r2-signed-urls";
 import { resendConfigured, resolveReplyTo, sendResendEmail } from "@/lib/resend";
+import { cartSnapshotToOrderItems } from "@/lib/order-display";
 import { createZipStream, type ZipStreamEntry } from "@/lib/zip";
 
 type ServiceClient = {
@@ -29,6 +30,7 @@ type OrderRow = {
   customer_name?: string | null;
   package_name?: string | null;
   notes?: string | null;
+  cart_snapshot?: unknown;
   school_id?: string | null;
   project_id?: string | null;
   student_id?: string | null;
@@ -301,7 +303,7 @@ async function fetchProjectMediaRows(service: ServiceClient, projectId: string) 
 async function fetchOrderContext(service: ServiceClient, orderId: string) {
   const { data: order, error: orderError } = await service
     .from("orders")
-    .select("id,photographer_id,status,payment_status,paid_at,parent_email,customer_email,parent_name,customer_name,package_name,notes,school_id,project_id,student_id")
+    .select("id,photographer_id,status,payment_status,paid_at,parent_email,customer_email,parent_name,customer_name,package_name,notes,cart_snapshot,school_id,project_id,student_id")
     .eq("id", orderId)
     .maybeSingle();
   if (orderError) throw orderError;
@@ -368,10 +370,16 @@ async function resolveDeliveryFiles(params: {
   project: ProjectRow | null;
 }) {
   const files: DigitalDeliveryFile[] = [];
+  const snapshotItems = cartSnapshotToOrderItems(params.order.cart_snapshot).map((item) => ({
+    product_name: item.product_name,
+    quantity: item.quantity,
+    sku: item.sku,
+  } satisfies OrderItemRow));
+  const sourceItems = [...params.items, ...snapshotItems];
   const orderPackageLooksDigital = looksDigital(params.order.package_name);
-  const digitalItems = params.items.filter((item) =>
+  const digitalItems = sourceItems.filter((item) =>
     looksDigital(item.product_name) ||
-    (params.items.length === 1 && orderPackageLooksDigital),
+    (sourceItems.length === 1 && orderPackageLooksDigital),
   );
 
   const fallbackDigitalOrder = !digitalItems.length && orderPackageLooksDigital
