@@ -421,6 +421,11 @@ function dashboardCompositeUrl(orderId: string, item: OrderItem, index: number) 
   return `/api/dashboard/orders/composite?orderId=${encodeURIComponent(orderId)}&item=${encodeURIComponent(String(itemIndex))}`;
 }
 
+function isBackdropOrderItem(item: Pick<OrderItem, "product_name">) {
+  const name = clean(item.product_name).toLowerCase();
+  return name.startsWith("★") || name.includes("premium backdrop") || name.includes("backdrop:");
+}
+
 function noteTextForOrder(order: Order | null) {
   return [order?.special_notes, order?.notes].map(clean).filter(Boolean).join("\n");
 }
@@ -1438,11 +1443,12 @@ function OrdersPageContent() {
       isWebImageUrl(item.sku),
     ).length;
     const snapshotHasBackdrop = snapshotItems.some((item) => item.backdrop);
+    const dbBackdropItems = (selected.items ?? []).filter(isBackdropOrderItem);
     const baseItems: OrderItem[] = snapshotHasBackdrop || snapshotItems.length > imageItemCount
-      ? snapshotItems
+      ? [...snapshotItems, ...dbBackdropItems]
       : selected.items?.length
-      ? selected.items
-      : noteSelections.length
+        ? selected.items
+        : noteSelections.length
         ? noteSelections.map((entry, index) => ({
             id: `${selected.id}-note-${index}`,
             product_name: entry.label || selected.package_name,

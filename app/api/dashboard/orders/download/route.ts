@@ -188,11 +188,10 @@ function downloadPhotoUrl(url: string): string {
 
   try {
     const parsed = new URL(raw);
-    if (
-      /\.r2\.dev$/i.test(parsed.host) ||
-      /\.r2\.cloudflarestorage\.com$/i.test(parsed.host) ||
-      parsed.pathname.startsWith("/api/r2/img/")
-    ) {
+    if (/\.r2\.dev$/i.test(parsed.host)) {
+      return encodePhotoUrl(raw);
+    }
+    if (/\.r2\.cloudflarestorage\.com$/i.test(parsed.host) || parsed.pathname.startsWith("/api/r2/img/")) {
       const key = r2KeyFromAnyUrl(raw);
       const signed = key ? r2PresignedGetUrl(key, 60 * 60) : "";
       return signed || encodePhotoUrl(raw);

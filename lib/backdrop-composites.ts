@@ -120,12 +120,42 @@ function nobgCandidateKeysForOriginalKey(originalKey: string) {
   ]);
 }
 
-async function firstReadableR2Object(keys: string[]) {
+function publicCandidateUrl(sourceUrl: string | null | undefined, key: string) {
+  const raw = clean(sourceUrl);
+  if (!/^https:\/\//i.test(raw)) return "";
+  try {
+    const parsed = new URL(raw);
+    if (!/\.r2\.dev$/i.test(parsed.host)) return "";
+    const encodedKey = key
+      .split("/")
+      .filter(Boolean)
+      .map((part) => encodeURIComponent(part))
+      .join("/");
+    return `${parsed.origin}/${encodedKey}`;
+  } catch {
+    return "";
+  }
+}
+
+async function loadHttpsImageBytes(value: string | null | undefined) {
+  const raw = clean(value);
+  if (!/^https:\/\//i.test(raw)) return null;
+  const response = await fetch(raw, { cache: "no-store", redirect: "follow" });
+  if (!response.ok) return null;
+  return Buffer.from(await response.arrayBuffer());
+}
+
+async function firstReadableImageObject(keys: string[], sourceUrl?: string | null) {
   for (const key of keys) {
     try {
       return await downloadR2(key);
     } catch {
       // Try the next known background-removal naming convention.
+    }
+    const publicUrl = publicCandidateUrl(sourceUrl, key);
+    if (publicUrl) {
+      const bytes = await loadHttpsImageBytes(publicUrl);
+      if (bytes) return bytes;
     }
   }
   return null;
@@ -144,10 +174,7 @@ async function loadTrustedImageBytes(value: string | null | undefined) {
     }
   }
 
-  if (!/^https:\/\//i.test(raw)) return null;
-  const response = await fetch(raw, { cache: "no-store", redirect: "follow" });
-  if (!response.ok) return null;
-  return Buffer.from(await response.arrayBuffer());
+  return loadHttpsImageBytes(raw);
 }
 
 function backdropImageUrl(backdrop: BackdropCompositeSelection | null | undefined) {
@@ -189,7 +216,7 @@ export async function composeBackdropImage(options: {
   if (!originalKey || !backdropUrl) return null;
 
   const [foregroundBuffer, backdropBuffer] = await Promise.all([
-    firstReadableR2Object(nobgCandidateKeysForOriginalKey(originalKey)),
+    firstReadableImageObject(nobgCandidateKeysForOriginalKey(originalKey), options.originalUrlOrKey),
     loadTrustedImageBytes(backdropUrl),
   ]);
   if (!foregroundBuffer || !backdropBuffer) return null;
