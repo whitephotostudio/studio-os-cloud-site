@@ -301,6 +301,7 @@ type DrawerView =
   | "build-package"
   | "checkout";
 type ItemSlot = { label: string; assignedImageUrl: string | null; composite?: boolean };
+type PackagePhotoFilter = "all" | "favorites";
 type DigitalSelection = {
   mediaId: string;
   url: string;
@@ -3938,6 +3939,7 @@ export default function ParentGalleryPage() {
   // Package builder
   const [slots, setSlots] = useState<ItemSlot[]>([]);
   const [activeSlotIndex, setActiveSlotIndex] = useState<number | null>(null);
+  const [packagePhotoFilter, setPackagePhotoFilter] = useState<PackagePhotoFilter>("all");
 
   // Checkout
   const [parentName, setParentName] = useState("");
@@ -7061,6 +7063,7 @@ export default function ParentGalleryPage() {
         : null);
     setSelectedOrderQty(chosenQty);
     setSelectedPkg(pkg);
+    setPackagePhotoFilter("all");
 
     // Find the first composite image for auto-filling composite slots in mixed packages
     const firstCompositeImage = images.find((img) => img.source === "composite");
@@ -7221,13 +7224,24 @@ export default function ParentGalleryPage() {
   const allSlotsAssigned = slots.every((s) => s.assignedImageUrl !== null);
   const compositeSelectedImage =
     isCompositeSelection && isCompositeGalleryImage(selectedImage) ? selectedImage : null;
-  const packageAssignableImages = useMemo(
+  const packageAllAssignableImages = useMemo(
     () =>
       compositeSelectedImage
         ? [compositeSelectedImage]
         : visibleImages.filter((img) => !isCompositeGalleryImage(img)),
     [compositeSelectedImage, visibleImages],
   );
+  const packageFavoriteAssignableImages = useMemo(
+    () =>
+      compositeSelectedImage
+        ? packageAllAssignableImages
+        : packageAllAssignableImages.filter((img) => favorites.has(img.id)),
+    [compositeSelectedImage, favorites, packageAllAssignableImages],
+  );
+  const packageAssignableImages =
+    packagePhotoFilter === "favorites"
+      ? packageFavoriteAssignableImages
+      : packageAllAssignableImages;
   const storefrontPackages = useMemo(
     () => {
       // 2026-04-26: hide retouching add-on packages from the main grid.
@@ -12322,15 +12336,96 @@ export default function ParentGalleryPage() {
                       <>
                         <div
                           style={{
-                            fontSize: 10,
-                            fontWeight: 800,
-                            color: "#555",
-                            letterSpacing: "0.1em",
-                            textTransform: "uppercase",
-                            marginBottom: 10,
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "space-between",
+                            gap: 12,
+                            flexWrap: "wrap",
+                            marginBottom: 12,
                           }}
                         >
-                          Choose photo for slot {activeSlotIndex + 1} of {slots.length}
+                          <div
+                            style={{
+                              fontSize: 10,
+                              fontWeight: 800,
+                              color: "#555",
+                              letterSpacing: "0.1em",
+                              textTransform: "uppercase",
+                            }}
+                          >
+                            Choose photo for slot {activeSlotIndex + 1} of {slots.length}
+                          </div>
+
+                          <div
+                            role="group"
+                            aria-label="Filter package photos"
+                            style={{
+                              display: "inline-flex",
+                              alignItems: "center",
+                              gap: 4,
+                              padding: 4,
+                              borderRadius: 999,
+                              background: "#202020",
+                              border: "1px solid #303030",
+                            }}
+                          >
+                            {([
+                              {
+                                key: "all" as PackagePhotoFilter,
+                                label: `All Photos (${packageAllAssignableImages.length})`,
+                              },
+                              {
+                                key: "favorites" as PackagePhotoFilter,
+                                label: `Favorites (${packageFavoriteAssignableImages.length})`,
+                              },
+                            ]).map((option) => {
+                              const isActive = packagePhotoFilter === option.key;
+                              const disabled =
+                                option.key === "favorites" &&
+                                packageFavoriteAssignableImages.length === 0;
+                              return (
+                                <button
+                                  key={option.key}
+                                  type="button"
+                                  onClick={() => setPackagePhotoFilter(option.key)}
+                                  disabled={disabled}
+                                  style={{
+                                    border: "none",
+                                    borderRadius: 999,
+                                    padding: "7px 11px",
+                                    background: isActive
+                                      ? option.key === "favorites"
+                                        ? "#4a1f1f"
+                                        : "#f5f5f5"
+                                      : "transparent",
+                                    color: isActive
+                                      ? option.key === "favorites"
+                                        ? "#fecaca"
+                                        : "#111"
+                                      : disabled
+                                        ? "#555"
+                                        : "#b7b7b7",
+                                    fontSize: 11,
+                                    fontWeight: 800,
+                                    cursor: disabled ? "not-allowed" : "pointer",
+                                    display: "inline-flex",
+                                    alignItems: "center",
+                                    gap: 6,
+                                    whiteSpace: "nowrap",
+                                  }}
+                                  aria-pressed={isActive}
+                                >
+                                  {option.key === "favorites" ? (
+                                    <Heart
+                                      size={12}
+                                      fill={isActive ? "currentColor" : "none"}
+                                    />
+                                  ) : null}
+                                  {option.label}
+                                </button>
+                              );
+                            })}
+                          </div>
                         </div>
 
                         <div
@@ -12414,9 +12509,12 @@ export default function ParentGalleryPage() {
                               fontSize: 13,
                               fontWeight: 600,
                               padding: "8px 0 18px",
+                              lineHeight: 1.5,
                             }}
                           >
-                            {groupLabel.singular} composites cannot be used inside package photo slots.
+                            {packagePhotoFilter === "favorites"
+                              ? "No favorite photos yet. Tap the heart on photos first, then use this filter to assign them to package slots."
+                              : `${groupLabel.singular} composites cannot be used inside package photo slots.`}
                           </div>
                         )}
                       </>
