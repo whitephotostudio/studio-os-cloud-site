@@ -4346,6 +4346,7 @@ export default function ParentGalleryPage() {
     email: string;
   }>({ businessName: "", logoUrl: "", address: "", phone: "", email: "" });
   const [lateOrderPolicy, setLateOrderPolicy] = useState<LateOrderPolicy | null>(null);
+  const [lateOrderNoticeHidden, setLateOrderNoticeHidden] = useState(false);
 
   // ── Combine-orders drawer state (Phase 1 chunk 3d) ──────────────────────
   // Opened when the parent clicks the "Unlock another gallery" pill.  The
@@ -5151,6 +5152,14 @@ export default function ParentGalleryPage() {
     () => buildLateOrderNotice(lateOrderPolicy),
     [lateOrderPolicy],
   );
+  useEffect(() => {
+    if (!lateOrderNotice) return;
+    setLateOrderNoticeHidden(false);
+    const timer = window.setTimeout(() => {
+      setLateOrderNoticeHidden(true);
+    }, 5 * 60 * 1000);
+    return () => window.clearTimeout(timer);
+  }, [lateOrderNotice?.title, lateOrderNotice?.body]);
   const galleryTabs = useMemo(
     () =>
       [
@@ -10788,48 +10797,72 @@ export default function ParentGalleryPage() {
                       </div>
                     ) : null}
                   </div>
-                  {lateOrderNotice ? (
+                  {lateOrderNotice && !lateOrderNoticeHidden ? (
                     <div
                       role="note"
                       aria-label="Order deadline notice"
                       style={{
                         position: "absolute",
-                        left: isMobileViewport ? 16 : "clamp(18px, 3.6vw, 64px)",
+                        left: isMobileViewport ? 12 : 12,
                         right: isMobileViewport ? 16 : undefined,
-                        top: isMobileViewport ? 76 : "30%",
-                        width: isMobileViewport ? undefined : 236,
+                        top: isMobileViewport ? 76 : "clamp(132px, 20vh, 190px)",
+                        width: isMobileViewport ? undefined : 216,
                         zIndex: 4,
                         border: "1px solid rgba(248,113,113,0.52)",
-                        background: "rgba(69,10,10,0.76)",
+                        background: "rgba(69,10,10,0.68)",
                         color: "#fee2e2",
-                        borderRadius: 16,
-                        padding: isMobileViewport ? "10px 12px" : "13px 14px",
-                        boxShadow: "0 18px 46px rgba(0,0,0,0.32)",
+                        borderRadius: 14,
+                        padding: isMobileViewport ? "9px 38px 9px 11px" : "11px 34px 11px 12px",
+                        boxShadow: "0 14px 34px rgba(0,0,0,0.24)",
                         backdropFilter: "blur(12px)",
                         fontFamily: galleryFontFamily,
-                        pointerEvents: "none",
+                        pointerEvents: "auto",
                       }}
                     >
+                      <button
+                        type="button"
+                        aria-label="Hide deadline notice"
+                        onClick={() => setLateOrderNoticeHidden(true)}
+                        style={{
+                          position: "absolute",
+                          top: 8,
+                          right: 8,
+                          width: 22,
+                          height: 22,
+                          border: "1px solid rgba(254,202,202,0.32)",
+                          borderRadius: 999,
+                          background: "rgba(127,29,29,0.46)",
+                          color: "#fecaca",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          padding: 0,
+                          cursor: "pointer",
+                        }}
+                      >
+                        <X size={12} strokeWidth={2.4} />
+                      </button>
                       <div
                         style={{
                           display: "flex",
-                          alignItems: "center",
-                          gap: 8,
+                          alignItems: "flex-start",
+                          gap: 7,
                           color: "#fca5a5",
-                          fontSize: 11,
+                          fontSize: 10,
                           fontWeight: 900,
-                          letterSpacing: "0.08em",
+                          letterSpacing: "0.06em",
                           textTransform: "uppercase",
-                          marginBottom: 6,
+                          marginBottom: 5,
+                          lineHeight: 1.25,
                         }}
                       >
-                        <Clock3 size={14} strokeWidth={2.2} />
+                        <Clock3 size={13} strokeWidth={2.2} style={{ flexShrink: 0, marginTop: 1 }} />
                         <span>{lateOrderNotice.title}</span>
                       </div>
                       <div
                         style={{
                           color: "#fecaca",
-                          fontSize: isMobileViewport ? 12 : 13,
+                          fontSize: isMobileViewport ? 12 : 12,
                           lineHeight: 1.45,
                           fontWeight: 650,
                         }}
