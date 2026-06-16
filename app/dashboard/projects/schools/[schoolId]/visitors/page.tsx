@@ -26,6 +26,8 @@ const textPrimary = "#111";
 const textMuted = "#666";
 const borderColor = "#e5e5e5";
 const accentColor = "#111";
+const reportGridColumns =
+  "44px minmax(210px,1.25fr) minmax(220px,1.25fr) minmax(170px,1fr) 110px 130px 120px minmax(210px,1.35fr)";
 
 /* ── types ───────────────────────────────────────────────────── */
 type VisitorOrder = {
@@ -116,6 +118,47 @@ function fmtDateTime(iso: string) {
 
 function fmtMoney(cents: number) {
   return "$" + (cents / 100).toFixed(2);
+}
+
+function csvEscape(value: string | number | null | undefined) {
+  const raw = value == null ? "" : String(value);
+  if (!/[",\n\r]/.test(raw)) return raw;
+  return `"${raw.replace(/"/g, '""')}"`;
+}
+
+function shortOrderId(id: string) {
+  return id ? id.slice(0, 8) : "";
+}
+
+function uniqueValues(values: Array<string | null | undefined>) {
+  return Array.from(new Set(values.map((value) => (value ?? "").trim()).filter(Boolean)));
+}
+
+function visitorStudentNames(visitor: Visitor) {
+  return uniqueValues(visitor.orders.map((order) => order.studentName)).join(", ");
+}
+
+function visitorClassNames(visitor: Visitor) {
+  return uniqueValues(visitor.orders.map((order) => order.className)).join(", ");
+}
+
+function visitorItemCount(visitor: Visitor) {
+  return visitor.orders.reduce((orderSum, order) => {
+    const items = order.items ?? [];
+    if (!items.length) return orderSum + 1;
+    return orderSum + items.reduce((itemSum, item) => itemSum + Math.max(1, Number(item.quantity) || 1), 0);
+  }, 0);
+}
+
+function visitorOrderTotal(visitor: Visitor) {
+  return visitor.orders.reduce((sum, order) => sum + (Number(order.totalCents) || 0), 0);
+}
+
+function visitorOrderLabels(visitor: Visitor) {
+  return visitor.orders.map((order) => {
+    const status = order.status.replace(/_/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+    return `Order #${shortOrderId(order.id)} (${status})`;
+  });
 }
 
 function statusBadge(status: string) {
@@ -490,6 +533,55 @@ export default function SchoolVisitorsPage() {
     setShowComposer(true);
   }
 
+  function openComposerForVisitor(visitor: Visitor) {
+    setSelected(new Set([visitor.id]));
+    setEmailForm({
+      subject: `Update from ${branding.businessName || "Your Photographer"}`,
+      headline: "A message from your photographer",
+      message: "",
+    });
+    setEmailResult(null);
+    setShowComposer(true);
+  }
+
+  function downloadCsv() {
+    const header = [
+      "Gallery Name",
+      "Visitor",
+      "Students",
+      "Classes",
+      "Last Activity",
+      "Favorites",
+      "Free Digitals",
+      "Cart Items",
+      "Orders",
+      "Order Total",
+    ];
+    const rows = filtered.map((visitor) => [
+      schoolName || "School Gallery",
+      visitor.email,
+      visitorStudentNames(visitor),
+      visitorClassNames(visitor),
+      visitor.preRelease ? `Registered ${fmtDate(visitor.firstVisit)}` : fmtDateTime(visitor.lastVisit),
+      visitor.favoriteCount || 0,
+      visitor.downloadCount || 0,
+      visitorItemCount(visitor) || 0,
+      visitorOrderLabels(visitor).join("; "),
+      visitorOrderTotal(visitor) > 0 ? fmtMoney(visitorOrderTotal(visitor)) : "",
+    ]);
+    const csv = [header, ...rows].map((row) => row.map(csvEscape).join(",")).join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    const slug = (schoolName || "school-gallery").replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "").toLowerCase();
+    link.href = url;
+    link.download = `${slug || "school-gallery"}-visitors.csv`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  }
+
   async function sendMassEmail() {
     setSendingEmail(true);
     const recipientEmails = visitors
@@ -535,17 +627,17 @@ export default function SchoolVisitorsPage() {
   return (
     <div style={{ display: "flex", minHeight: "100vh", background: bg }}>
       {/* ── Main content ──────────────────── */}
-      <div style={{ flex: 1, padding: "32px 40px", maxWidth: selectedVisitor ? "calc(100% - 440px)" : "100%" }}>
+      <div style={{ flex: 1, padding: "0 0 32px", maxWidth: selectedVisitor ? "calc(100% - 440px)" : "100%", overflowX: "hidden" }}>
         {/* Header */}
-        <div style={{ marginBottom: 24 }}>
-          <Link
-            href={`/dashboard/projects/schools/${schoolId}`}
-            style={{ display: "inline-flex", alignItems: "center", gap: 6, color: textMuted, fontSize: 13, textDecoration: "none", marginBottom: 12 }}
-          >
-            <ArrowLeft size={14} /> Back to {schoolName || "School"}
-          </Link>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16 }}>
+        <div style={{ background: cardBg, borderBottom: `1px solid ${borderColor}`, padding: "24px 40px 20px" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
             <div>
+              <Link
+                href={`/dashboard/projects/schools/${schoolId}`}
+                style={{ display: "inline-flex", alignItems: "center", gap: 6, color: textMuted, fontSize: 13, textDecoration: "none", marginBottom: 14 }}
+              >
+                <ArrowLeft size={16} /> Back to {schoolName || "School"}
+              </Link>
               <h1 style={{ fontSize: 24, fontWeight: 800, color: textPrimary, margin: 0 }}>
                 <Users size={22} style={{ marginRight: 8, verticalAlign: "middle" }} />
                 Gallery Visitors
@@ -554,246 +646,306 @@ export default function SchoolVisitorsPage() {
                 {schoolName} &middot; {(() => {
                   const real = visitors.filter((v) => !v.preRelease).length;
                   const pre = visitors.filter((v) => v.preRelease).length;
-                  const parts = [
-                    `${real} visitor${real !== 1 ? "s" : ""}`,
-                  ];
+                  const parts = [`${real} visitor${real !== 1 ? "s" : ""}`];
                   if (pre > 0) parts.push(`${pre} on notification list`);
                   return parts.join(" · ");
                 })()}
               </div>
             </div>
-            {selected.size > 0 && (
+            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
               <button
                 type="button"
-                onClick={openComposer}
+                onClick={downloadCsv}
                 style={{
-                  display: "flex",
+                  display: "inline-flex",
                   alignItems: "center",
                   gap: 8,
-                  padding: "10px 20px",
-                  background: accentColor,
-                  color: "#fff",
-                  border: "none",
+                  padding: "9px 16px",
+                  background: "#fff",
+                  color: textPrimary,
+                  border: `1px solid ${borderColor}`,
                   borderRadius: 8,
-                  fontWeight: 700,
+                  fontWeight: 800,
                   fontSize: 13,
                   cursor: "pointer",
                 }}
               >
-                <Mail size={16} /> Email {selected.size} Visitor{selected.size !== 1 ? "s" : ""}
+                <Download size={16} /> Download CSV
               </button>
-            )}
+              {selected.size > 0 && (
+                <button
+                  type="button"
+                  onClick={openComposer}
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 8,
+                    padding: "10px 18px",
+                    background: accentColor,
+                    color: "#fff",
+                    border: "none",
+                    borderRadius: 8,
+                    fontWeight: 800,
+                    fontSize: 13,
+                    cursor: "pointer",
+                  }}
+                >
+                  <Mail size={16} /> Email {selected.size} Visitor{selected.size !== 1 ? "s" : ""}
+                </button>
+              )}
+            </div>
           </div>
         </div>
 
-        {/* Search bar */}
-        <div style={{ position: "relative", marginBottom: 20, maxWidth: 480 }}>
-          <Search size={16} style={{ position: "absolute", left: 12, top: 11, color: textMuted }} />
-          <input
-            type="text"
-            placeholder="Search by email, student name, class, or order ID…"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            style={{
-              width: "100%",
-              padding: "10px 12px 10px 36px",
-              border: `1px solid ${borderColor}`,
-              borderRadius: 8,
-              fontSize: 13,
-              color: textPrimary,
-              background: cardBg,
-              boxSizing: "border-box",
-            }}
-          />
-        </div>
-
-        {/* Table */}
-        <div style={{ background: cardBg, borderRadius: 12, border: `1px solid ${borderColor}`, overflow: "hidden" }}>
-          {/* Table header */}
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "40px 1fr 1fr 80px 100px 100px 120px",
-              padding: "12px 16px",
-              background: "#fafafa",
-              borderBottom: `1px solid ${borderColor}`,
-              fontSize: 11,
-              fontWeight: 700,
-              textTransform: "uppercase",
-              letterSpacing: "0.06em",
-              color: textMuted,
-            }}
-          >
-            <div>
+        <div style={{ padding: "24px 40px 0" }}>
+          {/* Search bar */}
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 18, flexWrap: "wrap" }}>
+            <div style={{ position: "relative", width: "min(100%, 520px)" }}>
+              <Search size={16} style={{ position: "absolute", left: 12, top: 12, color: textMuted }} />
               <input
-                type="checkbox"
-                checked={allSelected}
-                onChange={toggleAll}
-                style={{ width: 16, height: 16, cursor: "pointer" }}
+                type="text"
+                placeholder="Search & filter by email, student, class, or order ID..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                style={{
+                  width: "100%",
+                  padding: "11px 12px 11px 36px",
+                  border: `1px solid ${borderColor}`,
+                  borderRadius: 6,
+                  fontSize: 13,
+                  color: textPrimary,
+                  background: cardBg,
+                  boxSizing: "border-box",
+                }}
               />
             </div>
-            <div>Visitor</div>
-            <div>Last Activity</div>
-            <div>Favs</div>
-            <div>Orders</div>
-            <div>Downloads</div>
-            <div>Actions</div>
+            <div style={{ fontSize: 12, color: textMuted }}>
+              Showing {filtered.length} of {visitors.length} visitor{visitors.length !== 1 ? "s" : ""}
+            </div>
           </div>
 
-          {/* Rows */}
-          {filtered.length === 0 ? (
-            <div style={{ padding: 40, textAlign: "center", color: textMuted, fontSize: 14 }}>
-              {search ? "No visitors match your search." : "No visitors yet."}
-            </div>
-          ) : (
-            filtered.map((v) => (
+          {/* Table */}
+          <div style={{ background: cardBg, border: `1px solid ${borderColor}`, overflow: "auto" }}>
+            <div style={{ minWidth: 1180 }}>
+              {/* Table header */}
               <div
-                key={v.id}
                 style={{
                   display: "grid",
-                  gridTemplateColumns: "40px 1fr 1fr 80px 100px 100px 120px",
-                  padding: "14px 16px",
+                  gridTemplateColumns: reportGridColumns,
+                  padding: "12px 18px",
+                  background: "#fafafa",
                   borderBottom: `1px solid ${borderColor}`,
-                  alignItems: "center",
-                  background: selectedVisitor?.id === v.id ? "#f9fafb" : "transparent",
-                  cursor: "pointer",
+                  fontSize: 11,
+                  fontWeight: 800,
+                  color: "#6b7280",
                 }}
-                onClick={() => setSelectedVisitor(v)}
               >
-                <div onClick={(e) => e.stopPropagation()}>
+                <div>
                   <input
                     type="checkbox"
-                    checked={selected.has(v.id)}
-                    onChange={() => toggleOne(v.id)}
+                    checked={allSelected}
+                    onChange={toggleAll}
                     style={{ width: 16, height: 16, cursor: "pointer" }}
                   />
                 </div>
-                <div>
-                  {editingEmail?.id === v.id ? (
-                    <div style={{ display: "flex", gap: 6, alignItems: "center" }} onClick={(e) => e.stopPropagation()}>
-                      <input
-                        type="text"
-                        value={editingEmail.email}
-                        onChange={(e) => setEditingEmail({ ...editingEmail, email: e.target.value })}
-                        style={{ padding: "4px 8px", border: `1px solid ${borderColor}`, borderRadius: 4, fontSize: 13, color: textPrimary, width: 220 }}
-                      />
-                      <button
-                        type="button"
-                        onClick={saveEmailEdit}
-                        disabled={savingEmail}
-                        style={{ padding: "4px 8px", background: accentColor, color: "#fff", border: "none", borderRadius: 4, fontSize: 11, cursor: "pointer" }}
-                      >
-                        {savingEmail ? "…" : <Check size={14} />}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setEditingEmail(null)}
-                        style={{ padding: "4px 8px", background: "#eee", color: textPrimary, border: "none", borderRadius: 4, fontSize: 11, cursor: "pointer" }}
-                      >
-                        <X size={14} />
-                      </button>
-                    </div>
-                  ) : (
-                    <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-                      <div style={{ fontSize: 13, fontWeight: 600, color: textPrimary }}>{v.email}</div>
-                      {v.preRelease && (
-                        <span
-                          title="Registered for notification before the gallery opened"
-                          style={{
-                            display: "inline-block",
-                            padding: "1px 8px",
-                            borderRadius: 999,
-                            fontSize: 10,
-                            fontWeight: 700,
-                            background: "#eef2ff",
-                            color: "#3730a3",
-                            letterSpacing: "0.03em",
-                          }}
-                        >
-                          PRE-RELEASE
-                        </span>
-                      )}
-                      {v.alsoPreRelease && !v.preRelease && (
-                        <span
-                          title="Also signed up for the pre-release notification"
-                          style={{
-                            display: "inline-block",
-                            padding: "1px 8px",
-                            borderRadius: 999,
-                            fontSize: 10,
-                            fontWeight: 700,
-                            background: "#eef2ff",
-                            color: "#3730a3",
-                            letterSpacing: "0.03em",
-                          }}
-                        >
-                          PRE-RELEASE
-                        </span>
-                      )}
-                    </div>
-                  )}
-                  {v.orders.length > 0 && (
-                    <div style={{ fontSize: 11, color: textMuted, marginTop: 2 }}>
-                      {v.orders.map((o) => o.studentName).filter(Boolean).join(", ")}
-                    </div>
-                  )}
-                </div>
-                <div style={{ fontSize: 12, color: textMuted }}>
-                  {v.preRelease
-                    ? `Registered ${fmtDate(v.firstVisit)}`
-                    : fmtDateTime(v.lastVisit)}
-                </div>
-                <div>
-                  {(v.favoriteCount || 0) > 0 ? (
-                    <span style={{ fontSize: 12, fontWeight: 700, color: "#e11d48" }}>
-                      <Star size={12} style={{ marginRight: 4, verticalAlign: "middle" }} />
-                      {v.favoriteCount}
-                    </span>
-                  ) : (
-                    <span style={{ fontSize: 12, color: "#ccc" }}>-</span>
-                  )}
-                </div>
-                <div>
-                  {v.orderCount > 0 ? (
-                    <span style={{ fontSize: 12, fontWeight: 700, color: "#166534" }}>
-                      <ShoppingCart size={12} style={{ marginRight: 4, verticalAlign: "middle" }} />
-                      {v.orderCount}
-                    </span>
-                  ) : (
-                    <span style={{ fontSize: 12, color: "#ccc" }}>-</span>
-                  )}
-                </div>
-                <div>
-                  {v.downloadCount > 0 ? (
-                    <span style={{ fontSize: 12, fontWeight: 700, color: "#1e40af" }}>
-                      <Download size={12} style={{ marginRight: 4, verticalAlign: "middle" }} />
-                      {v.downloadCount}
-                    </span>
-                  ) : (
-                    <span style={{ fontSize: 12, color: "#ccc" }}>-</span>
-                  )}
-                </div>
-                <div style={{ display: "flex", gap: 6 }} onClick={(e) => e.stopPropagation()}>
-                  <button
-                    type="button"
-                    title="Edit email"
-                    onClick={() => setEditingEmail({ id: v.id, email: v.email })}
-                    style={{ padding: 6, background: "#f3f4f6", border: "none", borderRadius: 4, cursor: "pointer", color: textMuted }}
-                  >
-                    <Edit3 size={14} />
-                  </button>
-                  <button
-                    type="button"
-                    title="View details"
-                    onClick={() => setSelectedVisitor(v)}
-                    style={{ padding: 6, background: "#f3f4f6", border: "none", borderRadius: 4, cursor: "pointer", color: textMuted }}
-                  >
-                    <ChevronRight size={14} />
-                  </button>
-                </div>
+                <div>Gallery Name</div>
+                <div>Visitor</div>
+                <div>Last Activity</div>
+                <div>Favorites</div>
+                <div>Free Digitals</div>
+                <div>Cart Items</div>
+                <div>Orders</div>
               </div>
-            ))
-          )}
+
+              {/* Rows */}
+              {filtered.length === 0 ? (
+                <div style={{ padding: 40, textAlign: "center", color: textMuted, fontSize: 14 }}>
+                  {search ? "No visitors match your search." : "No visitors yet."}
+                </div>
+              ) : (
+                filtered.map((v, index) => {
+                  const students = visitorStudentNames(v);
+                  const classes = visitorClassNames(v);
+                  const itemCount = visitorItemCount(v);
+                  const orderLabels = visitorOrderLabels(v);
+                  return (
+                    <div
+                      key={v.id}
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: reportGridColumns,
+                        padding: "12px 18px",
+                        borderBottom: `1px solid ${borderColor}`,
+                        alignItems: "center",
+                        background: selectedVisitor?.id === v.id ? "#f1f5f9" : index % 2 === 0 ? "#fff" : "#f8fafc",
+                        cursor: "pointer",
+                      }}
+                      onClick={() => setSelectedVisitor(v)}
+                    >
+                      <div onClick={(e) => e.stopPropagation()}>
+                        <input
+                          type="checkbox"
+                          checked={selected.has(v.id)}
+                          onChange={() => toggleOne(v.id)}
+                          style={{ width: 16, height: 16, cursor: "pointer" }}
+                        />
+                      </div>
+
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ fontSize: 13, fontWeight: 800, color: textPrimary, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                          {schoolName || "School Gallery"}
+                        </div>
+                        <div style={{ fontSize: 11, color: textMuted, marginTop: 3, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                          {students || "No student linked yet"}
+                        </div>
+                      </div>
+
+                      <div style={{ minWidth: 0 }}>
+                        {editingEmail?.id === v.id ? (
+                          <div style={{ display: "flex", gap: 6, alignItems: "center" }} onClick={(e) => e.stopPropagation()}>
+                            <input
+                              type="text"
+                              value={editingEmail.email}
+                              onChange={(e) => setEditingEmail({ ...editingEmail, email: e.target.value })}
+                              style={{ padding: "5px 8px", border: `1px solid ${borderColor}`, borderRadius: 4, fontSize: 12, color: textPrimary, width: 190 }}
+                            />
+                            <button
+                              type="button"
+                              onClick={saveEmailEdit}
+                              disabled={savingEmail}
+                              style={{ padding: "5px 7px", background: accentColor, color: "#fff", border: "none", borderRadius: 4, cursor: "pointer" }}
+                            >
+                              {savingEmail ? "..." : <Check size={13} />}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setEditingEmail(null)}
+                              style={{ padding: "5px 7px", background: "#eee", color: textPrimary, border: "none", borderRadius: 4, cursor: "pointer" }}
+                            >
+                              <X size={13} />
+                            </button>
+                          </div>
+                        ) : (
+                          <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+                            <div style={{ fontSize: 13, fontWeight: 700, color: textPrimary, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{v.email}</div>
+                            <button
+                              type="button"
+                              title="Email this visitor"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                openComposerForVisitor(v);
+                              }}
+                              style={{ flex: "0 0 auto", padding: 5, border: `1px solid ${borderColor}`, borderRadius: 5, background: "#fff", color: textMuted, cursor: "pointer" }}
+                            >
+                              <Mail size={13} />
+                            </button>
+                            <button
+                              type="button"
+                              title="Edit email"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setEditingEmail({ id: v.id, email: v.email });
+                              }}
+                              style={{ flex: "0 0 auto", padding: 5, border: `1px solid ${borderColor}`, borderRadius: 5, background: "#fff", color: textMuted, cursor: "pointer" }}
+                            >
+                              <Edit3 size={13} />
+                            </button>
+                          </div>
+                        )}
+                        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 4 }}>
+                          {classes && <span style={{ fontSize: 11, color: textMuted }}>{classes}</span>}
+                          {(v.preRelease || v.alsoPreRelease) && (
+                            <span
+                              title="Registered for notification before the gallery opened"
+                              style={{
+                                display: "inline-block",
+                                padding: "1px 7px",
+                                borderRadius: 999,
+                                fontSize: 10,
+                                fontWeight: 800,
+                                background: "#eef2ff",
+                                color: "#3730a3",
+                              }}
+                            >
+                              PRE-RELEASE
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      <div style={{ fontSize: 12, color: textMuted }}>
+                        {v.preRelease ? `Registered ${fmtDate(v.firstVisit)}` : fmtDateTime(v.lastVisit)}
+                      </div>
+
+                      <div>
+                        {(v.favoriteCount || 0) > 0 ? (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSelectedVisitor(v);
+                            }}
+                            style={{ display: "inline-flex", alignItems: "center", gap: 5, border: "none", background: "transparent", padding: 0, color: "#be123c", fontSize: 12, fontWeight: 800, cursor: "pointer" }}
+                          >
+                            <Star size={13} /> {v.favoriteCount}
+                          </button>
+                        ) : (
+                          <span style={{ fontSize: 12, color: "#bbb" }}>-</span>
+                        )}
+                      </div>
+
+                      <div>
+                        {v.downloadCount > 0 ? (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSelectedVisitor(v);
+                            }}
+                            style={{ border: "none", background: "transparent", padding: 0, color: "#2563eb", fontSize: 12, fontWeight: 800, cursor: "pointer" }}
+                          >
+                            View ({v.downloadCount})
+                          </button>
+                        ) : (
+                          <span style={{ fontSize: 12, color: "#bbb" }}>-</span>
+                        )}
+                      </div>
+
+                      <div>
+                        {itemCount > 0 ? (
+                          <span style={{ display: "inline-flex", alignItems: "center", gap: 5, color: "#166534", fontSize: 12, fontWeight: 800 }}>
+                            <ShoppingCart size={13} /> {itemCount}
+                          </span>
+                        ) : (
+                          <span style={{ fontSize: 12, color: "#bbb" }}>-</span>
+                        )}
+                      </div>
+
+                      <div style={{ minWidth: 0 }}>
+                        {v.orders.length > 0 ? (
+                          <div style={{ display: "grid", gap: 3 }}>
+                            {v.orders.slice(0, 2).map((order, orderIndex) => (
+                              <Link
+                                key={order.id}
+                                href={`/dashboard/orders?focus=${order.id}`}
+                                onClick={(e) => e.stopPropagation()}
+                                style={{ color: "#2563eb", fontSize: 12, fontWeight: 800, textDecoration: "none", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}
+                              >
+                                {orderLabels[orderIndex]}
+                              </Link>
+                            ))}
+                            {v.orders.length > 2 && <span style={{ fontSize: 11, color: textMuted }}>+{v.orders.length - 2} more order{v.orders.length - 2 === 1 ? "" : "s"}</span>}
+                          </div>
+                        ) : (
+                          <span style={{ fontSize: 12, color: "#bbb" }}>-</span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
         </div>
       </div>
 
@@ -816,13 +968,22 @@ export default function SchoolVisitorsPage() {
               <div style={{ fontSize: 16, fontWeight: 800, color: textPrimary }}>{selectedVisitor.email}</div>
               <div style={{ fontSize: 12, color: textMuted, marginTop: 2 }}>First visit: {fmtDate(selectedVisitor.firstVisit)}</div>
             </div>
-            <button
-              type="button"
-              onClick={() => setSelectedVisitor(null)}
-              style={{ background: "none", border: "none", cursor: "pointer", color: textMuted }}
-            >
-              <X size={18} />
-            </button>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <button
+                type="button"
+                onClick={() => openComposerForVisitor(selectedVisitor)}
+                style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "8px 10px", background: accentColor, color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 12, fontWeight: 800 }}
+              >
+                <Mail size={14} /> Email
+              </button>
+              <button
+                type="button"
+                onClick={() => setSelectedVisitor(null)}
+                style={{ background: "none", border: "none", cursor: "pointer", color: textMuted }}
+              >
+                <X size={18} />
+              </button>
+            </div>
           </div>
 
           {/* Stats */}
@@ -872,10 +1033,10 @@ export default function SchoolVisitorsPage() {
               <div style={{ fontSize: 13, color: textMuted, padding: "12px 0" }}>No orders placed.</div>
             ) : (
               selectedVisitor.orders.map((o) => (
-                <Link
-                  key={o.id}
-                  href={`/dashboard/orders?highlight=${o.id}`}
-                  style={{
+	                <Link
+	                  key={o.id}
+	                  href={`/dashboard/orders?focus=${o.id}`}
+	                  style={{
                     display: "block",
                     padding: "12px 16px",
                     background: "#f9fafb",
