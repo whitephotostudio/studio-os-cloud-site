@@ -209,6 +209,79 @@ function packageSetSummary(items: PackageItemLike[]) {
   return `One package set includes ${count} item${count === 1 ? "" : "s"}. Client quantity multiplies this set and the price.`;
 }
 
+function packageItemsHaveNames(items: Array<{ name: string; qty: number; composite?: boolean }>) {
+  return items.some((item) => item.name.trim());
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function inferPackageItemsFromText(name: string, description?: string | null) {
+  const inferFromSingleText = (value: string | null | undefined) => {
+    const text = (value ?? "")
+      .replace(/×/g, "x")
+      .replace(/\s+/g, " ")
+      .trim()
+      .toLowerCase();
+    if (!text) return [] as Array<{ name: string; qty: number; composite?: boolean }>;
+
+    const inferred = new Map<string, { name: string; qty: number; composite?: boolean }>();
+    const addItem = (label: string, qty: number) => {
+      const safeQty = Number.isFinite(qty) && qty > 0 ? Math.round(qty) : 1;
+      const existing = inferred.get(label);
+      if (existing) {
+        existing.qty += safeQty;
+      } else {
+        inferred.set(label, { name: label, qty: safeQty, composite: false });
+      }
+    };
+
+    for (const size of PRINT_SIZES) {
+      if (size.value === "custom") continue;
+      const label = size.label;
+
+      if (size.value === "8_wallets") {
+        const walletMatches = [
+          ...text.matchAll(/(\d{1,2})\s*(?:-|x|\*)\s*(?:8\s*)?wallets?/gi),
+          ...text.matchAll(/(\d{1,2})\s+(?:sheets?\s+of\s+)?(?:8\s*)?wallets?/gi),
+        ];
+        if (walletMatches.length > 0) {
+          walletMatches.forEach((match) => addItem(label, Number.parseInt(match[1], 10)));
+        } else if (/\b8\s*wallets?\b/i.test(text) || /\bwallets?\b/i.test(text)) {
+          addItem(label, 1);
+        }
+        continue;
+      }
+
+      const normalizedSize = size.value.toLowerCase().replace(/×/g, "x");
+      const sizePattern = escapeRegExp(normalizedSize).replace("x", "\\s*x\\s*");
+      const patterns = [
+        new RegExp(`(\\d{1,2})\\s*(?:-|x|\\*)\\s*${sizePattern}\\b`, "gi"),
+        new RegExp(`(\\d{1,2})\\s*(?:prints?|copies?|photos?|items?)\\s*(?:of\\s*)?${sizePattern}\\b`, "gi"),
+        new RegExp(`(\\d{1,2})\\s+${sizePattern}\\b`, "gi"),
+      ];
+
+      let matched = false;
+      for (const pattern of patterns) {
+        for (const match of text.matchAll(pattern)) {
+          matched = true;
+          addItem(label, Number.parseInt(match[1], 10));
+        }
+      }
+
+      if (!matched && new RegExp(`\\b${sizePattern}\\b`, "i").test(text)) {
+        addItem(label, 1);
+      }
+    }
+
+    return Array.from(inferred.values());
+  };
+
+  const fromName = inferFromSingleText(name);
+  return fromName.length > 0 ? fromName : inferFromSingleText(description);
+}
+
 function genProfileId(): string {
   return `profile_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
 }
@@ -489,13 +562,19 @@ export default function PackagesPage() {
       if (typeof item === "string") return { name: item, qty: 1, composite: false };
       return { name: item.name?.trim() || "", qty: parseInt(String(item.qty ?? 1)) || 1, composite: !!item.composite };
     });
-    setEditItems(items.length > 0 ? items : [{ name: "", qty: 1 }]);
+    const inferredItems = packageItemsHaveNames(items)
+      ? items
+      : inferPackageItemsFromText(pkg.name, pkg.description);
+    setEditItems(inferredItems.length > 0 ? inferredItems : [{ name: "", qty: 1 }]);
   }
 
   async function saveEdit() {
     if (!editingPkg) return;
     setSaving(true);
-    const validItems = editItems.filter(i => i.name.trim());
+    const sourceItems = packageItemsHaveNames(editItems)
+      ? editItems
+      : inferPackageItemsFromText(editName, editDesc);
+    const validItems = sourceItems.filter(i => i.name.trim());
     const autoDesc = validItems.length > 0
       ? validItems.map(i => `${i.qty > 1 ? i.qty + "× " : ""}${i.name.trim()}`).join(", ")
       : null;
@@ -505,7 +584,7 @@ export default function PackagesPage() {
       price_cents: Math.round(parseFloat(editPrice) * 100),
       category:    editCategory,
       active:      editActive,
-      items:       editItems.filter(i => i.name.trim()).map(i => ({ name: i.name.trim(), qty: i.qty, ...(i.composite ? { composite: true } : {}) })),
+      items:       validItems.map(i => ({ name: i.name.trim(), qty: i.qty, ...(i.composite ? { composite: true } : {}) })),
     }).eq("id", editingPkg.id);
     setSaving(false);
     setEditingPkg(null);
