@@ -435,14 +435,27 @@ function extractImageUrls(order: Order | null) {
   const urls = new Set<string>();
   const noteUrls = extractOrderPhotoUrls(noteTextForOrder(order));
   const snapshotItems = cartSnapshotToOrderItems(order.cart_snapshot);
-  const orderedUrls = noteUrls.length > 0
-    ? noteUrls
-    : snapshotItems.length > 0
-      ? snapshotItems.map((item) => clean(item.sku)).filter((url) => !!dashboardPhotoUrl(url))
-      : (order.items ?? []).map((item) => clean(item.sku)).filter((url) => !!dashboardPhotoUrl(url));
+  const snapshotHasBackdrop = snapshotItems.some((item) => item.backdrop);
+  const orderedUrls = snapshotHasBackdrop
+    ? snapshotItems
+        .map((item, index) => dashboardCompositeUrl(order.id, {
+          ...item,
+          price: null,
+          unit_price_cents: null,
+          line_total_cents: null,
+          snapshotIndex: index,
+        }, index) || clean(item.sku))
+        .filter((url) => !!dashboardPhotoUrl(url))
+    : noteUrls.length > 0
+      ? noteUrls
+      : snapshotItems.length > 0
+        ? snapshotItems.map((item) => clean(item.sku)).filter((url) => !!dashboardPhotoUrl(url))
+        : (order.items ?? []).map((item) => clean(item.sku)).filter((url) => !!dashboardPhotoUrl(url));
 
   for (const url of orderedUrls) {
-    const displayUrl = dashboardPhotoUrl(url);
+    const displayUrl = url.startsWith("/api/dashboard/orders/composite")
+      ? url
+      : dashboardPhotoUrl(url);
     if (displayUrl) urls.add(displayUrl);
   }
 
