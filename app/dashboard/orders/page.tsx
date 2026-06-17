@@ -24,6 +24,7 @@ import {
   Pencil,
   Printer,
   RefreshCw,
+  Search,
   School2,
   Settings,
   ShoppingBag,
@@ -224,6 +225,53 @@ function moneyFromCents(cents: number | null | undefined, currency = "CAD") {
 
 function clean(value: string | null | undefined) {
   return (value ?? "").trim();
+}
+
+function searchable(value: string | number | null | undefined) {
+  return String(value ?? "").toLowerCase().trim();
+}
+
+function compactSearch(value: string) {
+  return value.replace(/[^a-z0-9]/g, "");
+}
+
+function orderMatchesSearch(order: Order, query: string) {
+  const tokens = searchable(query).split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) return true;
+
+  const studentName = `${clean(order.student?.first_name)} ${clean(order.student?.last_name)}`;
+  const fields = [
+    order.id,
+    orderShortId(order),
+    `order ${order.id}`,
+    `order ${orderShortId(order)}`,
+    order.order_group_id,
+    order.student_id,
+    studentName,
+    order.student?.first_name,
+    order.student?.last_name,
+    order.student?.folder_name,
+    order.student?.class_name,
+    order.parent_name,
+    order.customer_name,
+    order.parent_email,
+    order.customer_email,
+    order.parent_phone,
+    order.school?.school_name,
+    order.class?.class_name,
+    order.project?.title,
+    order.package_name,
+    order.special_notes,
+    order.notes,
+    ...(order.items ?? []).flatMap((item) => [item.product_name, item.sku, item.id]),
+  ];
+  const haystack = fields.map(searchable).filter(Boolean).join(" ");
+  const compactHaystack = compactSearch(haystack);
+
+  return tokens.every((token) => {
+    const compactToken = compactSearch(token);
+    return haystack.includes(token) || (compactToken.length > 0 && compactHaystack.includes(compactToken));
+  });
 }
 
 /** Strip ORDER ITEM blocks, URLs, and technical lines — keep only human notes */
@@ -1277,6 +1325,7 @@ function OrdersPageContent() {
   const [loading, setLoading] = useState(true);
   const [orders, setOrders] = useState<Order[]>([]);
   const [filter, setFilter] = useState<string>("all");
+  const [orderSearch, setOrderSearch] = useState("");
   const [selected, setSelected] = useState<Order | null>(null);
   const [selectedGroupKey, setSelectedGroupKey] = useState<string | null>(null);
   const detailsPanelRef = useRef<HTMLDivElement | null>(null);
@@ -1901,8 +1950,23 @@ function OrdersPageContent() {
     } else if (schoolFilter) {
       result = result.filter((o) => o.school_id === schoolFilter);
     }
+    result = result.filter((order) => orderMatchesSearch(order, orderSearch));
     return result;
+  }, [displayOrders, filter, schoolFilter, orderSearch]);
+
+  const searchScopeCount = useMemo(() => {
+    let result = displayOrders.filter((o) => matchesOrderStatusFilter(o, filter));
+    if (schoolFilter === "event") {
+      result = result.filter((o) => !o.school_id);
+    } else if (schoolFilter?.startsWith("event:")) {
+      const pid = schoolFilter.slice(6);
+      result = result.filter((o) => o.project_id === pid);
+    } else if (schoolFilter) {
+      result = result.filter((o) => o.school_id === schoolFilter);
+    }
+    return result.length;
   }, [displayOrders, filter, schoolFilter]);
+  const hasOrderSearch = clean(orderSearch).length > 0;
 
 
   const selectedDetailOrders = useMemo(() => {
@@ -2377,6 +2441,74 @@ function OrdersPageContent() {
 
         <main style={{ padding: isMobile ? 14 : 28, display: "flex", flexDirection: isMobile ? "column" : "row", gap: isMobile ? 14 : 24, alignItems: isMobile ? "stretch" : "flex-start" }}>
           <div style={{ flex: 1, minWidth: 0, width: "100%" }}>
+            <div
+              style={{
+                background: cardBg,
+                border: `1px solid ${borderColor}`,
+                borderRadius: 18,
+                padding: isMobile ? 12 : 14,
+                marginBottom: 16,
+                boxShadow: "0 8px 24px rgba(15,23,42,0.04)",
+              }}
+            >
+              <label htmlFor="order-search" style={{ display: "block", fontSize: 12, letterSpacing: "0.08em", textTransform: "uppercase", fontWeight: 900, color: textMuted, marginBottom: 8 }}>
+                Search orders
+              </label>
+              <div style={{ position: "relative" }}>
+                <Search size={18} color="#9ca3af" style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }} />
+                <input
+                  id="order-search"
+                  type="search"
+                  value={orderSearch}
+                  onChange={(event) => setOrderSearch(event.target.value)}
+                  placeholder="Search parent name, kid name, email, phone, or order number"
+                  autoComplete="off"
+                  style={{
+                    width: "100%",
+                    boxSizing: "border-box",
+                    border: `2px solid ${borderColor}`,
+                    borderRadius: 12,
+                    padding: "12px 44px",
+                    fontSize: 14,
+                    fontWeight: 700,
+                    color: textPrimary,
+                    outline: "none",
+                    background: "#fff",
+                  }}
+                />
+                {hasOrderSearch ? (
+                  <button
+                    type="button"
+                    aria-label="Clear order search"
+                    onClick={() => setOrderSearch("")}
+                    style={{
+                      position: "absolute",
+                      right: 10,
+                      top: "50%",
+                      transform: "translateY(-50%)",
+                      width: 28,
+                      height: 28,
+                      borderRadius: 999,
+                      border: "none",
+                      background: "#f3f4f6",
+                      color: textMuted,
+                      display: "inline-flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      cursor: "pointer",
+                    }}
+                  >
+                    <X size={15} />
+                  </button>
+                ) : null}
+              </div>
+              {hasOrderSearch ? (
+                <div style={{ marginTop: 8, fontSize: 13, color: textMuted }}>
+                  Showing <strong style={{ color: textPrimary }}>{filtered.length}</strong> of {searchScopeCount} matching the current filters.
+                </div>
+              ) : null}
+            </div>
+
             <div
               style={{
                 display: "grid",

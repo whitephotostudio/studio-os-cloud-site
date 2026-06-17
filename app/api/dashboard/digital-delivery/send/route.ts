@@ -95,8 +95,11 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(result);
   } catch (error) {
     console.error("[dashboard/digital-delivery/send]", error);
+    const message = error instanceof Error && error.message
+      ? error.message
+      : "Could not send the digital ZIP link.";
     return NextResponse.json(
-      { ok: false, message: "Could not send the digital ZIP link." },
+      { ok: false, message },
       { status: 500 },
     );
   }

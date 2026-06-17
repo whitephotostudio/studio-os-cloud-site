@@ -416,7 +416,7 @@ async function resolveDeliveryFiles(params: {
   const orderPackageLooksDigital = looksDigital(params.order.package_name);
   const digitalItems = sourceItems.filter((item) =>
     looksDigital(item.product_name) ||
-    (sourceItems.length === 1 && orderPackageLooksDigital),
+    (orderPackageLooksDigital && !!normalizeKey(item.sku)),
   );
 
   const fallbackDigitalOrder = !digitalItems.length && orderPackageLooksDigital
@@ -679,7 +679,12 @@ export async function sendDigitalDeliveryEmailForOrder(
   options?: { recipientEmail?: string | null; force?: boolean },
 ) {
   if (!resendConfigured()) {
-    return { ok: false as const, skipped: true as const, reason: "email_not_configured" };
+    return {
+      ok: false as const,
+      skipped: true as const,
+      reason: "email_not_configured",
+      message: "Email delivery is not configured on the server.",
+    };
   }
 
   const context = await resolveDigitalDeliveryContext(service, orderId, {
