@@ -4,6 +4,11 @@ import {
   resolveDashboardAuth,
 } from "@/lib/dashboard-auth";
 import { resolveOrderTotalCents, type OrderItemMoneyLike } from "@/lib/order-display";
+import {
+  finalizePaidOrderOrGroup,
+  getConnectedAccountId,
+  retrieveCheckoutSession,
+} from "@/lib/payments";
 
 export const dynamic = "force-dynamic";
 
@@ -27,6 +32,12 @@ type OrderRow = {
   total_cents?: number | null;
   total_amount?: number | null;
   items?: OrderItemRow[] | null;
+};
+
+type PhotographerRow = {
+  id: string;
+  stripe_account_id: string | null;
+  stripe_connected_account_id: string | null;
 };
 
 function clean(value: string | null | undefined) {
@@ -107,9 +118,9 @@ export async function POST(request: NextRequest) {
     const service = createDashboardServiceClient();
     const { data: photographer, error: photographerError } = await service
       .from("photographers")
-      .select("id")
+      .select("id,stripe_account_id,stripe_connected_account_id")
       .eq("user_id", user.id)
-      .maybeSingle();
+      .maybeSingle<PhotographerRow>();
 
     if (photographerError) throw photographerError;
     if (!photographer?.id) {
@@ -139,7 +150,41 @@ export async function POST(request: NextRequest) {
     const paidOrders = orders.filter(shouldNormalizePaidStatus);
     const digitalPaidIds = paidOrders.filter(isDigitalOrder).map((order) => order.id);
     const paidIds = paidOrders.filter((order) => !isDigitalOrder(order)).map((order) => order.id);
-    const checkoutIds = orders.filter(shouldNormalizeCheckoutStatus).map((order) => order.id);
+    const checkoutOrders = orders.filter(shouldNormalizeCheckoutStatus);
+    const recoveredStripePaidIds: string[] = [];
+    const stripeAccountId = getConnectedAccountId(photographer);
+
+    if (stripeAccountId) {
+      for (const order of checkoutOrders) {
+        const sessionId = clean(order.stripe_checkout_session_id);
+        if (!sessionId) continue;
+        try {
+          const session = await retrieveCheckoutSession(sessionId, stripeAccountId);
+          if (session.payment_status === "paid" || session.payment_status === "no_payment_required") {
+            await finalizePaidOrderOrGroup(service, {
+              orderId: order.id,
+              checkoutSessionId: session.id,
+              paymentIntentId: session.payment_intent ?? null,
+              paymentStatus: session.payment_status ?? "paid",
+              note: `[Order hygiene ${session.id}] recovered completed Stripe checkout`,
+              paidAt: new Date().toISOString(),
+            });
+            recoveredStripePaidIds.push(order.id);
+          }
+        } catch (error) {
+          console.warn("[dashboard:orders:hygiene] Stripe session check skipped", {
+            orderId: order.id,
+            sessionId,
+            error,
+          });
+        }
+      }
+    }
+
+    const recoveredStripePaid = new Set(recoveredStripePaidIds);
+    const checkoutIds = checkoutOrders
+      .filter((order) => !recoveredStripePaid.has(order.id))
+      .map((order) => order.id);
 
     if (placeholderIds.length > 0) {
       const { error: itemDeleteError } = await service
@@ -188,6 +233,7 @@ export async function POST(request: NextRequest) {
       deletedPlaceholders: placeholderIds.length,
       normalizedPaid: paidIds.length,
       normalizedDigitalPaid: digitalPaidIds.length,
+      recoveredStripePaid: recoveredStripePaidIds.length,
       normalizedCheckout: checkoutIds.length,
     });
   } catch (error) {
