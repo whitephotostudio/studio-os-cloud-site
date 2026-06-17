@@ -162,7 +162,7 @@ type OrderedPhotoGroup = {
   originalUrl: string | null;
   fallbackUrl: string | null;
   fileName: string;
-  items: OrderItem[];
+  items: Array<OrderItem & { sourceOrder?: Order }>;
 };
 
 type PackageComponentSummary = {
@@ -193,6 +193,10 @@ type PaymentBreakdownLine = {
   photoKeys?: string[];
   mergeKey?: string;
 };
+
+function orderShortId(order: Pick<Order, "id">) {
+  return clean(order.id).slice(0, 8);
+}
 
 const STATUS_COLORS: Record<string, { bg: string; color: string; label: string }> = {
   new: { bg: "#fef2f2", color: "#ef4444", label: "New" },
@@ -1256,6 +1260,7 @@ function OrdersPageContent() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [filter, setFilter] = useState<string>("all");
   const [selected, setSelected] = useState<Order | null>(null);
+  const [selectedGroupKey, setSelectedGroupKey] = useState<string | null>(null);
   const detailsPanelRef = useRef<HTMLDivElement | null>(null);
   // On mobile the details panel renders beneath the orders list instead of
   // in a sticky sidebar. Without a scroll-into-view, tapping "Open details"
@@ -1535,13 +1540,32 @@ function OrdersPageContent() {
     const isSameOpenOrder = selected?.id === order.id;
     if (isSameOpenOrder) {
       setSelected(null);
+      setSelectedGroupKey(null);
       return;
     }
 
+    setSelectedGroupKey(null);
     setSelected(order);
     if (!order.seen_by_photographer) {
       markSeen(order.id);
     }
+  }
+
+  function openOrderGroup(group: CombinedOrderGroup) {
+    const isSameOpenGroup = selectedGroupKey === group.key && selected?.id === group.representative.id;
+    if (isSameOpenGroup) {
+      setSelected(null);
+      setSelectedGroupKey(null);
+      return;
+    }
+
+    setSelectedGroupKey(group.key);
+    setSelected(group.representative);
+    group.orders
+      .filter((order) => !order.seen_by_photographer)
+      .forEach((order) => {
+        void markSeen(order.id);
+      });
   }
 
   async function handleSignOut() {
@@ -1739,7 +1763,10 @@ function OrdersPageContent() {
     try {
       const deletedIds = await deleteOrders([orderId]);
       setDeleteConfirmId(null);
-      if (selected && deletedIds.includes(selected.id)) setSelected(null);
+      if (selected && deletedIds.includes(selected.id)) {
+        setSelected(null);
+        setSelectedGroupKey(null);
+      }
       await load();
     } catch (error) {
       console.error("Order delete error:", error);
@@ -1814,7 +1841,10 @@ function OrdersPageContent() {
 
       setSelectedKeys(new Set());
       setBulkDeleteConfirm(false);
-      if (selected && deletedIds.includes(selected.id)) setSelected(null);
+      if (selected && deletedIds.includes(selected.id)) {
+        setSelected(null);
+        setSelectedGroupKey(null);
+      }
       await load();
     } catch (error) {
       console.error("Bulk order delete error:", error);
@@ -1857,128 +1887,181 @@ function OrdersPageContent() {
   }, [displayOrders, filter, schoolFilter]);
 
 
+  const selectedDetailOrders = useMemo(() => {
+    if (!selected) return [] as Order[];
+    if (!selectedGroupKey) return [selected];
+    const groupOrders = filtered.filter((order) => combinedStudentKey(order) === selectedGroupKey);
+    return groupOrders.length > 0 ? groupOrders : [selected];
+  }, [selected, selectedGroupKey, filtered]);
+
+  const selectedDetailOrderCount = selectedDetailOrders.length;
+  const selectedIsCombined = selectedDetailOrderCount > 1;
+  const selectedDetailCurrency = selected?.currency?.toUpperCase() || "CAD";
+  const selectedDetailTotalCents = selectedDetailOrders.reduce(
+    (sum, order) => sum + resolveOrderTotalCents(order, order.items),
+    0,
+  );
+  const selectedDetailSubtotalCents = selectedDetailOrders.reduce(
+    (sum, order) => sum + resolveOrderSubtotalCents(order, order.items),
+    0,
+  );
+  const selectedDetailTaxCents = selectedDetailOrders.reduce(
+    (sum, order) => sum + (Number(order.tax_cents ?? 0) || 0),
+    0,
+  );
+  const selectedDetailStatus = selectedIsCombined
+    ? getGroupDisplayStatus(selectedDetailOrders)
+    : selected
+      ? getOrderDisplayStatus(selected)
+      : "new";
+  const selectedDetailPackageSummary = selectedIsCombined
+    ? buildCombinedPackageSummary(selectedDetailOrders)
+    : selected?.package_name || "Package";
+  const selectedDetailHasPendingOrder = selectedDetailOrders.some(isCheckoutPendingOrder);
+  const selectedDetailDigitalDeliveryOrder =
+    selectedDetailOrders.find((order) => isPaidOrder(order) && hasDigitalDeliveryItems(order)) ?? null;
+  const selectedDetailPaymentLabel = selectedIsCombined
+    ? selectedDetailOrders.every(isPaidOrder)
+      ? "Processed"
+      : selectedDetailOrders.some(isPaidOrder)
+        ? "Mixed payment statuses"
+        : "Not Paid"
+    : selected
+      ? paymentStateLabel(selected)
+      : "—";
+  const selectedDetailPaymentDescription = selectedIsCombined
+    ? `${selectedDetailOrders.filter(isPaidOrder).length} of ${selectedDetailOrderCount} combined orders processed.`
+    : selected
+      ? paymentStateDescription(selected)
+      : "";
+
   const selectedOrderedPhotoGroups = useMemo(() => {
-    if (!selected) return [] as OrderedPhotoGroup[];
+    if (!selectedDetailOrders.length) return [] as OrderedPhotoGroup[];
 
     const buckets = new Map<string, OrderedPhotoGroup>();
-    const orderTotalCents = resolveOrderTotalCents(selected, selected.items);
-    const noteSelections = parseOrderPhotoSelections(noteTextForOrder(selected));
-    const snapshotItems: OrderItem[] = cartSnapshotToOrderItems(selected.cart_snapshot).map(
-      (item, index) => ({
-        id: `${selected.id}-cart-snapshot-${index}`,
-        product_name: item.product_name,
-        quantity: item.quantity,
-        price: null,
-        unit_price_cents: null,
-        line_total_cents: 0,
-        sku: item.sku,
-        backdrop: item.backdrop ?? null,
-        orientation: item.orientation ?? "portrait",
-        snapshotIndex: index,
-      }),
-    );
-    const imageItemCount = (selected.items ?? []).filter((item) =>
-      isWebImageUrl(item.sku),
-    ).length;
-    const snapshotHasBackdrop = snapshotItems.some((item) => item.backdrop);
-    const baseItems: OrderItem[] = snapshotHasBackdrop || snapshotItems.length > imageItemCount
-      ? snapshotItems
-      : selected.items?.length
-        ? selected.items.filter((item) => !isBackdropOrderItem(item))
-        : noteSelections.length
-        ? noteSelections.map((entry, index) => ({
-            id: `${selected.id}-note-${index}`,
-            product_name: entry.label || selected.package_name,
-            quantity: 1,
-            price: null,
-            unit_price_cents: null,
-            line_total_cents: resolveOrderItemDisplayCents(
-              { product_name: entry.label, quantity: 1, line_total_cents: null, unit_price_cents: null, price: null },
-              noteSelections.map((note) => ({ product_name: note.label, quantity: 1, line_total_cents: null, unit_price_cents: null, price: null })),
-              orderTotalCents,
-              index,
-            ),
-            sku: entry.url,
-          } as OrderItem))
-      : [{
-          id: `${selected.id}-package`,
-          product_name: selected.package_name,
-          quantity: 1,
-          price: selected.package_price,
-          unit_price_cents: null,
-          line_total_cents: orderTotalCents,
-          sku: selected.student?.photo_url ?? null,
-        } as OrderItem];
-    const sourceItems = baseItems.map((item, index) => ({
-      ...item,
-      line_total_cents: resolveOrderItemDisplayCents(
-        item,
-        baseItems,
-        orderTotalCents,
-        index,
-      ),
-    }));
 
-    sourceItems.forEach((item, index) => {
-      const rawSku = clean(item.sku);
-      const noteSelection =
-        noteSelections.find((entry) => entry.itemIndex === index) ?? noteSelections[index];
-      const rawUrl = dashboardPhotoUrl(rawSku) ? rawSku : clean(noteSelection?.url);
-      const originalDisplayUrl = dashboardPhotoUrl(rawUrl);
-      const compositeUrl = dashboardCompositeUrl(selected.id, item, index);
-      const displayUrl = compositeUrl || originalDisplayUrl;
-      const fallbackUrl = compositeUrl ? originalDisplayUrl : "";
-      const key = displayUrl || `no-image-${selected.id}-${index}`;
-      const existing = buckets.get(key);
-      if (existing) {
-        existing.items.push(item);
-      } else {
-        buckets.set(key, {
-          url: displayUrl || null,
-          originalUrl: rawUrl || selected.student?.photo_url || null,
-          fallbackUrl: fallbackUrl || null,
-          fileName: rawUrl ? fileNameFromUrl(rawUrl, selected.student?.folder_name || "photo.jpg") : selected.student?.folder_name || `${selected.student?.first_name ?? "student"}-${selected.id.slice(0, 6)}.jpg`,
+    selectedDetailOrders.forEach((order) => {
+      const orderTotalCents = resolveOrderTotalCents(order, order.items);
+      const noteSelections = parseOrderPhotoSelections(noteTextForOrder(order));
+      const snapshotItems: OrderItem[] = cartSnapshotToOrderItems(order.cart_snapshot).map(
+        (item, index) => ({
+          id: `${order.id}-cart-snapshot-${index}`,
+          product_name: item.product_name,
+          quantity: item.quantity,
+          price: null,
+          unit_price_cents: null,
+          line_total_cents: 0,
+          sku: item.sku,
+          backdrop: item.backdrop ?? null,
+          orientation: item.orientation ?? "portrait",
+          snapshotIndex: index,
+        }),
+      );
+      const imageItemCount = (order.items ?? []).filter((item) =>
+        isWebImageUrl(item.sku),
+      ).length;
+      const snapshotHasBackdrop = snapshotItems.some((item) => item.backdrop);
+      const baseItems: OrderItem[] = snapshotHasBackdrop || snapshotItems.length > imageItemCount
+        ? snapshotItems
+        : order.items?.length
+          ? order.items.filter((item) => !isBackdropOrderItem(item))
+          : noteSelections.length
+          ? noteSelections.map((entry, index) => ({
+              id: `${order.id}-note-${index}`,
+              product_name: entry.label || order.package_name,
+              quantity: 1,
+              price: null,
+              unit_price_cents: null,
+              line_total_cents: resolveOrderItemDisplayCents(
+                { product_name: entry.label, quantity: 1, line_total_cents: null, unit_price_cents: null, price: null },
+                noteSelections.map((note) => ({ product_name: note.label, quantity: 1, line_total_cents: null, unit_price_cents: null, price: null })),
+                orderTotalCents,
+                index,
+              ),
+              sku: entry.url,
+            } as OrderItem))
+        : [{
+            id: `${order.id}-package`,
+            product_name: order.package_name,
+            quantity: 1,
+            price: order.package_price,
+            unit_price_cents: null,
+            line_total_cents: orderTotalCents,
+            sku: order.student?.photo_url ?? null,
+          } as OrderItem];
+      const sourceItems = baseItems.map((item, index) => ({
+        ...item,
+        sourceOrder: order,
+        line_total_cents: resolveOrderItemDisplayCents(
+          item,
+          baseItems,
+          orderTotalCents,
+          index,
+        ),
+      }));
+
+      sourceItems.forEach((item, index) => {
+        const rawSku = clean(item.sku);
+        const noteSelection =
+          noteSelections.find((entry) => entry.itemIndex === index) ?? noteSelections[index];
+        const rawUrl = dashboardPhotoUrl(rawSku) ? rawSku : clean(noteSelection?.url);
+        const originalDisplayUrl = dashboardPhotoUrl(rawUrl);
+        const compositeUrl = dashboardCompositeUrl(order.id, item, index);
+        const displayUrl = compositeUrl || originalDisplayUrl;
+        const fallbackUrl = compositeUrl ? originalDisplayUrl : "";
+        const key = displayUrl || `no-image-${order.id}-${index}`;
+        const existing = buckets.get(key);
+        if (existing) {
+          existing.items.push(item);
+        } else {
+          buckets.set(key, {
+            url: displayUrl || null,
+            originalUrl: rawUrl || order.student?.photo_url || null,
+            fallbackUrl: fallbackUrl || null,
+            fileName: rawUrl ? fileNameFromUrl(rawUrl, order.student?.folder_name || "photo.jpg") : order.student?.folder_name || `${order.student?.first_name ?? "student"}-${order.id.slice(0, 6)}.jpg`,
+            items: [item],
+          });
+        }
+      });
+
+      noteSelections.slice(sourceItems.length).forEach((entry, offset) => {
+        const displayUrl = dashboardPhotoUrl(entry.url);
+        if (!displayUrl) return;
+        const index = sourceItems.length + offset;
+        const item = {
+          id: `${order.id}-extra-photo-${index}`,
+          product_name: entry.label || "Photo",
+          quantity: 1,
+          price: null,
+          unit_price_cents: null,
+          line_total_cents: 0,
+          sku: entry.url,
+          sourceOrder: order,
+        } as OrderItem & { sourceOrder: Order };
+        buckets.set(displayUrl, {
+          url: displayUrl,
+          originalUrl: entry.url,
+          fallbackUrl: null,
+          fileName: fileNameFromUrl(entry.url, `photo-${index + 1}.jpg`),
           items: [item],
         });
-      }
-    });
-
-    noteSelections.slice(sourceItems.length).forEach((entry, offset) => {
-      const displayUrl = dashboardPhotoUrl(entry.url);
-      if (!displayUrl) return;
-      const index = sourceItems.length + offset;
-      const item = {
-        id: `${selected.id}-extra-photo-${index}`,
-        product_name: entry.label || "Photo",
-        quantity: 1,
-        price: null,
-        unit_price_cents: null,
-        line_total_cents: 0,
-        sku: entry.url,
-      } as OrderItem;
-      buckets.set(displayUrl, {
-        url: displayUrl,
-        originalUrl: entry.url,
-        fallbackUrl: null,
-        fileName: fileNameFromUrl(entry.url, `photo-${index + 1}.jpg`),
-        items: [item],
       });
     });
 
     return Array.from(buckets.values());
-  }, [selected]);
+  }, [selectedDetailOrders]);
 
   const selectedPackageComponents = useMemo(
     () => buildPackageComponentSummary(selectedOrderedPhotoGroups),
     [selectedOrderedPhotoGroups],
   );
   const selectedPackageSetQuantity = useMemo(
-    () => orderPackageSetQuantity(selected),
-    [selected],
+    () => selectedDetailOrders.reduce((sum, order) => sum + orderPackageSetQuantity(order), 0),
+    [selectedDetailOrders],
   );
   const selectedBackdropAddOns = useMemo(
-    () => (selected ? orderBackdropAddOns(selected) : []),
-    [selected],
+    () => selectedDetailOrders.flatMap(orderBackdropAddOns),
+    [selectedDetailOrders],
   );
 
   const combinedRows = useMemo<CombinedOrderGroup[]>(() => {
@@ -2585,7 +2668,7 @@ function OrdersPageContent() {
                       key={group.key}
                       data-order-ids={group.orders.map((o) => o.id).join(" ")}
                       style={{ background: cardBg, border: isSelected ? "2px solid #cc0000" : `1px solid ${borderColor}`, borderRadius: 18, overflow: "hidden", boxShadow: isSelected ? "0 0 0 3px rgba(204,0,0,0.1)" : "0 4px 12px rgba(15,23,42,0.05)", cursor: "pointer", transition: "border-color 0.15s" }}
-                      onClick={() => openOrder(order)}
+                      onClick={() => openOrderGroup(group)}
                     >
                       <div style={{ position: "relative" }}>
                         <div style={{ width: "100%", aspectRatio: "3/4", background: "#f3f4f6", overflow: "hidden" }}>
@@ -2663,7 +2746,7 @@ function OrdersPageContent() {
                       key={group.key}
                       data-order-ids={group.orders.map((o) => o.id).join(" ")}
                       style={{ display: "grid", gridTemplateColumns: "36px 56px 1fr 1fr 1fr 90px 100px 36px", gap: 0, alignItems: "center", padding: "10px 14px", borderTop: idx === 0 ? "none" : `1px solid #f5f5f5`, background: isSelected ? "#fff9f9" : "#fff", cursor: "pointer" }}
-                      onClick={() => openOrder(order)}
+                      onClick={() => openOrderGroup(group)}
                     >
                       <div onClick={(e) => e.stopPropagation()}>
                         <button type="button" onClick={() => toggleSelect(group.key)} style={{ background: isSelected ? "#cc0000" : "transparent", border: isSelected ? "2px solid #cc0000" : "2px solid #e5e7eb", borderRadius: 5, width: 20, height: 20, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", padding: 0 }}>
@@ -2705,7 +2788,7 @@ function OrdersPageContent() {
                       <div style={{ fontSize: 14, fontWeight: 900, color: textPrimary }}>{moneyFromCents(group.totalCents, currency)}</div>
                       <div><span style={{ background: cfg.bg, color: cfg.color, fontSize: 11, fontWeight: 800, borderRadius: 999, padding: "4px 9px" }}>{cfg.label}</span></div>
                       <div onClick={(e) => e.stopPropagation()}>
-                        <button type="button" onClick={() => openOrder(order)} style={{ background: "none", border: "none", cursor: "pointer", color: textMuted, display: "flex", padding: 4 }}><ChevronRight size={16} /></button>
+                        <button type="button" onClick={() => openOrderGroup(group)} style={{ background: "none", border: "none", cursor: "pointer", color: textMuted, display: "flex", padding: 4 }}><ChevronRight size={16} /></button>
                       </div>
                     </div>
                   );
@@ -2736,7 +2819,7 @@ function OrdersPageContent() {
                     <div
                       key={group.key}
                       data-order-ids={group.orders.map((o) => o.id).join(" ")}
-                      onClick={() => openOrder(order)}
+                      onClick={() => openOrderGroup(group)}
                       style={{
                         background: cardBg,
                         border: isSelected ? "2px solid #cc0000" : isNew ? "2px solid #ef4444" : `1px solid ${borderColor}`,
@@ -3029,7 +3112,7 @@ function OrdersPageContent() {
                               type="button"
                               onClick={(e) => {
                                 e.stopPropagation();
-                                openOrder(order);
+                                openOrderGroup(group);
                               }}
                               style={{
                                 background: "#fff5f5",
@@ -3044,7 +3127,7 @@ function OrdersPageContent() {
                                 cursor: "pointer",
                               }}
                             >
-                              {selected?.id === order.id ? <ChevronDown size={16} /> : <ChevronRight size={16} />} {selected?.id === order.id ? "Close details" : group.orderCount > 1 ? "Open latest details" : "Open details"}
+                              {selected?.id === order.id ? <ChevronDown size={16} /> : <ChevronRight size={16} />} {selected?.id === order.id ? "Close details" : "Open details"}
                             </button>
                           </div>
                         </div>
@@ -3077,24 +3160,28 @@ function OrdersPageContent() {
               {/* ── Order Header ── */}
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: isMobile ? 14 : 20, gap: 10 }}>
                 <div style={{ minWidth: 0 }}>
-                  <div style={{ fontSize: isMobile ? 18 : 28, fontWeight: 900, color: textPrimary, lineHeight: 1.2 }}>Order {selected.id.slice(0, 8)}</div>
-                  <div style={{ fontSize: isMobile ? 12 : 13, color: textMuted, marginTop: 4 }}>Placed {formatDate(selected.created_at)}</div>
+                  <div style={{ fontSize: isMobile ? 18 : 28, fontWeight: 900, color: textPrimary, lineHeight: 1.2 }}>
+                    {selectedIsCombined ? `${selectedDetailOrderCount} Combined Orders` : `Order ${selected.id.slice(0, 8)}`}
+                  </div>
+                  <div style={{ fontSize: isMobile ? 12 : 13, color: textMuted, marginTop: 4 }}>
+                    {selectedIsCombined ? `Latest order placed ${formatDate(selected.created_at)}` : `Placed ${formatDate(selected.created_at)}`}
+                  </div>
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                   <span style={{
                     display: "inline-block", padding: "5px 14px", borderRadius: 4, fontSize: 12, fontWeight: 700, letterSpacing: "0.04em",
-                    background: STATUS_COLORS[getOrderDisplayStatus(selected)]?.color ?? "#666", color: "#fff",
-                  }}>{STATUS_COLORS[getOrderDisplayStatus(selected)]?.label ?? getOrderDisplayStatus(selected)}</span>
-                  <button type="button" onClick={() => setSelected(null)} style={{ background: "#f3f4f6", border: "none", width: 32, height: 32, borderRadius: 8, cursor: "pointer", color: textMuted, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                    background: STATUS_COLORS[selectedDetailStatus]?.color ?? "#666", color: "#fff",
+                  }}>{STATUS_COLORS[selectedDetailStatus]?.label ?? selectedDetailStatus}</span>
+                  <button type="button" onClick={() => { setSelected(null); setSelectedGroupKey(null); }} style={{ background: "#f3f4f6", border: "none", width: 32, height: 32, borderRadius: 8, cursor: "pointer", color: textMuted, display: "flex", alignItems: "center", justifyContent: "center" }}>
                     <X size={16} />
                   </button>
                 </div>
               </div>
 
-              <div style={{ background: isPaidOrder(selected) ? "#f0fdf4" : "#fff7ed", border: `1px solid ${isPaidOrder(selected) ? "#bbf7d0" : "#fed7aa"}`, borderRadius: 16, padding: "12px 14px", marginBottom: 16 }}>
-                <div style={{ fontSize: 11, color: isPaidOrder(selected) ? "#15803d" : "#c2410c", fontWeight: 900, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 4 }}>Payment</div>
-                <div style={{ fontSize: 15, fontWeight: 900, color: textPrimary }}>{paymentStateLabel(selected)}</div>
-                <div style={{ fontSize: 12, color: textMuted, marginTop: 3, lineHeight: 1.45 }}>{paymentStateDescription(selected)}</div>
+              <div style={{ background: selectedDetailOrders.every(isPaidOrder) ? "#f0fdf4" : "#fff7ed", border: `1px solid ${selectedDetailOrders.every(isPaidOrder) ? "#bbf7d0" : "#fed7aa"}`, borderRadius: 16, padding: "12px 14px", marginBottom: 16 }}>
+                <div style={{ fontSize: 11, color: selectedDetailOrders.every(isPaidOrder) ? "#15803d" : "#c2410c", fontWeight: 900, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 4 }}>Payment</div>
+                <div style={{ fontSize: 15, fontWeight: 900, color: textPrimary }}>{selectedDetailPaymentLabel}</div>
+                <div style={{ fontSize: 12, color: textMuted, marginTop: 3, lineHeight: 1.45 }}>{selectedDetailPaymentDescription}</div>
               </div>
 
               {/* ── Client + Order Info ── */}
@@ -3113,11 +3200,39 @@ function OrdersPageContent() {
                 </div>
                 <div style={{ flex: "0 0 auto", textAlign: "right" }}>
                   <div style={{ fontSize: 11, color: textMuted, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>Order Total</div>
-                  <div style={{ fontSize: 28, fontWeight: 900, color: textPrimary }}>{moneyFromCents(resolveOrderTotalCents(selected, selected.items), selected.currency?.toUpperCase() || "CAD")}</div>
+                  <div style={{ fontSize: 28, fontWeight: 900, color: textPrimary }}>{moneyFromCents(selectedDetailTotalCents, selectedDetailCurrency)}</div>
                 </div>
               </div>
 
               <div style={{ borderTop: `1px solid ${borderColor}`, marginBottom: 16 }} />
+
+              {selectedIsCombined ? (
+                <div style={{ background: "#f8fafc", border: `1px solid ${borderColor}`, borderRadius: 16, padding: 14, marginBottom: 16 }}>
+                  <div style={{ fontSize: 11, color: textMuted, fontWeight: 900, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 10 }}>Included Orders</div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    {selectedDetailOrders.map((order) => {
+                      const orderStatus = getOrderDisplayStatus(order);
+                      const cfg = STATUS_COLORS[orderStatus] ?? STATUS_COLORS.new;
+                      return (
+                        <div key={order.id} style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 10, alignItems: "start", borderBottom: `1px solid ${borderColor}`, paddingBottom: 8 }}>
+                          <div style={{ minWidth: 0 }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
+                              <span style={{ fontSize: 13, fontWeight: 900, color: textPrimary }}>Order {orderShortId(order)}</span>
+                              <span style={{ background: cfg.bg, color: cfg.color, borderRadius: 999, padding: "2px 7px", fontSize: 10, fontWeight: 900 }}>{cfg.label}</span>
+                            </div>
+                            <div style={{ fontSize: 12, color: textMuted, marginTop: 3, lineHeight: 1.35 }}>
+                              {order.package_name || "Package"} · {formatDate(order.created_at)}
+                            </div>
+                          </div>
+                          <div style={{ fontSize: 13, fontWeight: 900, color: textPrimary, whiteSpace: "nowrap" }}>
+                            {moneyFromCents(resolveOrderTotalCents(order, order.items), order.currency?.toUpperCase() || selectedDetailCurrency)}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : null}
 
               {selectedBackdropAddOns.length > 0 ? (
                 <div style={{ background: "#111827", color: "#fff", borderRadius: 16, padding: 14, marginBottom: 16 }}>
@@ -3150,7 +3265,7 @@ function OrdersPageContent() {
                         </div>
                         {backdrop.cents > 0 ? (
                           <div style={{ flexShrink: 0, fontSize: 14, fontWeight: 900 }}>
-                            {moneyFromCents(backdrop.cents, selected.currency?.toUpperCase() || "CAD")}
+                            {moneyFromCents(backdrop.cents, selectedDetailCurrency)}
                           </div>
                         ) : null}
                       </div>
@@ -3160,11 +3275,11 @@ function OrdersPageContent() {
               ) : null}
 
               {(() => {
-                const currency = selected.currency?.toUpperCase() || "CAD";
-                const subtotalCents = resolveOrderSubtotalCents(selected, selected.items);
-                const taxCents = Number(selected.tax_cents ?? 0) || 0;
-                const totalCents = resolveOrderTotalCents(selected, selected.items);
-                const financialLines = orderPaymentBreakdownLines(selected);
+                const currency = selectedDetailCurrency;
+                const subtotalCents = selectedDetailSubtotalCents;
+                const taxCents = selectedDetailTaxCents;
+                const totalCents = selectedDetailTotalCents;
+                const financialLines = selectedDetailOrders.flatMap(orderPaymentBreakdownLines);
                 return (
                   <div style={{ background: "#f8fafc", border: `1px solid ${borderColor}`, borderRadius: 16, padding: 14, marginBottom: 16 }}>
                     <div style={{ fontSize: 11, color: textMuted, fontWeight: 900, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 10 }}>Payment Breakdown</div>
@@ -3192,7 +3307,7 @@ function OrdersPageContent() {
                       </div>
                       {taxCents > 0 ? (
                         <div style={{ display: "flex", justifyContent: "space-between", gap: 12, fontSize: 13, color: textMuted, fontWeight: 700 }}>
-                          <span>{taxLabelForOrder(selected)}</span>
+                          <span>{selectedIsCombined ? "Tax" : taxLabelForOrder(selected)}</span>
                           <span style={{ color: textPrimary, fontWeight: 900 }}>{moneyFromCents(taxCents, currency)}</span>
                         </div>
                       ) : null}
@@ -3207,7 +3322,7 @@ function OrdersPageContent() {
 
               {/* ── Package info ── */}
               <div style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "baseline", marginBottom: 4 }}>
-                <div style={{ fontSize: 18, fontWeight: 800, color: textPrimary }}>{selected.package_name || "Package"}</div>
+                <div style={{ fontSize: 18, fontWeight: 800, color: textPrimary }}>{selectedDetailPackageSummary}</div>
               </div>
               <div style={{ fontSize: 13, color: textMuted, marginBottom: 16 }}>
                 {selectedPackageSetQuantity > 1 ? `${selectedPackageSetQuantity} package sets · ` : ""}
@@ -3311,10 +3426,11 @@ function OrdersPageContent() {
                       {/* Item details */}
                       <div style={{ flex: 1, minWidth: 0 }}>
                         {photoGroup.items.map((item, itemIndex) => {
-                          const includedInPackage = isPackageComponentItem(selected, item, selected.items);
+                          const sourceOrder = item.sourceOrder ?? selected;
+                          const includedInPackage = isPackageComponentItem(sourceOrder, item, sourceOrder.items);
                           const amountLabel = includedInPackage
                             ? "Included"
-                            : moneyFromCents(item.line_total_cents ?? 0, selected.currency?.toUpperCase() || "CAD");
+                            : moneyFromCents(item.line_total_cents ?? 0, sourceOrder.currency?.toUpperCase() || selectedDetailCurrency);
                           const slot = packageSlotText(item);
                           const itemQty = orderItemQuantity(item);
 
@@ -3346,33 +3462,53 @@ function OrdersPageContent() {
               </div>
 
               {/* ── Notes ── */}
-              {cleanNotes(selected.special_notes || selected.notes) ? (
+              {selectedDetailOrders.map((order) => cleanNotes(order.special_notes || order.notes)).filter(Boolean).length > 0 ? (
                 <div style={{ background: "#fafafa", borderLeft: "3px solid #333", borderRadius: 2, padding: "12px 16px", marginBottom: 16 }}>
                   <div style={{ fontSize: 11, color: "#888", fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", marginBottom: 6 }}>Notes</div>
-                  <div style={{ fontSize: 13, color: "#333", whiteSpace: "pre-wrap", lineHeight: 1.6 }}>{cleanNotes(selected.special_notes || selected.notes)}</div>
+                  <div style={{ fontSize: 13, color: "#333", whiteSpace: "pre-wrap", lineHeight: 1.6 }}>
+                    {selectedDetailOrders
+                      .map((order) => cleanNotes(order.special_notes || order.notes))
+                      .filter(Boolean)
+                      .join("\n\n")}
+                  </div>
                 </div>
               ) : null}
 
               {/* ── Actions ── */}
               <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 18 }}>
-                {isCheckoutPendingOrder(selected) ? (
+                {selectedDetailHasPendingOrder ? (
                   <div style={{ width: "100%", background: "#fff7ed", color: "#c2410c", border: "1px solid #fed7aa", borderRadius: 12, padding: "10px 14px", display: "inline-flex", alignItems: "center", gap: 8, fontWeight: 800, fontSize: 13 }}>
                     <WalletCards size={15} /> This is a cart attempt. Lab export unlocks after payment is processed.
                   </div>
                 ) : (
                   <button
                     type="button"
-                    onClick={() => downloadOriginals(selected)}
+                    onClick={() => selectedIsCombined
+                      ? downloadCombinedOriginals({
+                          key: selectedGroupKey ?? selected.id,
+                          representative: selected,
+                          orders: selectedDetailOrders,
+                          imageUrls: [],
+                          imagePreviews: [],
+                          hasBackdrop: selectedDetailOrders.some(orderHasBackdropPreview),
+                          totalCents: selectedDetailTotalCents,
+                          itemsCount: selectedDetailOrders.reduce((sum, order) => sum + ((order.items?.length || 0) > 0 ? order.items!.length : 1), 0),
+                          orderCount: selectedDetailOrderCount,
+                          combinedStatus: selectedDetailStatus,
+                          packageSummary: selectedDetailPackageSummary,
+                          isAnyNew: selectedDetailOrders.some((order) => !order.seen_by_photographer && isMainWorkflowOrder(order)),
+                        })
+                      : downloadOriginals(selected)}
                     style={{ background: "#111", color: "#fff", border: "none", borderRadius: 6, padding: "10px 16px", display: "inline-flex", alignItems: "center", gap: 8, fontWeight: 700, cursor: "pointer", fontSize: 13 }}
                   >
-                    <Download size={15} /> {downloadingId === selected.id ? "Downloading…" : "Download Summary & Photos"}
+                    <Download size={15} /> {downloadingId === (selectedIsCombined ? (selectedGroupKey ?? selected.id) : selected.id) ? "Downloading…" : "Download Summary & Photos"}
                   </button>
                 )}
-                {isPaidOrder(selected) && hasDigitalDeliveryItems(selected) ? (
+                {selectedDetailDigitalDeliveryOrder ? (
                   <button
                     type="button"
-                    onClick={() => openDigitalDelivery(selected)}
-                    disabled={sendingDigitalDeliveryId === selected.id}
+                    onClick={() => openDigitalDelivery(selectedDetailDigitalDeliveryOrder)}
+                    disabled={sendingDigitalDeliveryId === selectedDetailDigitalDeliveryOrder.id}
                     style={{
                       background: "#eef2ff",
                       color: "#3730a3",
@@ -3383,12 +3519,12 @@ function OrdersPageContent() {
                       alignItems: "center",
                       gap: 8,
                       fontWeight: 700,
-                      cursor: sendingDigitalDeliveryId === selected.id ? "default" : "pointer",
+                      cursor: sendingDigitalDeliveryId === selectedDetailDigitalDeliveryOrder.id ? "default" : "pointer",
                       fontSize: 13,
-                      opacity: sendingDigitalDeliveryId === selected.id ? 0.7 : 1,
+                      opacity: sendingDigitalDeliveryId === selectedDetailDigitalDeliveryOrder.id ? 0.7 : 1,
                     }}
                   >
-                    <Mail size={15} /> {sendingDigitalDeliveryId === selected.id ? "Sending…" : "Send digital link"}
+                    <Mail size={15} /> {sendingDigitalDeliveryId === selectedDetailDigitalDeliveryOrder.id ? "Sending…" : "Send digital link"}
                   </button>
                 ) : null}
               </div>
