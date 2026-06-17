@@ -9,6 +9,7 @@ export const dynamic = "force-dynamic";
 
 type OrderItemRow = OrderItemMoneyLike & {
   id?: string | null;
+  product_name?: string | null;
 };
 
 type OrderRow = {
@@ -19,6 +20,7 @@ type OrderRow = {
   customer_email?: string | null;
   status?: string | null;
   payment_status?: string | null;
+  package_name?: string | null;
   paid_at?: string | null;
   stripe_payment_intent_id?: string | null;
   stripe_checkout_session_id?: string | null;
@@ -48,6 +50,25 @@ function isPaidOrder(order: OrderRow) {
 
 function hasStartedCheckout(order: OrderRow) {
   return !isPaidOrder(order) && !!clean(order.stripe_checkout_session_id);
+}
+
+function looksDigital(value: string | null | undefined) {
+  const text = clean(value).toLowerCase();
+  if (!text || text.includes("retouch")) return false;
+  return (
+    text.includes("digital") ||
+    text.includes("download") ||
+    text.includes("file") ||
+    text.includes("jpg") ||
+    text.includes("jpeg") ||
+    text.includes("png") ||
+    text.includes("usb")
+  );
+}
+
+function isDigitalOrder(order: OrderRow) {
+  if (looksDigital(order.package_name) || looksDigital(order.status)) return true;
+  return (order.items ?? []).some((item) => looksDigital(item.product_name));
 }
 
 function isInvalidPlaceholderOrder(order: OrderRow) {
@@ -104,7 +125,7 @@ export async function POST(request: NextRequest) {
         `
           id,
           parent_name, parent_email, customer_name, customer_email,
-          status, payment_status, paid_at, stripe_payment_intent_id, stripe_checkout_session_id,
+          status, payment_status, package_name, paid_at, stripe_payment_intent_id, stripe_checkout_session_id,
           total_cents, total_amount,
           items:order_items(id, product_name, quantity, price, unit_price_cents, line_total_cents, sku)
         `,
@@ -115,7 +136,9 @@ export async function POST(request: NextRequest) {
 
     const orders = ((rows ?? []) as OrderRow[]);
     const placeholderIds = orders.filter(isInvalidPlaceholderOrder).map((order) => order.id);
-    const paidIds = orders.filter(shouldNormalizePaidStatus).map((order) => order.id);
+    const paidOrders = orders.filter(shouldNormalizePaidStatus);
+    const digitalPaidIds = paidOrders.filter(isDigitalOrder).map((order) => order.id);
+    const paidIds = paidOrders.filter((order) => !isDigitalOrder(order)).map((order) => order.id);
     const checkoutIds = orders.filter(shouldNormalizeCheckoutStatus).map((order) => order.id);
 
     if (placeholderIds.length > 0) {
@@ -142,6 +165,15 @@ export async function POST(request: NextRequest) {
       if (paidError) throw paidError;
     }
 
+    if (digitalPaidIds.length > 0) {
+      const { error: digitalPaidError } = await service
+        .from("orders")
+        .update({ status: "digital_paid" })
+        .eq("photographer_id", photographer.id)
+        .in("id", digitalPaidIds);
+      if (digitalPaidError) throw digitalPaidError;
+    }
+
     if (checkoutIds.length > 0) {
       const { error: checkoutError } = await service
         .from("orders")
@@ -155,6 +187,7 @@ export async function POST(request: NextRequest) {
       ok: true,
       deletedPlaceholders: placeholderIds.length,
       normalizedPaid: paidIds.length,
+      normalizedDigitalPaid: digitalPaidIds.length,
       normalizedCheckout: checkoutIds.length,
     });
   } catch (error) {
