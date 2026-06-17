@@ -83,8 +83,6 @@ type SchoolRow = {
 type ProjectRow = {
   id: string;
   title?: string | null;
-  name?: string | null;
-  project_name?: string | null;
 };
 
 type MediaRow = {
@@ -366,7 +364,7 @@ async function fetchOrderContext(service: ServiceClient, orderId: string) {
     order.project_id
       ? service
           .from("projects")
-          .select("id,title,name,project_name")
+          .select("id,title")
           .eq("id", order.project_id)
           .maybeSingle()
       : Promise.resolve({ data: null, error: null }),
@@ -565,8 +563,6 @@ export async function resolveDigitalDeliveryContext(
   const galleryName =
     clean(school?.school_name) ||
     clean(project?.title) ||
-    clean(project?.project_name) ||
-    clean(project?.name) ||
     "your gallery";
 
   return {
