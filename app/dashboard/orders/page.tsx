@@ -476,6 +476,23 @@ function thumbnailKeyForStoragePath(storagePath: string | null | undefined) {
   return `${base}_thumbnail.jpg`;
 }
 
+function originalKeyForDerivativeStoragePath(storagePath: string | null | undefined) {
+  const key = clean(storagePath)
+    .replace(/^\/+/, "")
+    .split("?")[0]
+    .split("#")[0];
+  if (!key) return "";
+  return key.replace(/_(?:thumbnail|preview)(\.(?:png|jpe?g|webp|gif|avif))$/i, "$1");
+}
+
+function dashboardOriginalFallbackUrl(value: string | null | undefined) {
+  const raw = clean(value);
+  if (!raw || isDashboardCompositeReference(raw)) return "";
+  const key = r2KeyFromBrowserUrl(raw) || (!/^https?:\/\//i.test(raw) ? raw.replace(/^\/+/, "") : "");
+  const originalKey = originalKeyForDerivativeStoragePath(key);
+  return originalKey && originalKey !== key ? dashboardPhotoUrl(originalKey) : "";
+}
+
 function dashboardThumbnailUrl(value: string | null | undefined) {
   const raw = clean(value);
   if (!raw || isDashboardCompositeReference(raw)) return dashboardImageReference(raw);
@@ -520,10 +537,11 @@ function makeOrderImagePreview(
     : dashboardThumbnailUrl(url) || originalDisplayUrl;
   const fallback = fallbackUrl ? dashboardPhotoUrl(fallbackUrl) : "";
   const rawOriginal = clean(originalUrl) || clean(fallbackUrl) || clean(url);
+  const derivativeFallback = dashboardOriginalFallbackUrl(rawOriginal) || dashboardOriginalFallbackUrl(url);
   return {
     url: displayUrl,
     originalUrl: rawOriginal || null,
-    fallbackUrl: fallback || (displayUrl !== originalDisplayUrl ? originalDisplayUrl : null),
+    fallbackUrl: fallback || derivativeFallback || (displayUrl !== originalDisplayUrl ? originalDisplayUrl : null),
     label: previewFileName(displayUrl, `print-preview-${index + 1}.jpg`),
     printReady: isDashboardCompositeReference(displayUrl),
   };
