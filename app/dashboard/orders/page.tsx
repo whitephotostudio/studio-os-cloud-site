@@ -125,6 +125,35 @@ type Order = {
   items?: OrderItem[] | null;
 };
 
+/**
+ * Best-effort class name from an order's notes when the order has no class
+ * linked (common for web / event orders, which save class_id null). The photo
+ * URLs embed the class folder, e.g. ".../<schoolId>/SK B/<student folder>/
+ * <file>.jpg" — the class is the folder two levels above the filename.
+ * Class-composite URLs (".../composites/...") are skipped.
+ */
+function deriveClassFromNotes(notes: string | null | undefined): string | null {
+  if (!notes || !notes.trim()) return null;
+  const urls = notes.match(/https?:\/\/\S+/g) ?? [];
+  for (let url of urls) {
+    const q = url.indexOf("?");
+    if (q >= 0) url = url.slice(0, q);
+    if (url.toLowerCase().includes("/composites/")) continue;
+    const segs = url.split("/").filter(Boolean);
+    if (segs.length < 3) continue;
+    let cls = segs[segs.length - 3];
+    try {
+      cls = decodeURIComponent(cls);
+    } catch {
+      /* keep raw */
+    }
+    cls = cls.trim();
+    if (!cls || cls.includes(".") || cls.length > 40) continue;
+    return cls;
+  }
+  return null;
+}
+
 type RelatedRow<T> = T | T[] | null | undefined;
 
 type RawOrder = Omit<Order, "student" | "school" | "class" | "project"> & {
@@ -1532,14 +1561,24 @@ function OrdersPageContent() {
       .order("created_at", { ascending: false });
 
     const nextOrders = ((rows as RawOrder[] | null) ?? [])
-      .map((order) => ({
-        ...order,
-        student: singleRelation(order.student),
-        school: singleRelation(order.school),
-        class: singleRelation(order.class),
-        project: singleRelation(order.project),
-        items: order.items ?? [],
-      }))
+      .map((order) => {
+        const studentRel = singleRelation(order.student);
+        let classRel = singleRelation(order.class);
+        // Web/event orders often have no class linked. Recover it from the
+        // photo folder in the notes ("…/SK B/…") so it isn't shown as "—".
+        if (!classRel?.class_name && !studentRel?.class_name) {
+          const derived = deriveClassFromNotes(order.special_notes);
+          if (derived) classRel = { class_name: derived };
+        }
+        return {
+          ...order,
+          student: studentRel,
+          school: singleRelation(order.school),
+          class: classRel,
+          project: singleRelation(order.project),
+          items: order.items ?? [],
+        };
+      })
       .filter(isCustomerOrder);
 
     setOrders(nextOrders);
