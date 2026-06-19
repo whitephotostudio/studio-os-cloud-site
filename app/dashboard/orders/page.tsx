@@ -201,7 +201,7 @@ type PackageComponentSummary = {
   assignedSlots: number;
   slotTotal: number | null;
   poseCount: number;
-  assignments: Array<{ poseIndex: number; fileName: string; slotText: string }>;
+  assignments: Array<{ poseIndex: number; fileName: string; slotText: string; sourceOrderId: string }>;
 };
 
 type BackdropAddOnSummary = {
@@ -218,6 +218,7 @@ type PaymentBreakdownLine = {
   label: string;
   detail: string;
   cents: number;
+  sourceOrderId?: string;
   isBackdrop?: boolean;
   slotCount?: number;
   photoKeys?: string[];
@@ -396,6 +397,7 @@ function buildPackageComponentSummary(groups: OrderedPhotoGroup[]): PackageCompo
           poseIndex: groupIndex,
           fileName: group.fileName,
           slotText,
+          sourceOrderId: item.sourceOrder?.id ?? "",
         });
         existing.poseKeys.add(poseKey);
       }
@@ -840,7 +842,7 @@ function reconcilePaymentBreakdownLines(order: Order, lines: PaymentBreakdownLin
     }
   }
 
-  return merged;
+  return merged.map((line) => ({ ...line, sourceOrderId: order.id }));
 }
 
 function orderPaymentBreakdownLines(order: Order): PaymentBreakdownLine[] {
@@ -3473,21 +3475,33 @@ function OrdersPageContent() {
                   <div style={{ background: "#f8fafc", border: `1px solid ${borderColor}`, borderRadius: 16, padding: 14, marginBottom: 16 }}>
                     <div style={{ fontSize: 11, color: textMuted, fontWeight: 900, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 10 }}>Payment Breakdown</div>
                     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                      {financialLines.map((line) => (
-                        <div key={line.key} style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start" }}>
-                          <div style={{ minWidth: 0 }}>
-                            <div style={{ fontSize: 13, fontWeight: 800, color: textPrimary, lineHeight: 1.35 }}>
-                              {line.label}
+                      {financialLines.map((line) => {
+                        const lineOrderShort = selectedIsCombined && line.sourceOrderId
+                          ? orderShortId({ id: line.sourceOrderId })
+                          : "";
+                        return (
+                          <div key={line.key} style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start" }}>
+                            <div style={{ minWidth: 0 }}>
+                              <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                                <span style={{ fontSize: 13, fontWeight: 800, color: textPrimary, lineHeight: 1.35 }}>
+                                  {line.label}
+                                </span>
+                                {lineOrderShort ? (
+                                  <span style={{ fontSize: 10, color: textMuted, background: "#fff", border: `1px solid ${borderColor}`, borderRadius: 999, padding: "2px 7px", fontWeight: 900 }}>
+                                    Order {lineOrderShort}
+                                  </span>
+                                ) : null}
+                              </div>
+                              <div style={{ fontSize: 11, color: textMuted, marginTop: 2, lineHeight: 1.35 }}>
+                                {line.detail}
+                              </div>
                             </div>
-                            <div style={{ fontSize: 11, color: textMuted, marginTop: 2, lineHeight: 1.35 }}>
-                              {line.detail}
+                            <div style={{ flexShrink: 0, fontSize: 13, fontWeight: 900, color: textPrimary }}>
+                              {moneyFromCents(line.cents, currency)}
                             </div>
                           </div>
-                          <div style={{ flexShrink: 0, fontSize: 13, fontWeight: 900, color: textPrimary }}>
-                            {moneyFromCents(line.cents, currency)}
-                          </div>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                     <div style={{ borderTop: `1px solid ${borderColor}`, marginTop: 12, paddingTop: 10, display: "flex", flexDirection: "column", gap: 6 }}>
                       <div style={{ display: "flex", justifyContent: "space-between", gap: 12, fontSize: 13, color: textMuted, fontWeight: 700 }}>
@@ -3540,6 +3554,12 @@ function OrdersPageContent() {
                             <div style={{ display: "flex", flexDirection: "column", gap: 3, marginTop: 6 }}>
                               {component.assignments.slice(0, 6).map((assignment, index) => (
                                 <div key={`${component.key}-${assignment.poseIndex}-${assignment.fileName}-${index}`} style={{ fontSize: 11, color: textMuted, lineHeight: 1.35, wordBreak: "break-word" }}>
+                                  {selectedIsCombined && assignment.sourceOrderId ? (
+                                    <>
+                                      <strong style={{ color: textPrimary }}>Order {orderShortId({ id: assignment.sourceOrderId })}</strong>
+                                      {" · "}
+                                    </>
+                                  ) : null}
                                   <strong style={{ color: textPrimary }}>{poseLabel(assignment.poseIndex, selectedOrderedPhotoGroups.length)}</strong>
                                   {assignment.slotText ? ` slot ${assignment.slotText}` : ""} · {assignment.fileName}
                                 </div>
@@ -3622,6 +3642,7 @@ function OrdersPageContent() {
                             : moneyFromCents(item.line_total_cents ?? 0, sourceOrder.currency?.toUpperCase() || selectedDetailCurrency);
                           const slot = packageSlotText(item);
                           const itemQty = orderItemQuantity(item);
+                          const sourceOrderShort = selectedIsCombined ? orderShortId(sourceOrder) : "";
 
                           return (
                             <div key={`${photoGroup.fileName}-${item.product_name}-${itemIndex}`} style={{ padding: "10px 14px", background: "#f9fafb", borderRadius: 8, marginBottom: 8, border: `1px solid ${borderColor}` }}>
@@ -3629,6 +3650,9 @@ function OrdersPageContent() {
                                 <div style={{ minWidth: 0 }}>
                                   <div style={{ fontSize: 14, fontWeight: 800, color: textPrimary, lineHeight: 1.35 }}>{orderItemBaseLabel(item)}</div>
                                   <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 6 }}>
+                                    {sourceOrderShort ? (
+                                      <span style={{ fontSize: 11, color: textMuted, background: "#fff", border: `1px solid ${borderColor}`, borderRadius: 999, padding: "2px 7px", fontWeight: 900 }}>Order {sourceOrderShort}</span>
+                                    ) : null}
                                     <span style={{ fontSize: 11, color: textMuted, background: "#fff", border: `1px solid ${borderColor}`, borderRadius: 999, padding: "2px 7px", fontWeight: 700 }}>Qty {itemQty}</span>
                                     {slot ? (
                                       <span style={{ fontSize: 11, color: textMuted, background: "#fff", border: `1px solid ${borderColor}`, borderRadius: 999, padding: "2px 7px", fontWeight: 700 }}>{slot}</span>
@@ -3656,7 +3680,13 @@ function OrdersPageContent() {
                   <div style={{ fontSize: 11, color: "#888", fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", marginBottom: 6 }}>Notes</div>
                   <div style={{ fontSize: 13, color: "#333", whiteSpace: "pre-wrap", lineHeight: 1.6 }}>
                     {selectedDetailOrders
-                      .map((order) => cleanNotes(order.special_notes || order.notes))
+                      .map((order) => {
+                        const cleaned = cleanNotes(order.special_notes || order.notes);
+                        if (!cleaned) return "";
+                        return selectedIsCombined
+                          ? `Order ${orderShortId(order)}\n${cleaned}`
+                          : cleaned;
+                      })
                       .filter(Boolean)
                       .join("\n\n")}
                   </div>
