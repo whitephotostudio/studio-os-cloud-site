@@ -5119,8 +5119,29 @@ export default function ParentGalleryPage() {
   const backdropForegroundScaleLandscape = getLandscapeForegroundScale(selectedImageAspectRatio);
   const backdropForegroundVerticalOffsetLandscape = getLandscapeForegroundVerticalOffset(selectedImageAspectRatio);
   const currentGalleryExtras = gallerySettings.extras;
-  const shippingEnabledForGallery =
-    isSchoolMode && currentGalleryExtras.shippingEnabled;
+  const shippingEnabledForGallery = currentGalleryExtras.shippingEnabled;
+  const physicalDeliveryMethods = useMemo<Array<"pickup" | "shipping">>(() => {
+    if (!shippingEnabledForGallery) return ["pickup"];
+    return currentGalleryExtras.pickupEnabled ? ["pickup", "shipping"] : ["shipping"];
+  }, [currentGalleryExtras.pickupEnabled, shippingEnabledForGallery]);
+  const activeDeliveryMethod = physicalDeliveryMethods.includes(deliveryMethod)
+    ? deliveryMethod
+    : physicalDeliveryMethods[0] ?? "pickup";
+  const pickupSummary = useMemo(() => {
+    if (!currentGalleryExtras.pickupLocationEnabled) return "";
+    return [
+      clean(currentGalleryExtras.pickupLocationName),
+      clean(currentGalleryExtras.pickupLocationAddress),
+      clean(currentGalleryExtras.pickupLocationInstructions),
+    ]
+      .filter(Boolean)
+      .join(" • ");
+  }, [
+    currentGalleryExtras.pickupLocationAddress,
+    currentGalleryExtras.pickupLocationEnabled,
+    currentGalleryExtras.pickupLocationInstructions,
+    currentGalleryExtras.pickupLocationName,
+  ]);
   const showProofWatermark =
     watermarkEnabled && currentGalleryExtras.showProofWatermark !== false;
   const currentGalleryBranding = gallerySettings.branding;
@@ -7961,7 +7982,7 @@ export default function ParentGalleryPage() {
     if (
       shippingEnabledForGallery &&
       anyPhysicalCheckoutItem &&
-      deliveryMethod === "shipping" &&
+      activeDeliveryMethod === "shipping" &&
       (!shippingName.trim() ||
         !shippingAddress1.trim() ||
         !shippingCity.trim() ||
@@ -8034,7 +8055,7 @@ export default function ParentGalleryPage() {
     }));
 
     const deliveryPayload =
-      shippingEnabledForGallery && anyPhysicalCheckoutItem && deliveryMethod === "shipping"
+      shippingEnabledForGallery && anyPhysicalCheckoutItem && activeDeliveryMethod === "shipping"
         ? {
             method: "shipping" as const,
             name: shippingName.trim(),
@@ -12982,11 +13003,11 @@ export default function ParentGalleryPage() {
                       </div>
                     </div>
 
-                    {shippingEnabledForGallery && anyPhysicalCheckoutItem && (
+                    {anyPhysicalCheckoutItem && physicalDeliveryMethods.length > 1 && (
                       <div>
                         <label style={labelStyle}>Delivery</label>
                         <div style={{ display: "flex", gap: 8 }}>
-                          {(["pickup", "shipping"] as const).map((m) => (
+                          {physicalDeliveryMethods.map((m) => (
                             <button
                               key={m}
                               type="button"
@@ -12994,13 +13015,13 @@ export default function ParentGalleryPage() {
                               style={{
                                 flex: 1,
                                 border: "none",
-                                background: deliveryMethod === m ? "#fff" : "#242424",
+                                background: activeDeliveryMethod === m ? "#fff" : "#242424",
                                 outline:
-                                  deliveryMethod === m
+                                  activeDeliveryMethod === m
                                     ? "none"
                                     : "1px solid #333",
                                 outlineOffset: -1,
-                                color: deliveryMethod === m ? "#000" : "#666",
+                                color: activeDeliveryMethod === m ? "#000" : "#666",
                                 borderRadius: 8,
                                 padding: "11px",
                                 fontSize: 13,
@@ -13021,8 +13042,26 @@ export default function ParentGalleryPage() {
                       </div>
                     )}
 
+                    {anyPhysicalCheckoutItem &&
+                      activeDeliveryMethod === "pickup" &&
+                      pickupSummary && (
+                        <div
+                          style={{
+                            background: "#141414",
+                            border: "1px solid #252525",
+                            borderRadius: 10,
+                            color: "#bbb",
+                            fontSize: 12,
+                            lineHeight: 1.5,
+                            padding: "10px 12px",
+                          }}
+                        >
+                          Pickup: {pickupSummary}
+                        </div>
+                      )}
+
                     {shippingEnabledForGallery &&
-                      deliveryMethod === "shipping" &&
+                      activeDeliveryMethod === "shipping" &&
                       anyPhysicalCheckoutItem && (
                         <div
                           style={{

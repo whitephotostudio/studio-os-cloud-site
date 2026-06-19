@@ -592,7 +592,7 @@ export async function POST(request: NextRequest) {
     let student: StudentRow | null = null;
     let projectId: string | null = null;
     let projectTitle: string | null = null;
-    let schoolShippingEnabled = false;
+    let galleryShippingEnabled = false;
     let gallerySettingsForTax: unknown = null;
     let sb = createDashboardServiceClient();
 
@@ -642,10 +642,10 @@ export async function POST(request: NextRequest) {
       student = studentRow;
       schoolId = schoolRow.id;
       photographerId = schoolRow.photographer_id;
-      schoolShippingEnabled = normalizeEventGallerySettings(
-        schoolRow.gallery_settings,
-      ).extras.shippingEnabled;
       gallerySettingsForTax = schoolRow.gallery_settings;
+      galleryShippingEnabled = normalizeEventGallerySettings(
+        gallerySettingsForTax,
+      ).extras.shippingEnabled;
     } else {
       const projectIdResult = validateUuid(body.projectId, "projectId");
       if (!projectIdResult.ok) {
@@ -692,11 +692,14 @@ export async function POST(request: NextRequest) {
       projectTitle = clean(access.project.title) || null;
       photographerId = access.project.photographer_id;
       gallerySettingsForTax = access.project.gallery_settings;
+      galleryShippingEnabled = normalizeEventGallerySettings(
+        gallerySettingsForTax,
+      ).extras.shippingEnabled;
     }
 
-    if (delivery.method === "shipping" && !schoolShippingEnabled) {
+    if (delivery.method === "shipping" && !galleryShippingEnabled) {
       return NextResponse.json(
-        { ok: false, message: "Shipping is not enabled for this school." },
+        { ok: false, message: "Shipping is not enabled for this gallery." },
         { status: 400 },
       );
     }
@@ -934,6 +937,26 @@ export async function POST(request: NextRequest) {
       // Digital-only carts don't ship anywhere; quietly treat as pickup.
       (delivery as unknown as { method: string }).method = "pickup";
     }
+    const galleryExtras = normalizeEventGallerySettings(gallerySettingsForTax).extras;
+    const pickupAllowed = galleryExtras.pickupEnabled || !galleryShippingEnabled;
+    if (anyPhysical && delivery.method === "pickup" && !pickupAllowed) {
+      return NextResponse.json(
+        { ok: false, message: "Pickup is not enabled for this gallery." },
+        { status: 400 },
+      );
+    }
+    const pickupLines = [
+      "Delivery: pickup",
+      galleryExtras.pickupLocationEnabled && clean(galleryExtras.pickupLocationName)
+        ? `Pickup location: ${clean(galleryExtras.pickupLocationName)}`
+        : `Pickup location: ${body.mode === "school" ? "School" : "Photographer/studio"}`,
+      galleryExtras.pickupLocationEnabled && clean(galleryExtras.pickupLocationAddress)
+        ? `Pickup address: ${clean(galleryExtras.pickupLocationAddress)}`
+        : "",
+      galleryExtras.pickupLocationEnabled && clean(galleryExtras.pickupLocationInstructions)
+        ? `Pickup instructions: ${clean(galleryExtras.pickupLocationInstructions)}`
+        : "",
+    ].filter(Boolean);
 
     // ── build server-trusted notes block ────────────────────────────────
     const entryNotes = resolved.map((entry, index) => {
@@ -996,7 +1019,7 @@ export async function POST(request: NextRequest) {
             ]
               .filter(Boolean)
               .join("\n")
-          : "Delivery: pickup"
+          : pickupLines.join("\n")
         : "";
 
     const combinedNotes = [notes, ...entryNotes, shippingBlock]

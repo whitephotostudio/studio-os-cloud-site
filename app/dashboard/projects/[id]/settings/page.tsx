@@ -1673,6 +1673,22 @@ export default function ProjectSettingsPage() {
                     </Field>
                     <ToggleRow title="Allow Cropping" description="Clients may crop photos on orders" checked={extras.allowCropping} onChange={(next) => setExtra("allowCropping", next)} />
                     <ToggleRow title="Enable Store" description="Allow your clients to shop by product first" checked={extras.enableStore} onChange={(next) => setExtra("enableStore", next)} />
+                    <ToggleRow title="Enable Shipping" description="Show a Shipping option at checkout for this event." checked={extras.shippingEnabled} onChange={(next) => setExtra("shippingEnabled", next)} />
+                    <ToggleRow title="Enable Pickup" description="Let clients choose Pickup instead of Shipping." checked={extras.pickupEnabled} onChange={(next) => setExtra("pickupEnabled", next)} />
+                    <ToggleRow title="Use Special Pickup Location" description="Show a studio or custom pickup address instead of the default event pickup." checked={extras.pickupLocationEnabled} onChange={(next) => setExtra("pickupLocationEnabled", next)} />
+                    {extras.pickupLocationEnabled ? (
+                      <div className="grid gap-4 md:grid-cols-2">
+                        <Field label="Pickup Location Name">
+                          <input value={extras.pickupLocationName} onChange={(e) => setExtra("pickupLocationName", e.target.value)} className="w-full rounded-xl border border-neutral-200 bg-white px-4 py-3 text-sm text-neutral-800 placeholder:text-neutral-400" placeholder="Studio pickup" />
+                        </Field>
+                        <Field label="Pickup Address">
+                          <input value={extras.pickupLocationAddress} onChange={(e) => setExtra("pickupLocationAddress", e.target.value)} className="w-full rounded-xl border border-neutral-200 bg-white px-4 py-3 text-sm text-neutral-800 placeholder:text-neutral-400" placeholder="123 Main St" />
+                        </Field>
+                        <Field label="Pickup Instructions">
+                          <textarea value={extras.pickupLocationInstructions} onChange={(e) => setExtra("pickupLocationInstructions", e.target.value)} className="min-h-[96px] w-full rounded-xl border border-neutral-200 bg-white px-4 py-3 text-sm text-neutral-800 placeholder:text-neutral-400 md:col-span-2" placeholder="Pickup hours, door code, or notes for parents" />
+                        </Field>
+                      </div>
+                    ) : null}
                     <ToggleRow title="Enable Abandoned Cart Email" description="Automatically send a reminder email to clients who abandon their shopping carts" checked={extras.enableAbandonedCartEmail} onChange={(next) => setExtra("enableAbandonedCartEmail", next)} />
                     <ToggleRow title="Show Buy All Button" checked={extras.showBuyAllButton} onChange={(next) => setExtra("showBuyAllButton", next)} />
                     <ToggleRow title="Offer Packages Only" description="Hide a la carte items and allow clients to only purchase packages" checked={extras.offerPackagesOnly} onChange={(next) => setExtra("offerPackagesOnly", next)} />

@@ -22,6 +22,11 @@ export type EventGalleryExtraSettings = {
   includePrintRelease: boolean;
   enableStore: boolean;
   shippingEnabled: boolean;
+  pickupEnabled: boolean;
+  pickupLocationEnabled: boolean;
+  pickupLocationName: string;
+  pickupLocationAddress: string;
+  pickupLocationInstructions: string;
   minimumOrderAmount: string;
   taxEnabled: boolean;
   taxPercent: number;
@@ -154,6 +159,11 @@ export const defaultEventGalleryExtras: EventGalleryExtraSettings = {
   includePrintRelease: false,
   enableStore: true,
   shippingEnabled: false,
+  pickupEnabled: true,
+  pickupLocationEnabled: false,
+  pickupLocationName: "",
+  pickupLocationAddress: "",
+  pickupLocationInstructions: "",
   minimumOrderAmount: "",
   taxEnabled: false,
   taxPercent: 0,
@@ -454,6 +464,26 @@ export function normalizeEventGallerySettings(value: unknown): EventGallerySetti
       shippingEnabled: asBoolean(
         extrasSource?.shippingEnabled,
         defaultEventGalleryExtras.shippingEnabled,
+      ),
+      pickupEnabled: asBoolean(
+        extrasSource?.pickupEnabled,
+        defaultEventGalleryExtras.pickupEnabled,
+      ),
+      pickupLocationEnabled: asBoolean(
+        extrasSource?.pickupLocationEnabled,
+        defaultEventGalleryExtras.pickupLocationEnabled,
+      ),
+      pickupLocationName: asString(
+        extrasSource?.pickupLocationName,
+        defaultEventGalleryExtras.pickupLocationName,
+      ),
+      pickupLocationAddress: asString(
+        extrasSource?.pickupLocationAddress,
+        defaultEventGalleryExtras.pickupLocationAddress,
+      ),
+      pickupLocationInstructions: asString(
+        extrasSource?.pickupLocationInstructions,
+        defaultEventGalleryExtras.pickupLocationInstructions,
       ),
       minimumOrderAmount: asString(
         extrasSource?.minimumOrderAmount,
