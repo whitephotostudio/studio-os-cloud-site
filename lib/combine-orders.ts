@@ -17,8 +17,8 @@ export type CombineGroup = {
   subtotalCents: number;
 };
 
-/** Per-studio tiered sibling-discount config, stored as jsonb on photographers. */
-export type SiblingDiscountTiers = Record<string, number>;
+/** Per-studio combine-order config, stored as jsonb on photographers. */
+export type SiblingDiscountTiers = Record<string, number | boolean>;
 
 /** What gets passed in for shipping math. */
 export type ShippingInput = {
@@ -84,13 +84,20 @@ export type CombineTotals = {
 
 // ── Pure helpers ─────────────────────────────────────────────────────────
 
+export function isCombineOrdersEnabled(
+  tiers: SiblingDiscountTiers | null | undefined,
+): boolean {
+  if (!tiers) return true;
+  return tiers.enabled !== false;
+}
+
 /**
  * Pick the discount % to apply to non-primary groups based on the kid count.
  *
- * Tiers are stored as `{"2": 5, "3": 10}` — keys are kid counts, values
- * are percent-off applied to each additional kid. The lookup walks the
- * tiers in descending order so "3+ kids" wins over "2 kids" when both
- * are configured. Missing config → 0%.
+ * Tiers are stored as `{"enabled": true, "2": 5, "3": 10}` — numeric keys are
+ * kid counts and values are percent-off applied to each additional kid. The
+ * lookup walks the tiers in descending order so "3+ kids" wins over "2 kids"
+ * when both are configured. Missing config → 0%.
  */
 export function pickSiblingDiscountPercent(
   tiers: SiblingDiscountTiers | null | undefined,

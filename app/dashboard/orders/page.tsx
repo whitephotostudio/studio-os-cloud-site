@@ -154,6 +154,7 @@ type OrderImagePreview = {
   url: string;
   originalUrl: string | null;
   fallbackUrl: string | null;
+  fallbackUrls?: string[];
   label: string;
   printReady: boolean;
 };
@@ -162,6 +163,7 @@ type OrderedPhotoGroup = {
   url: string | null;
   originalUrl: string | null;
   fallbackUrl: string | null;
+  fallbackUrls?: string[];
   fileName: string;
   items: Array<OrderItem & { sourceOrder?: Order }>;
 };
@@ -533,6 +535,18 @@ function originalKeyForDerivativeStoragePath(storagePath: string | null | undefi
   return key.replace(/_(?:thumbnail|preview)(\.(?:png|jpe?g|webp|gif|avif))$/i, "$1");
 }
 
+function previewKeyForStoragePath(storagePath: string | null | undefined) {
+  const key = clean(storagePath)
+    .replace(/^\/+/, "")
+    .split("?")[0]
+    .split("#")[0];
+  const match = key.match(/\.(png|jpe?g|webp|gif|avif)$/i);
+  if (!key || !match) return "";
+  const ext = match[0];
+  const base = key.slice(0, -ext.length).replace(/_(?:thumbnail|preview)$/i, "");
+  return `${base}_preview.jpg`;
+}
+
 function dashboardOriginalFallbackUrl(value: string | null | undefined) {
   const raw = clean(value);
   if (!raw || isDashboardCompositeReference(raw)) return "";
@@ -547,6 +561,51 @@ function dashboardThumbnailUrl(value: string | null | undefined) {
   const key = r2KeyFromBrowserUrl(raw) || (!/^https?:\/\//i.test(raw) ? raw.replace(/^\/+/, "") : "");
   const thumbnailKey = thumbnailKeyForStoragePath(key);
   return thumbnailKey ? dashboardPhotoUrl(thumbnailKey) : dashboardPhotoUrl(raw);
+}
+
+function storageKeyFromImageValue(value: string | null | undefined) {
+  const raw = clean(value);
+  if (!raw || isDashboardCompositeReference(raw)) return "";
+  return r2KeyFromBrowserUrl(raw) || (!/^https?:\/\//i.test(raw) ? raw.replace(/^\/+/, "") : "");
+}
+
+function dashboardImageFallbackUrls(primaryUrl: string | null | undefined, ...values: Array<string | null | undefined>) {
+  const primary = clean(primaryUrl);
+  const seen = new Set(primary ? [primary] : []);
+  const urls: string[] = [];
+  const add = (value: string | null | undefined) => {
+    const url = clean(value);
+    if (!url || seen.has(url)) return;
+    seen.add(url);
+    urls.push(url);
+  };
+
+  for (const value of values) {
+    const raw = clean(value);
+    if (!raw) continue;
+    add(dashboardImageReference(raw));
+
+    const key = storageKeyFromImageValue(raw);
+    if (!key) continue;
+    add(dashboardPhotoUrl(previewKeyForStoragePath(key)));
+    add(dashboardPhotoUrl(originalKeyForDerivativeStoragePath(key)));
+    add(dashboardPhotoUrl(thumbnailKeyForStoragePath(key)));
+    add(dashboardPhotoUrl(key));
+  }
+
+  return urls;
+}
+
+function tryNextImageFallback(img: HTMLImageElement, fallbackUrls: Array<string | null | undefined>) {
+  const urls = fallbackUrls.map(clean).filter(Boolean);
+  const nextIndex = Number(img.dataset.fallbackIndex ?? 0);
+  const nextUrl = urls[nextIndex];
+  if (nextUrl) {
+    img.dataset.fallbackIndex = String(nextIndex + 1);
+    img.src = nextUrl;
+    return;
+  }
+  img.style.display = "none";
 }
 
 function isBackdropOrderItem(item: Pick<OrderItem, "product_name">) {
@@ -586,10 +645,20 @@ function makeOrderImagePreview(
   const fallback = fallbackUrl ? dashboardPhotoUrl(fallbackUrl) : "";
   const rawOriginal = clean(originalUrl) || clean(fallbackUrl) || clean(url);
   const derivativeFallback = dashboardOriginalFallbackUrl(rawOriginal) || dashboardOriginalFallbackUrl(url);
+  const fallbackUrls = dashboardImageFallbackUrls(
+    displayUrl,
+    fallback,
+    derivativeFallback,
+    originalDisplayUrl,
+    rawOriginal,
+    fallbackUrl,
+    url,
+  );
   return {
     url: displayUrl,
     originalUrl: rawOriginal || null,
-    fallbackUrl: fallback || derivativeFallback || (displayUrl !== originalDisplayUrl ? originalDisplayUrl : null),
+    fallbackUrl: fallbackUrls[0] ?? null,
+    fallbackUrls,
     label: previewFileName(displayUrl, `print-preview-${index + 1}.jpg`),
     printReady: isDashboardCompositeReference(displayUrl),
   };
@@ -889,7 +958,7 @@ function orderPaymentBreakdownLines(order: Order): PaymentBreakdownLine[] {
   if (lines.length > 0) return reconcilePaymentBreakdownLines(order, lines);
   return reconcilePaymentBreakdownLines(order, [{
     key: `${order.id}-package`,
-    label: order.package_name || "Package",
+    label: orderPackageDisplayLabel(order),
     detail: "Package",
     cents: resolveOrderSubtotalCents(order, items),
   }]);
@@ -912,7 +981,7 @@ function orderFinancialLines(order: Order) {
   if (lines.length > 0) return lines;
   return [{
     key: `${order.id}-package`,
-    label: order.package_name || "Package",
+    label: orderPackageDisplayLabel(order),
     detail: "",
     quantity: 1,
     cents: resolveOrderSubtotalCents(order, items),
@@ -962,6 +1031,56 @@ function orderBackdropAddOns(order: Order) {
   return [] as BackdropAddOnSummary[];
 }
 
+function orderBackdropLabel(order: Order) {
+  const addOns = orderBackdropAddOns(order);
+  if (addOns.length > 0) {
+    return addOns.map((backdrop) => backdrop.label).filter(Boolean).join(", ");
+  }
+  return "";
+}
+
+function orderProductionItems(order: Order) {
+  return (order.items ?? []).filter((item) =>
+    !isBackdropOrderItem(item) &&
+    !isNonProductionLineItem(item)
+  );
+}
+
+function packageSummaryFromProductionItems(order: Order) {
+  const summaries = new Map<string, { label: string; quantity: number }>();
+  for (const item of orderProductionItems(order)) {
+    const label = clean(orderItemBaseLabel(item));
+    if (!label) continue;
+    const existing = summaries.get(label);
+    if (existing) {
+      existing.quantity += orderItemQuantity(item);
+    } else {
+      summaries.set(label, { label, quantity: orderItemQuantity(item) });
+    }
+  }
+
+  return Array.from(summaries.values())
+    .map((summary) => summary.quantity > 1 ? `${summary.quantity}-${summary.label}` : summary.label)
+    .join(" + ");
+}
+
+function orderPackageDisplayLabel(order: Order) {
+  const rawLabel = clean(order.package_name);
+  const expandedLabel = packageSummaryFromProductionItems(order);
+  if (!rawLabel) return expandedLabel || "Package";
+  if (/\+\s*\d+\s+more\b/i.test(rawLabel) && expandedLabel) return expandedLabel;
+  return rawLabel;
+}
+
+function orderDetailCountLabel(order: Order) {
+  const productionItems = orderProductionItems(order);
+  const photoCount = extractImagePreviews(order).length;
+  const itemCount = productionItems.reduce((sum, item) => sum + orderItemQuantity(item), 0);
+  const itemText = `${itemCount || productionItems.length || 1} item${(itemCount || productionItems.length || 1) === 1 ? "" : "s"}`;
+  const photoText = `${photoCount} photo${photoCount === 1 ? "" : "s"}`;
+  return `${itemText} · ${photoText}`;
+}
+
 async function triggerDownload(url: string, filename?: string) {
   const anchor = document.createElement("a");
   anchor.href = url;
@@ -1001,7 +1120,7 @@ function buildManifest(order: Order) {
     `Student: ${order.student?.first_name ?? ""} ${order.student?.last_name ?? ""}`.trim(),
     `Parent: ${order.parent_name ?? order.customer_name ?? "—"}`,
     `Email: ${order.parent_email ?? order.customer_email ?? "—"}`,
-    `Package: ${order.package_name || "Package"}`,
+    `Package: ${orderPackageDisplayLabel(order)}`,
     `Package Price: ${moneyFromCents(orderTotalCents, order.currency?.toUpperCase() || "CAD")}`,
     `Total: ${moneyFromCents(orderTotalCents, order.currency?.toUpperCase() || "CAD")}`,
     `Suggested Folder: ${folderRoot}`,
@@ -1021,7 +1140,7 @@ function buildManifest(order: Order) {
           const poseFile = poseUrl ? fileNameFromUrl(poseUrl, `photo-${index + 1}.jpg`) : "—";
           return `${index + 1}. ${orderItemBaseLabel(item)} | Qty: ${qty}${slot ? ` | ${slot}` : ""} | Pose/File: ${poseFile} | Total: ${total}`;
         })
-      : [`1. ${order.package_name || "Package"} | Qty: 1 | Total: ${moneyFromCents(orderTotalCents, order.currency?.toUpperCase() || "CAD")}`]),
+      : [`1. ${orderPackageDisplayLabel(order)} | Qty: 1 | Total: ${moneyFromCents(orderTotalCents, order.currency?.toUpperCase() || "CAD")}`]),
     ``,
     `Original Files`,
     ...(urls.length ? urls.map((url, index) => `${index + 1}. ${fileNameFromUrl(url, `image-${index + 1}.jpg`)}\n   ${url}`) : ["No image URLs found."]),
@@ -1042,9 +1161,8 @@ function combinedStudentKey(order: Order) {
 }
 
 function buildCombinedPackageSummary(orders: Order[]) {
-  const uniquePackages = Array.from(new Set(orders.map((order) => clean(order.package_name)).filter(Boolean)));
-  if (uniquePackages.length <= 2) return uniquePackages.join(" + ") || "Package";
-  return `${uniquePackages.slice(0, 2).join(" + ")} +${uniquePackages.length - 2} more`;
+  const uniquePackages = Array.from(new Set(orders.map(orderPackageDisplayLabel).filter(Boolean)));
+  return uniquePackages.join(" + ") || "Package";
 }
 
 function isPaidOrder(order: Order) {
@@ -1998,7 +2116,7 @@ function OrdersPageContent() {
       : "new";
   const selectedDetailPackageSummary = selectedIsCombined
     ? buildCombinedPackageSummary(selectedDetailOrders)
-    : selected?.package_name || "Package";
+    : selected ? orderPackageDisplayLabel(selected) : "Package";
   const selectedDetailHasPendingOrder = selectedDetailOrders.some(isCheckoutPendingOrder);
   const selectedDetailDigitalDeliveryOrder =
     selectedDetailOrders.find((order) => isPaidOrder(order) && hasDigitalDeliveryItems(order)) ?? null;
@@ -2091,6 +2209,7 @@ function OrdersPageContent() {
         const compositeUrl = dashboardCompositeUrl(order.id, item, index);
         const displayUrl = compositeUrl || originalDisplayUrl;
         const fallbackUrl = compositeUrl ? originalDisplayUrl : "";
+        const fallbackUrls = dashboardImageFallbackUrls(displayUrl, fallbackUrl, rawUrl, item.sku, noteSelection?.url);
         const key = displayUrl || `no-image-${order.id}-${index}`;
         const existing = buckets.get(key);
         if (existing) {
@@ -2100,6 +2219,7 @@ function OrdersPageContent() {
             url: displayUrl || null,
             originalUrl: rawUrl || order.student?.photo_url || null,
             fallbackUrl: fallbackUrl || null,
+            fallbackUrls,
             fileName: rawUrl ? fileNameFromUrl(rawUrl, order.student?.folder_name || "photo.jpg") : order.student?.folder_name || `${order.student?.first_name ?? "student"}-${order.id.slice(0, 6)}.jpg`,
             items: [item],
           });
@@ -2124,6 +2244,7 @@ function OrdersPageContent() {
           url: displayUrl,
           originalUrl: entry.url,
           fallbackUrl: null,
+          fallbackUrls: dashboardImageFallbackUrls(displayUrl, entry.url),
           fileName: fileNameFromUrl(entry.url, `photo-${index + 1}.jpg`),
           items: [item],
         });
@@ -2144,6 +2265,104 @@ function OrdersPageContent() {
   const selectedBackdropAddOns = useMemo(
     () => selectedDetailOrders.flatMap(orderBackdropAddOns),
     [selectedDetailOrders],
+  );
+  const selectedPhotoGroupsByOrder = useMemo(() =>
+    selectedDetailOrders.map((order) => ({
+      order,
+      groups: selectedOrderedPhotoGroups.flatMap((group) => {
+        const items = group.items.filter((item) =>
+          (item.sourceOrder?.id ?? selected?.id) === order.id
+        );
+        return items.length > 0 ? [{ ...group, items }] : [];
+      }),
+    })),
+    [selectedDetailOrders, selectedOrderedPhotoGroups, selected?.id],
+  );
+
+  const renderPhotoDetailGroup = (
+    photoGroup: OrderedPhotoGroup,
+    groupIndex: number,
+    groupTotal: number,
+  ) => (
+    <div key={`${photoGroup.fileName}-${groupIndex}`} style={{ borderBottom: `1px solid ${borderColor}`, paddingBottom: 16 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, marginBottom: 8 }}>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontSize: 13, fontWeight: 900, color: textPrimary }}>
+            {poseLabel(groupIndex, groupTotal)}
+          </div>
+          <div style={{ fontSize: 12, fontWeight: 700, color: textMuted, marginTop: 2, wordBreak: "break-word" }}>{photoGroup.fileName}</div>
+        </div>
+        <div style={{ flexShrink: 0, fontSize: 11, color: textMuted, background: "#f3f4f6", borderRadius: 999, padding: "3px 8px", fontWeight: 800 }}>
+          {photoGroup.items.length} item{photoGroup.items.length === 1 ? "" : "s"}
+        </div>
+      </div>
+      <div style={{ display: "flex", gap: 16, alignItems: "flex-start" }}>
+        <div style={{ width: 140, flexShrink: 0 }}>
+          <div style={{ width: 140, height: 180, borderRadius: 4, overflow: "hidden", border: `1px solid ${borderColor}`, background: "#f5f5f5" }}>
+            {photoGroup.url ? (
+              <img
+                loading="lazy"
+                src={photoGroup.url}
+                alt=""
+                style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                onError={(event) => {
+                  const img = event.currentTarget;
+                  tryNextImageFallback(img, photoGroup.fallbackUrls ?? [photoGroup.fallbackUrl]);
+                }}
+              />
+            ) : (
+              <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "#ccc" }}>
+                <ImageIcon size={28} />
+              </div>
+            )}
+          </div>
+          {photoGroup.url ? (
+            <a href={isDashboardCompositeReference(photoGroup.url) ? photoGroup.url : dashboardPhotoUrl(photoGroup.originalUrl) || photoGroup.url} target="_blank" rel="noopener noreferrer" style={{ color: "#0ea5e9", fontSize: 12, fontWeight: 600, textDecoration: "none", display: "block", marginTop: 6 }}>
+              {isDashboardCompositeReference(photoGroup.url) ? "Download Print File" : "Download Original"}
+            </a>
+          ) : null}
+          {isDashboardCompositeReference(photoGroup.url) && selectedBackdropAddOns[0] ? (
+            <div style={{ marginTop: 5, fontSize: 11, color: "#111827", fontWeight: 900, lineHeight: 1.3 }}>
+              Backdrop: {selectedBackdropAddOns[0].label} applied
+            </div>
+          ) : null}
+        </div>
+
+        <div style={{ flex: 1, minWidth: 0 }}>
+          {photoGroup.items.map((item, itemIndex) => {
+            const sourceOrder = item.sourceOrder ?? selected;
+            if (!sourceOrder) return null;
+            const includedInPackage = isPackageComponentItem(sourceOrder, item, sourceOrder.items);
+            const amountLabel = includedInPackage
+              ? "Included"
+              : moneyFromCents(item.line_total_cents ?? 0, sourceOrder.currency?.toUpperCase() || selectedDetailCurrency);
+            const slot = packageSlotText(item);
+            const itemQty = orderItemQuantity(item);
+
+            return (
+              <div key={`${photoGroup.fileName}-${item.product_name}-${itemIndex}`} style={{ padding: "10px 14px", background: "#f9fafb", borderRadius: 8, marginBottom: 8, border: `1px solid ${borderColor}` }}>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: 14, fontWeight: 800, color: textPrimary, lineHeight: 1.35 }}>{orderItemBaseLabel(item)}</div>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 6 }}>
+                      <span style={{ fontSize: 11, color: textMuted, background: "#fff", border: `1px solid ${borderColor}`, borderRadius: 999, padding: "2px 7px", fontWeight: 700 }}>Qty {itemQty}</span>
+                      {slot ? (
+                        <span style={{ fontSize: 11, color: textMuted, background: "#fff", border: `1px solid ${borderColor}`, borderRadius: 999, padding: "2px 7px", fontWeight: 700 }}>{slot}</span>
+                      ) : null}
+                      <span style={{ fontSize: 11, color: textMuted, background: "#fff", border: `1px solid ${borderColor}`, borderRadius: 999, padding: "2px 7px", fontWeight: 700 }}>{poseLabel(groupIndex, groupTotal)}</span>
+                    </div>
+                  </div>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: includedInPackage ? "#16a34a" : textPrimary, whiteSpace: "nowrap" }}>{amountLabel}</div>
+                </div>
+              </div>
+            );
+          })}
+          {photoGroup.items.length === 0 && (
+            <div style={{ fontSize: 13, color: textMuted, fontStyle: "italic" }}>No item details</div>
+          )}
+        </div>
+      </div>
+    </div>
   );
 
   const combinedRows = useMemo<CombinedOrderGroup[]>(() => {
@@ -2830,12 +3049,7 @@ function OrdersPageContent() {
                               style={{ width: "100%", height: "100%", objectFit: "cover" }}
                               onError={(event) => {
                                 const img = event.currentTarget;
-                                if (primaryFallbackUrl && img.dataset.fallbackUsed !== "1") {
-                                  img.dataset.fallbackUsed = "1";
-                                  img.src = primaryFallbackUrl;
-                                } else {
-                                  img.style.display = "none";
-                                }
+                                tryNextImageFallback(img, primaryPreview?.fallbackUrls ?? [primaryFallbackUrl]);
                               }}
                             />
                           ) : (
@@ -2913,12 +3127,7 @@ function OrdersPageContent() {
                               style={{ width: "100%", height: "100%", objectFit: "cover" }}
                               onError={(event) => {
                                 const img = event.currentTarget;
-                                if (primaryFallbackUrl && img.dataset.fallbackUsed !== "1") {
-                                  img.dataset.fallbackUsed = "1";
-                                  img.src = primaryFallbackUrl;
-                                } else {
-                                  img.style.display = "none";
-                                }
+                                tryNextImageFallback(img, primaryPreview?.fallbackUrls ?? [primaryFallbackUrl]);
                               }}
                             />
                           ) : <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "#d1d5db" }}><Users size={14} /></div>}
@@ -3009,12 +3218,7 @@ function OrdersPageContent() {
                                 style={{ width: "100%", height: "100%", objectFit: "cover" }}
                                 onError={(event) => {
                                   const img = event.currentTarget;
-                                  if (primaryFallbackUrl && img.dataset.fallbackUsed !== "1") {
-                                    img.dataset.fallbackUsed = "1";
-                                    img.src = primaryFallbackUrl;
-                                  } else {
-                                    img.style.display = "none";
-                                  }
+                                  tryNextImageFallback(img, primaryPreview?.fallbackUrls ?? [primaryFallbackUrl]);
                                 }}
                               />
                             ) : (
@@ -3156,12 +3360,7 @@ function OrdersPageContent() {
                                           style={{ width: "100%", height: "100%", objectFit: "cover" }}
                                           onError={(event) => {
                                             const img = event.currentTarget;
-                                            if (preview.fallbackUrl && img.dataset.fallbackUsed !== "1") {
-                                              img.dataset.fallbackUsed = "1";
-                                              img.src = preview.fallbackUrl;
-                                            } else {
-                                              img.style.display = "none";
-                                            }
+                                            tryNextImageFallback(img, preview.fallbackUrls ?? [preview.fallbackUrl]);
                                           }}
                                         />
                                       </div>
@@ -3183,12 +3382,7 @@ function OrdersPageContent() {
                                         style={{ width: "100%", height: "100%", objectFit: "cover" }}
                                         onError={(event) => {
                                           const img = event.currentTarget;
-                                          if (preview.fallbackUrl && img.dataset.fallbackUsed !== "1") {
-                                            img.dataset.fallbackUsed = "1";
-                                            img.src = preview.fallbackUrl;
-                                          } else {
-                                            img.style.display = "none";
-                                          }
+                                          tryNextImageFallback(img, preview.fallbackUrls ?? [preview.fallbackUrl]);
                                         }}
                                       />
                                     </div>
@@ -3363,6 +3557,8 @@ function OrdersPageContent() {
                     {selectedDetailOrders.map((order) => {
                       const orderStatus = getOrderDisplayStatus(order);
                       const cfg = STATUS_COLORS[orderStatus] ?? STATUS_COLORS.new;
+                      const backdropLabel = orderBackdropLabel(order);
+                      const productionItems = orderProductionItems(order);
                       return (
                         <div key={order.id} style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 10, alignItems: "start", borderBottom: `1px solid ${borderColor}`, paddingBottom: 8 }}>
                           <div style={{ minWidth: 0 }}>
@@ -3371,8 +3567,25 @@ function OrdersPageContent() {
                               <span style={{ background: cfg.bg, color: cfg.color, borderRadius: 999, padding: "2px 7px", fontSize: 10, fontWeight: 900 }}>{cfg.label}</span>
                             </div>
                             <div style={{ fontSize: 12, color: textMuted, marginTop: 3, lineHeight: 1.35 }}>
-                              {order.package_name || "Package"} · {formatDate(order.created_at)}
+                              {orderPackageDisplayLabel(order)} · {formatDate(order.created_at)}
                             </div>
+                            <div style={{ fontSize: 11, color: textMuted, marginTop: 5, lineHeight: 1.45 }}>
+                              {orderDetailCountLabel(order)}
+                            </div>
+                            <div style={{ fontSize: 11, color: backdropLabel ? "#111827" : textMuted, marginTop: 5, lineHeight: 1.45, fontWeight: backdropLabel ? 900 : 700 }}>
+                              Backdrop: {backdropLabel || "No backdrop selected"}
+                            </div>
+                            {productionItems.length > 0 ? (
+                              <div style={{ display: "flex", flexDirection: "column", gap: 3, marginTop: 7 }}>
+                                {productionItems.map((item, index) => (
+                                  <div key={`${order.id}-${item.id ?? item.product_name ?? index}`} style={{ fontSize: 11, color: textMuted, lineHeight: 1.35, wordBreak: "break-word" }}>
+                                    <strong style={{ color: textPrimary }}>{orderItemBaseLabel(item)}</strong>
+                                    {" · "}Qty {orderItemQuantity(item)}
+                                    {clean(item.sku) ? ` · ${fileNameFromUrl(clean(item.sku), `photo-${index + 1}.jpg`)}` : ""}
+                                  </div>
+                                ))}
+                              </div>
+                            ) : null}
                           </div>
                           <div style={{ fontSize: 13, fontWeight: 900, color: textPrimary, whiteSpace: "nowrap" }}>
                             {moneyFromCents(resolveOrderTotalCents(order, order.items), order.currency?.toUpperCase() || selectedDetailCurrency)}
@@ -3384,9 +3597,9 @@ function OrdersPageContent() {
                 </div>
               ) : null}
 
-              {selectedBackdropAddOns.length > 0 ? (
-                <div style={{ background: "#111827", color: "#fff", borderRadius: 16, padding: 14, marginBottom: 16 }}>
-                  <div style={{ fontSize: 11, color: "#cbd5e1", fontWeight: 900, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 10 }}>Selected Backdrop</div>
+              <div style={{ background: selectedBackdropAddOns.length > 0 ? "#111827" : "#f8fafc", color: selectedBackdropAddOns.length > 0 ? "#fff" : textPrimary, border: selectedBackdropAddOns.length > 0 ? "none" : `1px solid ${borderColor}`, borderRadius: 16, padding: 14, marginBottom: 16 }}>
+                <div style={{ fontSize: 11, color: selectedBackdropAddOns.length > 0 ? "#cbd5e1" : textMuted, fontWeight: 900, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 10 }}>Selected Backdrop</div>
+                {selectedBackdropAddOns.length > 0 ? (
                   <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                     {selectedBackdropAddOns.map((backdrop) => (
                       <div key={backdrop.key} style={{ display: "flex", gap: 12, alignItems: "center" }}>
@@ -3421,8 +3634,10 @@ function OrdersPageContent() {
                       </div>
                     ))}
                   </div>
-                </div>
-              ) : null}
+                ) : (
+                  <div style={{ fontSize: 14, color: textMuted, fontWeight: 800, lineHeight: 1.45 }}>No backdrop selected for this order.</div>
+                )}
+              </div>
 
               {(() => {
                 const currency = selectedDetailCurrency;
@@ -3499,15 +3714,12 @@ function OrdersPageContent() {
                           </div>
                           {component.assignments.length > 0 ? (
                             <div style={{ display: "flex", flexDirection: "column", gap: 3, marginTop: 6 }}>
-                              {component.assignments.slice(0, 6).map((assignment, index) => (
+                              {component.assignments.map((assignment, index) => (
                                 <div key={`${component.key}-${assignment.poseIndex}-${assignment.fileName}-${index}`} style={{ fontSize: 11, color: textMuted, lineHeight: 1.35, wordBreak: "break-word" }}>
                                   <strong style={{ color: textPrimary }}>{poseLabel(assignment.poseIndex, selectedOrderedPhotoGroups.length)}</strong>
                                   {assignment.slotText ? ` slot ${assignment.slotText}` : ""} · {assignment.fileName}
                                 </div>
                               ))}
-                              {component.assignments.length > 6 ? (
-                                <div style={{ fontSize: 11, color: textMuted }}>+ {component.assignments.length - 6} more assignment{component.assignments.length - 6 === 1 ? "" : "s"}</div>
-                              ) : null}
                             </div>
                           ) : null}
                         </div>
@@ -3521,95 +3733,52 @@ function OrdersPageContent() {
               ) : null}
 
               {/* ── Order Items with Photos ── */}
-              <div style={{ display: "flex", flexDirection: "column", gap: 16, marginBottom: 20 }}>
-                {selectedOrderedPhotoGroups.map((photoGroup, groupIndex) => (
-                  <div key={`${photoGroup.fileName}-${groupIndex}`} style={{ borderBottom: `1px solid ${borderColor}`, paddingBottom: 16 }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, marginBottom: 8 }}>
-                      <div style={{ minWidth: 0 }}>
-                        <div style={{ fontSize: 13, fontWeight: 900, color: textPrimary }}>
-                          {poseLabel(groupIndex, selectedOrderedPhotoGroups.length)}
-                        </div>
-                        <div style={{ fontSize: 12, fontWeight: 700, color: textMuted, marginTop: 2, wordBreak: "break-word" }}>{photoGroup.fileName}</div>
-                      </div>
-                      <div style={{ flexShrink: 0, fontSize: 11, color: textMuted, background: "#f3f4f6", borderRadius: 999, padding: "3px 8px", fontWeight: 800 }}>
-                        {photoGroup.items.length} item{photoGroup.items.length === 1 ? "" : "s"}
-                      </div>
-                    </div>
-                    <div style={{ display: "flex", gap: 16, alignItems: "flex-start" }}>
-                      {/* Photo */}
-                      <div style={{ width: 140, flexShrink: 0 }}>
-                        <div style={{ width: 140, height: 180, borderRadius: 4, overflow: "hidden", border: `1px solid ${borderColor}`, background: "#f5f5f5" }}>
-                          {photoGroup.url ? (
-                            <img
-                              loading="lazy"
-                              src={photoGroup.url}
-                              alt=""
-                              style={{ width: "100%", height: "100%", objectFit: "cover" }}
-                              onError={(event) => {
-                                const fallback = photoGroup.fallbackUrl;
-                                const img = event.currentTarget;
-                                if (fallback && img.src !== fallback) {
-                                  img.src = fallback;
-                                } else {
-                                  img.style.display = "none";
-                                }
-                              }}
-                            />
-                          ) : (
-                            <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "#ccc" }}>
-                              <ImageIcon size={28} />
+              {selectedIsCombined ? (
+                <div style={{ display: "flex", flexDirection: "column", gap: 16, marginBottom: 20 }}>
+                  <div style={{ fontSize: 11, color: textMuted, fontWeight: 900, letterSpacing: "0.08em", textTransform: "uppercase" }}>Photos by order number</div>
+                  {selectedPhotoGroupsByOrder.map(({ order, groups }) => {
+                    const orderBackdrop = orderBackdropLabel(order);
+                    return (
+                      <div key={order.id} style={{ border: `1px solid ${borderColor}`, borderRadius: 16, overflow: "hidden", background: "#fff" }}>
+                        <div style={{ background: "#f8fafc", borderBottom: `1px solid ${borderColor}`, padding: "12px 14px", display: "grid", gridTemplateColumns: "1fr auto", gap: 12, alignItems: "start" }}>
+                          <div style={{ minWidth: 0 }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                              <span style={{ fontSize: 15, fontWeight: 900, color: textPrimary }}>Order {orderShortId(order)}</span>
+                              <span style={{ fontSize: 11, fontWeight: 900, color: "#0f766e", background: "#ecfeff", border: "1px solid #a5f3fc", borderRadius: 999, padding: "2px 8px" }}>
+                                {groups.length} photo{groups.length === 1 ? "" : "s"}
+                              </span>
                             </div>
+                            <div style={{ fontSize: 12, color: textMuted, marginTop: 4, lineHeight: 1.4 }}>
+                              {orderPackageDisplayLabel(order)} · {formatDate(order.created_at)}
+                            </div>
+                            <div style={{ fontSize: 12, color: orderBackdrop ? textPrimary : textMuted, fontWeight: orderBackdrop ? 900 : 700, marginTop: 4, lineHeight: 1.4 }}>
+                              Backdrop: {orderBackdrop || "No backdrop selected"}
+                            </div>
+                          </div>
+                          <div style={{ fontSize: 14, color: textPrimary, fontWeight: 900, whiteSpace: "nowrap" }}>
+                            {moneyFromCents(resolveOrderTotalCents(order, order.items), order.currency?.toUpperCase() || selectedDetailCurrency)}
+                          </div>
+                        </div>
+                        <div style={{ padding: 14, display: "flex", flexDirection: "column", gap: 16 }}>
+                          {groups.length > 0 ? (
+                            groups.map((photoGroup, groupIndex) =>
+                              renderPhotoDetailGroup(photoGroup, groupIndex, groups.length)
+                            )
+                          ) : (
+                            <div style={{ color: textMuted, fontSize: 13, fontStyle: "italic" }}>No photo details found for this order.</div>
                           )}
                         </div>
-                        {photoGroup.url ? (
-                          <a href={isDashboardCompositeReference(photoGroup.url) ? photoGroup.url : dashboardPhotoUrl(photoGroup.originalUrl) || photoGroup.url} target="_blank" rel="noopener noreferrer" style={{ color: "#0ea5e9", fontSize: 12, fontWeight: 600, textDecoration: "none", display: "block", marginTop: 6 }}>
-                            {isDashboardCompositeReference(photoGroup.url) ? "Download Print File" : "Download Original"}
-                          </a>
-                        ) : null}
-                        {isDashboardCompositeReference(photoGroup.url) && selectedBackdropAddOns[0] ? (
-                          <div style={{ marginTop: 5, fontSize: 11, color: "#111827", fontWeight: 900, lineHeight: 1.3 }}>
-                            Backdrop: {selectedBackdropAddOns[0].label} applied
-                          </div>
-                        ) : null}
                       </div>
-
-                      {/* Item details */}
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        {photoGroup.items.map((item, itemIndex) => {
-                          const sourceOrder = item.sourceOrder ?? selected;
-                          const includedInPackage = isPackageComponentItem(sourceOrder, item, sourceOrder.items);
-                          const amountLabel = includedInPackage
-                            ? "Included"
-                            : moneyFromCents(item.line_total_cents ?? 0, sourceOrder.currency?.toUpperCase() || selectedDetailCurrency);
-                          const slot = packageSlotText(item);
-                          const itemQty = orderItemQuantity(item);
-
-                          return (
-                            <div key={`${photoGroup.fileName}-${item.product_name}-${itemIndex}`} style={{ padding: "10px 14px", background: "#f9fafb", borderRadius: 8, marginBottom: 8, border: `1px solid ${borderColor}` }}>
-                              <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
-                                <div style={{ minWidth: 0 }}>
-                                  <div style={{ fontSize: 14, fontWeight: 800, color: textPrimary, lineHeight: 1.35 }}>{orderItemBaseLabel(item)}</div>
-                                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 6 }}>
-                                    <span style={{ fontSize: 11, color: textMuted, background: "#fff", border: `1px solid ${borderColor}`, borderRadius: 999, padding: "2px 7px", fontWeight: 700 }}>Qty {itemQty}</span>
-                                    {slot ? (
-                                      <span style={{ fontSize: 11, color: textMuted, background: "#fff", border: `1px solid ${borderColor}`, borderRadius: 999, padding: "2px 7px", fontWeight: 700 }}>{slot}</span>
-                                    ) : null}
-                                    <span style={{ fontSize: 11, color: textMuted, background: "#fff", border: `1px solid ${borderColor}`, borderRadius: 999, padding: "2px 7px", fontWeight: 700 }}>{poseLabel(groupIndex, selectedOrderedPhotoGroups.length)}</span>
-                                  </div>
-                                </div>
-                                <div style={{ fontSize: 14, fontWeight: 700, color: includedInPackage ? "#16a34a" : textPrimary, whiteSpace: "nowrap" }}>{amountLabel}</div>
-                              </div>
-                            </div>
-                          );
-                        })}
-                        {photoGroup.items.length === 0 && (
-                          <div style={{ fontSize: 13, color: textMuted, fontStyle: "italic" }}>No item details</div>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 16, marginBottom: 20 }}>
+                  {selectedOrderedPhotoGroups.map((photoGroup, groupIndex) =>
+                    renderPhotoDetailGroup(photoGroup, groupIndex, selectedOrderedPhotoGroups.length)
+                  )}
+                </div>
+              )}
 
               {/* ── Notes ── */}
               {selectedDetailOrders.map((order) => cleanNotes(order.special_notes || order.notes)).filter(Boolean).length > 0 ? (
@@ -3755,7 +3924,7 @@ function OrdersPageContent() {
               <div>
                 <div style={{ fontSize: 11, color: "#3730a3", fontWeight: 900, letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 6 }}>Digital Delivery</div>
                 <div style={{ fontSize: 22, fontWeight: 900, color: textPrimary, lineHeight: 1.2 }}>Send ZIP link</div>
-                <div style={{ fontSize: 13, color: textMuted, marginTop: 6 }}>Order {digitalDeliveryModal.id.slice(0, 8)} · {digitalDeliveryModal.package_name || "Digital order"}</div>
+                <div style={{ fontSize: 13, color: textMuted, marginTop: 6 }}>Order {digitalDeliveryModal.id.slice(0, 8)} · {orderPackageDisplayLabel(digitalDeliveryModal)}</div>
               </div>
               <button type="button" onClick={() => setDigitalDeliveryModal(null)} style={{ background: "#f3f4f6", border: "none", width: 36, height: 36, borderRadius: 12, cursor: "pointer", color: textMuted, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                 <X size={16} />

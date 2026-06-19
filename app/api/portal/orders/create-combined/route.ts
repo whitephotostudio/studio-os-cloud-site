@@ -52,6 +52,7 @@ import { hasActiveSubscription } from "@/lib/subscription-gate";
 import { parseJson } from "@/lib/api-validation";
 import {
   computeCombineTotals,
+  isCombineOrdersEnabled,
   type CombineGroup,
   type SiblingDiscountTiers,
 } from "@/lib/combine-orders";
@@ -344,6 +345,12 @@ export async function POST(request: NextRequest) {
 
     const tiers: SiblingDiscountTiers =
       (photographer?.sibling_discount_tiers as SiblingDiscountTiers | null) ?? {};
+    if (!isCombineOrdersEnabled(tiers)) {
+      return NextResponse.json(
+        { ok: false, message: "This studio has combine orders turned off." },
+        { status: 403 },
+      );
+    }
     const shippingFeeCents = Number(photographer?.shipping_fee_cents ?? 0) || 0;
     const lateHandlingFeePercent =
       Number(photographer?.late_handling_fee_percent ?? 10) || 10;
