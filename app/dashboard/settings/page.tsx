@@ -303,10 +303,11 @@ function planDisplayLabel(value: string | null | undefined) {
 // percentages — and these helpers convert between the two shapes.
 
 function buildSiblingTiersJson(
+  enabled: boolean,
   tier2Percent: number,
   tier3Percent: number,
-): Record<string, number> {
-  const out: Record<string, number> = {};
+): Record<string, number | boolean> {
+  const out: Record<string, number | boolean> = { enabled };
   if (Number.isFinite(tier2Percent) && tier2Percent > 0) {
     out["2"] = clampPercent(tier2Percent);
   }
@@ -314,6 +315,10 @@ function buildSiblingTiersJson(
     out["3"] = clampPercent(tier3Percent);
   }
   return out;
+}
+
+function readCombineOrdersEnabled(tiers: Record<string, unknown>) {
+  return tiers.enabled !== false;
 }
 
 function clampPercent(value: number): number {
@@ -356,6 +361,7 @@ export default function SettingsPage() {
   // Tiers are stored as a JSON object on the photographers row but the UI
   // exposes them as two simple percentages — most studios stop at "3+ kids".
   // Spec: docs/design/combine-orders-and-recovery.md.
+  const [combineOrdersEnabled, setCombineOrdersEnabled] = useState(true);
   const [siblingTier2Percent, setSiblingTier2Percent] = useState<number>(5);
   const [siblingTier3Percent, setSiblingTier3Percent] = useState<number>(10);
   const [shippingFeeCents, setShippingFeeCents] = useState<number>(0);
@@ -565,7 +571,8 @@ export default function SettingsPage() {
           }
           const { data: commerceRow } = commerceResult;
           if (commerceRow) {
-            const tiers = (commerceRow.sibling_discount_tiers ?? {}) as Record<string, number>;
+            const tiers = (commerceRow.sibling_discount_tiers ?? {}) as Record<string, unknown>;
+            setCombineOrdersEnabled(readCombineOrdersEnabled(tiers));
             setSiblingTier2Percent(typeof tiers["2"] === "number" ? tiers["2"] : 5);
             setSiblingTier3Percent(typeof tiers["3"] === "number" ? tiers["3"] : 10);
             const fee = Number(commerceRow.shipping_fee_cents);
@@ -776,6 +783,7 @@ export default function SettingsPage() {
             billing_email: billingEmail || studioEmail || user.email || null,
             billing_currency: billingCurrency || "cad",
             sibling_discount_tiers: buildSiblingTiersJson(
+              combineOrdersEnabled,
               siblingTier2Percent,
               siblingTier3Percent,
             ),
@@ -812,6 +820,7 @@ export default function SettingsPage() {
             billing_email: billingEmail || studioEmail || user.email || null,
             billing_currency: billingCurrency || "cad",
             sibling_discount_tiers: buildSiblingTiersJson(
+              combineOrdersEnabled,
               siblingTier2Percent,
               siblingTier3Percent,
             ),
@@ -1398,6 +1407,63 @@ export default function SettingsPage() {
               only when shipping is enabled for that school.
             </p>
 
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: 16,
+                background: combineOrdersEnabled ? "#f0fdf4" : "#f8fafc",
+                border: `1px solid ${combineOrdersEnabled ? "#bbf7d0" : "#d6dfef"}`,
+                borderRadius: 16,
+                padding: "14px 16px",
+                marginBottom: 18,
+              }}
+            >
+              <div>
+                <div style={{ fontWeight: 900, color: "#0f172a" }}>
+                  {combineOrdersEnabled ? "Combine orders is on" : "Combine orders is off"}
+                </div>
+                <div style={{ fontSize: 13, color: "#64748b", marginTop: 3, lineHeight: 1.45 }}>
+                  {combineOrdersEnabled
+                    ? "Parents can use Save with combine and combined checkout."
+                    : "Parents cannot place combined sibling orders until this is turned back on."}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setCombineOrdersEnabled((value) => !value)}
+                role="switch"
+                aria-checked={combineOrdersEnabled}
+                aria-label="Toggle combine orders"
+                style={{
+                  width: 58,
+                  height: 32,
+                  borderRadius: 16,
+                  border: "none",
+                  background: combineOrdersEnabled ? "#22c55e" : "#d1d5db",
+                  position: "relative",
+                  cursor: "pointer",
+                  transition: "background 0.2s",
+                  flexShrink: 0,
+                }}
+              >
+                <div
+                  style={{
+                    width: 26,
+                    height: 26,
+                    borderRadius: 13,
+                    background: "#fff",
+                    position: "absolute",
+                    top: 3,
+                    left: combineOrdersEnabled ? 29 : 3,
+                    transition: "left 0.2s",
+                    boxShadow: "0 1px 3px rgba(0,0,0,0.2)",
+                  }}
+                />
+              </button>
+            </div>
+
             <div style={{ display: "grid", gap: 16, gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))" }}>
               <NumberField
                 label="2-kid sibling discount"
@@ -1408,6 +1474,7 @@ export default function SettingsPage() {
                 max={50}
                 step={1}
                 helper="Applied to the 2nd kid"
+                disabled={!combineOrdersEnabled}
               />
               <NumberField
                 label="3+ kid sibling discount"
@@ -1418,6 +1485,7 @@ export default function SettingsPage() {
                 max={50}
                 step={1}
                 helper="Applied to each additional kid (3+)"
+                disabled={!combineOrdersEnabled}
               />
               <NumberField
                 label="Default shipping fee"
@@ -1428,6 +1496,7 @@ export default function SettingsPage() {
                 max={200}
                 step={0.5}
                 helper="Used only for schools with shipping enabled"
+                disabled={!combineOrdersEnabled}
               />
               <NumberField
                 label="Late handling fee"
@@ -1438,6 +1507,7 @@ export default function SettingsPage() {
                 max={50}
                 step={1}
                 helper="Added when ordering past due date"
+                disabled={!combineOrdersEnabled}
               />
             </div>
 
@@ -3260,6 +3330,7 @@ function NumberField({
   max,
   step,
   helper,
+  disabled,
 }: {
   label: string;
   value: number;
@@ -3270,9 +3341,10 @@ function NumberField({
   max?: number;
   step?: number;
   helper?: string;
+  disabled?: boolean;
 }) {
   return (
-    <label style={{ display: "block" }}>
+    <label style={{ display: "block", opacity: disabled ? 0.58 : 1 }}>
       <div style={{ marginBottom: 6, fontSize: 13, fontWeight: 700, color: "#475569" }}>{label}</div>
       <div
         style={{
@@ -3291,6 +3363,7 @@ function NumberField({
         <input
           type="number"
           value={Number.isFinite(value) ? value : 0}
+          disabled={disabled}
           onChange={(e) => {
             const next = Number(e.target.value);
             onChange(Number.isFinite(next) ? next : 0);
@@ -3307,6 +3380,7 @@ function NumberField({
             fontWeight: 700,
             color: "#0f172a",
             minWidth: 60,
+            cursor: disabled ? "not-allowed" : "text",
           }}
         />
         {suffix ? (
