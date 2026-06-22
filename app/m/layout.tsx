@@ -18,8 +18,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Bell, CalendarDays, GraduationCap, Home, PlusCircle, ShoppingBag } from "lucide-react";
+import { Bell, CalendarDays, GraduationCap, Home, PlusCircle, Search, ShoppingBag } from "lucide-react";
 import { AgreementGate } from "@/components/agreement-gate";
+import { SpotlightModal, type SpotlightHit } from "@/components/spotlight-search";
 import { createClient } from "@/lib/supabase/client";
 import {
   MOBILE_ORDER_SELECT_MONEY,
@@ -116,6 +117,25 @@ function clean(value: string | null | undefined) {
   return (value ?? "").trim();
 }
 
+/** Route a global-search hit to the matching /m mobile page (instead of the
+ *  desktop /dashboard pages the shared search defaults to). */
+function mobileHrefForHit(hit: SpotlightHit): string {
+  switch (hit.kind) {
+    case "school":
+      return `/m/schools/${hit.id}`;
+    case "event":
+      return `/m/events/${hit.id}`;
+    case "order":
+      return `/m/orders/${hit.id}`;
+    case "student": {
+      // The student hit's href carries the school id: /dashboard/projects/
+      // schools/<schoolId>?student=<id>. Pull it out for the /m school page.
+      const m = hit.href.match(/schools\/([^/?]+)/);
+      return m ? `/m/schools/${m[1]}` : "/m/schools";
+    }
+  }
+}
+
 function moneyFromCents(cents: number, currency = "CAD") {
   return new Intl.NumberFormat("en-US", {
     style: "currency",
@@ -135,6 +155,7 @@ export default function MobileLayout({
   const pathname = usePathname() ?? "/m";
   const [supabase] = useState(() => createClient());
   const [unreadCount, setUnreadCount] = useState<number>(0);
+  const [searchOpen, setSearchOpen] = useState(false);
   const [checkedAuth, setCheckedAuth] = useState(false);
   const [photographerId, setPhotographerId] = useState<string | null>(null);
   const [notificationPermission, setNotificationPermission] = useState<
@@ -469,6 +490,26 @@ export default function MobileLayout({
           </Link>
 
           <div style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+            <button
+              type="button"
+              onClick={() => setSearchOpen(true)}
+              aria-label="Search everything"
+              style={{
+                width: 40,
+                height: 40,
+                borderRadius: 12,
+                background: "#fff",
+                border: "1px solid #e5e7eb",
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                color: "#111827",
+                cursor: "pointer",
+              }}
+            >
+              <Search size={18} />
+            </button>
+
             <Link
               href="/m/new"
               aria-label="Create event or school"
@@ -537,6 +578,14 @@ export default function MobileLayout({
             </Link>
           </div>
         </header>
+
+        {/* Global "Search everything" — same engine as the desktop dashboard,
+            but results route to the /m mobile pages. */}
+        <SpotlightModal
+          open={searchOpen}
+          onClose={() => setSearchOpen(false)}
+          hrefFor={mobileHrefForHit}
+        />
 
         {checkedAuth && (!soundEnabled || notificationPermission === "default") ? (
           <div

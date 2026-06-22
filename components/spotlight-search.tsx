@@ -552,11 +552,14 @@ export function useSpotlight(term: string, enabled: boolean) {
 type SpotlightModalProps = {
   open: boolean;
   onClose: () => void;
+  /** Optional remap of a hit's destination — e.g. route to the /m mobile pages
+   *  instead of the desktop /dashboard pages. Defaults to the hit's own href. */
+  hrefFor?: (hit: SpotlightHit) => string;
 };
 
 type SpotlightKind = SpotlightHit["kind"];
 
-export function SpotlightModal({ open, onClose }: SpotlightModalProps) {
+export function SpotlightModal({ open, onClose, hrefFor }: SpotlightModalProps) {
   const [term, setTerm] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
   const [kindFilter, setKindFilter] = useState<SpotlightKind | null>(null);
@@ -623,12 +626,12 @@ export function SpotlightModal({ open, onClose }: SpotlightModalProps) {
         e.preventDefault();
         const hit = visibleHits[activeIndex];
         if (hit) {
-          router.push(hit.href);
+          router.push(hrefFor ? hrefFor(hit) : hit.href);
           onClose();
         }
       }
     },
-    [canShowResults, visibleHits, activeIndex, onClose, router],
+    [canShowResults, visibleHits, activeIndex, onClose, router, hrefFor],
   );
 
   if (!open) return null;
@@ -802,7 +805,7 @@ export function SpotlightModal({ open, onClose }: SpotlightModalProps) {
             visibleHits.map((hit, idx) => (
               <Link
                 key={`${hit.kind}-${hit.id}-${idx}`}
-                href={hit.href}
+                href={hrefFor ? hrefFor(hit) : hit.href}
                 onClick={onClose}
                 onMouseEnter={() => setActiveIndex(idx)}
                 style={{
