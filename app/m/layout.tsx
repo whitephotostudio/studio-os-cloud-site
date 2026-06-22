@@ -129,9 +129,13 @@ function mobileHrefForHit(hit: SpotlightHit): string {
       return `/m/orders/${hit.id}`;
     case "student": {
       // The student hit's href carries the school id: /dashboard/projects/
-      // schools/<schoolId>?student=<id>. Pull it out for the /m school page.
+      // schools/<schoolId>?student=<id>. Keep BOTH the school id and the
+      // student id so the /m school page can scroll to + blue-highlight the
+      // student, matching the desktop behavior.
       const m = hit.href.match(/schools\/([^/?]+)/);
-      return m ? `/m/schools/${m[1]}` : "/m/schools";
+      return m
+        ? `/m/schools/${m[1]}?student=${encodeURIComponent(hit.id)}`
+        : "/m/schools";
     }
   }
 }
