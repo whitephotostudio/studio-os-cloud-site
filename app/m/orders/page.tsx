@@ -174,8 +174,7 @@ export default function MobileOrdersPage() {
            customer_name, customer_email, package_name,
            ${MOBILE_ORDER_SELECT_MONEY},
            seen_by_photographer, student_id,
-           student:students(first_name,last_name,photo_url),
-           items:order_items(sku)`,
+           student:students(first_name,last_name,photo_url)`,
         )
         .eq("photographer_id", photog.id)
         .order("created_at", { ascending: false })
