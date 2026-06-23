@@ -30,7 +30,44 @@ git push origin main
 ```
 **Smoke test after Vercel redeploy:** Projects → an event → Favorite Photos → type a client email (autocompletes) → grid narrows to their favorites → "Email N to client" → client gets an email → link opens the mobile landing page → "Download all as ZIP" works, and on a phone tapping a photo lets them Save Image.
 
-**Next (deferred):** mirror to Schools favorites (`school_gallery_favorites`, the `/dashboard/projects/schools/[schoolId]` page); optional per-photo deselect before sending.
+**Next (deferred):** dashboard-side mirror to Schools favorites view (`/dashboard/projects/schools/[schoolId]`) for the filter+send UI; optional per-photo deselect before sending.
+
+## 🆕 2026-06-22 (later) — Favorites no longer silently lost (parents portal — PUSH REQUIRED)
+
+Driver: a client said she favorited 7 photos but they weren't in the dashboard. DB forensics (Supabase `bwqhzczxoevouiondjak`): she opened the event gallery `72b922cb-aa7c-4969-ba77-c267f33943ec` with `shushanik.karapetyan@gmail.com` (visitor row 2026-06-18 22:30) but had **zero** favorites under that email anywhere; no blank-email favorites; no typo'd email with ~7 favs; gallery has `email_required=false` (so approval wasn't the blocker). Conclusion: her hearts only reached `localStorage`, never the server.
+
+Root cause in `app/parents/[pin]/page.tsx`: `toggleFavorite` writes the heart to localStorage + state optimistically, then fires `syncEventFavorite` POST. On failure it just caught, kept it local, and showed a 2.8s "saved only in this browser" message. On next load the GET **merges** local ∪ server, so the parent keeps seeing the heart (reinforcing false confidence) but it never gets pushed up.
+
+Fix (no DB/schema change):
+- `postFavoriteWithRetry` (3 attempts, 0.5s/1s backoff) wraps every favorite POST. New `postEventFavoriteRequest` / `postSchoolFavoriteRequest` low-level helpers; `syncEventFavorite` / `syncSchoolFavorite` now go through retry.
+- `reconcileEventFavorites` / `reconcileSchoolFavorites`: on gallery load, after merging local ∪ server, push any IDs that are local-but-not-on-server up to the server (ADD only, never delete — favorites from other devices stay safe). Wired into both the event load path (after `setEventFavoritesAvailable`) and the school load path (captures `schoolServerFavoriteIds`). Shows "Synced N favorites that hadn't saved before."
+- Reworded the misleading toast to "Saved on your device — it will sync to the studio next time you open the gallery." (now actually true).
+
+**Recovery for the affected client:** once this deploys, if her browser still holds the 7 hearts in localStorage (same device, not cleared), she only needs to **reopen the gallery once** — reconcile pushes them to the server automatically. No re-favoriting 600 photos. If she's on a different device / cleared storage, they're unrecoverable from the server (never persisted) and she'd have to re-pick.
+
+Typecheck clean (`npx tsc --noEmit` → exit 0). Push from Mac:
+```
+cd ~/Downloads/Projects/studio-os-cloud-site
+git add app/parents/[pin]/page.tsx CLAUDE.md
+git commit -m "fix: parents portal favorites self-heal (retry + reconcile-on-load) so hearts never silently fail to save"
+git push origin main
+```
+
+## 🆕 2026-06-22 (later 2) — Order payment breakdown showed $0.00 line items (dashboard — PUSH REQUIRED)
+
+Driver: Harout looked at Shushanik Karapetyan's orders and the totals looked wrong. DB forensics: she has **3 separate, legitimate Stripe charges** (no double-charge, no refunds) = **$137.01** total — event "Sk Graduation Ceremony 2026" Digital-All-Photos $55.67 (`9734422e`, pi_3Tgxlm), ARS school Digital-All-Photos $55.67 (`bca07668`, pi_3ThBDs), ARS school Composite 8x10 $25.67 (`93e19f97`, pi_3ThBcK). The dashboard groups the two ARS orders into one $81.34 card + the event order separately, so there's no single combined number — that plus the $0.00 line made it look broken.
+
+Root cause: `order_items` rows store `price/unit_price_cents/line_total_cents = 0` — the real amount lives on the **order** (`total_cents` / `package_price`). The Payment Breakdown in `app/dashboard/orders/page.tsx` summed line items (→ $0.00) while Subtotal/Total read the order total ($55.67). `reconcilePaymentBreakdownLines` only corrected ≤2¢ rounding gaps, so a fully-$0 line never got filled.
+
+Fix (display only, no data change): in `reconcilePaymentBreakdownLines`, when `packageSum === 0 && packageTarget > 0`, distribute the order subtotal across the package line(s) so the breakdown reconciles (single Digital line → $55.67; combined ARS card → $55.67 + $25.67 = $81.34). Also in the per-photo "ordered photos" list, show **"Included"** (green) instead of **$0.00** when a photo's line carries no standalone price. Typecheck clean.
+
+Push (from Mac):
+```
+cd ~/Downloads/Projects/studio-os-cloud-site
+git add "app/parents/[pin]/page.tsx" app/dashboard/orders/page.tsx CLAUDE.md
+git commit -m "fix: favorites self-heal + order payment breakdown no longer shows \$0.00 line items"
+git push origin main
+```
 
 ---
 

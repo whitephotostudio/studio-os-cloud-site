@@ -4718,6 +4718,18 @@ export default function ParentGalleryPage() {
           setConfirmedBackdrop(null);
           setFavorites(nextFavorites);
           setEventFavoritesAvailable(favoritesPayload.unavailable !== true);
+          if (favoritesPayload.unavailable !== true && projectId && eventEmail) {
+            // Push up any hearts that only made it to this browser last time.
+            void reconcileEventFavorites({
+              projectId,
+              email: eventEmail,
+              pin,
+              serverIds: (favoritesPayload.mediaIds ?? [])
+                .map((value) => clean(value))
+                .filter(Boolean),
+              desiredIds: Array.from(nextFavorites),
+            });
+          }
           setNobgUrls({});
           setNobgStatus("ready");
           setPhotographerId(contextPayload.photographerId ?? activeProject?.photographer_id ?? null);
@@ -4895,6 +4907,7 @@ export default function ParentGalleryPage() {
         const storedSchoolFavorites = readStoredFavorites(schoolFavoritesStorageKey);
         let nextSchoolFavorites = storedSchoolFavorites;
         let schoolFavoritesUnavailable = false;
+        let schoolServerFavoriteIds: string[] = [];
         if (favoriteSchoolId && schoolViewerEmail) {
           const schoolFavoritesParams = new URLSearchParams({
             schoolId: favoriteSchoolId,
@@ -4912,11 +4925,12 @@ export default function ParentGalleryPage() {
           };
           schoolFavoritesUnavailable = schoolFavoritesPayload.unavailable === true;
           if (schoolFavoritesResponse.ok && schoolFavoritesPayload.ok !== false) {
+            schoolServerFavoriteIds = (schoolFavoritesPayload.mediaIds ?? [])
+              .map((value) => clean(value))
+              .filter(Boolean);
             nextSchoolFavorites = new Set([
               ...storedSchoolFavorites,
-              ...(schoolFavoritesPayload.mediaIds ?? [])
-                .map((value) => clean(value))
-                .filter(Boolean),
+              ...schoolServerFavoriteIds,
             ]);
           }
         }
@@ -4950,6 +4964,16 @@ export default function ParentGalleryPage() {
         setBackdrops(backdropRows);
         setFavorites(nextSchoolFavorites);
         setEventFavoritesAvailable(!schoolFavoritesUnavailable);
+        if (!schoolFavoritesUnavailable && favoriteSchoolId && schoolViewerEmail) {
+          // Push up any hearts that only made it to this browser last time.
+          void reconcileSchoolFavorites({
+            schoolId: favoriteSchoolId,
+            email: schoolViewerEmail,
+            pin,
+            serverIds: schoolServerFavoriteIds,
+            desiredIds: Array.from(nextSchoolFavorites),
+          });
+        }
         setNobgUrls({});
         setNobgStatus("idle");
         setPhotographerId(resolvedPhotographerId);
@@ -5716,65 +5740,190 @@ export default function ParentGalleryPage() {
     router.push("/parents");
   }
 
-  async function syncEventFavorite(imageId: string, favorited: boolean) {
+  // Favorites are a "must never lose silently" action: a flaky signal on a
+  // phone in a crowded venue must not drop a parent's pick.  Retry a few
+  // times with backoff before surfacing a failure.
+  async function postFavoriteWithRetry<T>(fn: () => Promise<T>, attempts = 3): Promise<T> {
+    let lastError: unknown;
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      try {
+        return await fn();
+      } catch (error) {
+        lastError = error;
+        if (attempt < attempts - 1) {
+          await new Promise((resolve) => setTimeout(resolve, 500 * (attempt + 1)));
+        }
+      }
+    }
+    throw lastError;
+  }
+
+  async function postEventFavoriteRequest(args: {
+    projectId: string;
+    email: string;
+    pin: string;
+    mediaId: string;
+    favorited: boolean;
+  }) {
     const response = await fetch("/api/portal/event-favorites", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(args),
+    });
+
+    const payload = (await response.json().catch(() => ({}))) as {
+      ok?: boolean;
+      message?: string;
+      unavailable?: boolean;
+    };
+
+    if (payload.unavailable === true) {
+      setEventFavoritesAvailable(false);
+      return { unavailable: true as const };
+    }
+
+    if (!response.ok || payload.ok === false) {
+      throw new Error(payload.message || "Could not save favorite.");
+    }
+    return { unavailable: false as const };
+  }
+
+  async function postSchoolFavoriteRequest(args: {
+    schoolId: string;
+    email: string;
+    pin: string;
+    mediaId: string;
+    favorited: boolean;
+  }) {
+    const response = await fetch("/api/portal/school-favorites", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(args),
+    });
+
+    const payload = (await response.json().catch(() => ({}))) as {
+      ok?: boolean;
+      message?: string;
+      unavailable?: boolean;
+    };
+
+    if (payload.unavailable === true) {
+      setEventFavoritesAvailable(false);
+      return { unavailable: true as const };
+    }
+
+    if (!response.ok || payload.ok === false) {
+      throw new Error(payload.message || "Could not save favorite.");
+    }
+    return { unavailable: false as const };
+  }
+
+  async function syncEventFavorite(imageId: string, favorited: boolean) {
+    await postFavoriteWithRetry(() =>
+      postEventFavoriteRequest({
         projectId,
         email: eventEmail,
         pin,
         mediaId: imageId,
         favorited,
       }),
-    });
-
-    const payload = (await response.json().catch(() => ({}))) as {
-      ok?: boolean;
-      message?: string;
-      unavailable?: boolean;
-    };
-
-    if (payload.unavailable === true) {
-      setEventFavoritesAvailable(false);
-      return;
-    }
-
-    if (!response.ok || payload.ok === false) {
-      throw new Error(payload.message || "Could not save favorite.");
-    }
+    );
   }
 
   async function syncSchoolFavorite(imageId: string, favorited: boolean) {
-    const response = await fetch("/api/portal/school-favorites", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
+    await postFavoriteWithRetry(() =>
+      postSchoolFavoriteRequest({
         schoolId: student?.school_id ?? schoolId,
         email: schoolViewerEmail,
         pin,
         mediaId: imageId,
         favorited,
       }),
-    });
+    );
+  }
 
-    const payload = (await response.json().catch(() => ({}))) as {
-      ok?: boolean;
-      message?: string;
-      unavailable?: boolean;
-    };
+  // Self-heal: push any favorites that live only in this browser (a previous
+  // save that never reached the server) up to the studio.  Runs on gallery
+  // load, so a parent only has to REOPEN the gallery once and their picks
+  // sync themselves — no need to re-favorite hundreds of photos.  Only ADDS,
+  // never deletes, so favorites made on another device stay safe.
+  async function reconcileEventFavorites(args: {
+    projectId: string;
+    email: string;
+    pin: string;
+    serverIds: string[];
+    desiredIds: string[];
+  }) {
+    const serverSet = new Set(args.serverIds.map((value) => clean(value)).filter(Boolean));
+    const missing = args.desiredIds
+      .map((value) => clean(value))
+      .filter((value) => value.length > 0 && !serverSet.has(value));
+    if (!missing.length) return;
 
-    if (payload.unavailable === true) {
-      setEventFavoritesAvailable(false);
-      return;
+    let pushed = 0;
+    for (const mediaId of missing) {
+      try {
+        const result = await postFavoriteWithRetry(() =>
+          postEventFavoriteRequest({
+            projectId: args.projectId,
+            email: args.email,
+            pin: args.pin,
+            mediaId,
+            favorited: true,
+          }),
+        );
+        if (result?.unavailable) return; // favorites table missing — stop
+        pushed += 1;
+      } catch {
+        // Leave it in localStorage; it retries on the next gallery load.
+      }
     }
 
-    if (!response.ok || payload.ok === false) {
-      throw new Error(payload.message || "Could not save favorite.");
+    if (pushed > 0) {
+      setFavoriteMessage(
+        `Synced ${pushed} favorite${pushed === 1 ? "" : "s"} that hadn't saved before.`,
+      );
+      window.setTimeout(() => setFavoriteMessage(""), 3600);
+    }
+  }
+
+  async function reconcileSchoolFavorites(args: {
+    schoolId: string;
+    email: string;
+    pin: string;
+    serverIds: string[];
+    desiredIds: string[];
+  }) {
+    const serverSet = new Set(args.serverIds.map((value) => clean(value)).filter(Boolean));
+    const missing = args.desiredIds
+      .map((value) => clean(value))
+      .filter((value) => value.length > 0 && !serverSet.has(value));
+    if (!missing.length) return;
+
+    let pushed = 0;
+    for (const mediaId of missing) {
+      try {
+        const result = await postFavoriteWithRetry(() =>
+          postSchoolFavoriteRequest({
+            schoolId: args.schoolId,
+            email: args.email,
+            pin: args.pin,
+            mediaId,
+            favorited: true,
+          }),
+        );
+        if (result?.unavailable) return;
+        pushed += 1;
+      } catch {
+        // Leave it in localStorage; it retries on the next gallery load.
+      }
+    }
+
+    if (pushed > 0) {
+      setFavoriteMessage(
+        `Synced ${pushed} favorite${pushed === 1 ? "" : "s"} that hadn't saved before.`,
+      );
+      window.setTimeout(() => setFavoriteMessage(""), 3600);
     }
   }
 
@@ -5803,14 +5952,14 @@ export default function ParentGalleryPage() {
     if (!isSchoolMode && projectId && eventEmail && eventFavoritesAvailable) {
       void syncEventFavorite(imageId, nextFavorited).catch(() => {
         writeStoredFavorites(storageKey, nextSetSnapshot);
-        setFavoriteMessage("Favorite saved only in this browser for now.");
+        setFavoriteMessage("Saved on your device — it will sync to the studio next time you open the gallery.");
         window.setTimeout(() => setFavoriteMessage(""), 2800);
       });
     }
     if (isSchoolMode && (student?.school_id || schoolId) && schoolViewerEmail && eventFavoritesAvailable) {
       void syncSchoolFavorite(imageId, nextFavorited).catch(() => {
         writeStoredFavorites(storageKey, nextSetSnapshot);
-        setFavoriteMessage("Favorite saved only in this browser for now.");
+        setFavoriteMessage("Saved on your device — it will sync to the studio next time you open the gallery.");
         window.setTimeout(() => setFavoriteMessage(""), 2800);
       });
     }

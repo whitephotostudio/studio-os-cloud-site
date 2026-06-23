@@ -837,8 +837,22 @@ function reconcilePaymentBreakdownLines(order: Order, lines: PaymentBreakdownLin
     const packageTarget = Math.max(0, subtotalCents - backdropCents);
     const packageSum = packageLines.reduce((sum, line) => sum + line.cents, 0);
     const delta = packageTarget - packageSum;
-    if (delta !== 0 && packageLines.length > 0 && Math.abs(delta) <= packageLines.length * 2) {
-      packageLines[packageLines.length - 1].cents += delta;
+    if (packageLines.length > 0) {
+      if (packageSum === 0 && packageTarget > 0) {
+        // The order's line items carry no per-item price — the charge lives
+        // on the package/order total (common for "Digital - All Photos" and
+        // composite packages).  Spread the order total across the package
+        // lines so the breakdown reconciles instead of showing $0.00.
+        const base = Math.floor(packageTarget / packageLines.length);
+        packageLines.forEach((line, index) => {
+          line.cents =
+            index === packageLines.length - 1
+              ? packageTarget - base * (packageLines.length - 1)
+              : base;
+        });
+      } else if (delta !== 0 && Math.abs(delta) <= packageLines.length * 2) {
+        packageLines[packageLines.length - 1].cents += delta;
+      }
     }
   }
 
@@ -3637,9 +3651,13 @@ function OrdersPageContent() {
                         {photoGroup.items.map((item, itemIndex) => {
                           const sourceOrder = item.sourceOrder ?? selected;
                           const includedInPackage = isPackageComponentItem(sourceOrder, item, sourceOrder.items);
-                          const amountLabel = includedInPackage
+                          const lineItemCents = financialLineItemAmountCents(item);
+                          // A $0 line means the photo is part of a package whose
+                          // price lives on the order total — show "Included", not "$0.00".
+                          const showAsIncluded = includedInPackage || lineItemCents === 0;
+                          const amountLabel = showAsIncluded
                             ? "Included"
-                            : moneyFromCents(item.line_total_cents ?? 0, sourceOrder.currency?.toUpperCase() || selectedDetailCurrency);
+                            : moneyFromCents(lineItemCents, sourceOrder.currency?.toUpperCase() || selectedDetailCurrency);
                           const slot = packageSlotText(item);
                           const itemQty = orderItemQuantity(item);
                           const sourceOrderShort = selectedIsCombined ? orderShortId(sourceOrder) : "";
@@ -3660,7 +3678,7 @@ function OrdersPageContent() {
                                     <span style={{ fontSize: 11, color: textMuted, background: "#fff", border: `1px solid ${borderColor}`, borderRadius: 999, padding: "2px 7px", fontWeight: 700 }}>{poseLabel(groupIndex, selectedOrderedPhotoGroups.length)}</span>
                                   </div>
                                 </div>
-                                <div style={{ fontSize: 14, fontWeight: 700, color: includedInPackage ? "#16a34a" : textPrimary, whiteSpace: "nowrap" }}>{amountLabel}</div>
+                                <div style={{ fontSize: 14, fontWeight: 700, color: showAsIncluded ? "#16a34a" : textPrimary, whiteSpace: "nowrap" }}>{amountLabel}</div>
                               </div>
                             </div>
                           );
