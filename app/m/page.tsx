@@ -13,13 +13,11 @@ import Link from "next/link";
 import {
   ArrowRight,
   CalendarCheck,
-  ChevronRight,
   GraduationCap,
   PartyPopper,
   Search,
   ShoppingBag,
   Sparkles,
-  X,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import {
@@ -33,38 +31,28 @@ import {
   mobileRevenueDate,
   type MobileOrderMoneyRow,
 } from "@/lib/mobile-order-utils";
+import { SpotlightModal, type SpotlightHit } from "@/components/spotlight-search";
 
 // ── Types ────────────────────────────────────────────────────────────
 
-type SearchHit =
-  | {
-      kind: "student";
-      id: string;
-      title: string;
-      subtitle: string;
-      href: string;
+// Route a global-search hit to the matching /m mobile page so the home search
+// box behaves exactly like the header search icon (one shared smart palette).
+function mobileHrefForHit(hit: SpotlightHit): string {
+  switch (hit.kind) {
+    case "school":
+      return `/m/schools/${hit.id}`;
+    case "event":
+      return `/m/events/${hit.id}`;
+    case "order":
+      return `/m/orders/${hit.id}`;
+    case "student": {
+      const m = hit.href.match(/schools\/([^/?]+)/);
+      return m
+        ? `/m/schools/${m[1]}?student=${encodeURIComponent(hit.id)}`
+        : "/m/schools";
     }
-  | {
-      kind: "order";
-      id: string;
-      title: string;
-      subtitle: string;
-      href: string;
-    }
-  | {
-      kind: "school";
-      id: string;
-      title: string;
-      subtitle: string;
-      href: string;
-    }
-  | {
-      kind: "event";
-      id: string;
-      title: string;
-      subtitle: string;
-      href: string;
-    };
+  }
+}
 
 type StatsOrderRow = {
   id: string;
@@ -116,9 +104,7 @@ export default function MobileHomePage() {
   const [monthRevenueCents, setMonthRevenueCents] = useState(0);
   const [statsCurrency, setStatsCurrency] = useState("CAD");
 
-  const [search, setSearch] = useState("");
-  const [hits, setHits] = useState<SearchHit[]>([]);
-  const [searching, setSearching] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
 
   // ── Bootstrap: user, stats ────────────────────────────────────────
   useEffect(() => {
@@ -214,197 +200,8 @@ export default function MobileHomePage() {
     };
   }, [supabase]);
 
-  // ── Search: debounced cross-table Spotlight ───────────────────────
-  //
-  // Matches the desktop ⌘K palette (components/spotlight-search.tsx).
-  // Every hit deep-links all the way to the object:
-  //   - student → /m/schools/<schoolId>?student=<studentId>   (highlights the student card)
-  //   - school  → /m/schools/<schoolId>
-  //   - event   → /m/events/<eventId>
-  //   - order   → /m/orders/<orderId>                         (opens the detail page)
-  useEffect(() => {
-    const term = search.trim();
-    if (!photographerId) return;
-    if (term.length < 2) {
-      const resetHandle = window.setTimeout(() => {
-        setHits([]);
-        setSearching(false);
-      }, 0);
-      return () => window.clearTimeout(resetHandle);
-    }
-
-    let cancelled = false;
-    const handle = window.setTimeout(async () => {
-      setSearching(true);
-      try {
-        // Order-id lookup is only useful when the term looks like a
-        // uuid fragment (hex + dashes).  Skips the query for plain names
-        // like "Ethan" so we don't waste a round-trip.
-        const looksLikeOrderId = /^[0-9a-f-]{4,}$/i.test(term);
-
-        const queries: PromiseLike<unknown>[] = [
-          // students has no photographer_id column — filter through the
-          // schools !inner join so ownership resolves via school_id.
-          supabase
-            .from("students")
-            .select(
-              "id, first_name, last_name, photo_url, school_id, class_id, class_name, role, schools!inner(school_name, photographer_id)",
-            )
-            .eq("schools.photographer_id", photographerId)
-            // Match name OR role so typing "coach" surfaces every coach.
-            // Teachers + coaches live in the same students table with a
-            // non-null role value.
-            .or(
-              `first_name.ilike.%${term}%,last_name.ilike.%${term}%,role.ilike.%${term}%`,
-            )
-            .limit(8),
-          supabase
-            .from("schools")
-            .select("id, school_name")
-            .eq("photographer_id", photographerId)
-            .ilike("school_name", `%${term}%`)
-            .limit(6),
-          supabase
-            .from("projects")
-            .select("id, title, client_name, workflow_type")
-            .eq("photographer_id", photographerId)
-            .eq("workflow_type", "event")
-            .ilike("title", `%${term}%`)
-            .limit(6),
-        ];
-
-        if (looksLikeOrderId) {
-          queries.push(
-            supabase
-              .from("orders")
-              .select(
-                "id, status, parent_name, customer_name, package_name, student:students(first_name,last_name)",
-              )
-              .eq("photographer_id", photographerId)
-              .ilike("id", `${term}%`)
-              .limit(6),
-          );
-        }
-
-        const results = (await Promise.all(queries)) as Array<{
-          data: unknown;
-          error: unknown;
-        }>;
-
-        if (cancelled) return;
-
-        const [studentsRes, schoolsRes, projectsRes, ordersRes] = results;
-
-        const next: SearchHit[] = [];
-
-        for (const s of (studentsRes.data ?? []) as Array<{
-          id: string;
-          first_name: string | null;
-          last_name: string | null;
-          school_id: string | null;
-          class_id: string | null;
-          class_name: string | null;
-          role: string | null;
-          schools:
-            | { school_name: string | null }
-            | { school_name: string | null }[]
-            | null;
-        }>) {
-          const schoolRow = Array.isArray(s.schools) ? s.schools[0] : s.schools;
-          // Mobile has no class-level page — the deepest leaf for a student
-          // is /m/schools/[id].  The `?student=` param tells that page to
-          // scroll to the student card and highlight it.
-          const href = s.school_id
-            ? `/m/schools/${s.school_id}?student=${encodeURIComponent(s.id)}`
-            : `/m/orders?student=${encodeURIComponent(s.id)}`;
-          const name =
-            [clean(s.first_name), clean(s.last_name)]
-              .filter(Boolean)
-              .join(" ") || "Person";
-          // Subtitle prefers school · class; falls back to school · role
-          // for teachers / coaches so the hit row says what they are.
-          const context = clean(s.class_name) || clean(s.role);
-          const subtitle = [
-            clean(schoolRow?.school_name) || "School",
-            context,
-          ]
-            .filter(Boolean)
-            .join(" · ");
-          next.push({
-            kind: "student",
-            id: s.id,
-            title: name,
-            subtitle,
-            href,
-          });
-        }
-        for (const school of (schoolsRes.data ?? []) as Array<{
-          id: string;
-          school_name: string | null;
-        }>) {
-          next.push({
-            kind: "school",
-            id: school.id,
-            title: clean(school.school_name) || "School",
-            subtitle: "School",
-            href: `/m/schools/${school.id}`,
-          });
-        }
-        for (const proj of (projectsRes.data ?? []) as Array<{
-          id: string;
-          title: string | null;
-          client_name: string | null;
-        }>) {
-          next.push({
-            kind: "event",
-            id: proj.id,
-            title: clean(proj.title) || "Event",
-            subtitle: clean(proj.client_name) || "Event",
-            href: `/m/events/${proj.id}`,
-          });
-        }
-        if (ordersRes) {
-          for (const o of (ordersRes.data ?? []) as Array<{
-            id: string;
-            status: string | null;
-            parent_name: string | null;
-            customer_name: string | null;
-            package_name: string | null;
-            student:
-              | { first_name: string | null; last_name: string | null }
-              | { first_name: string | null; last_name: string | null }[]
-              | null;
-          }>) {
-            const stu = Array.isArray(o.student) ? o.student[0] : o.student;
-            const who =
-              [clean(stu?.first_name), clean(stu?.last_name)]
-                .filter(Boolean)
-                .join(" ") ||
-              clean(o.parent_name) ||
-              clean(o.customer_name) ||
-              "Customer";
-            next.push({
-              kind: "order",
-              id: o.id,
-              title: `#${o.id.slice(0, 8).toUpperCase()} · ${who}`,
-              subtitle:
-                clean(o.package_name) || clean(o.status) || "Order",
-              href: `/m/orders/${o.id}`,
-            });
-          }
-        }
-
-        setHits(next);
-      } finally {
-        if (!cancelled) setSearching(false);
-      }
-    }, 220);
-
-    return () => {
-      cancelled = true;
-      window.clearTimeout(handle);
-    };
-  }, [search, supabase, photographerId]);
+  // Global search now lives in the shared SpotlightModal, opened from the
+  // search box below and the header icon (see mobileHrefForHit above).
 
   const tiles = useMemo(
     () => [
@@ -496,144 +293,32 @@ export default function MobileHomePage() {
         />
       </div>
 
-      {/* Search */}
-      <div style={{ position: "relative", marginBottom: 14 }}>
-        <Search
-          size={16}
-          style={{
-            position: "absolute",
-            left: 12,
-            top: "50%",
-            transform: "translateY(-50%)",
-            color: "#6b7280",
-            pointerEvents: "none",
-          }}
-        />
-        <input
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search students, schools, events…"
-          aria-label="Spotlight search"
-          inputMode="search"
-          style={{
-            width: "100%",
-            boxSizing: "border-box",
-            borderRadius: 14,
-            border: "1px solid #e5e7eb",
-            background: "#fff",
-            color: "#111827",
-            padding: "13px 40px 13px 38px",
-            fontSize: 15,
-            fontWeight: 600,
-            outline: "none",
-          }}
-        />
-        {search ? (
-          <button
-            type="button"
-            onClick={() => setSearch("")}
-            aria-label="Clear search"
-            style={{
-              position: "absolute",
-              right: 6,
-              top: "50%",
-              transform: "translateY(-50%)",
-              width: 30,
-              height: 30,
-              borderRadius: 999,
-              background: "#f3f4f6",
-              border: "none",
-              cursor: "pointer",
-              color: "#6b7280",
-              display: "inline-flex",
-              alignItems: "center",
-              justifyContent: "center",
-            }}
-          >
-            <X size={14} />
-          </button>
-        ) : null}
-      </div>
-
-      {/* Results (inline when user is typing) */}
-      {search.trim().length >= 2 ? (
-        <div
-          style={{
-            border: "1px solid #e5e7eb",
-            borderRadius: 14,
-            overflow: "hidden",
-            background: "#fff",
-            marginBottom: 16,
-          }}
-        >
-          {searching && hits.length === 0 ? (
-            <div
-              style={{
-                padding: 16,
-                color: "#6b7280",
-                fontSize: 13,
-                fontWeight: 600,
-              }}
-            >
-              Searching…
-            </div>
-          ) : hits.length === 0 ? (
-            <div
-              style={{
-                padding: 16,
-                color: "#6b7280",
-                fontSize: 13,
-                fontWeight: 600,
-              }}
-            >
-              No results for &quot;{search}&quot;.
-            </div>
-          ) : (
-            hits.map((hit, idx) => (
-              <Link
-                key={`${hit.kind}-${hit.id}-${idx}`}
-                href={hit.href}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  gap: 10,
-                  padding: "12px 14px",
-                  borderTop: idx === 0 ? undefined : "1px solid #f3f4f6",
-                  textDecoration: "none",
-                  color: "#111827",
-                }}
-              >
-                <div style={{ minWidth: 0 }}>
-                  <div
-                    style={{
-                      fontSize: 14,
-                      fontWeight: 800,
-                      color: "#111827",
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    {hit.title}
-                  </div>
-                  <div
-                    style={{
-                      fontSize: 12,
-                      color: "#6b7280",
-                      fontWeight: 600,
-                      marginTop: 2,
-                    }}
-                  >
-                    {kindLabel(hit.kind)} · {hit.subtitle}
-                  </div>
-                </div>
-                <ChevronRight size={15} color="#9ca3af" />
-              </Link>
-            ))
-          )}
-        </div>
-      ) : null}
+      {/* Search — opens the same smart palette as the header search icon */}
+      <button
+        type="button"
+        onClick={() => setSearchOpen(true)}
+        aria-label="Search students, schools, events"
+        style={{
+          width: "100%",
+          boxSizing: "border-box",
+          display: "flex",
+          alignItems: "center",
+          gap: 10,
+          borderRadius: 14,
+          border: "1px solid #e5e7eb",
+          background: "#fff",
+          color: "#6b7280",
+          padding: "13px 14px",
+          fontSize: 15,
+          fontWeight: 600,
+          marginBottom: 16,
+          cursor: "pointer",
+          textAlign: "left",
+        }}
+      >
+        <Search size={16} style={{ color: "#6b7280", flexShrink: 0 }} />
+        <span>Search students, schools, events…</span>
+      </button>
 
       {/* Quick tiles */}
       <div
@@ -710,6 +395,12 @@ export default function MobileHomePage() {
           </Link>
         ))}
       </div>
+
+      <SpotlightModal
+        open={searchOpen}
+        onClose={() => setSearchOpen(false)}
+        hrefFor={mobileHrefForHit}
+      />
     </div>
   );
 }
@@ -762,15 +453,4 @@ function MiniStat({
   );
 }
 
-function kindLabel(kind: SearchHit["kind"]): string {
-  switch (kind) {
-    case "student":
-      return "Student";
-    case "order":
-      return "Order";
-    case "school":
-      return "School";
-    case "event":
-      return "Event";
-  }
-}
+
