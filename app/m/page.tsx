@@ -13,6 +13,7 @@ import Link from "next/link";
 import {
   ArrowRight,
   CalendarCheck,
+  Camera,
   GraduationCap,
   PartyPopper,
   Search,
@@ -205,6 +206,13 @@ export default function MobileHomePage() {
 
   const tiles = useMemo(
     () => [
+      {
+        href: "/m/capture",
+        label: "Picture Day",
+        icon: <Camera size={22} />,
+        accent: "#cc0000",
+        note: "Scan + shoot",
+      },
       {
         href: "/m/orders",
         label: "Orders",
