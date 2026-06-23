@@ -19,6 +19,8 @@ Driver (Harout): in an event's Favorite Photos modal he wanted to type a client'
 
 **No new env vars** — reuses existing RESEND_API_KEY / RESEND_FROM_EMAIL / R2 secrets. **No DB migration.** Typecheck clean (`npx tsc --noEmit` → exit 0).
 
+**⚠️ Build fix in the same push:** the first push (`e50e57a`) also swept in a previously-untracked `mobile/` Capacitor iOS sub-project (via `git add -A`). Vercel build failed at `./mobile/capacitor.config.ts:1:38` because it imports `@capacitor/cli` from `mobile/package.json` (not the web app's) — `moduleResolution: bundler` resolved it locally via `mobile/node_modules` but Vercel only installs the root deps. Fix: added `"mobile"` to `tsconfig.json` `exclude` **and** to `.vercelignore`, so the web build never type-checks or uploads `mobile/`. The mobile project stays tracked in git, just out of the Next build. (Local `tsc` passing ≠ Vercel passing when an accidentally-committed sub-project resolves deps from its own nested node_modules — watch `git add -A` on a dirty tree.)
+
 **Push (from Mac — sandbox can't push):**
 ```
 cd ~/Projects/studio-os-cloud-site
