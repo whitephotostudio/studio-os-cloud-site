@@ -28,6 +28,7 @@ import {
   ShoppingBag,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { proxiedPhotoUrl } from "@/lib/photo-url";
 import {
   cartSnapshotToOrderItems,
   cleanOrderCustomerNote,
@@ -573,10 +574,10 @@ export default function MobileOrderDetailPage() {
             flexShrink: 0,
           }}
         >
-          {student?.photo_url ? (
+          {proxiedPhotoUrl(student?.photo_url) ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img
-              src={student.photo_url}
+              src={proxiedPhotoUrl(student?.photo_url)}
               alt=""
               style={{ width: "100%", height: "100%", objectFit: "cover" }}
             />
@@ -903,10 +904,10 @@ export default function MobileOrderDetailPage() {
                     border: "1px solid #e5e7eb",
                   }}
                 >
-                  {group.url ? (
+                  {proxiedPhotoUrl(group.url) ? (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img
-                      src={group.url}
+                      src={proxiedPhotoUrl(group.url)}
                       alt=""
                       style={{ width: "100%", height: "100%", objectFit: "cover" }}
                     />

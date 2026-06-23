@@ -32,6 +32,7 @@ import {
   mobileDisplayStatus,
   mobileOrderTotalCents,
 } from "@/lib/mobile-order-utils";
+import { proxiedPhotoUrl } from "@/lib/photo-url";
 
 type OrderRow = {
   id: string;
@@ -173,7 +174,8 @@ export default function MobileOrdersPage() {
            customer_name, customer_email, package_name,
            ${MOBILE_ORDER_SELECT_MONEY},
            seen_by_photographer, student_id,
-           student:students(first_name,last_name,photo_url)`,
+           student:students(first_name,last_name,photo_url),
+           items:order_items(sku)`,
         )
         .eq("photographer_id", photog.id)
         .order("created_at", { ascending: false })
@@ -422,7 +424,14 @@ export default function MobileOrdersPage() {
           {filtered.map((order) => {
             const unread = order.seen_by_photographer === false;
             const student = Array.isArray(order.student) ? order.student[0] : order.student;
-            const photoUrl = clean(student?.photo_url);
+            // School orders carry a student photo; event orders carry the ordered
+            // photo on their items. Both are dead/expiring R2 links, so route them
+            // through the /api/r2/img proxy (same as the desktop dashboard).
+            const orderedSku = clean(
+              order.items?.find((it) => clean(it?.sku))?.sku,
+            );
+            const photoUrl =
+              proxiedPhotoUrl(student?.photo_url) || proxiedPhotoUrl(orderedSku);
             return (
               <li key={order.id}>
                 <Link
@@ -457,6 +466,10 @@ export default function MobileOrdersPage() {
                       <img
                         src={photoUrl}
                         alt=""
+                        loading="lazy"
+                        onError={(e) => {
+                          (e.currentTarget as HTMLImageElement).style.display = "none";
+                        }}
                         style={{ width: "100%", height: "100%", objectFit: "cover" }}
                       />
                     ) : null}

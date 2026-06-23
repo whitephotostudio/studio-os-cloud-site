@@ -28,6 +28,7 @@ import {
   X,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { proxiedPhotoUrl } from "@/lib/photo-url";
 
 type School = {
   id: string;
@@ -500,10 +501,10 @@ export default function MobileSchoolDetailPage() {
             overflow: "hidden",
           }}
         >
-          {cover ? (
+          {proxiedPhotoUrl(cover) ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img
-              src={cover}
+              src={proxiedPhotoUrl(cover)}
               alt=""
               style={{
                 width: "100%",
@@ -911,10 +912,10 @@ export default function MobileSchoolDetailPage() {
                       flexShrink: 0,
                     }}
                   >
-                    {student.photo_url ? (
+                    {proxiedPhotoUrl(student.photo_url) ? (
                       // eslint-disable-next-line @next/next/no-img-element
                       <img
-                        src={student.photo_url}
+                        src={proxiedPhotoUrl(student.photo_url)}
                         alt=""
                         style={{
                           width: "100%",
