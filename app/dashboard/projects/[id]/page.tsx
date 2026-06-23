@@ -119,6 +119,12 @@ type FavoriteMediaRow = {
   filename: string;
   storagePath?: string | null;
   downloadUrl?: string | null;
+  viewerEmails?: string[];
+};
+
+type FavoritesViewerSummaryRow = {
+  viewerEmail: string;
+  favoritesCount: number;
 };
 
 type FavoritesSummary = {
@@ -128,6 +134,7 @@ type FavoritesSummary = {
   albumsWithFavorites: number;
   preRegisteredCount: number;
   viewers: FavoritesViewerRow[];
+  allViewers: FavoritesViewerSummaryRow[];
   albums: FavoritesAlbumRow[];
   recentFavorites: RecentFavoriteRow[];
   favoriteMedia: FavoriteMediaRow[];
@@ -210,6 +217,7 @@ function emptyFavoritesSummary(): FavoritesSummary {
     albumsWithFavorites: 0,
     preRegisteredCount: 0,
     viewers: [],
+    allViewers: [],
     albums: [],
     recentFavorites: [],
     favoriteMedia: [],
@@ -273,6 +281,9 @@ export default function ProjectDetailPage() {
   const [hoveredActivityMetric, setHoveredActivityMetric] = useState<string | null>(null);
   const [downloadingFavoriteMedia, setDownloadingFavoriteMedia] = useState(false);
   const [favoriteLibraryNotice, setFavoriteLibraryNotice] = useState("");
+  const [favoriteClientFilter, setFavoriteClientFilter] = useState("");
+  const [sendingFavoritesToClient, setSendingFavoritesToClient] = useState(false);
+  const [favoriteLibraryNoticeTone, setFavoriteLibraryNoticeTone] = useState<"info" | "error">("error");
   const [shareRecipientMode, setShareRecipientMode] = useState<"visitors" | "others" | "client">("visitors");
   const [shareRecipientInput, setShareRecipientInput] = useState("");
   const [shareSubject, setShareSubject] = useState(defaultEventGalleryShareSettings.emailSubject);
@@ -786,6 +797,7 @@ export default function ProjectDetailPage() {
   async function downloadFavoriteMediaRows(rows: FavoriteMediaRow[]) {
     const items = rows.filter((item) => clean(item.storagePath) || clean(item.previewUrl));
     if (!items.length) {
+      setFavoriteLibraryNoticeTone("error");
       setFavoriteLibraryNotice("No favorited photos are ready to download yet.");
       window.setTimeout(() => setFavoriteLibraryNotice(""), 2600);
       return;
@@ -813,13 +825,47 @@ export default function ProjectDetailPage() {
         document.body.removeChild(anchor);
         window.URL.revokeObjectURL(blobUrl);
       }
+      setFavoriteLibraryNoticeTone("info");
       setFavoriteLibraryNotice(`Downloading ${items.length} favorite photo${items.length === 1 ? "" : "s"}.`);
       window.setTimeout(() => setFavoriteLibraryNotice(""), 2600);
     } catch (err) {
+      setFavoriteLibraryNoticeTone("error");
       setFavoriteLibraryNotice(err instanceof Error ? err.message : "Could not download favorites.");
       window.setTimeout(() => setFavoriteLibraryNotice(""), 2600);
     } finally {
       setDownloadingFavoriteMedia(false);
+    }
+  }
+
+  async function sendFavoritesToClient(email: string) {
+    const target = clean(email).toLowerCase();
+    if (!target) return;
+    setSendingFavoritesToClient(true);
+    setFavoriteLibraryNotice("");
+    try {
+      const response = await fetch(`/api/dashboard/events/${projectId}/favorites/send`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ viewerEmail: target }),
+      });
+      let payload: { ok?: boolean; message?: string; fileCount?: number } = {};
+      try {
+        payload = await response.json();
+      } catch {
+        payload = {};
+      }
+      if (!response.ok || !payload.ok) {
+        throw new Error(payload.message || "Could not email the client.");
+      }
+      setFavoriteLibraryNoticeTone("info");
+      setFavoriteLibraryNotice(payload.message || `Sent favorites to ${target}.`);
+      window.setTimeout(() => setFavoriteLibraryNotice(""), 4200);
+    } catch (err) {
+      setFavoriteLibraryNoticeTone("error");
+      setFavoriteLibraryNotice(err instanceof Error ? err.message : "Could not email the client.");
+      window.setTimeout(() => setFavoriteLibraryNotice(""), 4200);
+    } finally {
+      setSendingFavoritesToClient(false);
     }
   }
 
@@ -1138,6 +1184,27 @@ export default function ProjectDetailPage() {
   const topViewerItems = favoritesSummary.viewers.slice(0, 3);
   const favoriteMediaItems = favoritesSummary.favoriteMedia;
   const favoriteAlbumItems = favoritesSummary.albums;
+
+  // Filter the favorites grid down to a single client (by email).
+  const favoriteClientQuery = favoriteClientFilter.trim().toLowerCase();
+  const favoriteViewerEmails = (favoritesSummary.allViewers ?? []).map((v) => v.viewerEmail);
+  const exactClientMatch = favoriteViewerEmails.find((e) => e === favoriteClientQuery) || "";
+  const substringClientMatches = favoriteClientQuery
+    ? favoriteViewerEmails.filter((e) => e.includes(favoriteClientQuery))
+    : [];
+  // A single, unambiguous client to email: an exact match, or the only
+  // viewer whose email contains what was typed.
+  const activeClientEmail =
+    exactClientMatch || (substringClientMatches.length === 1 ? substringClientMatches[0] : "");
+  const clientFilterActive = favoriteClientQuery.length > 0;
+  const clientMatchEmails = activeClientEmail
+    ? new Set([activeClientEmail])
+    : new Set(substringClientMatches);
+  const filteredFavoriteMediaItems = clientFilterActive
+    ? favoriteMediaItems.filter((item) =>
+        (item.viewerEmails || []).some((email) => clientMatchEmails.has(email)),
+      )
+    : favoriteMediaItems;
 
   if (loading) {
     return <div style={{ minHeight: "100vh", background: "#faf7f7", display: "grid", placeItems: "center", color: "#4b5563" }}>Loading project...</div>;
@@ -1876,23 +1943,27 @@ export default function ProjectDetailPage() {
                     {favoritesLibraryMode === "photos" ? (
                       <button
                         type="button"
-                        onClick={() => void downloadFavoriteMediaRows(favoriteMediaItems)}
-                        disabled={!favoriteMediaItems.length || downloadingFavoriteMedia}
+                        onClick={() => void downloadFavoriteMediaRows(filteredFavoriteMediaItems)}
+                        disabled={!filteredFavoriteMediaItems.length || downloadingFavoriteMedia}
                         style={{
                           borderRadius: 12,
                           border: "1px solid #d0d5dd",
-                          background: !favoriteMediaItems.length || downloadingFavoriteMedia ? "#f8fafc" : "#111111",
-                          color: !favoriteMediaItems.length || downloadingFavoriteMedia ? "#98a2b3" : "#ffffff",
+                          background: !filteredFavoriteMediaItems.length || downloadingFavoriteMedia ? "#f8fafc" : "#111111",
+                          color: !filteredFavoriteMediaItems.length || downloadingFavoriteMedia ? "#98a2b3" : "#ffffff",
                           padding: "10px 14px",
                           fontWeight: 800,
-                          cursor: !favoriteMediaItems.length || downloadingFavoriteMedia ? "not-allowed" : "pointer",
+                          cursor: !filteredFavoriteMediaItems.length || downloadingFavoriteMedia ? "not-allowed" : "pointer",
                           display: "inline-flex",
                           alignItems: "center",
                           gap: 8,
                         }}
                       >
                         <Download size={16} />
-                        {downloadingFavoriteMedia ? "Preparing downloads..." : "Download All"}
+                        {downloadingFavoriteMedia
+                          ? "Preparing downloads..."
+                          : clientFilterActive
+                            ? `Download ${filteredFavoriteMediaItems.length}`
+                            : "Download All"}
                       </button>
                     ) : null}
                     <button
@@ -1904,6 +1975,82 @@ export default function ProjectDetailPage() {
                     </button>
                   </div>
                 </div>
+
+                {favoritesLibraryMode === "photos" ? (
+                  <div style={{ display: "grid", gap: 10, border: "1px solid #e5e7eb", borderRadius: 18, padding: 16, background: "#fff" }}>
+                    <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, flex: "1 1 260px", minWidth: 0, borderRadius: 12, border: "1px solid #d0d5dd", background: "#f8fafc", padding: "10px 12px" }}>
+                        <Search size={16} color="#667085" />
+                        <input
+                          list="favorite-client-emails"
+                          value={favoriteClientFilter}
+                          onChange={(e) => setFavoriteClientFilter(e.target.value)}
+                          placeholder="Filter by client email…"
+                          autoComplete="off"
+                          style={{ flex: 1, minWidth: 0, border: 0, outline: "none", background: "transparent", fontSize: 14, color: "#111111" }}
+                        />
+                        {favoriteClientFilter ? (
+                          <button
+                            type="button"
+                            onClick={() => setFavoriteClientFilter("")}
+                            style={{ border: 0, background: "transparent", color: "#667085", cursor: "pointer", fontWeight: 800, fontSize: 13 }}
+                          >
+                            Clear
+                          </button>
+                        ) : null}
+                      </div>
+                      <datalist id="favorite-client-emails">
+                        {(favoritesSummary.allViewers ?? []).map((v) => (
+                          <option key={v.viewerEmail} value={v.viewerEmail}>
+                            {`${v.favoritesCount} favorite${v.favoritesCount === 1 ? "" : "s"}`}
+                          </option>
+                        ))}
+                      </datalist>
+                      <button
+                        type="button"
+                        onClick={() => activeClientEmail && void sendFavoritesToClient(activeClientEmail)}
+                        disabled={!activeClientEmail || sendingFavoritesToClient || !filteredFavoriteMediaItems.length}
+                        style={{
+                          borderRadius: 12,
+                          border: "1px solid #b42318",
+                          background: !activeClientEmail || sendingFavoritesToClient || !filteredFavoriteMediaItems.length ? "#fde8e8" : "#dc2626",
+                          color: !activeClientEmail || sendingFavoritesToClient || !filteredFavoriteMediaItems.length ? "#c98a8a" : "#ffffff",
+                          padding: "10px 16px",
+                          fontWeight: 800,
+                          cursor: !activeClientEmail || sendingFavoritesToClient || !filteredFavoriteMediaItems.length ? "not-allowed" : "pointer",
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: 8,
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        <Mail size={16} />
+                        {sendingFavoritesToClient
+                          ? "Sending…"
+                          : activeClientEmail
+                            ? `Email ${filteredFavoriteMediaItems.length} to client`
+                            : "Email to client"}
+                      </button>
+                    </div>
+                    {clientFilterActive ? (
+                      <div style={{ fontSize: 13, color: "#4b5563" }}>
+                        {activeClientEmail ? (
+                          <span>
+                            Showing <strong>{filteredFavoriteMediaItems.length}</strong> photo{filteredFavoriteMediaItems.length === 1 ? "" : "s"} favorited by <strong>{activeClientEmail}</strong>. They&rsquo;ll get a secure link to a ZIP of just these.
+                          </span>
+                        ) : substringClientMatches.length > 1 ? (
+                          <span>{substringClientMatches.length} clients match — pick one full email to send their favorites.</span>
+                        ) : (
+                          <span>No client matches &ldquo;{favoriteClientFilter.trim()}&rdquo;.</span>
+                        )}
+                      </div>
+                    ) : (
+                      <div style={{ fontSize: 13, color: "#667085" }}>
+                        Type a client&rsquo;s email to see only their favorites, then email them a secure ZIP of just those photos.
+                      </div>
+                    )}
+                  </div>
+                ) : null}
 
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(180px,1fr))", gap: 12 }}>
                   <div style={{ border: "1px solid #e5e7eb", borderRadius: 18, padding: 16, background: "#fffaf9" }}>
@@ -1925,15 +2072,25 @@ export default function ProjectDetailPage() {
                 </div>
 
                 {favoriteLibraryNotice ? (
-                  <div style={{ borderRadius: 14, border: "1px solid #ead7d7", background: "#fff5f5", color: "#b91c1c", fontSize: 13, fontWeight: 700, padding: "12px 14px" }}>
+                  <div
+                    style={{
+                      borderRadius: 14,
+                      border: favoriteLibraryNoticeTone === "error" ? "1px solid #ead7d7" : "1px solid #c7e8d2",
+                      background: favoriteLibraryNoticeTone === "error" ? "#fff5f5" : "#f0fdf4",
+                      color: favoriteLibraryNoticeTone === "error" ? "#b91c1c" : "#15803d",
+                      fontSize: 13,
+                      fontWeight: 700,
+                      padding: "12px 14px",
+                    }}
+                  >
                     {favoriteLibraryNotice}
                   </div>
                 ) : null}
 
                 {favoritesLibraryMode === "photos" ? (
-                  favoriteMediaItems.length ? (
+                  filteredFavoriteMediaItems.length ? (
                     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(220px,1fr))", gap: 16 }}>
-                      {favoriteMediaItems.map((item) => {
+                      {filteredFavoriteMediaItems.map((item) => {
                         const downloadUrl =
                           clean(item.downloadUrl) ||
                           publicStorageUrl(item.storagePath) ||
@@ -1985,6 +2142,10 @@ export default function ProjectDetailPage() {
                           </div>
                         );
                       })}
+                    </div>
+                  ) : clientFilterActive ? (
+                    <div style={{ border: "1px dashed #d0d5dd", borderRadius: 18, padding: 24, color: "#4b5563" }}>
+                      No favorites match this client. Clear the filter to see everyone&rsquo;s favorites.
                     </div>
                   ) : (
                     <div style={{ border: "1px dashed #d0d5dd", borderRadius: 18, padding: 24, color: "#4b5563" }}>

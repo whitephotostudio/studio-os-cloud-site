@@ -106,7 +106,9 @@ function emptySummary(warning = "") {
       previewUrl: string;
       filename: string;
       storagePath: string | null;
+      viewerEmails: string[];
     }>,
+    allViewers: [] as Array<{ viewerEmail: string; favoritesCount: number }>,
     preRegisteredCount: 0,
     warning: clean(warning) || null,
   };
@@ -293,6 +295,7 @@ export async function GET(
         filename: string;
         storagePath: string | null;
         downloadUrl: string | null;
+        viewers: Set<string>;
       }
     >();
 
@@ -389,6 +392,7 @@ export async function GET(
           if (!existingMedia.downloadUrl && clean(mediaRow?.download_url)) {
             existingMedia.downloadUrl = clean(mediaRow?.download_url);
           }
+          if (viewerEmail) existingMedia.viewers.add(viewerEmail);
         } else {
           favoriteMediaMap.set(mediaId, {
             mediaId,
@@ -400,6 +404,7 @@ export async function GET(
             filename: clean(mediaRow?.filename) || "Photo",
             storagePath: clean(mediaRow?.storage_path) || null,
             downloadUrl: clean(mediaRow?.download_url) || null,
+            viewers: new Set(viewerEmail ? [viewerEmail] : []),
           });
         }
       }
@@ -472,17 +477,37 @@ export async function GET(
           sensitivity: "base",
         });
       });
-    const favoriteMedia = Array.from(favoriteMediaMap.values()).sort((a, b) => {
-      if (b.favoritesCount !== a.favoritesCount) {
-        return b.favoritesCount - a.favoritesCount;
-      }
-      const recentDelta = compareRecent(a.latestFavoritedAt, b.latestFavoritedAt);
-      if (recentDelta !== 0) return recentDelta;
-      return a.filename.localeCompare(b.filename, undefined, {
-        numeric: true,
-        sensitivity: "base",
+    const favoriteMedia = Array.from(favoriteMediaMap.values())
+      .sort((a, b) => {
+        if (b.favoritesCount !== a.favoritesCount) {
+          return b.favoritesCount - a.favoritesCount;
+        }
+        const recentDelta = compareRecent(a.latestFavoritedAt, b.latestFavoritedAt);
+        if (recentDelta !== 0) return recentDelta;
+        return a.filename.localeCompare(b.filename, undefined, {
+          numeric: true,
+          sensitivity: "base",
+        });
+      })
+      .map(({ viewers, ...rest }) => ({
+        ...rest,
+        viewerEmails: Array.from(viewers).sort(),
+      }));
+
+    // Every viewer that favorited at least one photo (not capped like
+    // `viewers`), so the dashboard can offer email autocomplete + filter.
+    const allViewers = Array.from(viewerMap.values())
+      .filter((row) => row.favoritesCount > 0)
+      .map((row) => ({
+        viewerEmail: row.viewerEmail,
+        favoritesCount: row.favoritesCount,
+      }))
+      .sort((a, b) => {
+        if (b.favoritesCount !== a.favoritesCount) {
+          return b.favoritesCount - a.favoritesCount;
+        }
+        return a.viewerEmail.localeCompare(b.viewerEmail);
       });
-    });
 
     return NextResponse.json({
       ok: true,
@@ -492,6 +517,7 @@ export async function GET(
         uniqueViewers: viewerMap.size,
         albumsWithFavorites: albumMap.size,
         viewers,
+        allViewers,
         albums,
         recentFavorites,
         favoriteMedia,

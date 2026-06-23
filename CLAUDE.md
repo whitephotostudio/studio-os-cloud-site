@@ -2,7 +2,37 @@
 
 Checkpoint for Claude so a context reset doesn't lose the thread. Update as work progresses.
 
-Last updated: 2026-04-27 — **Develop mode overhaul + RAW pipeline shipped end-to-end** (fullscreen Develop, Core Image platform channel, raws/ folder convention, customizable export dialog, tone curve / HSL / lens corrections / detail v2 panels, RAW/JPG filter pills, expanded crop presets, sync-now button, Apple auto-enhance integration).  Full writeup at `docs/design/develop-mode-overhaul.md`.  **Flutter rebuild required.**
+Last updated: 2026-06-22 — **Event favorites: filter-by-client + email their favorites as a ZIP** (web only, typecheck clean, uncommitted — push from Mac).
+
+## 🆕 2026-06-22 — Event favorites: filter by client email + email them their favorites (web — PUSH REQUIRED)
+
+Driver (Harout): in an event's Favorite Photos modal he wanted to type a client's email, see only that client's favorited photos, and email that client a ZIP of just those photos. His note: "only the one they favourite photos in zip format, if it's a phone the phone logic" → deliver ZIP, mobile-friendly. Scope = Events only (schools favorites left for a later pass). Send-all of that client's favorites (no per-photo deselect).
+
+**New files:**
+- `lib/favorites-delivery.ts` — HMAC token (kind `favorites-delivery`, encodes projectId + recipientEmail + exp, signing secret falls back to SUPABASE_SERVICE_ROLE_KEY like digital-delivery), `resolveFavoritesDeliveryContext` (pulls ALL `event_gallery_favorites` for the project, filters by lowercased viewer_email in JS to dodge ILIKE `_` wildcard + casing issues, loads media, derives original R2 key the same way as `buildSignedMediaUrls`), `buildFavoritesZipEntries` + `createFavoritesDeliveryZipStream` (reuses `lib/zip` + `r2PresignedGetUrl`), `sendFavoritesDeliveryEmail` (Resend, responsive HTML), and `renderFavoritesDeliveryPage` (mobile landing page: tap-to-save + "Download all as ZIP").
+- `app/api/portal/favorites-delivery/route.ts` — public, token-gated GET. Default → renders the mobile landing page; `?download=1` → streams the ZIP. Mirrors `digital-delivery` route. (This is the "phone logic": phone users tap photos to save to camera roll, everyone can grab the ZIP.)
+- `app/api/dashboard/events/[id]/favorites/send/route.ts` — POST `{ viewerEmail }`. Dashboard auth + photographer-owns-project check, then `sendFavoritesDeliveryEmail`. Returns `{ ok, fileCount, recipientEmail, message }`.
+
+**Edited:**
+- `app/api/dashboard/events/[id]/favorites/route.ts` — summary now returns `viewerEmails: string[]` on each `favoriteMedia` item (so the grid filters client-side, instant) + `allViewers: [{viewerEmail, favoritesCount}]` (all viewers, for the email autocomplete — `viewers` stays capped at 25 for the rich cards).
+- `app/dashboard/projects/[id]/page.tsx` (the events favorites modal, `shareView === "favorites"`): added a "Filter by client email" input with a `<datalist>` of all viewers, derived `filteredFavoriteMediaItems` (exact match, or sole substring match = the unambiguous client to email), a red "Email N to client" button → `sendFavoritesToClient` → the new send route, a status banner, tone-aware notice (info green / error red). Download All + the grid + empty state now respect the filter.
+
+**No new env vars** — reuses existing RESEND_API_KEY / RESEND_FROM_EMAIL / R2 secrets. **No DB migration.** Typecheck clean (`npx tsc --noEmit` → exit 0).
+
+**Push (from Mac — sandbox can't push):**
+```
+cd ~/Projects/studio-os-cloud-site
+rm -f .git/HEAD.lock .git/index.lock
+git add -A && git commit -m "feat: event favorites — filter by client email + email a client their favorites as a secure ZIP"
+git push origin main
+```
+**Smoke test after Vercel redeploy:** Projects → an event → Favorite Photos → type a client email (autocompletes) → grid narrows to their favorites → "Email N to client" → client gets an email → link opens the mobile landing page → "Download all as ZIP" works, and on a phone tapping a photo lets them Save Image.
+
+**Next (deferred):** mirror to Schools favorites (`school_gallery_favorites`, the `/dashboard/projects/schools/[schoolId]` page); optional per-photo deselect before sending.
+
+---
+
+Last updated (prior): 2026-04-27 — **Develop mode overhaul + RAW pipeline shipped end-to-end** (fullscreen Develop, Core Image platform channel, raws/ folder convention, customizable export dialog, tone curve / HSL / lens corrections / detail v2 panels, RAW/JPG filter pills, expanded crop presets, sync-now button, Apple auto-enhance integration).  Full writeup at `docs/design/develop-mode-overhaul.md`.  **Flutter rebuild required.**
 
 ## 🆕 2026-04-27 — Develop module overhaul (Flutter — REBUILD REQUIRED)
 

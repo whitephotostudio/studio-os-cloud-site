@@ -1,0 +1,14 @@
+# Dependencies
+node_modules/
+
+# Capacitor / Xcode build artifacts
+ios/App/Pods/
+ios/App/Podfile.lock
+ios/App/App/public/
+ios/App/build/
+ios/DerivedData/
+ios/capacitor-cordova-ios-plugins/
+
+# macOS / misc
+.DS_Store
+*.log

@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover"
+    />
+    <title>Studio OS</title>
+    <style>
+      :root {
+        color-scheme: light;
+      }
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: #ffffff;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+          Helvetica, Arial, sans-serif;
+        color: #161616;
+      }
+      .wrap {
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 18px;
+        padding: 24px;
+        text-align: center;
+      }
+      .mark {
+        width: 92px;
+        height: 92px;
+        border-radius: 22px;
+        background: #cc0000;
+        color: #fff;
+        display: grid;
+        place-items: center;
+        font-weight: 800;
+        font-size: 30px;
+        letter-spacing: -0.02em;
+        box-shadow: 0 16px 40px rgba(204, 0, 0, 0.28);
+      }
+      h1 {
+        font-size: 20px;
+        font-weight: 800;
+        margin: 4px 0 0;
+      }
+      p {
+        margin: 0;
+        color: #6b635b;
+        font-size: 14px;
+        max-width: 280px;
+        line-height: 1.5;
+      }
+      .spinner {
+        width: 22px;
+        height: 22px;
+        border: 3px solid rgba(0, 0, 0, 0.12);
+        border-top-color: #cc0000;
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+      }
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <!--
+      This local page is only shown if the live site cannot be reached. In normal
+      operation the app loads https://www.studiooscloud.com/m directly (see
+      server.url in capacitor.config.ts).
+    -->
+    <div class="wrap">
+      <div class="mark">SO</div>
+      <div class="spinner" aria-hidden="true"></div>
+      <h1>Studio OS</h1>
+      <p>Connecting to your studio… Check your internet connection and reopen the app.</p>
+    </div>
+  </body>
+</html>
