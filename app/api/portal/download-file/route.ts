@@ -19,6 +19,35 @@ function clean(value: string | null | undefined) {
   return (value ?? "").trim();
 }
 
+function safeDownloadFileName(raw: string, fallback = "photo.jpg") {
+  const lastSegment = clean(raw).split("/").pop()?.split("\\").pop() ?? "";
+  let decoded = lastSegment;
+  try {
+    decoded = decodeURIComponent(lastSegment);
+  } catch {
+    decoded = lastSegment;
+  }
+  const sanitized = Array.from(decoded)
+    .map((ch) => {
+      const code = ch.charCodeAt(0);
+      const isLetter =
+        (code >= 65 && code <= 90) || (code >= 97 && code <= 122);
+      const isDigit = code >= 48 && code <= 57;
+      const isSafePunct =
+        ch === "." ||
+        ch === "_" ||
+        ch === " " ||
+        ch === "(" ||
+        ch === ")" ||
+        ch === "-";
+      return isLetter || isDigit || isSafePunct ? ch : "_";
+    })
+    .join("")
+    .replace(/\s+/g, " ")
+    .trim();
+  return sanitized || fallback;
+}
+
 function matchesOriginPrefix(target: URL, baseUrl: string) {
   const safeBaseUrl = clean(baseUrl);
   if (!safeBaseUrl) return false;
@@ -118,6 +147,9 @@ export async function GET(request: NextRequest) {
       );
     }
 
+    const requestedName = clean(request.nextUrl.searchParams.get("name"));
+    const downloadName = safeDownloadFileName(requestedName || target.pathname);
+
     const headers = new Headers();
     const contentType = clean(upstream.headers.get("content-type"));
     const contentLength = clean(upstream.headers.get("content-length"));
@@ -126,6 +158,12 @@ export async function GET(request: NextRequest) {
     if (contentType) headers.set("content-type", contentType);
     if (contentLength) headers.set("content-length", contentLength);
     headers.set("cache-control", cacheControl || "private, no-store");
+    headers.set(
+      "content-disposition",
+      `attachment; filename="${downloadName}"; filename*=UTF-8''${encodeURIComponent(
+        downloadName,
+      )}`,
+    );
 
     return new NextResponse(upstream.body, {
       status: 200,
