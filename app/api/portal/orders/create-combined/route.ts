@@ -814,10 +814,16 @@ export async function POST(request: NextRequest) {
             sku: entry.selectedImageUrl,
           });
         } else if (entry.slots.length > 0) {
-          for (const slot of entry.slots) {
-            const perSlot = Math.round(
-              entry.packageSubtotalCents / Math.max(entry.slots.length, 1),
-            );
+          // Distribute the package price across slots with no rounding drift,
+          // so the line items sum EXACTLY to packageSubtotalCents and the
+          // Stripe checkout ±2¢ reconciliation guard never trips on a
+          // multi-item basket. (See orders/create for the full rationale.)
+          const slotCount = entry.slots.length;
+          const basePerSlot = Math.floor(entry.packageSubtotalCents / slotCount);
+          const remainderCents =
+            entry.packageSubtotalCents - basePerSlot * slotCount;
+          entry.slots.forEach((slot, slotIndex) => {
+            const perSlot = basePerSlot + (slotIndex < remainderCents ? 1 : 0);
             itemsToInsert.push({
               order_id: orderRow.id as string,
               product_name: (slot.label || "Item") + orientationSuffix,
@@ -827,7 +833,7 @@ export async function POST(request: NextRequest) {
               line_total_cents: perSlot,
               sku: slot.assignedImageUrl ?? null,
             });
-          }
+          });
         } else {
           itemsToInsert.push({
             order_id: orderRow.id as string,

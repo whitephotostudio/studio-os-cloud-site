@@ -2,7 +2,23 @@
 
 Checkpoint for Claude so a context reset doesn't lose the thread. Update as work progresses.
 
-Last updated: 2026-06-24 — **Shipping fee bugfix: single-order checkout was silently dropping the fee** (web only, typecheck clean, uncommitted — push from Mac).
+Last updated: 2026-06-24 — **Two checkout bugfixes: (1) shipping fee silently dropped on single-order checkout; (2) "This order total is invalid." on multi-item baskets (per-slot rounding drift).** Web only, typecheck clean, uncommitted — push from Mac.
+
+## 🆕 2026-06-24 (later) — "This order total is invalid." blocking real client checkout (PUSH REQUIRED)
+
+Driver (Harout): client **Sona Kaltagian** (sonakaltagian@hotmail.com) couldn't check out of "Ars 8th Grade Ceremony 2026" — basket of **10× "2-5x7" ($13.67, 2 print slots each)**, **Pickup**, kept showing red **"This order total is invalid."** Unrelated to the shipping fix (this was pickup; shipping = 0) and reproduced on **live** (shipping fix not deployed yet).
+
+**Root cause — per-slot rounding drift vs. the Stripe checkout reconciliation guard.** Both order routes split a package's price across its print slots with `Math.round(packageSubtotalCents / slots)` per slot. For an odd price like $13.67 = 1367¢ over 2 slots → `round(683.5)=684` ×2 = **1368¢**, a **+1¢ gain per package**. `subtotal_cents` is stored as Σ package prices (13670 for 10), but `order_items` summed to **13680** (+10¢). `app/api/stripe/checkout/route.ts` rejects any order where `Σ order_items.line_total_cents ≠ subtotal_cents` beyond **±2¢** → "This order total is invalid." DB confirmed: failing orders `4eb8fd4a` / `5e8acb4e` (10 pkgs, +10¢), plus yesterday's `ab2a403a` (9 pkgs, +9¢). A 1-package order only drifts +1¢ so it squeaked by — which is why small test orders "worked" and real baskets didn't. **Every multi-item basket of an odd-priced print package was un-checkout-able.**
+
+**Fix:** replaced the naive per-slot `Math.round` with remainder distribution in **both** `app/api/portal/orders/create/route.ts` and `app/api/portal/orders/create-combined/route.ts`:
+```
+basePerSlot = floor(packageSubtotalCents / slotCount)
+remainder   = packageSubtotalCents − basePerSlot*slotCount
+perSlot[i]  = basePerSlot + (i < remainder ? 1 : 0)   // first `remainder` slots get +1¢
+```
+Line items now sum **exactly** to `packageSubtotalCents`, zero drift, regardless of price or basket size. Verified: the failing 10×$13.67 case goes 13680→13670 (drift 0); brute-force over prices 100–5000¢ × 1–6 slots × 1–50 items → **0** reconciliation failures. Typecheck clean (`npx tsc --noEmit` → exit 0).
+
+The stuck `payment_pending` rows are abandoned drafts — **no DB repair needed**; Sona just re-checks-out once this deploys and gets a correctly-split order. (Worth telling her to retry.)
 
 ## 🆕 2026-06-24 — Shipping fee not getting applied (single-order route — PUSH REQUIRED)
 
@@ -17,17 +33,19 @@ Driver (Harout): "the shipping fee is not getting applied." DB confirms config i
 - Appended a **"Shipping" line item** (and "Late handling fee" line if ever non-zero) to `order_items`. **Critical:** the Stripe checkout route (`app/api/stripe/checkout/route.ts`) rejects any order where `Σ order_items.line_total_cents ≠ subtotal_cents (±2¢)`. Adding shipping to the subtotal *without* the line item would have broken checkout outright — the line item keeps it reconciled.
 - `anyGroupLate: false` for now → this route does **not** force pickup→shipping past the order_due_date or add the 10% late handling. That late-handling parity with combined is deferred (would be a behavior change; not what Harout reported). Easy follow-up if wanted: wire `anyGroupLate` from the school's `order_due_date` via `hasCalendarBoundaryPassed`.
 
-Typecheck clean (`npx tsc --noEmit` → exit 0). One file changed: `app/api/portal/orders/create/route.ts` (+ this note).
+Typecheck clean (`npx tsc --noEmit` → exit 0). File changed: `app/api/portal/orders/create/route.ts` (+ this note).
 
-**Push (from Mac — sandbox can't push):**
+**Push (from Mac — sandbox can't push) — covers BOTH 2026-06-24 fixes:**
 ```
 cd ~/Downloads/Projects/studio-os-cloud-site
 rm -f .git/HEAD.lock .git/index.lock
-git add app/api/portal/orders/create/route.ts CLAUDE.md
-git commit -m "fix: single-order checkout now charges the studio shipping fee (was silently dropped on all event + single-school orders)"
+git add app/api/portal/orders/create/route.ts app/api/portal/orders/create-combined/route.ts CLAUDE.md
+git commit -m "fix: charge studio shipping fee on single-order checkout + eliminate per-slot rounding drift that blocked multi-item baskets at Stripe"
 git push origin main
 ```
-**Smoke test after Vercel redeploy:** open a gallery → add a physical print → checkout → choose **Shipping** → confirm the cart total and the Stripe amount now include the $15 shipping fee, and the order's payment breakdown shows a "Shipping" line. Choose **Pickup** → no shipping line, total unchanged. Digital-only cart → no shipping regardless.
+**Smoke test after Vercel redeploy:**
+- *Rounding fix:* add 3+ of an odd-priced print package (e.g. 10× "2-5x7" $13.67) → **Pickup** → "Continue to Secure Checkout" → no more "This order total is invalid."; reaches Stripe.
+- *Shipping fix:* open a gallery → add a physical print → checkout → choose **Shipping** → cart total + Stripe amount include the $15 fee, order shows a "Shipping" line. **Pickup** → no shipping line, total unchanged. Digital-only → no shipping regardless.
 
 ## 🆕 2026-06-22 — Event favorites: filter by client email + email them their favorites (web — PUSH REQUIRED)
 

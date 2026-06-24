@@ -1187,10 +1187,17 @@ export async function POST(request: NextRequest) {
           });
         }
       } else if (entry.slots.length > 0) {
-        for (const slot of entry.slots) {
-          const perSlot = Math.round(
-            entry.packageSubtotalCents / Math.max(entry.slots.length, 1),
-          );
+        // Split the package price across its slots so the line items sum
+        // EXACTLY to packageSubtotalCents. A naive Math.round() per slot can
+        // gain/lose up to (slots-1)¢ per package, and that drift accumulates
+        // across a multi-item basket until it exceeds the Stripe checkout
+        // route's ±2¢ reconciliation guard → "This order total is invalid."
+        // (e.g. a $13.67 / 2-slot package drifts +1¢ each; 10 in the cart = +10¢.)
+        const slotCount = entry.slots.length;
+        const basePerSlot = Math.floor(entry.packageSubtotalCents / slotCount);
+        const remainderCents = entry.packageSubtotalCents - basePerSlot * slotCount;
+        entry.slots.forEach((slot, slotIndex) => {
+          const perSlot = basePerSlot + (slotIndex < remainderCents ? 1 : 0);
           itemsToInsert.push({
             order_id: orderId,
             product_name: (slot.label || "Item") + orientationSuffix,
@@ -1200,7 +1207,7 @@ export async function POST(request: NextRequest) {
             line_total_cents: perSlot,
             sku: slot.assignedImageUrl ?? null,
           });
-        }
+        });
       } else {
         // Physical package with no slots yet (shouldn't happen from the
         // client but don't let it silently drop a charge).
