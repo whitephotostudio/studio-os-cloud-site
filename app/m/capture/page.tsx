@@ -29,6 +29,7 @@ import {
   BrowserMultiFormatReader,
   type IScannerControls,
 } from "@zxing/browser";
+import { BarcodeFormat, DecodeHintType } from "@zxing/library";
 
 type SchoolOption = { id: string; name: string };
 type StudentRow = {
@@ -36,6 +37,7 @@ type StudentRow = {
   first_name: string | null;
   last_name: string | null;
   pin: string | null;
+  pin_code: string | null;
   external_student_id: string | null;
   class_name: string | null;
 };
@@ -57,17 +59,35 @@ function findStudentByToken(
 ): StudentRow | null {
   const t = clean(raw);
   if (!t) return null;
+  // 1. 5-digit PIN anywhere in the payload (the desktop's primary match).
   const pin = t.match(/\b\d{5}\b/)?.[0];
   if (pin) {
-    const byPin = students.find((s) => clean(s.pin) === pin);
+    const byPin = students.find(
+      (s) => clean(s.pin) === pin || clean(s.pin_code) === pin,
+    );
     if (byPin) return byPin;
   }
+  // 2. Exact student id.
   const byId = students.find(
     (s) => clean(s.external_student_id) && clean(s.external_student_id) === t,
   );
   if (byId) return byId;
+  // 3. Name match in either direction (handles "Last First PIN" payloads).
   const lower = t.toLowerCase();
-  return students.find((s) => fullName(s).toLowerCase().includes(lower)) ?? null;
+  const byName = students.find((s) => {
+    const name = fullName(s).toLowerCase();
+    return name.length > 1 && (name.includes(lower) || lower.includes(name));
+  });
+  if (byName) return byName;
+  // 4. Split a multi-field payload and retry each part (desktop behaviour).
+  const parts = t.split(/[|,;\n\t]+|\s{2,}/).map((x) => x.trim()).filter(Boolean);
+  if (parts.length > 1) {
+    for (const part of parts) {
+      const hit = findStudentByToken(part, students);
+      if (hit) return hit;
+    }
+  }
+  return null;
 }
 
 async function captureFrame(
@@ -102,6 +122,9 @@ export default function CapturePage() {
   const [manualPin, setManualPin] = useState("");
   const [cameraError, setCameraError] = useState("");
   const [flash, setFlash] = useState(false);
+  const [scanInfo, setScanInfo] = useState<
+    { text: string; matched: boolean; at: number } | null
+  >(null);
 
   const [sessionCount, setSessionCount] = useState(0);
   const [perStudent, setPerStudent] = useState<Record<string, number>>({});
@@ -176,12 +199,19 @@ export default function CapturePage() {
 
   const handleToken = useCallback((raw: string) => {
     const token = clean(raw);
+    if (!token) return;
     const now = Date.now();
-    if (lastScanRef.current.token === token && now - lastScanRef.current.at < 1500) {
+    if (lastScanRef.current.token === token && now - lastScanRef.current.at < 1200) {
       return;
     }
     lastScanRef.current = { token, at: now };
     const match = findStudentByToken(token, studentsRef.current);
+    // Always surface what was read so it's clear scanning works, matched or not.
+    setScanInfo({ text: token, matched: !!match, at: now });
+    window.setTimeout(
+      () => setScanInfo((cur) => (cur && cur.at === now ? null : cur)),
+      3500,
+    );
     if (!match || activeRef.current?.id === match.id) return;
     setActive(match);
     setFlash(true);
@@ -194,13 +224,24 @@ export default function CapturePage() {
     const video = videoRef.current;
     if (!video) return;
     try {
-      const reader = new BrowserMultiFormatReader();
+      const hints = new Map();
+      hints.set(DecodeHintType.POSSIBLE_FORMATS, [
+        BarcodeFormat.QR_CODE,
+        BarcodeFormat.CODE_128,
+        BarcodeFormat.CODE_39,
+        BarcodeFormat.DATA_MATRIX,
+      ]);
+      hints.set(DecodeHintType.TRY_HARDER, true);
+      const reader = new BrowserMultiFormatReader(hints, {
+        delayBetweenScanAttempts: 120,
+        delayBetweenScanSuccess: 800,
+      });
       controlsRef.current = await reader.decodeFromConstraints(
         {
           video: {
             facingMode: { ideal: "environment" },
-            width: { ideal: 3840 },
-            height: { ideal: 2160 },
+            width: { ideal: 2560 },
+            height: { ideal: 1440 },
           },
         },
         video,
@@ -242,7 +283,7 @@ export default function CapturePage() {
     setPerStudent({});
     const { data } = await supabase
       .from("students")
-      .select("id, first_name, last_name, pin, external_student_id, class_name")
+      .select("id, first_name, last_name, pin, pin_code, external_student_id, class_name")
       .eq("school_id", opt.id);
     setStudents((data ?? []) as StudentRow[]);
     setLoadingStudents(false);
@@ -411,6 +452,13 @@ export default function CapturePage() {
         </div>
       </div>
 
+      <style
+        dangerouslySetInnerHTML={{
+          __html:
+            ".capture-reticle{width:64%;aspect-ratio:1/1;border:3px solid rgba(250,204,21,0.95);border-radius:18px;animation:captureScanPulse 1.15s ease-in-out infinite}" +
+            "@keyframes captureScanPulse{0%,100%{box-shadow:0 0 0 0 rgba(250,204,21,0);border-color:rgba(250,204,21,0.85)}50%{box-shadow:0 0 22px 4px rgba(250,204,21,0.55);border-color:rgba(253,224,71,1)}}",
+        }}
+      />
       {/* Camera */}
       <div
         style={{
@@ -457,11 +505,56 @@ export default function CapturePage() {
             </div>
           </div>
         </div>
+        {/* Scan target — pulses while looking for a barcode */}
+        {!active ? (
+          <div
+            style={{
+              position: "absolute",
+              inset: 0,
+              display: "grid",
+              placeItems: "center",
+              pointerEvents: "none",
+            }}
+          >
+            <div className="capture-reticle" />
+            <div
+              style={{
+                position: "absolute",
+                bottom: 14,
+                left: 0,
+                right: 0,
+                textAlign: "center",
+                color: "#fde047",
+                fontSize: 12,
+                fontWeight: 800,
+                textShadow: "0 1px 4px rgba(0,0,0,0.7)",
+              }}
+            >
+              Aim the QR code inside the box
+            </div>
+          </div>
+        ) : null}
         {/* Capture flash */}
         {flash ? (
           <div style={{ position: "absolute", inset: 0, background: "rgba(255,255,255,0.55)" }} />
         ) : null}
       </div>
+
+      {scanInfo && !scanInfo.matched ? (
+        <div
+          style={{
+            background: "#fffbeb",
+            color: "#b45309",
+            borderRadius: 12,
+            padding: "10px 12px",
+            fontSize: 13,
+            fontWeight: 700,
+          }}
+        >
+          Read &ldquo;{scanInfo.text}&rdquo; — no matching student in{" "}
+          {school?.name ?? "this school"}. Check you picked the right school.
+        </div>
+      ) : null}
 
       {cameraError ? (
         <div style={{ background: "#fff1f0", color: "#9f2f24", borderRadius: 12, padding: "10px 12px", fontSize: 13, fontWeight: 600 }}>
