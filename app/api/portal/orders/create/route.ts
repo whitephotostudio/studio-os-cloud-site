@@ -6,6 +6,7 @@ import { calculateCheckoutTaxCents } from "@/lib/checkout-tax";
 import { isOrderingWindowOpen } from "@/lib/ordering-window";
 import { getClientIp, rateLimit } from "@/lib/rate-limit";
 import { hasActiveSubscription } from "@/lib/subscription-gate";
+import { resolveShipping } from "@/lib/combine-orders";
 import {
   ensureObjectBody,
   validateEmail,
@@ -154,6 +155,8 @@ type PhotographerGateRow = {
   tax_label?: string | null;
   tax_country?: string | null;
   tax_rates_by_country?: Record<string, number> | null;
+  shipping_fee_cents?: number | null;
+  late_handling_fee_percent?: number | null;
 };
 
 type OrderItemInsert = {
@@ -705,9 +708,9 @@ export async function POST(request: NextRequest) {
     }
 
     const photographerSelect =
-      "id,is_platform_admin,subscription_status,trial_starts_at,trial_ends_at,created_at,tax_enabled,tax_percent,tax_label,tax_country,tax_rates_by_country";
+      "id,is_platform_admin,subscription_status,trial_starts_at,trial_ends_at,created_at,shipping_fee_cents,late_handling_fee_percent,tax_enabled,tax_percent,tax_label,tax_country,tax_rates_by_country";
     const photographerBaseSelect =
-      "id,is_platform_admin,subscription_status,trial_starts_at,trial_ends_at,created_at";
+      "id,is_platform_admin,subscription_status,trial_starts_at,trial_ends_at,created_at,shipping_fee_cents,late_handling_fee_percent";
     let photographerResult = await sb
       .from("photographers")
       .select(photographerSelect)
@@ -917,21 +920,15 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    const orderSubtotalCents = resolved.reduce((sum, e) => sum + e.lineTotalCents, 0);
-    if (!Number.isFinite(orderSubtotalCents) || orderSubtotalCents <= 0) {
+    const productSubtotalCents = resolved.reduce((sum, e) => sum + e.lineTotalCents, 0);
+    if (!Number.isFinite(productSubtotalCents) || productSubtotalCents <= 0) {
       return NextResponse.json(
         { ok: false, message: "Order total is invalid." },
         { status: 400 },
       );
     }
-    const taxCents = calculateCheckoutTaxCents(
-      orderSubtotalCents,
-      gallerySettingsForTax,
-      null,
-      photographer,
-    );
-    const orderTotalCents = orderSubtotalCents + taxCents;
 
+    // ── delivery method normalization (must run before shipping math) ────
     const anyPhysical = resolved.some((e) => !e.isDigital);
     if (!anyPhysical && delivery.method === "shipping") {
       // Digital-only carts don't ship anywhere; quietly treat as pickup.
@@ -945,6 +942,43 @@ export async function POST(request: NextRequest) {
         { status: 400 },
       );
     }
+
+    // ── shipping fee ─────────────────────────────────────────────────────
+    // BUGFIX (2026-06-24): this route previously charged product + tax only
+    // and silently dropped the studio's shipping fee on every single-order
+    // checkout (all events + single-school orders). Mirror create-combined:
+    // when the parent chooses shipping on a cart with a physical item, charge
+    // photographers.shipping_fee_cents. resolveShipping returns 0 for pickup /
+    // digital-only. (Late-handling parity is deferred — anyGroupLate stays
+    // false, so this route never force-converts pickup → shipping past due.)
+    const shippingFeeCents = Math.max(
+      0,
+      Number(photographer?.shipping_fee_cents ?? 0) || 0,
+    );
+    const lateHandlingFeePercent =
+      Number(photographer?.late_handling_fee_percent ?? 10) || 10;
+    const resolvedShipping = resolveShipping(
+      {
+        requestedMethod:
+          anyPhysical && delivery.method === "shipping" ? "shipping" : "pickup",
+        shippingFeeCents,
+        lateHandlingFeePercent,
+        anyGroupLate: false,
+      },
+      productSubtotalCents,
+    );
+
+    const orderSubtotalCents =
+      productSubtotalCents +
+      resolvedShipping.shippingFeeCents +
+      resolvedShipping.handlingFeeCents;
+    const taxCents = calculateCheckoutTaxCents(
+      orderSubtotalCents,
+      gallerySettingsForTax,
+      null,
+      photographer,
+    );
+    const orderTotalCents = orderSubtotalCents + taxCents;
     const pickupLines = [
       "Delivery: pickup",
       galleryExtras.pickupLocationEnabled && clean(galleryExtras.pickupLocationName)
@@ -1197,6 +1231,35 @@ export async function POST(request: NextRequest) {
           sku: clean(entry.backdropRow.image_url) || null,
         });
       }
+    }
+
+    // ── shipping + handling line items ──────────────────────────────────
+    // Surfaced so the order_items sum reconciles with subtotal_cents (the
+    // Stripe checkout route rejects orders where they diverge) and so the
+    // lab + parent receipt show the shipping charge as its own line.
+    if (resolvedShipping.shippingFeeCents > 0) {
+      itemsToInsert.push({
+        order_id: orderId,
+        product_name: resolvedShipping.forcedDueToLate
+          ? "Shipping (late — pickup window closed)"
+          : "Shipping",
+        quantity: 1,
+        price: resolvedShipping.shippingFeeCents / 100,
+        unit_price_cents: resolvedShipping.shippingFeeCents,
+        line_total_cents: resolvedShipping.shippingFeeCents,
+        sku: null,
+      });
+    }
+    if (resolvedShipping.handlingFeeCents > 0) {
+      itemsToInsert.push({
+        order_id: orderId,
+        product_name: "Late handling fee",
+        quantity: 1,
+        price: resolvedShipping.handlingFeeCents / 100,
+        unit_price_cents: resolvedShipping.handlingFeeCents,
+        line_total_cents: resolvedShipping.handlingFeeCents,
+        sku: null,
+      });
     }
 
     const { error: itemsError } = await sb.from("order_items").insert(itemsToInsert);

@@ -2,7 +2,32 @@
 
 Checkpoint for Claude so a context reset doesn't lose the thread. Update as work progresses.
 
-Last updated: 2026-06-22 — **Event favorites: filter-by-client + email their favorites as a ZIP** (web only, typecheck clean, uncommitted — push from Mac).
+Last updated: 2026-06-24 — **Shipping fee bugfix: single-order checkout was silently dropping the fee** (web only, typecheck clean, uncommitted — push from Mac).
+
+## 🆕 2026-06-24 — Shipping fee not getting applied (single-order route — PUSH REQUIRED)
+
+Driver (Harout): "the shipping fee is not getting applied." DB confirms config is fine — `photographers.shipping_fee_cents = 1500` ($15), `late_handling_fee_percent = 10`. The bug was code, not config.
+
+**Root cause:** `app/api/portal/orders/create/route.ts` (the legacy single-order path) computed `subtotal = Σ line items` then `total = subtotal + tax` and **never added the shipping fee**. It validated that shipping was *enabled* for the gallery but never charged `shipping_fee_cents`. The photographer select didn't even fetch the column. The combined route (`create-combined`) does it right via `resolveShipping` — but combined only runs for **multi-lane school carts** (`isSchoolMode && isMultiLane`). So **every event order and every single-school order** dropped the fee. Stripe charged product + tax only.
+
+**Fix (mirror create-combined):**
+- Added `shipping_fee_cents,late_handling_fee_percent` to both photographer selects + `PhotographerGateRow` type.
+- Imported `resolveShipping` from `@/lib/combine-orders`. Moved the `anyPhysical` / delivery-method normalization **above** the totals math, then compute `resolvedShipping = resolveShipping({ requestedMethod: anyPhysical && method==="shipping" ? "shipping" : "pickup", shippingFeeCents, lateHandlingFeePercent, anyGroupLate: false }, productSubtotalCents)`.
+- `orderSubtotalCents = productSubtotalCents + shipping + handling` → tax computed on that (tax applies to shipping, same as combined) → `total = subtotal + tax`.
+- Appended a **"Shipping" line item** (and "Late handling fee" line if ever non-zero) to `order_items`. **Critical:** the Stripe checkout route (`app/api/stripe/checkout/route.ts`) rejects any order where `Σ order_items.line_total_cents ≠ subtotal_cents (±2¢)`. Adding shipping to the subtotal *without* the line item would have broken checkout outright — the line item keeps it reconciled.
+- `anyGroupLate: false` for now → this route does **not** force pickup→shipping past the order_due_date or add the 10% late handling. That late-handling parity with combined is deferred (would be a behavior change; not what Harout reported). Easy follow-up if wanted: wire `anyGroupLate` from the school's `order_due_date` via `hasCalendarBoundaryPassed`.
+
+Typecheck clean (`npx tsc --noEmit` → exit 0). One file changed: `app/api/portal/orders/create/route.ts` (+ this note).
+
+**Push (from Mac — sandbox can't push):**
+```
+cd ~/Downloads/Projects/studio-os-cloud-site
+rm -f .git/HEAD.lock .git/index.lock
+git add app/api/portal/orders/create/route.ts CLAUDE.md
+git commit -m "fix: single-order checkout now charges the studio shipping fee (was silently dropped on all event + single-school orders)"
+git push origin main
+```
+**Smoke test after Vercel redeploy:** open a gallery → add a physical print → checkout → choose **Shipping** → confirm the cart total and the Stripe amount now include the $15 shipping fee, and the order's payment breakdown shows a "Shipping" line. Choose **Pickup** → no shipping line, total unchanged. Digital-only cart → no shipping regardless.
 
 ## 🆕 2026-06-22 — Event favorites: filter by client email + email them their favorites (web — PUSH REQUIRED)
 
