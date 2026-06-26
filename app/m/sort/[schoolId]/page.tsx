@@ -10,7 +10,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { ArrowLeft, Search, Trash2, UserRound } from "lucide-react";
+import { ArrowLeft, ArrowRightLeft, Search, Trash2, UserRound, X } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { proxiedPhotoUrl } from "@/lib/photo-url";
 
@@ -52,6 +52,9 @@ export default function SortSchoolPage() {
   const [photos, setPhotos] = useState<Photo[]>([]);
   const [photosLoading, setPhotosLoading] = useState(false);
   const [deletingKey, setDeletingKey] = useState<string | null>(null);
+  const [movingPhoto, setMovingPhoto] = useState<Photo | null>(null);
+  const [moveBusy, setMoveBusy] = useState(false);
+  const [moveSearch, setMoveSearch] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -181,6 +184,44 @@ export default function SortSchoolPage() {
     }
   }
 
+  async function doMove(target: Student) {
+    if (!movingPhoto || !selected) return;
+    setMoveBusy(true);
+    try {
+      const res = await fetch("/api/dashboard/capture/move", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          schoolId,
+          key: movingPhoto.key,
+          fromStudentId: selected.id,
+          toStudentId: target.id,
+        }),
+      });
+      const json = (await res.json().catch(() => ({}))) as {
+        ok?: boolean;
+        error?: string;
+      };
+      if (res.ok && json.ok) {
+        const movedKey = movingPhoto.key;
+        setPhotos((prev) => prev.filter((p) => p.key !== movedKey));
+        setCounts((prev) => ({
+          ...prev,
+          [selected.id]: Math.max(0, (prev[selected.id] ?? 1) - 1),
+          [target.id]: (prev[target.id] ?? 0) + 1,
+        }));
+        setMovingPhoto(null);
+        setMoveSearch("");
+      } else {
+        window.alert(json.error || "Could not move the photo.");
+      }
+    } catch {
+      window.alert("Could not move the photo.");
+    } finally {
+      setMoveBusy(false);
+    }
+  }
+
   const filteredStudents = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return students;
@@ -206,6 +247,18 @@ export default function SortSchoolPage() {
 
   // ── Per-student photo view ──
   if (selected) {
+    const moveTargets = students
+      .filter((s) => s.id !== selected.id)
+      .filter((s) => {
+        const q = moveSearch.trim().toLowerCase();
+        if (!q) return true;
+        const name = `${clean(s.first_name)} ${clean(s.last_name)}`.toLowerCase();
+        return (
+          name.includes(q) ||
+          clean(s.pin).includes(q) ||
+          clean(s.class_name).toLowerCase().includes(q)
+        );
+      });
     return (
       <div>
         <button
@@ -257,6 +310,27 @@ export default function SortSchoolPage() {
                 />
                 <button
                   type="button"
+                  onClick={() => setMovingPhoto(p)}
+                  aria-label="Move to another student"
+                  style={{
+                    position: "absolute",
+                    top: 5,
+                    left: 5,
+                    width: 30,
+                    height: 30,
+                    borderRadius: 8,
+                    border: "none",
+                    background: "rgba(17,24,39,0.8)",
+                    color: "#fff",
+                    display: "grid",
+                    placeItems: "center",
+                    cursor: "pointer",
+                  }}
+                >
+                  <ArrowRightLeft size={14} />
+                </button>
+                <button
+                  type="button"
                   onClick={() => void deletePhoto(p.key)}
                   disabled={deletingKey === p.key}
                   aria-label="Delete photo"
@@ -282,6 +356,110 @@ export default function SortSchoolPage() {
             ))}
           </div>
         )}
+
+        {movingPhoto ? (
+          <div
+            onClick={() => {
+              if (!moveBusy) {
+                setMovingPhoto(null);
+                setMoveSearch("");
+              }
+            }}
+            style={{
+              position: "fixed",
+              inset: 0,
+              zIndex: 1000,
+              background: "rgba(0,0,0,0.45)",
+              display: "flex",
+              alignItems: "flex-end",
+              justifyContent: "center",
+            }}
+          >
+            <div
+              onClick={(e) => e.stopPropagation()}
+              style={{
+                background: "#fff",
+                width: "100%",
+                maxWidth: 480,
+                maxHeight: "80vh",
+                borderRadius: "18px 18px 0 0",
+                display: "flex",
+                flexDirection: "column",
+                overflow: "hidden",
+              }}
+            >
+              <div style={{ padding: "14px 16px", borderBottom: "1px solid #eef0f4", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <div style={{ fontSize: 15, fontWeight: 900, color: "#111827" }}>
+                  Move photo to…
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!moveBusy) {
+                      setMovingPhoto(null);
+                      setMoveSearch("");
+                    }
+                  }}
+                  aria-label="Close"
+                  style={{ background: "transparent", border: "none", cursor: "pointer", color: "#6b7280", padding: 0 }}
+                >
+                  <X size={20} />
+                </button>
+              </div>
+              <div style={{ padding: "10px 14px" }}>
+                <input
+                  value={moveSearch}
+                  onChange={(e) => setMoveSearch(e.target.value)}
+                  placeholder="Search students…"
+                  autoFocus
+                  style={{ width: "100%", boxSizing: "border-box", borderRadius: 12, border: "1px solid #e5e7eb", padding: "10px 12px", fontSize: 15, outline: "none" }}
+                />
+              </div>
+              <div style={{ overflowY: "auto", padding: "0 8px 12px" }}>
+                {moveTargets.map((s) => {
+                  const cover = proxiedPhotoUrl(covers[s.id] || s.photo_url);
+                  return (
+                    <button
+                      key={s.id}
+                      type="button"
+                      disabled={moveBusy}
+                      onClick={() => void doMove(s)}
+                      style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", textAlign: "left", background: "transparent", border: "none", borderRadius: 10, padding: "9px 10px", cursor: moveBusy ? "default" : "pointer" }}
+                    >
+                      <div style={{ width: 34, height: 34, borderRadius: 8, overflow: "hidden", background: "#eef0f4", flexShrink: 0, display: "grid", placeItems: "center" }}>
+                        {cover ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img src={cover} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                        ) : (
+                          <UserRound size={16} color="#b8bfca" />
+                        )}
+                      </div>
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ fontSize: 14, fontWeight: 800, color: "#111827", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {fullName(s)}
+                        </div>
+                        <div style={{ fontSize: 12, color: "#6b7280" }}>
+                          {clean(s.class_name) || "No class"}
+                          {typeof counts[s.id] === "number" ? ` · ${counts[s.id]} photos` : ""}
+                        </div>
+                      </div>
+                    </button>
+                  );
+                })}
+                {moveTargets.length === 0 ? (
+                  <div style={{ fontSize: 13, color: "#9ca3af", padding: 12 }}>
+                    No other students match.
+                  </div>
+                ) : null}
+              </div>
+              {moveBusy ? (
+                <div style={{ padding: "8px 16px 14px", fontSize: 13, fontWeight: 700, color: "#6b7280" }}>
+                  Moving…
+                </div>
+              ) : null}
+            </div>
+          </div>
+        ) : null}
       </div>
     );
   }

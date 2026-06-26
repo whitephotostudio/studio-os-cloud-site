@@ -2,6 +2,7 @@ import {
   S3Client,
   PutObjectCommand,
   GetObjectCommand,
+  CopyObjectCommand,
   DeleteObjectCommand,
   DeleteObjectsCommand,
   ListObjectsV2Command,
@@ -110,6 +111,27 @@ export async function r2Upload(
     }),
   );
   return r2PublicUrl(key);
+}
+
+/**
+ * Server-side copy of one object to a new key (no download/upload round-trip).
+ * `CopySource` must be the URL-encoded `{bucket}/{key}` — keys can contain
+ * spaces (e.g. class "SK A"), so each path segment is percent-encoded.
+ */
+export async function r2Copy(srcKey: string, destKey: string) {
+  const client = getR2Client();
+  const encodedSource = `${R2_BUCKET}/${srcKey
+    .split("/")
+    .filter(Boolean)
+    .map((segment) => encodeURIComponent(segment))
+    .join("/")}`;
+  await client.send(
+    new CopyObjectCommand({
+      Bucket: R2_BUCKET,
+      CopySource: encodedSource,
+      Key: destKey,
+    }),
+  );
 }
 
 /**

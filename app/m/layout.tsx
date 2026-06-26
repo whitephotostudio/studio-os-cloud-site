@@ -464,7 +464,7 @@ export default function MobileLayout({
             zIndex: 20,
             background: "#fff",
             borderBottom: "1px solid #eef2f7",
-            padding: "12px 16px",
+            padding: "calc(env(safe-area-inset-top) + 12px) 16px 12px",
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
@@ -673,7 +673,7 @@ export default function MobileLayout({
         <main
           style={{
             flex: 1,
-            padding: "16px 14px 90px",
+            padding: "16px 14px calc(90px + env(safe-area-inset-bottom))",
             // Bottom padding reserves space for the sticky tab bar so the
             // last content row never sits under it.
           }}
@@ -707,6 +707,7 @@ export default function MobileLayout({
             display: "grid",
             gridTemplateColumns: `repeat(${TABS.length}, 1fr)`,
             boxShadow: "0 -2px 12px rgba(15,23,42,0.04)",
+            paddingBottom: "env(safe-area-inset-bottom)",
           }}
         >
           {TABS.map((tab) => {
