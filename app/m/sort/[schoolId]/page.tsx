@@ -55,6 +55,7 @@ export default function SortSchoolPage() {
   const [movingPhoto, setMovingPhoto] = useState<Photo | null>(null);
   const [moveBusy, setMoveBusy] = useState(false);
   const [moveSearch, setMoveSearch] = useState("");
+  const [deletingStudent, setDeletingStudent] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -222,6 +223,40 @@ export default function SortSchoolPage() {
     }
   }
 
+  async function deleteStudent() {
+    if (!selected) return;
+    if (
+      !window.confirm(
+        `Delete ${fullName(selected)} and all their photos? This can't be undone.`,
+      )
+    ) {
+      return;
+    }
+    setDeletingStudent(true);
+    try {
+      const res = await fetch("/api/dashboard/capture/student-delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ schoolId, studentId: selected.id }),
+      });
+      const json = (await res.json().catch(() => ({}))) as {
+        ok?: boolean;
+        error?: string;
+      };
+      if (res.ok && json.ok) {
+        const removedId = selected.id;
+        setStudents((prev) => prev.filter((s) => s.id !== removedId));
+        setSelected(null);
+      } else {
+        window.alert(json.error || "Could not delete the student.");
+      }
+    } catch {
+      window.alert("Could not delete the student.");
+    } finally {
+      setDeletingStudent(false);
+    }
+  }
+
   const filteredStudents = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return students;
@@ -283,10 +318,32 @@ export default function SortSchoolPage() {
         <div style={{ fontSize: 20, fontWeight: 900, color: "#111827" }}>
           {fullName(selected)}
         </div>
-        <div style={{ fontSize: 12, color: "#6b7280", marginTop: 2, marginBottom: 14 }}>
+        <div style={{ fontSize: 12, color: "#6b7280", marginTop: 2, marginBottom: 10 }}>
           {clean(selected.class_name) || "No class"} · PIN {clean(selected.pin) || "—"} ·{" "}
           {photos.length} photo{photos.length === 1 ? "" : "s"}
         </div>
+        <button
+          type="button"
+          onClick={() => void deleteStudent()}
+          disabled={deletingStudent}
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 6,
+            background: "#fff",
+            border: "1px solid #fca5a5",
+            color: "#b91c1c",
+            borderRadius: 10,
+            padding: "7px 12px",
+            fontSize: 12,
+            fontWeight: 800,
+            cursor: deletingStudent ? "default" : "pointer",
+            opacity: deletingStudent ? 0.6 : 1,
+            marginBottom: 14,
+          }}
+        >
+          <Trash2 size={13} /> {deletingStudent ? "Deleting…" : "Delete student"}
+        </button>
 
         {photosLoading && photos.length === 0 ? (
           <div style={{ fontSize: 13, color: "#9ca3af", padding: 12 }}>Loading photos…</div>

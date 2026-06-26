@@ -29,6 +29,7 @@ import {
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { proxiedPhotoUrl } from "@/lib/photo-url";
+import QrCode from "@/components/qr-code";
 
 type School = {
   id: string;
@@ -605,6 +606,16 @@ export default function MobileSchoolDetailPage() {
           >
             {galleryUrl() || "—"}
           </div>
+          {galleryUrl() ? (
+            <div style={{ display: "flex", justifyContent: "center", paddingTop: 4 }}>
+              <div style={{ background: "#fff", padding: 12, borderRadius: 14, border: "1px solid #e5e7eb", textAlign: "center" }}>
+                <QrCode value={galleryUrl()} size={188} />
+                <div style={{ fontSize: 11, fontWeight: 700, color: "#6b7280", marginTop: 8 }}>
+                  Scan to open the gallery
+                </div>
+              </div>
+            </div>
+          ) : null}
           <div
             style={{
               display: "grid",
