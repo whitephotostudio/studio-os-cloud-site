@@ -15,6 +15,7 @@ import {
   CalendarCheck,
   Camera,
   GraduationCap,
+  LayoutGrid,
   PartyPopper,
   Search,
   ShoppingBag,
@@ -212,6 +213,13 @@ export default function MobileHomePage() {
         icon: <Camera size={22} />,
         accent: "#cc0000",
         note: "Scan + shoot",
+      },
+      {
+        href: "/m/sort",
+        label: "Sort & Review",
+        icon: <LayoutGrid size={22} />,
+        accent: "#1d4ed8",
+        note: "By student",
       },
       {
         href: "/m/orders",

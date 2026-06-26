@@ -17,9 +17,11 @@ import {
   CloudUpload,
   Images,
   Search,
+  Trash2,
   UserRound,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { proxiedPhotoUrl } from "@/lib/photo-url";
 import {
   addCapture,
   allCaptures,
@@ -135,6 +137,12 @@ export default function CapturePage() {
   // shots a tethered DSLR auto-sent to this phone (e.g. Canon Camera Connect)
   // from the Photos library and queues them for the locked student.
   const [mode, setMode] = useState<"phone" | "dslr">("phone");
+  // Review + delete: the locked student's photos already in their R2 folder.
+  const [studentPhotos, setStudentPhotos] = useState<
+    Array<{ key: string; url: string; name: string }>
+  >([]);
+  const [photosLoading, setPhotosLoading] = useState(false);
+  const [deletingKey, setDeletingKey] = useState<string | null>(null);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const controlsRef = useRef<IScannerControls | null>(null);
@@ -299,6 +307,43 @@ export default function CapturePage() {
     return () => stopScanner();
   }, [step, startScanner, stopScanner]);
 
+  // Load the locked student's existing photos for the review + delete strip.
+  const loadStudentPhotos = useCallback(
+    async (student: StudentRow | null) => {
+      if (!student || !school) {
+        setStudentPhotos([]);
+        return;
+      }
+      setPhotosLoading(true);
+      try {
+        const res = await fetch("/api/dashboard/capture/list", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ schoolId: school.id, studentId: student.id }),
+        });
+        const json = (await res.json().catch(() => ({}))) as {
+          ok?: boolean;
+          photos?: Array<{ key: string; url: string; name: string }>;
+        };
+        setStudentPhotos(res.ok && json.ok ? json.photos ?? [] : []);
+      } catch {
+        setStudentPhotos([]);
+      } finally {
+        setPhotosLoading(false);
+      }
+    },
+    [school],
+  );
+
+  // Refresh the strip when the active student changes or a capture uploads.
+  useEffect(() => {
+    if (!active) {
+      setStudentPhotos([]);
+      return;
+    }
+    void loadStudentPhotos(active);
+  }, [active, uploaded, loadStudentPhotos]);
+
   async function chooseSchool(opt: SchoolOption) {
     setSchool(opt);
     setLoadingStudents(true);
@@ -378,6 +423,38 @@ export default function CapturePage() {
     window.setTimeout(() => setFlash(false), 140);
     void refreshQueue();
     pump();
+  }
+
+  async function deletePhoto(key: string) {
+    if (!school) return;
+    if (
+      !window.confirm(
+        "Delete this photo? This removes it from the gallery permanently.",
+      )
+    ) {
+      return;
+    }
+    setDeletingKey(key);
+    try {
+      const res = await fetch("/api/dashboard/capture/delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ schoolId: school.id, key }),
+      });
+      const json = (await res.json().catch(() => ({}))) as {
+        ok?: boolean;
+        error?: string;
+      };
+      if (res.ok && json.ok) {
+        setStudentPhotos((prev) => prev.filter((p) => p.key !== key));
+      } else {
+        window.alert(json.error || "Could not delete the photo.");
+      }
+    } catch {
+      window.alert("Could not delete the photo.");
+    } finally {
+      setDeletingKey(null);
+    }
   }
 
   // ── School picker ──
@@ -757,6 +834,47 @@ export default function CapturePage() {
           </div>
         </>
       )}
+
+      {/* Review + delete the locked student's photos */}
+      {active ? (
+        <div style={{ borderTop: "1px solid #eef0f4", paddingTop: 12 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+            <div style={{ fontSize: 13, fontWeight: 800, color: "#374151" }}>
+              {fullName(active)}&apos;s photos{studentPhotos.length ? ` · ${studentPhotos.length}` : ""}
+            </div>
+            <button
+              type="button"
+              onClick={() => void loadStudentPhotos(active)}
+              style={{ background: "transparent", border: "none", color: "#6b7280", fontSize: 12, fontWeight: 800, cursor: "pointer", padding: 0 }}
+            >
+              {photosLoading ? "Loading…" : "Refresh"}
+            </button>
+          </div>
+          {studentPhotos.length === 0 ? (
+            <div style={{ fontSize: 12, color: "#9ca3af", padding: "2px 0 6px" }}>
+              {photosLoading ? "Loading photos…" : "No photos yet for this student."}
+            </div>
+          ) : (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}>
+              {studentPhotos.map((p) => (
+                <div key={p.key} style={{ position: "relative", aspectRatio: "1 / 1", borderRadius: 10, overflow: "hidden", background: "#f3f4f6" }}>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={proxiedPhotoUrl(p.key) || p.url} alt="" loading="lazy" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                  <button
+                    type="button"
+                    onClick={() => void deletePhoto(p.key)}
+                    disabled={deletingKey === p.key}
+                    aria-label="Delete photo"
+                    style={{ position: "absolute", top: 5, right: 5, width: 30, height: 30, borderRadius: 8, border: "none", background: "rgba(204,0,0,0.92)", color: "#fff", display: "grid", placeItems: "center", cursor: deletingKey === p.key ? "default" : "pointer", opacity: deletingKey === p.key ? 0.6 : 1 }}
+                  >
+                    <Trash2 size={15} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      ) : null}
 
       <div style={{ display: "flex", alignItems: "center", gap: 6, justifyContent: "center", color: "#6b7280", fontSize: 12, fontWeight: 700 }}>
         <CheckCircle2 size={14} color="#16a34a" /> {sessionCount} captured this session
