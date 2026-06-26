@@ -1,24 +1,25 @@
 "use client";
 
-// Sort & Review — school picker (/m/sort)
+// Sort & Review — picker (/m/sort)
 //
-// Mirrors the desktop Sort panel's first step: pick a school, then review each
-// student's photos. Drills into /m/sort/[schoolId].
+// Pick a school (roster-based review → /m/sort/[schoolId]) or an event
+// (album-based photo grid → /m/sort/event/[id]).
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, ChevronRight, GraduationCap, Search } from "lucide-react";
+import { ArrowLeft, ChevronRight, GraduationCap, PartyPopper, Search } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 
-type SchoolOption = { id: string; name: string };
+type Item = { id: string; name: string };
 
 function clean(v: string | null | undefined) {
   return (v ?? "").trim();
 }
 
-export default function SortPickSchoolPage() {
+export default function SortPickPage() {
   const [supabase] = useState(() => createClient());
-  const [schools, setSchools] = useState<SchoolOption[]>([]);
+  const [schools, setSchools] = useState<Item[]>([]);
+  const [events, setEvents] = useState<Item[]>([]);
   const [filter, setFilter] = useState("");
   const [loading, setLoading] = useState(true);
 
@@ -35,16 +36,31 @@ export default function SortPickSchoolPage() {
         .eq("user_id", user.id)
         .maybeSingle();
       if (!pg?.id || cancelled) return;
-      const { data } = await supabase
-        .from("schools")
-        .select("id, school_name")
-        .eq("photographer_id", pg.id)
-        .order("school_name");
+
+      const [{ data: schoolData }, { data: eventData }] = await Promise.all([
+        supabase
+          .from("schools")
+          .select("id, school_name")
+          .eq("photographer_id", pg.id)
+          .order("school_name"),
+        supabase
+          .from("projects")
+          .select("id, title")
+          .eq("photographer_id", pg.id)
+          .eq("workflow_type", "event")
+          .order("title"),
+      ]);
       if (cancelled) return;
       setSchools(
-        ((data ?? []) as Array<{ id: string; school_name: string | null }>).map(
+        ((schoolData ?? []) as Array<{ id: string; school_name: string | null }>).map(
           (s) => ({ id: s.id, name: clean(s.school_name) || "Untitled school" }),
         ),
+      );
+      setEvents(
+        ((eventData ?? []) as Array<{ id: string; title: string | null }>).map((p) => ({
+          id: p.id,
+          name: clean(p.title) || "Untitled event",
+        })),
       );
       setLoading(false);
     })();
@@ -53,9 +69,32 @@ export default function SortPickSchoolPage() {
     };
   }, [supabase]);
 
-  const filtered = schools.filter((s) =>
-    s.name.toLowerCase().includes(filter.trim().toLowerCase()),
-  );
+  const q = filter.trim().toLowerCase();
+  const filteredSchools = schools.filter((s) => s.name.toLowerCase().includes(q));
+  const filteredEvents = events.filter((s) => s.name.toLowerCase().includes(q));
+
+  const rowStyle: React.CSSProperties = {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+    background: "#fff",
+    border: "1px solid #e5e7eb",
+    borderRadius: 14,
+    padding: "14px 16px",
+    fontSize: 15,
+    fontWeight: 800,
+    color: "#111827",
+    textDecoration: "none",
+  };
+  const headerStyle: React.CSSProperties = {
+    fontSize: 11,
+    letterSpacing: "0.1em",
+    textTransform: "uppercase",
+    fontWeight: 800,
+    color: "#6b7280",
+    margin: "4px 2px 8px",
+  };
 
   return (
     <div>
@@ -78,10 +117,10 @@ export default function SortPickSchoolPage() {
         Sort &amp; Review
       </div>
       <div style={{ fontSize: 13, color: "#6b7280", marginTop: 2, marginBottom: 14 }}>
-        Pick a school to review and clean up each student&apos;s photos.
+        Pick a school or event to review and clean up photos.
       </div>
 
-      <div style={{ position: "relative", marginBottom: 12 }}>
+      <div style={{ position: "relative", marginBottom: 14 }}>
         <Search
           size={16}
           style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", color: "#6b7280" }}
@@ -89,7 +128,7 @@ export default function SortPickSchoolPage() {
         <input
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
-          placeholder="Search schools…"
+          placeholder="Search schools & events…"
           style={{
             width: "100%",
             boxSizing: "border-box",
@@ -103,42 +142,53 @@ export default function SortPickSchoolPage() {
         />
       </div>
 
-      <div style={{ display: "grid", gap: 8 }}>
-        {filtered.map((s) => (
-          <Link
-            key={s.id}
-            href={`/m/sort/${s.id}`}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              gap: 10,
-              background: "#fff",
-              border: "1px solid #e5e7eb",
-              borderRadius: 14,
-              padding: "14px 16px",
-              fontSize: 15,
-              fontWeight: 800,
-              color: "#111827",
-              textDecoration: "none",
-            }}
-          >
-            <span style={{ display: "inline-flex", alignItems: "center", gap: 10 }}>
-              <GraduationCap size={18} color="#1d4ed8" />
-              {s.name}
-            </span>
-            <ChevronRight size={18} color="#9ca3af" />
-          </Link>
-        ))}
-        {!loading && filtered.length === 0 ? (
-          <div style={{ color: "#6b7280", fontSize: 13, padding: 12 }}>
-            {schools.length === 0 ? "No schools yet." : "No schools match that search."}
+      {loading ? (
+        <div style={{ color: "#6b7280", fontSize: 13, padding: 12 }}>Loading…</div>
+      ) : (
+        <>
+          {filteredEvents.length > 0 ? (
+            <div style={{ marginBottom: 18 }}>
+              <div style={headerStyle}>Events · {filteredEvents.length}</div>
+              <div style={{ display: "grid", gap: 8 }}>
+                {filteredEvents.map((s) => (
+                  <Link key={s.id} href={`/m/sort/event/${s.id}`} style={rowStyle}>
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 10, minWidth: 0 }}>
+                      <PartyPopper size={18} color="#b45309" />
+                      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {s.name}
+                      </span>
+                    </span>
+                    <ChevronRight size={18} color="#9ca3af" />
+                  </Link>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          <div style={headerStyle}>Schools · {filteredSchools.length}</div>
+          <div style={{ display: "grid", gap: 8 }}>
+            {filteredSchools.map((s) => (
+              <Link key={s.id} href={`/m/sort/${s.id}`} style={rowStyle}>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 10, minWidth: 0 }}>
+                  <GraduationCap size={18} color="#1d4ed8" />
+                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {s.name}
+                  </span>
+                </span>
+                <ChevronRight size={18} color="#9ca3af" />
+              </Link>
+            ))}
           </div>
-        ) : null}
-        {loading ? (
-          <div style={{ color: "#6b7280", fontSize: 13, padding: 12 }}>Loading schools…</div>
-        ) : null}
-      </div>
+
+          {filteredSchools.length === 0 && filteredEvents.length === 0 ? (
+            <div style={{ color: "#6b7280", fontSize: 13, padding: 12 }}>
+              {schools.length + events.length === 0
+                ? "No schools or events yet."
+                : "Nothing matches that search."}
+            </div>
+          ) : null}
+        </>
+      )}
     </div>
   );
 }
