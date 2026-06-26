@@ -15,6 +15,7 @@ import {
   Camera,
   CheckCircle2,
   CloudUpload,
+  Images,
   Search,
   UserRound,
 } from "lucide-react";
@@ -130,9 +131,14 @@ export default function CapturePage() {
   const [perStudent, setPerStudent] = useState<Record<string, number>>({});
   const [pending, setPending] = useState(0);
   const [uploaded, setUploaded] = useState(0);
+  // Capture source: "phone" shoots with the device camera; "dslr" imports the
+  // shots a tethered DSLR auto-sent to this phone (e.g. Canon Camera Connect)
+  // from the Photos library and queues them for the locked student.
+  const [mode, setMode] = useState<"phone" | "dslr">("phone");
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const controlsRef = useRef<IScannerControls | null>(null);
+  const dslrInputRef = useRef<HTMLInputElement | null>(null);
   const activeRef = useRef<StudentRow | null>(null);
   const studentsRef = useRef<StudentRow[]>([]);
   const lastScanRef = useRef<{ token: string; at: number }>({ token: "", at: 0 });
@@ -169,6 +175,23 @@ export default function CapturePage() {
       cancelled = true;
     };
   }, [supabase]);
+
+  // Remember the capture source between sessions (a DSLR shooter stays in DSLR).
+  useEffect(() => {
+    try {
+      const saved = window.localStorage.getItem("capture-mode");
+      if (saved === "dslr" || saved === "phone") setMode(saved);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+  useEffect(() => {
+    try {
+      window.localStorage.setItem("capture-mode", mode);
+    } catch {
+      /* ignore */
+    }
+  }, [mode]);
 
   // Background upload pump + queue counter.
   const refreshQueue = useCallback(async () => {
@@ -324,6 +347,39 @@ export default function CapturePage() {
     pump();
   }
 
+  // Queue the DSLR shots the photographer picked from Photos (where Camera
+  // Connect deposited them) for the locked student — same offline queue + R2
+  // upload as a phone capture, just sourced from files instead of the camera.
+  async function importDslrPhotos(files: FileList | null) {
+    const student = active;
+    if (!files || files.length === 0 || !student || !school) return;
+    let added = 0;
+    for (const file of Array.from(files)) {
+      if (!file.type.startsWith("image/")) continue;
+      const rec: CaptureRecord = {
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        schoolId: school.id,
+        studentId: student.id,
+        studentName: fullName(student),
+        className: clean(student.class_name),
+        blob: file,
+        createdAt: Date.now() + added,
+        status: "pending",
+        attempts: 0,
+      };
+      await addCapture(rec);
+      added += 1;
+    }
+    if (dslrInputRef.current) dslrInputRef.current.value = "";
+    if (added === 0) return;
+    setSessionCount((n) => n + added);
+    setPerStudent((m) => ({ ...m, [student.id]: (m[student.id] ?? 0) + added }));
+    setFlash(true);
+    window.setTimeout(() => setFlash(false), 140);
+    void refreshQueue();
+    pump();
+  }
+
   // ── School picker ──
   if (step === "pick") {
     const filtered = schools.filter((s) =>
@@ -450,6 +506,42 @@ export default function CapturePage() {
           <CloudUpload size={14} />
           {uploaded} up · {pending} pending
         </div>
+      </div>
+
+      {/* Capture source: phone camera vs DSLR import */}
+      <div style={{ display: "flex", gap: 6, background: "#f3f4f6", borderRadius: 12, padding: 4 }}>
+        {([
+          { key: "phone", label: "Phone camera", icon: <Camera size={15} /> },
+          { key: "dslr", label: "DSLR import", icon: <Images size={15} /> },
+        ] as const).map((opt) => {
+          const on = mode === opt.key;
+          return (
+            <button
+              key={opt.key}
+              type="button"
+              onClick={() => setMode(opt.key)}
+              style={{
+                flex: 1,
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 6,
+                border: "none",
+                borderRadius: 9,
+                padding: "9px 8px",
+                fontSize: 13,
+                fontWeight: 800,
+                cursor: "pointer",
+                background: on ? "#fff" : "transparent",
+                color: on ? "#111827" : "#6b7280",
+                boxShadow: on ? "0 1px 3px rgba(0,0,0,0.12)" : "none",
+              }}
+            >
+              {opt.icon}
+              {opt.label}
+            </button>
+          );
+        })}
       </div>
 
       <style
@@ -601,30 +693,70 @@ export default function CapturePage() {
         </button>
       </div>
 
-      {/* Shutter */}
-      <button
-        type="button"
-        onClick={() => void shoot()}
-        disabled={!active}
-        style={{
-          width: "100%",
-          borderRadius: 16,
-          border: "none",
-          background: active ? "#cc0000" : "#e5e7eb",
-          color: active ? "#fff" : "#9ca3af",
-          padding: "16px",
-          fontSize: 17,
-          fontWeight: 900,
-          cursor: active ? "pointer" : "default",
-          display: "inline-flex",
-          alignItems: "center",
-          justifyContent: "center",
-          gap: 8,
-        }}
-      >
-        <Camera size={20} />
-        {active ? `Capture ${fullName(active)}` : "Scan a student first"}
-      </button>
+      {/* Shutter (phone camera) / Import (DSLR) */}
+      {mode === "phone" ? (
+        <button
+          type="button"
+          onClick={() => void shoot()}
+          disabled={!active}
+          style={{
+            width: "100%",
+            borderRadius: 16,
+            border: "none",
+            background: active ? "#cc0000" : "#e5e7eb",
+            color: active ? "#fff" : "#9ca3af",
+            padding: "16px",
+            fontSize: 17,
+            fontWeight: 900,
+            cursor: active ? "pointer" : "default",
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 8,
+          }}
+        >
+          <Camera size={20} />
+          {active ? `Capture ${fullName(active)}` : "Scan a student first"}
+        </button>
+      ) : (
+        <>
+          <input
+            ref={dslrInputRef}
+            type="file"
+            accept="image/*"
+            multiple
+            style={{ display: "none" }}
+            onChange={(e) => void importDslrPhotos(e.target.files)}
+          />
+          <button
+            type="button"
+            onClick={() => dslrInputRef.current?.click()}
+            disabled={!active}
+            style={{
+              width: "100%",
+              borderRadius: 16,
+              border: "none",
+              background: active ? "#cc0000" : "#e5e7eb",
+              color: active ? "#fff" : "#9ca3af",
+              padding: "16px",
+              fontSize: 17,
+              fontWeight: 900,
+              cursor: active ? "pointer" : "default",
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 8,
+            }}
+          >
+            <Images size={20} />
+            {active ? `Import photos for ${fullName(active)}` : "Scan a student first"}
+          </button>
+          <div style={{ fontSize: 12, color: "#6b7280", fontWeight: 600, textAlign: "center", lineHeight: 1.5 }}>
+            Your DSLR&apos;s shots arrive in this phone&apos;s Photos via Canon Camera
+            Connect. Scan the student, tap Import, and pick their latest photos.
+          </div>
+        </>
+      )}
 
       <div style={{ display: "flex", alignItems: "center", gap: 6, justifyContent: "center", color: "#6b7280", fontSize: 12, fontWeight: 700 }}>
         <CheckCircle2 size={14} color="#16a34a" /> {sessionCount} captured this session
