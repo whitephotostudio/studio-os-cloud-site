@@ -859,7 +859,7 @@ export default function CapturePage() {
               {studentPhotos.map((p) => (
                 <div key={p.key} style={{ position: "relative", aspectRatio: "1 / 1", borderRadius: 10, overflow: "hidden", background: "#f3f4f6" }}>
                   {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={proxiedPhotoUrl(p.key) || p.url} alt="" loading="lazy" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                  <img src={`${proxiedPhotoUrl(p.key) || p.url}?w=400`} alt="" loading="lazy" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                   <button
                     type="button"
                     onClick={() => void deletePhoto(p.key)}

@@ -379,7 +379,7 @@ export default function MobileSchoolsPage() {
           </div>
         </div>
       ) : (
-        <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "grid", gap: 14 }}>
+        <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 10 }}>
           {filtered.map((school) => {
             const students = studentsBySchool[school.id] ?? 0;
             const orderCt = ordersBySchool[school.id] ?? 0;
@@ -413,7 +413,7 @@ export default function MobileSchoolsPage() {
                   <div
                     style={{
                       position: "relative",
-                      height: 120,
+                      height: 84,
                       background: cover
                         ? "#f3f4f6"
                         : "linear-gradient(135deg,#1e293b 0%,#0f172a 100%)",
@@ -423,7 +423,7 @@ export default function MobileSchoolsPage() {
                     {cover ? (
                       // eslint-disable-next-line @next/next/no-img-element
                       <img
-                        src={cover}
+                        src={`${cover}?w=320`}
                         alt=""
                         style={{
                           width: "100%",
@@ -472,9 +472,9 @@ export default function MobileSchoolsPage() {
                         position: "absolute",
                         top: 10,
                         right: 10,
-                        width: 36,
-                        height: 36,
-                        borderRadius: 10,
+                        width: 30,
+                        height: 30,
+                        borderRadius: 9,
                         background: "rgba(255,255,255,0.94)",
                         border: "1px solid rgba(0,0,0,0.06)",
                         color: "#111827",

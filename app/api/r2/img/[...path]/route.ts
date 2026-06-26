@@ -4,6 +4,8 @@ import {
   resolveDashboardAuth,
 } from "@/lib/dashboard-auth";
 import { r2PresignedGetUrl } from "@/lib/r2-signed-urls";
+import { r2Download } from "@/lib/r2";
+import sharp from "sharp";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -157,6 +159,35 @@ export async function GET(
         { ok: false, message: "Not authorized for this image." },
         { status: 403 },
       );
+    }
+
+    // ── On-demand thumbnail: ?w=<px> downloads the object, resizes it with
+    //    sharp, and returns the bytes (cached a day). Lets the mobile grids
+    //    show a 25-student page without pulling 25 full-size originals.
+    //    Falls through to the normal redirect on any failure. ──
+    const widthParam = request.nextUrl.searchParams.get("w");
+    const thumbWidth = widthParam
+      ? Math.max(16, Math.min(1600, Number.parseInt(widthParam, 10) || 0))
+      : 0;
+    if (thumbWidth > 0) {
+      try {
+        const original = await r2Download(storagePath);
+        const resized = await sharp(original)
+          .rotate()
+          .resize({ width: thumbWidth, withoutEnlargement: true })
+          .jpeg({ quality: 78 })
+          .toBuffer();
+        return new NextResponse(new Uint8Array(resized), {
+          status: 200,
+          headers: {
+            "Content-Type": "image/jpeg",
+            "Cache-Control": "private, max-age=86400",
+          },
+        });
+      } catch (resizeError) {
+        console.error("[r2/img] thumbnail resize failed", resizeError);
+        // fall through to the normal redirect below
+      }
     }
 
     // ── Generate a short-lived signed URL (5 min — browser cache will

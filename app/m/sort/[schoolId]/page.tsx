@@ -360,7 +360,7 @@ export default function SortSchoolPage() {
               >
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
-                  src={proxiedPhotoUrl(p.key) || p.url}
+                  src={`${proxiedPhotoUrl(p.key) || p.url}?w=400`}
                   alt=""
                   loading="lazy"
                   style={{ width: "100%", height: "100%", objectFit: "cover" }}
@@ -486,7 +486,7 @@ export default function SortSchoolPage() {
                       <div style={{ width: 34, height: 34, borderRadius: 8, overflow: "hidden", background: "#eef0f4", flexShrink: 0, display: "grid", placeItems: "center" }}>
                         {cover ? (
                           // eslint-disable-next-line @next/next/no-img-element
-                          <img src={cover} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                          <img src={`${cover}?w=96`} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                         ) : (
                           <UserRound size={16} color="#b8bfca" />
                         )}
@@ -622,7 +622,7 @@ export default function SortSchoolPage() {
                       {cover ? (
                         // eslint-disable-next-line @next/next/no-img-element
                         <img
-                          src={cover}
+                          src={`${cover}?w=300`}
                           alt=""
                           loading="lazy"
                           style={{ width: "100%", height: "100%", objectFit: "cover" }}
