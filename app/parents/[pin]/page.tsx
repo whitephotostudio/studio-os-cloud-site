@@ -1920,11 +1920,21 @@ function isStandaloneWalletPrint(pkg: PackageRow): boolean {
   );
 }
 
+// A row the base classifier labels "print" but that actually bundles more than
+// one print — it carries package items (e.g. "2-5x7", a two-pack). It belongs
+// in Packages, not the single-size Prints grid. True single prints carry no
+// items, so this never catches a real 5x7/8x10/etc.
+function isGalleryPrintBundle(pkg: PackageRow): boolean {
+  return getCategory(pkg) === "print" && (pkg.items?.length ?? 0) >= 1;
+}
+
 // Category key used for browsing in the client gallery only (never the
-// dashboard or checkout). Identical to getCategory() except a standalone wallet
-// print is grouped with Prints.
+// dashboard or checkout). Identical to getCategory() except: a standalone
+// wallet print joins Prints, and a multi-print pack is pushed to Packages.
 function galleryCategoryKey(pkg: PackageRow): string {
-  return isStandaloneWalletPrint(pkg) ? "print" : getCategory(pkg);
+  if (isStandaloneWalletPrint(pkg)) return "print";
+  if (isGalleryPrintBundle(pkg)) return "package";
+  return getCategory(pkg);
 }
 
 function packageSearchText(pkg: PackageRow): string {
@@ -4030,13 +4040,12 @@ export default function ParentGalleryPage() {
   const [drawerView, setDrawerView] = useState<DrawerView>("product-select");
   const [activeCategoryKey, setActiveCategoryKey] = useState<string>("package");
 
-  // Prints size grid (ShootProof-style "tap a size") — which size tile is
-  // highlighted and the quantity for it. Both reset when a category opens.
-  const [selectedPrintPkgId, setSelectedPrintPkgId] = useState<string | null>(null);
-  const [printGridQty, setPrintGridQty] = useState(1);
-  // Set when the grid's "Add to basket" is tapped, so the effect below can add
-  // the print straight to the basket once selectPackage has prepared its slot.
+  // Prints size grid (ShootProof-style). Each size tile carries its own
+  // quantity (stored per package id via get/setChosenQty) and its own Buy
+  // button. pendingPrintAdd drives the one-tap add; justAddedPrintId flashes
+  // "Added" on the tile that was just dropped into the basket.
   const [pendingPrintAdd, setPendingPrintAdd] = useState(false);
+  const [justAddedPrintId, setJustAddedPrintId] = useState<string | null>(null);
 
   // Package builder
   const [slots, setSlots] = useState<ItemSlot[]>([]);
@@ -7544,9 +7553,16 @@ export default function ParentGalleryPage() {
   function openCategory(catKey: string) {
     setActiveCategoryKey(catKey);
     setDrawerView("category-list");
-    // Fresh size-grid state each time a category is opened.
-    setSelectedPrintPkgId(null);
-    setPrintGridQty(1);
+  }
+
+  // Per-tile "Buy" in the Prints size grid: add this size (with its own
+  // quantity) straight to the basket. selectPackage routes it through the
+  // build-package step with the current photo pre-assigned; the pendingPrintAdd
+  // effect then finalises the basket line and returns to the grid.
+  function buyPrintTile(pkg: PackageRow) {
+    if (orderingDisabled) return;
+    setPendingPrintAdd(true);
+    selectPackage(pkg, { quantityOverride: getChosenQty(pkg.id) });
   }
 
   function getChosenQty(pkgId: string) {
@@ -7797,11 +7813,6 @@ export default function ParentGalleryPage() {
     activeCategoryKey === "print" &&
     !compositeSelectedImage &&
     printGridPackages.length > 0;
-  const activePrintPkg = showPrintSizeGrid
-    ? printGridPackages.find((p) => p.id === selectedPrintPkgId) ??
-      printGridPackages[0] ??
-      null
-    : null;
 
   const tilesWithData = TILES.map((tile) => ({
     ...tile,
@@ -8205,7 +8216,9 @@ export default function ParentGalleryPage() {
   useEffect(() => {
     if (!pendingPrintAdd) return;
     if (drawerView !== "build-package" || !selectedPkg) return;
-    if (getCategory(selectedPkg) !== "print") {
+    // galleryCategoryKey (not getCategory) so a standalone wallet print — stored
+    // as "package" but shown in the Prints grid — also adds correctly.
+    if (galleryCategoryKey(selectedPkg) !== "print") {
       setPendingPrintAdd(false);
       return;
     }
@@ -8213,10 +8226,23 @@ export default function ParentGalleryPage() {
       setPendingPrintAdd(false);
       return;
     }
+    const addedId = selectedPkg.id;
     setPendingPrintAdd(false);
     addCurrentSelectionToCart();
+    // Stay on the size grid so the client can keep adding sizes; reset that
+    // tile's quantity and flash "Added" on it.
+    setChosenQty(addedId, 1);
+    setJustAddedPrintId(addedId);
+    setActiveCategoryKey("print");
+    setDrawerView("category-list");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingPrintAdd, drawerView, selectedPkg, allSlotsAssigned, currentDraftCartItem]);
+
+  useEffect(() => {
+    if (!justAddedPrintId) return;
+    const t = setTimeout(() => setJustAddedPrintId(null), 1500);
+    return () => clearTimeout(t);
+  }, [justAddedPrintId]);
 
   function removeCartItem(cartItemId: string) {
     setCartItems((prev) => prev.filter((item) => item.id !== cartItemId));
@@ -12488,7 +12514,7 @@ export default function ParentGalleryPage() {
                 {/* ══ PRINTS SIZE GRID (tap a size) ═══════════════════════ */}
                 {drawerView === "category-list" && showPrintSizeGrid && (
                   <div style={{ display: "flex", flexDirection: "column" }}>
-                    {effectiveImageUrl ? (
+                    {(confirmedBackdrop && currentNobgUrl) || effectiveImageUrl ? (
                       <div
                         style={{
                           borderRadius: 12,
@@ -12499,21 +12525,52 @@ export default function ParentGalleryPage() {
                           display: "flex",
                           alignItems: "center",
                           justifyContent: "center",
-                          maxHeight: 220,
+                          padding: confirmedBackdrop && currentNobgUrl ? 8 : 0,
+                          maxHeight: 240,
                         }}
                       >
-                        <img
-                          src={effectiveImageUrl}
-                          alt=""
-                          aria-hidden
-                          style={{
-                            maxWidth: "100%",
-                            maxHeight: 220,
-                            objectFit: "contain",
-                            display: "block",
-                            filter: galleryImageFilter || undefined,
-                          }}
-                        />
+                        {confirmedBackdrop && currentNobgUrl ? (
+                          // Backdrop applied: composite the photo onto it the
+                          // same way the package slots do (MiniComposite renders
+                          // a live canvas, so the cut-out subject always shows —
+                          // unlike the flattened compositeDataUrl, which can drop
+                          // the foreground).
+                          <div
+                            style={{
+                              width: 200,
+                              height: 200,
+                              borderRadius: 10,
+                              overflow: "hidden",
+                            }}
+                          >
+                            <MiniComposite
+                              backdropUrl={
+                                confirmedBackdrop.thumbnail_url ||
+                                confirmedBackdrop.image_url
+                              }
+                              backdropFallbackUrl={confirmedBackdrop.image_url}
+                              nobgUrl={currentNobgUrl}
+                              fallbackUrl={selectedImage?.url ?? ""}
+                              size={200}
+                              backdropBlurPx={
+                                confirmedBlurBackground ? confirmedBlurAmount : 0
+                              }
+                            />
+                          </div>
+                        ) : effectiveImageUrl ? (
+                          <img
+                            src={effectiveImageUrl}
+                            alt=""
+                            aria-hidden
+                            style={{
+                              maxWidth: "100%",
+                              maxHeight: 220,
+                              objectFit: "contain",
+                              display: "block",
+                              filter: galleryImageFilter || undefined,
+                            }}
+                          />
+                        ) : null}
                       </div>
                     ) : null}
 
@@ -12538,186 +12595,139 @@ export default function ParentGalleryPage() {
                       }}
                     >
                       {printGridPackages.map((pkg) => {
-                        const selected = activePrintPkg?.id === pkg.id;
                         const finish = printFinishLabel(pkg.name);
+                        const tileQty = getChosenQty(pkg.id);
+                        const justAdded = justAddedPrintId === pkg.id;
+                        const lineCents = pkg.price_cents * Math.max(1, tileQty);
+                        const stepStyle = {
+                          width: 32,
+                          height: 32,
+                          borderRadius: 999,
+                          border: "1px solid rgba(255,255,255,0.18)",
+                          background: "transparent",
+                          color: "#fff",
+                          fontSize: 18,
+                          cursor: "pointer",
+                          lineHeight: 1,
+                          flexShrink: 0,
+                        } as const;
                         return (
-                          <button
+                          <div
                             key={pkg.id}
-                            type="button"
-                            onClick={() => {
-                              setSelectedPrintPkgId(pkg.id);
-                              setPrintGridQty(1);
-                            }}
-                            aria-pressed={selected}
                             style={{
-                              textAlign: "left",
-                              border: selected
-                                ? "1.5px solid #ef4444"
+                              display: "flex",
+                              flexDirection: "column",
+                              gap: 11,
+                              border: justAdded
+                                ? "1.5px solid #22c55e"
                                 : "1px solid #2f2f2f",
-                              background: selected
-                                ? "rgba(239,68,68,0.12)"
-                                : "#222",
+                              background: "#222",
                               borderRadius: 12,
-                              padding: "12px 13px",
-                              cursor: "pointer",
-                              position: "relative",
-                              minHeight: 76,
+                              padding: 12,
                             }}
                           >
-                            <div style={{ fontSize: 17, fontWeight: 700, color: "#fff" }}>
-                              {printSizeLabel(pkg.name)}
-                            </div>
-                            {finish ? (
+                            <div>
+                              <div style={{ fontSize: 17, fontWeight: 700, color: "#fff" }}>
+                                {printSizeLabel(pkg.name)}
+                              </div>
+                              {finish ? (
+                                <div style={{ fontSize: 11, color: "#8f8f8f", marginTop: 2 }}>
+                                  {finish}
+                                </div>
+                              ) : null}
                               <div
                                 style={{
-                                  fontSize: 11,
-                                  color: selected ? "#f3b4b0" : "#8f8f8f",
-                                  marginTop: 2,
+                                  fontSize: 13,
+                                  fontWeight: 700,
+                                  color: "#c7c7c7",
+                                  marginTop: 6,
                                 }}
                               >
-                                {finish}
+                                ${(pkg.price_cents / 100).toFixed(2)}
                               </div>
-                            ) : null}
+                            </div>
+
                             <div
                               style={{
-                                fontSize: 13,
-                                fontWeight: 700,
-                                color: selected ? "#fff" : "#c7c7c7",
-                                marginTop: 7,
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                gap: 12,
                               }}
                             >
-                              ${(pkg.price_cents / 100).toFixed(2)}
-                            </div>
-                            {selected ? (
-                              <div
+                              <button
+                                type="button"
+                                aria-label={`Decrease ${printSizeLabel(pkg.name)} quantity`}
+                                onClick={() => setChosenQty(pkg.id, tileQty - 1)}
+                                style={stepStyle}
+                              >
+                                −
+                              </button>
+                              <span
                                 style={{
-                                  position: "absolute",
-                                  top: 9,
-                                  right: 9,
-                                  width: 20,
-                                  height: 20,
-                                  borderRadius: "50%",
-                                  background: "#ef4444",
-                                  display: "flex",
-                                  alignItems: "center",
-                                  justifyContent: "center",
+                                  minWidth: 18,
+                                  textAlign: "center",
+                                  color: "#fff",
+                                  fontWeight: 700,
                                 }}
                               >
-                                <Check size={13} color="#fff" strokeWidth={3} />
-                              </div>
-                            ) : null}
-                          </button>
+                                {tileQty}
+                              </span>
+                              <button
+                                type="button"
+                                aria-label={`Increase ${printSizeLabel(pkg.name)} quantity`}
+                                onClick={() => setChosenQty(pkg.id, tileQty + 1)}
+                                style={stepStyle}
+                              >
+                                +
+                              </button>
+                            </div>
+
+                            <button
+                              type="button"
+                              disabled={orderingDisabled}
+                              onClick={() => buyPrintTile(pkg)}
+                              style={{
+                                width: "100%",
+                                background: orderingDisabled
+                                  ? "#2a2a2a"
+                                  : justAdded
+                                    ? "#22c55e"
+                                    : "#fff",
+                                color: orderingDisabled
+                                  ? "#666"
+                                  : justAdded
+                                    ? "#04130a"
+                                    : "#000",
+                                border: "none",
+                                borderRadius: 999,
+                                padding: "11px",
+                                fontSize: 13,
+                                fontWeight: 800,
+                                cursor: orderingDisabled ? "not-allowed" : "pointer",
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                gap: 6,
+                              }}
+                            >
+                              {orderingDisabled ? (
+                                "Closed"
+                              ) : justAdded ? (
+                                <>
+                                  <Check size={15} strokeWidth={3} /> Added
+                                </>
+                              ) : (
+                                <>
+                                  <ShoppingCart size={15} /> Buy · $
+                                  {(lineCents / 100).toFixed(2)}
+                                </>
+                              )}
+                            </button>
+                          </div>
                         );
                       })}
                     </div>
-
-                    <div
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "space-between",
-                        marginTop: 16,
-                        padding: "10px 14px",
-                        border: "1px solid #262626",
-                        borderRadius: 12,
-                        background: "#1e1e1e",
-                      }}
-                    >
-                      <span style={{ color: "#bdbdbd", fontSize: 13 }}>Quantity</span>
-                      <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-                        <button
-                          type="button"
-                          aria-label="Decrease quantity"
-                          onClick={() => setPrintGridQty((q) => Math.max(1, q - 1))}
-                          style={{
-                            width: 34,
-                            height: 34,
-                            borderRadius: 999,
-                            border: "1px solid rgba(255,255,255,0.18)",
-                            background: "transparent",
-                            color: "#fff",
-                            fontSize: 18,
-                            cursor: "pointer",
-                            lineHeight: 1,
-                          }}
-                        >
-                          −
-                        </button>
-                        <span
-                          style={{
-                            minWidth: 20,
-                            textAlign: "center",
-                            color: "#fff",
-                            fontWeight: 700,
-                          }}
-                        >
-                          {printGridQty}
-                        </span>
-                        <button
-                          type="button"
-                          aria-label="Increase quantity"
-                          onClick={() => setPrintGridQty((q) => q + 1)}
-                          style={{
-                            width: 34,
-                            height: 34,
-                            borderRadius: 999,
-                            border: "1px solid rgba(255,255,255,0.18)",
-                            background: "transparent",
-                            color: "#fff",
-                            fontSize: 18,
-                            cursor: "pointer",
-                            lineHeight: 1,
-                          }}
-                        >
-                          +
-                        </button>
-                      </div>
-                    </div>
-
-                    <button
-                      type="button"
-                      disabled={!activePrintPkg || orderingDisabled}
-                      onClick={() => {
-                        if (!activePrintPkg || orderingDisabled) return;
-                        setPendingPrintAdd(true);
-                        selectPackage(activePrintPkg, {
-                          quantityOverride: Math.max(1, printGridQty),
-                        });
-                      }}
-                      style={{
-                        marginTop: 16,
-                        width: "100%",
-                        background:
-                          activePrintPkg && !orderingDisabled ? "#fff" : "#222",
-                        color: activePrintPkg && !orderingDisabled ? "#000" : "#555",
-                        border: "none",
-                        borderRadius: 999,
-                        padding: "15px",
-                        fontSize: 15,
-                        fontWeight: 800,
-                        cursor:
-                          activePrintPkg && !orderingDisabled
-                            ? "pointer"
-                            : "not-allowed",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        gap: 8,
-                      }}
-                    >
-                      <ShoppingCart size={16} />
-                      {orderingDisabled
-                        ? galleryCopy.orderingClosed ?? "Ordering closed"
-                        : `${galleryCopy.addToBasket ?? "Add to Basket"}${
-                            activePrintPkg
-                              ? ` · $${(
-                                  (activePrintPkg.price_cents *
-                                    Math.max(1, printGridQty)) /
-                                  100
-                                ).toFixed(2)}`
-                              : ""
-                          }`}
-                    </button>
                   </div>
                 )}
 
