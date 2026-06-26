@@ -32,6 +32,7 @@ export default function SortEventPage() {
   const [loading, setLoading] = useState(true);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [showQr, setShowQr] = useState(false);
+  const [accessPin, setAccessPin] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -52,7 +53,7 @@ export default function SortEventPage() {
       if (!pg?.id || cancelled) return;
       const { data: proj } = await supabase
         .from("projects")
-        .select("id, title, gallery_slug")
+        .select("id, title, gallery_slug, access_pin, access_mode")
         .eq("id", projectId)
         .eq("photographer_id", pg.id)
         .maybeSingle();
@@ -63,6 +64,9 @@ export default function SortEventPage() {
       }
       setTitle(clean((proj as { title: string | null }).title) || "Event");
       setSlug(clean((proj as { gallery_slug: string | null }).gallery_slug));
+      const accessMode = clean((proj as { access_mode: string | null }).access_mode);
+      const pin = clean((proj as { access_pin: string | null }).access_pin);
+      setAccessPin(accessMode === "pin" && pin ? pin : "");
       try {
         const res = await fetch("/api/dashboard/capture/event-list", {
           method: "POST",
@@ -261,6 +265,16 @@ export default function SortEventPage() {
                 <QrCode value={galleryUrl()} size={250} />
               </div>
             </div>
+            {accessPin ? (
+              <div style={{ marginTop: 16, padding: "12px 16px", borderRadius: 14, background: "#fff7ed", border: "1px solid #fed7aa" }}>
+                <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: "0.1em", textTransform: "uppercase", color: "#c2410c" }}>
+                  Access PIN
+                </div>
+                <div style={{ fontSize: 30, fontWeight: 900, color: "#9a3412", letterSpacing: "0.18em", marginTop: 4, fontFamily: "ui-monospace, monospace" }}>
+                  {accessPin}
+                </div>
+              </div>
+            ) : null}
             <div style={{ fontSize: 11, color: "#9ca3af", marginTop: 14, wordBreak: "break-all", fontFamily: "ui-monospace, monospace" }}>
               {galleryUrl()}
             </div>
