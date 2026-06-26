@@ -2810,9 +2810,243 @@ export default function SettingsPage() {
           </div>
         ) : null}
 
+        {/* ── Change password ──────────────────────────────────────── */}
+        <ChangePasswordSection sessionReady={sessionReady} />
+
         {/* ── Two-Factor Authentication ────────────────────────────── */}
         <MfaSection accessToken={accessToken} sessionReady={sessionReady} />
 
+      </div>
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════════ */
+/*  Change Password Section                                            */
+/* ═══════════════════════════════════════════════════════════════════ */
+
+/**
+ * Lets a signed-in photographer change their own password without going
+ * through the "forgot password" email flow. We verify the current password
+ * first by re-authenticating (signInWithPassword), then set the new one via
+ * supabase.auth.updateUser({ password }). Entirely client-side — same
+ * primitive the /reset-password page uses, just with a current-password gate
+ * so a walk-up on an unlocked session can't silently swap the password.
+ */
+function ChangePasswordSection({ sessionReady }: { sessionReady: boolean }) {
+  const supabase = useMemo(() => createClient(), []);
+
+  const [accountEmail, setAccountEmail] = useState<string | null>(null);
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [showPasswords, setShowPasswords] = useState(false);
+  const [pwBusy, setPwBusy] = useState(false);
+  const [pwError, setPwError] = useState("");
+  const [pwMessage, setPwMessage] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    supabase.auth
+      .getUser()
+      .then(({ data }) => {
+        if (active) setAccountEmail(data.user?.email ?? null);
+      })
+      .catch(() => {
+        if (active) setAccountEmail(null);
+      });
+    return () => {
+      active = false;
+    };
+  }, [supabase]);
+
+  async function handleChangePassword(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    setPwError("");
+    setPwMessage("");
+
+    if (!currentPassword || !newPassword || !confirmPassword) {
+      setPwError("Please fill in all three fields.");
+      return;
+    }
+    if (newPassword.length < 6) {
+      setPwError("Your new password must be at least 6 characters.");
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setPwError("The new passwords don't match.");
+      return;
+    }
+    if (newPassword === currentPassword) {
+      setPwError("Your new password must be different from your current one.");
+      return;
+    }
+    if (!accountEmail) {
+      setPwError("We couldn't verify your account. Refresh the page and try again.");
+      return;
+    }
+
+    setPwBusy(true);
+    try {
+      // 1. Confirm the current password is correct by re-authenticating.
+      //    On a wrong password this errors and leaves the session untouched;
+      //    on success it refreshes the same user's session.
+      const { error: verifyError } = await supabase.auth.signInWithPassword({
+        email: accountEmail,
+        password: currentPassword,
+      });
+      if (verifyError) {
+        const msg = (verifyError.message || "").toLowerCase();
+        setPwError(
+          msg.includes("invalid login credentials")
+            ? "Your current password is incorrect."
+            : verifyError.message,
+        );
+        setPwBusy(false);
+        return;
+      }
+
+      // 2. Set the new password.
+      const { error: updateError } = await supabase.auth.updateUser({
+        password: newPassword,
+      });
+      if (updateError) {
+        setPwError(updateError.message);
+        setPwBusy(false);
+        return;
+      }
+
+      setPwMessage("Your password has been updated. Use it the next time you sign in.");
+      setCurrentPassword("");
+      setNewPassword("");
+      setConfirmPassword("");
+    } catch (err) {
+      setPwError(
+        err instanceof Error ? err.message : "Something went wrong. Please try again.",
+      );
+    } finally {
+      setPwBusy(false);
+    }
+  }
+
+  const inputStyle: React.CSSProperties = {
+    width: "100%",
+    borderRadius: 18,
+    border: "1px solid #d6dfef",
+    background: "#fff",
+    padding: "14px 16px",
+    fontSize: 16,
+    color: "#0f172a",
+    outline: "none",
+  };
+  const labelStyle: React.CSSProperties = {
+    marginBottom: 8,
+    fontSize: 13,
+    fontWeight: 700,
+    color: "#475569",
+  };
+
+  return (
+    <div style={{ marginTop: 20 }}>
+      <div style={cardStyle}>
+        <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 18 }}>
+          <div style={{ width: 54, height: 54, borderRadius: 16, background: "#eef2ff", display: "grid", placeItems: "center" }}>
+            <KeyRound size={24} color="#4f46e5" />
+          </div>
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 800, letterSpacing: "0.14em", textTransform: "uppercase", color: "#64748b" }}>
+              Account security
+            </div>
+            <div style={{ fontSize: 20, fontWeight: 900, color: "#0f172a", marginTop: 2 }}>
+              Change password
+            </div>
+          </div>
+        </div>
+
+        <p style={{ fontSize: 14, color: "#64748b", margin: "0 0 18px" }}>
+          Update the password for{" "}
+          <strong style={{ color: "#0f172a" }}>{accountEmail || "your account"}</strong>. You'll
+          need your current password to confirm it's you.
+        </p>
+
+        {pwMessage ? (
+          <div style={{ borderRadius: 16, border: "1px solid #86efac", background: "#f0fdf4", color: "#166534", padding: "12px 16px", marginBottom: 14, fontWeight: 700 }}>
+            {pwMessage}
+          </div>
+        ) : null}
+
+        {pwError ? (
+          <div style={{ borderRadius: 16, border: "1px solid #fca5a5", background: "#fef2f2", color: "#991b1b", padding: "12px 16px", marginBottom: 14, fontWeight: 700 }}>
+            {pwError}
+          </div>
+        ) : null}
+
+        <form onSubmit={handleChangePassword} style={{ display: "grid", gap: 14, maxWidth: 460 }}>
+          <label style={{ display: "block" }}>
+            <div style={labelStyle}>Current password</div>
+            <input
+              type={showPasswords ? "text" : "password"}
+              value={currentPassword}
+              onChange={(e) => setCurrentPassword(e.target.value)}
+              autoComplete="current-password"
+              placeholder="Your current password"
+              style={inputStyle}
+            />
+          </label>
+
+          <label style={{ display: "block" }}>
+            <div style={labelStyle}>New password</div>
+            <input
+              type={showPasswords ? "text" : "password"}
+              value={newPassword}
+              onChange={(e) => setNewPassword(e.target.value)}
+              autoComplete="new-password"
+              placeholder="At least 6 characters"
+              style={inputStyle}
+            />
+          </label>
+
+          <label style={{ display: "block" }}>
+            <div style={labelStyle}>Confirm new password</div>
+            <input
+              type={showPasswords ? "text" : "password"}
+              value={confirmPassword}
+              onChange={(e) => setConfirmPassword(e.target.value)}
+              autoComplete="new-password"
+              placeholder="Type the new password again"
+              style={inputStyle}
+            />
+          </label>
+
+          <label style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 14, color: "#475569", cursor: "pointer", userSelect: "none" }}>
+            <input
+              type="checkbox"
+              checked={showPasswords}
+              onChange={(e) => setShowPasswords(e.target.checked)}
+              style={{ width: 16, height: 16, cursor: "pointer", accentColor: "#4f46e5" }}
+            />
+            Show passwords
+          </label>
+
+          <div>
+            <button
+              type="submit"
+              disabled={pwBusy || !sessionReady}
+              style={{
+                border: "1px solid #0f172a",
+                borderRadius: 14,
+                background: "#0f172a",
+                color: "#fff",
+                padding: "12px 22px",
+                fontWeight: 800,
+                cursor: pwBusy || !sessionReady ? "not-allowed" : "pointer",
+                opacity: pwBusy || !sessionReady ? 0.6 : 1,
+              }}
+            >
+              {pwBusy ? "Updating..." : "Update password"}
+            </button>
+          </div>
+        </form>
       </div>
     </div>
   );
