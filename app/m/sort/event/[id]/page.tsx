@@ -9,7 +9,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { ArrowLeft, QrCode as QrIcon, Trash2, X } from "lucide-react";
+import { ArrowLeft, QrCode as QrIcon, Share2, Trash2, X } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { proxiedPhotoUrl } from "@/lib/photo-url";
 import QrCode from "@/components/qr-code";
@@ -93,6 +93,27 @@ export default function SortEventPage() {
     const origin = typeof window !== "undefined" ? window.location.origin : "";
     if (slug) return `${origin}/g/${slug}`;
     return `${origin}/parents?mode=event&project=${projectId}`;
+  }
+
+  async function shareGallery() {
+    const url = galleryUrl();
+    const label = title || "Gallery";
+    const message = accessPin
+      ? `${label} — view the photos at ${url}\nAccess PIN: ${accessPin}`
+      : `${label} — view the photos at ${url}`;
+    try {
+      const nav = navigator as Navigator & {
+        share?: (data: { title?: string; text?: string; url?: string }) => Promise<void>;
+      };
+      if (nav.share) {
+        await nav.share({ title: label, text: message, url });
+      } else if (navigator.clipboard) {
+        await navigator.clipboard.writeText(message);
+        window.alert("Link and PIN copied — paste into an email or text.");
+      }
+    } catch {
+      /* user cancelled the share sheet, or sharing is unavailable */
+    }
   }
 
   async function deletePhoto(p: Photo) {
@@ -275,6 +296,28 @@ export default function SortEventPage() {
                 </div>
               </div>
             ) : null}
+            <button
+              type="button"
+              onClick={() => void shareGallery()}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 8,
+                width: "100%",
+                marginTop: 16,
+                borderRadius: 12,
+                border: "none",
+                background: "#111827",
+                color: "#fff",
+                padding: "13px",
+                fontSize: 15,
+                fontWeight: 800,
+                cursor: "pointer",
+              }}
+            >
+              <Share2 size={16} /> Share link &amp; PIN
+            </button>
             <div style={{ fontSize: 11, color: "#9ca3af", marginTop: 14, wordBreak: "break-all", fontFamily: "ui-monospace, monospace" }}>
               {galleryUrl()}
             </div>
