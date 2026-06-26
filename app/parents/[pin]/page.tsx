@@ -1123,6 +1123,32 @@ function formatPackageItem(item: PackageItemValue): string {
   return [qty + name, type, size, finish].filter(Boolean).join(" · ").trim() || "Package item";
 }
 
+// Pull a clean size label ("5×7", or "Wallets (8)") out of a print product
+// name like "5x7 Lustre" / "Wallets (8 Cut) Lustre" for the tappable size grid.
+// Falls back to the full name when there's no recognised token, so nothing the
+// studio adds ever disappears.
+function printSizeLabel(name: string): string {
+  const s = name ?? "";
+  const m = s.match(/(\d+(?:\.\d+)?)\s*[x×]\s*(\d+(?:\.\d+)?)/);
+  if (m) return `${m[1]}×${m[2]}`;
+  if (/\bwallets?\b/i.test(s)) {
+    const count = s.match(/(\d+)\s*cut/i) ?? s.match(/\(\s*(\d+)\s*\)/);
+    return count ? `Wallets (${count[1]})` : "Wallets";
+  }
+  return s.trim();
+}
+
+// The remaining descriptor after the size/wallet token is stripped (e.g.
+// "Lustre"), shown as a small subtitle under the size.
+function printFinishLabel(name: string): string {
+  return (name ?? "")
+    .replace(/(\d+(?:\.\d+)?)\s*[x×]\s*(\d+(?:\.\d+)?)/, "")
+    .replace(/\bwallets?\b/gi, "")
+    .replace(/\(\s*\d+\s*cut\s*\)/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function folderFromPhotoUrl(photoUrl: string): string | null {
   try {
     const storagePath = extractStoragePathFromSupabaseUrl(photoUrl);
@@ -1874,6 +1900,31 @@ function isImageFileName(name: string): boolean {
 
 function getCategory(pkg: PackageRow): string {
   return getPackageCategory(pkg);
+}
+
+// A standalone wallet print (e.g. "Wallets (8 Cut) Lustre") is stored under the
+// "package" category because its name carries no NxM size token. For the CLIENT
+// gallery ONLY we surface it as a print size so it joins the size grid. This is
+// display-only: the stored category, the studio dashboard, and wallet
+// fulfilment (one sheet of 8) are untouched — orders still reference the same
+// package id. Bundles like "1-5x7 + 8 Wallets" are excluded (they have items /
+// a "+" / a real size and stay packages).
+function isStandaloneWalletPrint(pkg: PackageRow): boolean {
+  const name = pkg.name ?? "";
+  return (
+    getCategory(pkg) === "package" &&
+    !(pkg.items && pkg.items.length) &&
+    /\bwallets?\b/i.test(name) &&
+    !/\+/.test(name) &&
+    extractPackageSizes(pkg).length === 0
+  );
+}
+
+// Category key used for browsing in the client gallery only (never the
+// dashboard or checkout). Identical to getCategory() except a standalone wallet
+// print is grouped with Prints.
+function galleryCategoryKey(pkg: PackageRow): string {
+  return isStandaloneWalletPrint(pkg) ? "print" : getCategory(pkg);
 }
 
 function packageSearchText(pkg: PackageRow): string {
@@ -2827,60 +2878,7 @@ function renderPremiumMockup(
   );
 }
 
-const PREVIEW_LABELS = ["Wall", "Desk", "Close-up"];
-
-function renderMockupStrip(
-  kind: PreviewKind,
-  imageUrl: string | null | undefined,
-  activeVariant: number,
-  sizeLabel: string | null | undefined,
-  onSelect: (variant: number) => void,
-  imageFilter?: string,
-  imageAspectRatio?: number | null,
-  isCompositeArtwork = false,
-  orientationOverride?: "portrait" | "landscape",
-) {
-  return (
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 12, marginTop: 14 }}>
-      {[0, 1, 2].map((variant) => {
-        const active = activeVariant === variant;
-        return (
-          <button
-            key={variant}
-            type="button"
-            onClick={() => onSelect(variant)}
-            style={{
-              border: active ? "1px solid rgba(255,255,255,0.48)" : "1px solid rgba(255,255,255,0.10)",
-              background: active ? "rgba(255,255,255,0.10)" : "rgba(255,255,255,0.035)",
-              borderRadius: 12,
-              padding: 8,
-              cursor: "pointer",
-              width: "100%",
-              minHeight: 96,
-            }}
-          >
-            <div style={{ width: "100%", height: 60, borderRadius: 10, overflow: "hidden", background: "#1b1b1b" }}>
-              {renderPremiumMockup(
-                kind,
-                imageUrl,
-                variant,
-                true,
-                sizeLabel,
-                imageFilter,
-                imageAspectRatio,
-                isCompositeArtwork,
-                orientationOverride,
-              )}
-            </div>
-            <div style={{ marginTop: 8, fontSize: 11, fontWeight: 700, color: active ? "#fff" : "#9a9a9a" }}>
-              {PREVIEW_LABELS[variant]}
-            </div>
-          </button>
-        );
-      })}
-    </div>
-  );
-}
+// Wall / Desk / Close-up scene switcher removed (clients found it confusing).
 
 // ── Nobg helpers ──────────────────────────────────────────────────────────
 function nobgPublicUrl(path: string): string {
@@ -4022,12 +4020,23 @@ export default function ParentGalleryPage() {
 
   const [selectedOrderQty, setSelectedOrderQty] = useState(1);
   const [packageQuantities, setPackageQuantities] = useState<Record<string, number>>({});
-  const [cardPreviewVariant, setCardPreviewVariant] = useState<Record<string, number>>({});
+  // Card hero preview stays on the default scene (variant 0). The old
+  // Wall/Desk/Close-up scene switcher was removed — it confused clients —
+  // so there's no setter; the value is read-only at the default.
+  const [cardPreviewVariant] = useState<Record<string, number>>({});
 
   // Drawer
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerView, setDrawerView] = useState<DrawerView>("product-select");
   const [activeCategoryKey, setActiveCategoryKey] = useState<string>("package");
+
+  // Prints size grid (ShootProof-style "tap a size") — which size tile is
+  // highlighted and the quantity for it. Both reset when a category opens.
+  const [selectedPrintPkgId, setSelectedPrintPkgId] = useState<string | null>(null);
+  const [printGridQty, setPrintGridQty] = useState(1);
+  // Set when the grid's "Add to basket" is tapped, so the effect below can add
+  // the print straight to the basket once selectPackage has prepared its slot.
+  const [pendingPrintAdd, setPendingPrintAdd] = useState(false);
 
   // Package builder
   const [slots, setSlots] = useState<ItemSlot[]>([]);
@@ -7535,6 +7544,9 @@ export default function ParentGalleryPage() {
   function openCategory(catKey: string) {
     setActiveCategoryKey(catKey);
     setDrawerView("category-list");
+    // Fresh size-grid state each time a category is opened.
+    setSelectedPrintPkgId(null);
+    setPrintGridQty(1);
   }
 
   function getChosenQty(pkgId: string) {
@@ -7545,7 +7557,10 @@ export default function ParentGalleryPage() {
     setPackageQuantities((prev) => ({ ...prev, [pkgId]: Math.max(1, nextQty) }));
   }
 
-  function selectPackage(pkg: PackageRow, options?: { skipGroupPhotoNotice?: boolean }) {
+  function selectPackage(
+    pkg: PackageRow,
+    options?: { skipGroupPhotoNotice?: boolean; quantityOverride?: number },
+  ) {
     if (orderingDisabled) return;
 
     if (
@@ -7560,7 +7575,7 @@ export default function ParentGalleryPage() {
       return;
     }
 
-    const chosenQty = getChosenQty(pkg.id);
+    const chosenQty = Math.max(1, options?.quantityOverride ?? getChosenQty(pkg.id));
     const compositeSelectedImage =
       selectedImage && isCompositeGalleryImage(selectedImage) ? selectedImage : null;
     const initialAssignedImageUrl =
@@ -7767,14 +7782,32 @@ export default function ParentGalleryPage() {
     [packages],
   );
   const packagesInCategory = storefrontPackages.filter(
-    (p) => getCategory(p) === activeCategoryKey
+    (p) => galleryCategoryKey(p) === activeCategoryKey
   );
+
+  // Prints render as a tappable size grid, sorted cheapest-first so the sizes
+  // read in order (5×7, Wallets, 8×10, …). Composite (class group-photo) orders
+  // keep the existing card list because they carry their own size restrictions
+  // and messaging.
+  const printGridPackages =
+    activeCategoryKey === "print"
+      ? [...packagesInCategory].sort((a, b) => a.price_cents - b.price_cents)
+      : [];
+  const showPrintSizeGrid =
+    activeCategoryKey === "print" &&
+    !compositeSelectedImage &&
+    printGridPackages.length > 0;
+  const activePrintPkg = showPrintSizeGrid
+    ? printGridPackages.find((p) => p.id === selectedPrintPkgId) ??
+      printGridPackages[0] ??
+      null
+    : null;
 
   const tilesWithData = TILES.map((tile) => ({
     ...tile,
-    count: storefrontPackages.filter((p) => getCategory(p) === tile.key).length,
+    count: storefrontPackages.filter((p) => galleryCategoryKey(p) === tile.key).length,
     minPrice: (() => {
-      const pkgs = storefrontPackages.filter((p) => getCategory(p) === tile.key);
+      const pkgs = storefrontPackages.filter((p) => galleryCategoryKey(p) === tile.key);
       return pkgs.length ? Math.min(...pkgs.map((p) => p.price_cents)) / 100 : null;
     })(),
   })).filter((t) => t.count > 0);
@@ -8160,6 +8193,30 @@ export default function ParentGalleryPage() {
     setOrderError("");
     setDrawerView("product-select");
   }
+
+  // One-tap "Add to basket" for the Prints size grid. selectPackage() routes a
+  // print into the build-package step with the current photo pre-assigned to
+  // its slot(s); the moment that's ready we add it straight to the basket so the
+  // grid behaves like ShootProof ("tap a size → add"). Heavily guarded: it only
+  // fires for a print the grid itself initiated (pendingPrintAdd), only when the
+  // photo actually landed in the slot, and it clears the flag before adding so
+  // it can never double-add. If the photo couldn't auto-assign it quietly hands
+  // the client the normal build-package screen instead.
+  useEffect(() => {
+    if (!pendingPrintAdd) return;
+    if (drawerView !== "build-package" || !selectedPkg) return;
+    if (getCategory(selectedPkg) !== "print") {
+      setPendingPrintAdd(false);
+      return;
+    }
+    if (!allSlotsAssigned || !currentDraftCartItem) {
+      setPendingPrintAdd(false);
+      return;
+    }
+    setPendingPrintAdd(false);
+    addCurrentSelectionToCart();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingPrintAdd, drawerView, selectedPkg, allSlotsAssigned, currentDraftCartItem]);
 
   function removeCartItem(cartItemId: string) {
     setCartItems((prev) => prev.filter((item) => item.id !== cartItemId));
@@ -10980,11 +11037,14 @@ export default function ParentGalleryPage() {
           <div
             style={{
               flex: 1,
-              // On mobile, when the backdrop picker is open, hide the photo area
-              // entirely so the picker can take the full viewport instead of
-              // fighting for a 520px panel next to a shrunken photo.
+              // On mobile, when the backdrop picker OR the order drawer is open,
+              // hide the photo area entirely so the panel can take the full
+              // viewport instead of fighting for space next to a shrunken photo.
+              // (The order drawer is a fixed-width 620px panel on desktop; on a
+              // phone that overflowed the screen — this is the fix for "half the
+              // website they can't see".)
               display:
-                isMobileViewport && backdropPickerOpen && !drawerOpen
+                isMobileViewport && (drawerOpen || backdropPickerOpen)
                   ? "none"
                   : "flex",
               flexDirection: "column",
@@ -11969,11 +12029,15 @@ export default function ParentGalleryPage() {
           {drawerOpen && (
             <div
               style={{
-                width: 620,
+                // Desktop: fixed 620px side panel. Mobile/iPad: take the full
+                // screen so clients can actually see and use the whole ordering
+                // flow (mirrors the backdrop picker panel's responsive width).
+                width: isMobileViewport ? "100%" : 620,
+                maxWidth: "100vw",
                 display: "flex",
                 flexDirection: "column",
                 background: "#1a1a1a",
-                borderLeft: "1px solid #222",
+                borderLeft: isMobileViewport ? "none" : "1px solid #222",
                 flexShrink: 0,
                 overflow: "hidden",
               }}
@@ -12295,7 +12359,7 @@ export default function ParentGalleryPage() {
                       })}
                     </div>
 
-                    {storefrontPackages.filter((p) => getCategory(p) === "package").length > 0 && (
+                    {storefrontPackages.filter((p) => galleryCategoryKey(p) === "package").length > 0 && (
                       <>
                         <div
                           style={{
@@ -12318,7 +12382,7 @@ export default function ParentGalleryPage() {
                           }}
                         >
                           {packages
-                            .filter((p) => getCategory(p) === "package")
+                            .filter((p) => galleryCategoryKey(p) === "package")
                             .map((pkg) => (
                               <div
                                 key={pkg.id}
@@ -12421,8 +12485,244 @@ export default function ParentGalleryPage() {
                   </>
                 )}
 
+                {/* ══ PRINTS SIZE GRID (tap a size) ═══════════════════════ */}
+                {drawerView === "category-list" && showPrintSizeGrid && (
+                  <div style={{ display: "flex", flexDirection: "column" }}>
+                    {effectiveImageUrl ? (
+                      <div
+                        style={{
+                          borderRadius: 12,
+                          overflow: "hidden",
+                          background: "#101010",
+                          border: "1px solid #262626",
+                          marginBottom: 16,
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          maxHeight: 220,
+                        }}
+                      >
+                        <img
+                          src={effectiveImageUrl}
+                          alt=""
+                          aria-hidden
+                          style={{
+                            maxWidth: "100%",
+                            maxHeight: 220,
+                            objectFit: "contain",
+                            display: "block",
+                            filter: galleryImageFilter || undefined,
+                          }}
+                        />
+                      </div>
+                    ) : null}
+
+                    <div
+                      style={{
+                        fontSize: 10,
+                        fontWeight: 800,
+                        color: "#8d8d8d",
+                        letterSpacing: "0.1em",
+                        textTransform: "uppercase",
+                        marginBottom: 12,
+                      }}
+                    >
+                      Choose a size
+                    </div>
+
+                    <div
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+                        gap: 10,
+                      }}
+                    >
+                      {printGridPackages.map((pkg) => {
+                        const selected = activePrintPkg?.id === pkg.id;
+                        const finish = printFinishLabel(pkg.name);
+                        return (
+                          <button
+                            key={pkg.id}
+                            type="button"
+                            onClick={() => {
+                              setSelectedPrintPkgId(pkg.id);
+                              setPrintGridQty(1);
+                            }}
+                            aria-pressed={selected}
+                            style={{
+                              textAlign: "left",
+                              border: selected
+                                ? "1.5px solid #ef4444"
+                                : "1px solid #2f2f2f",
+                              background: selected
+                                ? "rgba(239,68,68,0.12)"
+                                : "#222",
+                              borderRadius: 12,
+                              padding: "12px 13px",
+                              cursor: "pointer",
+                              position: "relative",
+                              minHeight: 76,
+                            }}
+                          >
+                            <div style={{ fontSize: 17, fontWeight: 700, color: "#fff" }}>
+                              {printSizeLabel(pkg.name)}
+                            </div>
+                            {finish ? (
+                              <div
+                                style={{
+                                  fontSize: 11,
+                                  color: selected ? "#f3b4b0" : "#8f8f8f",
+                                  marginTop: 2,
+                                }}
+                              >
+                                {finish}
+                              </div>
+                            ) : null}
+                            <div
+                              style={{
+                                fontSize: 13,
+                                fontWeight: 700,
+                                color: selected ? "#fff" : "#c7c7c7",
+                                marginTop: 7,
+                              }}
+                            >
+                              ${(pkg.price_cents / 100).toFixed(2)}
+                            </div>
+                            {selected ? (
+                              <div
+                                style={{
+                                  position: "absolute",
+                                  top: 9,
+                                  right: 9,
+                                  width: 20,
+                                  height: 20,
+                                  borderRadius: "50%",
+                                  background: "#ef4444",
+                                  display: "flex",
+                                  alignItems: "center",
+                                  justifyContent: "center",
+                                }}
+                              >
+                                <Check size={13} color="#fff" strokeWidth={3} />
+                              </div>
+                            ) : null}
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        marginTop: 16,
+                        padding: "10px 14px",
+                        border: "1px solid #262626",
+                        borderRadius: 12,
+                        background: "#1e1e1e",
+                      }}
+                    >
+                      <span style={{ color: "#bdbdbd", fontSize: 13 }}>Quantity</span>
+                      <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+                        <button
+                          type="button"
+                          aria-label="Decrease quantity"
+                          onClick={() => setPrintGridQty((q) => Math.max(1, q - 1))}
+                          style={{
+                            width: 34,
+                            height: 34,
+                            borderRadius: 999,
+                            border: "1px solid rgba(255,255,255,0.18)",
+                            background: "transparent",
+                            color: "#fff",
+                            fontSize: 18,
+                            cursor: "pointer",
+                            lineHeight: 1,
+                          }}
+                        >
+                          −
+                        </button>
+                        <span
+                          style={{
+                            minWidth: 20,
+                            textAlign: "center",
+                            color: "#fff",
+                            fontWeight: 700,
+                          }}
+                        >
+                          {printGridQty}
+                        </span>
+                        <button
+                          type="button"
+                          aria-label="Increase quantity"
+                          onClick={() => setPrintGridQty((q) => q + 1)}
+                          style={{
+                            width: 34,
+                            height: 34,
+                            borderRadius: 999,
+                            border: "1px solid rgba(255,255,255,0.18)",
+                            background: "transparent",
+                            color: "#fff",
+                            fontSize: 18,
+                            cursor: "pointer",
+                            lineHeight: 1,
+                          }}
+                        >
+                          +
+                        </button>
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      disabled={!activePrintPkg || orderingDisabled}
+                      onClick={() => {
+                        if (!activePrintPkg || orderingDisabled) return;
+                        setPendingPrintAdd(true);
+                        selectPackage(activePrintPkg, {
+                          quantityOverride: Math.max(1, printGridQty),
+                        });
+                      }}
+                      style={{
+                        marginTop: 16,
+                        width: "100%",
+                        background:
+                          activePrintPkg && !orderingDisabled ? "#fff" : "#222",
+                        color: activePrintPkg && !orderingDisabled ? "#000" : "#555",
+                        border: "none",
+                        borderRadius: 999,
+                        padding: "15px",
+                        fontSize: 15,
+                        fontWeight: 800,
+                        cursor:
+                          activePrintPkg && !orderingDisabled
+                            ? "pointer"
+                            : "not-allowed",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        gap: 8,
+                      }}
+                    >
+                      <ShoppingCart size={16} />
+                      {orderingDisabled
+                        ? galleryCopy.orderingClosed ?? "Ordering closed"
+                        : `${galleryCopy.addToBasket ?? "Add to Basket"}${
+                            activePrintPkg
+                              ? ` · $${(
+                                  (activePrintPkg.price_cents *
+                                    Math.max(1, printGridQty)) /
+                                  100
+                                ).toFixed(2)}`
+                              : ""
+                          }`}
+                    </button>
+                  </div>
+                )}
+
                 {/* ══ CATEGORY LIST ══════════════════════════════════════ */}
-                {drawerView === "category-list" && (
+                {drawerView === "category-list" && !showPrintSizeGrid && (
                   <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
                     {packagesInCategory.length === 0 && (
                       <div
@@ -12627,21 +12927,6 @@ export default function ParentGalleryPage() {
                                 : `Select (${chosenQty})`}
                             </button>
                           </div>
-
-                          {renderMockupStrip(
-                            previewKind,
-                            effectiveImageUrl,
-                            previewVariant,
-                            pkg.name,
-                            (variant) =>
-                              setCardPreviewVariant((prev) => ({
-                                ...prev,
-                                [pkg.id]: variant,
-                            })),
-                            galleryImageFilter,
-                            effectiveImageAspectRatio,
-                            isCompositeSelection,
-                          )}
 
                           {pkg.items?.length ? (
                             <div
