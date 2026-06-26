@@ -7555,14 +7555,22 @@ export default function ParentGalleryPage() {
     setDrawerView("category-list");
   }
 
-  // Per-tile "Buy" in the Prints size grid: add this size (with its own
-  // quantity) straight to the basket. selectPackage routes it through the
-  // build-package step with the current photo pre-assigned; the pendingPrintAdd
-  // effect then finalises the basket line and returns to the grid.
+  // Per-tile "Buy" in the Prints size grid.
+  //  • Quantity 1 → one-tap add the pose currently in the viewer (fast path;
+  //    the pendingPrintAdd effect finalises it and keeps them on the grid).
+  //  • Quantity 2+ → open the pose-assignment screen (the same slot UI packages
+  //    use, with "1 of 3" labels) so the parent can give each copy a different
+  //    pose. They tap "Add to Basket" there. Slots are pre-filled with the
+  //    current pose, so they can also just add as-is.
   function buyPrintTile(pkg: PackageRow) {
     if (orderingDisabled) return;
+    const qty = getChosenQty(pkg.id);
+    if (qty > 1) {
+      selectPackage(pkg, { quantityOverride: qty });
+      return;
+    }
     setPendingPrintAdd(true);
-    selectPackage(pkg, { quantityOverride: getChosenQty(pkg.id) });
+    selectPackage(pkg, { quantityOverride: qty });
   }
 
   function getChosenQty(pkgId: string) {
@@ -12716,6 +12724,10 @@ export default function ParentGalleryPage() {
                               ) : justAdded ? (
                                 <>
                                   <Check size={15} strokeWidth={3} /> Added
+                                </>
+                              ) : tileQty > 1 ? (
+                                <>
+                                  <ShoppingCart size={15} /> Pick {tileQty} poses
                                 </>
                               ) : (
                                 <>
