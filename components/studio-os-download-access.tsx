@@ -198,7 +198,7 @@ export function StudioOSDownloadAccess({
       }
 
       setMessageTone("success");
-      setMessage("You're registered. We'll email you when Windows is released at the end of May.");
+      setMessage("You're registered. We'll email you when Windows is released.");
     } catch (error) {
       setMessageTone("error");
       setMessage(
@@ -256,7 +256,7 @@ export function StudioOSDownloadAccess({
               </div>
               <h2 className="mt-4 text-3xl font-black tracking-tight text-neutral-950 sm:text-4xl">
                 {selectedPlatform === "windows"
-                  ? "Windows is coming end of May."
+                  ? "Windows is coming soon."
                   : "Use your email first, then download the app."}
               </h2>
               <p className="mt-4 text-base leading-7 text-neutral-600">
@@ -269,7 +269,7 @@ export function StudioOSDownloadAccess({
             <div className="rounded-2xl border border-neutral-200 bg-neutral-50 px-4 py-3 text-sm font-medium text-neutral-700">
               {selectedPlatform === "mac"
                 ? "Installer ready for Mac after account setup"
-                : "Windows coming end of May. Register for release email."}
+                : "Windows coming soon. Register for release email."}
             </div>
           </div>
 
@@ -425,7 +425,7 @@ export function StudioOSDownloadAccess({
             <div className="text-2xl font-bold">Windows</div>
           </div>
           <p className="mt-4 text-sm leading-7 text-neutral-600">
-            Windows is coming at the end of May. Register your email and we will notify you as soon as the installer is released.
+            Windows is coming soon. Register your email and we will notify you as soon as the installer is released.
           </p>
           {signedIn ? (
             releaseReady && windowsReady ? (
@@ -445,7 +445,7 @@ export function StudioOSDownloadAccess({
               >
                 <span>{submitting ? "Registering..." : "Register for Windows Release"}</span>
                 <span className="mt-1 text-[11px] uppercase tracking-[0.16em] text-neutral-400">
-                  Coming end of May
+                  Coming soon
                 </span>
               </button>
             )
