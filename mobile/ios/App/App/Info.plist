@@ -2,6 +2,14 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>NSCameraUsageDescription</key>
+	<string>Studio OS uses the camera to scan student barcodes and take photos during a shoot.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Studio OS saves photos to your Photos library when you download them.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Studio OS imports the photos your DSLR sent to this phone so it can attach them to the right student during a shoot.</string>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
     <key>CAPACITOR_DEBUG</key>
 	<string>$(CAPACITOR_DEBUG)</string>
 	<key>CFBundleDevelopmentRegion</key>
