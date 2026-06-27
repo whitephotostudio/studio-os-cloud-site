@@ -148,6 +148,47 @@ export default async function StudioOSDownloadPage() {
 
           <section className="rounded-3xl border border-neutral-200 bg-white p-8 sm:p-10">
             <h2 className="text-2xl font-semibold tracking-tight sm:text-3xl">
+              On your iPhone &amp; iPad
+            </h2>
+            <p className="mt-3 text-sm leading-7 text-neutral-700">
+              Studio OS Mobile lets you run Picture Day from your phone — scan a
+              student&apos;s QR code, capture, sort, delete, and share galleries on
+              the go. There&apos;s no App Store download yet: open it in Safari and
+              add it to your Home Screen, and it behaves just like an app.
+            </p>
+            <ol className="mt-6 space-y-3 text-sm leading-7 text-neutral-700">
+              <li>
+                <span className="font-semibold text-neutral-950">1.</span> On your
+                iPhone or iPad, open{" "}
+                <a
+                  href="https://www.studiooscloud.com/m"
+                  className="font-semibold text-black underline underline-offset-4"
+                >
+                  studiooscloud.com/m
+                </a>{" "}
+                in <span className="font-semibold text-neutral-950">Safari</span>.
+              </li>
+              <li>
+                <span className="font-semibold text-neutral-950">2.</span> Tap the{" "}
+                <span className="font-semibold text-neutral-950">Share</span> icon
+                (the square with an up arrow).
+              </li>
+              <li>
+                <span className="font-semibold text-neutral-950">3.</span> Choose{" "}
+                <span className="font-semibold text-neutral-950">
+                  &ldquo;Add to Home Screen.&rdquo;
+                </span>{" "}
+                The Studio OS icon lands on your Home Screen and opens full-screen.
+              </li>
+            </ol>
+            <p className="mt-4 text-xs leading-6 text-neutral-500">
+              It stays up to date automatically — nothing to reinstall when we ship
+              updates. A full App Store version is on the way.
+            </p>
+          </section>
+
+          <section className="rounded-3xl border border-neutral-200 bg-white p-8 sm:p-10">
+            <h2 className="text-2xl font-semibold tracking-tight sm:text-3xl">
               System requirements
             </h2>
             <div className="mt-6 grid gap-6 sm:grid-cols-2">

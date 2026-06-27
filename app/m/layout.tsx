@@ -21,6 +21,7 @@ import { usePathname } from "next/navigation";
 import { Bell, CalendarDays, GraduationCap, Home, PlusCircle, Search, ShoppingBag } from "lucide-react";
 import { AgreementGate } from "@/components/agreement-gate";
 import { SpotlightModal, type SpotlightHit } from "@/components/spotlight-search";
+import InstallPrompt from "@/components/install-prompt";
 import { createClient } from "@/lib/supabase/client";
 import {
   MOBILE_ORDER_SELECT_MONEY,
@@ -590,6 +591,8 @@ export default function MobileLayout({
           onClose={() => setSearchOpen(false)}
           hrefFor={mobileHrefForHit}
         />
+
+        <InstallPrompt />
 
         {checkedAuth && (!soundEnabled || notificationPermission === "default") ? (
           <div
