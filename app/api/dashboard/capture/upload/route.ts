@@ -133,7 +133,12 @@ export async function POST(request: NextRequest) {
       .join(" "),
     `student ${student.id.slice(0, 8)}`,
   );
-  const folderName = safeSegment(student.folder_name ?? "", fallbackFolder);
+  // Match the Flutter desktop convention exactly (_folderNameFor → "Last First
+  // PIN", spaces) so mobile captures land in the SAME R2 folder the Mac app
+  // creates and pulls. Do NOT use students.folder_name — that column is the
+  // different "studentId_Last_First" value, which would fork into a separate
+  // folder and make pulled photos feel out of place.
+  const folderName = fallbackFolder;
 
   // Normalise to an auto-oriented JPEG (phone photos carry EXIF rotation), with
   // a defensive dimension cap.

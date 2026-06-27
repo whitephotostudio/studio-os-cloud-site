@@ -143,7 +143,10 @@ export async function POST(request: NextRequest) {
       .join(" "),
     `student ${dest.id.slice(0, 8)}`,
   );
-  const destFolderName = safeSegment(dest.folder_name ?? "", destFallback);
+  // Match the Flutter "Last First PIN" folder convention (not the
+  // studentId_Last_First students.folder_name) so a re-assigned photo lands in
+  // the same folder the Mac app uses for that student.
+  const destFolderName = destFallback;
   const destFolder = `${schoolBaseId}/${destClass}/${destFolderName}`;
 
   const origBasename = key.split("/").pop() ?? "";
