@@ -5,15 +5,22 @@
 // signature JWT requires), and the push is delivered over Node's http2 to
 // Apple's HTTP/2 endpoint.
 //
+// IMPORTANT: `node:crypto` and `node:http2` are loaded lazily (with the
+// `turbopackIgnore` magic comment) instead of imported at the top of the file.
+// This module is reached from `lib/payments.ts`, which a few dashboard *client*
+// components import for pure billing helpers. A static `import ... "node:http2"`
+// would get pulled into the client bundle and break the Turbopack build
+// ("the chunking context does not support external modules (request:
+// node:http2)"). Loading them inside the function keeps this module free of any
+// static `node:` external; these functions only ever run on the server, where
+// the imports resolve normally.
+//
 // Required env vars (set in Vercel):
 //   APNS_KEY_ID       – the Key ID of your APNs Auth Key (.p8)
 //   APNS_TEAM_ID      – your Apple Developer Team ID
 //   APNS_PRIVATE_KEY  – the .p8 contents (PKCS#8 PEM; newlines as \n)
 //   APNS_BUNDLE_ID    – com.studiooscloud.mobile
 //   APNS_PRODUCTION   – "true" for the App Store/TestFlight, else sandbox
-
-import crypto from "node:crypto";
-import http2 from "node:http2";
 
 function env(name: string): string {
   return (process.env[name] ?? "").trim();
@@ -28,10 +35,28 @@ export function hasApnsConfig(): boolean {
   );
 }
 
+type CryptoModule = typeof import("node:crypto");
+type Http2Module = typeof import("node:http2");
+
+async function loadNodeModules(): Promise<{
+  crypto: CryptoModule;
+  http2: Http2Module;
+}> {
+  const [cryptoMod, http2Mod] = await Promise.all([
+    import(/* turbopackIgnore: true */ "node:crypto"),
+    import(/* turbopackIgnore: true */ "node:http2"),
+  ]);
+  const crypto = ((cryptoMod as { default?: CryptoModule }).default ??
+    cryptoMod) as CryptoModule;
+  const http2 = ((http2Mod as { default?: Http2Module }).default ??
+    http2Mod) as Http2Module;
+  return { crypto, http2 };
+}
+
 // APNs JWTs are valid up to 1h and Apple throttles regenerating them, so cache.
 let cachedJwt: { value: string; at: number } | null = null;
 
-function apnsJwt(): string {
+function apnsJwt(crypto: CryptoModule): string {
   if (cachedJwt && Date.now() - cachedJwt.at < 50 * 60 * 1000) {
     return cachedJwt.value;
   }
@@ -74,9 +99,18 @@ export async function sendApnsPush(
       : "https://api.sandbox.push.apple.com";
   const bundleId = env("APNS_BUNDLE_ID");
 
+  let crypto: CryptoModule;
+  let http2: Http2Module;
+  try {
+    ({ crypto, http2 } = await loadNodeModules());
+  } catch (error) {
+    console.error("[apns] failed to load node modules", error);
+    return { ok: false, status: 0, reason: "node-load" };
+  }
+
   let jwt: string;
   try {
-    jwt = apnsJwt();
+    jwt = apnsJwt(crypto);
   } catch (error) {
     console.error("[apns] failed to sign JWT", error);
     return { ok: false, status: 0, reason: "jwt" };
