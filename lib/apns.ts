@@ -85,37 +85,18 @@ function apnsJwt(crypto: CryptoModule): string {
 
 export type ApnsResult = { ok: boolean; status: number; reason?: string };
 
-/** Deliver one alert payload to one device token. Resolves with the APNs
- *  status so the caller can prune dead tokens (410 / BadDeviceToken). */
-export async function sendApnsPush(
+const APNS_PRODUCTION_HOST = "https://api.push.apple.com";
+const APNS_SANDBOX_HOST = "https://api.sandbox.push.apple.com";
+
+/** Send to one specific APNs gateway. */
+function sendToHost(
+  http2: Http2Module,
+  host: string,
   deviceToken: string,
-  payload: Record<string, unknown>,
+  bundleId: string,
+  jwt: string,
+  body: Buffer,
 ): Promise<ApnsResult> {
-  if (!hasApnsConfig()) return { ok: false, status: 0, reason: "not-configured" };
-
-  const host =
-    env("APNS_PRODUCTION") === "true"
-      ? "https://api.push.apple.com"
-      : "https://api.sandbox.push.apple.com";
-  const bundleId = env("APNS_BUNDLE_ID");
-
-  let crypto: CryptoModule;
-  let http2: Http2Module;
-  try {
-    ({ crypto, http2 } = await loadNodeModules());
-  } catch (error) {
-    console.error("[apns] failed to load node modules", error);
-    return { ok: false, status: 0, reason: "node-load" };
-  }
-
-  let jwt: string;
-  try {
-    jwt = apnsJwt(crypto);
-  } catch (error) {
-    console.error("[apns] failed to sign JWT", error);
-    return { ok: false, status: 0, reason: "jwt" };
-  }
-
   return new Promise<ApnsResult>((resolve) => {
     const client = http2.connect(host);
     let settled = false;
@@ -131,7 +112,6 @@ export async function sendApnsPush(
     };
     client.on("error", () => finish({ ok: false, status: 0, reason: "connection" }));
 
-    const body = Buffer.from(JSON.stringify(payload));
     const req = client.request({
       ":method": "POST",
       ":path": `/3/device/${deviceToken}`,
@@ -166,4 +146,50 @@ export async function sendApnsPush(
     req.write(body);
     req.end();
   });
+}
+
+/** Deliver one alert payload to one device token. Resolves with the APNs
+ *  status so the caller can prune dead tokens (410 / BadDeviceToken).
+ *
+ *  A device token is tied to one APNs environment: dev/Xcode builds register a
+ *  sandbox token, TestFlight/App Store builds register a production token. We
+ *  try the gateway implied by APNS_PRODUCTION first, then fall back to the other
+ *  on "BadDeviceToken" — so push works for both build types without juggling the
+ *  env var, and the caller only prunes a token that's dead on *both*. */
+export async function sendApnsPush(
+  deviceToken: string,
+  payload: Record<string, unknown>,
+): Promise<ApnsResult> {
+  if (!hasApnsConfig()) return { ok: false, status: 0, reason: "not-configured" };
+
+  const bundleId = env("APNS_BUNDLE_ID");
+  const preferProduction = env("APNS_PRODUCTION") === "true";
+  const primaryHost = preferProduction ? APNS_PRODUCTION_HOST : APNS_SANDBOX_HOST;
+  const fallbackHost = preferProduction ? APNS_SANDBOX_HOST : APNS_PRODUCTION_HOST;
+
+  let crypto: CryptoModule;
+  let http2: Http2Module;
+  try {
+    ({ crypto, http2 } = await loadNodeModules());
+  } catch (error) {
+    console.error("[apns] failed to load node modules", error);
+    return { ok: false, status: 0, reason: "node-load" };
+  }
+
+  let jwt: string;
+  try {
+    jwt = apnsJwt(crypto);
+  } catch (error) {
+    console.error("[apns] failed to sign JWT", error);
+    return { ok: false, status: 0, reason: "jwt" };
+  }
+
+  const body = Buffer.from(JSON.stringify(payload));
+
+  let result = await sendToHost(http2, primaryHost, deviceToken, bundleId, jwt, body);
+  // Token belongs to the other environment → Apple says BadDeviceToken. Retry.
+  if (!result.ok && result.reason === "BadDeviceToken") {
+    result = await sendToHost(http2, fallbackHost, deviceToken, bundleId, jwt, body);
+  }
+  return result;
 }
