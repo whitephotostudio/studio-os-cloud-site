@@ -7,6 +7,9 @@
 // `string` so TypeScript doesn't require the package at build time — it's only
 // truly present inside the native app's bundle). Everything is guarded by
 // `Capacitor.isNativePlatform()`.
+//
+// Includes temporary `beacon()` diagnostics that POST progress to
+// /api/dashboard/push/debug so we can trace registration in the server logs.
 
 import { useEffect } from "react";
 import { createClient } from "@/lib/supabase/client";
@@ -28,6 +31,19 @@ type PushModule = {
   };
 };
 
+function beacon(stage: string, extra?: Record<string, unknown>) {
+  try {
+    void fetch("/api/dashboard/push/debug", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      keepalive: true,
+      body: JSON.stringify({ stage, ...extra }),
+    }).catch(() => {});
+  } catch {
+    /* ignore */
+  }
+}
+
 export default function PushRegister() {
   useEffect(() => {
     const listeners: Listener[] = [];
@@ -36,23 +52,25 @@ export default function PushRegister() {
     (async () => {
       try {
         const core = (await import("@capacitor/core" as string)) as CapacitorCore;
-        if (!core.Capacitor.isNativePlatform() || cancelled) return;
+        const native = core.Capacitor.isNativePlatform();
+        beacon("start", { native });
+        if (!native || cancelled) return;
 
         const mod = (await import(
           "@capacitor/push-notifications" as string
         )) as PushModule;
         const Push = mod.PushNotifications;
+        beacon("plugin-loaded", { hasRegister: typeof Push?.register });
 
         const perm = await Push.requestPermissions();
+        beacon("permission", { receive: perm?.receive });
         if (perm.receive !== "granted" || cancelled) return;
 
-        // Got a token → send it to the server so we can push to this device.
-        // The mobile webview authenticates API calls with a Supabase Bearer
-        // token (cookies aren't reliable here), mirroring every other /m page.
-        // Without it the POST 401s and the token is never saved.
+        // Got a token → send it to the server (Bearer-authed like every /m page).
         listeners.push(
           await Push.addListener("registration", (token) => {
             const value = (token as { value?: string })?.value;
+            beacon("registration", { hasToken: !!value, len: value?.length ?? 0 });
             if (!value) return;
             void (async () => {
               try {
@@ -60,7 +78,10 @@ export default function PushRegister() {
                 const {
                   data: { session },
                 } = await supabase.auth.getSession();
-                await fetch("/api/dashboard/push/register", {
+                beacon("posting-token", {
+                  hasSession: !!session?.access_token,
+                });
+                const res = await fetch("/api/dashboard/push/register", {
                   method: "POST",
                   headers: {
                     "Content-Type": "application/json",
@@ -69,17 +90,18 @@ export default function PushRegister() {
                   credentials: "include",
                   body: JSON.stringify({ token: value, platform: "ios" }),
                 });
-              } catch {
-                /* ignore */
+                beacon("register-response", { status: res.status });
+              } catch (e) {
+                beacon("post-error", { message: String(e) });
               }
             })();
           }),
         );
 
-        // Surface APNs registration failures (useful when debugging via the
-        // Safari web inspector attached to the device).
+        // APNs registration failure (e.g. missing entitlement).
         listeners.push(
           await Push.addListener("registrationError", (err) => {
+            beacon("registration-error", { error: JSON.stringify(err) });
             console.error("[push] APNs registration error", err);
           }),
         );
@@ -95,9 +117,11 @@ export default function PushRegister() {
           }),
         );
 
+        beacon("before-register");
         await Push.register();
-      } catch {
-        /* not the native app, or the plugin isn't available — ignore */
+        beacon("after-register-call");
+      } catch (e) {
+        beacon("exception", { message: String(e) });
       }
     })();
 
