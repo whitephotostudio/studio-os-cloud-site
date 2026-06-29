@@ -5,6 +5,7 @@ import Link from "next/link";
 import {
   AlertCircle,
   ArrowUpRight,
+  Bell,
   BookOpenText,
   Building2,
   CheckCircle2,
@@ -2813,9 +2814,162 @@ export default function SettingsPage() {
         {/* ── Change password ──────────────────────────────────────── */}
         <ChangePasswordSection sessionReady={sessionReady} />
 
+        {/* ── Order notifications ──────────────────────────────────── */}
+        <OrderNotificationsSection sessionReady={sessionReady} />
+
         {/* ── Two-Factor Authentication ────────────────────────────── */}
         <MfaSection accessToken={accessToken} sessionReady={sessionReady} />
 
+      </div>
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════════ */
+/*  Order Notifications Section                                        */
+/* ═══════════════════════════════════════════════════════════════════ */
+
+/**
+ * Controls what the iPhone push banner shows when a new order comes in.
+ * Off (default, privacy-first): "New order received." On: includes the client
+ * name + amount. Backed by photographers.order_push_show_details via
+ * /api/dashboard/push/preferences.
+ */
+function OrderNotificationsSection({ sessionReady }: { sessionReady: boolean }) {
+  const [showDetails, setShowDetails] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    fetch("/api/dashboard/push/preferences")
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error("load failed"))))
+      .then((data: { showDetails?: boolean }) => {
+        if (active) {
+          setShowDetails(Boolean(data.showDetails));
+          setLoaded(true);
+        }
+      })
+      .catch(() => {
+        if (active) setLoaded(true);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  async function toggle(next: boolean) {
+    setBusy(true);
+    setError("");
+    const previous = showDetails;
+    setShowDetails(next); // optimistic
+    try {
+      const res = await fetch("/api/dashboard/push/preferences", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ showDetails: next }),
+      });
+      if (!res.ok) throw new Error("save failed");
+    } catch {
+      setShowDetails(previous); // revert
+      setError("Could not save. Please try again.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const disabled = !loaded || busy || !sessionReady;
+
+  return (
+    <div style={{ marginTop: 20 }}>
+      <div style={cardStyle}>
+        <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 18 }}>
+          <div style={{ width: 54, height: 54, borderRadius: 16, background: "#fef3c7", display: "grid", placeItems: "center" }}>
+            <Bell size={24} color="#d97706" />
+          </div>
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 800, letterSpacing: "0.14em", textTransform: "uppercase", color: "#64748b" }}>
+              Notifications
+            </div>
+            <div style={{ fontSize: 20, fontWeight: 900, color: "#0f172a", marginTop: 2 }}>
+              New order alerts
+            </div>
+          </div>
+        </div>
+
+        <p style={{ fontSize: 14, color: "#64748b", margin: "0 0 18px" }}>
+          Your iPhone buzzes the moment a parent places an order. By default the banner just says{" "}
+          <strong style={{ color: "#0f172a" }}>&ldquo;New order received&rdquo;</strong> so nothing
+          private shows on your lock screen. Turn this on to include the client name and amount.
+        </p>
+
+        {error ? (
+          <div style={{ borderRadius: 16, border: "1px solid #fca5a5", background: "#fef2f2", color: "#991b1b", padding: "12px 16px", marginBottom: 14, fontWeight: 700 }}>
+            {error}
+          </div>
+        ) : null}
+
+        <button
+          type="button"
+          onClick={() => toggle(!showDetails)}
+          disabled={disabled}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 16,
+            width: "100%",
+            maxWidth: 460,
+            borderRadius: 18,
+            border: "1px solid #e2e8f0",
+            background: "#f8fafc",
+            padding: "16px 18px",
+            cursor: disabled ? "not-allowed" : "pointer",
+            opacity: disabled ? 0.7 : 1,
+            textAlign: "left",
+          }}
+        >
+          <span>
+            <span style={{ display: "block", fontSize: 15, fontWeight: 800, color: "#0f172a" }}>
+              Show order details in the banner
+            </span>
+            <span style={{ display: "block", fontSize: 13, color: "#64748b", marginTop: 2 }}>
+              {showDetails ? "Banner shows client name + amount" : "Banner shows a generic message"}
+            </span>
+          </span>
+          <span
+            aria-hidden
+            style={{
+              flex: "0 0 auto",
+              width: 52,
+              height: 30,
+              borderRadius: 999,
+              background: showDetails ? "#16a34a" : "#cbd5e1",
+              position: "relative",
+              transition: "background 160ms ease",
+            }}
+          >
+            <span
+              style={{
+                position: "absolute",
+                top: 3,
+                left: showDetails ? 25 : 3,
+                width: 24,
+                height: 24,
+                borderRadius: "50%",
+                background: "#fff",
+                boxShadow: "0 1px 3px rgba(0,0,0,0.25)",
+                transition: "left 160ms ease",
+              }}
+            />
+          </span>
+        </button>
+
+        <p style={{ fontSize: 12.5, color: "#94a3b8", margin: "14px 0 0" }}>
+          Alerts arrive on any iPhone where you&apos;re signed in to the Studio OS app. Make sure you
+          allowed notifications when the app first asked.
+        </p>
       </div>
     </div>
   );

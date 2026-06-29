@@ -3,6 +3,7 @@ import { createDashboardServiceClient } from "@/lib/dashboard-auth";
 import { syncPhotographyKeysByPhotographerId } from "@/lib/studio-os-app";
 import { buildOrderNotificationEmail } from "@/lib/order-notification-email";
 import { buildOrderReceiptEmail } from "@/lib/order-receipt-email";
+import { sendNewOrderPush } from "@/lib/order-push";
 import { notifyOwnerForSetting } from "@/lib/admin-notification-center";
 import { ownerUrl } from "@/lib/owner-notifications";
 import { resendConfigured, sendResendEmail, resolveReplyTo } from "@/lib/resend";
@@ -2141,6 +2142,38 @@ export async function finalizePaidOrder(
             });
           } catch (receiptEmailError) {
             console.error("[order-notification] Buyer receipt failed:", receiptEmailError);
+          }
+
+          // Alert the photographer's iPhone(s) that a new order came in. Generic
+          // "New order received" banner unless they opted into showing details.
+          try {
+            const orderForPush = (fullOrder.data ?? order) as Record<string, unknown>;
+            const photographerId = clean(
+              (photographer as Record<string, unknown>).id as string,
+            );
+            const customerName =
+              clean(orderForPush.parent_name as string) ||
+              clean(orderForPush.customer_name as string) ||
+              studentFullName;
+            const totalCents =
+              Number(orderForPush.total_cents) ||
+              Math.round(Number(orderForPush.total_amount ?? 0) * 100) ||
+              0;
+            const currency =
+              (clean(orderForPush.currency as string) || "cad").toUpperCase();
+            const amountLabel =
+              totalCents > 0
+                ? new Intl.NumberFormat("en-US", {
+                    style: "currency",
+                    currency,
+                  }).format(totalCents / 100)
+                : "";
+            await sendNewOrderPush(service, photographerId, {
+              customerName,
+              amountLabel,
+            });
+          } catch (pushError) {
+            console.error("[order-notification] push failed:", pushError);
           }
 
           const hasDigitalDeliveryItem =

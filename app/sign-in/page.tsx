@@ -568,6 +568,8 @@ export default function SignInPage() {
                       </label>
                       <input
                         type="email"
+                        name="email"
+                        autoComplete="username"
                         value={email}
                         onChange={(e) => setEmail(e.target.value)}
                         required
@@ -590,6 +592,8 @@ export default function SignInPage() {
                       </div>
                       <input
                         type="password"
+                        name="password"
+                        autoComplete="current-password"
                         value={password}
                         onChange={(e) => setPassword(e.target.value)}
                         required

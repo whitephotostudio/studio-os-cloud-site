@@ -22,6 +22,7 @@ import { Bell, CalendarDays, GraduationCap, Home, PlusCircle, Search, ShoppingBa
 import { AgreementGate } from "@/components/agreement-gate";
 import { SpotlightModal, type SpotlightHit } from "@/components/spotlight-search";
 import InstallPrompt from "@/components/install-prompt";
+import PushRegister from "@/components/push-register";
 import { createClient } from "@/lib/supabase/client";
 import {
   MOBILE_ORDER_SELECT_MONEY,
@@ -593,6 +594,8 @@ export default function MobileLayout({
         />
 
         <InstallPrompt />
+
+        {checkedAuth ? <PushRegister /> : null}
 
         {checkedAuth && (!soundEnabled || notificationPermission === "default") ? (
           <div

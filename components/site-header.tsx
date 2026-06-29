@@ -28,7 +28,7 @@ export function SiteHeader() {
 
   return (
     <header
-      className={`sticky top-0 z-40 border-b bg-white/95 text-neutral-950 backdrop-blur-xl transition duration-300 ${
+      className={`sticky top-0 z-40 border-b bg-white/95 pt-[env(safe-area-inset-top)] text-neutral-950 backdrop-blur-xl transition duration-300 ${
         isScrolled
           ? "border-neutral-200 shadow-[0_14px_45px_rgba(0,0,0,0.08)]"
           : "border-neutral-100"
