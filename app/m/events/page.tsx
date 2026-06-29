@@ -22,6 +22,7 @@ import {
   X,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { proxiedPhotoUrl } from "@/lib/photo-url";
 
 type EventRow = {
   id: string;
@@ -350,7 +351,7 @@ export default function MobileEventsPage() {
           </div>
         </div>
       ) : (
-        <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "grid", gap: 14 }}>
+        <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 10 }}>
           {filtered.map((event) => {
             const orderCt = ordersByEvent[event.id] ?? 0;
             const mediaCt = mediaByEvent[event.id] ?? 0;
@@ -386,7 +387,7 @@ export default function MobileEventsPage() {
                   <div
                     style={{
                       position: "relative",
-                      height: 120,
+                      height: 84,
                       background: cover
                         ? "#111"
                         : "linear-gradient(135deg,#7c2d12 0%,#b45309 100%)",
@@ -396,7 +397,7 @@ export default function MobileEventsPage() {
                     {cover ? (
                       // eslint-disable-next-line @next/next/no-img-element
                       <img
-                        src={cover}
+                        src={`${proxiedPhotoUrl(cover)}?w=320`}
                         alt=""
                         style={{
                           width: "100%",
@@ -445,9 +446,9 @@ export default function MobileEventsPage() {
                         position: "absolute",
                         top: 10,
                         right: 10,
-                        width: 36,
-                        height: 36,
-                        borderRadius: 10,
+                        width: 30,
+                        height: 30,
+                        borderRadius: 9,
                         background: "rgba(255,255,255,0.94)",
                         border: "1px solid rgba(0,0,0,0.06)",
                         color: "#111827",
