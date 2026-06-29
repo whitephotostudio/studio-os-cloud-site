@@ -352,7 +352,7 @@ export default function SortSchoolPage() {
             No photos yet for this student.
           </div>
         ) : (
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 8 }}>
             {photos.map((p) => (
               <div
                 key={p.key}
@@ -589,7 +589,7 @@ export default function SortSchoolPage() {
             >
               {cls} · {group.length}
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 10 }}>
               {group.map((s) => {
                 const cover = proxiedPhotoUrl(covers[s.id] || s.photo_url);
                 const count = counts[s.id];

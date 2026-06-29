@@ -379,7 +379,7 @@ export default function MobileSchoolsPage() {
           </div>
         </div>
       ) : (
-        <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 10 }}>
+        <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 10 }}>
           {filtered.map((school) => {
             const students = studentsBySchool[school.id] ?? 0;
             const orderCt = ordersBySchool[school.id] ?? 0;

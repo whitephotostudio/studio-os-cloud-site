@@ -200,7 +200,7 @@ export default function SortEventPage() {
           No photos in this event yet.
         </div>
       ) : (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 8 }}>
           {photos.map((p) => (
             <div
               key={p.id}
