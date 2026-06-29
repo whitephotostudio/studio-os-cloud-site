@@ -2892,15 +2892,19 @@ function OrderNotificationsSection({ sessionReady }: { sessionReady: boolean }) 
         ok?: boolean;
         deviceCount?: number;
         message?: string;
+        summary?: string;
       };
       if (data.ok) {
         setTestOk(true);
         setTestMsg(
-          `Sent to ${data.deviceCount ?? 1} device${(data.deviceCount ?? 1) === 1 ? "" : "s"} — check your iPhone.`,
+          `Apple accepted the push — check your iPhone.${data.summary ? ` [${data.summary}]` : ""}`,
         );
       } else {
         setTestOk(false);
-        setTestMsg(data.message || "Could not send the test notification.");
+        setTestMsg(
+          data.message ||
+            `Apple rejected the push${data.summary ? `: ${data.summary}` : "."}`,
+        );
       }
     } catch {
       setTestOk(false);
