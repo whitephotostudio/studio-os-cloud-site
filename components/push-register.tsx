@@ -9,6 +9,7 @@
 // `Capacitor.isNativePlatform()`.
 
 import { useEffect } from "react";
+import { createClient } from "@/lib/supabase/client";
 
 type Listener = { remove: () => void };
 
@@ -46,15 +47,40 @@ export default function PushRegister() {
         if (perm.receive !== "granted" || cancelled) return;
 
         // Got a token → send it to the server so we can push to this device.
+        // The mobile webview authenticates API calls with a Supabase Bearer
+        // token (cookies aren't reliable here), mirroring every other /m page.
+        // Without it the POST 401s and the token is never saved.
         listeners.push(
           await Push.addListener("registration", (token) => {
             const value = (token as { value?: string })?.value;
             if (!value) return;
-            void fetch("/api/dashboard/push/register", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ token: value, platform: "ios" }),
-            }).catch(() => {});
+            void (async () => {
+              try {
+                const supabase = createClient();
+                const {
+                  data: { session },
+                } = await supabase.auth.getSession();
+                await fetch("/api/dashboard/push/register", {
+                  method: "POST",
+                  headers: {
+                    "Content-Type": "application/json",
+                    Authorization: `Bearer ${session?.access_token ?? ""}`,
+                  },
+                  credentials: "include",
+                  body: JSON.stringify({ token: value, platform: "ios" }),
+                });
+              } catch {
+                /* ignore */
+              }
+            })();
+          }),
+        );
+
+        // Surface APNs registration failures (useful when debugging via the
+        // Safari web inspector attached to the device).
+        listeners.push(
+          await Push.addListener("registrationError", (err) => {
+            console.error("[push] APNs registration error", err);
           }),
         );
 
