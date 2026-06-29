@@ -2840,6 +2840,9 @@ function OrderNotificationsSection({ sessionReady }: { sessionReady: boolean }) 
   const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [testBusy, setTestBusy] = useState(false);
+  const [testMsg, setTestMsg] = useState("");
+  const [testOk, setTestOk] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -2876,6 +2879,34 @@ function OrderNotificationsSection({ sessionReady }: { sessionReady: boolean }) 
       setError("Could not save. Please try again.");
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function sendTest() {
+    setTestBusy(true);
+    setTestMsg("");
+    setTestOk(false);
+    try {
+      const res = await fetch("/api/dashboard/push/test", { method: "POST" });
+      const data = (await res.json().catch(() => ({}))) as {
+        ok?: boolean;
+        deviceCount?: number;
+        message?: string;
+      };
+      if (data.ok) {
+        setTestOk(true);
+        setTestMsg(
+          `Sent to ${data.deviceCount ?? 1} device${(data.deviceCount ?? 1) === 1 ? "" : "s"} — check your iPhone.`,
+        );
+      } else {
+        setTestOk(false);
+        setTestMsg(data.message || "Could not send the test notification.");
+      }
+    } catch {
+      setTestOk(false);
+      setTestMsg("Could not send the test notification. Please try again.");
+    } finally {
+      setTestBusy(false);
     }
   }
 
@@ -2965,6 +2996,32 @@ function OrderNotificationsSection({ sessionReady }: { sessionReady: boolean }) 
             />
           </span>
         </button>
+
+        <div style={{ marginTop: 18, display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+          <button
+            type="button"
+            onClick={sendTest}
+            disabled={testBusy || !sessionReady}
+            style={{
+              borderRadius: 14,
+              border: "1px solid #d97706",
+              background: testBusy ? "#fde68a" : "#f59e0b",
+              color: "#1f2937",
+              padding: "11px 18px",
+              fontSize: 14,
+              fontWeight: 800,
+              cursor: testBusy || !sessionReady ? "not-allowed" : "pointer",
+              opacity: !sessionReady ? 0.7 : 1,
+            }}
+          >
+            {testBusy ? "Sending..." : "Send test notification"}
+          </button>
+          {testMsg ? (
+            <span style={{ fontSize: 13, fontWeight: 700, color: testOk ? "#166534" : "#b91c1c" }}>
+              {testMsg}
+            </span>
+          ) : null}
+        </div>
 
         <p style={{ fontSize: 12.5, color: "#94a3b8", margin: "14px 0 0" }}>
           Alerts arrive on any iPhone where you&apos;re signed in to the Studio OS app. Make sure you
