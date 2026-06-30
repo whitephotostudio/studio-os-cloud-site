@@ -94,7 +94,7 @@ input[type=text],input[type=email]{width:100%;padding:12px;border:1px solid #d6d
   var base = 'https://bwqhzczxoevouiondjak.supabase.co/functions/v1';
   var params = new URLSearchParams(location.search);
   var eventId = params.get('event') || '';
-  var S = {ev:null, slots:[], slot:null, stripe:null, elements:null, cs:null, pin:''};
+  var S = {ev:null, slots:[], slot:null, stripe:null, elements:null, cs:null, pin:'', credit:false};
   var $ = function(id){return document.getElementById(id)};
 
   function money(cents, cur){
@@ -180,7 +180,7 @@ input[type=text],input[type=email]{width:100%;padding:12px;border:1px solid #d6d
     })}).then(function(r){ return r.json().then(function(j){ return {status:r.status, j:j} }) })
     .then(function(res){
       var d = res.j;
-      if(res.status===200 && d.confirmed){ S.pin = d.accessPin || ''; done(false); return }
+      if(res.status===200 && d.confirmed){ S.pin = d.accessPin || ''; S.credit = !!d.creditApplied; done(false); return }
       if(res.status===200 && d.requiresPayment){ S.pin = d.accessPin || ''; startPay(d); return }
       if(res.status===503 || d.error==='payments_not_configured'){ formErr('Online payment is not set up for this event yet. Please contact the studio.'); reset(); return }
       if(res.status===409){ formErr('That time was just taken. Please pick another.'); reset(); setTimeout(load, 800); return }
@@ -215,7 +215,8 @@ input[type=text],input[type=email]{width:100%;padding:12px;border:1px solid #d6d
   }
   function done(paid){
     $('step-slots').classList.add('hidden'); $('step-form').classList.add('hidden'); $('step-done').classList.remove('hidden');
-    $('donesub').textContent = 'A confirmation has been sent to ' + $('em').value.trim() + '.' + (paid?' Your payment was received.':'');
+    var creditMsg = S.credit ? ' Your studio credit covered the fee — nothing to pay.' : '';
+    $('donesub').textContent = 'A confirmation has been sent to ' + $('em').value.trim() + '.' + (paid?' Your payment was received.':'') + creditMsg;
     if(S.pin){ $('pinval').textContent = S.pin; $('pinbox').classList.remove('hidden'); }
     window.scrollTo(0,0);
   }
