@@ -17,6 +17,8 @@ Driver (Harout): about to send the public booking link to a school; asked for a 
 - `booking-send-emails` v9: new templates — client `cancel_credit` ("fee is non-refundable, saved as studio credit AMT, auto-applies next booking with this email, valid 12 months") + photographer `booking_cancelled` (student/time/parent contact + note that their fee became a credit). `isCancelNotice` includes `cancel_credit` so it still sends for cancelled bookings; `new_booking` skip-if-cancelled preserved.
 
 **Web repo (uncommitted — push from Mac):** `app/manage/route.ts` — cancel screen states the policy when a fee exists ("non-refundable → saved as a studio credit, applied automatically next time you book with this email"); post-cancel confirmation shows the credit message when the API returns `creditIssued`. Typecheck clean (`npx tsc --noEmit` → exit 0).
+
+**2026-07-03 (later): spots-left counter on /book** — `app/book/route.ts` day headers now show a pill with `N spots left` (red `only N left` when ≤5), computed client-side from the open-slots payload; refreshes automatically on the post-409 reload. NOTE: repo working tree lives on branch `feature/mobile-ordering-ux` (29+ local commits of mobile work, NOT for prod) — ship web fixes to prod by copying files onto a freshly-pulled `main` (recipe below), never by merging the branch. Lunch-break generator + spots counter verified live on the TEST event (Aug 18 day: gap 11:55→12:30 ✓).
 ```
 cd ~/Downloads/Projects/studio-os-cloud-site
 rm -f .git/HEAD.lock .git/index.lock

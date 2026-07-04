@@ -29,6 +29,8 @@ h1{font-size:22px;margin:0 0 4px}
 .feedesc{margin:8px 0 0;font-size:14px;color:#374049;line-height:1.45}
 .badge{display:inline-block;margin-top:10px;background:#eef6ee;color:#1f7a34;border:1px solid #cfe7d2;font-size:12px;font-weight:600;padding:4px 10px;border-radius:999px}
 .dayhdr{font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:#5b6470;margin:18px 0 8px}
+.dayhdr .spots{margin-left:8px;display:inline-block;background:#eef1f4;color:#374049;border-radius:999px;padding:2px 10px;font-size:12px;font-weight:600;text-transform:none;letter-spacing:0}
+.dayhdr .spots.low{background:#fdecec;color:#b3261e}
 .slots{display:grid;grid-template-columns:repeat(auto-fill,minmax(92px,1fr));gap:8px}
 .slot{appearance:none;border:1px solid #d6dadf;background:#fff;border-radius:10px;padding:11px 6px;font-size:14px;font-weight:600;cursor:pointer;color:#15171a}
 .slot:hover{border-color:#15171a}
@@ -135,7 +137,9 @@ input[type=text],input[type=email]{width:100%;padding:12px;border:1px solid #d6d
     S.slots.forEach(function(s){ var d = fmtDay(s.start_at, tz); if(!groups[d]){ groups[d]=[]; order.push(d) } groups[d].push(s) });
     var html = '';
     order.forEach(function(day){
-      html += '<div class=dayhdr>'+day+'</div><div class=slots>';
+      var n = groups[day].length;
+      var spotsLbl = n <= 5 ? ('only ' + n + ' left') : (n + ' spots left');
+      html += '<div class=dayhdr>'+day+'<span class="spots'+(n<=5?' low':'')+'">'+spotsLbl+'</span></div><div class=slots>';
       groups[day].forEach(function(s){ html += '<button class=slot data-id='+s.id+'>'+fmtTime(s.start_at,tz)+'</button>' });
       html += '</div>';
     });
