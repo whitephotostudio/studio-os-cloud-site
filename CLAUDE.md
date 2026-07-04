@@ -2,7 +2,41 @@
 
 Checkpoint for Claude so a context reset doesn't lose the thread. Update as work progresses.
 
-Last updated: 2026-06-24 — **Two checkout bugfixes: (1) shipping fee silently dropped on single-order checkout; (2) "This order total is invalid." on multi-item baskets (per-slot rounding drift).** Web only, typecheck clean, uncommitted — push from Mac.
+Last updated: 2026-07-03 — **Booking system audit + fix pass before the school link goes out.** Edge functions already deployed live via MCP (no push needed for those); web repo has ONE changed file (`app/manage/route.ts`) to push from Mac; Flutter needs a rebuild for the new lunch-break UI. Full audit: `~/Downloads/Projects/booking-system-audit-2026-07-03.md`.
+
+## 🆕 2026-07-03 — Booking system: audit + critical fixes (school link prep)
+
+Driver (Harout): about to send the public booking link to a school; asked for a deep engineering review + fixes. Policy decisions made via AskUserQuestion: **parent self-cancel auto-issues a studio credit** (fee non-refundable → credit, matches "miss your session = credit" policy) and **abandoned-checkout hold = 10 minutes** (he explicitly shortened from 30).
+
+**Deployed LIVE to Supabase edge functions (already active, nothing to push):**
+- `booking-expire-pending` (NEW, v2) + pg_cron job #3 (`*/5 * * * *`): cancels `pending` bookings older than 10 min — cancels their Stripe PI FIRST (on the connected account) so a stale open tab can't pay afterwards; skips bookings whose payment already succeeded (webhook confirms those). Fixes the biggest bug: abandoned checkouts held slots FOREVER (availability hides pending-held slots + `bookings_one_active_per_slot` unique index blocks rebooking; nothing ever released them).
+- `booking-availability` v6: past slots excluded (`start_at > now()`); previously a parent could book 9am at 1pm on shoot day.
+- `booking-create` v13: rejects past slots (409); real server-side email validation (regex + length, was only "non-empty"); name/class inputs length-capped; reminders whose send time is already in the past are skipped instead of firing instantly (booked <24h/<1h before session).
+- `booking-manage` v3: (a) GET list now excludes past slots AND slots held by any pending/confirmed booking (was inconsistent with public availability — pending-held slots showed as pickable); (b) reschedule made safe: booking row moves FIRST with its error checked (the partial unique index is the atomic race guard), slot counters only adjust after it sticks — old code updated counters before an UNCHECKED booking update, so a lost race corrupted `booked_count` and told the parent "Rescheduled ✓" while leaving them on the old time; (c) reschedule keeps existing status (no longer force-flips to confirmed); (d) reminder rows now UPSERT on `(booking_id,recipient_type,offset_type)` so a 2nd reschedule re-arms already-sent reminders (plain insert used to silently fail the whole batch on the unique index); (e) **cancel: auto-issues a `booking_credits` row** (amount = event fee, expires +12mo, email lowercased) when a succeeded payment exists, queues `cancel_credit` email to the parent + `booking_cancelled` notice to the photographer (previously NOBODY was notified of parent cancels), returns `creditIssued` to the page.
+- `booking-stripe-webhook` v10: `confirm()` is now idempotent/transition-guarded — payment recorded first, then status update `.in('status',['pending','cancelled'])` with error + rowcount checked; slot bump/roster-student/reminders only run when THIS delivery actually transitioned the booking (Stripe retry could double-bump `booked_count` before). Expired-then-paid edge case: re-confirms only if the slot is still free (unique index decides), else booking stays cancelled with payment recorded `succeeded` for manual follow-up. `payment_failed` handler no longer overwrites a `succeeded` payment row.
+- `booking-send-emails` v9: new templates — client `cancel_credit` ("fee is non-refundable, saved as studio credit AMT, auto-applies next booking with this email, valid 12 months") + photographer `booking_cancelled` (student/time/parent contact + note that their fee became a credit). `isCancelNotice` includes `cancel_credit` so it still sends for cancelled bookings; `new_booking` skip-if-cancelled preserved.
+
+**Web repo (uncommitted — push from Mac):** `app/manage/route.ts` — cancel screen states the policy when a fee exists ("non-refundable → saved as a studio credit, applied automatically next time you book with this email"); post-cancel confirmation shows the credit message when the API returns `creditIssued`. Typecheck clean (`npx tsc --noEmit` → exit 0).
+```
+cd ~/Downloads/Projects/studio-os-cloud-site
+rm -f .git/HEAD.lock .git/index.lock
+git add app/manage/route.ts CLAUDE.md
+git commit -m "feat: booking manage page — non-refundable/credit policy wording + credit-aware cancel confirmation"
+git push origin main
+```
+
+**Flutter (rebuild required):** `lib/services/booking_service.dart` + `lib/widgets/booking_setup_sheet.dart` — **lunch breaks shipped**: each day row in "Days open for booking" now has "Add lunch break" (defaults 12:00–1:00, editable times, removable); `BookingDayWindow` gained nullable break fields; `generateSlots` skips any slot overlapping the break (cursor jumps to break end — loop provably advances). `_editTime` preserves break fields. Fee-description hint now suggests the non-refundable/credit wording. `cd ~/Downloads/Whitephoto_Studio_App_MVP_Source && flutter build macos`.
+
+**Still open / deliberately NOT done (from the audit):**
+1. **Real school event still needs creating** — the only live `booking_events` row is the $1 "Test" school one whose description says "Refundable" (test text). When creating the real one, paste: *"Sitting fee — non-refundable. If you miss your session, your fee is kept as a studio credit you can use toward a future session with the studio. Includes all digital image downloads."*
+2. No-show → credit button on the roster + a credits list UI (credits table is service-role-only; today only cancel paths create credits; viewing them = SQL).
+3. Rate limiting / Turnstile on `booking-create` + `booking-verify-pin` (5-digit PIN is brute-forceable).
+4. Partial credits (credit must fully cover fee; larger credit loses remainder).
+5. `generateSlots` regen guard counts CANCELLED bookings → year-2 same-school regen blocked; one `booking_events` row per school (unique index).
+6. Slot generation uses the Mac's local timezone (fine while Mac tz == event tz).
+7. Delete disabled `booking-selftest` function from dashboard when convenient.
+
+**Smoke test after Mac push + Flutter rebuild:** book a slot on the test event and abandon at the payment screen → slot disappears; within ~15 min it reappears (cron log: `select * from cron.job_run_details order by start_time desc limit 5`). Try the manage link from a confirmed booking's email → cancel → page + email mention the studio credit; Harout gets a "Booking cancelled" email; re-book with the same email → credit auto-covers the fee ("nothing to pay"). In the Flutter booking sheet: add a day → "Add lunch break" → generate → no slots 12:00–1:00.
 
 ## 🆕 2026-06-24 (later) — "This order total is invalid." blocking real client checkout (PUSH REQUIRED)
 
