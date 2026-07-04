@@ -55,7 +55,7 @@ h1{font-size:22px;margin:0 0 4px}
   </div>
   <div class='card hidden' id='step-cancel'>
     <h1>Cancel this booking?</h1>
-    <p class='sub'>Your sitting fee is non-refundable. If you just need a different time, go back and pick a new slot instead.</p>
+    <p class='sub' id='cancelSub'>Your sitting fee is non-refundable. If you just need a different time, go back and pick a new slot instead.</p>
     <button class='btn danger' id='cancelConfirm'>Yes, cancel my booking</button>
     <div class='center'><span class='link grey' id='cancelBack'>Go back</span></div>
   </div>
@@ -94,6 +94,9 @@ h1{font-size:22px;margin:0 0 4px}
     }
     $('sub').textContent = 'Session for ' + esc(b.studentName || 'your child');
     $('cur').innerHTML = b.currentStart ? (esc(fmtDay(b.currentStart, S.tz)) + ' <span>at ' + esc(fmtTime(b.currentStart, S.tz)) + '</span>') : '';
+    if((b.feeCents||0) > 0){
+      $('cancelSub').textContent = 'Your sitting fee is non-refundable. If you cancel, it is saved as a studio credit you can use toward a future session with the studio — applied automatically next time you book with this email. If you just need a different time, go back and pick a new slot instead.';
+    }
     $('step-actions').classList.remove('hidden');
     renderSlots();
   }
@@ -130,7 +133,7 @@ h1{font-size:22px;margin:0 0 4px}
     $('cancelConfirm').disabled=true; $('cancelConfirm').textContent='Cancelling...';
     fetch(base + '/booking-manage', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ token:token, action:'cancel' })})
       .then(function(r){ return r.json() })
-      .then(function(j){ if(j && j.ok){ done('Cancelled', 'Your booking has been cancelled.', 'The time slot is now open for someone else.'); } else { $('cancelConfirm').disabled=false; $('cancelConfirm').textContent='Yes, cancel my booking'; } })
+      .then(function(j){ if(j && j.ok){ done('Cancelled', 'Your booking has been cancelled.', j.creditIssued ? 'Your sitting fee was saved as a studio credit — it will be applied automatically next time you book with this email. A confirmation email is on its way.' : 'The time slot is now open for someone else.'); } else { $('cancelConfirm').disabled=false; $('cancelConfirm').textContent='Yes, cancel my booking'; } })
       .catch(function(){ $('cancelConfirm').disabled=false; $('cancelConfirm').textContent='Yes, cancel my booking'; });
   });
   function done(big, title, sub){
