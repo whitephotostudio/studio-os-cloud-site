@@ -71,7 +71,8 @@ input[type=text],input[type=email]{width:100%;padding:12px;border:1px solid #d6d
       <div><label>Student last name</label><input id='ln' type='text' autocomplete='family-name'></div>
     </div>
     <label>Class / Grade</label>
-    <input id='cls' type='text' autocomplete='off' placeholder='e.g. Grade 8B'>
+    <input id='cls' type='text' autocomplete='off' list='clslist' placeholder='e.g. Grade 8B'>
+    <datalist id='clslist'></datalist>
     <label>Parent / guardian name</label>
     <input id='pn' type='text' autocomplete='name'>
     <label>Email for confirmation</label>
@@ -127,6 +128,11 @@ input[type=text],input[type=email]{width:100%;padding:12px;border:1px solid #d6d
     if(ev.feeDescription){ h += '<p class=feedesc>'+escapeHtml(ev.feeDescription)+'</p>' }
     if(ev.includesDigital){ h += '<span class=badge>Includes digital image downloads</span>' }
     $('feebox').innerHTML = h;
+    var dl = $('clslist');
+    if(dl){
+      dl.innerHTML = '';
+      (ev.classNames || []).forEach(function(c){ var o = document.createElement('option'); o.value = c; dl.appendChild(o) });
+    }
   }
 
   function renderSlots(){
