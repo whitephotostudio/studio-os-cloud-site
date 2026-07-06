@@ -28,6 +28,9 @@ h1{font-size:22px;margin:0 0 4px}
 .fee .cur{color:#5b6470;font-size:13px}
 .feedesc{margin:8px 0 0;font-size:14px;color:#374049;line-height:1.45}
 .badge{display:inline-block;margin-top:10px;background:#eef6ee;color:#1f7a34;border:1px solid #cfe7d2;font-size:12px;font-weight:600;padding:4px 10px;border-radius:999px}
+.notebox{margin-top:12px;background:#fff8e1;border:1px solid #ffe082;border-radius:10px;padding:10px 12px;font-size:13px;color:#6b5310;line-height:1.5}
+.contact{margin:12px 0 0;font-size:13px;color:#5b6470}
+.contact a{color:#2563eb;text-decoration:none}
 .dayhdr{font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:#5b6470;margin:18px 0 8px}
 .dayhdr .spots{margin-left:8px;display:inline-block;background:#eef1f4;color:#374049;border-radius:999px;padding:2px 10px;font-size:12px;font-weight:600;text-transform:none;letter-spacing:0}
 .dayhdr .spots.low{background:#fdecec;color:#b3261e}
@@ -127,6 +130,14 @@ input[type=text],input[type=email]{width:100%;padding:12px;border:1px solid #d6d
     if((ev.feeCents||0) > 0){ h += '<div class=fee><span class=amt>'+money(ev.feeCents,ev.currency)+'</span><span class=cur>sitting fee</span></div>' }
     if(ev.feeDescription){ h += '<p class=feedesc>'+escapeHtml(ev.feeDescription)+'</p>' }
     if(ev.includesDigital){ h += '<span class=badge>Includes digital image downloads</span>' }
+    var mins = ev.slotMinutes || 5;
+    h += '<div class=notebox>Please arrive a few minutes early. Each session is just '+mins+' minute'+(mins===1?'':'s')+' long, so being on time makes sure your child does not miss their turn. Thank you!</div>';
+    var cbits = [];
+    if(ev.studioPhone){ cbits.push('<a href="tel:'+String(ev.studioPhone).replace(/[^+0-9]/g,'')+'">'+escapeHtml(ev.studioPhone)+'</a>') }
+    if(ev.studioEmail){ cbits.push('<a href="mailto:'+escapeHtml(ev.studioEmail)+'">'+escapeHtml(ev.studioEmail)+'</a>') }
+    if(ev.studioName || cbits.length){
+      h += '<p class=contact>Questions? Contact '+(ev.studioName?('<strong>'+escapeHtml(ev.studioName)+'</strong>'):'the studio')+(cbits.length?(' — '+cbits.join(' · ')):'')+'</p>';
+    }
     $('feebox').innerHTML = h;
     var dl = $('clslist');
     if(dl){
