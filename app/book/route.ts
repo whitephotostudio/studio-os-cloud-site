@@ -20,6 +20,7 @@ const html = `<!doctype html>
 *{box-sizing:border-box}
 body{margin:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;background:#f4f5f7;color:#15171a}
 .wrap{max-width:540px;margin:0 auto;padding:20px 16px 64px}
+#slogo img{display:block;max-height:56px;max-width:220px;object-fit:contain;margin:0 0 12px}
 .card{background:#fff;border:1px solid #e6e8eb;border-radius:16px;padding:22px;margin-bottom:16px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
 h1{font-size:22px;margin:0 0 4px}
 .sub{color:#5b6470;font-size:14px;margin:0}
@@ -59,6 +60,7 @@ input[type=text],input[type=email]{width:100%;padding:12px;border:1px solid #d6d
 <body>
 <div class='wrap'>
   <div class='card'>
+    <div id='slogo'></div>
     <h1 id='title'>Loading...</h1>
     <p class='sub' id='sub'>Photo session booking</p>
     <div id='feebox'></div>
@@ -124,6 +126,12 @@ input[type=text],input[type=email]{width:100%;padding:12px;border:1px solid #d6d
 
   function renderHead(){
     var ev = S.ev;
+    if(ev.studioLogoUrl){
+      var li = document.createElement('img');
+      li.src = ev.studioLogoUrl; li.alt = ev.studioName || 'Studio logo';
+      li.onerror = function(){ var w = $('slogo'); if(w) w.innerHTML=''; };
+      var lw = $('slogo'); if(lw){ lw.innerHTML=''; lw.appendChild(li); }
+    }
     $('title').textContent = ev.schoolName || 'Photo session';
     $('sub').textContent = 'Pick a time below to book your portrait session.';
     var h = '';
