@@ -17,6 +17,7 @@ type ProjectRow = {
   portal_status?: string | null;
   shoot_date?: string | null;
   event_date?: string | null;
+  expiration_date?: string | null;
   cover_photo_url?: string | null;
   cover_focal_x?: number | null;
   cover_focal_y?: number | null;
@@ -80,6 +81,19 @@ function formatDisplayDate(value: string | null | undefined) {
 
 function statusLabel(project: ProjectRow) {
   return clean(project.portal_status) || clean(project.status) || "inactive";
+}
+
+/// Gallery expiry line for list cards: gray when far out, amber within 14
+/// days, red once expired. Returns null when no expiry is set.
+function expiryInfo(value: string | null | undefined) {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  const label = date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+  const days = Math.ceil((date.getTime() - Date.now()) / 86400000);
+  if (days < 0) return { text: `Expired ${label}`, color: "#b3261e", weight: 700 };
+  if (days <= 14) return { text: `Expires ${label}`, color: "#b45309", weight: 700 };
+  return { text: `Expires ${label}`, color: "#9ca3af", weight: 500 };
 }
 
 function fallbackEventGradient(title: string) {
@@ -539,6 +553,12 @@ export default function EventsPage() {
                     <div style={{ fontSize: 12, color: "#9ca3af", marginTop: 4 }}>
                       {formatDisplayDate(project.event_date || project.shoot_date)}
                     </div>
+                    {(() => {
+                      const ex = expiryInfo(project.expiration_date);
+                      return ex ? (
+                        <div style={{ fontSize: 12, color: ex.color, fontWeight: ex.weight, marginTop: 2 }}>{ex.text}</div>
+                      ) : null;
+                    })()}
                     <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 10 }}>
                       <span style={{ fontSize: 12, color: "#6b7280" }}>{imageCounts[project.id] ?? 0} photos</span>
                       <span style={{ fontSize: 12, color: "#d1d5db" }}>&middot;</span>
