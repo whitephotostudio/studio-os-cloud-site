@@ -16,7 +16,21 @@ type SchoolRow = {
   local_school_id: string | null;
   shoot_date: string | null;
   created_at: string | null;
+  expiration_date: string | null;
 };
+
+/// Gallery expiry line for list cards: gray when far out, amber within 14
+/// days, red once expired. Returns null when no expiry is set.
+function expiryInfo(value: string | null | undefined) {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  const label = date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+  const days = Math.ceil((date.getTime() - Date.now()) / 86400000);
+  if (days < 0) return { text: `Expired ${label}`, color: "#b3261e", weight: 700 };
+  if (days <= 14) return { text: `Expires ${label}`, color: "#b45309", weight: 700 };
+  return { text: `Expires ${label}`, color: "#9ca3af", weight: 500 };
+}
 
 type StudentRow = {
   school_id: string;
@@ -31,6 +45,7 @@ type SchoolCard = {
   local_school_id: string | null;
   shoot_date: string | null;
   created_at: string | null;
+  expiration_date: string | null;
   peopleCount: number;
   classesCount: number;
   imagesCount: number;
@@ -198,7 +213,7 @@ export default function SchoolsPage() {
 
       const { data: schoolRows, error: schoolErr } = await supabase
         .from("schools")
-        .select("id,school_name,photographer_id,package_profile_id,local_school_id,shoot_date,created_at")
+        .select("id,school_name,photographer_id,package_profile_id,local_school_id,shoot_date,created_at,expiration_date")
         .eq("photographer_id", photographerRow.id)
         .order("created_at", { ascending: false });
 
@@ -296,6 +311,7 @@ export default function SchoolsPage() {
           local_school_id: school.local_school_id,
           shoot_date: school.shoot_date,
           created_at: school.created_at,
+          expiration_date: school.expiration_date,
           peopleCount: stat?.peopleCount ?? 0,
           classesCount: stat?.classNames.size ?? 0,
           imagesCount: stat?.imagesCount ?? 0,
@@ -700,6 +716,12 @@ export default function SchoolsPage() {
                   <div style={{ fontSize: 12, color: "#9ca3af", marginTop: 4 }}>
                     {school.shoot_date ? `Shoot ${formatDate(school.shoot_date)}` : formatDate(school.created_at)}
                   </div>
+                  {(() => {
+                    const ex = expiryInfo(school.expiration_date);
+                    return ex ? (
+                      <div style={{ fontSize: 12, color: ex.color, fontWeight: ex.weight, marginTop: 2 }}>{ex.text}</div>
+                    ) : null;
+                  })()}
                   <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 10 }}>
                     <span style={{ fontSize: 12, color: "#6b7280" }}>{school.classesCount} classes</span>
                     <span style={{ fontSize: 12, color: "#d1d5db" }}>&middot;</span>

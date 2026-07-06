@@ -315,7 +315,7 @@ export async function GET(request: NextRequest) {
     const { data: projectRows, error: projectsError, count: totalCount } = await service
       .from("projects")
       .select(
-        "id,title,client_name,workflow_type,source_type,status,portal_status,shoot_date,event_date,cover_photo_url,cover_focal_x,cover_focal_y,gallery_slug,linked_local_school_id,linked_school_id",
+        "id,title,client_name,workflow_type,source_type,status,portal_status,shoot_date,event_date,expiration_date,cover_photo_url,cover_focal_x,cover_focal_y,gallery_slug,linked_local_school_id,linked_school_id",
         { count: "exact" },
       )
       .eq("photographer_id", photographerRow.id)
