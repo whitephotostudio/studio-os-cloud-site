@@ -39,6 +39,8 @@ h1{font-size:22px;margin:0 0 4px}
 .slot{appearance:none;border:1px solid #d6dadf;background:#fff;border-radius:10px;padding:11px 6px;font-size:14px;font-weight:600;cursor:pointer;color:#15171a}
 .slot:hover{border-color:#15171a}
 .slot.sel{background:#15171a;color:#fff;border-color:#15171a}
+.slot.taken{background:#fdecec;border-color:#f3c0bd;color:#b3261e;cursor:not-allowed;text-decoration:line-through;opacity:.9}
+.slot.taken:hover{border-color:#f3c0bd}
 label{display:block;font-size:13px;font-weight:600;margin:14px 0 6px}
 input[type=text],input[type=email]{width:100%;padding:12px;border:1px solid #d6dadf;border-radius:10px;font-size:16px}
 .row{display:flex;gap:10px}
@@ -102,7 +104,7 @@ input[type=text],input[type=email]{width:100%;padding:12px;border:1px solid #d6d
   var base = 'https://bwqhzczxoevouiondjak.supabase.co/functions/v1';
   var params = new URLSearchParams(location.search);
   var eventId = params.get('event') || '';
-  var S = {ev:null, slots:[], slot:null, stripe:null, elements:null, cs:null, pin:'', credit:false};
+  var S = {ev:null, slots:[], taken:[], slot:null, stripe:null, elements:null, cs:null, pin:'', credit:false};
   var $ = function(id){return document.getElementById(id)};
 
   function money(cents, cur){
@@ -118,7 +120,7 @@ input[type=text],input[type=email]{width:100%;padding:12px;border:1px solid #d6d
       .then(function(r){ return r.json() })
       .then(function(d){
         if(d.error){ $('title').textContent='Booking unavailable'; $('status').innerHTML='<div class=err>'+escapeHtml(d.error)+'</div>'; return }
-        S.ev = d.event; S.slots = d.slots || [];
+        S.ev = d.event; S.slots = d.slots || []; S.taken = d.takenSlots || [];
         renderHead(); renderSlots();
       })
       .catch(function(){ $('status').innerHTML='<div class=err>Could not load. Please try again.</div>' });
@@ -155,21 +157,29 @@ input[type=text],input[type=email]{width:100%;padding:12px;border:1px solid #d6d
   }
 
   function renderSlots(){
-    if(!S.slots.length){ $('status').textContent = 'No times are available right now.'; $('slotwrap').innerHTML=''; return }
+    var open = S.slots || []; var taken = S.taken || [];
+    if(!open.length && !taken.length){ $('status').textContent = 'No times are available right now.'; $('slotwrap').innerHTML=''; return }
     $('status').textContent = '';
     var tz = S.ev.timezone;
     var groups = {}; var order = [];
-    S.slots.forEach(function(s){ var d = fmtDay(s.start_at, tz); if(!groups[d]){ groups[d]=[]; order.push(d) } groups[d].push(s) });
+    function bucket(s, isTaken){ var d = fmtDay(s.start_at, tz); if(!groups[d]){ groups[d]={open:[], all:[]}; order.push(d) } if(!isTaken){ groups[d].open.push(s) } groups[d].all.push({s:s, taken:isTaken}) }
+    open.forEach(function(s){ bucket(s, false) });
+    taken.forEach(function(s){ bucket(s, true) });
     var html = '';
     order.forEach(function(day){
-      var n = groups[day].length;
-      var spotsLbl = n <= 5 ? ('only ' + n + ' left') : (n + ' spots left');
+      var g = groups[day];
+      var n = g.open.length;
+      var spotsLbl = n === 0 ? 'fully booked' : (n <= 5 ? ('only ' + n + ' left') : (n + ' spots left'));
+      g.all.sort(function(a,b){ return new Date(a.s.start_at) - new Date(b.s.start_at) });
       html += '<div class=dayhdr>'+day+'<span class="spots'+(n<=5?' low':'')+'">'+spotsLbl+'</span></div><div class=slots>';
-      groups[day].forEach(function(s){ html += '<button class=slot data-id='+s.id+'>'+fmtTime(s.start_at,tz)+'</button>' });
+      g.all.forEach(function(it){
+        if(it.taken){ html += '<button class="slot taken" disabled title="Booked">'+fmtTime(it.s.start_at,tz)+'</button>' }
+        else { html += '<button class=slot data-id='+it.s.id+'>'+fmtTime(it.s.start_at,tz)+'</button>' }
+      });
       html += '</div>';
     });
     $('slotwrap').innerHTML = html;
-    Array.prototype.forEach.call(document.querySelectorAll('.slot'), function(b){ b.addEventListener('click', function(){ pick(b.getAttribute('data-id')) }) });
+    Array.prototype.forEach.call(document.querySelectorAll('.slot[data-id]'), function(b){ b.addEventListener('click', function(){ pick(b.getAttribute('data-id')) }) });
   }
 
   function pick(id){
