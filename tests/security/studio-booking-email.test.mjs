@@ -4,6 +4,7 @@ import test from "node:test";
 
 import {
   buildStudioBookingEmailDocument,
+  buildStudioBookingMailtoUrl,
   buildStudioBookingMailBody,
   collectStudioBookingEmailRecipients,
   defaultStudioBookingEmailCopy,
@@ -208,6 +209,41 @@ test("booking Mail draft body includes shared event, directions, and studio info
   assert.doesNotMatch(body, /call the principal/);
 });
 
+test("booking Mail draft URL uses percent-encoded spaces and CRLF line breaks", () => {
+  const body = [
+    "Your photography appointment details",
+    "",
+    "Hello,",
+    "",
+    "Location: 100 City Centre Dr Mississauga ON L5B 2C9 Canada",
+    "Address: https://maps.apple/p/Yn7u3np-y3pU8_",
+  ].join("\n");
+  const mailto = buildStudioBookingMailtoUrl({
+    to: "studio+bookings@example.com",
+    bcc: ["parent+one@example.com", "parent.two@example.com"],
+    subject: "Your photography +\nappointment details",
+    body,
+  });
+
+  assert.ok(mailto);
+  assert.doesNotMatch(mailto, /\+/);
+  assert.match(mailto, /^mailto:studio%2Bbookings@example\.com\?/);
+  assert.match(mailto, /bcc=parent%2Bone@example\.com,parent\.two@example\.com&/);
+  assert.match(mailto, /subject=Your%20photography%20%2B%20appointment%20details/);
+  assert.match(mailto, /%0D%0A%0D%0AHello%2C/);
+
+  const rawFields = Object.fromEntries(
+    mailto.slice(mailto.indexOf("?") + 1).split("&").map((field) => {
+      const splitAt = field.indexOf("=");
+      return [field.slice(0, splitAt), field.slice(splitAt + 1)];
+    }),
+  );
+  assert.equal(decodeURIComponent(rawFields.bcc), "parent+one@example.com,parent.two@example.com");
+  assert.equal(decodeURIComponent(rawFields.subject), "Your photography + appointment details");
+  assert.equal(decodeURIComponent(rawFields.body), body.replace(/\n/g, "\r\n"));
+  assert.equal(buildStudioBookingMailtoUrl({ to: null, bcc: ["parent@example.com"], subject: "Details", body: "Hello" }), null);
+});
+
 test("multi-day booking emails use an event date range and each recipient's real appointment", () => {
   const detail = detailFixture();
   detail.event.days = [
@@ -303,7 +339,7 @@ test("booking composer provides private branded send and BCC Mail fallback", () 
   const component = source("components/studio-booking-email-composer.tsx");
   assert.match(component, /Send branded email/);
   assert.match(component, /Open in Mail app/);
-  assert.match(component, /bcc: recipientEmails\.join/);
+  assert.match(component, /buildStudioBookingMailtoUrl/);
   assert.match(component, /navigator\.clipboard\.writeText/);
   assert.match(component, /Each client will receive a separate email/);
   assert.match(component, /Mail drafts cannot include the branded logo/);

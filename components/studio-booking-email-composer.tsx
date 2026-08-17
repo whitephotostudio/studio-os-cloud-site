@@ -27,6 +27,7 @@ import { createClient } from "@/lib/supabase/client";
 import {
   bookingEmailEventDate,
   bookingEmailTime,
+  buildStudioBookingMailtoUrl,
   buildStudioBookingMailBody,
   collectStudioBookingEmailRecipients,
   defaultStudioBookingEmailCopy,
@@ -325,13 +326,16 @@ export function StudioBookingEmailComposer({ detail }: { detail: StudioBookingDe
         directions,
       }),
     ].join("\n");
-    const query = new URLSearchParams({
-      bcc: recipientEmails.join(","),
-      subject: clean(subject),
+    const mailto = buildStudioBookingMailtoUrl({
+      to: detail.studio.email,
+      bcc: recipientEmails,
+      subject,
       body: mailBody,
     });
-    const to = detail.studio.email ? encodeURIComponent(detail.studio.email) : "";
-    const mailto = `mailto:${to}?${query.toString()}`;
+    if (!mailto) {
+      setError("Add a valid studio email in Settings before opening a Mail draft. You can still copy the BCC list.");
+      return;
+    }
     if (mailto.length > 16_000) {
       setError("This confirmed booking list is too large for one Mail draft. Copy the BCC list instead.");
       return;
@@ -611,7 +615,7 @@ export function StudioBookingEmailComposer({ detail }: { detail: StudioBookingDe
 
               <div className={styles.emailPrivacyNote}>
                 <ShieldCheck size={16} />
-                <span><strong>Recipients stay private.</strong> Branded delivery sends a separate email to each address. Mail-app delivery uses BCC.</span>
+                <span><strong>Recipients stay private with branded delivery.</strong> For Mail-app delivery, confirm every client appears in BCC before sending.</span>
               </div>
             </div>
 

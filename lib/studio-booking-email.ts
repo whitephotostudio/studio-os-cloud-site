@@ -40,10 +40,33 @@ export type StudioBookingEmailEventDetails = {
   directions?: string;
 };
 
+export type StudioBookingMailtoInput = {
+  to?: string | null;
+  bcc: string[];
+  subject: string;
+  body: string;
+};
+
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 function clean(value: string | null | undefined) {
   return (value ?? "").trim();
+}
+
+export function buildStudioBookingMailtoUrl(input: StudioBookingMailtoInput) {
+  const encodeAddress = (value: string | null | undefined) => {
+    const address = clean(value);
+    if (!EMAIL_RE.test(address)) return null;
+    const at = address.lastIndexOf("@");
+    return `${encodeURIComponent(address.slice(0, at))}@${encodeURIComponent(address.slice(at + 1))}`;
+  };
+  const to = encodeAddress(input.to);
+  const bcc = input.bcc.map(encodeAddress);
+  if (!to || !bcc.length || bcc.some((address) => !address)) return null;
+
+  const body = input.body.replace(/\r\n|\r|\n/g, "\r\n");
+  const subject = clean(input.subject).replace(/[\r\n]+/g, " ");
+  return `mailto:${to}?bcc=${bcc.join(",")}&subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
 }
 
 function cancelledStatus(value: string | null | undefined) {
