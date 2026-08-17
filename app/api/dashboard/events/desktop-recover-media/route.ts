@@ -4,7 +4,7 @@ import {
   createDashboardServiceClient,
   resolveDashboardAuth,
 } from "@/lib/dashboard-auth";
-import { r2PublicUrl, getR2Client, R2_BUCKET, hasR2Config } from "@/lib/r2";
+import { getR2Client, R2_BUCKET, hasR2Config } from "@/lib/r2";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -220,8 +220,8 @@ export async function POST(request: NextRequest) {
           storage_path: storagePath,
           filename: safeFilename,
           mime_type: "image/jpeg",
-          preview_url: r2PublicUrl(previewKey),
-          thumbnail_url: r2PublicUrl(thumbKey),
+          preview_url: previewKey,
+          thumbnail_url: thumbKey,
           sort_order: sortOrder,
           is_cover: false,
         },

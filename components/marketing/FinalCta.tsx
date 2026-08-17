@@ -24,7 +24,7 @@ export function FinalCta() {
               data-marketing-placement="home_final_cta"
               className="marketing-button premium-button inline-flex items-center justify-center gap-2 rounded-full bg-white px-5 py-3 text-neutral-950 transition hover:bg-neutral-100"
             >
-              Start Free Trial
+              Start 30-Day Free Trial
               <ArrowRight className="h-4 w-4" />
             </Link>
             <Link

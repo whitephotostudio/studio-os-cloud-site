@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 import { SeoLandingPage } from "@/components/seo-landing-page";
+import { BreadcrumbJsonLd } from "@/components/json-ld";
 
 export const metadata: Metadata = {
   title: "GotPhoto Alternative for School Photographers",
@@ -21,6 +22,15 @@ export const metadata: Metadata = {
 export default function GotPhotoAlternativePage() {
   return (
     <>
+      <BreadcrumbJsonLd
+        items={[
+          { name: "Home", item: "https://www.studiooscloud.com" },
+          {
+            name: "GotPhoto Alternative",
+            item: "https://www.studiooscloud.com/gotphoto-alternative",
+          },
+        ]}
+      />
       <SeoLandingPage
       badge="GotPhoto Alternative"
       headline="A GotPhoto Alternative with Connected Desktop and Cloud Workflow"

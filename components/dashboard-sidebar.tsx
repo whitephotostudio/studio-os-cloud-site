@@ -141,6 +141,20 @@ export function DashboardSidebar({
         {isAdmin && (
           <>
             <Link
+              href="/dashboard/admin/bookings"
+              onClick={onNavigate}
+              style={/^\/dashboard\/admin\/bookings/.test(pathname) ? navActiveStyle : navItemStyle}
+            >
+              Studio Bookings
+            </Link>
+            <Link
+              href="/dashboard/admin/cloud-flow"
+              onClick={onNavigate}
+              style={/^\/dashboard\/admin\/cloud-flow/.test(pathname) ? navActiveStyle : navItemStyle}
+            >
+              Cloud Flow
+            </Link>
+            <Link
               href="/dashboard/admin/users"
               onClick={onNavigate}
               style={{

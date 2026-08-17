@@ -34,9 +34,17 @@ export default function robots(): MetadataRoute.Robots {
           "cohere-ai",
         ],
         allow: ["/", "/llms.txt", "/llms-full.txt"],
-        disallow: ["/dashboard/", "/m/", "/api/", "/auth/", "/parents/", "/schools/"],
+        disallow: [
+          "/dashboard/",
+          "/m/",
+          "/api/",
+          "/auth/",
+          "/parents/",
+          "/schools/",
+        ],
       },
     ],
+    host: baseUrl,
     sitemap: `${baseUrl}/sitemap.xml`,
   };
 }

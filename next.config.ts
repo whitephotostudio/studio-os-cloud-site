@@ -113,6 +113,30 @@ const nextConfig: NextConfig = {
       headers: [{ key: "X-Robots-Tag", value: "noindex, nofollow" }],
     },
     {
+      source: "/dashboard/:path*",
+      headers: [{ key: "X-Robots-Tag", value: "noindex, nofollow" }],
+    },
+    {
+      source: "/m/:path*",
+      headers: [{ key: "X-Robots-Tag", value: "noindex, nofollow" }],
+    },
+    {
+      source: "/parents/:path*",
+      headers: [{ key: "X-Robots-Tag", value: "noindex, nofollow" }],
+    },
+    {
+      source: "/schools/:path*",
+      headers: [{ key: "X-Robots-Tag", value: "noindex, nofollow" }],
+    },
+    {
+      source: "/book",
+      headers: [{ key: "X-Robots-Tag", value: "noindex, nofollow" }],
+    },
+    {
+      source: "/manage",
+      headers: [{ key: "X-Robots-Tag", value: "noindex, nofollow" }],
+    },
+    {
       // Cache static assets aggressively
       source: "/(.*)\\.(js|css|woff2?|png|jpg|jpeg|gif|svg|ico|webp|avif)",
       headers: [

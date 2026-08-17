@@ -8,9 +8,9 @@ import { Logo } from "./logo";
 const navLinks = [
   { href: "/", label: "Home" },
   { href: "/sample-galleries", label: "Sample Galleries" },
+  { href: "/online-school-photography-booking", label: "Online Booking" },
   { href: "/studio-os", label: "Studio OS" },
   { href: "/mobile-app", label: "Mobile App" },
-  { href: "/studio-os/download", label: "Download App" },
   { href: "/pricing", label: "Pricing" },
 ];
 
@@ -43,7 +43,7 @@ export function SiteHeader() {
           <Logo small />
         </Link>
 
-        <nav className="relative z-10 hidden items-center gap-7 lg:flex">
+        <nav className="relative z-10 hidden items-center gap-7 xl:flex">
           {navLinks.map((link) => (
             <Link
               key={link.href}
@@ -55,7 +55,7 @@ export function SiteHeader() {
           ))}
         </nav>
 
-        <div className="relative z-10 hidden items-center gap-3 lg:flex">
+        <div className="relative z-10 hidden items-center gap-3 xl:flex">
           <Link
             href="/parents"
             rel="nofollow"
@@ -89,7 +89,7 @@ export function SiteHeader() {
           </Link>
         </div>
 
-        <div className="relative z-10 lg:hidden">
+        <div className="relative z-10 xl:hidden">
           <button
             type="button"
             onClick={() => setIsOpen((current) => !current)}

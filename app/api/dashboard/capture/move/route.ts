@@ -4,7 +4,7 @@ import {
   resolveDashboardAuth,
 } from "@/lib/dashboard-auth";
 import { guardAgreement } from "@/lib/require-agreement";
-import { r2Copy, r2DeleteWithVariants, r2PublicUrl, r2VariantKeys } from "@/lib/r2";
+import { r2Copy, r2DeleteWithVariants, r2VariantKeys } from "@/lib/r2";
 import { r2KeyFromAnyUrl } from "@/lib/r2-signed-urls";
 
 export const dynamic = "force-dynamic";
@@ -212,11 +212,10 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  const destUrl = r2PublicUrl(destKey);
-  if (!clean(dest.photo_url) && destUrl) {
+  if (!clean(dest.photo_url)) {
     await service
       .from("students")
-      .update({ photo_url: destUrl })
+      .update({ photo_url: destKey })
       .eq("id", dest.id);
   }
 

@@ -435,11 +435,11 @@ export default function SchoolsSchoolRoleGalleryPage() {
 
         // Generate pre-sized thumbnails server-side on R2
         const generated = await generateThumbnails(storagePath, accessToken);
-        const publicUrl = generated.previewUrl || r2Result.publicUrl;
-        if (clean(publicUrl)) {
+        const objectReference = generated.previewKey || r2Result.key || storagePath;
+        if (clean(objectReference)) {
           uploadedAssets.push({
             storagePath,
-            publicUrl,
+            publicUrl: objectReference,
             filename: file.name,
             mimeType: file.type || null,
           });
@@ -448,6 +448,13 @@ export default function SchoolsSchoolRoleGalleryPage() {
 
       const uploadedUrls = uploadedAssets.map((asset) => asset.publicUrl).filter(Boolean);
       if (!uploadedUrls.length) return;
+      const uploadedDisplayUrls = uploadedAssets.map(
+        (asset) =>
+          buildStoredMediaUrls({
+            storagePath: asset.storagePath,
+            previewUrl: asset.publicUrl,
+          }).previewUrl || asset.publicUrl,
+      );
 
       let nextPerson = person;
       const needsPersonUpdate = !clean(person.photo_url) || clean(person.folder_name) !== derivedFolderName;
@@ -481,7 +488,7 @@ export default function SchoolsSchoolRoleGalleryPage() {
 
       setPhotoUrlsMap((prev) => ({
         ...prev,
-        [person.id]: Array.from(new Set([...(existingUrls.length ? existingUrls : clean(person.photo_url) ? [clean(person.photo_url)] : []), ...uploadedUrls])),
+        [person.id]: Array.from(new Set([...(existingUrls.length ? existingUrls : clean(person.photo_url) ? [clean(person.photo_url)] : []), ...uploadedDisplayUrls])),
       }));
       setShareNotice(
         uploadedUrls.length === 1 ? "1 photo added to person" : `${uploadedUrls.length} photos added to person`
@@ -589,11 +596,11 @@ export default function SchoolsSchoolRoleGalleryPage() {
 
           // Generate pre-sized thumbnails server-side on R2
           const generated = await generateThumbnails(storagePath, accessToken);
-          const publicUrl = generated.previewUrl || r2Result.publicUrl;
-          if (clean(publicUrl)) {
+          const objectReference = generated.previewKey || r2Result.key || storagePath;
+          if (clean(objectReference)) {
             uploadedAssets.push({
               storagePath,
-              publicUrl,
+              publicUrl: objectReference,
               filename: file.name,
               mimeType: file.type || null,
             });
@@ -602,6 +609,13 @@ export default function SchoolsSchoolRoleGalleryPage() {
 
         const uploadedUrls = uploadedAssets.map((asset) => asset.publicUrl).filter(Boolean);
         if (uploadedUrls.length) {
+          const uploadedDisplayUrls = uploadedAssets.map(
+            (asset) =>
+              buildStoredMediaUrls({
+                storagePath: asset.storagePath,
+                previewUrl: asset.publicUrl,
+              }).previewUrl || asset.publicUrl,
+          );
           const { data: updatedRow, error: updateError } = await supabase
             .from("students")
             .update({
@@ -618,7 +632,10 @@ export default function SchoolsSchoolRoleGalleryPage() {
 
           nextPerson = updatedRow as PersonRow;
           setPeople((prev) => prev.map((person) => (person.id === nextPerson.id ? nextPerson : person)));
-          setPhotoUrlsMap((prev) => ({ ...prev, [nextPerson.id]: uploadedUrls }));
+          setPhotoUrlsMap((prev) => ({
+            ...prev,
+            [nextPerson.id]: uploadedDisplayUrls,
+          }));
         }
 
         if (syncTarget.projectId && syncTarget.collectionId) {

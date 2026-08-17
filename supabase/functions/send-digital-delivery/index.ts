@@ -4,76 +4,144 @@
 // Environment variables needed in Supabase Dashboard → Edge Functions → Secrets:
 //   RESEND_API_KEY   — your Resend API key (from resend.com)
 //   SUPABASE_URL     — your project URL (auto-injected)
+//   SUPABASE_ANON_KEY — publishable key used to validate the caller's JWT
 //   SUPABASE_SERVICE_ROLE_KEY — service role key (auto-injected)
 //   R2_PUBLIC_URL    — optional public base URL for migrated R2 photo storage
 
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.99.1";
+import {
+  cleanText,
+  encodeObjectKey,
+  escapeHtml,
+  validateOrderId,
+  validatePhotoPaths,
+} from "./security.ts";
 
 const RESEND_API_KEY = (Deno.env.get("RESEND_API_KEY") ?? "").trim().replace(/[^\x20-\x7E]/g, "");
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
+const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const R2_PUBLIC_URL = (Deno.env.get("R2_PUBLIC_URL") ?? "").trim().replace(/\/$/, "");
 
-const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+const admin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+  auth: { persistSession: false, autoRefreshToken: false },
+});
 
-interface DigitalDeliveryPayload {
-  order_id: string;
-  parent_email: string;
-  parent_name?: string;
-  student_name?: string;
-  school_name?: string;
-  photo_paths: string[]; // storage paths in the photos bucket
-}
+const cors = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+};
 
-function encodeKey(key: string) {
-  return key
-    .split("/")
-    .filter(Boolean)
-    .map((segment) => encodeURIComponent(segment))
-    .join("/");
+function json(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { ...cors, "Content-Type": "application/json" },
+  });
 }
 
 Deno.serve(async (req) => {
-  // Allow CORS for local dev
   if (req.method === "OPTIONS") {
-    return new Response("ok", {
-      headers: {
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Headers": "authorization, content-type",
-      },
-    });
+    return new Response("ok", { headers: cors });
   }
+  if (req.method !== "POST") return json({ error: "POST only" }, 405);
 
   try {
-    const payload: DigitalDeliveryPayload = await req.json();
-
-    const { order_id, parent_email, parent_name, student_name, school_name, photo_paths } = payload;
-
-    if (!parent_email || !photo_paths?.length) {
-      return new Response(JSON.stringify({ error: "Missing required fields" }), {
-        status: 400,
-        headers: { "Content-Type": "application/json" },
-      });
+    const authorization = req.headers.get("Authorization") ?? "";
+    if (!authorization.startsWith("Bearer ")) {
+      return json({ error: "Please sign in again." }, 401);
     }
+
+    const userClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+      global: { headers: { Authorization: authorization } },
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
+    const { data: userData, error: userError } = await userClient.auth.getUser();
+    if (userError || !userData.user) {
+      return json({ error: "Please sign in again." }, 401);
+    }
+
+    const payload = await req.json().catch(() => ({}));
+    const orderId = validateOrderId(payload?.order_id);
+    if (!orderId) return json({ error: "A valid order is required." }, 400);
+
+    const { data: photographer, error: photographerError } = await admin
+      .from("photographers")
+      .select("id")
+      .eq("user_id", userData.user.id)
+      .maybeSingle();
+    if (photographerError || !photographer?.id) {
+      return json({ error: "Photographer profile not found." }, 403);
+    }
+
+    const { data: order, error: orderError } = await admin
+      .from("orders")
+      .select("id,photographer_id,school_id,student_id,parent_email,customer_email,parent_name,customer_name")
+      .eq("id", orderId)
+      .eq("photographer_id", photographer.id)
+      .maybeSingle();
+    if (orderError || !order?.id) {
+      return json({ error: "Order not found." }, 404);
+    }
+
+    const validatedPaths = validatePhotoPaths(
+      payload?.photo_paths,
+      cleanText(order.school_id),
+      cleanText(order.student_id),
+    );
+    if (!validatedPaths.ok) return json({ error: validatedPaths.error }, 400);
+
+    const parentEmail = cleanText(order.customer_email) || cleanText(order.parent_email);
+    const parentName = cleanText(order.customer_name) || cleanText(order.parent_name);
+    if (
+      !parentEmail ||
+      parentEmail.length > 254 ||
+      !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(parentEmail)
+    ) {
+      return json({ error: "This order has no valid delivery email." }, 400);
+    }
+
+    const [{ data: student }, { data: school }] = await Promise.all([
+      admin
+        .from("students")
+        .select("first_name,last_name")
+        .eq("id", order.student_id)
+        .eq("school_id", order.school_id)
+        .maybeSingle(),
+      admin
+        .from("schools")
+        .select("school_name")
+        .eq("id", order.school_id)
+        .eq("photographer_id", photographer.id)
+        .maybeSingle(),
+    ]);
+
+    const studentName = [cleanText(student?.first_name), cleanText(student?.last_name)]
+      .filter(Boolean)
+      .join(" ") || "your child";
+    const schoolName = cleanText(school?.school_name);
+    const studentSubject = studentName.replace(/[\u0000\r\n]+/g, " ").slice(0, 160);
+
+    if (!RESEND_API_KEY) return json({ error: "Email delivery is not configured." }, 503);
 
     const usingR2PublicUrls = !!R2_PUBLIC_URL;
 
     // Generate R2 public URLs when configured; otherwise fall back to
     // Supabase signed URLs for legacy storage.
     const signedUrls: { path: string; url: string }[] = [];
-    for (const path of photo_paths) {
+    for (const path of validatedPaths.paths) {
       if (usingR2PublicUrls) {
         signedUrls.push({
           path,
-          url: `${R2_PUBLIC_URL}/${encodeKey(path)}`,
+          url: `${R2_PUBLIC_URL}/${encodeObjectKey(path)}`,
         });
       } else {
-        const { data, error } = await supabase.storage
+        const { data, error } = await admin.storage
           .from("photos")
           .createSignedUrl(path, 604800); // 7 days
 
         if (error || !data?.signedUrl) {
-          console.error(`Failed to create signed URL for ${path}:`, error);
+          console.error("[send-digital-delivery] could not sign an order photo");
           continue;
         }
         signedUrls.push({ path, url: data.signedUrl });
@@ -81,20 +149,17 @@ Deno.serve(async (req) => {
     }
 
     if (signedUrls.length === 0) {
-      return new Response(JSON.stringify({ error: "Could not generate download links" }), {
-        status: 500,
-        headers: { "Content-Type": "application/json" },
-      });
+      return json({ error: "Could not generate download links." }, 500);
     }
 
     // Build email HTML
-    const firstName = parent_name?.split(" ")[0] || "there";
-    const studentDisplay = student_name || "your child";
-    const schoolDisplay = school_name ? ` from ${school_name}` : "";
+    const firstName = escapeHtml(parentName.split(" ")[0] || "there");
+    const studentDisplay = escapeHtml(studentSubject);
+    const schoolDisplay = schoolName ? ` from ${escapeHtml(schoolName)}` : "";
 
     const photoLinksHtml = signedUrls
       .map((item, i) => {
-        const filename = item.path.split("/").pop() ?? `photo-${i + 1}.jpg`;
+        const filename = escapeHtml(item.path.split("/").pop() ?? `photo-${i + 1}.jpg`);
         return `
           <tr>
             <td style="padding: 10px 0; border-bottom: 1px solid #e5e5e5;">
@@ -154,7 +219,7 @@ Deno.serve(async (req) => {
               </p>`
               }
               <p style="margin: 0; font-size: 13px; color: #999; line-height: 1.6;">
-                Order reference: <code style="font-size: 11px; color: #bbb;">${order_id}</code>
+                Order reference: <code style="font-size: 11px; color: #bbb;">${escapeHtml(orderId)}</code>
               </p>
             </td>
           </tr>
@@ -184,37 +249,31 @@ Deno.serve(async (req) => {
       },
       body: JSON.stringify({
         from: "Studio OS <noreply@studiooscloud.com>",
-        to: [parent_email],
-        subject: `Your photos are ready — ${studentDisplay}`,
+        to: [parentEmail],
+        subject: `Your photos are ready — ${studentSubject}`,
         html: emailHtml,
       }),
     });
 
     if (!resendRes.ok) {
-      const resendErr = await resendRes.text();
-      console.error("Resend error:", resendErr);
-      return new Response(JSON.stringify({ error: "Failed to send email", detail: resendErr }), {
-        status: 500,
-        headers: { "Content-Type": "application/json" },
-      });
+      console.error("[send-digital-delivery] email provider rejected the request", resendRes.status);
+      return json({ error: "Failed to send email." }, 502);
     }
 
     // Mark order as digital_delivered in Supabase
-    await supabase
+    const { error: updateError } = await admin
       .from("orders")
       .update({ status: "digital_delivered", digital_delivered_at: new Date().toISOString() })
-      .eq("id", order_id);
+      .eq("id", orderId)
+      .eq("photographer_id", photographer.id);
+    if (updateError) {
+      console.error("[send-digital-delivery] email sent but order status update failed");
+    }
 
-    return new Response(JSON.stringify({ success: true, sent_to: parent_email, links: signedUrls.length }), {
-      status: 200,
-      headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
-    });
+    return json({ success: true, links: signedUrls.length });
 
   } catch (err) {
-    console.error("Edge function error:", err);
-    return new Response(JSON.stringify({ error: String(err) }), {
-      status: 500,
-      headers: { "Content-Type": "application/json" },
-    });
+    console.error("[send-digital-delivery] unexpected failure", err instanceof Error ? err.name : "unknown");
+    return json({ error: "Digital delivery failed." }, 500);
   }
 });

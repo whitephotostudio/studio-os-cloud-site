@@ -254,7 +254,7 @@ export default function SchoolsSchoolClassPage() {
 
         if (err) throw err;
 
-        let loaded = ((rows ?? []) as Student[]).map((student) => {
+        const loaded = ((rows ?? []) as Student[]).map((student) => {
           const storagePath = extractObjectPathFromPublicUrl(clean(student.photo_url));
           const previewUrl = storagePath
             ? buildStoredMediaUrls({
@@ -519,11 +519,11 @@ export default function SchoolsSchoolClassPage() {
 
         // Generate pre-sized thumbnails server-side on R2
         const generated = await generateThumbnails(storagePath, accessToken);
-        const publicUrl = generated.previewUrl || r2Result.publicUrl;
-        if (clean(publicUrl)) {
+        const objectReference = generated.previewKey || r2Result.key || storagePath;
+        if (clean(objectReference)) {
           uploadedAssets.push({
             storagePath,
-            publicUrl,
+            publicUrl: objectReference,
             filename: file.name,
             mimeType: file.type || null,
           });
@@ -534,6 +534,13 @@ export default function SchoolsSchoolClassPage() {
         .map((asset) => asset.publicUrl)
         .filter(Boolean);
       if (!uploadedUrls.length) return;
+      const uploadedDisplayUrls = uploadedAssets.map(
+        (asset) =>
+          buildStoredMediaUrls({
+            storagePath: asset.storagePath,
+            previewUrl: asset.publicUrl,
+          }).previewUrl || asset.publicUrl,
+      );
 
       let updatedStudent = student;
       const needsStudentUpdate =
@@ -586,7 +593,7 @@ export default function SchoolsSchoolClassPage() {
               : clean(student.photo_url)
                 ? [clean(student.photo_url)]
                 : []),
-            ...uploadedUrls,
+            ...uploadedDisplayUrls,
           ]),
         ),
       }));

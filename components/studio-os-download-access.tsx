@@ -15,6 +15,7 @@ import {
 
 import { Reveal } from "@/components/reveal";
 import { createClient } from "@/lib/supabase/client";
+import { FREE_TRIAL_DAYS } from "@/lib/trial-config";
 
 type StudioOSDownloadAccessProps = {
   publicRelease: boolean;
@@ -252,7 +253,7 @@ export function StudioOSDownloadAccess({
                 <Clock3 className="h-4 w-4" />
                 {selectedPlatform === "windows"
                   ? "Windows release list"
-                  : "Activate your 7-day trial"}
+                  : `Activate your ${FREE_TRIAL_DAYS}-day trial`}
               </div>
               <h2 className="mt-4 text-3xl font-black tracking-tight text-neutral-950 sm:text-4xl">
                 {selectedPlatform === "windows"
@@ -262,7 +263,7 @@ export function StudioOSDownloadAccess({
               <p className="mt-4 text-base leading-7 text-neutral-600">
                 {selectedPlatform === "windows"
                   ? "Register your email and we will notify you as soon as the Windows installer is released."
-                  : "Create your photographer account first so we can activate your 7-day Studio OS trial, track your access, and bring you back to the app download when you are ready."}
+                  : `Create your photographer account first so we can activate your ${FREE_TRIAL_DAYS}-day Studio OS trial, track your access, and bring you back to the app download when you are ready.`}
               </p>
             </div>
 
@@ -306,7 +307,7 @@ export function StudioOSDownloadAccess({
                   <>
                     {selectedPlatform === "windows"
                       ? "Register for Windows Release"
-                      : "Start Free 7-Day Trial"}
+                      : `Start Free ${FREE_TRIAL_DAYS}-Day Trial`}
                     <ArrowRight className="h-4 w-4" />
                   </>
                 )}
@@ -475,7 +476,7 @@ export function StudioOSDownloadAccess({
             Already a photographer account?
           </div>
           <p className="mt-3 text-base leading-7 text-neutral-600">
-            Sign in first and this page will immediately swap over to your app download buttons. New photographers can start with the free 7-day trial.
+            Sign in first and this page will immediately swap over to your app download buttons. New photographers can start with the free {FREE_TRIAL_DAYS}-day trial.
           </p>
           <div className="mt-5 flex flex-wrap items-center justify-center gap-3">
             <Link

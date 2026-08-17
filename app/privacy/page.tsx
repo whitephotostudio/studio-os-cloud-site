@@ -96,7 +96,7 @@ export default function PrivacyPage() {
               so one photographer cannot read another&rsquo;s data, and
               optional two-factor authentication on your account. No system
               is perfectly secure — if you suspect unauthorized access, email
-              us at harout@me.com so we can investigate.
+              us at galleries@studiooscloud.com so we can investigate.
             </p>
           </section>
 
@@ -104,7 +104,7 @@ export default function PrivacyPage() {
             <h2 className="text-xl font-black text-neutral-950">7. Your rights</h2>
             <p className="mt-2">
               You can request a copy of the data we hold about you, correct
-              it, or ask us to delete it. Email harout@me.com.
+              it, or ask us to delete it. Email galleries@studiooscloud.com.
               For parent/client data in a gallery, contact the photographer
               who invited you — they control that gallery.
             </p>

@@ -41,7 +41,10 @@ export type ActivityNotificationResult =
 const SETTINGS_KEY = "studioos:owner-notifications:settings";
 const ACTIVITY_KEY = "studioos:owner-activity:recent";
 const ACTIVITY_LIMIT = 500;
+const FOUNDING_100_KEY_PREFIX = "studioos:campaign:founding-100";
+const FOUNDING_100_RETENTION_SECONDS = 366 * 24 * 60 * 60;
 const HIGH_INTENT_PATH_PREFIXES = [
+  "/founding-100",
   "/pricing",
   "/prices",
   "/sign-up",
@@ -56,12 +59,22 @@ const HIGH_INTENT_PATH_PREFIXES = [
   "/gotphoto-alternative",
 ];
 const HIGH_INTENT_EVENTS = new Set([
+  "cta_book_demo",
   "cta_download_app",
+  "cta_founding_100",
   "cta_photographer_sign_in",
   "cta_start_trial",
   "cta_view_pricing",
   "cta_sample_galleries",
 ]);
+
+export type Founding100MarketingReport = {
+  visitors: number;
+  trialClicks: number;
+  demoClicks: number;
+  trackedSignups: number;
+  trackingMode: "persistent" | "recent-activity";
+};
 const EXCLUDED_PATH_PREFIXES = [
   "/api",
   "/_next",
@@ -240,6 +253,77 @@ function simplifyUserAgent(userAgent: string | null) {
   return `${browser} · ${device}`;
 }
 
+function founding100Signal(activity: OwnerActivity) {
+  const campaignPlacement = activity.placement?.startsWith("founding_100") ?? false;
+  const campaignPage = activity.path === "/founding-100";
+  if (!campaignPlacement && !campaignPage) return null;
+  if (activity.type === "page_view" && campaignPage) return "visitors" as const;
+  if (activity.event === "cta_start_trial") return "trial-clicks" as const;
+  if (activity.event === "cta_book_demo") return "demo-clicks" as const;
+  if (activity.event === "signup_account_created") return "signups" as const;
+  return null;
+}
+
+async function recordFounding100Signal(activity: OwnerActivity) {
+  if (cleanEnv(process.env.VERCEL_ENV) !== "production") return;
+  const signal = founding100Signal(activity);
+  const redis = getRedis();
+  if (!signal || !redis) return;
+  const key = `${FOUNDING_100_KEY_PREFIX}:${signal}`;
+  const identity = activity.anonymousId || activity.id;
+  try {
+    await Promise.all([
+      redis.sadd(key, identity),
+      redis.expire(key, FOUNDING_100_RETENTION_SECONDS),
+    ]);
+  } catch (error) {
+    console.warn("[admin-notification-center] Founding 100 tracking failed:", error);
+    markRedisFailed(error);
+  }
+}
+
+function uniqueCampaignSignals(activities: OwnerActivity[], signal: ReturnType<typeof founding100Signal>) {
+  if (!signal) return 0;
+  return new Set(
+    activities
+      .filter((activity) => founding100Signal(activity) === signal)
+      .map((activity) => activity.anonymousId || activity.id),
+  ).size;
+}
+
+export async function getFounding100MarketingReport(): Promise<Founding100MarketingReport> {
+  const redis = getRedis();
+  if (redis) {
+    try {
+      const [visitors, trialClicks, demoClicks, trackedSignups] = await Promise.all([
+        redis.scard(`${FOUNDING_100_KEY_PREFIX}:visitors`),
+        redis.scard(`${FOUNDING_100_KEY_PREFIX}:trial-clicks`),
+        redis.scard(`${FOUNDING_100_KEY_PREFIX}:demo-clicks`),
+        redis.scard(`${FOUNDING_100_KEY_PREFIX}:signups`),
+      ]);
+      return {
+        visitors,
+        trialClicks,
+        demoClicks,
+        trackedSignups,
+        trackingMode: "persistent",
+      };
+    } catch (error) {
+      console.warn("[admin-notification-center] Founding 100 report failed:", error);
+      markRedisFailed(error);
+    }
+  }
+
+  const { activities } = await getOwnerActivityReport(ACTIVITY_LIMIT);
+  return {
+    visitors: uniqueCampaignSignals(activities, "visitors"),
+    trialClicks: uniqueCampaignSignals(activities, "trial-clicks"),
+    demoClicks: uniqueCampaignSignals(activities, "demo-clicks"),
+    trackedSignups: uniqueCampaignSignals(activities, "signups"),
+    trackingMode: "recent-activity",
+  };
+}
+
 function locationFromRequest(request: Request) {
   const rawCity = request.headers.get("x-vercel-ip-city");
   return {
@@ -388,6 +472,8 @@ export async function recordOwnerActivity(input: ActivityInput, request: Request
     memoryActivities.unshift(activity);
     memoryActivities.splice(ACTIVITY_LIMIT);
   }
+
+  await recordFounding100Signal(activity);
 
   const notification = await maybeNotifyForActivity(activity, settings);
   return { recorded: true as const, activity, notification };

@@ -50,6 +50,7 @@ import { isOrderingWindowOpen } from "@/lib/ordering-window";
 import { getClientIp, rateLimit } from "@/lib/rate-limit";
 import { hasActiveSubscription } from "@/lib/subscription-gate";
 import { parseJson } from "@/lib/api-validation";
+import { durablePrivateMediaReference } from "@/lib/private-media-references";
 import {
   computeCombineTotals,
   type CombineGroup,
@@ -499,7 +500,8 @@ export async function POST(request: NextRequest) {
               id: bd.id as string,
               name: clean(bd.name) || "Backdrop",
               tier: bd.tier ?? null,
-              imageUrl: bd.image_url ?? null,
+              imageUrl:
+                durablePrivateMediaReference(bd.image_url) || null,
               blurred: !!entry.backdrop.blurred,
               blurAmount,
             };
@@ -519,9 +521,13 @@ export async function POST(request: NextRequest) {
           isDigital: isDigitalCategory(pkg.category, pkg.name),
           slots: (entry.slots ?? []).map((s) => ({
             label: clean(s.label) || "Item",
-            assignedImageUrl: s.assignedImageUrl ?? null,
+            assignedImageUrl: s.assignedImageUrl
+              ? durablePrivateMediaReference(s.assignedImageUrl)
+              : null,
           })),
-          selectedImageUrl: entry.selectedImageUrl ?? null,
+          selectedImageUrl: entry.selectedImageUrl
+            ? durablePrivateMediaReference(entry.selectedImageUrl)
+            : null,
           backdrop,
           orientation: entry.orientation ?? "portrait",
         });

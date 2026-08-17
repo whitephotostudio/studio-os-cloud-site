@@ -27,7 +27,10 @@ import { createClient } from "@/lib/supabase/client";
 import { useIsMobile } from "@/lib/use-is-mobile";
 import { uploadToR2 } from "@/lib/upload-to-r2-client";
 import { ensureSchoolCollectionId } from "@/lib/school-sync";
-import { extractStoragePathFromSupabaseUrl } from "@/lib/storage-images";
+import {
+  buildStoredMediaUrls,
+  extractStoragePathFromSupabaseUrl,
+} from "@/lib/storage-images";
 
 type School = {
   id: string;
@@ -1088,22 +1091,24 @@ export default function SchoolsSchoolDetailPage() {
         throw new Error("School cover upload failed.");
       }
 
-      const publicUrl = r2Result.publicUrl;
-      if (!publicUrl) {
-        throw new Error("School cover uploaded, but no public URL was returned.");
+      const objectReference = clean(r2Result.key) || storagePath;
+      if (!objectReference) {
+        throw new Error("School cover uploaded, but no storage reference was returned.");
       }
 
       const updateRes = await fetch(`/api/dashboard/events/${syncProjectId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ cover_photo_url: publicUrl }),
+        body: JSON.stringify({ cover_photo_url: objectReference }),
       });
       if (!updateRes.ok) {
         const updateData = await updateRes.json().catch(() => ({}));
         throw new Error((updateData as { message?: string }).message || "Failed to save uploaded cover.");
       }
 
-      setSchoolProjectCoverUrl(publicUrl);
+      setSchoolProjectCoverUrl(
+        buildStoredMediaUrls({ storagePath: objectReference }).previewUrl,
+      );
       setShareNotice("School cover uploaded");
       window.setTimeout(() => setShareNotice(""), 2200);
     } catch (err: unknown) {

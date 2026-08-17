@@ -1,7 +1,10 @@
-import type { Metadata } from "next";
+"use client";
+
 import Link from "next/link";
+import { useState } from "react";
 import {
   ArrowUpRight,
+  CalendarCheck2,
   Camera,
   Check,
   Globe2,
@@ -14,21 +17,13 @@ import { Reveal } from "@/components/marketing/Reveal";
 import { PricingJsonLd } from "@/components/json-ld";
 import { SiteFooter } from "@/components/site-footer";
 import { SiteHeader } from "@/components/site-header";
-
-export const metadata: Metadata = {
-  title: "Pricing for Photography Galleries and Workflow",
-  description:
-    "Studio OS Cloud pricing for premium online galleries, client ordering, digital delivery, desktop workflow, AI background tools, and connected production control.",
-  alternates: {
-    canonical: "https://www.studiooscloud.com/pricing",
-  },
-  openGraph: {
-    title: "Studio OS Cloud Pricing",
-    description:
-      "Choose the Studio OS Cloud plan for galleries, ordering, desktop workflow, and deeper production control.",
-    url: "https://www.studiooscloud.com/pricing",
-  },
-};
+import {
+  ANNUAL_DISCOUNT_PERCENT,
+  PLAN_DEFS,
+  type BillingInterval,
+  type PlanCode,
+} from "@/lib/studio-pricing";
+import { FREE_TRIAL_DAYS } from "@/lib/trial-config";
 
 type PricingPlan = {
   eyebrow: string;
@@ -73,6 +68,11 @@ const pricingComparisonRows: {
     studioOs: "yes",
   },
   {
+    label: "Online Booking + Student Rosters",
+    galleryOnly: "no",
+    studioOs: "yes",
+  },
+  {
     label: "Desktop + Cloud Workflow",
     galleryOnly: "no",
     studioOs: "yes",
@@ -103,6 +103,8 @@ const studioPlanFeatures = [
   "Everything in the App Plan",
   "2 Photography Keys",
   "Full Studio OS workflow",
+  "Online school and event booking links",
+  "Automatic booking-to-student-roster workflow",
   "Direct camera tethering",
   "Advanced school shooting tools",
   "AI backdrop cleanup and replacement in the app",
@@ -120,17 +122,17 @@ const plans: PricingPlan[] = [
     eyebrow: "Try Studio OS First",
     name: "Free Trial",
     price: "$0",
-    priceSuffix: "for 7 days",
-    billing: "Free 7-day access",
+    priceSuffix: `for ${FREE_TRIAL_DAYS} days`,
+    billing: `Free ${FREE_TRIAL_DAYS}-day access`,
     badge: "Everything in Studio Plan",
     description:
       "Try the full Studio OS workflow before choosing a paid plan. Use the same Studio Plan tools for galleries, production, school workflows, and ordering.",
     included: studioPlanFeatures,
-    note: "Includes everything in the Studio Plan for 7 days. After the trial, choose the plan that fits your studio.",
+    note: `Includes everything in the Studio Plan for ${FREE_TRIAL_DAYS} days. After the trial, choose the plan that fits your studio.`,
     cta: "Start Free Trial",
     href: "/sign-up",
     icon: Sparkles,
-    ribbon: "Free 7 Days",
+    ribbon: `Free ${FREE_TRIAL_DAYS} Days`,
   },
   {
     eyebrow: "For Online Delivery",
@@ -149,6 +151,7 @@ const plans: PricingPlan[] = [
     notIncluded: [
       "Studio OS app access",
       "School shooting tools",
+      "Online booking with automatic student rosters",
       "Photography keys",
       "Backdrop upsell tools",
     ],
@@ -169,6 +172,8 @@ const plans: PricingPlan[] = [
       "Everything in Web Gallery",
       "Studio OS app access",
       "1 Photography Key",
+      "Online school and event booking links",
+      "Automatic booking-to-student-roster workflow",
       "Direct camera tethering",
       "School photography workflow tools",
       "AI backdrop cleanup and replacement in the app",
@@ -204,11 +209,13 @@ const plans: PricingPlan[] = [
 ];
 
 export default function PricingPage() {
+  const [billingInterval, setBillingInterval] = useState<BillingInterval>("month");
+
   return (
     <div className="min-h-screen bg-white text-neutral-950">
       <PricingJsonLd />
       <SiteHeader />
-      <main className="px-4 py-16 sm:px-6 lg:px-8 lg:py-24">
+      <main className="overflow-x-hidden px-4 py-16 sm:px-6 lg:px-8 lg:py-24">
         <section className="mx-auto max-w-7xl">
           <Reveal className="pricing-cinematic-hero overflow-hidden rounded-[2rem] border border-white/10 bg-neutral-950 px-6 py-16 text-center text-white shadow-[0_38px_120px_rgba(0,0,0,0.28)] sm:px-10 lg:px-16 lg:py-20">
             <div className="pricing-hero-glow" />
@@ -216,15 +223,19 @@ export default function PricingPage() {
               <p className="marketing-kicker text-red-300">
                 Pricing
               </p>
-              <h1 className="marketing-display mt-4">
+              <h1
+                className="marketing-display mt-4"
+                style={{ fontSize: "clamp(2.2rem, 9.5vw, 5.4rem)" }}
+              >
                 Simple pricing for connected photography workflows.
               </h1>
               <p className="marketing-body mx-auto mt-5 max-w-3xl text-white/70">
                 Choose the level of Studio OS Cloud that matches how your studio
-                delivers galleries, captures locally, and manages production.
+                takes bookings, builds student rosters, delivers galleries, captures
+                locally, and manages production.
               </p>
               <div className="mt-8 flex flex-wrap justify-center gap-3">
-                {["7-day full trial", "Studio workflow included", "Monthly or annual"].map((label) => (
+                {[`${FREE_TRIAL_DAYS}-day launch trial`, "Studio workflow included", "Prices in CAD"].map((label) => (
                   <span
                     key={label}
                     className="marketing-kicker rounded-full border border-white/15 bg-white/10 px-4 py-2 text-white/75 backdrop-blur"
@@ -233,6 +244,29 @@ export default function PricingPage() {
                   </span>
                 ))}
               </div>
+            </div>
+          </Reveal>
+
+          <Reveal delay={80} className="mt-6 rounded-[1.5rem] border border-red-200 bg-gradient-to-r from-red-50 via-white to-red-50 p-5 sm:p-6">
+            <div className="flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex items-start gap-4">
+                <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-red-600 text-white">
+                  <CalendarCheck2 className="h-5 w-5" />
+                </span>
+                <div>
+                  <h2 className="marketing-card-title text-[1.15rem]">Online booking is included with the Studio OS app workflow.</h2>
+                  <p className="marketing-body mt-2 text-[1rem] leading-7 text-neutral-600">
+                    App and Studio plans let you create school booking links that build a student roster, or event links that build an attendee booking list.
+                  </p>
+                </div>
+              </div>
+              <Link
+                href="/online-school-photography-booking"
+                className="marketing-button inline-flex shrink-0 items-center justify-center gap-2 rounded-full border border-neutral-300 bg-white px-5 py-3 text-neutral-950 transition hover:border-neutral-950"
+              >
+                See Online Booking
+                <ArrowUpRight className="h-4 w-4" />
+              </Link>
             </div>
           </Reveal>
 
@@ -251,14 +285,35 @@ export default function PricingPage() {
                 aria-label="Billing cadence"
                 className="grid w-full max-w-[260px] grid-cols-2 rounded-2xl border border-neutral-200 bg-neutral-100 p-1.5"
               >
-                <span className="marketing-button rounded-xl bg-neutral-950 px-4 py-3 text-center text-white shadow-sm">
+                <button
+                  type="button"
+                  aria-pressed={billingInterval === "month"}
+                  onClick={() => setBillingInterval("month")}
+                  className={`marketing-button rounded-xl px-4 py-3 text-center transition ${
+                    billingInterval === "month"
+                      ? "bg-neutral-950 text-white shadow-sm"
+                      : "text-neutral-600 hover:bg-white"
+                  }`}
+                >
                   Monthly
-                </span>
-                <span className="marketing-button rounded-xl px-4 py-3 text-center text-neutral-600">
+                </button>
+                <button
+                  type="button"
+                  aria-pressed={billingInterval === "year"}
+                  onClick={() => setBillingInterval("year")}
+                  className={`marketing-button rounded-xl px-4 py-3 text-center transition ${
+                    billingInterval === "year"
+                      ? "bg-neutral-950 text-white shadow-sm"
+                      : "text-neutral-600 hover:bg-white"
+                  }`}
+                >
                   Annual
-                </span>
+                </button>
               </div>
             </div>
+            <p className="marketing-caption mt-4 text-neutral-500">
+              All prices are in Canadian dollars (CAD). Annual billing saves {ANNUAL_DISCOUNT_PERCENT}%.
+            </p>
           </Reveal>
 
           <div className="mt-10 grid gap-6 lg:grid-cols-2 lg:items-stretch xl:grid-cols-4">
@@ -273,7 +328,7 @@ export default function PricingPage() {
                   repeat
                   className={`pricing-plan-reveal pricing-plan-${motion} h-full`}
                 >
-                  <PricingCard plan={plan} />
+                  <PricingCard plan={plan} billingInterval={billingInterval} />
                 </Reveal>
               );
             })}
@@ -314,13 +369,50 @@ export default function PricingPage() {
   );
 }
 
-function PricingCard({ plan }: { plan: PricingPlan }) {
+function PricingCard({
+  plan,
+  billingInterval,
+}: {
+  plan: PricingPlan;
+  billingInterval: BillingInterval;
+}) {
   const Icon = plan.icon;
   const isFeatured = plan.featured;
+  const planCode: PlanCode | null =
+    plan.name === "Web Gallery Plan"
+      ? "starter"
+      : plan.name === "App Plan"
+        ? "core"
+        : plan.name === "Studio Plan"
+          ? "studio"
+          : null;
+  const priceCents = planCode
+    ? billingInterval === "year"
+      ? PLAN_DEFS[planCode].annualPriceCents
+      : PLAN_DEFS[planCode].priceCents
+    : 0;
+  const formattedPrice = planCode
+    ? new Intl.NumberFormat("en-CA", {
+        style: "currency",
+        currency: "CAD",
+        minimumFractionDigits: billingInterval === "year" ? 2 : 0,
+        maximumFractionDigits: 2,
+      }).format(priceCents / 100)
+    : plan.price;
+  const monthlyEquivalent = planCode
+    ? new Intl.NumberFormat("en-CA", {
+        style: "currency",
+        currency: "CAD",
+      }).format(priceCents / (billingInterval === "year" ? 1200 : 100))
+    : null;
+  const href = planCode
+    ? `/sign-up?plan=${planCode}&interval=${billingInterval}`
+    : plan.href;
+  const isAnnualPlan = Boolean(planCode && billingInterval === "year");
 
   return (
     <article
-      className={`premium-card flex h-full flex-col rounded-[2rem] border p-6 shadow-[0_20px_70px_rgba(0,0,0,0.08)] sm:p-7 ${
+      className={`premium-card flex h-full min-w-0 flex-col overflow-hidden rounded-[2rem] border p-6 shadow-[0_20px_70px_rgba(0,0,0,0.08)] sm:p-7 ${
         isFeatured
           ? "pricing-featured-card border-neutral-900 text-white shadow-[0_28px_95px_rgba(0,0,0,0.26)]"
           : "border-neutral-200 bg-white text-neutral-950"
@@ -356,16 +448,32 @@ function PricingCard({ plan }: { plan: PricingPlan }) {
         {plan.name}
       </h2>
 
-      <div className="mt-7 flex items-end gap-2">
-        <span className="text-6xl font-[700] leading-none tracking-normal">
-          {plan.price}
+      <div className={isAnnualPlan ? "mt-7" : "mt-7 flex items-end gap-2"}>
+        <span
+          className={`block whitespace-nowrap font-[700] leading-none tabular-nums ${
+            isAnnualPlan ? "text-[2.5rem] tracking-[-0.035em]" : "text-6xl tracking-normal"
+          }`}
+        >
+          {formattedPrice}
         </span>
-        <span className={`marketing-body pb-1 text-[1rem] ${isFeatured ? "text-white/60" : "text-neutral-600"}`}>
-          {plan.priceSuffix ?? "/month"}
+        <span
+          className={`marketing-body block text-[1rem] ${
+            isAnnualPlan ? "mt-2" : "pb-1"
+          } ${isFeatured ? "text-white/60" : "text-neutral-600"}`}
+        >
+          {planCode
+            ? billingInterval === "year"
+              ? "/year"
+              : "/month"
+            : plan.priceSuffix}
         </span>
       </div>
       <p className={`marketing-body mt-5 text-[1rem] leading-7 ${isFeatured ? "text-white/55" : "text-neutral-500"}`}>
-        {plan.billing}
+        {planCode
+          ? billingInterval === "year"
+            ? `Paid annually · ${monthlyEquivalent}/month equivalent`
+            : "Billed monthly · CAD"
+          : plan.billing}
       </p>
 
       <div
@@ -404,7 +512,7 @@ function PricingCard({ plan }: { plan: PricingPlan }) {
       </div>
 
       <Link
-        href={plan.href}
+        href={href}
         data-marketing-event="cta_start_trial"
         data-marketing-label={`Pricing plan: ${plan.name}`}
         data-marketing-placement="pricing_plan_card"

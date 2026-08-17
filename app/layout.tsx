@@ -28,12 +28,13 @@ const baseUrl = "https://www.studiooscloud.com";
 
 export const metadata: Metadata = {
   metadataBase: new URL(baseUrl),
+  applicationName: "Studio OS Cloud",
   title: {
-    default: "Studio OS Cloud | Premium Photography Gallery and Workflow Platform",
+    default: "Studio OS Cloud | Photography Workflow & Galleries",
     template: "%s | Studio OS Cloud",
   },
   description:
-    "Premium photography gallery and workflow platform for photographers who want branded online galleries, client ordering, digital delivery, and deeper workflow control. Connect desktop and cloud in one system.",
+    "Photography workflow software with online galleries, booking, ordering, digital delivery, desktop capture, and production tools in one connected platform.",
   keywords: [
     "photography workflow software",
     "photographer workflow software",
@@ -44,6 +45,9 @@ export const metadata: Metadata = {
     "photography project organization",
     "school photography software",
     "school picture day software",
+    "online school photography booking",
+    "picture day appointment scheduling",
+    "automatic photography roster",
     "client ordering system",
     "camera tethering software",
     "photography business management",
@@ -73,9 +77,9 @@ export const metadata: Metadata = {
     locale: "en_US",
     url: baseUrl,
     siteName: "Studio OS Cloud",
-    title: "Studio OS Cloud | Premium Photography Gallery and Workflow Platform",
+    title: "Studio OS Cloud | Photography Workflow & Galleries",
     description:
-      "Great galleries for all photographers. Deeper workflow power for photographers who need more.",
+      "Connect booking, desktop capture, online galleries, client ordering, digital delivery, and production in one photography platform.",
     images: [
       {
         url: "/studio_os_logo.png",
@@ -87,9 +91,9 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
-    title: "Studio OS Cloud | Premium Photography Gallery and Workflow Platform",
+    title: "Studio OS Cloud | Photography Workflow & Galleries",
     description:
-      "Premium online galleries, client ordering, and connected desktop + cloud workflow.",
+      "Booking, online galleries, ordering, delivery, and desktop production in one connected photography workflow.",
     images: ["/studio_os_logo.png"],
   },
   robots: {

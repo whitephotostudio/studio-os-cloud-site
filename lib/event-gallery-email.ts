@@ -2,6 +2,9 @@ import {
   EventGalleryShareSettings,
   defaultEventGalleryShareSettings,
 } from "@/lib/event-gallery-settings";
+import { signedPrivateMediaReference } from "@/lib/private-media-references";
+
+const EMAIL_COVER_MEDIA_TTL_SECONDS = 7 * 24 * 60 * 60;
 
 export type EventEmailProject = {
   id: string;
@@ -173,7 +176,10 @@ export function buildGalleryShareEmail(input: EventEmailContentInput) {
   const emailRequirement = eventEmailRequirementSummary(input.project);
   const studioName = eventFromName(input.photographer);
   const previewText = clean(input.previewText);
-  const coverUrl = clean(input.project.cover_photo_url);
+  const coverUrl = signedPrivateMediaReference(
+    input.project.cover_photo_url,
+    EMAIL_COVER_MEDIA_TTL_SECONDS,
+  );
   const textLines = [
     headline,
     "",
@@ -268,7 +274,10 @@ export function buildSchoolShareEmail(input: SchoolEmailContentInput) {
   const emailRequirement = schoolEmailRequirementSummary(input.school);
   const studioName = eventFromName(input.photographer);
   const previewText = clean(input.previewText);
-  const coverUrl = clean(input.school.cover_photo_url);
+  const coverUrl = signedPrivateMediaReference(
+    input.school.cover_photo_url,
+    EMAIL_COVER_MEDIA_TTL_SECONDS,
+  );
   const textLines = [
     headline,
     "",

@@ -23,6 +23,7 @@ import {
   type PlanCode,
   type PlanDefinition,
 } from "@/lib/studio-pricing";
+import { FREE_TRIAL_DAYS } from "@/lib/trial-config";
 
 export {
   ANNUAL_DISCOUNT_PERCENT,
@@ -33,6 +34,7 @@ export {
   normalizeBillingInterval,
   normalizeCreditPackCode,
   normalizePlanCode,
+  FREE_TRIAL_DAYS,
 };
 export type {
   BillingInterval,
@@ -500,9 +502,6 @@ export async function getPhotographerByUserId(service: ServiceClient, userId: st
 
   return (data as PhotographerBillingRow | null) ?? null;
 }
-
-/** Duration of the free trial in days. */
-export const FREE_TRIAL_DAYS = 7;
 
 export function isTrialStatus(status: string | null | undefined) {
   const normalized = (status ?? "").trim().toLowerCase();

@@ -7,10 +7,11 @@
     "build": "next build",
     "start": "next start",
     "seo:crawl": "node scripts/seo-crawl.mjs",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test:security": "node --test tests/security/*.test.mjs"
   },
   "dependencies": {
-    "@aws-sdk/client-s3": "^3.1030.0",
+    "@aws-sdk/client-s3": "^3.1093.0",
     "@capacitor/core": "^8.0.0",
     "@capacitor/push-notifications": "^8.0.0",
     "@supabase/ssr": "^0.9.0",
@@ -21,10 +22,12 @@
     "@zxing/browser": "^0.1.5",
     "@zxing/library": "^0.21.3",
     "lucide-react": "^0.577.0",
-    "next": "^16.1.6",
+    "next": "^16.2.11",
+    "pdf-lib": "^1.17.1",
+    "qrcode.react": "4.2.0",
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
-    "sharp": "^0.34.5",
+    "sharp": "0.35.3",
     "zod": "^4.3.6"
   },
   "devDependencies": {
@@ -33,11 +36,16 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
-    "eslint-config-next": "16.1.6",
+    "eslint-config-next": "16.2.11",
     "tailwindcss": "^4",
     "typescript": "^5"
   },
   "optionalDependencies": {
-    "@next/swc-darwin-arm64": "^16.1.6"
+    "@next/swc-darwin-arm64": "^16.2.11"
+  },
+  "overrides": {
+    "nanoid": "3.3.18",
+    "postcss": "8.5.23",
+    "sharp": "0.35.3"
   }
 }

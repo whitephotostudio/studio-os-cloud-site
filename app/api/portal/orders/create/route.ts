@@ -7,6 +7,7 @@ import { isOrderingWindowOpen } from "@/lib/ordering-window";
 import { getClientIp, rateLimit } from "@/lib/rate-limit";
 import { hasActiveSubscription } from "@/lib/subscription-gate";
 import { resolveShipping } from "@/lib/combine-orders";
+import { durablePrivateMediaReference } from "@/lib/private-media-references";
 import {
   ensureObjectBody,
   validateEmail,
@@ -587,7 +588,27 @@ export async function POST(request: NextRequest) {
         { status: 400 },
       );
     }
-    const entries = entriesResult.value;
+    const entries = entriesResult.value.map((entry) => ({
+      ...entry,
+      selectedImageUrl: entry.selectedImageUrl
+        ? durablePrivateMediaReference(entry.selectedImageUrl)
+        : null,
+      slots: entry.slots.map((slot) => ({
+        ...slot,
+        assignedImageUrl: slot.assignedImageUrl
+          ? durablePrivateMediaReference(slot.assignedImageUrl)
+          : null,
+      })),
+      digitalSelections: entry.digitalSelections.map((selection) => ({
+        ...selection,
+        url: selection.url
+          ? durablePrivateMediaReference(selection.url)
+          : null,
+        thumbnailUrl: selection.thumbnailUrl
+          ? durablePrivateMediaReference(selection.thumbnailUrl)
+          : null,
+      })),
+    }));
 
     // ── mode-specific access + photographer resolution ──────────────────
     let photographerId: string;
@@ -889,12 +910,13 @@ export async function POST(request: NextRequest) {
       const resolvedDigitalSelections = entry.digitalSelections.map((selection, index) => {
         const media = eventMediaMap.get(clean(selection.mediaId));
         const sku = clean(media?.storage_path) || clean(selection.url) || null;
-        const displayUrl =
+        const displayUrl = durablePrivateMediaReference(
           clean(selection.thumbnailUrl) ||
           clean(media?.thumbnail_url) ||
           clean(media?.preview_url) ||
           clean(selection.url) ||
-          sku;
+          sku,
+        );
         const label =
           clean(selection.filename) ||
           clean(media?.filename) ||
@@ -1085,7 +1107,8 @@ export async function POST(request: NextRequest) {
         ? {
             id: entry.backdropRow.id,
             name: clean(entry.backdropRow.name) || "Backdrop",
-            image_url: clean(entry.backdropRow.image_url) || null,
+            image_url:
+              durablePrivateMediaReference(entry.backdropRow.image_url) || null,
             tier: clean(entry.backdropRow.tier) || null,
             price_cents: entry.backdropAddOnCents,
             blurred: !!entry.backdrop?.blurred,
@@ -1235,7 +1258,8 @@ export async function POST(request: NextRequest) {
           price: entry.backdropAddOnCents / 100,
           unit_price_cents: entry.backdropAddOnCents,
           line_total_cents: entry.backdropAddOnCents,
-          sku: clean(entry.backdropRow.image_url) || null,
+          sku:
+            durablePrivateMediaReference(entry.backdropRow.image_url) || null,
         });
       }
     }

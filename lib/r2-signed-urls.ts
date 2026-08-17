@@ -69,19 +69,13 @@ function dateStamp(date: Date) {
  * @param key Object key (no leading slash). e.g. "projects/abc/albums/def/photo.jpg"
  * @param expiresInSeconds URL TTL.  Default 1 hour.  Max 7 days per AWS.
  */
-export function r2PresignedGetUrl(
+function r2PresignedUrl(
+  method: "GET" | "PUT",
   key: string,
-  expiresInSeconds = 60 * 60,
+  expiresInSeconds: number,
 ): string {
   if (!key) return "";
   if (!hasR2Secrets()) {
-    // In dev / Vercel previews without R2 secrets we fall back to the
-    // public URL so local rendering still works.  Production must set
-    // the env vars or every gallery will return blank URLs.
-    if (process.env.NODE_ENV !== "production") {
-      const publicBase = (process.env.R2_PUBLIC_URL || "").replace(/\/$/, "");
-      return publicBase ? `${publicBase}/${encodePath(key)}` : "";
-    }
     console.error(
       "[r2-signed-urls] R2 secrets missing — cannot presign URL.  " +
         "Set R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY.",
@@ -115,7 +109,7 @@ export function r2PresignedGetUrl(
   const payloadHash = "UNSIGNED-PAYLOAD";
 
   const canonicalRequest = [
-    "GET",
+    method,
     canonicalUri,
     canonicalQuery,
     canonicalHeaders,
@@ -140,6 +134,26 @@ export function r2PresignedGetUrl(
 
   return `https://${host}${canonicalUri}?${canonicalQuery}&X-Amz-Signature=${signature}`;
 }
+
+export function r2PresignedGetUrl(
+  key: string,
+  expiresInSeconds = 60 * 60,
+): string {
+  return r2PresignedUrl("GET", key, expiresInSeconds);
+}
+
+/**
+ * Generate a short-lived direct-upload URL. Only `host` is signed, so callers
+ * may set Content-Type for R2 metadata without having to reproduce the signing
+ * algorithm. The server route must authorize the exact key before issuing it.
+ */
+export function r2PresignedPutUrl(
+  key: string,
+  expiresInSeconds = 15 * 60,
+): string {
+  return r2PresignedUrl("PUT", key, expiresInSeconds);
+}
+
 
 /**
  * Convenience: extract the storage key from any of the URL shapes we

@@ -392,8 +392,8 @@ export default function ProjectAlbumPage() {
           // Generate pre-sized thumbnails server-side on R2
           const generated = await generateThumbnails(uploadedStoragePath, accessToken);
 
-          const previewUrl = generated.previewUrl || r2Result.publicUrl;
-          const thumbnailUrl = generated.thumbnailUrl || r2Result.publicUrl;
+          const previewReference = generated.previewKey || uploadedStoragePath;
+          const thumbnailReference = generated.thumbnailKey || previewReference;
 
           const payload = {
             project_id: projectId,
@@ -401,8 +401,8 @@ export default function ProjectAlbumPage() {
             storage_path: uploadedStoragePath,
             filename: file.name,
             mime_type: file.type || null,
-            preview_url: previewUrl || null,
-            thumbnail_url: thumbnailUrl || null,
+            preview_url: previewReference || null,
+            thumbnail_url: thumbnailReference || null,
             sort_order: sortOrderBase + uploadedCount + failedCount,
             is_cover: false,
           };
@@ -423,12 +423,14 @@ export default function ProjectAlbumPage() {
               storage_path: uploadedStoragePath,
               filename: file.name,
               mime_type: file.type || null,
-              preview_url: previewUrl || null,
-              thumbnail_url: thumbnailUrl || null,
+              preview_url: previewReference || null,
+              thumbnail_url: thumbnailReference || null,
               created_at: new Date().toISOString(),
               sort_order: sortOrderBase + uploadedCount + failedCount,
             }),
-            download_url: r2Result.publicUrl,
+            download_url: buildStoredMediaUrls({
+              storagePath: uploadedStoragePath,
+            }).originalUrl,
           }) as MediaRow;
 
           uploadedCount += 1;

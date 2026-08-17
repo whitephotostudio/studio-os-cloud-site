@@ -721,7 +721,7 @@ function DashboardPageContent() {
       if (photographerResult.error) throw photographerResult.error;
 
       // First-visit bootstrap: if no photographer row exists yet, hit the
-      // status endpoint which creates one (with a fresh 7-day trial) via
+      // status endpoint which creates one (with a fresh launch trial) via
       // getOrCreatePhotographerByUser, then re-query so the rest of the
       // dashboard (trial banner, schools, projects, orders) renders right
       // away instead of showing an empty state.
@@ -1345,7 +1345,7 @@ function DashboardPageContent() {
               <div style={{ display: "flex", justifyContent: "space-between", gap: 18, alignItems: "center", flexWrap: "wrap" }}>
                 <div>
                   <div style={{ fontSize: 13, letterSpacing: "0.12em", fontWeight: 800, color: "#2563eb", marginBottom: 8 }}>
-                    7-DAY TRIAL ACTIVE
+                    FREE TRIAL ACTIVE
                   </div>
                   <div style={{ fontSize: 24, lineHeight: 1.2, fontWeight: 900, color: "#0f172a" }}>
                     {dashboardTrialDaysRemaining} day{dashboardTrialDaysRemaining === 1 ? "" : "s"} left in your Studio OS trial

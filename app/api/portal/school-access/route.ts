@@ -10,6 +10,11 @@ import {
   buildSignedMediaUrls,
   SIGNED_URL_TTL_PARENTS_PORTAL_SECONDS,
 } from "@/lib/storage-images";
+import { signBackdropRows } from "@/lib/backdrop-media-references";
+import {
+  signedPrivateMediaReference,
+  signPhotoUrlRows,
+} from "@/lib/private-media-references";
 import { filterPackagesForProfile } from "@/lib/package-profile-selection";
 import {
   buildSchoolCandidateFolders,
@@ -635,12 +640,25 @@ export async function POST(request: NextRequest) {
             "Classes",
         };
 
+        const signedStudentCandidates = signPhotoUrlRows(
+          studentCandidates,
+          SIGNED_URL_TTL_PARENTS_PORTAL_SECONDS,
+        );
+        const signedPrimaryStudent = {
+          ...primaryStudent,
+          photo_url:
+            signedPrivateMediaReference(
+              primaryStudent.photo_url,
+              SIGNED_URL_TTL_PARENTS_PORTAL_SECONDS,
+            ) || null,
+        };
+
         galleryContext = {
           ok: true,
           currentSchool: selectedSchool,
           schoolRowsForMatch: sameNameFull ?? [gallerySchool],
-          studentCandidates,
-          primaryStudent,
+          studentCandidates: signedStudentCandidates,
+          primaryStudent: signedPrimaryStudent,
           activeSchool: gallerySchool,
           activeProject,
           gallerySettings: publicGallerySettings,
@@ -648,7 +666,10 @@ export async function POST(request: NextRequest) {
           media: mediaRows,
           composites: compositeRows,
           packages: packageRows,
-          backdrops: backdropsResult.data ?? [],
+          backdrops: signBackdropRows(
+            backdropsResult.data ?? [],
+            SIGNED_URL_TTL_PARENTS_PORTAL_SECONDS,
+          ),
           nobgUrls: noBgUrls,
           photographerId: photographer?.id ?? gallerySchool.photographer_id,
           watermarkEnabled,

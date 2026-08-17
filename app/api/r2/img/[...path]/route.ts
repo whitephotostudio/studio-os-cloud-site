@@ -5,6 +5,7 @@ import {
 } from "@/lib/dashboard-auth";
 import { r2PresignedGetUrl } from "@/lib/r2-signed-urls";
 import { r2Download } from "@/lib/r2";
+import { isUuid, normalizeR2Key } from "@/lib/r2-access-security";
 import sharp from "sharp";
 
 export const dynamic = "force-dynamic";
@@ -45,16 +46,16 @@ export async function GET(
 ) {
   try {
     const { path } = await context.params;
-    const storagePath = (path ?? []).map(decodeURIComponent).join("/");
-    if (!storagePath) {
+    const rawStoragePath = (path ?? []).map(decodeURIComponent).join("/");
+    if (!rawStoragePath) {
       return NextResponse.json(
         { ok: false, message: "Missing storage path." },
         { status: 400 },
       );
     }
 
-    // Reject path traversal attempts before doing any work.
-    if (storagePath.includes("..") || storagePath.startsWith("/")) {
+    const storagePath = normalizeR2Key(rawStoragePath);
+    if (!storagePath) {
       return NextResponse.json(
         { ok: false, message: "Invalid storage path." },
         { status: 400 },
@@ -89,17 +90,48 @@ export async function GET(
 
     // ── Authorization: confirm the photographer is allowed to view this path ──
     //
-    // Allowed shapes:
-    //   1. <photographerId>/...                       — school-mode photos
-    //   2. nobg-photos/<photographerId>/...           — background-removed PNGs
-    //   3. projects/<projectId>/...  where the project belongs to this photographer
-    //   4. thumbs/<photographerId>/...                — old thumbnails bucket
-    //   5. schools/<schoolId>/...                      — school composites/exports
-    //   6. <school.local_school_id>/...                — desktop school sync photos
+    // Keep this compatibility list aligned with the R2 gateway namespaces.
+    // Historical rows can use a database school id, local school id, project
+    // id, or a nested no-background namespace.
     let authorized = false;
+    const segments = storagePath.split("/").filter(Boolean);
+    const [firstSegment = "", secondSegment = "", thirdSegment = ""] = segments;
 
-    const firstSegment = storagePath.split("/")[0] ?? "";
-    const secondSegment = storagePath.split("/")[1] ?? "";
+    async function ownsProject(projectId: string) {
+      if (!isUuid(projectId)) return false;
+      const { data, error } = await service
+        .from("projects")
+        .select("id")
+        .eq("id", projectId)
+        .eq("photographer_id", photographerId)
+        .maybeSingle();
+      if (error) throw error;
+      return Boolean(data?.id);
+    }
+
+    async function ownsSchool(schoolIdOrLocalId: string) {
+      if (!schoolIdOrLocalId) return false;
+      if (isUuid(schoolIdOrLocalId)) {
+        const { data: byId, error: byIdError } = await service
+          .from("schools")
+          .select("id")
+          .eq("id", schoolIdOrLocalId)
+          .eq("photographer_id", photographerId)
+          .maybeSingle();
+        if (byIdError) throw byIdError;
+        if (byId?.id) return true;
+      }
+
+      const { data: byLocalId, error: byLocalIdError } = await service
+        .from("schools")
+        .select("id")
+        .eq("local_school_id", schoolIdOrLocalId)
+        .eq("photographer_id", photographerId)
+        .maybeSingle();
+      if (byLocalIdError) throw byLocalIdError;
+      return Boolean(byLocalId?.id);
+    }
+
     if (firstSegment === photographerId) {
       authorized = true;
     } else if (
@@ -107,54 +139,26 @@ export async function GET(
       storagePath.startsWith(`thumbs/${photographerId}/`)
     ) {
       authorized = true;
-    } else if (storagePath.startsWith("projects/")) {
-      // projects/<projectId>/...  — verify the project belongs to this photographer
-      const projectId = storagePath.split("/")[1] ?? "";
-      if (projectId) {
-        const { data: projectRow, error: projectError } = await service
-          .from("projects")
-          .select("id")
-          .eq("id", projectId)
-          .eq("photographer_id", photographerId)
-          .maybeSingle();
-        if (projectError) throw projectError;
-        if (projectRow) authorized = true;
+    } else if (firstSegment === "backdrops") {
+      authorized = secondSegment === photographerId;
+    } else if (firstSegment === "projects" || firstSegment === "probes") {
+      authorized = await ownsProject(secondSegment);
+    } else if (firstSegment === "schools" || firstSegment === "photos") {
+      authorized = await ownsSchool(secondSegment);
+    } else if (firstSegment === "nobg-photos") {
+      if (secondSegment === "projects") {
+        authorized = await ownsProject(thirdSegment);
+      } else if (secondSegment === "schools") {
+        authorized = await ownsSchool(thirdSegment);
+      } else {
+        authorized = await ownsSchool(secondSegment);
       }
-    } else if (storagePath.startsWith("schools/")) {
-      // schools/<schoolId>/... — class composites and school export files.
-      const schoolId = storagePath.split("/")[1] ?? "";
-      if (schoolId) {
-        const { data: schoolRow, error: schoolError } = await service
-          .from("schools")
-          .select("id")
-          .eq("id", schoolId)
-          .eq("photographer_id", photographerId)
-          .maybeSingle();
-        if (schoolError) throw schoolError;
-        if (schoolRow) authorized = true;
-      }
-    }
-
-    if (!authorized && firstSegment) {
-      const localSchoolId = firstSegment === "nobg-photos" ? secondSegment : firstSegment;
-      if (localSchoolId) {
-        const { data: schoolRow, error: schoolError } = await service
-          .from("schools")
-          .select("id")
-          .eq("photographer_id", photographerId)
-          .eq("local_school_id", localSchoolId)
-          .maybeSingle();
-        if (schoolError) throw schoolError;
-        if (schoolRow) authorized = true;
-      }
+    } else if (firstSegment) {
+      authorized = await ownsSchool(firstSegment);
     }
 
     if (!authorized) {
-      console.warn(
-        "[r2/img] photographer %s tried to access unauthorized path: %s",
-        photographerId,
-        storagePath,
-      );
+      console.warn("[r2/img] rejected an unauthorized object path");
       return NextResponse.json(
         { ok: false, message: "Not authorized for this image." },
         { status: 403 },

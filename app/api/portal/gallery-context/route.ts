@@ -16,6 +16,11 @@ import {
   buildSignedMediaUrls,
   SIGNED_URL_TTL_PARENTS_PORTAL_SECONDS,
 } from "@/lib/storage-images";
+import { signBackdropRows } from "@/lib/backdrop-media-references";
+import {
+  signedPrivateMediaReference,
+  signPhotoUrlRows,
+} from "@/lib/private-media-references";
 
 export const dynamic = "force-dynamic";
 
@@ -526,7 +531,10 @@ export async function POST(request: NextRequest) {
           publicGallerySettings.extras.priceSheetProfileId ||
           photographerDefaultProfileId,
       }).packages;
-      backdropRows = (backdropsResult.data ?? []) as BackdropRow[];
+      backdropRows = signBackdropRows(
+        (backdropsResult.data ?? []) as BackdropRow[],
+        SIGNED_URL_TTL_PARENTS_PORTAL_SECONDS,
+      );
 
       const photographer = photographerResult.data;
       if (photographer) {
@@ -605,12 +613,25 @@ export async function POST(request: NextRequest) {
         "Classes",
     };
 
+    const signedStudentCandidates = signPhotoUrlRows(
+      studentCandidates,
+      SIGNED_URL_TTL_PARENTS_PORTAL_SECONDS,
+    );
+    const signedPrimaryStudent = {
+      ...primaryStudent,
+      photo_url:
+        signedPrivateMediaReference(
+          primaryStudent.photo_url,
+          SIGNED_URL_TTL_PARENTS_PORTAL_SECONDS,
+        ) || null,
+    };
+
     return NextResponse.json({
       ok: true,
       currentSchool,
       schoolRowsForMatch,
-      studentCandidates,
-      primaryStudent,
+      studentCandidates: signedStudentCandidates,
+      primaryStudent: signedPrimaryStudent,
       activeSchool,
       activeProject,
       gallerySettings: publicGallerySettings,

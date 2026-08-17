@@ -34,6 +34,26 @@ function clean(value: string | null | undefined) {
   return (value ?? "").trim();
 }
 
+function isBareMediaKey(value: string) {
+  return (
+    !!value &&
+    !value.startsWith("/") &&
+    !/^[a-z][a-z0-9+.-]*:\/\//i.test(value) &&
+    /\.(png|jpe?g|webp|gif|avif|heic|heif|tiff?)(?:[?#].*)?$/i.test(value)
+  );
+}
+
+function browserUrlForStoredReference(
+  value: string | null | undefined,
+  bucket: string,
+) {
+  const candidate = clean(value);
+  if (!candidate) return "";
+  return isBareMediaKey(candidate)
+    ? publicStorageUrl(candidate.split("?")[0].split("#")[0], bucket)
+    : candidate;
+}
+
 function encodeStoragePath(path: string) {
   return path
     .split("/")
@@ -67,13 +87,10 @@ export function publicStorageUrl(
   // exposing the R2 secret in the browser bundle.  Server-side render
   // paths use buildSignedMediaUrls() directly and skip this proxy.
   //
-  // Falls back to the Supabase public URL only when storagePath looks
-  // like a Supabase-bucket path (e.g. backdrops/, studio-logos/) which
-  // are intentionally public.
-  if (
-    safePath.startsWith("backdrops/") ||
-    safePath.startsWith("studio-logos/")
-  ) {
+  // Studio logos are intentionally public Supabase assets. R2 backdrops use
+  // the `backdrops/<photographerId>/...` namespace and must go through the
+  // authenticated proxy like every other private R2 object.
+  if (safePath.startsWith("studio-logos/")) {
     if (!SUPABASE_URL) return "";
     return `${SUPABASE_URL}/storage/v1/object/public/${bucket}/${encodeStoragePath(safePath)}`;
   }
@@ -126,6 +143,10 @@ export function extractStoragePathFromSupabaseUrl(
 ) {
   const candidate = clean(url);
   if (!candidate) return null;
+
+  if (isBareMediaKey(candidate)) {
+    return decodeURIComponent(candidate.split("?")[0].split("#")[0]);
+  }
 
   if (R2_PUBLIC_URL && candidate.startsWith(`${R2_PUBLIC_URL}/`)) {
     try {
@@ -181,8 +202,14 @@ export function buildStoredMediaUrls(
   const storagePath = clean(input.storagePath);
   const originalUrl = publicStorageUrl(storagePath, bucket);
 
-  const existingThumbnailUrl = clean(input.thumbnailUrl);
-  const existingPreviewUrl = clean(input.previewUrl);
+  const existingThumbnailUrl = browserUrlForStoredReference(
+    input.thumbnailUrl,
+    bucket,
+  );
+  const existingPreviewUrl = browserUrlForStoredReference(
+    input.previewUrl,
+    bucket,
+  );
 
   // Use pre-generated thumbnails if they exist; otherwise fall back to the
   // original public URL.  We no longer generate Supabase transform URLs

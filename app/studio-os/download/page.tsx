@@ -6,9 +6,9 @@ import { SiteHeader } from "@/components/site-header";
 import { Reveal } from "@/components/reveal";
 
 export const metadata: Metadata = {
-  title: "Download Studio OS App — Mac & Windows",
+  title: "Download Studio OS for Mac — Windows Coming Soon",
   description:
-    "Download the Studio OS desktop app for Mac or Windows. Camera tethering, roster management, AI backgrounds, and cloud sync for professional photographers.",
+    "Download the Studio OS desktop app for Mac. Windows is coming soon. Camera tethering, roster management, AI backgrounds, and cloud sync for professional photographers.",
   alternates: {
     canonical: "https://www.studiooscloud.com/studio-os/download",
   },
