@@ -3,6 +3,7 @@
 import {
   type ChangeEvent,
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
@@ -31,6 +32,7 @@ import {
   buildStudioBookingMailBody,
   collectStudioBookingEmailRecipients,
   defaultStudioBookingEmailCopy,
+  normalizeStudioBookingEmailAddress,
   STUDIO_BOOKING_EMAIL_MAX_RECIPIENTS,
   studioBookingRecipientFingerprint,
 } from "@/lib/studio-booking-email";
@@ -53,6 +55,14 @@ type SendResult = {
   failed: number;
   total: number;
   message: string;
+  retryAfterSeconds?: number;
+  parentSent?: number;
+  parentFailed?: number;
+  staffCopy?: {
+    requested: boolean;
+    sent: boolean;
+    failed: boolean;
+  };
 };
 
 type ErrorPayload = {
@@ -156,10 +166,11 @@ function clean(value: string | null | undefined) {
 export function StudioBookingEmailComposer({ detail }: { detail: StudioBookingDetail }) {
   const supabase = useMemo(() => createClient(), []);
   const defaults = useMemo(() => defaultStudioBookingEmailCopy(detail), [detail]);
-  const subjectRef = useRef<HTMLInputElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const modalRef = useRef<HTMLElement>(null);
   const resultRef = useRef<HTMLDivElement>(null);
+  const staffCopyInputRef = useRef<HTMLInputElement>(null);
+  const staffCopyHelpId = useId();
   const sendingRef = useRef(false);
   const [open, setOpen] = useState(false);
   const [subject, setSubject] = useState(defaults.subject);
@@ -168,6 +179,9 @@ export function StudioBookingEmailComposer({ detail }: { detail: StudioBookingDe
   const [location, setLocation] = useState(clean(detail.schedule.location));
   const [address, setAddress] = useState(clean(detail.schedule.address));
   const [directions, setDirections] = useState("");
+  const [staffCopyEnabled, setStaffCopyEnabled] = useState(false);
+  const [staffCopyEmail, setStaffCopyEmail] = useState("");
+  const [staffCopyValidationAttempted, setStaffCopyValidationAttempted] = useState(false);
   const [photos, setPhotos] = useState<PreparedPhoto[]>([]);
   const [processingPhotos, setProcessingPhotos] = useState(false);
   const [sending, setSending] = useState(false);
@@ -176,6 +190,7 @@ export function StudioBookingEmailComposer({ detail }: { detail: StudioBookingDe
   const [notice, setNotice] = useState("");
   const [copied, setCopied] = useState(false);
   const [result, setResult] = useState<SendResult | null>(null);
+  const [retrySeconds, setRetrySeconds] = useState(0);
 
   const validSlotIds = useMemo(
     () => new Set(detail.slots.map((slot) => slot.id)),
@@ -189,8 +204,34 @@ export function StudioBookingEmailComposer({ detail }: { detail: StudioBookingDe
     () => recipientSummary.recipients.map((recipient) => recipient.email),
     [recipientSummary.recipients],
   );
+  const normalizedStaffCopyEmail = useMemo(
+    () => normalizeStudioBookingEmailAddress(staffCopyEmail),
+    [staffCopyEmail],
+  );
+  const staffCopyMatchesParent = useMemo(
+    () =>
+      Boolean(
+        normalizedStaffCopyEmail &&
+          recipientEmails.some(
+            (email) => email.toLowerCase() === normalizedStaffCopyEmail.toLowerCase(),
+          ),
+      ),
+    [normalizedStaffCopyEmail, recipientEmails],
+  );
+  const staffCopyReady = Boolean(
+    staffCopyEnabled && normalizedStaffCopyEmail && !staffCopyMatchesParent,
+  );
+  const staffCopyFieldError = staffCopyEnabled
+    ? staffCopyMatchesParent
+      ? "This address is already included as a parent recipient."
+      : staffCopyValidationAttempted && !normalizedStaffCopyEmail
+        ? "Enter one valid school/staff email address, or turn off the staff copy."
+        : ""
+    : "";
+  const brandedRecipientCount =
+    recipientEmails.length + (staffCopyReady ? 1 : 0);
   const brandedRecipientLimitExceeded =
-    recipientEmails.length > STUDIO_BOOKING_EMAIL_MAX_RECIPIENTS;
+    brandedRecipientCount > STUDIO_BOOKING_EMAIL_MAX_RECIPIENTS;
   const previewRecipient = recipientSummary.recipients[0] ?? null;
   const recipientFingerprint = useMemo(
     () => studioBookingRecipientFingerprint(recipientSummary.recipients),
@@ -210,7 +251,7 @@ export function StudioBookingEmailComposer({ detail }: { detail: StudioBookingDe
     const trigger = triggerRef.current;
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
-    const focusTimer = window.setTimeout(() => subjectRef.current?.focus(), 50);
+    const focusTimer = window.setTimeout(() => modalRef.current?.focus(), 50);
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape" && !sendingRef.current) setOpen(false);
       if (event.key !== "Tab") return;
@@ -245,11 +286,21 @@ export function StudioBookingEmailComposer({ detail }: { detail: StudioBookingDe
     return () => window.clearTimeout(timer);
   }, [result]);
 
+  useEffect(() => {
+    if (retrySeconds <= 0) return;
+    const timer = window.setTimeout(
+      () => setRetrySeconds((seconds) => Math.max(0, seconds - 1)),
+      1_000,
+    );
+    return () => window.clearTimeout(timer);
+  }, [retrySeconds]);
+
   function openComposer() {
     setOpen(true);
     setError("");
     setNotice("");
     setResult(null);
+    setRetrySeconds(0);
     setSendId(window.crypto.randomUUID());
   }
 
@@ -260,10 +311,14 @@ export function StudioBookingEmailComposer({ detail }: { detail: StudioBookingDe
     setLocation(clean(detail.schedule.location));
     setAddress(clean(detail.schedule.address));
     setDirections("");
+    setStaffCopyEnabled(false);
+    setStaffCopyEmail("");
+    setStaffCopyValidationAttempted(false);
     setPhotos([]);
     setError("");
     setNotice("");
     setResult(null);
+    setRetrySeconds(0);
     setSendId(window.crypto.randomUUID());
   }
 
@@ -347,12 +402,32 @@ export function StudioBookingEmailComposer({ detail }: { detail: StudioBookingDe
     window.location.href = mailto;
   }
 
-  async function sendBrandedEmail() {
+  function validatedStaffCopy() {
+    if (!staffCopyEnabled) return { enabled: false as const };
+    setStaffCopyValidationAttempted(true);
+    if (!normalizedStaffCopyEmail) {
+      setError("Enter one valid school/staff email address, or turn off the staff copy.");
+      staffCopyInputRef.current?.focus();
+      return null;
+    }
+    if (staffCopyMatchesParent) {
+      setError(
+        "That school/staff address is already included as a confirmed parent recipient. Use a different address or turn off the staff copy.",
+      );
+      staffCopyInputRef.current?.focus();
+      return null;
+    }
+    return { enabled: true as const, email: normalizedStaffCopyEmail };
+  }
+
+  async function sendBrandedEmail(retry = false) {
     const count = recipientSummary.recipients.length;
     if (!count) {
       setError("There are no valid email addresses for confirmed bookings.");
       return;
     }
+    const staffCopy = validatedStaffCopy();
+    if (!staffCopy) return;
     if (brandedRecipientLimitExceeded) {
       setError(
         `Branded delivery supports up to ${STUDIO_BOOKING_EMAIL_MAX_RECIPIENTS} recipients at a time. Copy the BCC list and split this event into smaller messages.`,
@@ -364,16 +439,22 @@ export function StudioBookingEmailComposer({ detail }: { detail: StudioBookingDe
       return;
     }
     const confirmed = window.confirm(
-      `Send this branded email to ${count} private recipient${count === 1 ? "" : "s"}?\n\n` +
-        "Recipients: confirmed bookings only\n" +
-        `Direction photos: ${photos.length}\n\nEach client will receive a separate email.`,
+      retry
+        ? "Retry the undelivered messages using the same campaign? Messages already accepted for delivery keep the same delivery key."
+        : `Send this branded email to ${count} private parent recipient${count === 1 ? "" : "s"}${staffCopy.enabled ? " plus 1 school/staff copy" : ""}?\n\n` +
+          "Parents: confirmed bookings only\n" +
+          (staffCopy.enabled ? `School/staff copy: ${staffCopy.email}\n` : "") +
+          `Direction photos: ${photos.length}\n\nEach parent receives a separate personalized email.` +
+          (staffCopy.enabled
+            ? "\nThe school/staff copy omits the automatic personalized booking section. Review the shared subject, message, directions and photos for sensitive information."
+            : ""),
     );
     if (!confirmed) return;
 
     setSending(true);
     setError("");
     setNotice("");
-    setResult(null);
+    if (!retry) setResult(null);
     try {
       const { data: { session } } = await supabase.auth.getSession();
       const headers: Record<string, string> = { "Content-Type": "application/json" };
@@ -394,6 +475,7 @@ export function StudioBookingEmailComposer({ detail }: { detail: StudioBookingDe
             location: clean(location),
             address: clean(address),
             directions: clean(directions),
+            staffCopy,
             photos,
           }),
         },
@@ -409,16 +491,25 @@ export function StudioBookingEmailComposer({ detail }: { detail: StudioBookingDe
             "The confirmed booking list changed. Close this window, refresh the event, and review the recipients again.",
         );
       }
+      if (response.status === 429 && retry) {
+        const retryAfter = Number(response.headers.get("Retry-After"));
+        setRetrySeconds(Number.isFinite(retryAfter) && retryAfter > 0 ? Math.ceil(retryAfter) : 60);
+      }
       if (!response.ok && !payload.sent) {
         throw new Error(payload.message || "The booking emails could not be sent.");
       }
       const nextResult = {
         sent: Number(payload.sent ?? 0),
         failed: Number(payload.failed ?? 0),
-        total: Number(payload.total ?? count),
+        total: Number(payload.total ?? count + (staffCopy.enabled ? 1 : 0)),
         message: payload.message || "Booking email delivery finished.",
+        retryAfterSeconds: Number(payload.retryAfterSeconds ?? 0),
+        parentSent: payload.parentSent,
+        parentFailed: payload.parentFailed,
+        staffCopy: payload.staffCopy,
       };
       setResult(nextResult);
+      setRetrySeconds(Math.max(0, nextResult.retryAfterSeconds));
       if (nextResult.failed > 0) {
         setError(`${nextResult.failed} email${nextResult.failed === 1 ? "" : "s"} could not be delivered.`);
       }
@@ -440,6 +531,7 @@ export function StudioBookingEmailComposer({ detail }: { detail: StudioBookingDe
         ref={modalRef}
         className={styles.emailModal}
         role="dialog"
+        tabIndex={-1}
         aria-modal="true"
         aria-labelledby="booking-email-title"
         aria-busy={sending}
@@ -480,7 +572,21 @@ export function StudioBookingEmailComposer({ detail }: { detail: StudioBookingDe
             {error ? <div className={styles.emailInlineError} role="alert"><XCircle size={16} /> {error}</div> : null}
             <div className={styles.emailResultActions}>
               <button type="button" onClick={() => setOpen(false)}>Done</button>
-              {!result.failed ? <button type="button" onClick={resetComposer}>Create another email</button> : null}
+              {result.failed ? (
+                <button
+                  type="button"
+                  onClick={() => void sendBrandedEmail(true)}
+                  disabled={sending || retrySeconds > 0}
+                >
+                  {sending
+                    ? "Retrying…"
+                    : retrySeconds > 0
+                      ? `Retry in ${retrySeconds}s`
+                      : "Retry failed deliveries"}
+                </button>
+              ) : (
+                <button type="button" onClick={resetComposer}>Create another email</button>
+              )}
             </div>
           </div>
         ) : (
@@ -489,7 +595,7 @@ export function StudioBookingEmailComposer({ detail }: { detail: StudioBookingDe
             <div className={styles.emailFormPane}>
               <div className={styles.emailAudienceCard}>
                 <div className={styles.emailFieldHeading}>
-                  <span>Confirmed bookings only</span>
+                  <span>Parent recipients</span>
                   <strong><UsersRound size={14} /> {recipientSummary.recipients.length} private email{recipientSummary.recipients.length === 1 ? "" : "s"}</strong>
                 </div>
                 <p>
@@ -505,12 +611,53 @@ export function StudioBookingEmailComposer({ detail }: { detail: StudioBookingDe
                     ? ` Branded sending is limited to ${STUDIO_BOOKING_EMAIL_MAX_RECIPIENTS} recipients per campaign; use Copy BCC to split this list.`
                     : ""}
                 </p>
+                <label className={styles.emailStaffCopyToggle}>
+                  <input
+                    type="checkbox"
+                    checked={staffCopyEnabled}
+                    onChange={(event) => {
+                      setStaffCopyEnabled(event.target.checked);
+                      setStaffCopyValidationAttempted(false);
+                      setError("");
+                    }}
+                  />
+                  <span>
+                    <strong>School / staff copy</strong>
+                    <small>Optional · branded delivery only</small>
+                  </span>
+                </label>
+                {staffCopyEnabled ? (
+                  <label className={styles.emailStaffCopyField}>
+                    <span>School / staff email</span>
+                    <input
+                      ref={staffCopyInputRef}
+                      type="email"
+                      value={staffCopyEmail}
+                      maxLength={254}
+                      placeholder="coordinator@school.ca"
+                      autoComplete="off"
+                      required
+                      aria-required="true"
+                      aria-describedby={staffCopyHelpId}
+                      aria-invalid={Boolean(staffCopyFieldError)}
+                      onChange={(event) => {
+                        setStaffCopyEmail(event.target.value);
+                        setStaffCopyValidationAttempted(false);
+                        setError("");
+                      }}
+                    />
+                    <small id={staffCopyHelpId} className={staffCopyFieldError ? styles.emailFieldHintError : undefined}>
+                      {staffCopyFieldError
+                        ? staffCopyFieldError
+                        : "Sends one separate copy with the same subject, message, event details and direction photos. The automatic personalized booking section is omitted; review shared content for sensitive information."}
+                    </small>
+                  </label>
+                ) : null}
               </div>
 
               <label className={styles.emailField}>
                 <span>Subject</span>
                 <input
-                  ref={subjectRef}
                   value={subject}
                   maxLength={200}
                   onChange={(event) => setSubject(event.target.value)}
@@ -615,12 +762,17 @@ export function StudioBookingEmailComposer({ detail }: { detail: StudioBookingDe
 
               <div className={styles.emailPrivacyNote}>
                 <ShieldCheck size={16} />
-                <span><strong>Recipients stay private with branded delivery.</strong> For Mail-app delivery, confirm every client appears in BCC before sending.</span>
+                <span><strong>Recipients stay private with branded delivery.</strong> Mail-app drafts and Copy BCC contain parents only; the school/staff copy is sent only with branded delivery.</span>
               </div>
             </div>
 
             <aside className={styles.emailPreviewPane}>
-              <div className={styles.emailPreviewLabel}>Branded email preview</div>
+              <div className={styles.emailPreviewLabel}>Parent email preview</div>
+              {staffCopyReady ? (
+                <div className={styles.emailStaffPreviewNote}>
+                  The school/staff copy uses this design but omits the automatic personalized booking section. Review the shared message and photos before sending.
+                </div>
+              ) : null}
               <div className={styles.emailPreviewCard}>
                 <div className={styles.emailPreviewBrand} style={{ background: detail.studio.brandColor }}>
                   {detail.studio.logoUrl ? (
@@ -694,7 +846,9 @@ export function StudioBookingEmailComposer({ detail }: { detail: StudioBookingDe
               disabled={sending || processingPhotos || !recipientEmails.length || brandedRecipientLimitExceeded}
             >
               {sending ? <LoaderCircle size={17} className={styles.spin} /> : <Send size={17} />}
-              {sending ? "Sending private emails…" : `Send branded email to ${recipientEmails.length}`}
+              {sending
+                ? "Sending private emails…"
+                : `Send to ${recipientEmails.length} parent${recipientEmails.length === 1 ? "" : "s"}${staffCopyReady ? " + 1 staff" : ""}`}
             </button>
           </footer>
         ) : null}

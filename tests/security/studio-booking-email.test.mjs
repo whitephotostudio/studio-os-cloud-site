@@ -4,10 +4,12 @@ import test from "node:test";
 
 import {
   buildStudioBookingEmailDocument,
+  buildStudioBookingStaffCopyDocument,
   buildStudioBookingMailtoUrl,
   buildStudioBookingMailBody,
   collectStudioBookingEmailRecipients,
   defaultStudioBookingEmailCopy,
+  normalizeStudioBookingEmailAddress,
   studioBookingRecipientFingerprint,
 } from "../../lib/studio-booking-email.ts";
 import { sendResendEmail } from "../../lib/resend.ts";
@@ -193,6 +195,35 @@ test("booking email document is branded, personalized, escaped, and supports CID
   assert.match(document.text, /Updated main campus/);
 });
 
+test("school staff copy contains shared details but no parent or student booking data", () => {
+  const detail = detailFixture();
+  const recipient = collectStudioBookingEmailRecipients(
+    detail.bookings,
+    "confirmed",
+    new Set(detail.slots.map((slot) => slot.id)),
+  ).recipients[0];
+  const document = buildStudioBookingStaffCopyDocument({
+    detail,
+    recipient,
+    headline: "Picture day details",
+    message: "Please share these arrival details with your team.",
+    location: "Updated main campus",
+    address: "20 Updated Road",
+    directions: "Use the east entrance.",
+    directionPhotoContentIds: ["booking-direction-1"],
+  });
+  const combined = `${document.html}\n${document.text}`;
+
+  assert.match(combined, /White Photo/);
+  assert.match(combined, /Example School/);
+  assert.match(combined, /Updated main campus/);
+  assert.match(combined, /Use the east entrance/);
+  assert.match(document.html, /cid:booking-direction-1/);
+  assert.match(combined, /SCHOOL \/ STAFF COPY/i);
+  assert.doesNotMatch(combined, /First Student|Second Student|Class A|Parent One|parent@example\.com/);
+  assert.doesNotMatch(combined, /YOUR BOOKINGS|succeeded|\$30\.00/);
+});
+
 test("booking Mail draft body includes shared event, directions, and studio information", () => {
   const detail = detailFixture();
   const defaults = defaultStudioBookingEmailCopy(detail);
@@ -242,6 +273,8 @@ test("booking Mail draft URL uses percent-encoded spaces and CRLF line breaks", 
   assert.equal(decodeURIComponent(rawFields.subject), "Your photography + appointment details");
   assert.equal(decodeURIComponent(rawFields.body), body.replace(/\n/g, "\r\n"));
   assert.equal(buildStudioBookingMailtoUrl({ to: null, bcc: ["parent@example.com"], subject: "Details", body: "Hello" }), null);
+  assert.equal(normalizeStudioBookingEmailAddress(" school@example.com "), "school@example.com");
+  assert.equal(normalizeStudioBookingEmailAddress("school@example.com,other@example.com"), null);
 });
 
 test("multi-day booking emails use an event date range and each recipient's real appointment", () => {
@@ -273,7 +306,7 @@ test("multi-day booking emails use an event date range and each recipient's real
   assert.match(document.text, /Wednesday, August 19, 2026/);
 });
 
-test("booking email API is owner-only, event-scoped, private, and never trusts client recipients", () => {
+test("booking email API derives parents server-side and strictly bounds the optional staff copy", () => {
   const route = source("app/api/dashboard/admin/bookings/[eventId]/email/route.ts");
   assert.match(route, /resolveDashboardAuth\(request\)/);
   assert.match(route, /photographer\.is_platform_admin/);
@@ -299,6 +332,19 @@ test("booking email API is owner-only, event-scoped, private, and never trusts c
   assert.match(route, /directions:\s*z\.string/);
   assert.match(route, /location:\s*z\.string/);
   assert.match(route, /address:\s*z\.string/);
+  assert.match(route, /z\.discriminatedUnion\("enabled"/);
+  assert.match(route, /email:\s*z\.string\(\)\.trim\(\)\.email\(\)\.max\(254\)/);
+  assert.match(route, /\.strict\(\)/);
+  assert.match(route, /buildStudioBookingStaffCopyDocument/);
+  assert.match(route, /studio-booking-email-staff-global/);
+  assert.match(route, /studio-booking-email-staff-target/);
+  assert.match(route, /staffCopyHash/);
+  assert.match(route, /recordAudit/);
+  assert.match(route, /staff_email_hash:\s*staffCopyHash/);
+  assert.match(route, /already included as a confirmed parent recipient/);
+  assert.match(route, /-staff-\$\{recipientKey\}/);
+  assert.doesNotMatch(route, /\bcc\s*:/i);
+  assert.doesNotMatch(route, /\bbcc\s*:/i);
 });
 
 test("Resend REST payload uses the provider's reply_to field", async () => {
@@ -337,17 +383,32 @@ test("Resend REST payload uses the provider's reply_to field", async () => {
 
 test("booking composer provides private branded send and BCC Mail fallback", () => {
   const component = source("components/studio-booking-email-composer.tsx");
+  const openMailSource = component.slice(
+    component.indexOf("function openMailApp"),
+    component.indexOf("function validatedStaffCopy"),
+  );
   assert.match(component, /Send branded email/);
   assert.match(component, /Open in Mail app/);
   assert.match(component, /buildStudioBookingMailtoUrl/);
   assert.match(component, /navigator\.clipboard\.writeText/);
-  assert.match(component, /Each client will receive a separate email/);
+  assert.match(component, /Each parent receives a separate personalized email/);
   assert.match(component, /Mail drafts cannot include the branded logo/);
   assert.match(component, /window\.confirm/);
-  assert.match(component, /Confirmed bookings only/);
+  assert.match(component, /Parent recipients/);
   assert.match(component, /Use saved schedule notes/);
   assert.match(component, /Location \(leave blank to omit\)/);
-  assert.match(component, /Branded email preview/);
+  assert.match(component, /Parent email preview/);
   assert.match(component, /recipientFingerprint/);
+  assert.match(component, /School \/ staff copy/);
+  assert.match(component, /branded delivery only/);
+  assert.match(component, /automatic personalized booking section is omitted; review shared content for sensitive information/);
+  assert.match(component, /staffCopy,\s*photos/);
+  assert.match(component, /Retry failed deliveries/);
+  assert.match(component, /sendBrandedEmail\(true\)/);
+  assert.match(component, /Retry in \$\{retrySeconds\}s/);
+  assert.match(component, /aria-describedby=\{staffCopyHelpId\}/);
+  assert.match(component, /aria-invalid=\{Boolean\(staffCopyFieldError\)\}/);
+  assert.match(openMailSource, /bcc:\s*recipientEmails/);
+  assert.doesNotMatch(openMailSource, /staffCopyEmail|normalizedStaffCopyEmail/);
   assert.doesNotMatch(component, /AUDIENCE_OPTIONS/);
 });

@@ -13,6 +13,11 @@ export type StudioBookingEmailRecipient = {
   bookings: StudioBookingRecord[];
 };
 
+type StudioBookingEmailDetail = Pick<
+  StudioBookingDetail,
+  "event" | "studio" | "schedule" | "slots"
+>;
+
 export type StudioBookingRecipientSummary = {
   recipients: StudioBookingEmailRecipient[];
   eligibleBookings: number;
@@ -34,6 +39,22 @@ export type StudioBookingEmailDocument = {
   text: string;
 };
 
+type StudioBookingEmailContentInput = {
+  detail: StudioBookingEmailDetail;
+  headline: string;
+  message: string;
+  location?: string;
+  address?: string;
+  directions?: string;
+  directionPhotoContentIds?: string[];
+};
+
+export type StudioBookingEmailDocumentInput = StudioBookingEmailContentInput & {
+  recipient: StudioBookingEmailRecipient;
+};
+
+export type StudioBookingStaffCopyDocumentInput = StudioBookingEmailContentInput;
+
 export type StudioBookingEmailEventDetails = {
   location?: string;
   address?: string;
@@ -53,10 +74,17 @@ function clean(value: string | null | undefined) {
   return (value ?? "").trim();
 }
 
+export function normalizeStudioBookingEmailAddress(
+  value: string | null | undefined,
+) {
+  const email = clean(value);
+  return EMAIL_RE.test(email) ? email : null;
+}
+
 export function buildStudioBookingMailtoUrl(input: StudioBookingMailtoInput) {
   const encodeAddress = (value: string | null | undefined) => {
-    const address = clean(value);
-    if (!EMAIL_RE.test(address)) return null;
+    const address = normalizeStudioBookingEmailAddress(value);
+    if (!address) return null;
     const at = address.lastIndexOf("@");
     return `${encodeURIComponent(address.slice(0, at))}@${encodeURIComponent(address.slice(at + 1))}`;
   };
@@ -232,7 +260,7 @@ function localDateKey(value: string, timezone: string) {
   }
 }
 
-function eventDayStarts(detail: StudioBookingDetail) {
+function eventDayStarts(detail: StudioBookingEmailDetail) {
   const candidates = detail.event.days
     .map((day) => day.startAt)
     .filter((value): value is string => Boolean(safeDate(value)));
@@ -249,7 +277,7 @@ function eventDayStarts(detail: StudioBookingDetail) {
   return Array.from(byDate.values());
 }
 
-export function bookingEmailEventDate(detail: StudioBookingDetail) {
+export function bookingEmailEventDate(detail: StudioBookingEmailDetail) {
   const starts = eventDayStarts(detail);
   if (!starts.length) {
     return bookingEmailDate(detail.event.firstSlotAt, detail.event.timezone);
@@ -260,7 +288,7 @@ export function bookingEmailEventDate(detail: StudioBookingDetail) {
   return `${first} – ${last}`;
 }
 
-function sessionTime(detail: StudioBookingDetail) {
+function sessionTime(detail: StudioBookingEmailDetail) {
   const start = detail.event.firstSlotAt;
   const end = detail.event.lastSlotAt;
   if (!start && !end) return "Time to be confirmed";
@@ -268,7 +296,7 @@ function sessionTime(detail: StudioBookingDetail) {
   return `${bookingEmailTime(start, detail.event.timezone)}–${bookingEmailTime(end, detail.event.timezone)}`;
 }
 
-export function defaultStudioBookingEmailCopy(detail: StudioBookingDetail): StudioBookingEmailCopy {
+export function defaultStudioBookingEmailCopy(detail: StudioBookingEmailDetail): StudioBookingEmailCopy {
   return {
     subject: `Important details for ${detail.event.name} — ${bookingEmailEventDate(detail)}`,
     headline: "Your photography appointment details",
@@ -326,7 +354,7 @@ function appointmentText(
 }
 
 function detailRows(
-  detail: StudioBookingDetail,
+  detail: StudioBookingEmailDetail,
   overrides: StudioBookingEmailEventDetails = {},
 ) {
   const dayCount = eventDayStarts(detail).length;
@@ -352,7 +380,7 @@ function detailRows(
 }
 
 export function buildStudioBookingMailBody(
-  detail: StudioBookingDetail,
+  detail: StudioBookingEmailDetail,
   message: string,
   eventDetails: StudioBookingEmailEventDetails = {},
 ) {
@@ -368,32 +396,28 @@ export function buildStudioBookingMailBody(
   return lines.join("\n");
 }
 
-export function buildStudioBookingEmailDocument(input: {
-  detail: StudioBookingDetail;
-  recipient: StudioBookingEmailRecipient;
-  headline: string;
-  message: string;
-  location?: string;
-  address?: string;
-  directions?: string;
-  directionPhotoContentIds?: string[];
-}): StudioBookingEmailDocument {
-  const { detail, recipient } = input;
+function renderStudioBookingEmailDocument(
+  input: StudioBookingEmailContentInput,
+  recipient: StudioBookingEmailRecipient | null,
+): StudioBookingEmailDocument {
+  const { detail } = input;
   const contentIds = input.directionPhotoContentIds ?? [];
   const studioName = clean(detail.studio.businessName) || "Studio OS";
   const logoUrl = safeHttpUrl(detail.studio.logoUrl);
   const brandColor = safeBrandColor(detail.studio.brandColor);
   const slots = slotById(detail.slots);
-  const appointments = recipient.bookings
-    .map((booking) => ({
-      booking,
-      slot: booking.slotId ? slots.get(booking.slotId) : undefined,
-    }))
-    .sort((left, right) => {
-      const leftTime = safeDate(left.slot?.startAt ?? null)?.getTime() ?? Number.MAX_SAFE_INTEGER;
-      const rightTime = safeDate(right.slot?.startAt ?? null)?.getTime() ?? Number.MAX_SAFE_INTEGER;
-      return leftTime - rightTime || left.booking.studentName.localeCompare(right.booking.studentName);
-    });
+  const appointments = recipient
+    ? recipient.bookings
+        .map((booking) => ({
+          booking,
+          slot: booking.slotId ? slots.get(booking.slotId) : undefined,
+        }))
+        .sort((left, right) => {
+          const leftTime = safeDate(left.slot?.startAt ?? null)?.getTime() ?? Number.MAX_SAFE_INTEGER;
+          const rightTime = safeDate(right.slot?.startAt ?? null)?.getTime() ?? Number.MAX_SAFE_INTEGER;
+          return leftTime - rightTime || left.booking.studentName.localeCompare(right.booking.studentName);
+        })
+    : [];
 
   const logoHtml = logoUrl
     ? `<img src="${escapeHtml(logoUrl)}" alt="${escapeHtml(studioName)}" style="display:block;max-height:64px;max-width:230px;margin:0 auto;object-fit:contain;" />`
@@ -429,6 +453,18 @@ export function buildStudioBookingEmailDocument(input: {
       </tr>`;
     })
     .join("");
+
+  const recipientBlockHtml = recipient
+    ? `<tr><td style="padding:0 34px 28px;">
+          <div style="margin:0 0 10px;color:#202a3d;font-size:16px;font-weight:850;">Your booking${appointments.length === 1 ? "" : "s"}</div>
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border:1px solid #e3e7ef;border-radius:9px;overflow:hidden;">${appointmentsHtml}</table>
+        </td></tr>`
+    : `<tr><td style="padding:0 34px 28px;">
+          <div style="padding:16px 18px;color:#445069;background:#f7f8fb;border:1px solid #e4e7ee;border-radius:10px;font-size:13px;line-height:1.55;">
+            <div style="margin:0 0 5px;color:#202a3d;font-size:15px;font-weight:850;">School / staff copy</div>
+            This copy includes the shared message and event information sent to confirmed booking clients. The automatic personalized parent and appointment section is omitted.
+          </div>
+        </td></tr>`;
 
   const photosHtml = contentIds.length
     ? `<div style="padding:0 34px 30px;">
@@ -466,10 +502,7 @@ export function buildStudioBookingEmailDocument(input: {
             <table role="presentation" width="100%" cellspacing="0" cellpadding="0">${eventRowsHtml}</table>
           </div>
         </td></tr>
-        <tr><td style="padding:0 34px 28px;">
-          <div style="margin:0 0 10px;color:#202a3d;font-size:16px;font-weight:850;">Your booking${appointments.length === 1 ? "" : "s"}</div>
-          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border:1px solid #e3e7ef;border-radius:9px;overflow:hidden;">${appointmentsHtml}</table>
-        </td></tr>
+        ${recipientBlockHtml}
         <tr><td>${photosHtml}</td></tr>
         <tr><td style="padding:20px 34px;text-align:center;background:#f7f8fb;border-top:1px solid #e7eaf0;">
           <div style="color:#4d5870;font-size:11px;font-weight:800;">${escapeHtml(studioName)}</div>
@@ -487,12 +520,42 @@ export function buildStudioBookingEmailDocument(input: {
     address: input.address,
     directions: input.directions,
   })) textLines.push(`${label}: ${value}`);
-  textLines.push("", `YOUR BOOKING${appointments.length === 1 ? "" : "S"}`);
-  for (const { booking, slot } of appointments) {
-    textLines.push(appointmentText(booking, slot, detail.event.timezone));
+  if (recipient) {
+    textLines.push("", `YOUR BOOKING${appointments.length === 1 ? "" : "S"}`);
+    for (const { booking, slot } of appointments) {
+      textLines.push(appointmentText(booking, slot, detail.event.timezone));
+    }
+  } else {
+    textLines.push(
+      "",
+      "SCHOOL / STAFF COPY",
+      "This copy includes the shared message and event information sent to confirmed booking clients. The automatic personalized parent and appointment section is omitted.",
+    );
   }
   if (contentIds.length) textLines.push("", `${contentIds.length} direction photo${contentIds.length === 1 ? " is" : "s are"} included with this email.`);
   textLines.push("", studioName, ...footerParts);
 
   return { html, text: textLines.join("\n") };
+}
+
+export function buildStudioBookingEmailDocument(
+  input: StudioBookingEmailDocumentInput,
+) {
+  const { recipient, ...content } = input;
+  return renderStudioBookingEmailDocument(content, recipient);
+}
+
+export function buildStudioBookingStaffCopyDocument(
+  input: StudioBookingStaffCopyDocumentInput,
+) {
+  const content: StudioBookingEmailContentInput = {
+    detail: input.detail,
+    headline: input.headline,
+    message: input.message,
+    location: input.location,
+    address: input.address,
+    directions: input.directions,
+    directionPhotoContentIds: input.directionPhotoContentIds,
+  };
+  return renderStudioBookingEmailDocument(content, null);
 }

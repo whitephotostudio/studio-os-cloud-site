@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import sharp from "sharp";
 import { z } from "zod";
 import { parseJson } from "@/lib/api-validation";
+import { recordAudit } from "@/lib/audit";
 import {
   createDashboardServiceClient,
   resolveDashboardAuth,
@@ -18,6 +19,7 @@ import {
 } from "@/lib/resend";
 import {
   buildStudioBookingEmailDocument,
+  buildStudioBookingStaffCopyDocument,
   collectStudioBookingEmailRecipients,
   STUDIO_BOOKING_EMAIL_MAX_RECIPIENTS,
   studioBookingRecipientFingerprint,
@@ -42,6 +44,14 @@ const DirectionPhotoSchema = z.object({
   content: z.string().min(1).max(MAX_PHOTO_BASE64),
 });
 
+const StaffCopySchema = z.discriminatedUnion("enabled", [
+  z.object({ enabled: z.literal(false) }).strict(),
+  z.object({
+    enabled: z.literal(true),
+    email: z.string().trim().email().max(254).transform((value) => value.toLowerCase()),
+  }).strict(),
+]);
+
 const BookingEmailBodySchema = z
   .object({
     sendId: z.string().uuid(),
@@ -52,8 +62,10 @@ const BookingEmailBodySchema = z
     location: z.string().trim().max(500).default(""),
     address: z.string().trim().max(1_000).default(""),
     directions: z.string().trim().max(3_000).default(""),
+    staffCopy: StaffCopySchema.default({ enabled: false }),
     photos: z.array(DirectionPhotoSchema).max(4).default([]),
   })
+  .strict()
   .superRefine((value, context) => {
     const total = value.photos.reduce((sum, photo) => sum + photo.content.length, 0);
     if (total > MAX_TOTAL_PHOTO_BASE64) {
@@ -235,7 +247,7 @@ export async function POST(
       );
     }
     if (
-      recipientSummary.recipients.length >
+      recipientSummary.recipients.length + (parsed.data.staffCopy.enabled ? 1 : 0) >
       STUDIO_BOOKING_EMAIL_MAX_RECIPIENTS
     ) {
       return privateJson(
@@ -245,6 +257,66 @@ export async function POST(
         },
         { status: 413 },
       );
+    }
+
+    const parentEmailKeys = new Set(
+      recipientSummary.recipients.map((recipient) => recipient.email.toLowerCase()),
+    );
+    const staffCopyEmail = parsed.data.staffCopy.enabled
+      ? parsed.data.staffCopy.email
+      : null;
+    const staffCopyHash = staffCopyEmail
+      ? createHash("sha256").update(staffCopyEmail).digest("hex").slice(0, 24)
+      : null;
+    if (staffCopyEmail && parentEmailKeys.has(staffCopyEmail)) {
+      return privateJson(
+        {
+          ok: false,
+          message:
+            "That school/staff address is already included as a confirmed parent recipient. Use a different address or turn off the staff copy.",
+        },
+        { status: 400 },
+      );
+    }
+
+    const attachments: Awaited<ReturnType<typeof prepareDirectionPhoto>>[] = [];
+    try {
+      for (let index = 0; index < parsed.data.photos.length; index += 1) {
+        attachments.push(await prepareDirectionPhoto(parsed.data.photos[index], index));
+      }
+    } catch (error) {
+      if (error instanceof InvalidDirectionPhotoError) {
+        return privateJson({ ok: false, message: error.message }, { status: 400 });
+      }
+      throw error;
+    }
+
+    if (staffCopyEmail && staffCopyHash) {
+      const staffGlobalLimit = await rateLimit(photographer.id, {
+        namespace: "studio-booking-email-staff-global",
+        limit: 12,
+        windowSeconds: 3_600,
+      });
+      const staffTargetLimit = await rateLimit(`${photographer.id}:${staffCopyHash}`, {
+        namespace: "studio-booking-email-staff-target",
+        limit: 4,
+        windowSeconds: 3_600,
+      });
+      const deniedStaffLimits = [staffGlobalLimit, staffTargetLimit].filter(
+        (limit) => !limit.allowed,
+      );
+      if (deniedStaffLimits.length) {
+        const resetAt = Math.max(...deniedStaffLimits.map((limit) => limit.resetAt));
+        const retryAfter = Math.max(1, Math.ceil((resetAt - Date.now()) / 1_000));
+        return privateJson(
+          {
+            ok: false,
+            message:
+              "The school/staff copy limit has been reached. Try again later, or turn off the staff copy and send only to booking clients.",
+          },
+          { status: 429, headers: { "Retry-After": String(retryAfter) } },
+        );
+      }
     }
 
     const campaignLimit = await rateLimit(`${photographer.id}:${eventId}`, {
@@ -266,44 +338,64 @@ export async function POST(
       );
     }
 
-    const attachments: Awaited<ReturnType<typeof prepareDirectionPhoto>>[] = [];
-    try {
-      for (let index = 0; index < parsed.data.photos.length; index += 1) {
-        attachments.push(await prepareDirectionPhoto(parsed.data.photos[index], index));
-      }
-    } catch (error) {
-      if (error instanceof InvalidDirectionPhotoError) {
-        return privateJson({ ok: false, message: error.message }, { status: 400 });
-      }
-      throw error;
-    }
+    const emailDetail = {
+      event: detail.event,
+      studio: detail.studio,
+      schedule: detail.schedule,
+      slots: detail.slots,
+    };
+    const deliveryTargets: Array<
+      | {
+          kind: "parent";
+          email: string;
+          recipient: (typeof recipientSummary.recipients)[number];
+        }
+      | { kind: "staff-copy"; email: string }
+    > = [
+      ...recipientSummary.recipients.map((recipient) => ({
+        kind: "parent" as const,
+        email: recipient.email,
+        recipient,
+      })),
+      ...(staffCopyEmail
+        ? [{ kind: "staff-copy" as const, email: staffCopyEmail }]
+        : []),
+    ];
 
-    let sent = 0;
-    let failed = 0;
+    let parentSent = 0;
+    let parentFailed = 0;
+    let staffCopySent = 0;
+    let staffCopyFailed = 0;
     for (
       let offset = 0;
-      offset < recipientSummary.recipients.length;
+      offset < deliveryTargets.length;
       offset += SEND_CONCURRENCY
     ) {
-      const group = recipientSummary.recipients.slice(offset, offset + SEND_CONCURRENCY);
+      const group = deliveryTargets.slice(offset, offset + SEND_CONCURRENCY);
       const results = await Promise.allSettled(
-        group.map((recipient) => {
-          const document = buildStudioBookingEmailDocument({
-            detail,
-            recipient,
+        group.map((target) => {
+          const sharedDocumentInput = {
+            detail: emailDetail,
             headline: parsed.data.headline,
             message: parsed.data.message,
             location: parsed.data.location,
             address: parsed.data.address,
             directions: parsed.data.directions,
             directionPhotoContentIds: attachments.map((attachment) => attachment.contentId),
-          });
+          };
+          const document =
+            target.kind === "parent"
+              ? buildStudioBookingEmailDocument({
+                  ...sharedDocumentInput,
+                  recipient: target.recipient,
+                })
+              : buildStudioBookingStaffCopyDocument(sharedDocumentInput);
           const recipientKey = createHash("sha256")
-            .update(recipient.email.toLowerCase())
+            .update(target.email.toLowerCase())
             .digest("hex")
             .slice(0, 20);
           return sendResendEmailWithRetry({
-            to: recipient.email,
+            to: target.email,
             subject: parsed.data.subject,
             html: document.html,
             text: document.text,
@@ -313,35 +405,82 @@ export async function POST(
             tags: [
               { name: "type", value: "booking-update" },
               { name: "event_id", value: eventId },
+              { name: "audience", value: target.kind },
             ],
-            idempotencyKey: `booking-update-${eventId}-${parsed.data.sendId}-${recipientKey}`,
+            idempotencyKey:
+              target.kind === "parent"
+                ? `booking-update-${eventId}-${parsed.data.sendId}-${recipientKey}`
+                : `booking-update-${eventId}-${parsed.data.sendId}-staff-${recipientKey}`,
           });
         }),
       );
 
-      for (const result of results) {
-        if (result.status === "fulfilled") sent += 1;
-        else failed += 1;
+      for (let index = 0; index < results.length; index += 1) {
+        const result = results[index];
+        const target = group[index];
+        if (target.kind === "staff-copy") {
+          if (result.status === "fulfilled") staffCopySent += 1;
+          else staffCopyFailed += 1;
+        } else if (result.status === "fulfilled") {
+          parentSent += 1;
+        } else {
+          parentFailed += 1;
+        }
       }
 
-      if (offset + SEND_CONCURRENCY < recipientSummary.recipients.length) {
+      if (offset + SEND_CONCURRENCY < deliveryTargets.length) {
         await wait(1_050);
       }
     }
+
+    const sent = parentSent + staffCopySent;
+    const failed = parentFailed + staffCopyFailed;
+
+    await recordAudit({
+      request,
+      actorUserId: user.id,
+      actorPhotographerId: photographer.id,
+      action: "studio_booking.email_campaign",
+      entityType: "booking_event",
+      entityId: eventId,
+      targetPhotographerId: photographer.id,
+      metadata: {
+        send_id: parsed.data.sendId,
+        parent_sent: parentSent,
+        parent_failed: parentFailed,
+        staff_copy_requested: Boolean(staffCopyEmail),
+        staff_copy_sent: staffCopySent === 1,
+        staff_copy_failed: staffCopyFailed === 1,
+        staff_email_hash: staffCopyHash,
+        direction_photo_count: attachments.length,
+      },
+      result: failed === 0 ? "ok" : "error",
+      errorMessage: failed ? `${failed} booking email deliveries failed.` : null,
+    });
 
     return privateJson({
       ok: failed === 0,
       sent,
       failed,
-      total: recipientSummary.recipients.length,
+      total: deliveryTargets.length,
+      parentSent,
+      parentFailed,
+      retryAfterSeconds: failed
+        ? Math.max(0, Math.ceil((campaignLimit.resetAt - Date.now()) / 1_000))
+        : 0,
+      staffCopy: {
+        requested: Boolean(staffCopyEmail),
+        sent: staffCopySent === 1,
+        failed: staffCopyFailed === 1,
+      },
       missingEmailBookings: recipientSummary.missingEmailBookings,
       invalidEmailBookings: recipientSummary.invalidEmailBookings,
       duplicateEmailBookings: recipientSummary.duplicateEmailBookings,
       unusableSlotBookings: recipientSummary.unusableSlotBookings,
       message:
         failed === 0
-          ? `Sent to ${sent} booking email${sent === 1 ? "" : "s"}.`
-          : `Sent to ${sent}; ${failed} could not be delivered.`,
+          ? `Sent ${parentSent} private booking email${parentSent === 1 ? "" : "s"}${staffCopySent ? " and 1 school/staff copy" : ""}.`
+          : `Sent to ${sent}; ${failed} could not be delivered${staffCopyFailed ? ", including the school/staff copy" : ""}.`,
     }, failed > 0 && sent === 0 ? { status: 502 } : undefined);
   } catch (error) {
     console.error("[studio-bookings:email]", error);
