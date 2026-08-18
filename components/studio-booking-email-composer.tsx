@@ -53,8 +53,10 @@ type PreparedPhoto = {
 type SendResult = {
   sent: number;
   failed: number;
+  unattempted?: number;
   total: number;
   message: string;
+  deliveryKind?: "all" | "new";
   retryAfterSeconds?: number;
   parentSent?: number;
   parentFailed?: number;
@@ -63,6 +65,33 @@ type SendResult = {
     sent: boolean;
     failed: boolean;
   };
+  campaignTrackingFailed?: boolean;
+};
+
+type BookingEmailCampaignSummary = {
+  saved: boolean;
+  id: string | null;
+  subject: string;
+  savedAt: string | null;
+  photoCount: number;
+  newRecipients: number;
+  newBookings: number;
+  handledBookings: number;
+  confirmedRecipients: number;
+  confirmedBookings: number;
+  currentFingerprint: string;
+  newFingerprint: string;
+};
+
+type CampaignPayload = {
+  ok?: boolean;
+  message?: string;
+  sent?: number;
+  failed?: number;
+  unattempted?: number;
+  total?: number;
+  trackingFailed?: boolean;
+  campaign?: Partial<BookingEmailCampaignSummary> | null;
 };
 
 type ErrorPayload = {
@@ -163,6 +192,43 @@ function clean(value: string | null | undefined) {
   return (value ?? "").trim();
 }
 
+function campaignCount(value: unknown) {
+  const count = Number(value ?? 0);
+  return Number.isFinite(count) ? Math.max(0, Math.floor(count)) : 0;
+}
+
+function normalizeCampaignSummary(
+  value: Partial<BookingEmailCampaignSummary> | null | undefined,
+): BookingEmailCampaignSummary {
+  return {
+    saved: Boolean(value?.saved),
+    id: clean(value?.id) || null,
+    subject: clean(value?.subject),
+    savedAt: clean(value?.savedAt) || null,
+    photoCount: campaignCount(value?.photoCount),
+    newRecipients: campaignCount(value?.newRecipients),
+    newBookings: campaignCount(value?.newBookings),
+    handledBookings: campaignCount(value?.handledBookings),
+    confirmedRecipients: campaignCount(value?.confirmedRecipients),
+    confirmedBookings: campaignCount(value?.confirmedBookings),
+    currentFingerprint: clean(value?.currentFingerprint),
+    newFingerprint: clean(value?.newFingerprint),
+  };
+}
+
+function campaignSavedLabel(value: string | null, timezone: string) {
+  if (!value) return "Saved message";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return "Saved message";
+  return `Saved ${new Intl.DateTimeFormat("en-CA", {
+    timeZone: timezone,
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(parsed)}`;
+}
+
 export function StudioBookingEmailComposer({ detail }: { detail: StudioBookingDetail }) {
   const supabase = useMemo(() => createClient(), []);
   const defaults = useMemo(() => defaultStudioBookingEmailCopy(detail), [detail]);
@@ -171,6 +237,7 @@ export function StudioBookingEmailComposer({ detail }: { detail: StudioBookingDe
   const resultRef = useRef<HTMLDivElement>(null);
   const staffCopyInputRef = useRef<HTMLInputElement>(null);
   const staffCopyHelpId = useId();
+  const campaignStatusId = useId();
   const sendingRef = useRef(false);
   const [open, setOpen] = useState(false);
   const [subject, setSubject] = useState(defaults.subject);
@@ -191,6 +258,12 @@ export function StudioBookingEmailComposer({ detail }: { detail: StudioBookingDe
   const [copied, setCopied] = useState(false);
   const [result, setResult] = useState<SendResult | null>(null);
   const [retrySeconds, setRetrySeconds] = useState(0);
+  const [rememberForNewBookings, setRememberForNewBookings] = useState(false);
+  const [campaign, setCampaign] = useState<BookingEmailCampaignSummary | null>(null);
+  const [campaignLoading, setCampaignLoading] = useState(false);
+  const [campaignAction, setCampaignAction] = useState<"baseline" | "new" | null>(null);
+  const [campaignError, setCampaignError] = useState("");
+  const [campaignTrackingRecoveryNeeded, setCampaignTrackingRecoveryNeeded] = useState(false);
 
   const validSlotIds = useMemo(
     () => new Set(detail.slots.map((slot) => slot.id)),
@@ -232,6 +305,11 @@ export function StudioBookingEmailComposer({ detail }: { detail: StudioBookingDe
     recipientEmails.length + (staffCopyReady ? 1 : 0);
   const brandedRecipientLimitExceeded =
     brandedRecipientCount > STUDIO_BOOKING_EMAIL_MAX_RECIPIENTS;
+  const campaignBusy = campaignLoading || campaignAction !== null;
+  const busy = sending || campaignAction !== null;
+  const campaignInitialLoading = campaignLoading && campaign === null;
+  const newRecipientLimitExceeded =
+    (campaign?.newRecipients ?? 0) > STUDIO_BOOKING_EMAIL_MAX_RECIPIENTS;
   const previewRecipient = recipientSummary.recipients[0] ?? null;
   const recipientFingerprint = useMemo(
     () => studioBookingRecipientFingerprint(recipientSummary.recipients),
@@ -243,8 +321,8 @@ export function StudioBookingEmailComposer({ detail }: { detail: StudioBookingDe
   );
 
   useEffect(() => {
-    sendingRef.current = sending;
-  }, [sending]);
+    sendingRef.current = busy;
+  }, [busy]);
 
   useEffect(() => {
     if (!open) return;
@@ -295,13 +373,67 @@ export function StudioBookingEmailComposer({ detail }: { detail: StudioBookingDe
     return () => window.clearTimeout(timer);
   }, [retrySeconds]);
 
+  async function campaignRequestHeaders(includeJson = false) {
+    const { data: { session } } = await supabase.auth.getSession();
+    return {
+      ...(includeJson ? { "Content-Type": "application/json" } : {}),
+      ...(session?.access_token
+        ? { Authorization: `Bearer ${session.access_token}` }
+        : {}),
+    };
+  }
+
+  async function refreshCampaign(options?: { silent?: boolean }) {
+    if (!options?.silent) setCampaignLoading(true);
+    setCampaignError("");
+    try {
+      const response = await fetch(
+        `/api/dashboard/admin/bookings/${encodeURIComponent(detail.event.id)}/email/campaign`,
+        {
+          cache: "no-store",
+          credentials: "include",
+          headers: await campaignRequestHeaders(),
+        },
+      );
+      const payload = (await response.json().catch(() => ({}))) as CampaignPayload;
+      if (response.status === 401) {
+        window.location.href = `/sign-in?redirect=${encodeURIComponent(window.location.pathname)}`;
+        return null;
+      }
+      if (!response.ok || payload.ok === false) {
+        throw new Error(payload.message || "The saved booking message could not be loaded.");
+      }
+      const next = normalizeCampaignSummary(payload.campaign);
+      setCampaign(next);
+      if (next.saved) setRememberForNewBookings(false);
+      return next;
+    } catch (loadError) {
+      setCampaignError(
+        loadError instanceof Error
+          ? loadError.message
+          : "The saved booking message could not be loaded.",
+      );
+      return null;
+    } finally {
+      if (!options?.silent) setCampaignLoading(false);
+    }
+  }
+
   function openComposer() {
+    const hasUnresolvedFullSend = Boolean(
+      result?.deliveryKind === "all" &&
+        (result.failed || result.unattempted || result.campaignTrackingFailed),
+    );
     setOpen(true);
-    setError("");
-    setNotice("");
-    setResult(null);
-    setRetrySeconds(0);
-    setSendId(window.crypto.randomUUID());
+    setCampaign(null);
+    if (!hasUnresolvedFullSend) {
+      setError("");
+      setNotice("");
+      setResult(null);
+      setRetrySeconds(0);
+      setSendId(window.crypto.randomUUID());
+    }
+    void refreshCampaign();
   }
 
   function resetComposer() {
@@ -319,6 +451,8 @@ export function StudioBookingEmailComposer({ detail }: { detail: StudioBookingDe
     setNotice("");
     setResult(null);
     setRetrySeconds(0);
+    setRememberForNewBookings(false);
+    setCampaignError("");
     setSendId(window.crypto.randomUUID());
   }
 
@@ -361,6 +495,9 @@ export function StudioBookingEmailComposer({ detail }: { detail: StudioBookingDe
       await navigator.clipboard.writeText(recipientEmails.join(", "));
       setCopied(true);
       setError("");
+      setNotice(
+        "Copied all confirmed parent addresses. External BCC sends are not tracked as saved-campaign deliveries.",
+      );
       window.setTimeout(() => setCopied(false), 1_800);
     } catch {
       setError("The BCC list could not be copied. Please allow clipboard access and try again.");
@@ -397,7 +534,7 @@ export function StudioBookingEmailComposer({ detail }: { detail: StudioBookingDe
     }
     setError("");
     setNotice(
-      "Opened a plain-text draft in your default Mail app with recipients in BCC. Mail drafts cannot include the branded logo, personalized appointment block, or website photo attachments; add photos manually, or use Send branded email for the full design.",
+      "Opened a plain-text draft for all confirmed parents in BCC. External Mail sends are not tracked as saved-campaign deliveries. Mail drafts cannot include the branded logo, personalized appointment block, or website photo attachments; add photos manually, or use branded delivery for the full design.",
     );
     window.location.href = mailto;
   }
@@ -420,6 +557,184 @@ export function StudioBookingEmailComposer({ detail }: { detail: StudioBookingDe
     return { enabled: true as const, email: normalizedStaffCopyEmail };
   }
 
+  function sharedCopyIsValid() {
+    if (clean(subject) && clean(headline) && clean(message)) return true;
+    setError("Add a subject, headline, and message before saving or sending.");
+    return false;
+  }
+
+  async function saveCampaignBaseline() {
+    if (!sharedCopyIsValid()) return;
+    if (processingPhotos) {
+      setError("Wait for the direction photos to finish preparing before saving.");
+      return;
+    }
+    if (campaignTrackingRecoveryNeeded) {
+      setError(
+        "Retry delivery tracking for the previous send before creating a baseline.",
+      );
+      return;
+    }
+    const count = recipientSummary.recipients.length;
+    const confirmed = window.confirm(
+      `Save this message for future new bookings without sending it now?\n\n` +
+        `${count} current parent recipient${count === 1 ? "" : "s"} will be marked as already handled. ` +
+        "Use this only if you already sent them this information. This action sends no email.",
+    );
+    if (!confirmed) return;
+
+    setCampaignAction("baseline");
+    setError("");
+    setNotice("");
+    try {
+      const response = await fetch(
+        `/api/dashboard/admin/bookings/${encodeURIComponent(detail.event.id)}/email/campaign`,
+        {
+          method: "POST",
+          cache: "no-store",
+          credentials: "include",
+          headers: await campaignRequestHeaders(true),
+          body: JSON.stringify({
+            action: "save-baseline",
+            saveId: window.crypto.randomUUID(),
+            recipientFingerprint: campaign?.currentFingerprint || recipientFingerprint,
+            subject: clean(subject),
+            headline: clean(headline),
+            message: clean(message),
+            location: clean(location),
+            address: clean(address),
+            directions: clean(directions),
+            photos,
+          }),
+        },
+      );
+      const payload = (await response.json().catch(() => ({}))) as CampaignPayload;
+      if (response.status === 401) {
+        window.location.href = `/sign-in?redirect=${encodeURIComponent(window.location.pathname)}`;
+        return;
+      }
+      if (!response.ok || payload.ok === false) {
+        if (response.status === 409) void refreshCampaign({ silent: true });
+        throw new Error(payload.message || "The message could not be saved for future bookings.");
+      }
+      setCampaign(normalizeCampaignSummary(payload.campaign));
+      setRememberForNewBookings(false);
+      setCampaignTrackingRecoveryNeeded(false);
+      setNotice(
+        payload.message ||
+          "Saved for future new bookings. No email was sent to current parents.",
+      );
+      await refreshCampaign({ silent: true });
+    } catch (saveError) {
+      setError(
+        saveError instanceof Error
+          ? saveError.message
+          : "The message could not be saved for future bookings.",
+      );
+    } finally {
+      setCampaignAction(null);
+    }
+  }
+
+  async function sendNewBookings() {
+    if (!campaign?.saved || !campaign.id) {
+      setCampaignError("Save a reusable booking message before sending to new bookings.");
+      return;
+    }
+    if (!campaign.newRecipients || !campaign.newFingerprint) {
+      setCampaignError("There are no new confirmed parent recipients to email.");
+      return;
+    }
+    if (newRecipientLimitExceeded) {
+      setCampaignError(
+        `New-booking delivery supports up to ${STUDIO_BOOKING_EMAIL_MAX_RECIPIENTS} recipients at a time.`,
+      );
+      return;
+    }
+    const confirmed = window.confirm(
+      `Send the saved message to ${campaign.newRecipients} new parent recipient${campaign.newRecipients === 1 ? "" : "s"} for ${campaign.newBookings} new booking${campaign.newBookings === 1 ? "" : "s"}?\n\n` +
+        "Each parent receives a private personalized email. The optional school/staff copy is not included in new-booking delivery.",
+    );
+    if (!confirmed) return;
+
+    setCampaignAction("new");
+    setCampaignError("");
+    setError("");
+    setNotice("");
+    try {
+      const response = await fetch(
+        `/api/dashboard/admin/bookings/${encodeURIComponent(detail.event.id)}/email/campaign`,
+        {
+          method: "POST",
+          cache: "no-store",
+          credentials: "include",
+          headers: await campaignRequestHeaders(true),
+          body: JSON.stringify({
+            action: "send-new",
+            campaignId: campaign.id,
+            recipientFingerprint: campaign.newFingerprint,
+          }),
+        },
+      );
+      const payload = (await response.json().catch(() => ({}))) as CampaignPayload;
+      if (response.status === 401) {
+        window.location.href = `/sign-in?redirect=${encodeURIComponent(window.location.pathname)}`;
+        return;
+      }
+      if (response.status === 409) {
+        await refreshCampaign({ silent: true });
+        throw new Error(
+          payload.message ||
+            "The new-booking list changed. Review the refreshed counts and try again.",
+        );
+      }
+      if (response.status === 429) {
+        const retryAfter = Number(response.headers.get("Retry-After"));
+        setRetrySeconds(
+          Number.isFinite(retryAfter) && retryAfter > 0 ? Math.ceil(retryAfter) : 60,
+        );
+      }
+      if (!response.ok && !payload.sent) {
+        throw new Error(payload.message || "The new-booking emails could not be sent.");
+      }
+      const trackingFailed = Boolean(
+        payload.trackingFailed ||
+          (payload.ok === false && response.status === 503 && campaignCount(payload.sent) > 0),
+      );
+      const nextResult: SendResult = {
+        sent: campaignCount(payload.sent),
+        failed: campaignCount(payload.failed),
+        unattempted: campaignCount(payload.unattempted),
+        total: campaignCount(payload.total) || campaign.newRecipients,
+        message: payload.message || "New-booking email delivery finished.",
+        deliveryKind: "new",
+        campaignTrackingFailed: trackingFailed,
+      };
+      setResult(nextResult);
+      setCampaignTrackingRecoveryNeeded(trackingFailed);
+      if (nextResult.failed || nextResult.unattempted) {
+        setError(
+          `${nextResult.failed} new-booking email${nextResult.failed === 1 ? "" : "s"} failed${nextResult.unattempted ? ` and ${nextResult.unattempted} ${nextResult.unattempted === 1 ? "was" : "were"} not attempted` : ""}.`,
+        );
+      }
+      if (trackingFailed) {
+        setError(
+          "Some emails were accepted, but their new-booking tracking was not saved. Retry with the same delivery keys; accepted emails will not be duplicated.",
+        );
+      }
+      if (payload.campaign) setCampaign(normalizeCampaignSummary(payload.campaign));
+      await refreshCampaign({ silent: true });
+    } catch (sendError) {
+      const message = sendError instanceof Error
+        ? sendError.message
+        : "The new-booking emails could not be sent.";
+      setCampaignError(message);
+      setError(message);
+    } finally {
+      setCampaignAction(null);
+    }
+  }
+
   async function sendBrandedEmail(retry = false) {
     const count = recipientSummary.recipients.length;
     if (!count) {
@@ -434,16 +749,18 @@ export function StudioBookingEmailComposer({ detail }: { detail: StudioBookingDe
       );
       return;
     }
-    if (!clean(subject) || !clean(headline) || !clean(message)) {
-      setError("Add a subject, headline, and message before sending.");
-      return;
-    }
+    if (!sharedCopyIsValid()) return;
     const confirmed = window.confirm(
       retry
-        ? "Retry the undelivered messages using the same campaign? Messages already accepted for delivery keep the same delivery key."
+        ? campaignTrackingRecoveryNeeded
+          ? "Retry this send with the same delivery key to restore campaign tracking? Emails already accepted for delivery will not be duplicated."
+          : "Retry the undelivered messages using the same campaign? Messages already accepted for delivery keep the same delivery key."
         : `Send this branded email to ${count} private parent recipient${count === 1 ? "" : "s"}${staffCopy.enabled ? " plus 1 school/staff copy" : ""}?\n\n` +
           "Parents: confirmed bookings only\n" +
           (staffCopy.enabled ? `School/staff copy: ${staffCopy.email}\n` : "") +
+          (rememberForNewBookings
+            ? "Saved follow-up: remember this message and mark successful parent deliveries for future new bookings\n"
+            : "") +
           `Direction photos: ${photos.length}\n\nEach parent receives a separate personalized email.` +
           (staffCopy.enabled
             ? "\nThe school/staff copy omits the automatic personalized booking section. Review the shared subject, message, directions and photos for sensitive information."
@@ -456,16 +773,13 @@ export function StudioBookingEmailComposer({ detail }: { detail: StudioBookingDe
     setNotice("");
     if (!retry) setResult(null);
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      const headers: Record<string, string> = { "Content-Type": "application/json" };
-      if (session?.access_token) headers.Authorization = `Bearer ${session.access_token}`;
       const response = await fetch(
         `/api/dashboard/admin/bookings/${encodeURIComponent(detail.event.id)}/email`,
         {
           method: "POST",
           cache: "no-store",
           credentials: "include",
-          headers,
+          headers: await campaignRequestHeaders(true),
           body: JSON.stringify({
             sendId: sendId || window.crypto.randomUUID(),
             recipientFingerprint,
@@ -476,11 +790,16 @@ export function StudioBookingEmailComposer({ detail }: { detail: StudioBookingDe
             address: clean(address),
             directions: clean(directions),
             staffCopy,
+            rememberForNewBookings,
             photos,
           }),
         },
       );
-      const payload = (await response.json().catch(() => ({}))) as ErrorPayload & SendResult;
+      const payload = (await response.json().catch(() => ({}))) as ErrorPayload &
+        SendResult & {
+          ok?: boolean;
+          campaign?: { saved?: boolean; id?: string | null; trackingFailed?: boolean };
+        };
       if (response.status === 401) {
         window.location.href = `/sign-in?redirect=${encodeURIComponent(window.location.pathname)}`;
         return;
@@ -498,21 +817,33 @@ export function StudioBookingEmailComposer({ detail }: { detail: StudioBookingDe
       if (!response.ok && !payload.sent) {
         throw new Error(payload.message || "The booking emails could not be sent.");
       }
-      const nextResult = {
+      const trackingFailed = Boolean(payload.campaign?.trackingFailed);
+      const nextResult: SendResult = {
         sent: Number(payload.sent ?? 0),
         failed: Number(payload.failed ?? 0),
         total: Number(payload.total ?? count + (staffCopy.enabled ? 1 : 0)),
         message: payload.message || "Booking email delivery finished.",
+        deliveryKind: "all",
         retryAfterSeconds: Number(payload.retryAfterSeconds ?? 0),
         parentSent: payload.parentSent,
         parentFailed: payload.parentFailed,
         staffCopy: payload.staffCopy,
+        campaignTrackingFailed: trackingFailed,
       };
       setResult(nextResult);
-      setRetrySeconds(Math.max(0, nextResult.retryAfterSeconds));
+      setCampaignTrackingRecoveryNeeded(trackingFailed);
+      setRetrySeconds(Math.max(0, nextResult.retryAfterSeconds ?? 0));
       if (nextResult.failed > 0) {
         setError(`${nextResult.failed} email${nextResult.failed === 1 ? "" : "s"} could not be delivered.`);
+      } else if (trackingFailed) {
+        setError(
+          "The emails were accepted, but future-booking tracking was not saved. Retry with the same delivery key before creating a baseline.",
+        );
+      } else {
+        setCampaignTrackingRecoveryNeeded(false);
+        if (payload.campaign?.saved) setRememberForNewBookings(false);
       }
+      await refreshCampaign({ silent: true });
     } catch (sendError) {
       setError(sendError instanceof Error ? sendError.message : "The booking emails could not be sent.");
     } finally {
@@ -524,7 +855,7 @@ export function StudioBookingEmailComposer({ detail }: { detail: StudioBookingDe
     <div
       className={styles.emailModalBackdrop}
       onMouseDown={(event) => {
-        if (event.target === event.currentTarget && !sending) setOpen(false);
+        if (event.target === event.currentTarget && !busy) setOpen(false);
       }}
     >
       <section
@@ -534,7 +865,7 @@ export function StudioBookingEmailComposer({ detail }: { detail: StudioBookingDe
         tabIndex={-1}
         aria-modal="true"
         aria-labelledby="booking-email-title"
-        aria-busy={sending}
+        aria-busy={busy}
       >
         <header className={styles.emailModalHeader}>
           <div>
@@ -547,7 +878,7 @@ export function StudioBookingEmailComposer({ detail }: { detail: StudioBookingDe
             className={styles.emailCloseButton}
             aria-label="Close email composer"
             onClick={() => setOpen(false)}
-            disabled={sending}
+            disabled={busy}
           >
             <X size={19} />
           </button>
@@ -561,38 +892,207 @@ export function StudioBookingEmailComposer({ detail }: { detail: StudioBookingDe
             aria-live="polite"
             tabIndex={-1}
           >
-            {result.failed ? <AlertTriangle size={46} /> : <CheckCircle2 size={46} />}
-            <h3>{result.failed ? "Email delivery finished with a warning" : "Booking emails sent"}</h3>
+            {result.failed || result.unattempted || result.campaignTrackingFailed
+              ? <AlertTriangle size={46} />
+              : <CheckCircle2 size={46} />}
+            <h3>
+              {result.failed || result.unattempted || result.campaignTrackingFailed
+                ? "Email delivery finished with a warning"
+                : result.deliveryKind === "new"
+                  ? "New bookings emailed"
+                  : "Booking emails sent"}
+            </h3>
             <p>{result.message}</p>
             <div>
               <span><strong>{result.sent}</strong> sent</span>
               <span><strong>{result.failed}</strong> failed</span>
+              {result.unattempted ? (
+                <span><strong>{result.unattempted}</strong> not attempted</span>
+              ) : null}
               <span><strong>{result.total}</strong> recipients</span>
             </div>
             {error ? <div className={styles.emailInlineError} role="alert"><XCircle size={16} /> {error}</div> : null}
             <div className={styles.emailResultActions}>
               <button type="button" onClick={() => setOpen(false)}>Done</button>
-              {result.failed ? (
+              {result.failed || result.unattempted || result.campaignTrackingFailed ? (
                 <button
                   type="button"
-                  onClick={() => void sendBrandedEmail(true)}
-                  disabled={sending || retrySeconds > 0}
+                  onClick={() => void (
+                    result.deliveryKind === "new"
+                      ? sendNewBookings()
+                      : sendBrandedEmail(true)
+                  )}
+                  disabled={
+                    busy ||
+                    (result.deliveryKind === "new"
+                      ? retrySeconds > 0 || !campaign?.newRecipients || !campaign.newFingerprint
+                      : retrySeconds > 0)
+                  }
                 >
-                  {sending
+                  {busy
                     ? "Retrying…"
-                    : retrySeconds > 0
+                    : result.deliveryKind === "new"
+                      ? retrySeconds > 0
+                        ? `Retry in ${retrySeconds}s`
+                        : "Retry remaining new bookings"
+                      : retrySeconds > 0
                       ? `Retry in ${retrySeconds}s`
-                      : "Retry failed deliveries"}
+                      : result.campaignTrackingFailed
+                        ? "Retry delivery tracking"
+                        : "Retry failed deliveries"}
                 </button>
               ) : (
-                <button type="button" onClick={resetComposer}>Create another email</button>
+                <button
+                  type="button"
+                  onClick={campaign?.saved
+                    ? () => {
+                        setResult(null);
+                        setError("");
+                      }
+                    : resetComposer}
+                >
+                  {campaign?.saved ? "Back to message" : "Create another email"}
+                </button>
               )}
             </div>
           </div>
         ) : (
-          <fieldset className={styles.emailComposerFieldset} disabled={sending}>
+          <fieldset className={styles.emailComposerFieldset} disabled={busy}>
             <div className={styles.emailComposerGrid}>
             <div className={styles.emailFormPane}>
+              <section
+                className={styles.emailCampaignCard}
+                aria-labelledby={campaignStatusId}
+              >
+                <div className={styles.emailCampaignHeader}>
+                  <div>
+                    <span>{campaign?.saved ? "Saved follow-up" : "Future bookings"}</span>
+                    <h3 id={campaignStatusId}>
+                      {campaign?.saved
+                        ? "Booking information message"
+                        : "Remember this message"}
+                    </h3>
+                  </div>
+                  <button
+                    type="button"
+                    className={styles.emailCampaignRefresh}
+                    onClick={() => void refreshCampaign()}
+                    disabled={campaignBusy}
+                    aria-label="Refresh saved message and new booking counts"
+                  >
+                    {campaignLoading ? <LoaderCircle size={14} className={styles.spin} /> : "Refresh"}
+                  </button>
+                </div>
+
+                {campaignError ? (
+                  <div className={styles.emailCampaignError} role="alert">
+                    <XCircle size={15} /> {campaignError}
+                  </div>
+                ) : null}
+
+                {campaignLoading && !campaign ? (
+                  <p className={styles.emailCampaignLoading} role="status">Checking for a saved message…</p>
+                ) : campaign?.saved ? (
+                  <>
+                    <div className={styles.emailCampaignSavedMeta}>
+                      <span>{campaignSavedLabel(campaign.savedAt, detail.event.timezone)}</span>
+                      <strong>{campaign.subject || "Saved booking information"}</strong>
+                      <small>
+                        {campaign.photoCount} saved direction photo{campaign.photoCount === 1 ? "" : "s"}
+                      </small>
+                    </div>
+                    <div
+                      className={styles.emailCampaignCounts}
+                      role="status"
+                      aria-live="polite"
+                      aria-atomic="true"
+                    >
+                      <span>
+                        <strong>{campaign.newBookings}</strong>
+                        new booking{campaign.newBookings === 1 ? "" : "s"}
+                      </span>
+                      <span>
+                        <strong>{campaign.newRecipients}</strong>
+                        parent email{campaign.newRecipients === 1 ? "" : "s"}
+                      </span>
+                      <span>
+                        <strong>{campaign.handledBookings}</strong>
+                        already handled
+                      </span>
+                    </div>
+                    <p>
+                      New-booking delivery uses this saved version. The editor below remains available
+                      for a separate message to all confirmed parents.
+                    </p>
+                    {newRecipientLimitExceeded ? (
+                      <div className={styles.emailCampaignError} role="alert">
+                        New-booking delivery is limited to {STUDIO_BOOKING_EMAIL_MAX_RECIPIENTS} parent
+                        recipients at a time.
+                      </div>
+                    ) : null}
+                    <button
+                      type="button"
+                      className={styles.emailCampaignSendNew}
+                      onClick={() => void sendNewBookings()}
+                      disabled={
+                        campaignBusy ||
+                        Boolean(campaignError) ||
+                        !campaign.newRecipients ||
+                        !campaign.newFingerprint ||
+                        newRecipientLimitExceeded
+                      }
+                    >
+                      {campaignAction === "new" ? (
+                        <><LoaderCircle size={16} className={styles.spin} /> Sending new bookings…</>
+                      ) : campaign.newRecipients ? (
+                        <><Send size={16} /> Send to {campaign.newRecipients} new parent{campaign.newRecipients === 1 ? "" : "s"}</>
+                      ) : (
+                        <><CheckCircle2 size={16} /> No new bookings to email</>
+                      )}
+                    </button>
+                    <small className={styles.emailCampaignStaffNote}>
+                      School/staff copy is manual only and is never included in new-booking delivery.
+                    </small>
+                  </>
+                ) : campaignError ? null : (
+                  <>
+                    <label className={styles.emailRememberCampaign}>
+                      <input
+                        type="checkbox"
+                        checked={rememberForNewBookings}
+                        onChange={(event) => setRememberForNewBookings(event.target.checked)}
+                      />
+                      <span>
+                        <strong>Remember this message for future new bookings</strong>
+                        <small>
+                          When you send to all parents, successful deliveries become the starting point.
+                        </small>
+                      </span>
+                    </label>
+                    <div className={styles.emailCampaignBaseline}>
+                      <span>
+                        Already sent this information outside Studio OS? Save the current message and
+                        mark today’s confirmed bookings as handled without emailing them again.
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => void saveCampaignBaseline()}
+                        disabled={campaignBusy || processingPhotos || campaignTrackingRecoveryNeeded}
+                      >
+                        {campaignAction === "baseline"
+                          ? "Saving…"
+                          : "I already sent this — save for future bookings"}
+                      </button>
+                    </div>
+                    {campaignTrackingRecoveryNeeded ? (
+                      <div className={styles.emailCampaignError} role="alert">
+                        Retry delivery tracking from the result screen before creating a baseline.
+                      </div>
+                    ) : null}
+                  </>
+                )}
+              </section>
+
               <div className={styles.emailAudienceCard}>
                 <div className={styles.emailFieldHeading}>
                   <span>Parent recipients</span>
@@ -623,7 +1123,7 @@ export function StudioBookingEmailComposer({ detail }: { detail: StudioBookingDe
                   />
                   <span>
                     <strong>School / staff copy</strong>
-                    <small>Optional · branded delivery only</small>
+                    <small>Optional · manual all-parent branded delivery only</small>
                   </span>
                 </label>
                 {staffCopyEnabled ? (
@@ -762,7 +1262,12 @@ export function StudioBookingEmailComposer({ detail }: { detail: StudioBookingDe
 
               <div className={styles.emailPrivacyNote}>
                 <ShieldCheck size={16} />
-                <span><strong>Recipients stay private with branded delivery.</strong> Mail-app drafts and Copy BCC contain parents only; the school/staff copy is sent only with branded delivery.</span>
+                <span>
+                  <strong>Recipients stay private with branded delivery.</strong> Mail-app drafts and
+                  copied BCC lists always contain all confirmed parents only. External Mail/BCC sends
+                  are not tracked as saved-campaign deliveries; the school/staff copy is sent only with
+                  manual branded delivery.
+                </span>
               </div>
             </div>
 
@@ -832,23 +1337,23 @@ export function StudioBookingEmailComposer({ detail }: { detail: StudioBookingDe
         {!result ? (
           <footer className={styles.emailModalFooter}>
             <div className={styles.emailMailActions}>
-              <button type="button" onClick={() => void copyBccList()} disabled={sending || !recipientEmails.length}>
-                {copied ? <Check size={16} /> : <Copy size={16} />}{copied ? "BCC copied" : "Copy BCC"}
+              <button type="button" onClick={() => void copyBccList()} disabled={busy || campaignInitialLoading || !recipientEmails.length}>
+                {copied ? <Check size={16} /> : <Copy size={16} />}{copied ? "All-parent BCC copied" : "Copy all-parent BCC"}
               </button>
-              <button type="button" onClick={openMailApp} disabled={sending || !recipientEmails.length}>
-                <Mail size={16} /> Open in Mail app
+              <button type="button" onClick={openMailApp} disabled={busy || campaignInitialLoading || !recipientEmails.length}>
+                <Mail size={16} /> Open all parents in Mail
               </button>
             </div>
             <button
               type="button"
               className={styles.emailSendButton}
               onClick={() => void sendBrandedEmail()}
-              disabled={sending || processingPhotos || !recipientEmails.length || brandedRecipientLimitExceeded}
+              disabled={busy || campaignInitialLoading || processingPhotos || !recipientEmails.length || brandedRecipientLimitExceeded}
             >
               {sending ? <LoaderCircle size={17} className={styles.spin} /> : <Send size={17} />}
               {sending
                 ? "Sending private emails…"
-                : `Send to ${recipientEmails.length} parent${recipientEmails.length === 1 ? "" : "s"}${staffCopyReady ? " + 1 staff" : ""}`}
+                : `${rememberForNewBookings ? "Send & remember" : "Send"} to ${recipientEmails.length} parent${recipientEmails.length === 1 ? "" : "s"}${staffCopyReady ? " + 1 staff" : ""}`}
             </button>
           </footer>
         ) : null}

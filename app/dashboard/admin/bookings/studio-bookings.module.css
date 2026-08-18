@@ -804,6 +804,158 @@
 
 .emailFormPane { min-width: 0; padding: 22px 24px 25px; border-right: 1px solid #e6e9f0; }
 
+.emailCampaignCard {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 14px;
+  padding: 15px;
+  color: #344056;
+  background: #f3f6ff;
+  border: 1px solid #cfd9f4;
+  border-radius: 14px;
+}
+
+.emailCampaignHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.emailCampaignHeader > div { display: grid; gap: 2px; min-width: 0; }
+.emailCampaignHeader > div > span {
+  color: #4c65ba;
+  font-size: 9px;
+  font-weight: 850;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+.emailCampaignHeader h3 { margin: 0; color: #24324c; font-size: 14px; line-height: 1.3; }
+
+.emailCampaignRefresh,
+.emailCampaignBaseline button,
+.emailCampaignSendNew {
+  border-radius: 9px;
+  font: inherit;
+  font-size: 10px;
+  font-weight: 850;
+  cursor: pointer;
+}
+
+.emailCampaignRefresh {
+  flex: 0 0 auto;
+  min-height: 31px;
+  padding: 0 10px;
+  color: #4961ae;
+  background: #fff;
+  border: 1px solid #cdd7ef;
+}
+
+.emailCampaignRefresh:hover:not(:disabled) { color: #2448c2; border-color: #9eb0df; }
+.emailCampaignRefresh:disabled,
+.emailCampaignBaseline button:disabled,
+.emailCampaignSendNew:disabled { opacity: 0.55; cursor: not-allowed; }
+
+.emailCampaignLoading,
+.emailCampaignCard > p { margin: 0; color: #5f6c82; font-size: 10px; line-height: 1.5; }
+
+.emailCampaignError {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  padding: 9px 10px;
+  color: #8f3030;
+  background: #fff2f2;
+  border: 1px solid #efcaca;
+  border-radius: 9px;
+  font-size: 10px;
+  font-weight: 720;
+  line-height: 1.45;
+}
+.emailCampaignError svg { flex: 0 0 auto; margin-top: 1px; }
+
+.emailCampaignSavedMeta {
+  display: grid;
+  gap: 2px;
+  padding: 10px 11px;
+  background: rgba(255, 255, 255, 0.82);
+  border: 1px solid #dce3f5;
+  border-radius: 10px;
+}
+.emailCampaignSavedMeta span { color: #5570c5; font-size: 9px; font-weight: 800; }
+.emailCampaignSavedMeta strong { overflow-wrap: anywhere; color: #25334d; font-size: 11px; }
+.emailCampaignSavedMeta small { color: #606c80; font-size: 10px; }
+
+.emailCampaignCounts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 7px;
+}
+.emailCampaignCounts span {
+  display: grid;
+  gap: 1px;
+  padding: 9px;
+  color: #5f6b81;
+  background: #fff;
+  border: 1px solid #dce3f3;
+  border-radius: 9px;
+  font-size: 9px;
+  line-height: 1.35;
+}
+.emailCampaignCounts strong { color: #294eba; font-size: 17px; line-height: 1.1; }
+
+.emailCampaignSendNew {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 40px;
+  padding: 0 14px;
+  color: #fff;
+  background: #3157d8;
+  border: 1px solid #3157d8;
+}
+.emailCampaignSendNew:hover:not(:disabled) { background: #2448c2; }
+.emailCampaignStaffNote { color: #5f6879; font-size: 10px; line-height: 1.45; }
+
+.emailRememberCampaign {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  color: #334158;
+  cursor: pointer;
+}
+.emailRememberCampaign input {
+  flex: 0 0 auto;
+  width: 17px;
+  height: 17px;
+  margin: 1px 0 0;
+  accent-color: #3157d8;
+}
+.emailRememberCampaign span { display: grid; gap: 2px; }
+.emailRememberCampaign strong { font-size: 11px; line-height: 1.35; }
+.emailRememberCampaign small { color: #5f6879; font-size: 10px; line-height: 1.45; }
+
+.emailCampaignBaseline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 11px;
+  border-top: 1px solid #d8e0f2;
+}
+.emailCampaignBaseline span { color: #5f6b80; font-size: 10px; line-height: 1.45; }
+.emailCampaignBaseline button {
+  flex: 0 0 auto;
+  max-width: 230px;
+  padding: 8px 10px;
+  color: #3855a9;
+  background: #fff;
+  border: 1px solid #c7d2ee;
+  line-height: 1.3;
+}
+.emailCampaignBaseline button:hover:not(:disabled) { color: #2448c2; border-color: #9eb0df; }
+
 .emailAudienceCard {
   margin-bottom: 18px;
   padding: 15px;
@@ -1237,11 +1389,17 @@
   .emailModalHeader h2 { font-size: 21px; }
   .emailFormPane,
   .emailPreviewPane { padding: 17px 15px 21px; }
+  .emailCampaignHeader { align-items: stretch; flex-direction: column; }
+  .emailCampaignRefresh { align-self: flex-start; }
+  .emailCampaignCounts { grid-template-columns: 1fr; }
+  .emailCampaignCounts span { grid-template-columns: auto 1fr; align-items: baseline; gap: 7px; }
+  .emailCampaignBaseline { align-items: stretch; flex-direction: column; }
+  .emailCampaignBaseline button { width: 100%; max-width: none; }
   .emailAudienceOptions { grid-template-columns: 1fr; }
   .emailPhotoList { grid-template-columns: repeat(2, 1fr); }
   .emailModalFooter { align-items: stretch; flex-direction: column-reverse; padding: 12px 15px; }
-  .emailMailActions { width: 100%; }
-  .emailMailActions button { flex: 1; }
+  .emailMailActions { display: grid; grid-template-columns: 1fr; width: 100%; }
+  .emailMailActions button { width: 100%; }
   .emailSendButton { width: 100%; }
   .emailResultPanel > div:not(.emailInlineError):not(.emailResultActions) { flex-wrap: wrap; justify-content: center; }
   .emailResultActions { flex-direction: column; width: 100%; max-width: 320px; }

@@ -1,6 +1,5 @@
 import { createHash } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
-import sharp from "sharp";
 import { z } from "zod";
 import { parseJson } from "@/lib/api-validation";
 import { recordAudit } from "@/lib/audit";
@@ -12,10 +11,7 @@ import { guardAgreement } from "@/lib/require-agreement";
 import { getOrCreatePhotographerByUser } from "@/lib/payments";
 import { rateLimit } from "@/lib/rate-limit";
 import {
-  ResendRequestError,
   resendConfigured,
-  sendResendEmail,
-  type SendResendEmailInput,
 } from "@/lib/resend";
 import {
   buildStudioBookingEmailDocument,
@@ -24,6 +20,21 @@ import {
   STUDIO_BOOKING_EMAIL_MAX_RECIPIENTS,
   studioBookingRecipientFingerprint,
 } from "@/lib/studio-booking-email";
+import {
+  pauseStudioBookingEmailCampaign,
+  recordHandledStudioBookingRecipients,
+  saveStudioBookingEmailCampaign,
+} from "@/lib/studio-booking-email-campaign";
+import {
+  InvalidStudioBookingDirectionPhotoError,
+  prepareStudioBookingDirectionPhoto,
+  STUDIO_BOOKING_EMAIL_MAX_PHOTO_BASE64,
+  STUDIO_BOOKING_EMAIL_MAX_TOTAL_PHOTO_BASE64,
+} from "@/lib/studio-booking-email-photos";
+import {
+  sendStudioBookingEmailWithRetry,
+  waitForStudioBookingEmail,
+} from "@/lib/studio-booking-email-send";
 import { loadStudioBookingDetail } from "@/lib/studio-bookings-detail-server";
 
 export const dynamic = "force-dynamic";
@@ -31,17 +42,12 @@ export const runtime = "nodejs";
 export const maxDuration = 120;
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const BASE64_RE = /^[A-Za-z0-9+/]+={0,2}$/;
-const MAX_PHOTO_BASE64 = 1_000_000;
-const MAX_TOTAL_PHOTO_BASE64 = 3_200_000;
-const MAX_OUTPUT_PHOTO_BYTES = 900_000;
-const MAX_INPUT_PIXELS = 40_000_000;
 const SEND_CONCURRENCY = 4;
 
 const DirectionPhotoSchema = z.object({
   filename: z.string().trim().min(1).max(120),
   contentType: z.enum(["image/jpeg", "image/png", "image/webp"]),
-  content: z.string().min(1).max(MAX_PHOTO_BASE64),
+  content: z.string().min(1).max(STUDIO_BOOKING_EMAIL_MAX_PHOTO_BASE64),
 });
 
 const StaffCopySchema = z.discriminatedUnion("enabled", [
@@ -63,12 +69,13 @@ const BookingEmailBodySchema = z
     address: z.string().trim().max(1_000).default(""),
     directions: z.string().trim().max(3_000).default(""),
     staffCopy: StaffCopySchema.default({ enabled: false }),
+    rememberForNewBookings: z.boolean().default(false),
     photos: z.array(DirectionPhotoSchema).max(4).default([]),
   })
   .strict()
   .superRefine((value, context) => {
     const total = value.photos.reduce((sum, photo) => sum + photo.content.length, 0);
-    if (total > MAX_TOTAL_PHOTO_BASE64) {
+    if (total > STUDIO_BOOKING_EMAIL_MAX_TOTAL_PHOTO_BASE64) {
       context.addIssue({
         code: "custom",
         path: ["photos"],
@@ -76,8 +83,6 @@ const BookingEmailBodySchema = z
       });
     }
   });
-
-class InvalidDirectionPhotoError extends Error {}
 
 function privateJson(
   body: unknown,
@@ -91,91 +96,6 @@ function privateJson(
       ...init?.headers,
     },
   });
-}
-
-function wait(milliseconds: number) {
-  return new Promise((resolve) => setTimeout(resolve, milliseconds));
-}
-
-async function prepareDirectionPhoto(
-  photo: z.infer<typeof DirectionPhotoSchema>,
-  index: number,
-) {
-  if (!BASE64_RE.test(photo.content)) {
-    throw new InvalidDirectionPhotoError(`Direction photo ${index + 1} is not a valid image.`);
-  }
-
-  const source = Buffer.from(photo.content, "base64");
-  if (!source.length || source.length > MAX_OUTPUT_PHOTO_BYTES * 2) {
-    throw new InvalidDirectionPhotoError(`Direction photo ${index + 1} is too large.`);
-  }
-
-  try {
-    const image = sharp(source, {
-      failOn: "error",
-      limitInputPixels: MAX_INPUT_PIXELS,
-    });
-    const metadata = await image.metadata();
-    if (!metadata.format || !["jpeg", "png", "webp"].includes(metadata.format)) {
-      throw new InvalidDirectionPhotoError(
-        `Direction photo ${index + 1} must be a JPEG, PNG, or WebP image.`,
-      );
-    }
-    if (
-      metadata.width &&
-      metadata.height &&
-      metadata.width * metadata.height > MAX_INPUT_PIXELS
-    ) {
-      throw new InvalidDirectionPhotoError(
-        `Direction photo ${index + 1} has too many pixels. Choose a smaller image.`,
-      );
-    }
-
-    const output = await image
-      .rotate()
-      .resize({
-        width: 1600,
-        height: 1600,
-        fit: "inside",
-        withoutEnlargement: true,
-      })
-      .jpeg({ quality: 82, progressive: true, mozjpeg: true })
-      .toBuffer();
-
-    if (output.length > MAX_OUTPUT_PHOTO_BYTES) {
-      throw new InvalidDirectionPhotoError(
-        `Direction photo ${index + 1} is still too large after optimization.`,
-      );
-    }
-
-    return {
-      filename: `direction-photo-${index + 1}.jpg`,
-      content: output.toString("base64"),
-      contentId: `booking-direction-${index + 1}`,
-    };
-  } catch (error) {
-    if (error instanceof InvalidDirectionPhotoError) throw error;
-    throw new InvalidDirectionPhotoError(`Direction photo ${index + 1} could not be read.`);
-  }
-}
-
-async function sendResendEmailWithRetry(input: SendResendEmailInput) {
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    try {
-      return await sendResendEmail(input);
-    } catch (error) {
-      const retryable =
-        error instanceof ResendRequestError &&
-        (error.status === 429 || error.status >= 500);
-      if (!retryable || attempt === 2) throw error;
-      const delay = Math.min(
-        10_000,
-        Math.max(750 * 2 ** attempt, error.retryAfterMs ?? 0),
-      );
-      await wait(delay);
-    }
-  }
-  throw new Error("Booking email delivery could not be completed.");
 }
 
 export async function POST(
@@ -279,13 +199,17 @@ export async function POST(
       );
     }
 
-    const attachments: Awaited<ReturnType<typeof prepareDirectionPhoto>>[] = [];
+    const attachments: Awaited<
+      ReturnType<typeof prepareStudioBookingDirectionPhoto>
+    >[] = [];
     try {
       for (let index = 0; index < parsed.data.photos.length; index += 1) {
-        attachments.push(await prepareDirectionPhoto(parsed.data.photos[index], index));
+        attachments.push(
+          await prepareStudioBookingDirectionPhoto(parsed.data.photos[index], index),
+        );
       }
     } catch (error) {
-      if (error instanceof InvalidDirectionPhotoError) {
+      if (error instanceof InvalidStudioBookingDirectionPhotoError) {
         return privateJson({ ok: false, message: error.message }, { status: 400 });
       }
       throw error;
@@ -338,6 +262,40 @@ export async function POST(
       );
     }
 
+    let savedCampaign: Awaited<
+      ReturnType<typeof saveStudioBookingEmailCampaign>
+    > | null = null;
+    if (parsed.data.rememberForNewBookings) {
+      try {
+        savedCampaign = await saveStudioBookingEmailCampaign({
+          service,
+          photographerId: photographer.id,
+          eventId,
+          studioEmail: detail.studio.email,
+          campaignId: parsed.data.sendId,
+          copy: {
+            subject: parsed.data.subject,
+            headline: parsed.data.headline,
+            message: parsed.data.message,
+            location: parsed.data.location,
+            address: parsed.data.address,
+            directions: parsed.data.directions,
+          },
+          attachments,
+        });
+      } catch (error) {
+        console.error("[studio-bookings:email-campaign-save]", error);
+        return privateJson(
+          {
+            ok: false,
+            message:
+              "The reusable message could not be saved, so no emails were sent. Try again or turn off Remember for new bookings.",
+          },
+          { status: 503 },
+        );
+      }
+    }
+
     const emailDetail = {
       event: detail.event,
       studio: detail.studio,
@@ -366,6 +324,10 @@ export async function POST(
     let parentFailed = 0;
     let staffCopySent = 0;
     let staffCopyFailed = 0;
+    const handledRecipients: Array<{
+      recipient: (typeof recipientSummary.recipients)[number];
+      resendEmailId?: string | null;
+    }> = [];
     for (
       let offset = 0;
       offset < deliveryTargets.length;
@@ -394,7 +356,7 @@ export async function POST(
             .update(target.email.toLowerCase())
             .digest("hex")
             .slice(0, 20);
-          return sendResendEmailWithRetry({
+          return sendStudioBookingEmailWithRetry({
             to: target.email,
             subject: parsed.data.subject,
             html: document.html,
@@ -423,18 +385,45 @@ export async function POST(
           else staffCopyFailed += 1;
         } else if (result.status === "fulfilled") {
           parentSent += 1;
+          if (savedCampaign) {
+            handledRecipients.push({
+              recipient: target.recipient,
+              resendEmailId: result.value.id,
+            });
+          }
         } else {
           parentFailed += 1;
         }
       }
 
       if (offset + SEND_CONCURRENCY < deliveryTargets.length) {
-        await wait(1_050);
+        await waitForStudioBookingEmail(1_050);
       }
     }
 
     const sent = parentSent + staffCopySent;
     const failed = parentFailed + staffCopyFailed;
+    let campaignTrackingFailed = false;
+    if (savedCampaign && handledRecipients.length) {
+      try {
+        await recordHandledStudioBookingRecipients({
+          service,
+          photographerId: photographer.id,
+          eventId,
+          campaign: savedCampaign,
+          status: "sent",
+          recipients: handledRecipients,
+        });
+      } catch (error) {
+        campaignTrackingFailed = true;
+        console.error("[studio-bookings:email-campaign-tracking]", error);
+        await pauseStudioBookingEmailCampaign(
+          service,
+          photographer.id,
+          eventId,
+        ).catch(() => undefined);
+      }
+    }
 
     await recordAudit({
       request,
@@ -453,18 +442,30 @@ export async function POST(
         staff_copy_failed: staffCopyFailed === 1,
         staff_email_hash: staffCopyHash,
         direction_photo_count: attachments.length,
+        remember_for_new_bookings: parsed.data.rememberForNewBookings,
+        campaign_id: savedCampaign?.id ?? null,
+        campaign_tracking_failed: campaignTrackingFailed,
       },
-      result: failed === 0 ? "ok" : "error",
-      errorMessage: failed ? `${failed} booking email deliveries failed.` : null,
+      result: failed === 0 && !campaignTrackingFailed ? "ok" : "error",
+      errorMessage: campaignTrackingFailed
+        ? "Follow-up campaign tracking could not be saved."
+        : failed
+          ? `${failed} booking email deliveries failed.`
+          : null,
     });
 
     return privateJson({
-      ok: failed === 0,
+      ok: failed === 0 && !campaignTrackingFailed,
       sent,
       failed,
       total: deliveryTargets.length,
       parentSent,
       parentFailed,
+      campaign: {
+        saved: Boolean(savedCampaign) && !campaignTrackingFailed,
+        id: savedCampaign?.id ?? null,
+        trackingFailed: campaignTrackingFailed,
+      },
       retryAfterSeconds: failed
         ? Math.max(0, Math.ceil((campaignLimit.resetAt - Date.now()) / 1_000))
         : 0,
@@ -478,8 +479,10 @@ export async function POST(
       duplicateEmailBookings: recipientSummary.duplicateEmailBookings,
       unusableSlotBookings: recipientSummary.unusableSlotBookings,
       message:
-        failed === 0
-          ? `Sent ${parentSent} private booking email${parentSent === 1 ? "" : "s"}${staffCopySent ? " and 1 school/staff copy" : ""}.`
+        campaignTrackingFailed
+          ? `Sent ${parentSent} private booking email${parentSent === 1 ? "" : "s"}, but follow-up tracking could not be saved. Use Retry with this same send to restore tracking safely.`
+          : failed === 0
+          ? `Sent ${parentSent} private booking email${parentSent === 1 ? "" : "s"}${staffCopySent ? " and 1 school/staff copy" : ""}.${savedCampaign ? " The message is saved for future new bookings." : ""}`
           : `Sent to ${sent}; ${failed} could not be delivered${staffCopyFailed ? ", including the school/staff copy" : ""}.`,
     }, failed > 0 && sent === 0 ? { status: 502 } : undefined);
   } catch (error) {

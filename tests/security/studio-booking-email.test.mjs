@@ -308,6 +308,7 @@ test("multi-day booking emails use an event date range and each recipient's real
 
 test("booking email API derives parents server-side and strictly bounds the optional staff copy", () => {
   const route = source("app/api/dashboard/admin/bookings/[eventId]/email/route.ts");
+  const photoHelper = source("lib/studio-booking-email-photos.ts");
   assert.match(route, /resolveDashboardAuth\(request\)/);
   assert.match(route, /photographer\.is_platform_admin/);
   assert.match(route, /loadStudioBookingDetail\(service, photographer\.id, eventId\)/);
@@ -322,12 +323,12 @@ test("booking email API derives parents server-side and strictly bounds the opti
   assert.doesNotMatch(route, /access_pin|public_token|stripe_payment_intent_id|stripe_charge_id/);
   assert.match(route, /photos:\s*z\.array\(DirectionPhotoSchema\)\.max\(4\)/);
   assert.match(route, /MAX_TOTAL_PHOTO_BASE64/);
-  assert.match(route, /sendResendEmail/);
+  assert.match(route, /sendStudioBookingEmailWithRetry/);
   assert.match(route, /idempotencyKey/);
   assert.match(route, /studio-booking-email-campaign/);
   assert.match(route, /STUDIO_BOOKING_EMAIL_MAX_RECIPIENTS/);
-  assert.match(route, /limitInputPixels: MAX_INPUT_PIXELS/);
-  assert.match(route, /sendResendEmailWithRetry/);
+  assert.match(photoHelper, /limitInputPixels: MAX_INPUT_PIXELS/);
+  assert.match(route, /waitForStudioBookingEmail/);
   assert.match(route, /booking-update-\$\{eventId\}/);
   assert.match(route, /directions:\s*z\.string/);
   assert.match(route, /location:\s*z\.string/);
@@ -387,8 +388,8 @@ test("booking composer provides private branded send and BCC Mail fallback", () 
     component.indexOf("function openMailApp"),
     component.indexOf("function validatedStaffCopy"),
   );
-  assert.match(component, /Send branded email/);
-  assert.match(component, /Open in Mail app/);
+  assert.match(component, /onClick=\{\(\) => void sendBrandedEmail\(\)\}/);
+  assert.match(component, /Open all parents in Mail/);
   assert.match(component, /buildStudioBookingMailtoUrl/);
   assert.match(component, /navigator\.clipboard\.writeText/);
   assert.match(component, /Each parent receives a separate personalized email/);
@@ -402,7 +403,7 @@ test("booking composer provides private branded send and BCC Mail fallback", () 
   assert.match(component, /School \/ staff copy/);
   assert.match(component, /branded delivery only/);
   assert.match(component, /automatic personalized booking section is omitted; review shared content for sensitive information/);
-  assert.match(component, /staffCopy,\s*photos/);
+  assert.match(component, /staffCopy,\s*rememberForNewBookings,\s*photos/);
   assert.match(component, /Retry failed deliveries/);
   assert.match(component, /sendBrandedEmail\(true\)/);
   assert.match(component, /Retry in \$\{retrySeconds\}s/);
