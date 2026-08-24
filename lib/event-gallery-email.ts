@@ -52,6 +52,8 @@ type SchoolEmailContentInput = {
   overrideSubject?: string | null;
   overrideMessage?: string | null;
   ctaLabel?: string | null;
+  studentName?: string | null;
+  studentPin?: string | null;
 };
 
 function clean(value: string | null | undefined) {
@@ -133,11 +135,21 @@ export function schoolGalleryName(school: SchoolEmailGallery) {
   return clean(school.school_name) || "Your gallery";
 }
 
-export function schoolAccessSummary() {
+export function schoolAccessSummary(
+  studentPin?: string | null,
+  studentName?: string | null,
+) {
+  const pin = clean(studentPin);
+  const name = clean(studentName);
+  if (pin) {
+    return name
+      ? `${name}'s private gallery PIN: ${pin}`
+      : `Your private student gallery PIN: ${pin}`;
+  }
   return "Access PIN: Use the PIN from your photo envelope or the one provided by your photographer.";
 }
 
-export function schoolEmailRequirementSummary(school: SchoolEmailGallery) {
+export function schoolEmailRequirementSummary() {
   return "Email required: Enter your email when opening the gallery.";
 }
 
@@ -270,8 +282,13 @@ export function buildSchoolShareEmail(input: SchoolEmailContentInput) {
     input.school.id,
     input.school.gallery_slug,
   );
-  const accessSummary = schoolAccessSummary();
-  const emailRequirement = schoolEmailRequirementSummary(input.school);
+  const studentPin = clean(input.studentPin);
+  const studentName = clean(input.studentName);
+  const accessSummary = schoolAccessSummary(
+    studentPin,
+    studentName,
+  );
+  const emailRequirement = schoolEmailRequirementSummary();
   const studioName = eventFromName(input.photographer);
   const previewText = clean(input.previewText);
   const coverUrl = signedPrivateMediaReference(
@@ -294,6 +311,19 @@ export function buildSchoolShareEmail(input: SchoolEmailContentInput) {
   const accessHtml = escapeHtml(accessSummary);
   const emailRequirementHtml = escapeHtml(emailRequirement);
   const galleryUrlHtml = escapeHtml(galleryUrl);
+  const accessBlockHtml = studentPin
+    ? `<div style="margin-top:18px;padding:22px 20px;border-radius:18px;background:#fff7ed;border:2px solid #fb923c;text-align:center;color:#111827;">
+                  <div style="font-size:13px;line-height:1.35;letter-spacing:0.06em;text-transform:uppercase;color:#9a3412;font-weight:800;">${studentName ? `${escapeHtml(studentName)}&#39;s private gallery PIN` : "Your private gallery PIN"}</div>
+                  <div style="margin-top:10px;font-family:Arial,sans-serif;font-size:44px;line-height:1;font-weight:900;letter-spacing:0.16em;color:#111827;font-variant-numeric:tabular-nums;-webkit-text-size-adjust:100%;">${escapeHtml(studentPin)}</div>
+                  <div style="margin-top:10px;font-size:14px;line-height:1.5;color:#7c2d12;font-weight:700;">Use this PIN to open your private photos.</div>
+                  <div style="margin-top:16px;padding-top:14px;border-top:1px solid #fdba74;font-size:14px;line-height:1.6;color:#374151;">${emailRequirementHtml}</div>
+                  <div style="margin-top:6px;font-size:14px;line-height:1.6;word-break:break-all;"><a href="${galleryUrlHtml}" style="color:#0369a1;text-decoration:underline;">${galleryUrlHtml}</a></div>
+                </div>`
+    : `<div style="margin-top:18px;padding:16px 18px;border-radius:18px;background:#f8fafc;border:1px solid #e5e7eb;color:#374151;font-size:14px;line-height:1.7;">
+                  <div><strong>${accessHtml}</strong></div>
+                  <div style="margin-top:6px;">${emailRequirementHtml}</div>
+                  <div style="margin-top:6px;word-break:break-all;">${galleryUrlHtml}</div>
+                </div>`;
 
   return {
     subject,
@@ -312,11 +342,7 @@ export function buildSchoolShareEmail(input: SchoolEmailContentInput) {
                 <div style="font-size:12px;letter-spacing:0.24em;text-transform:uppercase;color:#6b7280;font-weight:700;">${escapeHtml(studioName)}</div>
                 <h1 style="margin:16px 0 12px;font-size:32px;line-height:1.1;color:#111111;">${escapeHtml(headline)}</h1>
                 <div style="font-size:16px;line-height:1.7;color:#374151;">${messageHtml}</div>
-                <div style="margin-top:18px;padding:16px 18px;border-radius:18px;background:#f8fafc;border:1px solid #e5e7eb;color:#374151;font-size:14px;line-height:1.7;">
-                  <div><strong>${accessHtml}</strong></div>
-                  <div style="margin-top:6px;">${emailRequirementHtml}</div>
-                  <div style="margin-top:6px;word-break:break-all;">${galleryUrlHtml}</div>
-                </div>
+                ${accessBlockHtml}
                 <div style="margin-top:28px;">
                   <a href="${galleryUrlHtml}" style="display:inline-block;border-radius:999px;background:#111111;color:#ffffff;text-decoration:none;font-weight:800;padding:14px 24px;">${escapeHtml(buttonLabel)}</a>
                 </div>

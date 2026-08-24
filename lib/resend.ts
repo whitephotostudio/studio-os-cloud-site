@@ -26,6 +26,11 @@ type ResendSendResponse = {
   id?: string;
 };
 
+export type ResendSentEmailSummary = {
+  id: string;
+  lastEvent: string;
+};
+
 export class ResendRequestError extends Error {
   status: number;
   retryAfterMs: number | null;
@@ -128,4 +133,35 @@ export async function sendResendEmail(input: SendResendEmailInput) {
   return {
     id: clean(payload.id) || null,
   };
+}
+
+export async function listRecentResendEmailStatuses(limit = 100) {
+  const apiKey = clean(process.env.RESEND_API_KEY);
+  if (!apiKey) return [] as ResendSentEmailSummary[];
+
+  const safeLimit = Math.max(1, Math.min(100, Math.floor(limit)));
+  const response = await fetch(`https://api.resend.com/emails?limit=${safeLimit}`, {
+    headers: { Authorization: `Bearer ${apiKey}` },
+    cache: "no-store",
+  });
+  const payload = (await response.json().catch(() => ({}))) as {
+    data?: Array<{ id?: string; last_event?: string }>;
+    message?: string;
+    error?: { message?: string };
+  };
+
+  if (!response.ok) {
+    throw new ResendRequestError(
+      payload.error?.message || payload.message || "Failed to load email delivery statuses.",
+      response.status,
+      retryAfterMilliseconds(response.headers.get("retry-after")),
+    );
+  }
+
+  return (payload.data ?? [])
+    .map((email) => ({
+      id: clean(email.id),
+      lastEvent: clean(email.last_event).toLowerCase(),
+    }))
+    .filter((email) => email.id);
 }

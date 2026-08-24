@@ -10,6 +10,7 @@ import {
   EyeOff,
   FolderPlus,
   KeyRound,
+  Mail,
   Menu,
   Plus,
   Search,
@@ -149,6 +150,7 @@ export default function SchoolsSchoolClassPage() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const folderInputRef = useRef<HTMLInputElement | null>(null);
   const uploadTargetStudentRef = useRef<Student | null>(null);
+  const emailingStudentRef = useRef<string | null>(null);
   const folderImagesCacheRef = useRef<Map<string, string[]>>(new Map());
   const folderImageAssetsCacheRef = useRef<Map<string, GalleryPhotoAsset[]>>(new Map());
   const schoolId = String(params?.schoolId ?? "");
@@ -160,6 +162,10 @@ export default function SchoolsSchoolClassPage() {
   const [students, setStudents] = useState<Student[]>([]);
   const [error, setError] = useState("");
   const [shareNotice, setShareNotice] = useState("");
+  const [studentEmailFeedback, setStudentEmailFeedback] = useState<{
+    kind: "success" | "error";
+    message: string;
+  } | null>(null);
   const [studentSearch, setStudentSearch] = useState("");
   const [selectedStudentIds, setSelectedStudentIds] = useState<string[]>([]);
   const [visiblePinIds, setVisiblePinIds] = useState<string[]>([]);
@@ -172,6 +178,7 @@ export default function SchoolsSchoolClassPage() {
   const [queuedStudentFiles, setQueuedStudentFiles] = useState<File[]>([]);
   const [creatingStudent, setCreatingStudent] = useState(false);
   const [uploadingStudentId, setUploadingStudentId] = useState<string | null>(null);
+  const [emailingStudentId, setEmailingStudentId] = useState<string | null>(null);
   const [settingsStudent, setSettingsStudent] = useState<Student | null>(null);
   const [settingsName, setSettingsName] = useState("");
   const [settingsPin, setSettingsPin] = useState("");
@@ -466,6 +473,81 @@ export default function SchoolsSchoolClassPage() {
     setSettingsPin(clean(student.pin));
     setShowSettingsPin(false);
     setSettingsMsg("");
+  }
+
+  async function emailStudentGallery(student: Student) {
+    if (emailingStudentRef.current) return;
+
+    const studentName = fullNameOf(student);
+    if (!clean(student.pin)) {
+      const message = `${studentName} does not have a gallery PIN yet.`;
+      setStudentEmailFeedback({ kind: "error", message });
+      window.setTimeout(
+        () => setStudentEmailFeedback((current) =>
+          current?.message === message ? null : current,
+        ),
+        4200,
+      );
+      return;
+    }
+
+    const confirmed = typeof window !== "undefined"
+      ? window.confirm(
+          `Send ${studentName}'s private gallery link and PIN to their registered email?`,
+        )
+      : false;
+    if (!confirmed) return;
+
+    emailingStudentRef.current = student.id;
+    setOpenStudentMenuId(null);
+    setEmailingStudentId(student.id);
+    setShareNotice("");
+    setError("");
+    setStudentEmailFeedback(null);
+
+    try {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      const response = await fetch(`/api/dashboard/schools/${schoolId}/emails`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session?.access_token ?? ""}`,
+        },
+        body: JSON.stringify({ action: "student", studentId: student.id }),
+      });
+      const payload = await response.json().catch(() => null) as {
+        ok?: boolean;
+        message?: string;
+      } | null;
+      if (!response.ok || payload?.ok === false) {
+        throw new Error(payload?.message || "Could not send this student's gallery email.");
+      }
+
+      const message = `Gallery link and private access details emailed for ${studentName}.`;
+      setStudentEmailFeedback({ kind: "success", message });
+      window.setTimeout(
+        () => setStudentEmailFeedback((current) =>
+          current?.message === message ? null : current,
+        ),
+        3200,
+      );
+    } catch (err) {
+      const message = err instanceof Error
+        ? err.message
+        : "Could not send this student's gallery email.";
+      setStudentEmailFeedback({ kind: "error", message });
+      window.setTimeout(
+        () => setStudentEmailFeedback((current) =>
+          current?.message === message ? null : current,
+        ),
+        4200,
+      );
+    } finally {
+      emailingStudentRef.current = null;
+      setEmailingStudentId(null);
+    }
   }
 
   async function copyClassLink() {
@@ -988,6 +1070,30 @@ export default function SchoolsSchoolClassPage() {
 
   return (
     <div style={{ minHeight: "100vh", background: "#faf7f7", padding: 36 }}>
+      {studentEmailFeedback ? (
+        <div
+          role={studentEmailFeedback.kind === "error" ? "alert" : "status"}
+          aria-live={studentEmailFeedback.kind === "error" ? "assertive" : "polite"}
+          style={{
+            position: "fixed",
+            top: 24,
+            right: 24,
+            zIndex: 1000,
+            maxWidth: 420,
+            borderRadius: 12,
+            border: `1px solid ${studentEmailFeedback.kind === "error" ? "#fecaca" : "#bbf7d0"}`,
+            background: studentEmailFeedback.kind === "error" ? "#fef2f2" : "#f0fdf4",
+            color: studentEmailFeedback.kind === "error" ? "#991b1b" : "#166534",
+            boxShadow: "0 12px 30px rgba(15,23,42,0.16)",
+            padding: "12px 16px",
+            fontSize: 13,
+            fontWeight: 800,
+            lineHeight: 1.5,
+          }}
+        >
+          {studentEmailFeedback.message}
+        </div>
+      ) : null}
       <div style={{ maxWidth: 1400, margin: "0 auto" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16, marginBottom: 22 }}>
           <div>
@@ -1369,7 +1475,7 @@ export default function SchoolsSchoolClassPage() {
                           </button>
                           <div style={{ position: "relative" }}>
                             <button
-                              disabled={uploadingStudentId === student.id}
+                              disabled={uploadingStudentId === student.id || emailingStudentId === student.id}
                               onClick={() => setOpenStudentMenuId((prev) => (prev === student.id ? null : student.id))}
                               style={{
                                 width: 40,
@@ -1381,12 +1487,12 @@ export default function SchoolsSchoolClassPage() {
                                 display: "inline-flex",
                                 alignItems: "center",
                                 justifyContent: "center",
-                                cursor: uploadingStudentId === student.id ? "wait" : "pointer",
-                                opacity: uploadingStudentId === student.id ? 0.7 : 1,
+                                cursor: uploadingStudentId === student.id || emailingStudentId === student.id ? "wait" : "pointer",
+                                opacity: uploadingStudentId === student.id || emailingStudentId === student.id ? 0.7 : 1,
                               }}
                               aria-label="Student actions"
                             >
-                              {uploadingStudentId === student.id ? (
+                              {uploadingStudentId === student.id || emailingStudentId === student.id ? (
                                 <span style={{ fontSize: 10, fontWeight: 800 }}>...</span>
                               ) : (
                                 <Menu size={18} />
@@ -1439,6 +1545,27 @@ export default function SchoolsSchoolClassPage() {
                                   }}
                                 >
                                   Edit PIN
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={emailingStudentId !== null}
+                                  onClick={() => void emailStudentGallery(student)}
+                                  style={{
+                                    width: "100%",
+                                    textAlign: "left",
+                                    padding: "12px 14px",
+                                    color: emailingStudentId !== null ? "#98a2b3" : "#111111",
+                                    background: "#fff",
+                                    border: 0,
+                                    borderTop: "1px solid #f1f5f9",
+                                    fontWeight: 700,
+                                    cursor: emailingStudentId !== null ? "wait" : "pointer",
+                                    display: "flex",
+                                    alignItems: "center",
+                                    gap: 8,
+                                  }}
+                                >
+                                  <Mail size={15} /> Email Gallery + PIN
                                 </button>
                                 <button
                                   type="button"
