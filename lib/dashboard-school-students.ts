@@ -4,11 +4,15 @@ import {
   ensureSchoolCollectionId,
 } from "@/lib/school-sync";
 import {
-  buildStoredMediaUrls,
   buildSignedMediaUrls,
   extractStoragePathFromSupabaseUrl,
 } from "@/lib/storage-images";
 import { listR2FolderImages, r2DeleteWithVariants, r2Upload } from "@/lib/r2";
+import {
+  filterTombstonedSchoolPhotoAssets,
+  loadSchoolPhotoTombstones,
+  tombstoneFamilySet,
+} from "@/lib/school-photo-deletions";
 
 type SupabaseClientLike = SupabaseClient;
 
@@ -237,17 +241,27 @@ export async function syncStudentAssets(params: {
   return syncTarget;
 }
 
-export function listStorageFolderAssets(
+export async function listStorageFolderAssets(
   service: SupabaseClientLike,
   folderPath: string,
+  schoolId?: string,
 ) {
-  void service;
-  return listR2FolderImages(folderPath)
-    .then((files) => ({ data: files, error: null }))
-    .catch((error) => ({
+  try {
+    let files = await listR2FolderImages(folderPath);
+    if (clean(schoolId)) {
+      const tombstones = await loadSchoolPhotoTombstones(service, clean(schoolId));
+      files = filterTombstonedSchoolPhotoAssets(
+        files,
+        tombstoneFamilySet(tombstones),
+      );
+    }
+    return { data: files, error: null };
+  } catch (error) {
+    return {
       data: null,
       error: error instanceof Error ? error : new Error("Failed to list storage folder."),
-    }));
+    };
+  }
 }
 
 export function storageFilePublicUrl(

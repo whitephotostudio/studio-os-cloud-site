@@ -177,6 +177,7 @@ export async function POST(
       const { data: listedFiles, error: listError } = await listStorageFolderAssets(
         service,
         uploaded.folderPath,
+        schoolId,
       );
       if (listError) throw listError;
 

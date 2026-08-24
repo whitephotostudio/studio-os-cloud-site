@@ -104,7 +104,7 @@ export async function POST(request: NextRequest) {
 
   let rows;
   try {
-    rows = await loadFolderMediaRows(folders);
+    rows = await loadFolderMediaRows(folders, { service, schoolId });
   } catch (error) {
     console.error("[capture/list] loadFolderMediaRows failed", error);
     return NextResponse.json({ error: "Could not load photos." }, { status: 502 });

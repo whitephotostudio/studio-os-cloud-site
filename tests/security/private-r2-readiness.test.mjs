@@ -11,6 +11,7 @@ function source(relativePath) {
 const r2Source = source("lib/r2.ts");
 const thumbnailSource = source("app/api/dashboard/generate-thumbnails/route.ts");
 const imageProxySource = source("app/api/r2/img/[...path]/route.ts");
+const schoolPhotoDeletionSource = source("lib/school-photo-deletions.ts");
 const downloadProxySource = source("app/api/portal/download-file/route.ts");
 const schoolAccessSource = source("app/api/portal/school-access/route.ts");
 const galleryContextSource = source("app/api/portal/gallery-context/route.ts");
@@ -52,8 +53,16 @@ test("authenticated image proxy covers every active owned R2 namespace", () => {
   }
   assert.match(imageProxySource, /secondSegment === photographerId/);
   assert.match(imageProxySource, /ownsProject\(thirdSegment\)/);
-  assert.match(imageProxySource, /ownsSchool\(thirdSegment\)/);
-  assert.match(imageProxySource, /normalizeR2Key\(rawStoragePath\)/);
+  assert.match(imageProxySource, /ownedSchoolId\(thirdSegment\)/);
+  assert.match(
+    schoolPhotoDeletionSource,
+    /\.eq\("school_id", normalizedSchoolId\)/,
+  );
+  assert.match(
+    imageProxySource,
+    /loadTombstonedFamilies\([\s\S]*authorizedSchoolId/,
+  );
+  assert.match(imageProxySource, /normalizeR2Key\(rawStoragePath,/);
   assert.doesNotMatch(imageProxySource, /unauthorized path: %s/);
 });
 

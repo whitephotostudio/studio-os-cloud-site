@@ -122,6 +122,7 @@ async function allowedSchoolFavoriteIds(params: {
   studentCandidates: StudentAccessRow[];
   school: SchoolRow;
   schoolId: string;
+  service: ReturnType<typeof createDashboardServiceClient>;
 }) {
   const rows = await loadFolderMediaRows(
     buildSchoolCandidateFolders({
@@ -129,6 +130,7 @@ async function allowedSchoolFavoriteIds(params: {
       activeSchool: params.school,
       selectedSchoolId: params.schoolId,
     }),
+    { service: params.service, schoolId: params.schoolId },
   );
   const allowed = new Set(rows.map((row) => row.id));
   return allowed;
@@ -169,11 +171,25 @@ export async function GET(request: NextRequest) {
       throw error;
     }
 
+    const allowedIds = await allowedSchoolFavoriteIds({
+      studentCandidates: access.studentCandidates,
+      school: access.school,
+      schoolId: access.schoolId,
+      service: access.service,
+    });
+
     return NextResponse.json({
       ok: true,
       mediaIds: ((data ?? []) as FavoriteRow[])
         .map((row) => clean(row.media_id))
-        .filter(Boolean),
+        .filter(Boolean)
+        .filter(
+          (mediaId) =>
+            // A tombstoned favorite remains in the database for possible
+            // recovery, but must not reappear in the parent gallery.
+            // Loading the allowed set also enforces exact student folders.
+            allowedIds.has(mediaId),
+        ),
     });
   } catch (error) {
     console.error("[school-favorites:GET]", error);
@@ -243,6 +259,7 @@ export async function POST(request: NextRequest) {
       studentCandidates: access.studentCandidates,
       school: access.school,
       schoolId: access.schoolId,
+      service: access.service,
     });
     if (!allowedIds.has(mediaId) && !mediaId.startsWith("composite-")) {
       return NextResponse.json(

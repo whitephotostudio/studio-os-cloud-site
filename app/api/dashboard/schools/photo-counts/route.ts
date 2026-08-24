@@ -8,6 +8,10 @@ import { guardAgreement } from "@/lib/require-agreement";
 import { countR2FolderImages } from "@/lib/r2";
 import { isUuid } from "@/lib/r2-access-security";
 import { rateLimit } from "@/lib/rate-limit";
+import {
+  loadSchoolPhotoTombstones,
+  tombstoneFamilySet,
+} from "@/lib/school-photo-deletions";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -153,7 +157,10 @@ export async function POST(request: NextRequest) {
     }
 
     try {
-      counts[school.id] = await countR2FolderImages(prefix);
+      const tombstones = await loadSchoolPhotoTombstones(service, school.id);
+      counts[school.id] = await countR2FolderImages(prefix, {
+        excludedFamilies: tombstoneFamilySet(tombstones),
+      });
       sources[school.id] = "r2";
     } catch (error) {
       console.warn("[dashboard:school-photo-counts] R2 count unavailable", {

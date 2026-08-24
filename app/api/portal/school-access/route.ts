@@ -22,6 +22,11 @@ import {
   loadNoBgUrlMapForMediaRows,
 } from "@/lib/storage-folder";
 import { hasCalendarBoundaryPassed } from "@/lib/calendar-dates";
+import {
+  clearTombstonedSchoolPhotoReferences,
+  loadSchoolPhotoTombstones,
+  tombstoneFamilySet,
+} from "@/lib/school-photo-deletions";
 
 export const dynamic = "force-dynamic";
 
@@ -397,7 +402,8 @@ export async function POST(request: NextRequest) {
       service
         .from("schools")
         .select("id")
-        .ilike("school_name", selectedSchoolName),
+        .ilike("school_name", selectedSchoolName)
+        .eq("photographer_id", selectedSchool.photographer_id),
       // ✅ PERF: We already have the school — look up the student PIN
       // scoped to the candidate school IDs (resolved below) but we can
       // start with just the selected school as an optimistic first check.
@@ -478,9 +484,33 @@ export async function POST(request: NextRequest) {
         .maybeSingle();
 
       if (resolvedSchoolError) throw resolvedSchoolError;
-      if (resolvedSchool) {
+      if (
+        resolvedSchool &&
+        resolvedSchool.photographer_id === selectedSchool.photographer_id
+      ) {
         gallerySchool = resolvedSchool as typeof selectedSchool;
+      } else {
+        return NextResponse.json(
+          { ok: false, message: "No gallery was found for that school and PIN." },
+          { status: 404 },
+        );
       }
+    }
+
+    if (hasCalendarBoundaryPassed(gallerySchool.expiration_date)) {
+      return NextResponse.json(
+        { ok: false, step: "school_closed" },
+        { status: 409 },
+      );
+    }
+    if (
+      normalizedSchoolStatus(gallerySchool.portal_status ?? gallerySchool.status) ===
+      "pre_release"
+    ) {
+      return NextResponse.json(
+        { ok: false, step: "school_prerelease" },
+        { status: 409 },
+      );
     }
 
     const gallerySchoolName = clean(gallerySchool.school_name);
@@ -516,18 +546,33 @@ export async function POST(request: NextRequest) {
           ]);
 
         const studentCandidates = (studentsResult.data ?? []) as StudentRow[];
+        const resolvedStudentCandidates = studentCandidates.filter(
+          (student) => student.school_id === resolvedSchoolId,
+        );
+        const tombstonedFamilies = tombstoneFamilySet(
+          await loadSchoolPhotoTombstones(service, resolvedSchoolId),
+        );
+        const visibleStudentCandidates = clearTombstonedSchoolPhotoReferences(
+          resolvedStudentCandidates,
+          tombstonedFamilies,
+        );
         const primaryStudent =
-          studentCandidates.find((s) => s.school_id === resolvedSchoolId && !!s.photo_url) ??
-          studentCandidates.find((s) => !!s.photo_url) ??
-          studentCandidates.find((s) => s.school_id === resolvedSchoolId) ??
-          studentCandidates[0] ??
+          visibleStudentCandidates.find((s) => s.school_id === resolvedSchoolId && !!s.photo_url) ??
+          visibleStudentCandidates.find((s) => !!s.photo_url) ??
+          visibleStudentCandidates.find((s) => s.school_id === resolvedSchoolId) ??
+          visibleStudentCandidates[0] ??
           null;
         const mediaRowsResult = await loadFolderMediaRows(
           buildSchoolCandidateFolders({
-            studentCandidates,
+            studentCandidates: resolvedStudentCandidates,
             activeSchool: gallerySchool,
             selectedSchoolId: resolvedSchoolId,
           }),
+          {
+            service,
+            schoolId: resolvedSchoolId,
+            tombstonedFamilies,
+          },
         );
         const noBgUrls = await loadNoBgUrlMapForMediaRows(mediaRowsResult, {
           ttlSeconds: SIGNED_URL_TTL_PARENTS_PORTAL_SECONDS,
@@ -603,6 +648,7 @@ export async function POST(request: NextRequest) {
           .from("schools")
           .select("id,school_name,photographer_id,package_profile_id,local_school_id,status,portal_status,order_due_date,expiration_date,access_mode,access_pin,email_required,gallery_settings,group_label_singular,group_label_plural")
           .ilike("school_name", gallerySchoolName || selectedSchoolName)
+          .eq("photographer_id", gallerySchool.photographer_id)
           .order("created_at", { ascending: false });
 
         // 2026-04-26: Mirror gallery-context's response shape for the
@@ -641,7 +687,7 @@ export async function POST(request: NextRequest) {
         };
 
         const signedStudentCandidates = signPhotoUrlRows(
-          studentCandidates,
+          visibleStudentCandidates,
           SIGNED_URL_TTL_PARENTS_PORTAL_SECONDS,
         );
         const signedPrimaryStudent = {

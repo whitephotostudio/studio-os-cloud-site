@@ -5,7 +5,18 @@ import {
 } from "@/lib/dashboard-auth";
 import { guardAgreement } from "@/lib/require-agreement";
 import { r2Copy, r2DeleteWithVariants, r2VariantKeys } from "@/lib/r2";
-import { r2KeyFromAnyUrl } from "@/lib/r2-signed-urls";
+import {
+  buildStudentPhotoFolderPrefixes,
+  canonicalOriginalSchoolPhotoKey,
+  invalidateSchoolPhotoTombstones,
+  isMissingSchoolPhotoDeletionsTable,
+  keyBelongsToStudentPhotoFolders,
+  loadSchoolPhotoTombstones,
+  safeLocalSchoolStorageId,
+  schoolPhotoFamilyForKey,
+  storageKeyFromSchoolPhotoReference,
+  tombstoneFamilySet,
+} from "@/lib/school-photo-deletions";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -86,18 +97,15 @@ export async function POST(request: NextRequest) {
   }
 
   const schoolId = clean(body.schoolId);
-  const key = clean(body.key);
+  const key = canonicalOriginalSchoolPhotoKey(body.key);
   const fromStudentId = clean(body.fromStudentId);
   const toStudentId = clean(body.toStudentId);
 
-  if (!schoolId || !key || !toStudentId) {
+  if (!schoolId || !key || !fromStudentId || !toStudentId) {
     return NextResponse.json(
-      { error: "schoolId, key and toStudentId are required." },
+      { error: "schoolId, key, fromStudentId and toStudentId are required." },
       { status: 400 },
     );
-  }
-  if (key.includes("..") || key.startsWith("/") || key.includes("://")) {
-    return NextResponse.json({ error: "Invalid key." }, { status: 400 });
   }
 
   const { data: school } = await service
@@ -113,29 +121,89 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const schoolBaseId = clean(school.local_school_id) || school.id;
-  if (!key.startsWith(`${schoolBaseId}/`)) {
+  let verifiedLocalSchoolId: string | null = null;
+  const localSchoolId = safeLocalSchoolStorageId(school.local_school_id);
+  if (localSchoolId) {
+    const [idMatchesResult, localMatchesResult] = await Promise.all([
+      service.from("schools").select("id").eq("id", localSchoolId).limit(2),
+      service
+        .from("schools")
+        .select("id")
+        .eq("local_school_id", localSchoolId)
+        .limit(2),
+    ]);
+    if (idMatchesResult.error || localMatchesResult.error) {
+      return NextResponse.json(
+        { error: "Could not verify this school's storage namespace." },
+        { status: 502 },
+      );
+    }
+    const ids = new Set(
+      [...(idMatchesResult.data ?? []), ...(localMatchesResult.data ?? [])].map(
+        (row) => row.id,
+      ),
+    );
+    if (ids.size === 1 && ids.has(school.id)) {
+      verifiedLocalSchoolId = localSchoolId;
+    }
+  }
+  const authorizedSchool = {
+    ...school,
+    local_school_id: verifiedLocalSchoolId,
+  };
+
+  const [sourceResult, destinationResult] = await Promise.all([
+    service
+      .from("students")
+      .select("id, school_id, first_name, last_name, pin, class_name, folder_name, photo_url")
+      .eq("id", fromStudentId)
+      .eq("school_id", schoolId)
+      .maybeSingle<StudentRow>(),
+    service
+      .from("students")
+      .select("id, school_id, first_name, last_name, pin, class_name, folder_name, photo_url")
+      .eq("id", toStudentId)
+      .eq("school_id", schoolId)
+      .maybeSingle<StudentRow>(),
+  ]);
+  if (sourceResult.error) throw sourceResult.error;
+  if (destinationResult.error) throw destinationResult.error;
+  const source = sourceResult.data;
+  const dest = destinationResult.data;
+  if (!source?.id) {
     return NextResponse.json(
-      { error: "That photo is not in this school." },
-      { status: 403 },
+      { error: "Source student not found in this school." },
+      { status: 404 },
     );
   }
-
-  const { data: dest } = await service
-    .from("students")
-    .select(
-      "id, school_id, first_name, last_name, pin, class_name, folder_name, photo_url",
-    )
-    .eq("id", toStudentId)
-    .eq("school_id", schoolId)
-    .maybeSingle<StudentRow>();
   if (!dest?.id) {
     return NextResponse.json(
       { error: "Destination student not found in this school." },
       { status: 404 },
     );
   }
+  const sourceFolders = buildStudentPhotoFolderPrefixes({
+    school: authorizedSchool,
+    student: source,
+  });
+  if (!keyBelongsToStudentPhotoFolders(key, sourceFolders)) {
+    return NextResponse.json(
+      { error: "That photo is not in the source student's folder." },
+      { status: 403 },
+    );
+  }
+  const sourceFamily = schoolPhotoFamilyForKey(key);
+  const deletedFamilies = tombstoneFamilySet(
+    await loadSchoolPhotoTombstones(service, school.id),
+  );
+  if (sourceFamily && deletedFamilies.has(sourceFamily)) {
+    return NextResponse.json(
+      { error: "This photo has already been removed from the gallery." },
+      { status: 410 },
+    );
+  }
 
+  const schoolBaseId = verifiedLocalSchoolId || school.id;
   const destClass = safeSegment(dest.class_name ?? "", "Unassigned");
   const destFallback = safeSegment(
     [clean(dest.last_name), clean(dest.first_name), clean(dest.pin)]
@@ -179,11 +247,37 @@ export async function POST(request: NextRequest) {
       /* variant may not exist — skip */
     }
   }
-  try {
-    await r2DeleteWithVariants([key]);
-  } catch (error) {
-    console.error("[capture/move] source delete failed (copy already done)", error);
+  if (!sourceFamily) {
+    await r2DeleteWithVariants([destKey]).catch(() => undefined);
+    return NextResponse.json({ error: "Invalid source photo." }, { status: 400 });
   }
+  const { error: tombstoneError } = await service
+    .from("school_photo_deletions")
+    .upsert(
+      {
+        school_id: school.id,
+        student_id: source.id,
+        photographer_id: photographer.id,
+        storage_key: key,
+        storage_family: sourceFamily,
+        deleted_by_user_id: auth.user.id,
+      },
+      { onConflict: "school_id,storage_key", ignoreDuplicates: true },
+    );
+  if (tombstoneError) {
+    await r2DeleteWithVariants([destKey]).catch(() => undefined);
+    return NextResponse.json(
+      {
+        error: isMissingSchoolPhotoDeletionsTable(tombstoneError)
+          ? "Photo moves are being updated. Please try again shortly."
+          : "Move could not be recorded safely. Please try again.",
+      },
+      { status: isMissingSchoolPhotoDeletionsTable(tombstoneError) ? 503 : 502 },
+    );
+  }
+  // Preserve source bytes for older desktop builds and paid-order recovery.
+  // The tombstone hides them, while the copied destination remains visible.
+  invalidateSchoolPhotoTombstones(school.id);
 
   // Fix cover photos: clear the source student's cover if it was the moved
   // photo; set the destination's cover if it has none.
@@ -191,14 +285,8 @@ export async function POST(request: NextRequest) {
   const movedFolder = key.slice(0, key.lastIndexOf("/"));
 
   if (fromStudentId) {
-    const { data: fromStudent } = await service
-      .from("students")
-      .select("id, photo_url")
-      .eq("id", fromStudentId)
-      .eq("school_id", schoolId)
-      .maybeSingle<{ id: string; photo_url: string | null }>();
-    const fromKey = fromStudent?.photo_url
-      ? r2KeyFromAnyUrl(fromStudent.photo_url)
+    const fromKey = source.photo_url
+      ? storageKeyFromSchoolPhotoReference(source.photo_url) ?? ""
       : "";
     if (fromKey) {
       const fromFolder = fromKey.slice(0, fromKey.lastIndexOf("/"));
@@ -219,5 +307,10 @@ export async function POST(request: NextRequest) {
       .eq("id", dest.id);
   }
 
-  return NextResponse.json({ ok: true, newKey: destKey });
+  return NextResponse.json({
+    ok: true,
+    newKey: destKey,
+    sourceDisposition: "removed_from_gallery",
+    sourceBytesPreserved: true,
+  });
 }

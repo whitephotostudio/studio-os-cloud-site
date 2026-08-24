@@ -52,7 +52,11 @@ test("photo-count API is authenticated, agreement-gated, and owner-scoped", () =
 
 test("uploaded totals use the count-only R2 path with bounded concurrency", () => {
   assert.match(photoCountsRouteSource, /pooledForEach\([\s\S]*, 4,/);
-  assert.match(photoCountsRouteSource, /countR2FolderImages\(prefix\)/);
+  assert.match(
+    photoCountsRouteSource,
+    /countR2FolderImages\(prefix, \{[\s\S]*excludedFamilies:/,
+  );
+  assert.match(photoCountsRouteSource, /loadSchoolPhotoTombstones/);
   assert.doesNotMatch(photoCountsRouteSource, /findSyncedSchoolProjectId\(/);
   assert.doesNotMatch(photoCountsRouteSource, /\.from\("media"\)/);
   assert.match(

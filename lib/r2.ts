@@ -8,6 +8,7 @@ import {
   ListObjectsV2Command,
 } from "@aws-sdk/client-s3";
 import { r2PresignedGetUrl } from "@/lib/r2-signed-urls";
+import { schoolPhotoFamilyForKey } from "@/lib/school-photo-deletions";
 
 function env(name: string) {
   const value = process.env[name];
@@ -297,7 +298,10 @@ export async function listR2FolderImages(prefix: string): Promise<R2FolderImage[
 /** Count original images under an R2 prefix without generating signed URLs or
  * materializing/sorting every object. Intended for lightweight dashboard
  * rollups; preview and thumbnail derivatives are excluded. */
-export async function countR2FolderImages(prefix: string): Promise<number> {
+export async function countR2FolderImages(
+  prefix: string,
+  options?: { excludedFamilies?: ReadonlySet<string> },
+): Promise<number> {
   const normalizedPrefix = normalizePrefix(prefix);
   if (!normalizedPrefix) return 0;
 
@@ -322,6 +326,8 @@ export async function countR2FolderImages(prefix: string): Promise<number> {
       if (!name || name.startsWith(".") || !isImageKey(name) || isDerivedVariantKey(name)) {
         continue;
       }
+      const family = schoolPhotoFamilyForKey(key);
+      if (family && options?.excludedFamilies?.has(family)) continue;
       count += 1;
     }
 

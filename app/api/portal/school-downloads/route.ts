@@ -15,6 +15,7 @@ export const dynamic = "force-dynamic";
 type SchoolRow = {
   id: string;
   school_name: string | null;
+  photographer_id: string | null;
   local_school_id?: string | null;
   status: string | null;
   expiration_date: string | null;
@@ -54,7 +55,7 @@ async function validateSchoolDownloadAccess(params: {
 
   const { data: schoolRow, error: schoolError } = await service
     .from("schools")
-    .select("id,school_name,local_school_id,status,expiration_date,gallery_settings")
+    .select("id,school_name,photographer_id,local_school_id,status,expiration_date,gallery_settings")
     .eq("id", selectedSchoolId)
     .maybeSingle<SchoolRow>();
 
@@ -81,7 +82,11 @@ async function validateSchoolDownloadAccess(params: {
 
   const selectedSchoolName = clean(schoolRow.school_name);
   const [sameNameResult, pinResult] = await Promise.all([
-    service.from("schools").select("id").ilike("school_name", selectedSchoolName),
+    service
+      .from("schools")
+      .select("id")
+      .ilike("school_name", selectedSchoolName)
+      .eq("photographer_id", schoolRow.photographer_id),
     service
       .from("students")
       .select("id,school_id,photo_url,class_id,class_name,folder_name")
@@ -143,14 +148,26 @@ async function validateSchoolDownloadAccess(params: {
   if (resolvedSchoolId !== selectedSchoolId) {
     const { data: resolvedSchoolRow, error: resolvedSchoolError } = await service
       .from("schools")
-      .select("id,school_name,local_school_id,status,expiration_date,gallery_settings")
+      .select("id,school_name,photographer_id,local_school_id,status,expiration_date,gallery_settings")
       .eq("id", resolvedSchoolId)
+      .eq("photographer_id", schoolRow.photographer_id)
       .maybeSingle<SchoolRow>();
 
     if (resolvedSchoolError) throw resolvedSchoolError;
-    if (resolvedSchoolRow) {
-      resolvedSchool = resolvedSchoolRow;
+    if (!resolvedSchoolRow) {
+      return { ok: false as const, status: 404, message: "School gallery not found." };
     }
+    resolvedSchool = resolvedSchoolRow;
+  }
+
+  studentCandidates = studentCandidates.filter(
+    (student) => student.school_id === resolvedSchoolId,
+  );
+  if (hasCalendarBoundaryPassed(resolvedSchool.expiration_date)) {
+    return { ok: false as const, status: 409, message: "This gallery has expired." };
+  }
+  if (normalizedSchoolStatus(resolvedSchool.status) === "pre_release") {
+    return { ok: false as const, status: 409, message: "This gallery is not live yet." };
   }
 
   return {
@@ -169,6 +186,7 @@ async function loadAllowedMediaIdsForPin(params: {
   studentCandidates: StudentAccessRow[];
   school: SchoolRow;
   schoolId: string;
+  service: ReturnType<typeof createDashboardServiceClient>;
 }) {
   const rows = await loadFolderMediaRows(
     buildSchoolCandidateFolders({
@@ -176,6 +194,7 @@ async function loadAllowedMediaIdsForPin(params: {
       activeSchool: params.school,
       selectedSchoolId: params.schoolId,
     }),
+    { service: params.service, schoolId: params.schoolId },
   );
   return new Set(rows.map((row) => row.id));
 }
@@ -297,6 +316,7 @@ export async function POST(request: NextRequest) {
       studentCandidates: access.studentCandidates,
       school: access.school,
       schoolId: access.schoolId,
+      service: access.service,
     });
     const downloadableMediaIds = mediaIds.filter((id) => allowedMediaIdSet.has(id));
 

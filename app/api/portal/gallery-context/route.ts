@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createDashboardServiceClient } from "@/lib/dashboard-auth";
+import { getClientIp, rateLimit } from "@/lib/rate-limit";
 import {
   sanitizeEventGallerySettingsForClient,
 } from "@/lib/event-gallery-settings";
@@ -21,6 +22,13 @@ import {
   signedPrivateMediaReference,
   signPhotoUrlRows,
 } from "@/lib/private-media-references";
+import { hasCalendarBoundaryPassed } from "@/lib/calendar-dates";
+import { isUuid } from "@/lib/r2-access-security";
+import {
+  clearTombstonedSchoolPhotoReferences,
+  loadSchoolPhotoTombstones,
+  tombstoneFamilySet,
+} from "@/lib/school-photo-deletions";
 
 export const dynamic = "force-dynamic";
 
@@ -118,6 +126,14 @@ type CompositeMediaRow = {
 
 function clean(value: string | null | undefined) {
   return (value ?? "").trim();
+}
+
+function looksLikeEmail(value: string | null | undefined) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(clean(value));
+}
+
+function normalizedSchoolStatus(value: string | null | undefined) {
+  return clean(value).toLowerCase().replaceAll("-", "_");
 }
 
 function looksLikeImageAssetUrl(value: string | null | undefined) {
@@ -337,6 +353,26 @@ async function loadSchoolCompositeMedia(
 
 export async function POST(request: NextRequest) {
   try {
+    const limitResult = await rateLimit(getClientIp(request), {
+      namespace: "pin-auth-school",
+      limit: 8,
+      windowSeconds: 10,
+    });
+    if (!limitResult.allowed) {
+      return NextResponse.json(
+        { ok: false, message: "Too many attempts. Please wait a few seconds and try again." },
+        {
+          status: 429,
+          headers: {
+            "Retry-After": Math.max(
+              1,
+              Math.ceil((limitResult.resetAt - Date.now()) / 1000),
+            ).toString(),
+          },
+        },
+      );
+    }
+
     const { pin, schoolId, email } = (await request.json()) as {
       pin?: string;
       schoolId?: string;
@@ -347,8 +383,11 @@ export async function POST(request: NextRequest) {
     const selectedSchoolId = clean(schoolId);
     const selectedEmail = clean(email).toLowerCase();
 
-    if (!selectedPin) {
-      return NextResponse.json({ ok: false, message: "Missing PIN." }, { status: 400 });
+    if (!selectedPin || !isUuid(selectedSchoolId) || !looksLikeEmail(selectedEmail)) {
+      return NextResponse.json(
+        { ok: false, message: "School, PIN, and email are required." },
+        { status: 400 },
+      );
     }
 
     const service = createDashboardServiceClient();
@@ -362,6 +401,27 @@ export async function POST(request: NextRequest) {
       : { data: null as SchoolRow | null, error: null };
 
     if (currentSchoolError) throw currentSchoolError;
+    if (!currentSchool) {
+      return NextResponse.json(
+        { ok: false, message: "Gallery not found." },
+        { status: 404 },
+      );
+    }
+    if (hasCalendarBoundaryPassed(currentSchool.expiration_date)) {
+      return NextResponse.json(
+        { ok: false, message: "This gallery is no longer available." },
+        { status: 409 },
+      );
+    }
+    if (
+      normalizedSchoolStatus(currentSchool.portal_status ?? currentSchool.status) ===
+      "pre_release"
+    ) {
+      return NextResponse.json(
+        { ok: false, message: "This gallery is not available yet." },
+        { status: 409 },
+      );
+    }
 
     const schoolNameForMatch = clean(currentSchool?.school_name);
     let schoolIdsToSearch: string[] = [];
@@ -372,6 +432,7 @@ export async function POST(request: NextRequest) {
         .from("schools")
         .select("id,school_name,photographer_id,package_profile_id,local_school_id,status,portal_status,order_due_date,expiration_date,access_mode,access_pin,email_required,gallery_settings,screenshot_protection_desktop,screenshot_protection_mobile,screenshot_protection_watermark,group_label_singular,group_label_plural")
         .ilike("school_name", schoolNameForMatch)
+        .eq("photographer_id", currentSchool.photographer_id)
         .order("created_at", { ascending: false });
 
       if (sameNameError) throw sameNameError;
@@ -392,10 +453,10 @@ export async function POST(request: NextRequest) {
         .select("id,first_name,last_name,photo_url,class_id,school_id,class_name,folder_name,pin")
       .eq("pin", selectedPin);
 
-    const { data: studentRows, error: studentsError } =
-      schoolIdsToSearch.length > 0
-        ? await studentQuery.in("school_id", schoolIdsToSearch)
-        : await studentQuery;
+    const { data: studentRows, error: studentsError } = await studentQuery.in(
+      "school_id",
+      schoolIdsToSearch,
+    );
 
     if (studentsError) throw studentsError;
 
@@ -432,6 +493,41 @@ export async function POST(request: NextRequest) {
       if (fetchedSchoolError) throw fetchedSchoolError;
       activeSchool = fetchedSchool ?? null;
     }
+    if (!activeSchool || activeSchool.photographer_id !== currentSchool.photographer_id) {
+      return NextResponse.json(
+        { ok: false, message: "Gallery not found." },
+        { status: 404 },
+      );
+    }
+    if (hasCalendarBoundaryPassed(activeSchool.expiration_date)) {
+      return NextResponse.json(
+        { ok: false, message: "This gallery is no longer available." },
+        { status: 409 },
+      );
+    }
+    if (
+      normalizedSchoolStatus(activeSchool.portal_status ?? activeSchool.status) ===
+      "pre_release"
+    ) {
+      return NextResponse.json(
+        { ok: false, message: "This gallery is not available yet." },
+        { status: 409 },
+      );
+    }
+
+    const tombstonedFamilies = tombstoneFamilySet(
+      await loadSchoolPhotoTombstones(service, activeSchool.id),
+    );
+    const activeStudentCandidates = studentCandidates.filter(
+      (student) => student.school_id === activeSchool.id,
+    );
+    const visibleStudentCandidates = clearTombstonedSchoolPhotoReferences(
+      activeStudentCandidates,
+      tombstonedFamilies,
+    );
+    const visiblePrimaryStudent =
+      visibleStudentCandidates.find((student) => student.id === primaryStudent.id) ??
+      primaryStudent;
 
     const activeProject: ProjectRow | null = activeSchool
       ? {
@@ -574,10 +670,15 @@ export async function POST(request: NextRequest) {
     );
     const loadedMediaRows = await loadFolderMediaRows(
       buildSchoolCandidateFolders({
-        studentCandidates,
+        studentCandidates: activeStudentCandidates,
         activeSchool,
-        selectedSchoolId,
+        selectedSchoolId: activeSchool.id,
       }),
+      {
+        service,
+        schoolId: activeSchool.id,
+        tombstonedFamilies,
+      },
     );
     nobgUrls = await loadNoBgUrlMapForMediaRows(loadedMediaRows, {
       ttlSeconds: SIGNED_URL_TTL_PARENTS_PORTAL_SECONDS,
@@ -614,14 +715,14 @@ export async function POST(request: NextRequest) {
     };
 
     const signedStudentCandidates = signPhotoUrlRows(
-      studentCandidates,
+      visibleStudentCandidates,
       SIGNED_URL_TTL_PARENTS_PORTAL_SECONDS,
     );
     const signedPrimaryStudent = {
-      ...primaryStudent,
+      ...visiblePrimaryStudent,
       photo_url:
         signedPrivateMediaReference(
-          primaryStudent.photo_url,
+          visiblePrimaryStudent.photo_url,
           SIGNED_URL_TTL_PARENTS_PORTAL_SECONDS,
         ) || null,
     };

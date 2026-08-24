@@ -23,12 +23,15 @@ export function isUuid(value: string | null | undefined) {
  */
 export function normalizeR2Key(
   rawValue: string | null | undefined,
-  options: { prefix?: boolean } = {},
+  options: { prefix?: boolean; allowQueryCharacters?: boolean } = {},
 ): string | null {
   const raw = clean(rawValue);
   if (!raw || raw.length > MAX_R2_OBJECT_KEY_LENGTH) return null;
   if (/^[a-z][a-z0-9+.-]*:\/\//i.test(raw)) return null;
-  if (/[\\\u0000-\u001f\u007f?#]/.test(raw)) return null;
+  const unsafeCharacters = options.allowQueryCharacters
+    ? /[\\\u0000-\u001f\u007f]/
+    : /[\\\u0000-\u001f\u007f?#]/;
+  if (unsafeCharacters.test(raw)) return null;
   if (raw.startsWith("/") || raw.startsWith("//")) return null;
 
   const hadTrailingSlash = raw.endsWith("/");

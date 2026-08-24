@@ -6,6 +6,12 @@ import {
 } from "@/lib/dashboard-auth";
 import { parseJson } from "@/lib/api-validation";
 import { guardAgreement } from "@/lib/require-agreement";
+import {
+  loadSchoolPhotoTombstones,
+  schoolPhotoFamilyForKey,
+  storageKeyFromSchoolPhotoReference,
+  tombstoneFamilySet,
+} from "@/lib/school-photo-deletions";
 
 export const dynamic = "force-dynamic";
 
@@ -24,8 +30,6 @@ const DesktopSyncBodySchema = z.object({
   schoolId: z.string().min(1).max(128).nullable().optional(),
   students: z.array(StudentPayloadSchema).max(10_000).nullable().optional(),
 });
-
-type StudentPayload = z.infer<typeof StudentPayloadSchema>;
 
 type StudentRow = {
   id: string;
@@ -55,6 +59,10 @@ function clean(value: string | null | undefined) {
  */
 export async function GET(request: NextRequest) {
   try {
+    // Cursor from the beginning of the read. Rows created during this request
+    // are therefore returned again (safely/idempotently) on the next sync
+    // instead of falling behind a cursor captured after the query.
+    const syncCutoff = new Date().toISOString();
     const { user } = await resolveDashboardAuth(request);
     if (!user) {
       return NextResponse.json(
@@ -123,11 +131,22 @@ export async function GET(request: NextRequest) {
 
     if (studentsError) throw studentsError;
 
+    const photoDeletions = await loadSchoolPhotoTombstones(service, schoolId, {
+      since,
+    });
+
     return NextResponse.json({
       ok: true,
       school: schoolRow,
       students: (students ?? []) as StudentRow[],
-      syncedAt: new Date().toISOString(),
+      photoDeletions: (photoDeletions ?? []).map((row) => ({
+        id: row.id,
+        storageKey: row.storage_key,
+        storageFamily: row.storage_family,
+        studentId: row.student_id,
+        deletedAt: row.created_at,
+      })),
+      syncedAt: syncCutoff,
     });
   } catch (error) {
     return NextResponse.json(
@@ -225,25 +244,35 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const deletedFamilies = tombstoneFamilySet(
+      await loadSchoolPhotoTombstones(service, schoolId),
+    );
+
     // Fetch existing students to detect updates vs creates
     const { data: existingStudents, error: existingError } = await service
       .from("students")
-      .select("id,external_student_id,first_name,last_name,class_name")
+      .select("id,external_student_id,first_name,last_name,class_name,photo_url")
       .eq("school_id", schoolId);
 
     if (existingError) throw existingError;
 
-    const existingByExternalId = new Map<string, { id: string }>();
-    const existingByNameAndClass = new Map<string, { id: string }>();
+    const existingByExternalId = new Map<string, { id: string; photo_url: string | null }>();
+    const existingByNameAndClass = new Map<string, { id: string; photo_url: string | null }>();
 
     for (const student of existingStudents ?? []) {
       const extId = clean((student as { external_student_id?: string | null }).external_student_id);
       if (extId) {
-        existingByExternalId.set(extId, { id: (student as { id: string }).id });
+        existingByExternalId.set(extId, {
+          id: (student as { id: string }).id,
+          photo_url: (student as { photo_url?: string | null }).photo_url ?? null,
+        });
       }
       const nameKey = `${clean((student as { first_name?: string }).first_name)}::${clean((student as { last_name?: string | null }).last_name)}::${clean((student as { class_name?: string | null }).class_name)}`.toLowerCase();
       if (!existingByNameAndClass.has(nameKey)) {
-        existingByNameAndClass.set(nameKey, { id: (student as { id: string }).id });
+        existingByNameAndClass.set(nameKey, {
+          id: (student as { id: string }).id,
+          photo_url: (student as { photo_url?: string | null }).photo_url ?? null,
+        });
       }
     }
 
@@ -260,11 +289,11 @@ export async function POST(request: NextRequest) {
       const pin = clean(incoming.pin) || null;
       const role = clean(incoming.role) || "Student";
       const externalId = clean(incoming.external_student_id) || null;
-      const photoUrl = clean(incoming.photo_url) || null;
+      const incomingPhotoUrl = clean(incoming.photo_url) || null;
       const folderName = clean(incoming.folder_name) || null;
 
       // Try to match an existing student
-      let existingMatch: { id: string } | undefined;
+      let existingMatch: { id: string; photo_url: string | null } | undefined;
       if (externalId) {
         existingMatch = existingByExternalId.get(externalId);
       }
@@ -272,6 +301,20 @@ export async function POST(request: NextRequest) {
         const nameKey = `${firstName}::${lastName ?? ""}::${className ?? ""}`.toLowerCase();
         existingMatch = existingByNameAndClass.get(nameKey);
       }
+
+      const incomingPhotoFamily = schoolPhotoFamilyForKey(
+        storageKeyFromSchoolPhotoReference(incomingPhotoUrl),
+      );
+      const incomingPhotoWasDeleted =
+        !!incomingPhotoFamily && deletedFamilies.has(incomingPhotoFamily);
+      const existingPhotoFamily = schoolPhotoFamilyForKey(
+        storageKeyFromSchoolPhotoReference(existingMatch?.photo_url),
+      );
+      const photoUrl = incomingPhotoWasDeleted
+        ? existingPhotoFamily && !deletedFamilies.has(existingPhotoFamily)
+          ? existingMatch?.photo_url ?? null
+          : null
+        : incomingPhotoUrl;
 
       if (existingMatch) {
         // Update existing student

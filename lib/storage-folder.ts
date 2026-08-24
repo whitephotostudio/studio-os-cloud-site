@@ -1,6 +1,12 @@
 import { listR2FolderImages } from "@/lib/r2";
 import { r2PresignedGetUrl } from "@/lib/r2-signed-urls";
 import { extractStoragePathFromSupabaseUrl } from "@/lib/storage-images";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import {
+  filterTombstonedSchoolPhotoAssets,
+  loadSchoolPhotoTombstones,
+  tombstoneFamilySet,
+} from "@/lib/school-photo-deletions";
 
 type StudentFolderLike = {
   id: string;
@@ -115,12 +121,31 @@ export function buildSchoolCandidateFolders(params: {
   ]);
 }
 
-export async function loadFolderMediaRows(folderPaths: string[]) {
+export async function loadFolderMediaRows(
+  folderPaths: string[],
+  options?: {
+    service?: SupabaseClient;
+    schoolId?: string | null;
+    tombstonedFamilies?: ReadonlySet<string>;
+  },
+) {
   const mediaRows: FolderMediaRow[] = [];
   const seenPhotoKeys = new Set<string>();
+  let deletedFamilies = options?.tombstonedFamilies ?? new Set<string>();
+
+  if (!options?.tombstonedFamilies && options?.service && clean(options.schoolId)) {
+    const tombstones = await loadSchoolPhotoTombstones(
+      options.service,
+      clean(options.schoolId),
+    );
+    deletedFamilies = tombstoneFamilySet(tombstones);
+  }
 
   for (const folderPath of uniqueFolders(folderPaths)) {
-    const files = await listR2FolderImages(folderPath);
+    const files = filterTombstonedSchoolPhotoAssets(
+      await listR2FolderImages(folderPath),
+      deletedFamilies,
+    );
     for (const file of files) {
       const dedupeKey = photoDedupeKey(file.key, file.url);
       if (seenPhotoKeys.has(dedupeKey)) continue;
