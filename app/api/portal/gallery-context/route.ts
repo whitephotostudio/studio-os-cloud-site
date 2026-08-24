@@ -591,11 +591,16 @@ export async function POST(request: NextRequest) {
           orderDueDate: activeSchool.order_due_date ?? null,
           shippingFeeCents: Math.max(
             0,
-            Number((photographer as { shipping_fee_cents?: number | null }).shipping_fee_cents ?? 0) || 0,
+            Math.round(
+              Number((photographer as { shipping_fee_cents?: number | null }).shipping_fee_cents ?? 0) || 0,
+            ),
           ),
-          lateHandlingFeePercent: Math.max(
-            0,
-            Number((photographer as { late_handling_fee_percent?: number | null }).late_handling_fee_percent ?? 0) || 0,
+          lateHandlingFeePercent: Math.min(
+            100,
+            Math.max(
+              0,
+              Number((photographer as { late_handling_fee_percent?: number | null }).late_handling_fee_percent ?? 0) || 0,
+            ),
           ),
         };
       }

@@ -189,6 +189,8 @@ export default function SchoolSettingsPage() {
     defaultEventGallerySettings,
   );
   const [photographerPlan, setPhotographerPlan] = useState<string>("");
+  const [studioShippingFeeCents, setStudioShippingFeeCents] = useState(0);
+  const [studioLateHandlingFeePercent, setStudioLateHandlingFeePercent] = useState(0);
 
   // Screenshot protection toggles (parents portal only).
   const [protectDesktop, setProtectDesktop] = useState(false);
@@ -250,10 +252,26 @@ export default function SchoolSettingsPage() {
       // Fetch photographer plan
       const { data: pgRow } = await supabase
         .from("photographers")
-        .select("subscription_plan_code")
+        .select("subscription_plan_code,shipping_fee_cents,late_handling_fee_percent")
         .eq("id", schoolData.photographer_id)
         .maybeSingle();
       setPhotographerPlan((pgRow as Record<string, unknown> | null)?.subscription_plan_code as string || "");
+      setStudioShippingFeeCents(
+        Math.max(
+          0,
+          Math.round(
+            Number((pgRow as Record<string, unknown> | null)?.shipping_fee_cents ?? 0) || 0,
+          ),
+        ),
+      );
+      setStudioLateHandlingFeePercent(
+        Math.max(
+          0,
+          Number(
+            (pgRow as Record<string, unknown> | null)?.late_handling_fee_percent ?? 0,
+          ) || 0,
+        ),
+      );
     }
 
     if (schoolData) {
@@ -898,6 +916,28 @@ export default function SchoolSettingsPage() {
                     <ToggleRow title="Allow Cropping" description="Clients may crop photos on orders" checked={extras.allowCropping} onChange={(next) => setExtra("allowCropping", next)} />
                     <ToggleRow title="Enable Store" description="Allow your clients to shop by product first" checked={extras.enableStore} onChange={(next) => setExtra("enableStore", next)} />
                     <ToggleRow title="Enable Shipping" description="Show a Shipping option at checkout for this school. Leave off for pickup-only schools." checked={extras.shippingEnabled} onChange={(next) => setExtra("shippingEnabled", next)} />
+                    {extras.shippingEnabled ? (
+                      <div className="rounded-2xl border border-neutral-200 bg-neutral-50 px-4 py-4 text-sm text-neutral-700">
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                          <span className="font-semibold text-neutral-900">Checkout shipping fee</span>
+                          <span className="text-base font-bold text-neutral-900">
+                            ${(studioShippingFeeCents / 100).toFixed(2)}
+                          </span>
+                        </div>
+                        <p className="mt-2 leading-6">
+                          This studio-wide fee is charged once per checkout and is shown to the client before payment.
+                          {studioLateHandlingFeePercent > 0
+                            ? ` Late handling is ${studioLateHandlingFeePercent}% when the late-order policy applies.`
+                            : ""}
+                        </p>
+                        <Link
+                          href="/dashboard/settings"
+                          className="mt-2 inline-block font-semibold text-neutral-900 underline underline-offset-4"
+                        >
+                          Change commerce fees in Studio Settings
+                        </Link>
+                      </div>
+                    ) : null}
                     <ToggleRow title="Enable Pickup" description="Let clients choose Pickup instead of Shipping." checked={extras.pickupEnabled} onChange={(next) => setExtra("pickupEnabled", next)} />
                     <ToggleRow title="Use Special Pickup Location" description="Show a studio or custom pickup address instead of the default school pickup." checked={extras.pickupLocationEnabled} onChange={(next) => setExtra("pickupLocationEnabled", next)} />
                     {extras.pickupLocationEnabled ? (

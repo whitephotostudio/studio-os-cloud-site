@@ -5,6 +5,11 @@ import {
   getConnectedAccountId,
   retrieveCheckoutSession,
 } from "@/lib/payments";
+import {
+  assertStripePaymentMatches,
+  resolveStoredCheckoutCharge,
+  type StoredCheckoutOrder,
+} from "@/lib/order-checkout-total";
 
 export const dynamic = "force-dynamic";
 
@@ -13,11 +18,7 @@ type ConfirmBody = {
   orderId?: string;
 };
 
-type OrderRow = {
-  id: string;
-  photographer_id: string | null;
-  status: string | null;
-  payment_status: string | null;
+type OrderRow = StoredCheckoutOrder & {
   paid_at: string | null;
   stripe_checkout_session_id: string | null;
 };
@@ -48,7 +49,7 @@ export async function POST(req: NextRequest) {
     const sb = service();
     let orderQuery = sb
       .from("orders")
-      .select("id,photographer_id,status,payment_status,paid_at,stripe_checkout_session_id")
+      .select("id,order_group_id,photographer_id,subtotal_cents,tax_cents,total_cents,total_amount,currency,status,payment_status,paid_at,stripe_checkout_session_id")
       .limit(1);
 
     if (sessionId) {
@@ -63,31 +64,24 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, message: "Order not found." }, { status: 404 });
     }
 
-    const currentStatus = (order.status ?? "").toLowerCase();
-    const currentPaymentStatus = (order.payment_status ?? "").toLowerCase();
-    if (
-      (currentStatus === "paid" || currentStatus === "digital_paid") &&
-      (currentPaymentStatus === "paid" || currentPaymentStatus === "succeeded" || currentPaymentStatus === "no_payment_required")
-    ) {
-      await finalizePaidOrderOrGroup(sb, {
-        orderId: order.id,
-        checkoutSessionId: order.stripe_checkout_session_id,
-        paymentStatus: currentPaymentStatus || "paid",
-        note: "[Stripe checkout confirm] order was already marked paid",
-        paidAt: order.paid_at ?? new Date().toISOString(),
-      });
-      return NextResponse.json({
-        ok: true,
-        orderId: order.id,
-        paymentStatus: currentPaymentStatus,
-        status: currentStatus,
-      });
+    let chargeOrders: OrderRow[] = [order];
+    if (order.order_group_id) {
+      const { data: groupOrders, error: groupError } = await sb
+        .from("orders")
+        .select("id,order_group_id,photographer_id,subtotal_cents,tax_cents,total_cents,total_amount,currency,status,payment_status,paid_at,stripe_checkout_session_id")
+        .eq("order_group_id", order.order_group_id);
+      if (groupError) throw groupError;
+      chargeOrders = (groupOrders ?? []) as OrderRow[];
     }
+    const charge = resolveStoredCheckoutCharge({
+      seedOrderId: order.id,
+      orders: chargeOrders,
+    });
 
     const { data: photographer, error: photographerError } = await sb
       .from("photographers")
       .select("id,stripe_account_id,stripe_connected_account_id")
-      .eq("id", order.photographer_id)
+      .eq("id", charge.photographerId)
       .maybeSingle<PhotographerRow>();
 
     if (photographerError) throw photographerError;
@@ -110,8 +104,39 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    const metadataOrderId = session.metadata?.order_id ?? "";
+    const metadataGroupId = session.metadata?.order_group_id ?? null;
+    if (
+      !charge.orderIds.includes(metadataOrderId) ||
+      session.client_reference_id !== metadataOrderId ||
+      session.metadata?.photographer_id !== charge.photographerId ||
+      metadataGroupId !== charge.orderGroupId
+    ) {
+      return NextResponse.json(
+        { ok: false, message: "Payment details do not match this order." },
+        { status: 409 },
+      );
+    }
+    try {
+      assertStripePaymentMatches({
+        expected: charge,
+        amountCents: session.amount_total,
+        currency: session.currency,
+      });
+    } catch (error) {
+      console.error("[stripe:checkout:confirm] payment amount mismatch", {
+        orderId: order.id,
+        orderGroupId: charge.orderGroupId,
+        error,
+      });
+      return NextResponse.json(
+        { ok: false, message: "Payment amount does not match this order." },
+        { status: 409 },
+      );
+    }
+
     await finalizePaidOrderOrGroup(sb, {
-      orderId: order.id,
+      orderId: metadataOrderId,
       checkoutSessionId: session.id,
       paymentIntentId: session.payment_intent ?? null,
       paymentStatus: session.payment_status ?? "paid",

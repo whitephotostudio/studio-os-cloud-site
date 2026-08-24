@@ -594,10 +594,13 @@ export async function POST(request: NextRequest) {
         };
         lateOrderPolicy = {
           orderDueDate: projectRow.order_due_date ?? null,
-          shippingFeeCents: Math.max(0, Number(photographer.shipping_fee_cents ?? 0) || 0),
-          lateHandlingFeePercent: Math.max(
+          shippingFeeCents: Math.max(
             0,
-            Number(photographer.late_handling_fee_percent ?? 0) || 0,
+            Math.round(Number(photographer.shipping_fee_cents ?? 0) || 0),
+          ),
+          lateHandlingFeePercent: Math.min(
+            100,
+            Math.max(0, Number(photographer.late_handling_fee_percent ?? 0) || 0),
           ),
         };
       }

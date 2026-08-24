@@ -975,10 +975,12 @@ export async function POST(request: NextRequest) {
     // false, so this route never force-converts pickup → shipping past due.)
     const shippingFeeCents = Math.max(
       0,
-      Number(photographer?.shipping_fee_cents ?? 0) || 0,
+      Math.round(Number(photographer?.shipping_fee_cents ?? 0) || 0),
     );
-    const lateHandlingFeePercent =
-      Number(photographer?.late_handling_fee_percent ?? 10) || 10;
+    const lateHandlingFeePercent = Math.min(
+      100,
+      Math.max(0, Number(photographer?.late_handling_fee_percent ?? 10) || 0),
+    );
     const resolvedShipping = resolveShipping(
       {
         requestedMethod:

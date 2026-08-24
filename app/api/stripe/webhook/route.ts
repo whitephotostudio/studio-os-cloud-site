@@ -23,6 +23,11 @@ import {
   syncSubscriptionStateFromStripe,
   verifyStripeSignature,
 } from "@/lib/payments";
+import {
+  assertStripePaymentMatches,
+  resolveStoredCheckoutCharge,
+  type StoredCheckoutOrder,
+} from "@/lib/order-checkout-total";
 
 export const dynamic = "force-dynamic";
 
@@ -43,12 +48,17 @@ type StripeCheckoutSession = {
   customer?: string | null;
   subscription?: string | null;
   payment_intent?: string | null;
+  client_reference_id?: string | null;
+  amount_total?: number | null;
+  currency?: string | null;
 };
 
 type StripePaymentIntent = {
   id: string;
   status?: string | null;
   metadata?: Record<string, string> | null;
+  amount_received?: number | null;
+  currency?: string | null;
 };
 
 type StripeCharge = {
@@ -455,6 +465,66 @@ async function markSubscriptionPaymentFailure(
   await syncPhotographyKeysByPhotographerId(service, photographer.id);
 }
 
+async function verifyCustomerOrderStripePayment(
+  service: ReturnType<typeof createDashboardServiceClient>,
+  input: {
+    orderId: string;
+    orderGroupId?: string | null;
+    photographerId?: string | null;
+    eventAccount?: string | null;
+    clientReferenceId?: string | null;
+    amountCents: unknown;
+    currency?: string | null;
+  },
+) {
+  const { data: seedOrder, error: seedError } = await service
+    .from("orders")
+    .select("id,order_group_id,photographer_id,subtotal_cents,tax_cents,total_cents,total_amount,currency,status,payment_status")
+    .eq("id", input.orderId)
+    .maybeSingle<StoredCheckoutOrder>();
+  if (seedError) throw seedError;
+  if (!seedOrder) throw new Error("Stripe order metadata does not match an order.");
+
+  let orders: StoredCheckoutOrder[] = [seedOrder];
+  if (seedOrder.order_group_id) {
+    const { data: groupOrders, error: groupError } = await service
+      .from("orders")
+      .select("id,order_group_id,photographer_id,subtotal_cents,tax_cents,total_cents,total_amount,currency,status,payment_status")
+      .eq("order_group_id", seedOrder.order_group_id);
+    if (groupError) throw groupError;
+    orders = (groupOrders ?? []) as StoredCheckoutOrder[];
+  }
+
+  const charge = resolveStoredCheckoutCharge({
+    seedOrderId: seedOrder.id,
+    orders,
+  });
+  const metadataGroupId = input.orderGroupId?.trim() || null;
+  if (
+    metadataGroupId !== charge.orderGroupId ||
+    input.photographerId !== charge.photographerId ||
+    (input.clientReferenceId != null && input.clientReferenceId !== input.orderId)
+  ) {
+    throw new Error("Stripe payment metadata does not match the order.");
+  }
+
+  const photographer = await findPhotographer(service, "id", charge.photographerId);
+  if (
+    !photographer ||
+    !input.eventAccount ||
+    getConnectedAccountId(photographer) !== input.eventAccount
+  ) {
+    throw new Error("Stripe connected account does not match the order.");
+  }
+
+  assertStripePaymentMatches({
+    expected: charge,
+    amountCents: input.amountCents,
+    currency: input.currency,
+  });
+  return charge;
+}
+
 export async function POST(req: NextRequest) {
   const signature = req.headers.get("stripe-signature");
   if (!signature) {
@@ -650,6 +720,24 @@ export async function POST(req: NextRequest) {
 
         if (event.account && (billingFlow === "customer_order" || session.metadata?.order_id)) {
           if (session.payment_status === "paid" || session.payment_status === "no_payment_required") {
+            try {
+              await verifyCustomerOrderStripePayment(service, {
+                orderId: session.metadata?.order_id ?? "",
+                orderGroupId: session.metadata?.order_group_id ?? null,
+                photographerId: session.metadata?.photographer_id ?? null,
+                eventAccount: event.account,
+                clientReferenceId: session.client_reference_id ?? null,
+                amountCents: session.amount_total,
+                currency: session.currency,
+              });
+            } catch (error) {
+              console.error("[stripe-webhook] customer order payment blocked", {
+                eventId: event.id,
+                orderId: session.metadata?.order_id ?? null,
+                error,
+              });
+              break;
+            }
             // finalizePaidOrderOrGroup fans out across every order sharing
             // an order_group_id, so combined sibling/cross-year orders all
             // flip to paid in one shot.  Single orders are unaffected.
@@ -669,6 +757,23 @@ export async function POST(req: NextRequest) {
       case "payment_intent.succeeded": {
         const paymentIntent = object as unknown as StripePaymentIntent;
         if (event.account && paymentIntent.metadata?.order_id) {
+          try {
+            await verifyCustomerOrderStripePayment(service, {
+              orderId: paymentIntent.metadata.order_id,
+              orderGroupId: paymentIntent.metadata.order_group_id ?? null,
+              photographerId: paymentIntent.metadata.photographer_id ?? null,
+              eventAccount: event.account,
+              amountCents: paymentIntent.amount_received,
+              currency: paymentIntent.currency,
+            });
+          } catch (error) {
+            console.error("[stripe-webhook] customer payment intent blocked", {
+              eventId: event.id,
+              orderId: paymentIntent.metadata.order_id,
+              error,
+            });
+            break;
+          }
           await finalizePaidOrderOrGroup(service, {
             orderId: paymentIntent.metadata.order_id,
             paymentIntentId: paymentIntent.id,

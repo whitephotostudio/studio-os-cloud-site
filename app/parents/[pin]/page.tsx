@@ -63,6 +63,7 @@ import {
 } from "@/lib/combine-cart-storage";
 import OrdersHistoryPanel from "@/components/parents/orders-history-panel";
 import { calendarDateInputValue, hasCalendarBoundaryPassed } from "@/lib/calendar-dates";
+import { resolveShipping } from "@/lib/combine-orders";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 type StudentRow = {
@@ -8147,7 +8148,35 @@ export default function ParentGalleryPage() {
     (sum, item) => sum + item.backdropAddOnCents,
     0,
   );
-  const checkoutTaxableCents = checkoutItems.reduce((sum, item) => sum + item.lineTotalCents, 0);
+  const checkoutMerchandiseCents = checkoutItems.reduce(
+    (sum, item) => sum + item.lineTotalCents,
+    0,
+  );
+  const checkoutShipping = resolveShipping(
+    {
+      requestedMethod:
+        anyPhysicalCheckoutItem && shippingEnabledForGallery
+          ? activeDeliveryMethod
+          : "pickup",
+      shippingFeeCents: Math.max(
+        0,
+        Math.round(Number(lateOrderPolicy?.shippingFeeCents ?? 0) || 0),
+      ),
+      lateHandlingFeePercent: Math.max(
+        0,
+        Number(lateOrderPolicy?.lateHandlingFeePercent ?? 0) || 0,
+      ),
+      // The current ordering-window policy closes checkout at the due date,
+      // so a reachable single-gallery checkout is never late. Keeping this
+      // explicit makes the preview match the server today.
+      anyGroupLate: false,
+    },
+    checkoutMerchandiseCents,
+  );
+  const checkoutTaxableCents =
+    checkoutMerchandiseCents +
+    checkoutShipping.shippingFeeCents +
+    checkoutShipping.handlingFeeCents;
   const checkoutTaxPercent = currentGalleryExtras.taxEnabled
     ? currentGalleryExtras.taxRatesByCountry[currentGalleryExtras.taxCountry] ??
       currentGalleryExtras.taxPercent
@@ -8549,7 +8578,7 @@ export default function ParentGalleryPage() {
     setOrderError("");
 
     const resolvedProjectId = !isSchoolMode ? project?.id || projectId || null : null;
-    const totalCents = checkoutTaxableCents;
+    const totalCents = checkoutMerchandiseCents;
     const firstCheckoutItem = checkoutItems[0];
 
     if (!firstCheckoutItem) {
@@ -13959,6 +13988,41 @@ export default function ParentGalleryPage() {
                         >
                           <span>Backdrop add-ons</span>
                           <span>${(checkoutBackdropTotalCents / 100).toFixed(2)}</span>
+                        </div>
+                      )}
+                      {anyPhysicalCheckoutItem &&
+                        checkoutShipping.effectiveMethod === "shipping" && (
+                          <div
+                            style={{
+                              display: "flex",
+                              justifyContent: "space-between",
+                              fontSize: 12,
+                              color: "#bbb",
+                              marginBottom: 8,
+                            }}
+                          >
+                            <span>Shipping</span>
+                            <span>
+                              {checkoutShipping.shippingFeeCents > 0
+                                ? `$${(checkoutShipping.shippingFeeCents / 100).toFixed(2)}`
+                                : "Free"}
+                            </span>
+                          </div>
+                        )}
+                      {checkoutShipping.handlingFeeCents > 0 && (
+                        <div
+                          style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            fontSize: 12,
+                            color: "#f59e0b",
+                            marginBottom: 8,
+                          }}
+                        >
+                          <span>Late handling</span>
+                          <span>
+                            ${(checkoutShipping.handlingFeeCents / 100).toFixed(2)}
+                          </span>
                         </div>
                       )}
                       {checkoutTaxCents > 0 && (

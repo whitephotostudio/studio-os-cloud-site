@@ -200,11 +200,15 @@ export type StripeCheckoutSession = {
   client_reference_id?: string | null;
   metadata?: Record<string, string> | null;
   customer_details?: { email?: string | null } | null;
+  amount_total?: number | null;
+  currency?: string | null;
 };
 
 type StripePaymentIntent = {
   id: string;
   status: string;
+  amount_received?: number | null;
+  currency?: string | null;
   metadata?: Record<string, string> | null;
   latest_charge?: string | null;
 };
@@ -2437,7 +2441,9 @@ export async function createDirectOrderCheckoutSession(input: {
     method: "POST",
     body: params,
     account: input.accountId,
-    idempotencyKey: `studio-os-order-session-${input.orderId}`,
+    idempotencyKey: input.orderGroupId
+      ? `studio-os-order-group-session-${input.orderGroupId}`
+      : `studio-os-order-session-${input.orderId}`,
   });
 }
 

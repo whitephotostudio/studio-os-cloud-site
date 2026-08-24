@@ -473,7 +473,7 @@ export async function POST(request: NextRequest) {
               .order("sort_order", { ascending: true }),
             service
               .from("photographers")
-              .select("id,watermark_enabled,watermark_logo_url,logo_url,business_name,studio_address,studio_phone,studio_email,default_package_profile_id")
+              .select("id,watermark_enabled,watermark_logo_url,logo_url,business_name,studio_address,studio_phone,studio_email,default_package_profile_id,shipping_fee_cents,late_handling_fee_percent")
               .eq("id", gallerySchool.photographer_id)
               .maybeSingle(),
           ]);
@@ -569,6 +569,17 @@ export async function POST(request: NextRequest) {
           phone: photographer?.studio_phone || "",
           email: photographer?.studio_email || "",
         };
+        const lateOrderPolicy = {
+          orderDueDate: gallerySchool.order_due_date ?? null,
+          shippingFeeCents: Math.max(
+            0,
+            Math.round(Number(photographer?.shipping_fee_cents ?? 0) || 0),
+          ),
+          lateHandlingFeePercent: Math.min(
+            100,
+            Math.max(0, Number(photographer?.late_handling_fee_percent ?? 0) || 0),
+          ),
+        };
 
         const activeProject = {
           id: gallerySchool.id,
@@ -655,6 +666,7 @@ export async function POST(request: NextRequest) {
           watermarkEnabled,
           watermarkLogoUrl,
           studioInfo,
+          lateOrderPolicy,
           screenshotProtection,
           groupLabel,
         };

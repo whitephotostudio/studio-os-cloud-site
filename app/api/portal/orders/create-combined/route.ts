@@ -207,6 +207,7 @@ export async function POST(request: NextRequest) {
       orderDueDate: string | null;
       isLate: boolean;
       shippingEnabled: boolean;
+      pickupAllowed: boolean;
       gallerySettings: unknown;
     };
 
@@ -284,9 +285,11 @@ export async function POST(request: NextRequest) {
       const dueDate = (schoolRow.order_due_date as string | null) ?? null;
       const isLate = isPastDueDate(dueDate);
       if (isLate) anyGroupLate = true;
-      const shippingEnabled = normalizeEventGallerySettings(
+      const galleryExtras = normalizeEventGallerySettings(
         (schoolRow as { gallery_settings?: unknown }).gallery_settings,
-      ).extras.shippingEnabled;
+      ).extras;
+      const shippingEnabled = galleryExtras.shippingEnabled;
+      const pickupAllowed = !shippingEnabled || galleryExtras.pickupEnabled;
 
       resolvedGroups.push({
         groupIndex: i,
@@ -301,6 +304,7 @@ export async function POST(request: NextRequest) {
         orderDueDate: dueDate,
         isLate,
         shippingEnabled,
+        pickupAllowed,
         gallerySettings: (schoolRow as { gallery_settings?: unknown }).gallery_settings,
       });
     }
@@ -345,9 +349,14 @@ export async function POST(request: NextRequest) {
 
     const tiers: SiblingDiscountTiers =
       (photographer?.sibling_discount_tiers as SiblingDiscountTiers | null) ?? {};
-    const shippingFeeCents = Number(photographer?.shipping_fee_cents ?? 0) || 0;
-    const lateHandlingFeePercent =
-      Number(photographer?.late_handling_fee_percent ?? 10) || 10;
+    const shippingFeeCents = Math.max(
+      0,
+      Math.round(Number(photographer?.shipping_fee_cents ?? 0) || 0),
+    );
+    const lateHandlingFeePercent = Math.min(
+      100,
+      Math.max(0, Number(photographer?.late_handling_fee_percent ?? 10) || 0),
+    );
 
     // ── Resolve packages + backdrops in bulk ────────────────────────────
     const allPackageIds = Array.from(
@@ -551,14 +560,26 @@ export async function POST(request: NextRequest) {
     const anyPhysical = resolvedEntries.some((e) => !e.isDigital);
     const shippingEnabledForAllGroups =
       resolvedGroups.length > 0 && resolvedGroups.every((g) => g.shippingEnabled);
-    if (body.delivery.method === "shipping" && !shippingEnabledForAllGroups) {
+    if (
+      anyPhysical &&
+      body.delivery.method === "shipping" &&
+      !shippingEnabledForAllGroups
+    ) {
       return NextResponse.json(
         { ok: false, message: "Shipping is not enabled for every school in this order." },
         { status: 400 },
       );
     }
+    const pickupAllowedForAllGroups =
+      resolvedGroups.length > 0 && resolvedGroups.every((g) => g.pickupAllowed);
+    if (anyPhysical && body.delivery.method === "pickup" && !pickupAllowedForAllGroups) {
+      return NextResponse.json(
+        { ok: false, message: "Pickup is not enabled for every school in this order." },
+        { status: 400 },
+      );
+    }
     const requestedMethod: "pickup" | "shipping" =
-      anyPhysical && shippingEnabledForAllGroups ? body.delivery.method : "pickup";
+      anyPhysical ? body.delivery.method : "pickup";
 
     const combineTotals = computeCombineTotals({
       groups,
