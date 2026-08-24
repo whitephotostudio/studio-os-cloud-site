@@ -1,5 +1,9 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { normalizeEventGallerySettings } from "@/lib/event-gallery-settings";
+import {
+  selectSyncedSchoolProjectCandidate,
+  type SchoolProjectIdentityCandidate,
+} from "@/lib/school-project-identity";
 import { buildStoredMediaUrls, normalizeStorageUrl } from "@/lib/storage-images";
 
 type SupabaseClientLike = SupabaseClient;
@@ -118,36 +122,46 @@ export async function findSyncedSchoolProjectId(
     localSchoolId?: string | null;
   }
 ) {
+  const candidates: SchoolProjectIdentityCandidate[] = [];
   const schoolProjectByLinkedSchoolId = await supabase
     .from("projects")
-    .select("id")
+    .select("id,linked_school_id,linked_local_school_id")
     .eq("workflow_type", "school")
     .eq("linked_school_id", schoolId)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+    .order("created_at", { ascending: false });
 
-  if (schoolProjectByLinkedSchoolId.data?.id) {
-    return schoolProjectByLinkedSchoolId.data.id;
+  if (schoolProjectByLinkedSchoolId.error) {
+    throw schoolProjectByLinkedSchoolId.error;
   }
+  candidates.push(
+    ...((schoolProjectByLinkedSchoolId.data ?? []) as SchoolProjectIdentityCandidate[]),
+  );
 
   const localSchoolId = clean(options?.localSchoolId);
   if (localSchoolId) {
     const schoolProjectByLinkedLocalSchoolId = await supabase
       .from("projects")
-      .select("id")
+      .select("id,linked_school_id,linked_local_school_id")
       .eq("workflow_type", "school")
       .eq("linked_local_school_id", localSchoolId)
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
+      .order("created_at", { ascending: false });
 
-    if (schoolProjectByLinkedLocalSchoolId.data?.id) {
-      return schoolProjectByLinkedLocalSchoolId.data.id;
+    if (schoolProjectByLinkedLocalSchoolId.error) {
+      throw schoolProjectByLinkedLocalSchoolId.error;
     }
+    candidates.push(
+      ...((schoolProjectByLinkedLocalSchoolId.data ?? []) as SchoolProjectIdentityCandidate[]),
+    );
   }
 
-  return null;
+  const uniqueCandidates = Array.from(
+    new Map(candidates.map((candidate) => [clean(candidate.id), candidate])).values(),
+  ).filter((candidate) => clean(candidate.id));
+  const match = selectSyncedSchoolProjectCandidate(uniqueCandidates, {
+    schoolId,
+    localSchoolId,
+  });
+  return clean(match?.id) || null;
 }
 
 export async function ensureSyncedSchoolProjectId(

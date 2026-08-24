@@ -26,7 +26,11 @@ import {
 import { createClient } from "@/lib/supabase/client";
 import { useIsMobile } from "@/lib/use-is-mobile";
 import { uploadToR2 } from "@/lib/upload-to-r2-client";
-import { ensureSchoolCollectionId } from "@/lib/school-sync";
+import {
+  ensureSchoolCollectionId,
+  ensureSyncedSchoolProjectId,
+  findSyncedSchoolProjectId,
+} from "@/lib/school-sync";
 import {
   buildStoredMediaUrls,
   extractStoragePathFromSupabaseUrl,
@@ -232,86 +236,6 @@ function getRoleIcon(role: string) {
   }
 }
 
-async function findSyncedProjectId(
-  supabase: ReturnType<typeof createClient>,
-  schoolId: string,
-  options?: {
-    localSchoolId?: string | null;
-  }
-) {
-  const schoolProjectByLinkedSchoolId = await supabase
-    .from("projects")
-    .select("id")
-    .eq("workflow_type", "school")
-    .eq("linked_school_id", schoolId)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  if (schoolProjectByLinkedSchoolId.data?.id) {
-    return schoolProjectByLinkedSchoolId.data.id;
-  }
-
-  const localSchoolId = clean(options?.localSchoolId);
-  if (localSchoolId) {
-    const schoolProjectByLinkedLocalSchoolId = await supabase
-      .from("projects")
-      .select("id")
-      .eq("workflow_type", "school")
-      .eq("linked_local_school_id", localSchoolId)
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-
-    if (schoolProjectByLinkedLocalSchoolId.data?.id) {
-      return schoolProjectByLinkedLocalSchoolId.data.id;
-    }
-  }
-
-  return null;
-}
-
-async function ensureSyncedProjectId(
-  supabase: ReturnType<typeof createClient>,
-  schoolId: string,
-  school: School | null
-) {
-  const existingId = await findSyncedProjectId(supabase, schoolId, {
-    localSchoolId: school?.local_school_id,
-  });
-
-  if (existingId) return existingId;
-
-  const photographerId = clean(school?.photographer_id);
-  if (!photographerId) {
-    throw new Error("This school is missing its photographer link, so the cover could not sync yet.");
-  }
-
-  const { data, error } = await supabase
-    .from("projects")
-    .insert({
-      photographer_id: photographerId,
-      workflow_type: "school",
-      source_type: "cloud_only",
-      title: clean(school?.school_name) || "School Gallery",
-      linked_school_id: schoolId,
-      linked_local_school_id: clean(school?.local_school_id) || null,
-      status: clean(school?.portal_status) || clean(school?.status) || "active",
-    })
-    .select("id")
-    .single();
-
-  if (error) {
-    const fallbackId = await findSyncedProjectId(supabase, schoolId, {
-      localSchoolId: school?.local_school_id,
-    });
-    if (fallbackId) return fallbackId;
-    throw error;
-  }
-
-  return clean(data?.id) || null;
-}
-
 export default function SchoolsSchoolDetailPage() {
   const [supabase] = useState(() => createClient());
   const isMobile = useIsMobile();
@@ -431,7 +355,7 @@ export default function SchoolsSchoolDetailPage() {
 
         if (peopleError) throw peopleError;
 
-        const syncedProjectId = await findSyncedProjectId(supabase, schoolId, {
+        const syncedProjectId = await findSyncedSchoolProjectId(supabase, schoolId, {
           localSchoolId: (schoolRow as School).local_school_id,
         });
         if (!cancelled) setSchoolSyncedProjectId(syncedProjectId);
@@ -828,7 +752,7 @@ export default function SchoolsSchoolDetailPage() {
 
     try {
       setError("");
-      const syncProjectId = await ensureSyncedProjectId(supabase, schoolId, school);
+      const syncProjectId = await ensureSyncedSchoolProjectId(supabase, schoolId, school);
       if (!syncProjectId) {
         throw new Error("No synced school project found.");
       }
@@ -1032,7 +956,7 @@ export default function SchoolsSchoolDetailPage() {
 
     try {
       setError("");
-      const syncProjectId = schoolSyncedProjectId || await ensureSyncedProjectId(supabase, schoolId, school);
+      const syncProjectId = schoolSyncedProjectId || await ensureSyncedSchoolProjectId(supabase, schoolId, school);
       if (!syncProjectId) {
         throw new Error("No synced school project found for school cover selection.");
       }
@@ -1076,7 +1000,7 @@ export default function SchoolsSchoolDetailPage() {
 
     try {
       setError("");
-      const syncProjectId = await ensureSyncedProjectId(supabase, schoolId, school);
+      const syncProjectId = await ensureSyncedSchoolProjectId(supabase, schoolId, school);
       if (!syncProjectId) {
         throw new Error("No synced school project found for school cover upload.");
       }
@@ -1296,7 +1220,7 @@ export default function SchoolsSchoolDetailPage() {
 
       if (deleteStudentsError) throw deleteStudentsError;
 
-      const syncProjectId = await findSyncedProjectId(supabase, schoolId, {
+      const syncProjectId = await findSyncedSchoolProjectId(supabase, schoolId, {
         localSchoolId: school?.local_school_id,
       });
       const classCollectionIds = classNames
@@ -1380,7 +1304,7 @@ export default function SchoolsSchoolDetailPage() {
         if (deletePeopleError) throw deletePeopleError;
       }
 
-      const syncProjectId = await findSyncedProjectId(supabase, schoolId, {
+      const syncProjectId = await findSyncedSchoolProjectId(supabase, schoolId, {
         localSchoolId: school?.local_school_id,
       });
       const roleCollectionIds = roleNames
