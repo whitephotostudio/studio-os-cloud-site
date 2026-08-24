@@ -585,7 +585,13 @@ export default function SchoolsPage() {
           <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fill,minmax(${isMobile ? 160 : 240}px,1fr))`, gap: isMobile ? 12 : 20 }}>
             {filteredSchools.map((school) => {
               const href = `/dashboard/projects/schools/${school.id}`;
-              const coverUrl = proxiedPhotoUrl(school.coverUrl);
+              const rawCoverUrl = proxiedPhotoUrl(school.coverUrl);
+              // A previous proxy outage returned cacheable 500 responses for
+              // these image-shaped URLs. Version the repaired School-card
+              // requests so browsers do not keep displaying that stale error.
+              const coverUrl = rawCoverUrl.startsWith("/api/r2/img/")
+                ? `${rawCoverUrl}${rawCoverUrl.includes("?") ? "&" : "?"}v=school-cover-2`
+                : rawCoverUrl;
               const hovered = hoveredSchoolId === school.id;
               const selected = selectedIds.has(school.id);
               return (

@@ -386,7 +386,7 @@ export default function MobileSchoolsPage() {
             const orderCt = ordersBySchool[school.id] ?? 0;
             const cover = proxiedPhotoUrl(coversBySchool[school.id]);
             const thumbnailCover = cover.startsWith("/api/r2/img/")
-              ? `${cover}${cover.includes("?") ? "&" : "?"}w=320`
+              ? `${cover}${cover.includes("?") ? "&" : "?"}w=320&v=school-cover-2`
               : cover;
             const shootDate = formatShootDate(school.shoot_date);
             // Mockup-inspired status pill: Gallery Released when there's

@@ -20,6 +20,7 @@ const orderCreateSource = source("app/api/portal/orders/create/route.ts");
 const combinedOrderCreateSource = source("app/api/portal/orders/create-combined/route.ts");
 const galleryEmailSource = source("lib/event-gallery-email.ts");
 const privateMediaSource = source("lib/private-media-references.ts");
+const nextConfigSource = source("next.config.ts");
 
 test("new R2 uploads persist object keys and folder lists return signed URLs", () => {
   assert.match(r2Source, /return key;/);
@@ -54,6 +55,29 @@ test("authenticated image proxy covers every active owned R2 namespace", () => {
   assert.match(imageProxySource, /ownsSchool\(thirdSegment\)/);
   assert.match(imageProxySource, /normalizeR2Key\(rawStoragePath\)/);
   assert.doesNotMatch(imageProxySource, /unauthorized path: %s/);
+});
+
+test("image proxy loads optional Sharp only for an authorized resize request", () => {
+  assert.doesNotMatch(
+    imageProxySource,
+    /^import\s+sharp\s+from\s+["']sharp["'];/m,
+  );
+  assert.match(
+    imageProxySource,
+    /if \(thumbWidth > 0\) \{\s*try \{[\s\S]*?await import\(["']sharp["']\)/,
+  );
+  assert.ok(
+    imageProxySource.indexOf("if (!authorized)") <
+      imageProxySource.indexOf('await import("sharp")'),
+    "authorization must complete before the native image runtime is loaded",
+  );
+});
+
+test("immutable static-asset caching never captures image-shaped API responses", () => {
+  assert.match(
+    nextConfigSource,
+    /source: "\/\(\(\?!api\/\)\.\*\)\\\\\.\(js\|css\|woff2\?\|png\|jpg/,
+  );
 });
 
 test("parent portal signs backdrop references and generic downloads reject public R2 origins", () => {

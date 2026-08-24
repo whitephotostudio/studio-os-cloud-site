@@ -137,8 +137,10 @@ const nextConfig: NextConfig = {
       headers: [{ key: "X-Robots-Tag", value: "noindex, nofollow" }],
     },
     {
-      // Cache static assets aggressively
-      source: "/(.*)\\.(js|css|woff2?|png|jpg|jpeg|gif|svg|ico|webp|avif)",
+      // Cache real static assets aggressively, but never extension-shaped API
+      // routes such as /api/r2/img/...jpg. API handlers own their cache policy;
+      // caching a transient JSON/500 response as immutable breaks media URLs.
+      source: "/((?!api/).*)\\.(js|css|woff2?|png|jpg|jpeg|gif|svg|ico|webp|avif)",
       headers: [
         {
           key: "Cache-Control",

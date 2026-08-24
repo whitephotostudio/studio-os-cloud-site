@@ -6,7 +6,6 @@ import {
 import { r2PresignedGetUrl } from "@/lib/r2-signed-urls";
 import { r2Download } from "@/lib/r2";
 import { isUuid, normalizeR2Key } from "@/lib/r2-access-security";
-import sharp from "sharp";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -175,6 +174,10 @@ export async function GET(
       : 0;
     if (thumbWidth > 0) {
       try {
+        // Keep Sharp off the critical image-redirect path. If its optional
+        // native runtime is unavailable, normal previews must still redirect
+        // to the existing R2 object instead of failing while this route loads.
+        const { default: sharp } = await import("sharp");
         const original = await r2Download(storagePath);
         const resized = await sharp(original)
           .rotate()

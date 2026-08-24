@@ -20,8 +20,9 @@ test("school card covers route durable R2 keys through the authenticated image p
   );
   assert.match(
     schoolsDashboardSource,
-    /const coverUrl = proxiedPhotoUrl\(school\.coverUrl\)/,
+    /const rawCoverUrl = proxiedPhotoUrl\(school\.coverUrl\)/,
   );
+  assert.match(schoolsDashboardSource, /v=school-cover-2/);
   assert.match(schoolsDashboardSource, /src=\{coverUrl\}/);
   assert.doesNotMatch(schoolsDashboardSource, /src=\{school\.coverUrl\}/);
 });
@@ -55,6 +56,7 @@ test("mobile school cards proxy stored keys and resize only same-origin proxy UR
     mobileSchoolsSource,
     /cover\.startsWith\("\/api\/r2\/img\/"\)/,
   );
+  assert.match(mobileSchoolsSource, /w=320&v=school-cover-2/);
   assert.match(mobileSchoolsSource, /src=\{thumbnailCover\}/);
   assert.doesNotMatch(mobileSchoolsSource, /src=\{`\$\{cover\}\?w=320`\}/);
 });
