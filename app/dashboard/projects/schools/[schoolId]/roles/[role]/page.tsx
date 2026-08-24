@@ -7,8 +7,6 @@ import {
   ArrowLeft,
   Briefcase,
   CheckSquare,
-  ChevronLeft,
-  ChevronRight,
   Eye,
   EyeOff,
   FolderPlus,
@@ -33,6 +31,12 @@ import {
 } from "@/lib/storage-images";
 import { generateThumbnails } from "@/lib/generate-thumbnails-client";
 import { uploadToR2 } from "@/lib/upload-to-r2-client";
+import {
+  dedupeGalleryPhotoAssets,
+  GalleryPhotoAsset,
+  photoAssetFromStoredReference,
+  StudentPhotoLightbox,
+} from "@/components/student-photo-lightbox";
 
 type School = {
   id: string;
@@ -174,6 +178,7 @@ export default function SchoolsSchoolRoleGalleryPage() {
   const folderInputRef = useRef<HTMLInputElement | null>(null);
   const uploadTargetPersonRef = useRef<PersonRow | null>(null);
   const folderImagesCacheRef = useRef<Map<string, string[]>>(new Map());
+  const folderImageAssetsCacheRef = useRef<Map<string, GalleryPhotoAsset[]>>(new Map());
   const schoolId = String(params?.schoolId ?? "");
   const rawRoleParam = params?.role;
   const rawRole = Array.isArray(rawRoleParam) ? rawRoleParam[0] : String(rawRoleParam ?? "");
@@ -208,6 +213,7 @@ export default function SchoolsSchoolRoleGalleryPage() {
   const [lightbox, setLightbox] = useState<PersonRow | null>(null);
   const [lightboxIndex, setLightboxIndex] = useState(0);
   const [photoUrlsMap, setPhotoUrlsMap] = useState<Record<string, string[]>>({});
+  const [photoAssetsMap, setPhotoAssetsMap] = useState<Record<string, GalleryPhotoAsset[]>>({});
 
   async function loadFolderImageUrls(folderPath: string) {
     const cached = folderImagesCacheRef.current.get(folderPath);
@@ -219,21 +225,29 @@ export default function SchoolsSchoolRoleGalleryPage() {
     );
     const payload = (await response.json().catch(() => ({}))) as {
       ok?: boolean;
-      files?: Array<{ name: string; url: string }>;
+      files?: Array<{ key?: string; name: string; url: string }>;
     };
 
     if (!response.ok || payload.ok === false || !payload.files) {
-      folderImagesCacheRef.current.set(folderPath, []);
-      return [];
+      folderImagesCacheRef.current.delete(folderPath);
+      folderImageAssetsCacheRef.current.delete(folderPath);
+      throw new Error("Could not load this person's photo folder.");
     }
 
-    const urls = payload.files
+    const assets = payload.files
       .filter((file) => !!file.name && /\.(png|jpg|jpeg|webp)$/i.test(file.name))
       .sort((a, b) => naturalCompare(a.name, b.name))
-      .map((file) => clean(file.url))
-      .filter(Boolean);
+      .map((file) => {
+        const fallback = photoAssetFromStoredReference(file.url, file.name);
+        const key = clean(file.key) || fallback?.key || `${folderPath}/${file.name}`;
+        const url = clean(file.url);
+        return url ? { key, name: file.name, url } : null;
+      })
+      .filter((asset): asset is GalleryPhotoAsset => Boolean(asset));
+    const urls = assets.map((asset) => asset.url);
 
     folderImagesCacheRef.current.set(folderPath, urls);
+    folderImageAssetsCacheRef.current.set(folderPath, assets);
     return urls;
   }
 
@@ -285,18 +299,23 @@ export default function SchoolsSchoolRoleGalleryPage() {
           .filter((person) => matchesRoleGallery(person, normalizedRouteRole));
 
         const urlMap: Record<string, string[]> = {};
+        const assetMap: Record<string, GalleryPhotoAsset[]> = {};
 
         const peopleByFolder = new Map<string, PersonRow[]>();
 
         for (const person of filtered) {
           if (!person.photo_url) {
             urlMap[person.id] = [];
+            assetMap[person.id] = [];
             continue;
           }
 
           const folderPath = extractFolderPathFromPublicUrl(person.photo_url);
           if (!folderPath) {
             urlMap[person.id] = [person.photo_url];
+            assetMap[person.id] = dedupeGalleryPhotoAssets([
+              photoAssetFromStoredReference(person.photo_url),
+            ]);
             continue;
           }
 
@@ -309,17 +328,20 @@ export default function SchoolsSchoolRoleGalleryPage() {
           Array.from(peopleByFolder.entries()).map(async ([folderPath, folderPeople]) => {
             try {
               const urls = await loadFolderImageUrls(folderPath);
+              const folderAssets = folderImageAssetsCacheRef.current.get(folderPath) ?? [];
               for (const person of folderPeople) {
-                const mergedUrls = [person.photo_url, ...urls].filter(
-                  (value): value is string => Boolean(value),
-                );
-                urlMap[person.id] = mergedUrls.length
-                  ? Array.from(new Set(mergedUrls))
-                  : [];
+                // The online folder is authoritative after a successful load.
+                // A legacy representative URL can refer to a photo intentionally
+                // removed from the gallery and must not be merged back in.
+                urlMap[person.id] = Array.from(new Set(urls));
+                assetMap[person.id] = dedupeGalleryPhotoAssets(folderAssets);
               }
             } catch {
               for (const person of folderPeople) {
                 urlMap[person.id] = [person.photo_url!];
+                assetMap[person.id] = dedupeGalleryPhotoAssets([
+                  photoAssetFromStoredReference(person.photo_url),
+                ]);
               }
             }
           })
@@ -329,6 +351,7 @@ export default function SchoolsSchoolRoleGalleryPage() {
           setSchool(schoolRow);
           setPeople(filtered);
           setPhotoUrlsMap(urlMap);
+          setPhotoAssetsMap(assetMap);
           setSelectedPersonIds((prev) => prev.filter((id) => filtered.some((person) => person.id === id)));
           setVisiblePinIds((prev) => prev.filter((id) => filtered.some((person) => person.id === id)));
         }
@@ -337,6 +360,7 @@ export default function SchoolsSchoolRoleGalleryPage() {
           setError(err instanceof Error ? err.message : "Failed to load role gallery.");
           setPeople([]);
           setPhotoUrlsMap({});
+          setPhotoAssetsMap({});
         }
       } finally {
         if (!cancelled) {
@@ -356,8 +380,17 @@ export default function SchoolsSchoolRoleGalleryPage() {
     return photoUrlsMap[person.id] ?? (person.photo_url ? [person.photo_url] : []);
   }
 
+  function getPhotoAssets(person: PersonRow) {
+    return (
+      photoAssetsMap[person.id] ??
+      dedupeGalleryPhotoAssets([
+        photoAssetFromStoredReference(person.photo_url),
+      ])
+    );
+  }
+
   function openViewer(person: PersonRow) {
-    if (!getPhotoUrls(person).length) return;
+    if (!getPhotoAssets(person).length) return;
     setOpenPersonMenuId(null);
     setLightbox(person);
     setLightboxIndex(0);
@@ -407,6 +440,7 @@ export default function SchoolsSchoolRoleGalleryPage() {
       `${safeStorageSegment(fullNameOf(person), "Person")}-${Date.now()}`;
     const storageFolderPath = currentFolderPath || `${basePath}/roles/${rolePath}/${derivedFolderName}`;
     const existingUrls = getPhotoUrls(person);
+    const existingPhotoAssets = getPhotoAssets(person);
 
     setUploadingPersonId(person.id);
     setError("");
@@ -489,6 +523,17 @@ export default function SchoolsSchoolRoleGalleryPage() {
       setPhotoUrlsMap((prev) => ({
         ...prev,
         [person.id]: Array.from(new Set([...(existingUrls.length ? existingUrls : clean(person.photo_url) ? [clean(person.photo_url)] : []), ...uploadedDisplayUrls])),
+      }));
+      setPhotoAssetsMap((prev) => ({
+        ...prev,
+        [person.id]: dedupeGalleryPhotoAssets([
+          ...existingPhotoAssets,
+          ...uploadedAssets.map((asset, index) => ({
+            key: asset.storagePath,
+            name: asset.filename,
+            url: uploadedDisplayUrls[index] || asset.publicUrl,
+          })),
+        ]),
       }));
       setShareNotice(
         uploadedUrls.length === 1 ? "1 photo added to person" : `${uploadedUrls.length} photos added to person`
@@ -575,6 +620,7 @@ export default function SchoolsSchoolRoleGalleryPage() {
       let nextPerson = insertedRow as PersonRow;
       setPeople((prev) => [...prev, nextPerson]);
       setPhotoUrlsMap((prev) => ({ ...prev, [nextPerson.id]: [] }));
+      setPhotoAssetsMap((prev) => ({ ...prev, [nextPerson.id]: [] }));
       resetCreatePersonForm();
 
       if (filesToUpload.length) {
@@ -635,6 +681,16 @@ export default function SchoolsSchoolRoleGalleryPage() {
           setPhotoUrlsMap((prev) => ({
             ...prev,
             [nextPerson.id]: uploadedDisplayUrls,
+          }));
+          setPhotoAssetsMap((prev) => ({
+            ...prev,
+            [nextPerson.id]: dedupeGalleryPhotoAssets(
+              uploadedAssets.map((asset, index) => ({
+                key: asset.storagePath,
+                name: asset.filename,
+                url: uploadedDisplayUrls[index] || asset.publicUrl,
+              })),
+            ),
           }));
         }
 
@@ -722,6 +778,11 @@ export default function SchoolsSchoolRoleGalleryPage() {
         for (const id of uniqueIds) delete next[id];
         return next;
       });
+      setPhotoAssetsMap((prev) => {
+        const next = { ...prev };
+        for (const id of uniqueIds) delete next[id];
+        return next;
+      });
       if (settingsPerson && uniqueIds.includes(settingsPerson.id)) {
         setSettingsPerson(null);
       }
@@ -734,6 +795,87 @@ export default function SchoolsSchoolRoleGalleryPage() {
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to delete person.");
     }
+  }
+
+  async function removeLightboxPhotos(keys: string[]) {
+    if (!lightbox) return [];
+
+    const uniqueKeys = Array.from(new Set(keys.map((key) => clean(key)).filter(Boolean)));
+    if (!uniqueKeys.length) return getPhotoAssets(lightbox);
+
+    const response = await fetch(
+      `/api/dashboard/schools/${encodeURIComponent(schoolId)}/students/${encodeURIComponent(lightbox.id)}/photos`,
+      {
+        method: "DELETE",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ keys: uniqueKeys }),
+      },
+    );
+    const payload = (await response.json().catch(() => ({}))) as {
+      ok?: boolean;
+      message?: string;
+      deletedKeys?: string[];
+      remainingPhotos?: GalleryPhotoAsset[];
+      photoUrl?: string | null;
+      disposition?: string;
+    };
+
+    if (!response.ok || payload.ok === false || !Array.isArray(payload.remainingPhotos)) {
+      throw new Error(payload.message || "The selected photos could not be removed.");
+    }
+
+    const remainingPhotos = dedupeGalleryPhotoAssets(payload.remainingPhotos);
+    const remainingUrls = remainingPhotos.map((photo) => photo.url);
+    const previousFolderPath = extractFolderPathFromPublicUrl(lightbox.photo_url ?? "");
+    if (previousFolderPath) {
+      folderImagesCacheRef.current.set(previousFolderPath, remainingUrls);
+      folderImageAssetsCacheRef.current.set(previousFolderPath, remainingPhotos);
+    }
+
+    const nextReference = clean(payload.photoUrl);
+    const nextStoragePath = extractObjectPathFromPublicUrl(nextReference);
+    const nextPhotoUrl = nextReference
+      ? nextStoragePath
+        ? buildStoredMediaUrls({
+            storagePath: nextStoragePath,
+            previewUrl: nextReference,
+          }).previewUrl
+        : nextReference
+      : null;
+
+    setPhotoUrlsMap((current) => ({
+      ...current,
+      [lightbox.id]: remainingUrls,
+    }));
+    setPhotoAssetsMap((current) => ({
+      ...current,
+      [lightbox.id]: remainingPhotos,
+    }));
+    setPeople((current) =>
+      current.map((person) =>
+        person.id === lightbox.id
+          ? { ...person, photo_url: nextPhotoUrl }
+          : person,
+      ),
+    );
+    setLightbox((current) =>
+      current?.id === lightbox.id
+        ? { ...current, photo_url: nextPhotoUrl }
+        : current,
+    );
+
+    const removedCount = payload.deletedKeys?.length || uniqueKeys.length;
+    setShareNotice(
+      `${removedCount} photo${removedCount === 1 ? "" : "s"} removed from the online gallery`,
+    );
+    window.setTimeout(() => setShareNotice(""), 2600);
+
+    if (!remainingPhotos.length) {
+      setLightbox(null);
+      setLightboxIndex(0);
+    }
+
+    return remainingPhotos;
   }
 
   function toggleSelectedPerson(personId: string) {
@@ -790,7 +932,7 @@ export default function SchoolsSchoolRoleGalleryPage() {
     () => Object.values(photoUrlsMap).reduce((sum, urls) => sum + urls.length, 0),
     [photoUrlsMap]
   );
-  const lightboxPhotos = lightbox ? getPhotoUrls(lightbox) : [];
+  const lightboxPhotos = lightbox ? getPhotoAssets(lightbox) : [];
   const folderInputProps: Record<string, string> = { webkitdirectory: "", directory: "" };
   const title = normalizedRouteRole || "Role Gallery";
 
@@ -1600,157 +1742,17 @@ export default function SchoolsSchoolRoleGalleryPage() {
       ) : null}
 
       {lightbox ? (
-        <>
-          <div onClick={() => setLightbox(null)} style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.88)", zIndex: 200 }} />
-
-          <div style={{ position: "fixed", inset: 0, zIndex: 201, display: "flex", flexDirection: "column" }}>
-            <div
-              style={{
-                padding: "16px 18px",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                color: "#fff",
-              }}
-            >
-              <div style={{ minWidth: 0 }}>
-                <div style={{ fontSize: 18, fontWeight: 900 }}>{fullNameOf(lightbox)}</div>
-                <div style={{ fontSize: 12, color: "rgba(255,255,255,0.7)", marginTop: 4 }}>
-                  {lightboxIndex + 1} of {lightboxPhotos.length}
-                </div>
-              </div>
-
-              <button
-                type="button"
-                onClick={() => setLightbox(null)}
-                style={{ background: "none", border: "none", color: "#fff", cursor: "pointer" }}
-              >
-                <X size={24} />
-              </button>
-            </div>
-
-            <div
-              style={{
-                flex: 1,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                padding: "16px 24px",
-                gap: 16,
-              }}
-            >
-              <button
-                type="button"
-                onClick={() => setLightboxIndex((prev) => Math.max(0, prev - 1))}
-                disabled={lightboxIndex === 0}
-                style={{
-                  width: 44,
-                  height: 44,
-                  borderRadius: "50%",
-                  border: "1px solid rgba(255,255,255,0.2)",
-                  background: "rgba(255,255,255,0.1)",
-                  color: "#fff",
-                  cursor: lightboxIndex === 0 ? "default" : "pointer",
-                  opacity: lightboxIndex === 0 ? 0.3 : 1,
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                }}
-              >
-                <ChevronLeft size={22} />
-              </button>
-
-              <div
-                style={{
-                  maxWidth: "min(1000px, 75vw)",
-                  maxHeight: "70vh",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                }}
-              >
-                {lightboxPhotos[lightboxIndex] ? (
-                  <img
-                    src={lightboxPhotos[lightboxIndex]}
-                    alt={fullNameOf(lightbox)}
-                    style={{
-                      maxWidth: "100%",
-                      maxHeight: "70vh",
-                      objectFit: "contain",
-                      borderRadius: 18,
-                      boxShadow: "0 30px 80px rgba(0,0,0,0.4)",
-                    }}
-                  />
-                ) : (
-                  <div
-                    style={{
-                      width: 400,
-                      height: 500,
-                      background: "rgba(255,255,255,0.06)",
-                      border: "1px dashed rgba(255,255,255,0.25)",
-                      borderRadius: 12,
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      color: "rgba(255,255,255,0.6)",
-                    }}
-                  >
-                    No photo available
-                  </div>
-                )}
-              </div>
-
-              <button
-                type="button"
-                onClick={() => setLightboxIndex((prev) => Math.min(lightboxPhotos.length - 1, prev + 1))}
-                disabled={lightboxIndex >= lightboxPhotos.length - 1}
-                style={{
-                  width: 44,
-                  height: 44,
-                  borderRadius: "50%",
-                  border: "1px solid rgba(255,255,255,0.2)",
-                  background: "rgba(255,255,255,0.1)",
-                  color: "#fff",
-                  cursor: lightboxIndex >= lightboxPhotos.length - 1 ? "default" : "pointer",
-                  opacity: lightboxIndex >= lightboxPhotos.length - 1 ? 0.3 : 1,
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                }}
-              >
-                <ChevronRight size={22} />
-              </button>
-            </div>
-
-            <div style={{ padding: "16px 24px 24px", display: "flex", justifyContent: "center", gap: 10, overflowX: "auto" }}>
-              {lightboxPhotos.map((url, index) => (
-                <button
-                  key={`${lightbox.id}-${index}`}
-                  type="button"
-                  onClick={() => setLightboxIndex(index)}
-                  style={{
-                    border: index === lightboxIndex ? "2px solid #fff" : "1px solid rgba(255,255,255,0.2)",
-                    background: "none",
-                    padding: 0,
-                    borderRadius: 6,
-                    overflow: "hidden",
-                    width: 72,
-                    height: 90,
-                    flexShrink: 0,
-                    cursor: "pointer",
-                    opacity: index === lightboxIndex ? 1 : 0.75,
-                  }}
-                >
-                  <img
-                    src={url}
-                    alt={`${fullNameOf(lightbox)} ${index + 1}`}
-                    style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
-                  />
-                </button>
-              ))}
-            </div>
-          </div>
-        </>
+        <StudentPhotoLightbox
+          personName={fullNameOf(lightbox)}
+          photos={lightboxPhotos}
+          index={lightboxIndex}
+          onIndexChange={setLightboxIndex}
+          onClose={() => {
+            setLightbox(null);
+            setLightboxIndex(0);
+          }}
+          onRemoveSelected={removeLightboxPhotos}
+        />
       ) : null}
     </div>
   );
