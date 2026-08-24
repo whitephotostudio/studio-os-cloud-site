@@ -801,7 +801,9 @@ export default function SchoolsSchoolDetailPage() {
       totalClasses: classCards.length,
       totalRoles: roleCards.length,
       schoolCover: schoolProjectCoverUrl || firstSchoolPhoto,
-      totalSyncedPhotos: rows.filter((row) => clean(row.photo_url)).length,
+      // A student row stores one representative photo URL. This is a count
+      // of people who have photos, not the number of uploaded image files.
+      totalPeopleWithPhotos: rows.filter((row) => clean(row.photo_url)).length,
     };
   }, [classCollectionsBySlug, roleCollectionsBySlug, rows, schoolId, schoolProjectCoverUrl]);
 
@@ -1729,7 +1731,7 @@ export default function SchoolsSchoolDetailPage() {
                 {[
                   [groupLabelPlural, grouped.totalClasses],
                   ["Role Galleries", grouped.totalRoles],
-                  ["Synced Photos", grouped.totalSyncedPhotos],
+                  ["People with photos", grouped.totalPeopleWithPhotos],
                 ].map(([label, value]) => (
                   <div key={String(label)} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 14px", borderTop: "1px solid #eef2f7", color: "#111111", fontSize: 13 }}>
                     <span>{label}</span>
@@ -1916,6 +1918,7 @@ export default function SchoolsSchoolDetailPage() {
                           const classSettingsHref = `/dashboard/projects/schools/${schoolId}/classes/${encodeURIComponent(classCard.rawLabel)}/settings`;
                           const cover = classCard.coverPhoto;
                           const studentCount = classCard.count;
+                          const isEmptyClass = studentCount === 0;
                           const active =
                             selectedClassIds.includes(classCard.key) ||
                             hoveredClassId === classCard.key ||
@@ -1931,7 +1934,19 @@ export default function SchoolsSchoolDetailPage() {
                                 <div style={{ position: "relative", height: 200, marginBottom: 10 }}>
                                   <div style={{ position: "absolute", inset: "10px 10px 0 10px", borderRadius: 4, background: cover ? `url(${cover}) center/cover no-repeat` : "linear-gradient(135deg,#e5e7eb,#cbd5e1)", transform: "rotate(-3deg)", boxShadow: "0 8px 20px rgba(15,23,42,0.10)" }} />
                                   <div style={{ position: "absolute", inset: "4px 6px 6px 6px", borderRadius: 4, background: cover ? `url(${cover}) center/cover no-repeat` : "linear-gradient(135deg,#e5e7eb,#dbe4f0)", transform: "rotate(2deg)", boxShadow: "0 8px 20px rgba(15,23,42,0.10)" }} />
-                                  <div style={{ position: "absolute", inset: 0, borderRadius: 4, background: cover ? `url(${cover}) center/cover no-repeat` : "linear-gradient(135deg,#111111,#b91c1c)", border: active ? "2px solid #b91c1c" : "1px solid #d0d5dd", boxShadow: "0 10px 25px rgba(15,23,42,0.14)" }} />
+                                  <div style={{ position: "absolute", inset: 0, borderRadius: 4, background: cover ? `url(${cover}) center/cover no-repeat` : "linear-gradient(135deg,#f8fafc,#e2e8f0)", border: active ? "2px solid #b91c1c" : "1px solid #d0d5dd", boxShadow: "0 10px 25px rgba(15,23,42,0.14)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                                    {!cover ? (
+                                      <div style={{ display: "grid", justifyItems: "center", gap: 7, padding: 16, textAlign: "center", color: "#64748b" }}>
+                                        <Users size={32} aria-hidden="true" />
+                                        <span style={{ color: "#334155", fontSize: 14, fontWeight: 800 }}>
+                                          {isEmptyClass ? `Empty ${groupLabelSingular.toLowerCase()}` : "No cover selected"}
+                                        </span>
+                                        <span style={{ fontSize: 12, fontWeight: 600 }}>
+                                          {isEmptyClass ? "No students assigned" : "Open this class to choose a cover"}
+                                        </span>
+                                      </div>
+                                    ) : null}
+                                  </div>
                                 </div>
                               </Link>
                               <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 8, alignItems: "center" }}>
