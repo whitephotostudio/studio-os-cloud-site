@@ -6,6 +6,8 @@ import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { Logo } from "@/components/logo";
 import { useIsMobile } from "@/lib/use-is-mobile";
+import { proxiedPhotoUrl } from "@/lib/photo-url";
+import { selectSyncedSchoolProjectCandidate } from "@/lib/school-project-identity";
 import { CalendarDays, Check, GraduationCap, Images, LogOut, MoreHorizontal, Plus, School, Search, Settings, Trash2, Users, X } from "lucide-react";
 
 type SchoolRow = {
@@ -250,20 +252,8 @@ export default function SchoolsPage() {
         if (!deduped.has(key)) deduped.set(key, school);
       }
 
-      // Build maps of school ID → synced project cover info
       const schoolProjects = allProjects.filter((p) => clean(p.workflow_type) === "school");
-      type CoverInfo = { url: string; fx: number; fy: number };
-      const schoolCoverByLocalId = new Map<string, CoverInfo>();
-      const schoolCoverBySchoolId = new Map<string, CoverInfo>();
-      for (const sp of schoolProjects) {
-        const cover = clean(sp.cover_photo_url);
-        if (!cover) continue;
-        const info: CoverInfo = { url: cover, fx: Number(sp.cover_focal_x) || 0.5, fy: Number(sp.cover_focal_y) || 0.5 };
-        const lid = clean(sp.linked_local_school_id);
-        const sid = clean(sp.linked_school_id);
-        if (lid) schoolCoverByLocalId.set(lid, info);
-        if (sid) schoolCoverBySchoolId.set(sid, info);
-      }
+      const schoolProjectsWithCovers = schoolProjects.filter((p) => clean(p.cover_photo_url));
 
       const uniqueSchools = Array.from(deduped.values());
       if (uniqueSchools.length === 0) {
@@ -305,6 +295,16 @@ export default function SchoolsPage() {
 
       const cards = uniqueSchools.map<SchoolCard>((school) => {
         const stat = stats.get(school.id);
+        // A historical project can carry one current campus link and one stale
+        // campus link. Resolve the complete identity as a unit so its manual
+        // cover can never leak onto a second school card.
+        const coverProject = selectSyncedSchoolProjectCandidate(
+          schoolProjectsWithCovers,
+          {
+            schoolId: school.id,
+            localSchoolId: school.local_school_id,
+          },
+        ) as ProjectRow | null;
         return {
           id: school.id,
           school_name: school.school_name,
@@ -315,9 +315,9 @@ export default function SchoolsPage() {
           peopleCount: stat?.peopleCount ?? 0,
           classesCount: stat?.classNames.size ?? 0,
           imagesCount: stat?.imagesCount ?? 0,
-          coverUrl: schoolCoverBySchoolId.get(school.id)?.url || schoolCoverByLocalId.get(clean(school.local_school_id))?.url || stat?.firstPhotoUrl || null,
-          coverFocalX: schoolCoverBySchoolId.get(school.id)?.fx ?? schoolCoverByLocalId.get(clean(school.local_school_id))?.fx ?? 0.5,
-          coverFocalY: schoolCoverBySchoolId.get(school.id)?.fy ?? schoolCoverByLocalId.get(clean(school.local_school_id))?.fy ?? 0.5,
+          coverUrl: clean(coverProject?.cover_photo_url) || stat?.firstPhotoUrl || null,
+          coverFocalX: Number(coverProject?.cover_focal_x) || 0.5,
+          coverFocalY: Number(coverProject?.cover_focal_y) || 0.5,
         };
       }).filter((card) => {
         const isEmptyShell =
@@ -585,6 +585,7 @@ export default function SchoolsPage() {
           <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fill,minmax(${isMobile ? 160 : 240}px,1fr))`, gap: isMobile ? 12 : 20 }}>
             {filteredSchools.map((school) => {
               const href = `/dashboard/projects/schools/${school.id}`;
+              const coverUrl = proxiedPhotoUrl(school.coverUrl);
               const hovered = hoveredSchoolId === school.id;
               const selected = selectedIds.has(school.id);
               return (
@@ -620,17 +621,17 @@ export default function SchoolsPage() {
                       tasteful (Apple TV / Netflix pattern).  The
                       saved focal point still positions the contained
                       photo within the card. */}
-                <div style={{ position: "relative", paddingBottom: "65%", background: school.coverUrl ? "#0f172a" : gradientForSchool(school.school_name), overflow: "hidden" }}>
-                  {school.coverUrl ? (
+                <div style={{ position: "relative", paddingBottom: "65%", background: coverUrl ? "#0f172a" : gradientForSchool(school.school_name), overflow: "hidden" }}>
+                  {coverUrl ? (
                     <>
                       <img
-                        src={school.coverUrl}
+                        src={coverUrl}
                         alt=""
                         aria-hidden
                         style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", filter: "blur(28px) brightness(0.55) saturate(1.15)", transform: "scale(1.15)" }}
                       />
                       <img
-                        src={school.coverUrl}
+                        src={coverUrl}
                         alt={school.school_name}
                         style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "contain", objectPosition: `${Math.round(school.coverFocalX * 100)}% ${Math.round(school.coverFocalY * 100)}%` }}
                       />

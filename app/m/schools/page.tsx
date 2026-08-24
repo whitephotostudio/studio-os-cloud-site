@@ -19,6 +19,7 @@ import {
   X,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { proxiedPhotoUrl } from "@/lib/photo-url";
 
 type SchoolRow = {
   id: string;
@@ -383,7 +384,10 @@ export default function MobileSchoolsPage() {
           {filtered.map((school) => {
             const students = studentsBySchool[school.id] ?? 0;
             const orderCt = ordersBySchool[school.id] ?? 0;
-            const cover = coversBySchool[school.id];
+            const cover = proxiedPhotoUrl(coversBySchool[school.id]);
+            const thumbnailCover = cover.startsWith("/api/r2/img/")
+              ? `${cover}${cover.includes("?") ? "&" : "?"}w=320`
+              : cover;
             const shootDate = formatShootDate(school.shoot_date);
             // Mockup-inspired status pill: Gallery Released when there's
             // a slug + students, Pending when students exist but no slug,
@@ -420,10 +424,10 @@ export default function MobileSchoolsPage() {
                       overflow: "hidden",
                     }}
                   >
-                    {cover ? (
+                    {thumbnailCover ? (
                       // eslint-disable-next-line @next/next/no-img-element
                       <img
-                        src={`${cover}?w=320`}
+                        src={thumbnailCover}
                         alt=""
                         style={{
                           width: "100%",
