@@ -20,6 +20,8 @@ import {
   Send,
   Copy,
   ExternalLink,
+  Eye,
+  EyeOff,
   Heart,
   ShoppingBag,
 } from "lucide-react";
@@ -275,6 +277,7 @@ export default function SchoolsSchoolDetailPage() {
   const [hoveredClassId, setHoveredClassId] = useState<string | null>(null);
   const [hoveredRoleId, setHoveredRoleId] = useState<string | null>(null);
   const [classSearch, setClassSearch] = useState("");
+  const [hideEmptyClasses, setHideEmptyClasses] = useState(false);
   const [shareNotice, setShareNotice] = useState("");
   const [createGalleryKind, setCreateGalleryKind] = useState<"class" | "role" | null>(null);
   const [createGalleryName, setCreateGalleryName] = useState("");
@@ -324,6 +327,17 @@ export default function SchoolsSchoolDetailPage() {
   const [shareCcInput, setShareCcInput] = useState("");
   const [shareSending, setShareSending] = useState(false);
   const [shareResult, setShareResult] = useState<{ sent: number; failed: number; recipients: number } | null>(null);
+
+  useEffect(() => {
+    if (!schoolId || typeof window === "undefined") return;
+    try {
+      setHideEmptyClasses(
+        window.localStorage.getItem(`studioos_hide_empty_classes_${schoolId}`) === "1",
+      );
+    } catch {
+      setHideEmptyClasses(false);
+    }
+  }, [schoolId]);
 
   useEffect(() => {
     if (!schoolId || typeof window === "undefined") return;
@@ -1388,15 +1402,26 @@ export default function SchoolsSchoolDetailPage() {
 
   const orderedClasses = useMemo(() => grouped.classCards, [grouped.classCards]);
   const orderedRoles = useMemo(() => grouped.roleCards, [grouped.roleCards]);
+  const emptyClassCount = useMemo(
+    () => orderedClasses.filter((row) => row.count === 0).length,
+    [orderedClasses],
+  );
+  const visibleClasses = useMemo(
+    () =>
+      hideEmptyClasses
+        ? orderedClasses.filter((row) => row.count > 0)
+        : orderedClasses,
+    [hideEmptyClasses, orderedClasses],
+  );
 
   const filteredClasses = useMemo(() => {
     const q = clean(classSearch).toLowerCase();
-    if (!q) return orderedClasses;
-    return orderedClasses.filter((row) => {
+    if (!q) return visibleClasses;
+    return visibleClasses.filter((row) => {
       const label = clean(row.label).toLowerCase();
       return label.includes(q);
     });
-  }, [classSearch, orderedClasses]);
+  }, [classSearch, visibleClasses]);
 
   // Role gallery cards (Teacher, Coach, Staff…) also filter by search — so
   // typing "coach" narrows the Role Galleries grid to the matching card.
@@ -1432,6 +1457,32 @@ export default function SchoolsSchoolDetailPage() {
   const classSearchCountLabel = classSearch
     ? `${filteredClasses.length} classes · ${filteredPeople.length} people`
     : `${filteredClasses.length} of ${orderedClasses.length}`;
+
+  function toggleEmptyClasses() {
+    const next = !hideEmptyClasses;
+    setHideEmptyClasses(next);
+
+    if (typeof window !== "undefined") {
+      try {
+        window.localStorage.setItem(
+          `studioos_hide_empty_classes_${schoolId}`,
+          next ? "1" : "0",
+        );
+      } catch {
+        // The toggle still works for this session when storage is unavailable.
+      }
+    }
+
+    if (next) {
+      const visibleKeys = new Set(
+        orderedClasses.filter((row) => row.count > 0).map((row) => row.key),
+      );
+      setSelectedClassIds((previous) => {
+        const filtered = previous.filter((id) => visibleKeys.has(id));
+        return filtered.length === previous.length ? previous : filtered;
+      });
+    }
+  }
 
   return (
     <div style={{ minHeight: "100vh", background: "#faf7f7", padding: isMobile ? 14 : 24 }}>
@@ -1684,10 +1735,10 @@ export default function SchoolsSchoolDetailPage() {
                 <div style={{ borderRadius: 12, overflow: "hidden", border: "1px solid #e5e7eb" }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "11px 14px", background: "#fff5f5", borderBottom: "1px solid #eef2f7", color: "#111111", fontWeight: 800, fontSize: 13 }}>
                     <span>All {groupLabelPlural}</span>
-                    <span>{grouped.classCards.length}</span>
+                    <span>{hideEmptyClasses ? `${visibleClasses.length}/${grouped.classCards.length}` : grouped.classCards.length}</span>
                   </div>
                   <div style={{ maxHeight: 360, overflow: "auto" }}>
-                    {grouped.classCards.map((classCard) => {
+                    {visibleClasses.map((classCard) => {
                       const active = selectedClassIds.includes(classCard.key);
                       return (
                         <Link key={classCard.key} href={classCard.href} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, padding: "10px 12px", borderTop: "1px solid #eef2f7", background: active ? "#fff1f2" : "#fff", textDecoration: "none", color: "#111111", fontSize: 13, fontWeight: 700 }}>
@@ -1735,17 +1786,47 @@ export default function SchoolsSchoolDetailPage() {
                 </div>
                 <div style={{ display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "flex-end", alignItems: "center" }}>
                   {classSearch ? <div style={{ color: "#b91c1c", fontSize: 13, fontWeight: 700, minWidth: 72, textAlign: "right" }}>{classSearchCountLabel}</div> : null}
+                  <button
+                    type="button"
+                    onClick={toggleEmptyClasses}
+                    disabled={emptyClassCount === 0}
+                    aria-pressed={hideEmptyClasses}
+                    aria-label={hideEmptyClasses ? `Show empty ${groupLabelPlural.toLowerCase()}` : `Hide empty ${groupLabelPlural.toLowerCase()}`}
+                    title={hideEmptyClasses ? `Show ${emptyClassCount} empty ${groupLabelPlural.toLowerCase()}` : `Hide ${emptyClassCount} empty ${groupLabelPlural.toLowerCase()}`}
+                    style={{
+                      borderRadius: 10,
+                      border: "1px solid #111111",
+                      background: hideEmptyClasses ? "#111111" : "#fff",
+                      color: hideEmptyClasses ? "#fff" : "#111111",
+                      padding: "9px 12px",
+                      fontWeight: 700,
+                      cursor: emptyClassCount === 0 ? "not-allowed" : "pointer",
+                      opacity: emptyClassCount === 0 ? 0.45 : 1,
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 7,
+                    }}
+                  >
+                    {hideEmptyClasses ? <EyeOff size={16} aria-hidden="true" /> : <Eye size={16} aria-hidden="true" />}
+                    <span>{hideEmptyClasses ? "Empty hidden" : "Empty shown"} ({emptyClassCount})</span>
+                  </button>
                   <button style={{ borderRadius: 10, border: "1px solid #111111", background: "#fff", color: "#111111", padding: "9px 12px", fontWeight: 700, cursor: "pointer" }}>Sort by: Name A-Z</button>
                 </div>
               </div>
 
               {/* Stats line */}
               <div style={{ color: "#111111", marginBottom: 16, fontWeight: 700 }}>
-                {grouped.classCards.length} {groupLabelPlural.toLowerCase()} • {grouped.totalRoles} roles • {grouped.totalPeople} people
+                {hideEmptyClasses ? `${visibleClasses.length} of ${grouped.classCards.length}` : grouped.classCards.length} {groupLabelPlural.toLowerCase()} • {grouped.totalRoles} roles • {grouped.totalPeople} people
               </div>
 
-              {filteredClasses.length === 0 && filteredPeople.length === 0 ? (
-                <div style={{ border: "1px dashed #d0d5dd", borderRadius: 18, padding: 24, color: "#4b5563" }}>{classSearch ? "No matches for that search." : `No ${groupLabelPlural.toLowerCase()} yet.`}</div>
+              {filteredClasses.length === 0 && filteredRoles.length === 0 && filteredPeople.length === 0 ? (
+                <div style={{ border: "1px dashed #d0d5dd", borderRadius: 18, padding: 24, color: "#4b5563" }}>
+                  {classSearch
+                    ? "No matches for that search."
+                    : hideEmptyClasses && emptyClassCount > 0
+                      ? `All empty ${groupLabelPlural.toLowerCase()} are hidden. Use the eye toggle to show them.`
+                      : `No ${groupLabelPlural.toLowerCase()} yet.`}
+                </div>
               ) : (
                 <>
                   {/* Matching people — only visible when a search term is
