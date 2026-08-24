@@ -76,7 +76,7 @@ for (const [galleryKind, gallerySource, personName] of [
   ["class", classPageSource, "student"],
   ["role", rolePageSource, "person"],
 ]) {
-  test(`${galleryKind} galleries retain all-photo folder loading`, () => {
+  test(`${galleryKind} galleries treat a successful folder load as authoritative`, () => {
     assert.match(
       gallerySource,
       new RegExp(
@@ -90,25 +90,52 @@ for (const [galleryKind, gallerySource, personName] of [
     assert.match(
       gallerySource,
       new RegExp(
+        `urlMap\\[${personName}\\.id\\] = Array\\.from\\(new Set\\(urls\\)\\)`,
+      ),
+    );
+    assert.match(
+      gallerySource,
+      new RegExp(
+        `assetMap\\[${personName}\\.id\\] = dedupeGalleryPhotoAssets\\(folderAssets\\)`,
+      ),
+    );
+    assert.doesNotMatch(
+      gallerySource,
+      new RegExp(
         `const mergedUrls = \\[${personName}\\.photo_url, \\.\\.\\.urls\\]`,
       ),
     );
-    assert.match(gallerySource, /Array\.from\(new Set\(mergedUrls\)\)/);
+  });
+
+  test(`${galleryKind} galleries use the representative only when folder loading fails`, () => {
     assert.match(
       gallerySource,
-      new RegExp(`photoUrlsMap\\[${personName}\\.id\\]`),
+      new RegExp(
+        `urlMap\\[${personName}\\.id\\] = \\[${personName}\\.photo_url!\\]`,
+      ),
+    );
+    assert.match(
+      gallerySource,
+      new RegExp(
+        `photoAssetFromStoredReference\\(${personName}\\.photo_url\\)`,
+      ),
+    );
+    assert.match(
+      gallerySource,
+      new RegExp(`photoAssetsMap\\[${personName}\\.id\\]`),
     );
   });
 }
 
 test("student folder listing accepts legacy and namespaced school roots", () => {
   assert.match(storageFolderRouteSource, /import \{ isUuid \}/);
-  assert.match(storageFolderRouteSource, /async function ownsSchool/);
+  assert.match(storageFolderRouteSource, /async function ownedSchoolId/);
   assert.match(
     storageFolderRouteSource,
     /first === "schools" \|\| first === "photos"/,
   );
-  assert.match(storageFolderRouteSource, /return ownsSchool\(second\)/);
-  assert.match(storageFolderRouteSource, /return ownsSchool\(first\)/);
+  assert.match(storageFolderRouteSource, /await ownedSchoolId\(second\)/);
+  assert.match(storageFolderRouteSource, /await ownedSchoolId\(first\)/);
+  assert.match(storageFolderRouteSource, /filterTombstonedSchoolPhotoAssets/);
   assert.doesNotMatch(storageFolderRouteSource, /\.or\(`id\.eq\./);
 });
