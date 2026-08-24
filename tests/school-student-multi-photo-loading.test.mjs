@@ -37,6 +37,9 @@ const classPageSource = source(
 const rolePageSource = source(
   "app/dashboard/projects/schools/[schoolId]/roles/[role]/page.tsx",
 );
+const storageFolderRouteSource = source(
+  "app/api/dashboard/storage-folder/route.ts",
+);
 
 test("authenticated R2 display URLs round-trip to the original student folder", () => {
   const storagePath =
@@ -97,3 +100,15 @@ for (const [galleryKind, gallerySource, personName] of [
     );
   });
 }
+
+test("student folder listing accepts legacy and namespaced school roots", () => {
+  assert.match(storageFolderRouteSource, /import \{ isUuid \}/);
+  assert.match(storageFolderRouteSource, /async function ownsSchool/);
+  assert.match(
+    storageFolderRouteSource,
+    /first === "schools" \|\| first === "photos"/,
+  );
+  assert.match(storageFolderRouteSource, /return ownsSchool\(second\)/);
+  assert.match(storageFolderRouteSource, /return ownsSchool\(first\)/);
+  assert.doesNotMatch(storageFolderRouteSource, /\.or\(`id\.eq\./);
+});

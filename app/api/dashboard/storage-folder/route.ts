@@ -5,6 +5,7 @@ import {
 } from "@/lib/dashboard-auth";
 import { listR2FolderImages } from "@/lib/r2";
 import { guardAgreement } from "@/lib/require-agreement";
+import { isUuid } from "@/lib/r2-access-security";
 
 function clean(value: string | null | undefined) {
   return (value ?? "").trim();
@@ -19,6 +20,30 @@ async function photographerOwnsFolder(
   const segments = folderPath.split("/").filter(Boolean);
   if (segments.length === 0) return false;
   const [first, second] = segments;
+
+  async function ownsSchool(schoolIdOrLocalId: string | undefined) {
+    if (!schoolIdOrLocalId) return false;
+
+    if (isUuid(schoolIdOrLocalId)) {
+      const { data: byId, error: byIdError } = await service
+        .from("schools")
+        .select("id")
+        .eq("id", schoolIdOrLocalId)
+        .eq("photographer_id", photographerId)
+        .maybeSingle();
+      if (byIdError) throw byIdError;
+      if (byId?.id) return true;
+    }
+
+    const { data: byLocalId, error: byLocalIdError } = await service
+      .from("schools")
+      .select("id")
+      .eq("local_school_id", schoolIdOrLocalId)
+      .eq("photographer_id", photographerId)
+      .maybeSingle();
+    if (byLocalIdError) throw byLocalIdError;
+    return Boolean(byLocalId?.id);
+  }
 
   if (first === "projects" && segments.length >= 2) {
     const { data } = await service
@@ -39,14 +64,14 @@ async function photographerOwnsFolder(
     return second === photographerId;
   }
 
-  const { data } = await service
-    .from("schools")
-    .select("id")
-    .eq("photographer_id", photographerId)
-    .or(`id.eq.${first},local_school_id.eq.${first}`)
-    .limit(1)
-    .maybeSingle();
-  return !!data?.id;
+  // Current uploads can be rooted at schools/<school-id>/... or
+  // photos/<school-id>/..., while older desktop builds used the database or
+  // local school id directly as the first segment. Keep folder enumeration in
+  // lockstep with the authenticated image proxy for all three shapes.
+  if (first === "schools" || first === "photos") {
+    return ownsSchool(second);
+  }
+  return ownsSchool(first);
 }
 
 export async function GET(request: NextRequest) {
