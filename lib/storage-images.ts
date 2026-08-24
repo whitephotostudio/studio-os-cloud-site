@@ -148,6 +148,25 @@ export function extractStoragePathFromSupabaseUrl(
     return decodeURIComponent(candidate.split("?")[0].split("#")[0]);
   }
 
+  const authenticatedR2Marker = "/api/r2/img/";
+  if (candidate.startsWith(authenticatedR2Marker)) {
+    const nextPath = candidate
+      .slice(authenticatedR2Marker.length)
+      .split("?")[0]
+      .split("#")[0];
+    if (nextPath) return decodeURIComponent(nextPath);
+  }
+
+  try {
+    const parsed = new URL(candidate);
+    if (parsed.pathname.startsWith(authenticatedR2Marker)) {
+      const nextPath = parsed.pathname.slice(authenticatedR2Marker.length);
+      if (nextPath) return decodeURIComponent(nextPath);
+    }
+  } catch {
+    // Relative proxy URLs are handled above; continue with legacy shapes.
+  }
+
   if (R2_PUBLIC_URL && candidate.startsWith(`${R2_PUBLIC_URL}/`)) {
     try {
       const parsed = new URL(candidate);

@@ -69,3 +69,19 @@ export function proxiedPhotoUrl(value: string | null | undefined): string {
   if (key) return `/api/r2/img/${encodeStoragePath(key)}`;
   return isWebImageUrl(raw) ? encodeExternalImageUrl(raw) : "";
 }
+
+/** Add a stable display revision to same-origin proxy URLs without changing
+ * the durable R2 reference saved in the database. External image URLs are
+ * intentionally left alone. */
+export function versionedProxiedPhotoUrl(
+  value: string | null | undefined,
+  revision: string,
+): string {
+  const url = proxiedPhotoUrl(value);
+  const cleanRevision = revision.trim();
+  if (!url.startsWith("/api/r2/img/") || !cleanRevision) return url;
+
+  const parsed = new URL(url, "https://www.studiooscloud.com");
+  parsed.searchParams.set("v", cleanRevision);
+  return `${parsed.pathname}${parsed.search}${parsed.hash}`;
+}

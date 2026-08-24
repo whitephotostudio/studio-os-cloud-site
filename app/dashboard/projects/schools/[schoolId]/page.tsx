@@ -35,6 +35,7 @@ import {
   buildStoredMediaUrls,
   extractStoragePathFromSupabaseUrl,
 } from "@/lib/storage-images";
+import { versionedProxiedPhotoUrl } from "@/lib/photo-url";
 
 type School = {
   id: string;
@@ -112,6 +113,16 @@ const ROLE_ORDER = [
 
 function clean(value: string | null | undefined) {
   return (value ?? "").trim();
+}
+
+const SCHOOL_OVERVIEW_MEDIA_REVISION = "school-overview-1";
+
+function schoolOverviewPhotoUrl(value: string | null | undefined) {
+  return versionedProxiedPhotoUrl(value, SCHOOL_OVERVIEW_MEDIA_REVISION);
+}
+
+function cssImageUrl(url: string) {
+  return `url(${JSON.stringify(url)})`;
 }
 
 function slugify(value: string) {
@@ -478,7 +489,7 @@ export default function SchoolsSchoolDetailPage() {
     );
     const payload = (await response.json().catch(() => ({}))) as {
       ok?: boolean;
-      files?: Array<{ name: string; url: string }>;
+      files?: Array<{ key?: string; name: string; url: string }>;
     };
 
     if (!response.ok || payload.ok === false || !payload.files) {
@@ -490,7 +501,9 @@ export default function SchoolsSchoolDetailPage() {
       .filter((file) => !!file.name && /\.(png|jpg|jpeg|webp)$/i.test(file.name))
       .sort((a, b) => naturalCompare(a.name, b.name))
       .map((file) => ({
-        url: clean(file.url),
+        // Persist the durable object key when the API supplies one. The
+        // signed URL is only a temporary display fallback and expires.
+        url: clean(file.key) || clean(file.url),
         label: file.name,
       }));
 
@@ -730,6 +743,8 @@ export default function SchoolsSchoolDetailPage() {
       totalPeopleWithPhotos: rows.filter((row) => clean(row.photo_url)).length,
     };
   }, [classCollectionsBySlug, roleCollectionsBySlug, rows, schoolId, schoolProjectCoverUrl]);
+
+  const schoolCoverDisplayUrl = schoolOverviewPhotoUrl(grouped.schoolCover);
 
   async function createGallery(kind: "class" | "role") {
     const title = clean(createGalleryName);
@@ -1482,17 +1497,17 @@ export default function SchoolsSchoolDetailPage() {
                   border: 0,
                   borderRadius: 16,
                   overflow: "hidden",
-                  background: grouped.schoolCover ? `url(${grouped.schoolCover}) ${Math.round(focalX * 100)}% ${Math.round(focalY * 100)}%/cover no-repeat` : "linear-gradient(135deg,#111111,#b91c1c)",
+                  background: schoolCoverDisplayUrl ? `${cssImageUrl(schoolCoverDisplayUrl)} ${Math.round(focalX * 100)}% ${Math.round(focalY * 100)}%/cover no-repeat, linear-gradient(135deg,#111111,#b91c1c)` : "linear-gradient(135deg,#111111,#b91c1c)",
                   aspectRatio: "1.35 / 1",
                   boxSizing: "border-box",
                   cursor: "pointer",
                   outline: "none",
-                  boxShadow: grouped.schoolCover ? "inset 0 0 0 1px #e5e7eb" : "inset 0 0 0 1px #e5e7eb",
+                  boxShadow: "inset 0 0 0 1px #e5e7eb",
                 }}
                 aria-label="Choose school cover photo"
                 title="Choose school cover photo"
               />
-              {grouped.schoolCover && (
+              {schoolCoverDisplayUrl && (
                 <button
                   type="button"
                   onClick={() => setFocalEditorOpen(true)}
@@ -1790,11 +1805,12 @@ export default function SchoolsSchoolDetailPage() {
                                   flexShrink: 0,
                                 }}
                               >
-                                {person.photo_url ? (
+                                {schoolOverviewPhotoUrl(person.photo_url) ? (
                                   // eslint-disable-next-line @next/next/no-img-element
                                   <img
-                                    src={person.photo_url}
+                                    src={schoolOverviewPhotoUrl(person.photo_url)}
                                     alt=""
+                                    onError={(event) => { event.currentTarget.style.display = "none"; }}
                                     style={{ width: "100%", height: "100%", objectFit: "cover" }}
                                   />
                                 ) : null}
@@ -1840,7 +1856,7 @@ export default function SchoolsSchoolDetailPage() {
                         {filteredClasses.map((classCard) => {
                           const classHref = classCard.href;
                           const classSettingsHref = `/dashboard/projects/schools/${schoolId}/classes/${encodeURIComponent(classCard.rawLabel)}/settings`;
-                          const cover = classCard.coverPhoto;
+                          const cover = schoolOverviewPhotoUrl(classCard.coverPhoto);
                           const studentCount = classCard.count;
                           const isEmptyClass = studentCount === 0;
                           const active =
@@ -1856,9 +1872,9 @@ export default function SchoolsSchoolDetailPage() {
                             >
                               <Link href={classHref} style={{ display: "block", textDecoration: "none", color: "inherit" }}>
                                 <div style={{ position: "relative", height: 200, marginBottom: 10 }}>
-                                  <div style={{ position: "absolute", inset: "10px 10px 0 10px", borderRadius: 4, background: cover ? `url(${cover}) center/cover no-repeat` : "linear-gradient(135deg,#e5e7eb,#cbd5e1)", transform: "rotate(-3deg)", boxShadow: "0 8px 20px rgba(15,23,42,0.10)" }} />
-                                  <div style={{ position: "absolute", inset: "4px 6px 6px 6px", borderRadius: 4, background: cover ? `url(${cover}) center/cover no-repeat` : "linear-gradient(135deg,#e5e7eb,#dbe4f0)", transform: "rotate(2deg)", boxShadow: "0 8px 20px rgba(15,23,42,0.10)" }} />
-                                  <div style={{ position: "absolute", inset: 0, borderRadius: 4, background: cover ? `url(${cover}) center/cover no-repeat` : "linear-gradient(135deg,#f8fafc,#e2e8f0)", border: active ? "2px solid #b91c1c" : "1px solid #d0d5dd", boxShadow: "0 10px 25px rgba(15,23,42,0.14)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                                  <div style={{ position: "absolute", inset: "10px 10px 0 10px", borderRadius: 4, background: cover ? `${cssImageUrl(cover)} center/cover no-repeat, linear-gradient(135deg,#e5e7eb,#cbd5e1)` : "linear-gradient(135deg,#e5e7eb,#cbd5e1)", transform: "rotate(-3deg)", boxShadow: "0 8px 20px rgba(15,23,42,0.10)" }} />
+                                  <div style={{ position: "absolute", inset: "4px 6px 6px 6px", borderRadius: 4, background: cover ? `${cssImageUrl(cover)} center/cover no-repeat, linear-gradient(135deg,#e5e7eb,#dbe4f0)` : "linear-gradient(135deg,#e5e7eb,#dbe4f0)", transform: "rotate(2deg)", boxShadow: "0 8px 20px rgba(15,23,42,0.10)" }} />
+                                  <div style={{ position: "absolute", inset: 0, borderRadius: 4, background: cover ? `${cssImageUrl(cover)} center/cover no-repeat, linear-gradient(135deg,#f8fafc,#e2e8f0)` : "linear-gradient(135deg,#f8fafc,#e2e8f0)", border: active ? "2px solid #b91c1c" : "1px solid #d0d5dd", boxShadow: "0 10px 25px rgba(15,23,42,0.14)", display: "flex", alignItems: "center", justifyContent: "center" }}>
                                     {!cover ? (
                                       <div style={{ display: "grid", justifyItems: "center", gap: 7, padding: 16, textAlign: "center", color: "#64748b" }}>
                                         <Users size={32} aria-hidden="true" />
@@ -2050,7 +2066,7 @@ export default function SchoolsSchoolDetailPage() {
                         {grouped.roleCards.map((roleCard) => {
                           const roleHref = roleCard.href;
                           const personCount = roleCard.count;
-                          const roleCover = roleCard.coverPhoto;
+                          const roleCover = schoolOverviewPhotoUrl(roleCard.coverPhoto);
                           const active =
                             selectedRoleIds.includes(roleCard.key) ||
                             hoveredRoleId === roleCard.key ||
@@ -2064,13 +2080,13 @@ export default function SchoolsSchoolDetailPage() {
                             >
                               <Link href={roleHref} style={{ display: "block", textDecoration: "none", color: "inherit" }}>
                                 <div style={{ position: "relative", height: 200, marginBottom: 10 }}>
-                                  <div style={{ position: "absolute", inset: "10px 10px 0 10px", borderRadius: 4, background: roleCover ? `url(${roleCover}) center/cover no-repeat` : "linear-gradient(135deg,#e5e7eb,#cbd5e1)", transform: "rotate(-3deg)", boxShadow: "0 8px 20px rgba(15,23,42,0.10)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                                  <div style={{ position: "absolute", inset: "10px 10px 0 10px", borderRadius: 4, background: roleCover ? `${cssImageUrl(roleCover)} center/cover no-repeat, linear-gradient(135deg,#e5e7eb,#cbd5e1)` : "linear-gradient(135deg,#e5e7eb,#cbd5e1)", transform: "rotate(-3deg)", boxShadow: "0 8px 20px rgba(15,23,42,0.10)", display: "flex", alignItems: "center", justifyContent: "center" }}>
                                     {roleCover ? null : getRoleIcon(roleCard.label)}
                                   </div>
-                                  <div style={{ position: "absolute", inset: "4px 6px 6px 6px", borderRadius: 4, background: roleCover ? `url(${roleCover}) center/cover no-repeat` : "linear-gradient(135deg,#e5e7eb,#dbe4f0)", transform: "rotate(2deg)", boxShadow: "0 8px 20px rgba(15,23,42,0.10)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                                  <div style={{ position: "absolute", inset: "4px 6px 6px 6px", borderRadius: 4, background: roleCover ? `${cssImageUrl(roleCover)} center/cover no-repeat, linear-gradient(135deg,#e5e7eb,#dbe4f0)` : "linear-gradient(135deg,#e5e7eb,#dbe4f0)", transform: "rotate(2deg)", boxShadow: "0 8px 20px rgba(15,23,42,0.10)", display: "flex", alignItems: "center", justifyContent: "center" }}>
                                     {roleCover ? null : getRoleIcon(roleCard.label)}
                                   </div>
-                                  <div style={{ position: "absolute", inset: 0, borderRadius: 4, background: roleCover ? `url(${roleCover}) center/cover no-repeat` : "linear-gradient(135deg,#f1f5f9,#dbe4f0)", border: active ? "2px solid #b91c1c" : "1px solid #d0d5dd", boxShadow: "0 10px 25px rgba(15,23,42,0.14)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                                  <div style={{ position: "absolute", inset: 0, borderRadius: 4, background: roleCover ? `${cssImageUrl(roleCover)} center/cover no-repeat, linear-gradient(135deg,#f1f5f9,#dbe4f0)` : "linear-gradient(135deg,#f1f5f9,#dbe4f0)", border: active ? "2px solid #b91c1c" : "1px solid #d0d5dd", boxShadow: "0 10px 25px rgba(15,23,42,0.14)", display: "flex", alignItems: "center", justifyContent: "center" }}>
                                     {roleCover ? null : getRoleIcon(roleCard.label)}
                                   </div>
                                 </div>
@@ -2275,9 +2291,14 @@ export default function SchoolsSchoolDetailPage() {
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(180px,1fr))", gap: 16 }}>
                   {schoolCoverOptions.map((item) => {
                     const active = selectedSchoolCoverUrl === item.url;
+                    const displayUrl = schoolOverviewPhotoUrl(item.url);
                     return (
                       <button key={item.id} onClick={() => setSelectedSchoolCoverUrl(item.url)} style={{ border: active ? "3px solid #b91c1c" : "1px solid #e5e7eb", background: "#fff", borderRadius: 18, padding: 0, overflow: "hidden", cursor: "pointer", textAlign: "left" }}>
-                        <div style={{ aspectRatio: "4 / 3", background: item.url ? `url(${item.url}) center/cover no-repeat` : "#e5e7eb" }} />
+                        <div style={{ aspectRatio: "4 / 3", background: "#e5e7eb", overflow: "hidden" }}>
+                          {/* Authenticated R2 URLs use the app's custom proxy. */}
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          {displayUrl ? <img src={displayUrl} alt="" loading="lazy" onError={(event) => { event.currentTarget.style.display = "none"; }} style={{ width: "100%", height: "100%", display: "block", objectFit: "cover" }} /> : null}
+                        </div>
                         <div style={{ padding: 12, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
                           <div style={{ fontSize: 13, fontWeight: 700, color: "#111111", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.label}</div>
                           {active ? <span style={{ color: "#b91c1c", fontWeight: 900 }}>Selected</span> : null}
@@ -2320,9 +2341,14 @@ export default function SchoolsSchoolDetailPage() {
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(180px,1fr))", gap: 16 }}>
                   {classCoverOptions.map((item) => {
                     const active = selectedClassCoverUrl === item.url;
+                    const displayUrl = schoolOverviewPhotoUrl(item.url);
                     return (
                       <button key={item.id} onClick={() => setSelectedClassCoverUrl(item.url)} style={{ border: active ? "3px solid #b91c1c" : "1px solid #e5e7eb", background: "#fff", borderRadius: 18, padding: 0, overflow: "hidden", cursor: "pointer", textAlign: "left" }}>
-                        <div style={{ aspectRatio: "4 / 3", background: item.url ? `url(${item.url}) center/cover no-repeat` : "#e5e7eb" }} />
+                        <div style={{ aspectRatio: "4 / 3", background: "#e5e7eb", overflow: "hidden" }}>
+                          {/* Authenticated R2 URLs use the app's custom proxy. */}
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          {displayUrl ? <img src={displayUrl} alt="" loading="lazy" onError={(event) => { event.currentTarget.style.display = "none"; }} style={{ width: "100%", height: "100%", display: "block", objectFit: "cover" }} /> : null}
+                        </div>
                         <div style={{ padding: 12, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
                           <div style={{ fontSize: 13, fontWeight: 700, color: "#111111", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.label}</div>
                           {active ? <span style={{ color: "#b91c1c", fontWeight: 900 }}>Selected</span> : null}
@@ -2365,9 +2391,14 @@ export default function SchoolsSchoolDetailPage() {
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(180px,1fr))", gap: 16 }}>
                   {roleCoverOptions.map((item) => {
                     const active = selectedRoleCoverUrl === item.url;
+                    const displayUrl = schoolOverviewPhotoUrl(item.url);
                     return (
                       <button key={item.id} onClick={() => setSelectedRoleCoverUrl(item.url)} style={{ border: active ? "3px solid #b91c1c" : "1px solid #e5e7eb", background: "#fff", borderRadius: 18, padding: 0, overflow: "hidden", cursor: "pointer", textAlign: "left" }}>
-                        <div style={{ aspectRatio: "4 / 3", background: item.url ? `url(${item.url}) center/cover no-repeat` : "#e5e7eb" }} />
+                        <div style={{ aspectRatio: "4 / 3", background: "#e5e7eb", overflow: "hidden" }}>
+                          {/* Authenticated R2 URLs use the app's custom proxy. */}
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          {displayUrl ? <img src={displayUrl} alt="" loading="lazy" onError={(event) => { event.currentTarget.style.display = "none"; }} style={{ width: "100%", height: "100%", display: "block", objectFit: "cover" }} /> : null}
+                        </div>
                         <div style={{ padding: 12, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
                           <div style={{ fontSize: 13, fontWeight: 700, color: "#111111", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.label}</div>
                           {active ? <span style={{ color: "#b91c1c", fontWeight: 900 }}>Selected</span> : null}
@@ -2577,8 +2608,8 @@ export default function SchoolsSchoolDetailPage() {
                 <div style={{ padding: "14px 22px 56px", background: "#e9eaec", overflowY: "auto" }}>
                   <div style={{ width: "100%", maxWidth: 500, margin: "0 auto" }}>
                     <div style={{ background: "#fff", boxShadow: "0 1px 2px rgba(15,23,42,0.08)", overflow: "hidden" }}>
-                      <div style={{ width: "100%", aspectRatio: "1.62 / 1", background: grouped.schoolCover ? `url(${grouped.schoolCover}) ${Math.round(focalX * 100)}% ${Math.round(focalY * 100)}%/cover no-repeat` : "linear-gradient(135deg,#1f2937,#94a3b8)", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontSize: 24, fontWeight: 900, letterSpacing: "0.04em" }}>
-                        {!grouped.schoolCover ? "WHITEPHOTO" : null}
+                      <div style={{ width: "100%", aspectRatio: "1.62 / 1", background: schoolCoverDisplayUrl ? `${cssImageUrl(schoolCoverDisplayUrl)} ${Math.round(focalX * 100)}% ${Math.round(focalY * 100)}%/cover no-repeat, linear-gradient(135deg,#1f2937,#94a3b8)` : "linear-gradient(135deg,#1f2937,#94a3b8)", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontSize: 24, fontWeight: 900, letterSpacing: "0.04em" }}>
+                        {!schoolCoverDisplayUrl ? "WHITEPHOTO" : null}
                       </div>
                       <div style={{ padding: "42px 28px 30px", textAlign: "center" }}>
                         <div style={{ fontSize: 28, lineHeight: 1, fontWeight: 900, color: "#cbd5e1", textShadow: "0 1px 0 #fff" }}>
@@ -2615,7 +2646,7 @@ export default function SchoolsSchoolDetailPage() {
       ) : null}
 
       {/* ── Focal Point Editor Modal ── */}
-      {focalEditorOpen && grouped.schoolCover ? (
+      {focalEditorOpen && schoolCoverDisplayUrl ? (
         <div style={{ position: "fixed", inset: 0, zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.6)", backdropFilter: "blur(4px)" }}>
           <div style={{ background: "#fff", borderRadius: 20, width: "90%", maxWidth: 680, maxHeight: "90vh", display: "flex", flexDirection: "column", overflow: "hidden", boxShadow: "0 24px 64px rgba(0,0,0,0.25)" }}>
             {/* Header */}
@@ -2644,9 +2675,10 @@ export default function SchoolsSchoolDetailPage() {
                 }}
               >
                 <img
-                  src={grouped.schoolCover}
+                  src={schoolCoverDisplayUrl}
                   alt="Cover"
                   draggable={false}
+                  onError={(event) => { event.currentTarget.style.display = "none"; }}
                   style={{ width: "100%", maxHeight: "50vh", objectFit: "contain", display: "block", userSelect: "none" }}
                 />
                 {/* Focal point indicator */}
@@ -2675,7 +2707,7 @@ export default function SchoolsSchoolDetailPage() {
             {/* Preview strip */}
             <div style={{ padding: "0 24px 16px" }}>
               <div style={{ fontSize: 12, fontWeight: 700, color: "#6b7280", marginBottom: 6 }}>Crop preview</div>
-              <div style={{ width: "100%", height: 80, borderRadius: 10, overflow: "hidden", border: "1px solid #e5e7eb", backgroundImage: `url(${grouped.schoolCover})`, backgroundSize: "cover", backgroundPosition: `${Math.round(focalX * 100)}% ${Math.round(focalY * 100)}%` }} />
+              <div style={{ width: "100%", height: 80, borderRadius: 10, overflow: "hidden", border: "1px solid #e5e7eb", background: `${cssImageUrl(schoolCoverDisplayUrl)} ${Math.round(focalX * 100)}% ${Math.round(focalY * 100)}%/cover no-repeat, #e5e7eb` }} />
             </div>
             </div>{/* end scrollable body */}
 
