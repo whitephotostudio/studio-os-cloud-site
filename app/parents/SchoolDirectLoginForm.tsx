@@ -1,6 +1,7 @@
 "use client";
 
 import { type CSSProperties, type FormEvent, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Check, Mail, School, X } from "lucide-react";
 
@@ -182,9 +183,9 @@ export default function SchoolDirectLoginForm({ school }: { school: SchoolRow })
             <div style={{ ...inputStyle, display: "flex", alignItems: "center", gap: 12, paddingLeft: 16 }}>
               <School size={16} color="#98a2b3" />
               <span style={{ flex: 1, color: "#111" }}>{school.school_name}</span>
-              <a href="/parents" aria-label="Choose another school" style={{ color: "#98a2b3", display: "flex" }}>
+              <Link href="/parents" aria-label="Choose another school" style={{ color: "#98a2b3", display: "flex" }}>
                 <X size={16} />
-              </a>
+              </Link>
             </div>
           </div>
 
@@ -205,7 +206,7 @@ export default function SchoolDirectLoginForm({ school }: { school: SchoolRow })
 
           {preRelease ? (
             <div style={{ background: "#eff6ff", border: "1px solid #bfdbfe", color: "#1e40af", borderRadius: 12, padding: "13px 16px", fontSize: 13, lineHeight: 1.7 }}>
-              <strong>This gallery isn't available yet.</strong> Enter your email and we'll send you a notification as soon as the photos are ready - no PIN needed right now.
+              <strong>This gallery isn&apos;t available yet.</strong> Enter your email and we&apos;ll send you a notification as soon as the photos are ready - no PIN needed right now.
             </div>
           ) : (
             <div>
@@ -230,9 +231,9 @@ export default function SchoolDirectLoginForm({ school }: { school: SchoolRow })
             <div style={{ background: "#ecfdf3", border: "1px solid #6ee7b7", color: "#065f46", borderRadius: 14, padding: "16px 18px", fontSize: 14, lineHeight: 1.6, textAlign: "center" }}>
               <div style={{ display: "flex", gap: 8, alignItems: "center", justifyContent: "center", fontWeight: 800, marginBottom: 4 }}>
                 <Check size={17} />
-                You're on the list!
+                You&apos;re on the list!
               </div>
-              We'll notify you at <strong>{email.trim().toLowerCase()}</strong> when this gallery goes live.
+              We&apos;ll notify you at <strong>{email.trim().toLowerCase()}</strong> when this gallery goes live.
             </div>
           ) : (
             <button
@@ -273,8 +274,12 @@ const inputStyle: CSSProperties = {
   borderRadius: 14,
   border: "1px solid #d9dee7",
   background: "#fff",
+  color: "#111827",
+  caretColor: "#111827",
+  colorScheme: "light",
   padding: "0 14px",
   fontSize: 14,
+  fontFamily: "inherit",
   outline: "none",
   boxSizing: "border-box",
 };
