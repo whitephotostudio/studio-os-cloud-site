@@ -80,38 +80,17 @@ async function validateSchoolDownloadAccess(params: {
     };
   }
 
-  const selectedSchoolName = clean(schoolRow.school_name);
-  const [sameNameResult, pinResult] = await Promise.all([
-    service
-      .from("schools")
-      .select("id")
-      .ilike("school_name", selectedSchoolName)
-      .eq("photographer_id", schoolRow.photographer_id),
-    service
-      .from("students")
-      .select("id,school_id,photo_url,class_id,class_name,folder_name")
-      .eq("pin", selectedPin)
-      .eq("school_id", selectedSchoolId),
-  ]);
+  // Download authorization is exactly scoped to the immutable school chosen
+  // by the visitor. A duplicate display name must never widen access.
+  const pinResult = await service
+    .from("students")
+    .select("id,school_id,photo_url,class_id,class_name,folder_name")
+    .eq("pin", selectedPin)
+    .eq("school_id", selectedSchoolId);
 
-  if (sameNameResult.error) throw sameNameResult.error;
   if (pinResult.error) throw pinResult.error;
 
-  const candidateSchoolIds = Array.from(
-    new Set([selectedSchoolId, ...(sameNameResult.data ?? []).map((row) => row.id)]),
-  );
-
-  let matches = pinResult.data ?? [];
-  if (!matches.length && candidateSchoolIds.length > 1) {
-    const { data: broadMatches, error: broadError } = await service
-      .from("students")
-      .select("id,school_id,photo_url,class_id,class_name,folder_name")
-      .in("school_id", candidateSchoolIds)
-      .eq("pin", selectedPin);
-
-    if (broadError) throw broadError;
-    matches = broadMatches ?? [];
-  }
+  const matches = pinResult.data ?? [];
 
   if (!matches.length) {
     return {
@@ -121,61 +100,16 @@ async function validateSchoolDownloadAccess(params: {
     };
   }
 
-  let studentCandidates = matches as StudentAccessRow[];
-  if (candidateSchoolIds.length > 1) {
-    const { data: allCandidateMatches, error: allCandidateError } = await service
-      .from("students")
-      .select("id,school_id,photo_url,class_id,class_name,folder_name")
-      .in("school_id", candidateSchoolIds)
-      .eq("pin", selectedPin);
-
-    if (allCandidateError) throw allCandidateError;
-    if (allCandidateMatches?.length) {
-      studentCandidates = allCandidateMatches as StudentAccessRow[];
-    }
-  }
-
+  const studentCandidates = matches as StudentAccessRow[];
   const bestMatch =
-    studentCandidates.find(
-      (row) => row.school_id === selectedSchoolId && !!row.photo_url,
-    ) ??
-    studentCandidates.find((row) => !!row.photo_url) ??
-    studentCandidates.find((row) => row.school_id === selectedSchoolId) ??
-    studentCandidates[0];
-  const resolvedSchoolId = bestMatch?.school_id ?? selectedSchoolId;
-  let resolvedSchool = schoolRow;
-
-  if (resolvedSchoolId !== selectedSchoolId) {
-    const { data: resolvedSchoolRow, error: resolvedSchoolError } = await service
-      .from("schools")
-      .select("id,school_name,photographer_id,local_school_id,status,expiration_date,gallery_settings")
-      .eq("id", resolvedSchoolId)
-      .eq("photographer_id", schoolRow.photographer_id)
-      .maybeSingle<SchoolRow>();
-
-    if (resolvedSchoolError) throw resolvedSchoolError;
-    if (!resolvedSchoolRow) {
-      return { ok: false as const, status: 404, message: "School gallery not found." };
-    }
-    resolvedSchool = resolvedSchoolRow;
-  }
-
-  studentCandidates = studentCandidates.filter(
-    (student) => student.school_id === resolvedSchoolId,
-  );
-  if (hasCalendarBoundaryPassed(resolvedSchool.expiration_date)) {
-    return { ok: false as const, status: 409, message: "This gallery has expired." };
-  }
-  if (normalizedSchoolStatus(resolvedSchool.status) === "pre_release") {
-    return { ok: false as const, status: 409, message: "This gallery is not live yet." };
-  }
+    studentCandidates.find((row) => !!row.photo_url) ?? studentCandidates[0];
 
   return {
     ok: true as const,
     service,
-    schoolId: resolvedSchoolId,
+    schoolId: selectedSchoolId,
     viewerEmail: selectedEmail,
-    school: resolvedSchool,
+    school: schoolRow,
     classId: bestMatch?.class_id ?? null,
     className: bestMatch?.class_name ?? null,
     studentCandidates,

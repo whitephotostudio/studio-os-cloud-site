@@ -120,15 +120,22 @@ export async function findSyncedSchoolProjectId(
   schoolId: string,
   options?: {
     localSchoolId?: string | null;
+    photographerId?: string | null;
   }
 ) {
   const candidates: SchoolProjectIdentityCandidate[] = [];
-  const schoolProjectByLinkedSchoolId = await supabase
+  let schoolProjectByLinkedSchoolIdQuery = supabase
     .from("projects")
     .select("id,linked_school_id,linked_local_school_id")
     .eq("workflow_type", "school")
     .eq("linked_school_id", schoolId)
     .order("created_at", { ascending: false });
+  const photographerId = clean(options?.photographerId);
+  if (photographerId) {
+    schoolProjectByLinkedSchoolIdQuery =
+      schoolProjectByLinkedSchoolIdQuery.eq("photographer_id", photographerId);
+  }
+  const schoolProjectByLinkedSchoolId = await schoolProjectByLinkedSchoolIdQuery;
 
   if (schoolProjectByLinkedSchoolId.error) {
     throw schoolProjectByLinkedSchoolId.error;
@@ -139,12 +146,18 @@ export async function findSyncedSchoolProjectId(
 
   const localSchoolId = clean(options?.localSchoolId);
   if (localSchoolId) {
-    const schoolProjectByLinkedLocalSchoolId = await supabase
+    let schoolProjectByLinkedLocalSchoolIdQuery = supabase
       .from("projects")
       .select("id,linked_school_id,linked_local_school_id")
       .eq("workflow_type", "school")
       .eq("linked_local_school_id", localSchoolId)
       .order("created_at", { ascending: false });
+    if (photographerId) {
+      schoolProjectByLinkedLocalSchoolIdQuery =
+        schoolProjectByLinkedLocalSchoolIdQuery.eq("photographer_id", photographerId);
+    }
+    const schoolProjectByLinkedLocalSchoolId =
+      await schoolProjectByLinkedLocalSchoolIdQuery;
 
     if (schoolProjectByLinkedLocalSchoolId.error) {
       throw schoolProjectByLinkedLocalSchoolId.error;
@@ -169,16 +182,17 @@ export async function ensureSyncedSchoolProjectId(
   schoolId: string,
   school: SchoolSyncTarget | null
 ) {
-  const existingId = await findSyncedSchoolProjectId(supabase, schoolId, {
-    localSchoolId: school?.local_school_id,
-  });
-
-  if (existingId) return existingId;
-
   const photographerId = clean(school?.photographer_id);
   if (!photographerId) {
     return null;
   }
+
+  const existingId = await findSyncedSchoolProjectId(supabase, schoolId, {
+    localSchoolId: school?.local_school_id,
+    photographerId,
+  });
+
+  if (existingId) return existingId;
 
   const { data, error } = await supabase
     .from("projects")
@@ -197,6 +211,7 @@ export async function ensureSyncedSchoolProjectId(
   if (error) {
     const fallbackId = await findSyncedSchoolProjectId(supabase, schoolId, {
       localSchoolId: school?.local_school_id,
+      photographerId,
     });
     if (fallbackId) return fallbackId;
     throw error;

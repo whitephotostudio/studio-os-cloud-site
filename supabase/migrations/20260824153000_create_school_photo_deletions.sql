@@ -47,8 +47,74 @@ end
 $migration$;
 
 create unique index if not exists schools_local_school_id_unique_nonblank_idx
-  on public.schools (local_school_id)
+  on public.schools (lower(local_school_id))
   where local_school_id is not null and local_school_id <> '';
+
+-- `id` and `local_school_id` have both been used as top-level R2 roots. A
+-- normal unique index covers local/local collisions but cannot prevent one
+-- school's local id from equaling another school's database UUID. Claim every
+-- root in one registry so either kind of cross-school collision fails
+-- atomically, including concurrent inserts and updates.
+create table if not exists public.school_storage_root_claims (
+  root text primary key,
+  school_id uuid not null references public.schools(id) on delete cascade,
+  root_kind text not null check (root_kind in ('database', 'local')),
+  created_at timestamptz not null default timezone('utc', now()),
+  unique (school_id, root_kind),
+  constraint school_storage_root_claims_normalized
+    check (root = lower(btrim(root)) and root <> '')
+);
+
+alter table public.school_storage_root_claims enable row level security;
+revoke all on table public.school_storage_root_claims from anon;
+revoke all on table public.school_storage_root_claims from authenticated;
+
+insert into public.school_storage_root_claims (root, school_id, root_kind)
+select lower(id::text), id, 'database'
+from public.schools
+union all
+select lower(local_school_id), id, 'local'
+from public.schools
+where local_school_id is not null
+  and local_school_id <> ''
+  and lower(local_school_id) <> lower(id::text);
+
+create or replace function public.sync_school_storage_root_claims()
+returns trigger
+language plpgsql
+security definer
+set search_path = pg_catalog, public
+as $$
+begin
+  if tg_op = 'UPDATE' then
+    delete from public.school_storage_root_claims where school_id = old.id;
+  else
+    delete from public.school_storage_root_claims where school_id = new.id;
+  end if;
+
+  insert into public.school_storage_root_claims (root, school_id, root_kind)
+  values (lower(new.id::text), new.id, 'database');
+
+  if new.local_school_id is not null
+    and new.local_school_id <> ''
+    and lower(new.local_school_id) <> lower(new.id::text)
+  then
+    insert into public.school_storage_root_claims (root, school_id, root_kind)
+    values (lower(new.local_school_id), new.id, 'local');
+  end if;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists sync_school_storage_root_claims on public.schools;
+create trigger sync_school_storage_root_claims
+after insert or update of id, local_school_id on public.schools
+for each row
+execute function public.sync_school_storage_root_claims();
+
+revoke execute on function public.sync_school_storage_root_claims()
+  from public, anon, authenticated;
 
 create table if not exists public.school_photo_deletions (
   id uuid primary key default gen_random_uuid(),
@@ -96,7 +162,7 @@ create policy "Photographer reads own school photo deletions"
 -- role. Desktop and web clients can read their own tombstones but cannot forge,
 -- change, or erase them directly.
 revoke all on table public.school_photo_deletions from anon;
-revoke insert, update, delete on table public.school_photo_deletions from authenticated;
+revoke all on table public.school_photo_deletions from authenticated;
 grant select on table public.school_photo_deletions to authenticated;
 
 comment on table public.school_photo_deletions is

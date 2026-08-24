@@ -3,7 +3,7 @@ import { normalizeR2Key } from "@/lib/r2-access-security";
 import { r2KeyFromAnyUrl } from "@/lib/r2-signed-urls";
 import { extractStoragePathFromSupabaseUrl } from "@/lib/storage-images";
 
-type SupabaseClientLike = SupabaseClient;
+export type SchoolPhotoServiceClient = Pick<SupabaseClient, "from">;
 
 export type SchoolPhotoDeletionRow = {
   id: string;
@@ -25,6 +25,7 @@ type SchoolIdentity = {
 };
 
 type StudentFolderIdentity = {
+  school_id?: string | null;
   photo_url?: string | null;
   class_name?: string | null;
   folder_name?: string | null;
@@ -232,6 +233,25 @@ export function keyBelongsToSchoolStorage(
 }
 
 /**
+ * Remove representative references that do not belong to the selected
+ * school's globally claimed storage roots. This must run before a service-role
+ * route signs database-provided photo URLs.
+ */
+export function clearOutOfScopeSchoolPhotoReferences<
+  T extends { school_id?: string | null; photo_url: string | null },
+>(rows: T[], school: SchoolIdentity) {
+  return rows.map((row) => {
+    const rowSchoolId = clean(row.school_id);
+    const key = storageKeyFromSchoolPhotoReference(row.photo_url);
+    const inScope =
+      (!rowSchoolId || rowSchoolId === clean(school.id)) &&
+      !!key &&
+      keyBelongsToSchoolStorage(key, school);
+    return row.photo_url && !inScope ? { ...row, photo_url: null } : row;
+  });
+}
+
+/**
  * Exact folder prefixes authorized for one student. The representative photo
  * is authoritative for legacy paths; generated candidates cover current
  * database-id/local-id and schools/photos namespaced roots.
@@ -240,6 +260,12 @@ export function buildStudentPhotoFolderPrefixes(params: {
   school: SchoolIdentity;
   student: StudentFolderIdentity;
 }) {
+  if (
+    clean(params.student.school_id) &&
+    clean(params.student.school_id) !== clean(params.school.id)
+  ) {
+    return [];
+  }
   const roots = schoolStorageRoots(params.school);
   const className = safeStorageSegment(params.student.class_name);
   const folderName = safeStorageSegment(params.student.folder_name);
@@ -277,7 +303,7 @@ export function keyBelongsToStudentPhotoFolders(
 }
 
 export async function loadSchoolPhotoTombstones(
-  service: SupabaseClientLike,
+  service: SchoolPhotoServiceClient,
   schoolId: string,
   options?: { since?: string | null; fresh?: boolean },
 ): Promise<SchoolPhotoDeletionRow[]> {

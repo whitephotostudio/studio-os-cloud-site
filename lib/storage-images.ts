@@ -178,6 +178,7 @@ export function extractStoragePathFromSupabaseUrl(
 
   const markers = [
     `/storage/v1/object/public/${bucket}/`,
+    `/storage/v1/object/sign/${bucket}/`,
     `/storage/v1/render/image/public/${bucket}/`,
   ];
 

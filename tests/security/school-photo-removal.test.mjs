@@ -8,6 +8,8 @@ function source(relativePath) {
 }
 
 const helperSource = source("lib/school-photo-deletions.ts");
+const storageFolderSource = source("lib/storage-folder.ts");
+const digitalDeliverySource = source("lib/digital-delivery.ts");
 const routeSource = source(
   "app/api/dashboard/schools/[schoolId]/students/[studentId]/photos/route.ts",
 );
@@ -164,6 +166,47 @@ test("authorizes exact student folders across legacy and namespaced school roots
   );
 });
 
+test("rejects representative folders and rows outside the selected school's roots", () => {
+  const school = { id: "owned-id", local_school_id: "owned-local" };
+  const folders = helper.buildStudentPhotoFolderPrefixes({
+    school,
+    student: {
+      school_id: "owned-id",
+      class_name: "Class A",
+      folder_name: "Student One",
+      photo_url: "victim-id/Class A/Student One/stolen.jpg",
+    },
+  });
+  assert.ok(!folders.includes("victim-id/Class A/Student One"));
+  assert.deepEqual(
+    helper.buildStudentPhotoFolderPrefixes({
+      school,
+      student: {
+        school_id: "victim-id",
+        class_name: "Class A",
+        folder_name: "Student One",
+      },
+    }),
+    [],
+  );
+
+  const [owned, forged] = helper.clearOutOfScopeSchoolPhotoReferences(
+    [
+      {
+        school_id: "owned-id",
+        photo_url: "schools/owned-id/Class A/Student One/owned.jpg",
+      },
+      {
+        school_id: "owned-id",
+        photo_url: "schools/victim-id/Class A/Student One/stolen.jpg",
+      },
+    ],
+    school,
+  );
+  assert.equal(owned.photo_url, "schools/owned-id/Class A/Student One/owned.jpg");
+  assert.equal(forged.photo_url, null);
+});
+
 test("rejects path-shaped, padded, control, query, and reserved local school ids", () => {
   for (const malicious of [
     "schools/victim-id",
@@ -263,28 +306,35 @@ test("all gallery reload paths and direct image reads respect tombstones", () =>
   assert.match(routeSource, /invalidateSchoolPhotoTombstones\(schoolId\)/);
 });
 
-test("portal routes cannot sign tombstoned representatives or cross photographer scope", () => {
+test("portal routes cannot sign tombstoned representatives or cross school scope", () => {
   assert.match(galleryContextSource, /!isUuid\(selectedSchoolId\)/);
   assert.doesNotMatch(galleryContextSource, /: await studentQuery;/);
   assert.match(galleryContextSource, /namespace: "pin-auth-school"/);
   assert.match(galleryContextSource, /looksLikeEmail\(selectedEmail\)/);
   assert.match(galleryContextSource, /hasCalendarBoundaryPassed/);
   assert.match(galleryContextSource, /clearTombstonedSchoolPhotoReferences/);
+  assert.match(galleryContextSource, /clearOutOfScopeSchoolPhotoReferences/);
   assert.match(galleryContextSource, /tombstonedFamilies/);
   assert.match(galleryContextSource, /schoolId: activeSchool\.id/);
+  assert.doesNotMatch(galleryContextSource, /\.ilike\("school_name"/);
   assert.match(
     galleryContextSource,
-    /\.ilike\("school_name", schoolNameForMatch\)[\s\S]*?\.eq\("photographer_id", currentSchool\.photographer_id\)/,
+    /\.eq\("pin", selectedPin\)[\s\S]*?\.eq\("school_id", selectedSchoolId\)/,
   );
   assert.match(schoolAccessSource, /clearTombstonedSchoolPhotoReferences/);
+  assert.match(schoolAccessSource, /clearOutOfScopeSchoolPhotoReferences/);
   assert.match(
-    schoolAccessSource,
-    /\.ilike\("school_name", selectedSchoolName\)[\s\S]*?\.eq\("photographer_id", selectedSchool\.photographer_id\)/,
+    storageFolderSource,
+    /buildStudentPhotoFolderPrefixes\(\{ school, student \}\)/,
   );
+  assert.doesNotMatch(storageFolderSource, /folderFromPhotoUrl/);
   assert.match(
-    schoolDownloadsSource,
-    /\.ilike\("school_name", selectedSchoolName\)[\s\S]*?\.eq\("photographer_id", schoolRow\.photographer_id\)/,
+    digitalDeliverySource,
+    /service: params\.service,[\s\S]*?schoolId: params\.order\.school_id/,
+    "digital delivery must keep removed school photos filtered",
   );
+  assert.doesNotMatch(schoolAccessSource, /\.ilike\("school_name"/);
+  assert.doesNotMatch(schoolDownloadsSource, /\.ilike\("school_name"/);
 });
 
 test("migration provides owner-only reads and blocks legacy representative resurrection", () => {
@@ -292,9 +342,19 @@ test("migration provides owner-only reads and blocks legacy representative resur
   assert.match(migrationSource, /unique \(school_id, storage_key\)/i);
   assert.match(migrationSource, /schools_local_school_id_safe_storage_segment/i);
   assert.match(migrationSource, /schools_local_school_id_unique_nonblank_idx/i);
+  assert.match(migrationSource, /create table if not exists public\.school_storage_root_claims/i);
+  assert.match(migrationSource, /root text primary key/i);
+  assert.match(migrationSource, /sync_school_storage_root_claims/i);
+  assert.match(
+    migrationSource,
+    /revoke all on table public\.school_storage_root_claims from authenticated/i,
+  );
   assert.match(migrationSource, /alter table public\.school_photo_deletions enable row level security/i);
   assert.match(migrationSource, /for select[\s\S]*to authenticated[\s\S]*user_id = auth\.uid\(\)/i);
-  assert.match(migrationSource, /revoke insert, update, delete[\s\S]*from authenticated/i);
+  assert.match(
+    migrationSource,
+    /revoke all on table public\.school_photo_deletions from authenticated;[\s\S]*grant select on table public\.school_photo_deletions to authenticated;/i,
+  );
   assert.match(migrationSource, /prevent_tombstoned_student_photo_resurrection/i);
   assert.match(migrationSource, /school_photo_percent_decode/i);
   assert.match(migrationSource, /convert_from\(encoded_bytes, 'UTF8'\)/i);

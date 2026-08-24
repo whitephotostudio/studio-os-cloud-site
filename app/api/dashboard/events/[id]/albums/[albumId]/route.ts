@@ -10,6 +10,14 @@ import {
 } from "@/lib/storage-images";
 import { r2DeleteWithVariantsBestEffort } from "@/lib/r2";
 import { guardAgreement } from "@/lib/require-agreement";
+import {
+  loadSchoolPhotoTombstones,
+  tombstoneFamilySet,
+} from "@/lib/school-photo-deletions";
+import {
+  projectMediaReferenceMatchesSchoolPhotoFamily,
+  resolveOwnedProjectLinkedSchool,
+} from "@/lib/school-project-photo-mapping";
 
 export const dynamic = "force-dynamic";
 
@@ -64,9 +72,26 @@ function isKnownStorageUrl(value: string) {
   }
 }
 
-function resolveDashboardCoverUrl(value: string | null | undefined) {
+function resolveDashboardCoverUrl(
+  value: string | null | undefined,
+  projectId: string,
+  collectionId: string,
+  tombstonedFamilies: ReadonlySet<string> = new Set(),
+  collectionTitle?: string | null,
+) {
   const cover = clean(value);
   if (!cover) return "";
+  if (
+    projectMediaReferenceMatchesSchoolPhotoFamily({
+      reference: cover,
+      families: tombstonedFamilies,
+      projectId,
+      collectionId,
+      collectionTitle,
+    })
+  ) {
+    return "";
+  }
 
   const isHttpUrl = /^https?:\/\//i.test(cover);
   if (isHttpUrl && !isKnownStorageUrl(cover)) return cover;
@@ -142,7 +167,7 @@ export async function GET(
 
     const { data: projectData, error: projectError } = await service
       .from("projects")
-      .select("id,title,client_name,status,portal_status,event_date,shoot_date")
+      .select("id,title,client_name,status,portal_status,event_date,shoot_date,workflow_type,linked_school_id,linked_local_school_id")
       .eq("id", projectId)
       .eq("photographer_id", photographerRow.id)
       .maybeSingle();
@@ -154,6 +179,22 @@ export async function GET(
         { status: 404 },
       );
     }
+
+    const linkedSchoolResolution = await resolveOwnedProjectLinkedSchool({
+      service,
+      project: projectData,
+      photographerId: photographerRow.id,
+    });
+    if (linkedSchoolResolution.status === "invalid") {
+      return NextResponse.json(
+        { ok: false, message: "Project school link could not be verified." },
+        { status: 409 },
+      );
+    }
+    const linkedSchoolId = linkedSchoolResolution.school?.id ?? "";
+    const tombstonedFamilies = linkedSchoolId
+      ? tombstoneFamilySet(await loadSchoolPhotoTombstones(service, linkedSchoolId))
+      : new Set<string>();
 
     const { data: albumData, error: albumError } = await service
       .from("collections")
@@ -184,7 +225,17 @@ export async function GET(
     // R2 public URLs in DB.  Photographer dashboard uses 1 hour TTL —
     // long enough for an active browse session, short enough that a
     // copied URL doesn't outlive the gallery view by much.
-    const normalizedMedia = (mediaData ?? []).map((row) => {
+    const normalizedMedia = (mediaData ?? []).filter((row) =>
+      ![row.storage_path, row.preview_url, row.thumbnail_url].some((reference) =>
+        projectMediaReferenceMatchesSchoolPhotoFamily({
+          reference,
+          families: tombstonedFamilies,
+          projectId,
+          collectionId: albumId,
+          collectionTitle: albumData.title,
+        }),
+      ),
+    ).map((row) => {
       const mediaUrls = buildSignedMediaUrls({
         storagePath: row.storage_path,
         previewUrl: row.preview_url,
@@ -254,7 +305,7 @@ export async function PATCH(
 
     const { data: projectData, error: projectError } = await service
       .from("projects")
-      .select("id")
+      .select("id,workflow_type,linked_school_id,linked_local_school_id")
       .eq("id", projectId)
       .eq("photographer_id", photographerRow.id)
       .maybeSingle();
@@ -266,6 +317,22 @@ export async function PATCH(
         { status: 404 },
       );
     }
+
+    const linkedSchoolResolution = await resolveOwnedProjectLinkedSchool({
+      service,
+      project: projectData,
+      photographerId: photographerRow.id,
+    });
+    if (linkedSchoolResolution.status === "invalid") {
+      return NextResponse.json(
+        { ok: false, message: "Project school link could not be verified." },
+        { status: 409 },
+      );
+    }
+    const linkedSchoolId = linkedSchoolResolution.school?.id ?? "";
+    const tombstonedFamilies = linkedSchoolId
+      ? tombstoneFamilySet(await loadSchoolPhotoTombstones(service, linkedSchoolId))
+      : new Set<string>();
 
     const { data: currentAlbum, error: currentAlbumError } = await service
       .from("collections")
@@ -301,6 +368,19 @@ export async function PATCH(
           { status: 400 },
         );
       }
+      if (
+        linkedSchoolResolution.status === "resolved" &&
+        title !== clean((currentAlbum as CollectionRow).title)
+      ) {
+        return NextResponse.json(
+          {
+            ok: false,
+            message:
+              "School album names come from the class folder and cannot be renamed here.",
+          },
+          { status: 409 },
+        );
+      }
 
       updatePayload.title = title;
       updatePayload.slug = slugify(title);
@@ -308,7 +388,18 @@ export async function PATCH(
     }
 
     if (Object.prototype.hasOwnProperty.call(body, "cover_photo_url")) {
-      updatePayload.cover_photo_url = clean(body.cover_photo_url) || null;
+      const requestedCover = clean(body.cover_photo_url);
+      updatePayload.cover_photo_url =
+        requestedCover &&
+        !projectMediaReferenceMatchesSchoolPhotoFamily({
+          reference: requestedCover,
+          families: tombstonedFamilies,
+          projectId,
+          collectionId: albumId,
+          collectionTitle: (currentAlbum as CollectionRow).title,
+        })
+          ? requestedCover
+          : null;
       hasUpdate = true;
     }
 
@@ -380,6 +471,10 @@ export async function PATCH(
         ...(albumData as CollectionRow),
         cover_photo_url: resolveDashboardCoverUrl(
           (albumData as CollectionRow).cover_photo_url,
+          projectId,
+          albumId,
+          tombstonedFamilies,
+          (currentAlbum as CollectionRow).title,
         ),
       },
     });

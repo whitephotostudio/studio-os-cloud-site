@@ -24,7 +24,9 @@ import {
 } from "@/lib/private-media-references";
 import { hasCalendarBoundaryPassed } from "@/lib/calendar-dates";
 import { isUuid } from "@/lib/r2-access-security";
+import { findSyncedSchoolProjectId } from "@/lib/school-sync";
 import {
+  clearOutOfScopeSchoolPhotoReferences,
   clearTombstonedSchoolPhotoReferences,
   loadSchoolPhotoTombstones,
   tombstoneFamilySet,
@@ -240,31 +242,14 @@ async function loadSchoolCompositeMedia(
   className: string | null | undefined | Array<string | null | undefined>,
 ) {
   const classCandidates = compositeClassCandidates(className);
-  if (!school?.id) return [] as CompositeMediaRow[];
-
-  const projectBySchoolId = await service
-    .from("projects")
-    .select("id")
-    .eq("workflow_type", "school")
-    .eq("linked_school_id", school.id)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  if (projectBySchoolId.error) throw projectBySchoolId.error;
-
-  let projectId = clean(projectBySchoolId.data?.id);
-  if (!projectId && school.local_school_id) {
-    const localProject = await service
-      .from("projects")
-      .select("id")
-      .eq("workflow_type", "school")
-      .eq("linked_local_school_id", school.local_school_id)
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    if (localProject.error) throw localProject.error;
-    projectId = clean(localProject.data?.id);
+  if (!school?.id || !clean(school.photographer_id)) {
+    return [] as CompositeMediaRow[];
   }
+
+  const projectId = await findSyncedSchoolProjectId(service, school.id, {
+    localSchoolId: school.local_school_id,
+    photographerId: school.photographer_id,
+  });
 
   if (!projectId) return [] as CompositeMediaRow[];
 
@@ -423,40 +408,15 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const schoolNameForMatch = clean(currentSchool?.school_name);
-    let schoolIdsToSearch: string[] = [];
-    let schoolRowsForMatch: SchoolRow[] = currentSchool ? [currentSchool] : [];
+    // Keep the response shape expected by the portal while treating the
+    // selected immutable school ID as the complete authorization boundary.
+    const schoolRowsForMatch: SchoolRow[] = [currentSchool];
 
-    if (schoolNameForMatch) {
-      const { data: sameNameSchools, error: sameNameError } = await service
-        .from("schools")
-        .select("id,school_name,photographer_id,package_profile_id,local_school_id,status,portal_status,order_due_date,expiration_date,access_mode,access_pin,email_required,gallery_settings,screenshot_protection_desktop,screenshot_protection_mobile,screenshot_protection_watermark,group_label_singular,group_label_plural")
-        .ilike("school_name", schoolNameForMatch)
-        .eq("photographer_id", currentSchool.photographer_id)
-        .order("created_at", { ascending: false });
-
-      if (sameNameError) throw sameNameError;
-
-      schoolRowsForMatch = (sameNameSchools as SchoolRow[] | null) ?? schoolRowsForMatch;
-      schoolIdsToSearch = Array.from(
-        new Set([
-          ...schoolRowsForMatch.map((row) => row.id),
-          ...(selectedSchoolId ? [selectedSchoolId] : []),
-        ]),
-      );
-    } else if (selectedSchoolId) {
-      schoolIdsToSearch = [selectedSchoolId];
-    }
-
-    const studentQuery = service
+    const { data: studentRows, error: studentsError } = await service
       .from("students")
-        .select("id,first_name,last_name,photo_url,class_id,school_id,class_name,folder_name,pin")
-      .eq("pin", selectedPin);
-
-    const { data: studentRows, error: studentsError } = await studentQuery.in(
-      "school_id",
-      schoolIdsToSearch,
-    );
+      .select("id,first_name,last_name,photo_url,class_id,school_id,class_name,folder_name,pin")
+      .eq("pin", selectedPin)
+      .eq("school_id", selectedSchoolId);
 
     if (studentsError) throw studentsError;
 
@@ -469,36 +429,8 @@ export async function POST(request: NextRequest) {
     }
 
     const primaryStudent =
-      studentCandidates.find((row) => row.school_id === selectedSchoolId && !!row.photo_url) ??
-      studentCandidates.find((row) => !!row.photo_url) ??
-      studentCandidates.find((row) => row.school_id === selectedSchoolId) ??
-      studentCandidates[0];
-
-    const knownSchoolsById = new Map<string, SchoolRow>();
-    for (const row of schoolRowsForMatch) {
-      knownSchoolsById.set(row.id, row);
-    }
-    if (currentSchool?.id) {
-      knownSchoolsById.set(currentSchool.id, currentSchool);
-    }
-
-    let activeSchool = knownSchoolsById.get(primaryStudent.school_id) ?? null;
-    if (!activeSchool && primaryStudent.school_id) {
-      const { data: fetchedSchool, error: fetchedSchoolError } = await service
-        .from("schools")
-        .select("id,school_name,photographer_id,package_profile_id,local_school_id,status,portal_status,order_due_date,expiration_date,access_mode,access_pin,email_required,gallery_settings,screenshot_protection_desktop,screenshot_protection_mobile,screenshot_protection_watermark,group_label_singular,group_label_plural")
-        .eq("id", primaryStudent.school_id)
-        .maybeSingle<SchoolRow>();
-
-      if (fetchedSchoolError) throw fetchedSchoolError;
-      activeSchool = fetchedSchool ?? null;
-    }
-    if (!activeSchool || activeSchool.photographer_id !== currentSchool.photographer_id) {
-      return NextResponse.json(
-        { ok: false, message: "Gallery not found." },
-        { status: 404 },
-      );
-    }
+      studentCandidates.find((row) => !!row.photo_url) ?? studentCandidates[0];
+    const activeSchool = currentSchool;
     if (hasCalendarBoundaryPassed(activeSchool.expiration_date)) {
       return NextResponse.json(
         { ok: false, message: "This gallery is no longer available." },
@@ -525,9 +457,15 @@ export async function POST(request: NextRequest) {
       activeStudentCandidates,
       tombstonedFamilies,
     );
+    const scopedVisibleStudentCandidates =
+      clearOutOfScopeSchoolPhotoReferences(
+        visibleStudentCandidates,
+        activeSchool,
+      );
     const visiblePrimaryStudent =
-      visibleStudentCandidates.find((student) => student.id === primaryStudent.id) ??
-      primaryStudent;
+      scopedVisibleStudentCandidates.find(
+        (student) => student.id === primaryStudent.id,
+      ) ?? scopedVisibleStudentCandidates[0];
 
     const activeProject: ProjectRow | null = activeSchool
       ? {
@@ -715,7 +653,7 @@ export async function POST(request: NextRequest) {
     };
 
     const signedStudentCandidates = signPhotoUrlRows(
-      visibleStudentCandidates,
+      scopedVisibleStudentCandidates,
       SIGNED_URL_TTL_PARENTS_PORTAL_SECONDS,
     );
     const signedPrimaryStudent = {

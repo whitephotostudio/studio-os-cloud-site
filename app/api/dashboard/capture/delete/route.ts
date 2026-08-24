@@ -7,6 +7,7 @@ import { guardAgreement } from "@/lib/require-agreement";
 import { listR2FolderImages } from "@/lib/r2";
 import { recordAudit } from "@/lib/audit";
 import { rateLimit } from "@/lib/rate-limit";
+import { repairSchoolPhotoCoverReferences } from "@/lib/school-photo-cover-repair";
 import {
   buildStudentPhotoFolderPrefixes,
   canonicalOriginalSchoolPhotoKey,
@@ -27,7 +28,12 @@ function clean(value: string | null | undefined) {
   return (value ?? "").trim();
 }
 
-type SchoolRow = { id: string; local_school_id: string | null };
+type SchoolRow = {
+  id: string;
+  local_school_id: string | null;
+  photographer_id: string | null;
+  cover_photo_url: string | null;
+};
 type StudentRow = {
   id: string;
   photo_url: string | null;
@@ -94,7 +100,7 @@ export async function POST(request: NextRequest) {
 
   const { data: school } = await service
     .from("schools")
-    .select("id, local_school_id")
+    .select("id,local_school_id,photographer_id,cover_photo_url")
     .eq("id", schoolId)
     .eq("photographer_id", photographer.id)
     .maybeSingle<SchoolRow>();
@@ -254,6 +260,25 @@ export async function POST(request: NextRequest) {
     }
   }
 
+  let repairedReferences: Array<{ type: string; id: string }>;
+  try {
+    repairedReferences = await repairSchoolPhotoCoverReferences({
+      service,
+      school,
+      removedFamilies: new Set([family]),
+      fallbackKey: remainingAssets[0]?.key ?? null,
+    });
+  } catch (error) {
+    console.error("[capture/delete] gallery cover repair failed", error);
+    return NextResponse.json(
+      {
+        error:
+          "Photo was removed, but one or more gallery covers could not be refreshed.",
+      },
+      { status: 502 },
+    );
+  }
+
   await recordAudit({
     request,
     actorUserId: auth.user.id,
@@ -268,6 +293,7 @@ export async function POST(request: NextRequest) {
       schoolId: school.id,
       storageKey: key,
       alreadyRemoved,
+      repairedReferences: repairedReferences.length,
       bytesPreserved: true,
     },
     result: "ok",
@@ -280,5 +306,6 @@ export async function POST(request: NextRequest) {
     disposition: "removed_from_gallery",
     bytesPreserved: true,
     photoUrl: nextRepresentativeKey,
+    repairedReferences,
   });
 }
