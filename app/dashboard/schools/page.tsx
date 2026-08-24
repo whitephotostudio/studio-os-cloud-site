@@ -51,6 +51,8 @@ type SchoolCard = {
   peopleCount: number;
   classesCount: number;
   imagesCount: number;
+  uploadedPhotoCount: number | null;
+  uploadedPhotoCountVerified: boolean;
   coverUrl: string | null;
   coverFocalX: number;
   coverFocalY: number;
@@ -181,6 +183,52 @@ export default function SchoolsPage() {
       return () => window.removeEventListener("click", handleClick);
     }
   }, [contextMenuId]);
+
+  async function loadUploadedPhotoCounts(cards: SchoolCard[]) {
+    if (cards.length === 0) return;
+
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const batchSize = 25;
+
+      // Keep the exact R2 rollup off the critical render path and bound each
+      // request. Larger portfolios fill in a batch at a time without placing
+      // unbounded parallel pressure on R2.
+      for (let index = 0; index < cards.length; index += batchSize) {
+        const schoolIds = cards.slice(index, index + batchSize).map((card) => card.id);
+        const response = await fetch("/api/dashboard/schools/photo-counts", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(session?.access_token
+              ? { Authorization: `Bearer ${session.access_token}` }
+              : {}),
+          },
+          body: JSON.stringify({ schoolIds }),
+          cache: "no-store",
+        });
+        if (!response.ok) continue;
+
+        const payload = (await response.json()) as {
+          counts?: Record<string, number | null>;
+          sources?: Record<string, string>;
+        };
+        const counts = payload.counts ?? {};
+        const sources = payload.sources ?? {};
+
+        setSchools((current) => current.map((school) => {
+          if (!Object.prototype.hasOwnProperty.call(counts, school.id)) return school;
+          return {
+            ...school,
+            uploadedPhotoCount: counts[school.id] ?? null,
+            uploadedPhotoCountVerified: sources[school.id] === "r2",
+          };
+        }));
+      }
+    } catch (countError) {
+      console.warn("[schools] uploaded photo counts unavailable:", countError);
+    }
+  }
 
   async function load() {
     setLoading(true);
@@ -315,6 +363,8 @@ export default function SchoolsPage() {
           peopleCount: stat?.peopleCount ?? 0,
           classesCount: stat?.classNames.size ?? 0,
           imagesCount: stat?.imagesCount ?? 0,
+          uploadedPhotoCount: null,
+          uploadedPhotoCountVerified: false,
           coverUrl: clean(coverProject?.cover_photo_url) || stat?.firstPhotoUrl || null,
           coverFocalX: Number(coverProject?.cover_focal_x) || 0.5,
           coverFocalY: Number(coverProject?.cover_focal_y) || 0.5,
@@ -332,6 +382,7 @@ export default function SchoolsPage() {
       });
 
       setSchools(cards);
+      void loadUploadedPhotoCounts(cards);
     } catch (err) {
       console.error("[schools] load error:", err);
       setError(err instanceof Error ? err.message : "Failed to load schools");
@@ -729,17 +780,28 @@ export default function SchoolsPage() {
                       <div style={{ fontSize: 12, color: ex.color, fontWeight: ex.weight, marginTop: 2 }}>{ex.text}</div>
                     ) : null;
                   })()}
-                  <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 10 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 10, flexWrap: "wrap" }}>
                     <span style={{ fontSize: 12, color: "#6b7280" }}>{school.classesCount} classes</span>
                     <span style={{ fontSize: 12, color: "#d1d5db" }}>&middot;</span>
                     <span style={{ fontSize: 12, color: "#6b7280" }}>{school.peopleCount} students</span>
                     <span style={{ fontSize: 12, color: "#d1d5db" }}>&middot;</span>
-                    <span style={{ fontSize: 12, color: "#6b7280" }}>{school.imagesCount} photos</span>
+                    <span style={{ fontSize: 12, color: "#6b7280" }}>{school.imagesCount} with photos</span>
                   </div>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
                     <span style={{ display: "inline-block", padding: "3px 10px", borderRadius: 6, fontSize: 11, fontWeight: 700, background: "#dbeafe", color: "#1e40af" }}>
                       Synced
                     </span>
+                    {school.uploadedPhotoCount !== null && (
+                      <span
+                        title={school.uploadedPhotoCountVerified
+                          ? "Original photo files verified in cloud"
+                          : "Uploaded photo records; cloud verification is temporarily unavailable"}
+                        style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 10px", borderRadius: 999, fontSize: 11, fontWeight: 800, background: school.uploadedPhotoCountVerified ? "#dcfce7" : "#fef3c7", color: school.uploadedPhotoCountVerified ? "#166534" : "#92400e" }}
+                      >
+                        {school.uploadedPhotoCountVerified ? <Check size={11} /> : <Images size={11} />}
+                        {school.uploadedPhotoCount} uploaded
+                      </span>
+                    )}
                   </div>
                 </div>
               </div>
