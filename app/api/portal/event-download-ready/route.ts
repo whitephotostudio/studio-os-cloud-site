@@ -14,7 +14,9 @@ import { validateUuidArray } from "@/lib/request-validation";
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-const DOWNLOAD_TOKEN_TTL_MS = 45 * 60 * 1000;
+// Large original galleries are intentionally downloaded one ZIP at a time.
+// Keep every batch token valid long enough for the earlier ZIPs to finish.
+const DOWNLOAD_TOKEN_TTL_MS = 6 * 60 * 60 * 1000;
 const MEDIA_LOOKUP_CHUNK_SIZE = 100;
 
 type DownloadLogRow = {

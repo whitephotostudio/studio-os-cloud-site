@@ -82,10 +82,6 @@ async function prepareBatchDownload(batch: EventGalleryDownloadBatch) {
   };
 }
 
-function wait(ms: number) {
-  return new Promise<void>((resolve) => window.setTimeout(resolve, ms));
-}
-
 export default function ParentGalleryDownloadsPage() {
   const params = useParams();
   const router = useRouter();
@@ -95,13 +91,19 @@ export default function ParentGalleryDownloadsPage() {
 
   const [manifest, setManifest] = useState<EventGalleryDownloadManifest | null>(null);
   const [status, setStatus] = useState<"loading" | "ready" | "missing" | "expired">("loading");
-  const [downloadingAll, setDownloadingAll] = useState(false);
-  const [downloadedBatchCount, setDownloadedBatchCount] = useState(0);
+  const [nextBatchIndex, setNextBatchIndex] = useState(0);
+  const [startedBatchIds, setStartedBatchIds] = useState<string[]>([]);
   const [preparingBatchId, setPreparingBatchId] = useState<string | null>(null);
   const [downloadNotice, setDownloadNotice] = useState("");
   const [downloadError, setDownloadError] = useState("");
 
   useEffect(() => {
+    setNextBatchIndex(0);
+    setStartedBatchIds([]);
+    setPreparingBatchId(null);
+    setDownloadNotice("");
+    setDownloadError("");
+
     const nextManifest = readStoredManifest(manifestId);
     if (!nextManifest) {
       setManifest(null);
@@ -131,44 +133,11 @@ export default function ParentGalleryDownloadsPage() {
         ? "Download Session Expired"
         : "Download Files";
 
-  async function handleDownloadAllBatches() {
-    if (!manifest || downloadingAll || preparingBatchId) return;
-    setDownloadingAll(true);
-    setDownloadedBatchCount(0);
-    setPreparingBatchId(null);
-    setDownloadNotice("");
-    setDownloadError("");
-
-    try {
-      for (let index = 0; index < manifest.batches.length; index += 1) {
-        const batch = manifest.batches[index];
-        setPreparingBatchId(batch.id);
-        const preparedDownload = await prepareBatchDownload(batch);
-        triggerBatchDownload(
-          preparedDownload.downloadUrl,
-          preparedDownload.fileName,
-        );
-        setDownloadedBatchCount(index + 1);
-        if (index < manifest.batches.length - 1) {
-          await wait(1400);
-        }
-      }
-
-      setDownloadNotice(
-        manifest.batchCount === 1
-          ? "Your ZIP download has started."
-          : `Started ${manifest.batchCount} ZIP downloads. Your browser may ask you to allow multiple downloads.`,
-      );
-    } catch (error) {
-      setDownloadError(downloadErrorMessage(error));
-    } finally {
-      setPreparingBatchId(null);
-      setDownloadingAll(false);
-    }
-  }
-
-  async function handleDownloadBatch(batch: EventGalleryDownloadBatch) {
-    if (downloadingAll || preparingBatchId) return;
+  async function handleDownloadBatch(
+    batch: EventGalleryDownloadBatch,
+    batchIndex: number,
+  ) {
+    if (!manifest || preparingBatchId) return;
     setPreparingBatchId(batch.id);
     setDownloadNotice("");
     setDownloadError("");
@@ -176,13 +145,27 @@ export default function ParentGalleryDownloadsPage() {
     try {
       const preparedDownload = await prepareBatchDownload(batch);
       triggerBatchDownload(preparedDownload.downloadUrl, preparedDownload.fileName);
-      setDownloadNotice(`${batch.label} download has started.`);
+      setStartedBatchIds((current) =>
+        current.includes(batch.id) ? current : [...current, batch.id],
+      );
+      setNextBatchIndex((current) =>
+        batchIndex === current ? current + 1 : current,
+      );
+      setDownloadNotice(
+        batchIndex < manifest.batches.length - 1
+          ? `${batch.label} has started. Let it finish, then start ${manifest.batches[batchIndex + 1].label}.`
+          : `${batch.label} has started. Keep this page open until your browser shows that the download is complete.`,
+      );
     } catch (error) {
       setDownloadError(downloadErrorMessage(error));
     } finally {
       setPreparingBatchId(null);
     }
   }
+
+  const nextBatch = manifest?.batches[nextBatchIndex] ?? null;
+  const preparingBatch =
+    manifest?.batches.find((batch) => batch.id === preparingBatchId) ?? null;
 
   return (
     <main
@@ -356,8 +339,12 @@ export default function ParentGalleryDownloadsPage() {
                 >
                   <button
                     type="button"
-                    onClick={() => void handleDownloadAllBatches()}
-                    disabled={downloadingAll || !!preparingBatchId}
+                    onClick={() =>
+                      nextBatch
+                        ? void handleDownloadBatch(nextBatch, nextBatchIndex)
+                        : undefined
+                    }
+                    disabled={!nextBatch || !!preparingBatchId}
                     style={{
                       display: "inline-flex",
                       alignItems: "center",
@@ -369,19 +356,18 @@ export default function ParentGalleryDownloadsPage() {
                       padding: "14px 20px",
                       fontSize: 14,
                       fontWeight: 800,
-                      cursor: downloadingAll || preparingBatchId ? "default" : "pointer",
-                      opacity: downloadingAll || preparingBatchId ? 0.8 : 1,
+                      cursor: !nextBatch || preparingBatchId ? "default" : "pointer",
+                      opacity: !nextBatch || preparingBatchId ? 0.8 : 1,
                     }}
                   >
-                    {downloadingAll ? <LoaderCircle size={16} /> : <Download size={16} />}
-                    {downloadingAll
-                      ? `Preparing ZIP ${Math.min(
-                          manifest.batchCount,
-                          downloadedBatchCount + 1,
-                        )} of ${manifest.batchCount}`
-                      : manifest.batchCount === 1
-                        ? "Download ZIP File"
-                        : `Download All ${manifest.batchCount} ZIP Files`}
+                    {preparingBatchId ? <LoaderCircle size={16} /> : <Download size={16} />}
+                    {preparingBatchId && preparingBatch
+                      ? `Preparing ${preparingBatch.label}`
+                      : nextBatch
+                        ? manifest.batchCount === 1
+                          ? "Download ZIP File"
+                          : `Download ${nextBatch.label}`
+                        : "All ZIP Files Started"}
                   </button>
 
                   <div
@@ -392,7 +378,8 @@ export default function ParentGalleryDownloadsPage() {
                       maxWidth: 430,
                     }}
                   >
-                    One click will start each ZIP automatically. For very large galleries, your browser may ask for permission to allow multiple downloads.
+                    Download one ZIP at a time. When your browser finishes the current file,
+                    return here and start the next. This keeps large galleries from timing out.
                   </div>
                 </div>
 
@@ -457,87 +444,96 @@ export default function ParentGalleryDownloadsPage() {
                     marginTop: 4,
                   }}
                 >
-                  {manifest.batches.map((batch) => (
-                    <button
-                      key={batch.id}
-                      type="button"
-                      onClick={() => void handleDownloadBatch(batch)}
-                      disabled={downloadingAll || !!preparingBatchId}
-                      style={{
-                        width: "100%",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "space-between",
-                        gap: 16,
-                        padding: "18px 18px",
-                        borderRadius: 20,
-                        border: "1px solid rgba(22,22,22,0.08)",
-                        background: "#fbfaf8",
-                        color: "inherit",
-                        textAlign: "left",
-                        cursor: downloadingAll || preparingBatchId ? "default" : "pointer",
-                        opacity: downloadingAll || preparingBatchId ? 0.72 : 1,
-                      }}
-                    >
-                      <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-                        <div
-                          style={{
-                            width: 42,
-                            height: 42,
-                            borderRadius: 14,
-                            background: "#111111",
-                            color: "#fff",
-                            display: "grid",
-                            placeItems: "center",
-                            flexShrink: 0,
-                          }}
-                        >
-                          <FileArchive size={20} />
-                        </div>
-                        <div style={{ minWidth: 0 }}>
-                          <div
-                            style={{
-                              fontSize: 17,
-                              fontWeight: 700,
-                              color: "#161616",
-                            }}
-                          >
-                            {batch.label}
-                          </div>
-                          <div
-                            style={{
-                              marginTop: 4,
-                              fontSize: 14,
-                              color: "#66605a",
-                            }}
-                          >
-                            {batch.photoCount} photo{batch.photoCount === 1 ? "" : "s"} inside
-                          </div>
-                        </div>
-                      </div>
-                      <div
+                  {manifest.batches.map((batch, batchIndex) => {
+                    const hasStarted = startedBatchIds.includes(batch.id);
+                    return (
+                      <button
+                        key={batch.id}
+                        type="button"
+                        onClick={() => void handleDownloadBatch(batch, batchIndex)}
+                        disabled={!!preparingBatchId}
                         style={{
-                          display: "inline-flex",
+                          width: "100%",
+                          display: "flex",
                           alignItems: "center",
-                          gap: 8,
-                          borderRadius: 999,
-                          padding: "11px 16px",
-                          background: "#111111",
-                          color: "#fff",
-                          fontSize: 13,
-                          fontWeight: 700,
-                          whiteSpace: "nowrap",
+                          justifyContent: "space-between",
+                          gap: 16,
+                          padding: "18px 18px",
+                          borderRadius: 20,
+                          border: "1px solid rgba(22,22,22,0.08)",
+                          background: "#fbfaf8",
+                          color: "inherit",
+                          textAlign: "left",
+                          cursor: preparingBatchId ? "default" : "pointer",
+                          opacity: preparingBatchId ? 0.72 : 1,
                         }}
                       >
-                        {preparingBatchId === batch.id ? (
-                          <LoaderCircle size={15} />
-                        ) : (
-                          <Download size={15} />
-                        )}
-                        {preparingBatchId === batch.id ? "Preparing" : "Download"}
-                      </div>
-                    </button>
-                  ))}
+                        <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+                          <div
+                            style={{
+                              width: 42,
+                              height: 42,
+                              borderRadius: 14,
+                              background: "#111111",
+                              color: "#fff",
+                              display: "grid",
+                              placeItems: "center",
+                              flexShrink: 0,
+                            }}
+                          >
+                            <FileArchive size={20} />
+                          </div>
+                          <div style={{ minWidth: 0 }}>
+                            <div
+                              style={{
+                                fontSize: 17,
+                                fontWeight: 700,
+                                color: "#161616",
+                              }}
+                            >
+                              {batch.label}
+                            </div>
+                            <div
+                              style={{
+                                marginTop: 4,
+                                fontSize: 14,
+                                color: "#66605a",
+                              }}
+                            >
+                              {batch.photoCount} photo{batch.photoCount === 1 ? "" : "s"} inside
+                            </div>
+                          </div>
+                        </div>
+                        <div
+                          style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: 8,
+                            borderRadius: 999,
+                            padding: "11px 16px",
+                            background: "#111111",
+                            color: "#fff",
+                            fontSize: 13,
+                            fontWeight: 700,
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          {preparingBatchId === batch.id ? (
+                            <LoaderCircle size={15} />
+                          ) : hasStarted ? (
+                            <CheckCircle2 size={15} />
+                          ) : (
+                            <Download size={15} />
+                          )}
+                          {preparingBatchId === batch.id
+                            ? "Preparing"
+                            : hasStarted
+                              ? "Download Again"
+                              : "Download"}
+                        </div>
+                      </button>
+                    );
+                  })}
                 </div>
               </>
             ) : (

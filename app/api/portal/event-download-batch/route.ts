@@ -14,7 +14,10 @@ import { createZipStream, type ZipStreamEntry } from "@/lib/zip";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
-export const maxDuration = 300;
+// Original-resolution event ZIPs can approach 1 GB. Give a single, sequential
+// download enough time to finish on a normal client connection instead of
+// terminating the stream after five minutes and leaving a corrupt ZIP.
+export const maxDuration = 1800;
 
 // Hard upper bound for legacy or tampered tokens. The ZIP response streams now,
 // so larger professional batches are safe, but we still cap untrusted token
