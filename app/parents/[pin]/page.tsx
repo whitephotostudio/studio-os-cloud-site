@@ -357,6 +357,93 @@ type CartLineItem = {
   laneSchoolName?: string;
   laneStudentName?: string;
 };
+
+type LocalCartDraft = {
+  version: 1;
+  updatedAt: string;
+  items: CartLineItem[];
+  parentName: string;
+  parentEmail: string;
+  parentPhone: string;
+  notes: string;
+  deliveryMethod: "pickup" | "shipping";
+  shippingName: string;
+  shippingAddress1: string;
+  shippingAddress2: string;
+  shippingCity: string;
+  shippingProvince: string;
+  shippingPostalCode: string;
+};
+
+function cartDraftStorageKey(args: {
+  mode: string;
+  pin: string | null | undefined;
+  schoolId?: string | null;
+  studentId?: string | null;
+  projectId?: string | null;
+  email?: string | null;
+}) {
+  const safeMode = clean(args.mode);
+  const safePin = clean(args.pin);
+  const galleryId = clean(args.projectId) || clean(args.schoolId);
+  const subjectId = clean(args.studentId);
+  const safeEmail = clean(args.email).toLowerCase();
+  if (!safeMode || !safePin || !galleryId) return "";
+  return [
+    "studio-os-cart-draft-v1",
+    safeMode,
+    galleryId,
+    subjectId || "gallery",
+    safeEmail || "no-email",
+    safePin,
+  ].join(":");
+}
+
+function readLocalCartDraft(key: string): LocalCartDraft | null {
+  if (!key || typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<LocalCartDraft>;
+    if (parsed.version !== 1 || !Array.isArray(parsed.items)) return null;
+    return {
+      version: 1,
+      updatedAt: typeof parsed.updatedAt === "string" ? parsed.updatedAt : new Date().toISOString(),
+      items: parsed.items,
+      parentName: typeof parsed.parentName === "string" ? parsed.parentName : "",
+      parentEmail: typeof parsed.parentEmail === "string" ? parsed.parentEmail : "",
+      parentPhone: typeof parsed.parentPhone === "string" ? parsed.parentPhone : "",
+      notes: typeof parsed.notes === "string" ? parsed.notes : "",
+      deliveryMethod: parsed.deliveryMethod === "shipping" ? "shipping" : "pickup",
+      shippingName: typeof parsed.shippingName === "string" ? parsed.shippingName : "",
+      shippingAddress1: typeof parsed.shippingAddress1 === "string" ? parsed.shippingAddress1 : "",
+      shippingAddress2: typeof parsed.shippingAddress2 === "string" ? parsed.shippingAddress2 : "",
+      shippingCity: typeof parsed.shippingCity === "string" ? parsed.shippingCity : "",
+      shippingProvince: typeof parsed.shippingProvince === "string" ? parsed.shippingProvince : "",
+      shippingPostalCode: typeof parsed.shippingPostalCode === "string" ? parsed.shippingPostalCode : "",
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writeLocalCartDraft(key: string, draft: LocalCartDraft) {
+  if (!key || typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(key, JSON.stringify(draft));
+  } catch {
+    // Storage can be unavailable in private browsing; the live cart still works.
+  }
+}
+
+function clearLocalCartDraft(key: string) {
+  if (!key || typeof window === "undefined") return;
+  try {
+    window.localStorage.removeItem(key);
+  } catch {
+    // Ignore storage failures.
+  }
+}
 type GalleryView = "photos" | "store" | "favorites" | "orders" | "about";
 type EventPhotoStage = "albums" | "grid" | "viewer";
 
@@ -3988,6 +4075,7 @@ export default function ParentGalleryPage() {
   // are declared) — search for "[Phase 1d block]" to find them.
   const combineHydratedRef = useRef(false);
   const lastPersistedSignatureRef = useRef<string>("");
+  const localCartDraftHydratedRef = useRef<string>("");
   const [combineLanes, setCombineLanes] = useState<CombineLane[]>([]);
 
   // Convert the in-memory CartLineItem[] into the flat persisted shape.
@@ -4072,6 +4160,7 @@ export default function ParentGalleryPage() {
   const [orderError, setOrderError] = useState("");
   const [orderId, setOrderId] = useState("");
   const [placed, setPlaced] = useState(false);
+  const [restoredCartMessage, setRestoredCartMessage] = useState("");
 
   // 2026-04-26: Retouching upsell modal.  Pops up on every "Continue to
   // Secure Checkout" click — explicitly clarifies retouching is a SERVICE
@@ -4156,6 +4245,31 @@ export default function ParentGalleryPage() {
         ((student as unknown as { class_name?: string | null })?.class_name as string | null) ?? null,
     };
   }, [photographerId, student, pin, parentEmail, schoolName]);
+
+  const localCartDraftKey = useMemo(
+    () =>
+      cartDraftStorageKey({
+        mode,
+        pin,
+        schoolId: isSchoolMode ? student?.school_id || schoolId : null,
+        studentId: isSchoolMode ? student?.id ?? null : null,
+        projectId: isSchoolMode ? null : project?.id || projectId,
+        email: parentEmail || schoolViewerEmail || eventEmail,
+      }),
+    [
+      eventEmail,
+      isSchoolMode,
+      mode,
+      parentEmail,
+      pin,
+      project?.id,
+      projectId,
+      schoolId,
+      schoolViewerEmail,
+      student?.id,
+      student?.school_id,
+    ],
+  );
 
   // Hydrate from sessionStorage once photographerId is known.
   useEffect(() => {
@@ -5168,6 +5282,8 @@ export default function ParentGalleryPage() {
           throw new Error(json.message || "Payment confirmation failed.");
         }
         if (!active) return;
+        clearLocalCartDraft(localCartDraftKey);
+        setRestoredCartMessage("");
         setOrderId(json.orderId || "");
         if (json.customerEmail) setParentEmail(json.customerEmail);
         setPlaced(true);
@@ -5191,7 +5307,7 @@ export default function ParentGalleryPage() {
     return () => {
       active = false;
     };
-  }, [checkoutStatus, sessionId, placed]);
+  }, [checkoutStatus, sessionId, localCartDraftKey, placed]);
 
   // In school mode, once ANY photo in the set has a cutout (background-removed),
   // hide the non-cutout "originals" from the viewer thumbnail strip so parents
@@ -8139,6 +8255,127 @@ export default function ParentGalleryPage() {
     return "";
   }, [checkoutItems]);
   const basketItemCount = cartItems.length;
+  useEffect(() => {
+    if (!localCartDraftKey) return;
+    if (localCartDraftHydratedRef.current === localCartDraftKey) return;
+    if (packages.length === 0) return;
+
+    localCartDraftHydratedRef.current = localCartDraftKey;
+    if (cartItems.length > 0) return;
+
+    const draft = readLocalCartDraft(localCartDraftKey);
+    if (!draft || draft.items.length === 0) return;
+
+    const validPackageIds = new Set(packages.map((pkg) => pkg.id));
+    const restored = draft.items
+      .filter((item) => validPackageIds.has(item.packageId))
+      .map((item, index) => ({
+        ...item,
+        id:
+          item.id && item.id !== "__draft__"
+            ? item.id
+            : `restored_${Date.now()}_${index + 1}`,
+        slots: Array.isArray(item.slots) ? item.slots : [],
+        digitalSelections: Array.isArray(item.digitalSelections)
+          ? item.digitalSelections
+          : [],
+        backdrop: item.backdrop ?? null,
+        selectedImageUrl: item.selectedImageUrl ?? null,
+        orientation: item.orientation ?? "portrait",
+      }));
+
+    if (restored.length === 0) {
+      clearLocalCartDraft(localCartDraftKey);
+      return;
+    }
+
+    const restoreTimer = window.setTimeout(() => {
+      setCartItems(restored);
+      if (!parentName && draft.parentName) setParentName(draft.parentName);
+      if (!parentEmail && draft.parentEmail) setParentEmail(draft.parentEmail);
+      if (!parentPhone && draft.parentPhone) setParentPhone(draft.parentPhone);
+      if (!notes && draft.notes) setNotes(draft.notes);
+      setDeliveryMethod(draft.deliveryMethod);
+      if (!shippingName && draft.shippingName) setShippingName(draft.shippingName);
+      if (!shippingAddress1 && draft.shippingAddress1) setShippingAddress1(draft.shippingAddress1);
+      if (!shippingAddress2 && draft.shippingAddress2) setShippingAddress2(draft.shippingAddress2);
+      if (!shippingCity && draft.shippingCity) setShippingCity(draft.shippingCity);
+      if (!shippingProvince && draft.shippingProvince) setShippingProvince(draft.shippingProvince);
+      if (!shippingPostalCode && draft.shippingPostalCode) setShippingPostalCode(draft.shippingPostalCode);
+      setRestoredCartMessage("We restored your saved cart for this gallery.");
+      setDrawerOpen(true);
+      setDrawerView("checkout");
+    }, 0);
+    return () => window.clearTimeout(restoreTimer);
+  }, [
+    cartItems.length,
+    localCartDraftKey,
+    notes,
+    packages,
+    parentEmail,
+    parentName,
+    parentPhone,
+    shippingAddress1,
+    shippingAddress2,
+    shippingCity,
+    shippingName,
+    shippingPostalCode,
+    shippingProvince,
+  ]);
+
+  useEffect(() => {
+    if (!localCartDraftKey) return;
+    if (localCartDraftHydratedRef.current !== localCartDraftKey) return;
+    if (placed) return;
+
+    const meaningfulItems = checkoutItems.filter(
+      (item) => item.packageId && item.lineTotalCents > 0,
+    );
+    if (meaningfulItems.length === 0) {
+      clearLocalCartDraft(localCartDraftKey);
+      return;
+    }
+
+    const updatedAt = new Date().toISOString();
+    writeLocalCartDraft(localCartDraftKey, {
+      version: 1,
+      updatedAt,
+      items: meaningfulItems.map((item, index) => ({
+        ...item,
+        id: item.id === "__draft__" ? `draft_${Date.now()}_${index + 1}` : item.id,
+        slots: item.slots.map((slot) => ({ ...slot })),
+        digitalSelections: item.digitalSelections?.map((selection) => ({ ...selection })) ?? [],
+        backdrop: item.backdrop ? { ...item.backdrop } : null,
+      })),
+      parentName,
+      parentEmail,
+      parentPhone,
+      notes,
+      deliveryMethod,
+      shippingName,
+      shippingAddress1,
+      shippingAddress2,
+      shippingCity,
+      shippingProvince,
+      shippingPostalCode,
+    });
+  }, [
+    checkoutItems,
+    deliveryMethod,
+    localCartDraftKey,
+    notes,
+    parentEmail,
+    parentName,
+    parentPhone,
+    placed,
+    shippingAddress1,
+    shippingAddress2,
+    shippingCity,
+    shippingName,
+    shippingPostalCode,
+    shippingProvince,
+  ]);
+
   const anyPhysicalCheckoutItem = checkoutItems.some((item) => item.category !== "digital");
   const checkoutSubtotalCents = checkoutItems.reduce(
     (sum, item) => sum + item.packageSubtotalCents,
@@ -8239,6 +8476,7 @@ export default function ParentGalleryPage() {
     ]);
     resetCurrentSelection();
     setOrderError("");
+    setRestoredCartMessage("");
     setDrawerView("product-select");
   }
 
@@ -8283,6 +8521,7 @@ export default function ParentGalleryPage() {
 
   function removeCartItem(cartItemId: string) {
     setCartItems((prev) => prev.filter((item) => item.id !== cartItemId));
+    setRestoredCartMessage("");
   }
 
   // 2026-04-26: Retouching upsell modal — add a retouch add-on package to
@@ -8318,6 +8557,7 @@ export default function ParentGalleryPage() {
       laneStudentName: currentLane?.studentName,
     };
     setCartItems((prev) => [...prev, line]);
+    setRestoredCartMessage("");
     setRetouchUpsellShown(true);
     setRetouchUpsellOpen(false);
   }
@@ -8337,6 +8577,8 @@ export default function ParentGalleryPage() {
     setOrderError("");
     setPlacing(false);
     setCartItems([]);
+    clearLocalCartDraft(localCartDraftKey);
+    setRestoredCartMessage("");
     resetCurrentSelection();
     setDrawerOpen(false);
     setBackdropPickerOpen(false);
@@ -9154,6 +9396,8 @@ export default function ParentGalleryPage() {
                 setOrderError("");
                 setPlacing(false);
                 setCartItems([]);
+                clearLocalCartDraft(localCartDraftKey);
+                setRestoredCartMessage("");
                 resetCurrentSelection();
                 setDrawerOpen(false);
                 setBackdropPickerOpen(false);
@@ -13943,6 +14187,21 @@ export default function ParentGalleryPage() {
                         }}
                       >
                         {orderError || digitalFavoritesPackIssue}
+                      </div>
+                    )}
+
+                    {restoredCartMessage && !orderError && !digitalFavoritesPackIssue && (
+                      <div
+                        style={{
+                          background: "#071b12",
+                          border: "1px solid #14532d",
+                          borderRadius: 8,
+                          padding: "10px 13px",
+                          color: "#86efac",
+                          fontSize: 12,
+                        }}
+                      >
+                        {restoredCartMessage}
                       </div>
                     )}
 

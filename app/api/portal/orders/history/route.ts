@@ -311,12 +311,12 @@ export async function POST(request: NextRequest) {
     .ilike("viewer_email", emailLower)
     .maybeSingle();
 
-  if (!visitorRow) {
-    return NextResponse.json(
-      { ok: false, message: "We couldn't find any orders for that email + PIN combination." },
-      { status: 404 },
-    );
-  }
+  // Visitor rows are best-effort tracking. Older checkouts, blocked
+  // storage/cookies, or reloads after Stripe can leave a paid order without
+  // an event_gallery_visitors row. The order query below is still scoped by
+  // project + exact purchase email + valid PIN, so it remains private while
+  // recovering those real paid orders for the parent.
+  void visitorRow;
 
   const { data: orders, error } = await sb
     .from("orders")
