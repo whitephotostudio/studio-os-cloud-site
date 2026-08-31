@@ -10,6 +10,7 @@ import {
   normalizeEventGallerySettings,
   type EventGalleryLinkedContact,
 } from "@/lib/event-gallery-settings";
+import { selectSyncedSchoolProjectCandidate } from "@/lib/school-project-identity";
 
 export const dynamic = "force-dynamic";
 
@@ -292,20 +293,6 @@ export async function POST(request: NextRequest) {
       matchedSchool = schoolByLocalId;
     }
 
-    if (!matchedSchool?.id && title) {
-      const { data: schoolByName, error: schoolByNameError } = await service
-        .from("schools")
-        .select("id,local_school_id")
-        .eq("photographer_id", photographerId)
-        .ilike("school_name", title)
-        .order("created_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-
-      if (schoolByNameError) throw schoolByNameError;
-      matchedSchool = schoolByName;
-    }
-
     const matchedSchoolId = clean(matchedSchool?.id);
     let matchedSchoolHasPeople = false;
     if (matchedSchoolId) {
@@ -319,7 +306,10 @@ export async function POST(request: NextRequest) {
 
     let projectId = cloudProjectId;
     let existingProjectAccess: {
+      id?: string | null;
       workflow_type?: string | null;
+      linked_school_id?: string | null;
+      linked_local_school_id?: string | null;
       access_mode?: string | null;
       access_pin?: string | null;
       access_updated_at?: string | null;
@@ -332,7 +322,7 @@ export async function POST(request: NextRequest) {
       const { data: existing } = await service
         .from("projects")
         .select(
-          "id,workflow_type,access_mode,access_pin,access_updated_at,access_updated_source,gallery_settings",
+          "id,workflow_type,linked_school_id,linked_local_school_id,access_mode,access_pin,access_updated_at,access_updated_source,gallery_settings",
         )
         .eq("id", projectId)
         .eq("photographer_id", photographerId)
@@ -347,18 +337,37 @@ export async function POST(request: NextRequest) {
     }
 
     if (!projectId && localProjectId) {
-      // Try to find by linked_local_school_id
-      const { data: linked } = await service
+      // A local identifier can have stale duplicate project rows from older
+      // clients. For a school, accept only a row whose complete identity is
+      // compatible with the exact owner-scoped school resolved above.
+      const { data: linkedRows, error: linkedRowsError } = await service
         .from("projects")
         .select(
-          "id,workflow_type,access_mode,access_pin,access_updated_at,access_updated_source,gallery_settings",
+          "id,workflow_type,linked_school_id,linked_local_school_id,access_mode,access_pin,access_updated_at,access_updated_source,gallery_settings",
         )
         .eq("linked_local_school_id", localProjectId)
         .eq("photographer_id", photographerId)
         .or("status.is.null,status.neq.deleted")
         .order("created_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
+        .limit(50);
+
+      if (linkedRowsError) throw linkedRowsError;
+      const linkedCandidates = linkedRows ?? [];
+      const linked = matchedSchoolId && requestedWorkflowType !== "event"
+        ? selectSyncedSchoolProjectCandidate(
+            linkedCandidates.filter(
+              (candidate) => clean(candidate.workflow_type) === "school",
+            ),
+            {
+              schoolId: matchedSchoolId,
+              localSchoolId: matchedSchool?.local_school_id,
+            },
+          )
+        : requestedWorkflowType === "school"
+          ? null
+          : linkedCandidates.find(
+              (candidate) => clean(candidate.workflow_type) !== "school",
+            ) ?? null;
 
       if (linked?.id) {
         projectId = linked.id;
@@ -367,14 +376,71 @@ export async function POST(request: NextRequest) {
     }
 
     const existingWorkflowType = clean(existingProjectAccess?.workflow_type).toLowerCase();
+    const existingLinkedSchoolId = clean(existingProjectAccess?.linked_school_id);
+    const existingLinkedLocalSchoolId = clean(
+      existingProjectAccess?.linked_local_school_id,
+    );
+    if (
+      existingWorkflowType === "school" &&
+      requestedWorkflowType === "event"
+    ) {
+      return NextResponse.json(
+        {
+          ok: false,
+          message:
+            "This cloud project is linked to a school and cannot be changed into a regular project.",
+        },
+        { status: 409 },
+      );
+    }
     const effectiveWorkflowType =
       requestedWorkflowType ??
-      (matchedSchoolId &&
-      (matchedSchoolHasPeople || existingWorkflowType === "school" || !existingProjectAccess)
+      (existingWorkflowType === "school" ||
+      (matchedSchoolId && (matchedSchoolHasPeople || !existingProjectAccess))
         ? "school"
         : "event");
+    if (
+      effectiveWorkflowType === "school" &&
+      !matchedSchoolId &&
+      existingWorkflowType !== "school"
+    ) {
+      return NextResponse.json(
+        {
+          ok: false,
+          message:
+            "The exact local school could not be found. Refresh Cloud Sync before creating its gallery.",
+        },
+        { status: 409 },
+      );
+    }
     const effectiveSourceType =
       effectiveWorkflowType === "school" ? "hybrid" : "cloud_only";
+    if (
+      existingProjectAccess &&
+      localProjectId &&
+      existingLinkedLocalSchoolId &&
+      existingLinkedLocalSchoolId.toLowerCase() !== localProjectId.toLowerCase()
+    ) {
+      return NextResponse.json(
+        { ok: false, message: "This project belongs to a different local project." },
+        { status: 409 },
+      );
+    }
+    if (
+      effectiveWorkflowType === "school" &&
+      existingProjectAccess &&
+      matchedSchoolId &&
+      (existingLinkedSchoolId || existingLinkedLocalSchoolId) &&
+      !selectSyncedSchoolProjectCandidate([existingProjectAccess], {
+        schoolId: matchedSchoolId,
+        localSchoolId: matchedSchool?.local_school_id,
+      })
+    ) {
+      return NextResponse.json(
+        { ok: false, message: "This project belongs to a different school." },
+        { status: 409 },
+      );
+    }
 
     if (!projectId && localProjectId && effectiveWorkflowType === "event") {
       const { data: deletedProject, error: deletedProjectError } = await service
@@ -469,7 +535,10 @@ export async function POST(request: NextRequest) {
             effectiveWorkflowType === "school" && matchedSchoolId
               ? matchedSchoolId
               : null,
-          linked_local_school_id: localProjectId || null,
+          linked_local_school_id:
+            effectiveWorkflowType === "school"
+              ? clean(matchedSchool?.local_school_id) || localProjectId || null
+              : localProjectId || null,
           shoot_date: shootDate || null,
           event_date: shootDate || null,
           access_mode: effectiveProjectAccessMode,
@@ -497,10 +566,16 @@ export async function POST(request: NextRequest) {
           source_type: effectiveSourceType,
           title,
           client_name: clientName || null,
-          linked_school_id:
-            effectiveWorkflowType === "school" && matchedSchoolId
-              ? matchedSchoolId
-              : null,
+          ...(effectiveWorkflowType === "school" && matchedSchoolId
+            ? {
+                linked_school_id: existingLinkedSchoolId || matchedSchoolId,
+                linked_local_school_id:
+                  existingLinkedLocalSchoolId ||
+                  clean(matchedSchool?.local_school_id) ||
+                  localProjectId ||
+                  null,
+              }
+            : {}),
           ...(shootDate
             ? { shoot_date: shootDate, event_date: shootDate }
             : {}),
@@ -524,7 +599,7 @@ export async function POST(request: NextRequest) {
     const { data: projectRow, error: projectReadError } = await service
       .from("projects")
       .select(
-        "id,title,client_name,workflow_type,linked_school_id,shoot_date,event_date,order_due_date,expiration_date,portal_status,pre_release,gallery_slug,gallery_settings,cover_photo_url,access_mode,access_pin,access_updated_at,access_updated_source,updated_at",
+        "id,title,client_name,workflow_type,linked_school_id,linked_local_school_id,shoot_date,event_date,order_due_date,expiration_date,portal_status,pre_release,gallery_slug,gallery_settings,cover_photo_url,access_mode,access_pin,access_updated_at,access_updated_source,updated_at",
       )
       .eq("id", projectId)
       .single();
@@ -532,6 +607,10 @@ export async function POST(request: NextRequest) {
     if (projectReadError) throw projectReadError;
 
     const galleryUrl = buildGalleryUrl(projectId, projectRow?.gallery_slug);
+    const projectHasDeclaredSchoolLink =
+      clean(projectRow?.workflow_type).toLowerCase() === "school" &&
+      (clean(projectRow?.linked_school_id) !== "" ||
+        clean(projectRow?.linked_local_school_id) !== "");
 
     let seededVisitor: Record<string, unknown> | null = null;
     if (clientEmail) {
@@ -574,6 +653,7 @@ export async function POST(request: NextRequest) {
       // Find existing collection by local_id or slug/title
       let collectionId = "";
       let existingCollectionAccess: {
+        title?: string | null;
         access_mode?: string | null;
         access_pin?: string | null;
         access_updated_at?: string | null;
@@ -584,7 +664,7 @@ export async function POST(request: NextRequest) {
         const { data: byLocalId } = await service
           .from("collections")
           .select(
-            "id,cover_photo_url,access_mode,access_pin,access_updated_at,access_updated_source",
+            "id,title,cover_photo_url,access_mode,access_pin,access_updated_at,access_updated_source",
           )
           .eq("project_id", projectId)
           .eq("local_id", albumLocalId)
@@ -601,7 +681,7 @@ export async function POST(request: NextRequest) {
         const { data: bySlug } = await service
           .from("collections")
           .select(
-            "id,cover_photo_url,access_mode,access_pin,access_updated_at,access_updated_source",
+            "id,title,cover_photo_url,access_mode,access_pin,access_updated_at,access_updated_source",
           )
           .eq("project_id", projectId)
           .eq("kind", "gallery")
@@ -678,13 +758,18 @@ export async function POST(request: NextRequest) {
       } else {
         // Update existing collection
         const updatePayload: Record<string, unknown> = {
-          title: albumName,
           access_mode: effectiveAlbumAccessMode,
           access_pin: effectiveAlbumAccessPin,
           access_updated_at: effectiveAlbumAccessUpdatedAt,
           access_updated_source: effectiveAlbumAccessUpdatedSource,
           updated_at: nowIso,
         };
+        if (
+          !projectHasDeclaredSchoolLink ||
+          !clean(existingCollectionAccess?.title)
+        ) {
+          updatePayload.title = albumName;
+        }
         if (albumLocalId) updatePayload.local_id = albumLocalId;
 
         const { error: updateErr } = await service
@@ -697,7 +782,7 @@ export async function POST(request: NextRequest) {
 
       const { data: collectionRow, error: collectionReadError } = await service
         .from("collections")
-        .select("cover_photo_url")
+        .select("title,cover_photo_url")
         .eq("id", collectionId)
         .maybeSingle();
 
@@ -705,7 +790,7 @@ export async function POST(request: NextRequest) {
 
       collectionResults.push({
         id: collectionId,
-        title: albumName,
+        title: collectionRow?.title ?? albumName,
         local_id: albumLocalId,
         cover_photo_url: collectionRow?.cover_photo_url ?? null,
         access_mode: effectiveAlbumAccessMode,

@@ -7,6 +7,8 @@ import {
   DeleteObjectsCommand,
   ListObjectsV2Command,
 } from "@aws-sdk/client-s3";
+import { r2PresignedGetUrl } from "@/lib/r2-signed-urls";
+import { schoolPhotoFamilyForKey } from "@/lib/school-photo-deletions";
 
 function env(name: string) {
   const value = process.env[name];
@@ -50,7 +52,6 @@ function warnMissingR2ConfigOnce() {
 }
 
 export const R2_BUCKET = process.env.R2_BUCKET_NAME || "whitephoto-media";
-export const R2_PUBLIC_URL = (process.env.R2_PUBLIC_URL || "").replace(/\/$/, "");
 
 type R2FolderImage = {
   key: string;
@@ -79,20 +80,10 @@ function isDerivedVariantKey(key: string) {
 }
 
 /**
- * Returns the public URL for a given storage key in R2.
- */
-export function r2PublicUrl(key: string) {
-  if (!R2_PUBLIC_URL || !key) return "";
-  const encodedKey = key
-    .split("/")
-    .filter(Boolean)
-    .map((s) => encodeURIComponent(s))
-    .join("/");
-  return `${R2_PUBLIC_URL}/${encodedKey}`;
-}
-
-/**
- * Upload a file (Buffer) to R2.
+ * Upload a file (Buffer) to R2 and return its durable object key.
+ *
+ * Never return a permanent public URL here. New database rows must remain
+ * usable after the bucket's r2.dev public-access switch is disabled.
  */
 export async function r2Upload(
   key: string,
@@ -110,7 +101,7 @@ export async function r2Upload(
       CacheControl: cacheControl,
     }),
   );
-  return r2PublicUrl(key);
+  return key;
 }
 
 /**
@@ -147,7 +138,6 @@ export async function r2Download(key: string): Promise<Buffer> {
   );
   const stream = res.Body;
   if (!stream) throw new Error("Empty response body from R2");
-  // @ts-ignore — transformToByteArray exists on the SDK stream
   const bytes = await stream.transformToByteArray();
   return Buffer.from(bytes);
 }
@@ -266,9 +256,13 @@ export async function r2DeleteWithVariantsBestEffort(keys: string[]) {
   }
 }
 
-export async function listR2FolderImages(prefix: string): Promise<R2FolderImage[]> {
+export async function listR2FolderImages(
+  prefix: string,
+  options?: { ttlSeconds?: number },
+): Promise<R2FolderImage[]> {
   const normalizedPrefix = normalizePrefix(prefix);
   if (!normalizedPrefix) return [];
+  const ttlSeconds = options?.ttlSeconds ?? 60 * 60;
 
   const client = getR2Client();
   const results: R2FolderImage[] = [];
@@ -295,7 +289,7 @@ export async function listR2FolderImages(prefix: string): Promise<R2FolderImage[
       results.push({
         key,
         name,
-        url: r2PublicUrl(key),
+        url: r2PresignedGetUrl(key, ttlSeconds),
       });
     }
 
@@ -303,4 +297,46 @@ export async function listR2FolderImages(prefix: string): Promise<R2FolderImage[
   } while (continuationToken);
 
   return results.sort((a, b) => naturalCompare(a.name, b.name));
+}
+
+/** Count original images under an R2 prefix without generating signed URLs or
+ * materializing/sorting every object. Intended for lightweight dashboard
+ * rollups; preview and thumbnail derivatives are excluded. */
+export async function countR2FolderImages(
+  prefix: string,
+  options?: { excludedFamilies?: ReadonlySet<string> },
+): Promise<number> {
+  const normalizedPrefix = normalizePrefix(prefix);
+  if (!normalizedPrefix) return 0;
+
+  const client = getR2Client();
+  let count = 0;
+  let continuationToken: string | undefined;
+
+  do {
+    const page = await client.send(
+      new ListObjectsV2Command({
+        Bucket: R2_BUCKET,
+        Prefix: `${normalizedPrefix}/`,
+        MaxKeys: 1000,
+        ContinuationToken: continuationToken,
+      }),
+    );
+
+    for (const item of page.Contents ?? []) {
+      const key = normalizePrefix(item.Key ?? "");
+      if (!key || key === normalizedPrefix) continue;
+      const name = key.split("/").pop() ?? "";
+      if (!name || name.startsWith(".") || !isImageKey(name) || isDerivedVariantKey(name)) {
+        continue;
+      }
+      const family = schoolPhotoFamilyForKey(key);
+      if (family && options?.excludedFamilies?.has(family)) continue;
+      count += 1;
+    }
+
+    continuationToken = page.IsTruncated ? page.NextContinuationToken : undefined;
+  } while (continuationToken);
+
+  return count;
 }

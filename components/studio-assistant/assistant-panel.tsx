@@ -24,6 +24,7 @@ import {
   AssistantSuggestion,
   suggestionsForIntent,
 } from "@/lib/studio-assistant/suggestions";
+import { proxiedPhotoUrl } from "@/lib/photo-url";
 
 export type RunOutcome =
   | { ok: true; message: string; data?: Record<string, unknown> }
@@ -1517,7 +1518,11 @@ function PopularMediaResult({ data }: { data: Record<string, unknown> }) {
             overflow: "hidden",
           }}
         >
-          {items.map((row, idx) => (
+          {items.map((row, idx) => {
+            const photoUrl = proxiedPhotoUrl(
+              typeof row.photo_url === "string" ? row.photo_url : null,
+            );
+            return (
             <div
               key={String(row.student_id ?? idx)}
               style={{
@@ -1529,12 +1534,12 @@ function PopularMediaResult({ data }: { data: Record<string, unknown> }) {
                 background: idx % 2 === 0 ? "#fff" : "#fafbfc",
               }}
             >
-              {row.photo_url ? (
+              {photoUrl ? (
                 // Small 40x40 thumbnail from arbitrary user-content URLs —
                 // next/image would require registering every possible host.
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
-                  src={String(row.photo_url)}
+                  src={photoUrl}
                   alt=""
                   loading="lazy"
                   style={{
@@ -1587,7 +1592,8 @@ function PopularMediaResult({ data }: { data: Record<string, unknown> }) {
                 POPULAR
               </span>
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
       {school?.id ? (
@@ -1698,7 +1704,11 @@ function CoverSuggestionsResult({ data }: { data: Record<string, unknown> }) {
             gap: 10,
           }}
         >
-          {cands.map((c, idx) => (
+          {cands.map((c, idx) => {
+            const photoUrl = proxiedPhotoUrl(
+              typeof c.photo_url === "string" ? c.photo_url : null,
+            );
+            return (
             <div
               key={idx}
               style={{
@@ -1711,12 +1721,12 @@ function CoverSuggestionsResult({ data }: { data: Record<string, unknown> }) {
                 gap: 6,
               }}
             >
-              {c.photo_url ? (
+              {photoUrl ? (
                 // Cover suggestion thumbnail from arbitrary user-content URLs —
                 // next/image would require registering every possible host.
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
-                  src={String(c.photo_url)}
+                  src={photoUrl}
                   alt=""
                   loading="lazy"
                   style={{
@@ -1744,7 +1754,8 @@ function CoverSuggestionsResult({ data }: { data: Record<string, unknown> }) {
                 {String(c.reason ?? "")}
               </div>
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
       {school?.id ? (

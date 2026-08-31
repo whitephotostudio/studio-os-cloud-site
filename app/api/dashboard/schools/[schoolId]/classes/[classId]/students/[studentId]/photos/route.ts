@@ -151,7 +151,7 @@ export async function POST(
         .eq("id", student.id)
         .eq("school_id", schoolId)
         .select(
-          "id,school_id,first_name,last_name,pin,photo_url,class_id,class_name,folder_name,external_student_id",
+          "id,school_id,first_name,last_name,pin,photo_url,class_id,class_name,folder_name,external_student_id,parent_email",
         )
         .single<DashboardStudentRow>();
 
@@ -177,6 +177,7 @@ export async function POST(
       const { data: listedFiles, error: listError } = await listStorageFolderAssets(
         service,
         uploaded.folderPath,
+        schoolId,
       );
       if (listError) throw listError;
 

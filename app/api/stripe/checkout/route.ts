@@ -8,11 +8,17 @@ import {
   retrieveStripeAccount,
   syncConnectState,
 } from "@/lib/payments";
+import {
+  storedOrderTotalCents,
+  sumStoredOrderItemTotalsCents,
+  sumStoredOrderTotalsCents,
+} from "@/lib/order-checkout-totals";
 
 export const dynamic = "force-dynamic";
 
 type OrderRow = {
   id: string;
+  order_group_id: string | null;
   school_id: string | null;
   project_id: string | null;
   student_id: string | null;
@@ -90,7 +96,7 @@ export async function POST(req: NextRequest) {
     const { data: order, error: orderError } = await sb
       .from("orders")
       .select(
-        "id,school_id,project_id,student_id,photographer_id,parent_email,customer_email,package_id,package_name,subtotal_cents,tax_cents,total_cents,total_amount,currency,status,payment_status,stripe_checkout_session_id",
+        "id,order_group_id,school_id,project_id,student_id,photographer_id,parent_email,customer_email,package_id,package_name,subtotal_cents,tax_cents,total_cents,total_amount,currency,status,payment_status,stripe_checkout_session_id",
       )
       .eq("id", body.orderId)
       .maybeSingle<OrderRow>();
@@ -100,12 +106,48 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, message: "Order draft not found." }, { status: 404 });
     }
 
-    if ((order.payment_status ?? "").toLowerCase() === "paid") {
+    let checkoutOrders: OrderRow[] = [order];
+    if (order.order_group_id) {
+      const { data: groupOrders, error: groupError } = await sb
+        .from("orders")
+        .select(
+          "id,order_group_id,school_id,project_id,student_id,photographer_id,parent_email,customer_email,package_id,package_name,subtotal_cents,tax_cents,total_cents,total_amount,currency,status,payment_status,stripe_checkout_session_id",
+        )
+        .eq("order_group_id", order.order_group_id)
+        .order("id", { ascending: true });
+
+      if (groupError) throw groupError;
+      checkoutOrders = (groupOrders ?? []) as OrderRow[];
+      if (
+        checkoutOrders.length === 0 ||
+        !checkoutOrders.some((member) => member.id === order.id)
+      ) {
+        return NextResponse.json(
+          { ok: false, message: "This combined order is incomplete." },
+          { status: 400 },
+        );
+      }
+    }
+
+    if (
+      checkoutOrders.some(
+        (member) =>
+          ["paid", "succeeded", "no_payment_required"].includes(
+            (member.payment_status ?? "").toLowerCase(),
+          ),
+      )
+    ) {
       return NextResponse.json(
         { ok: false, message: "This order has already been paid." },
         { status: 400 },
       );
     }
+    // A caller normally submits create-combined's primaryOrderId, but make the
+    // Stripe/idempotency anchor deterministic for every member of the group.
+    // This prevents a second Checkout Session if a retry names a sibling row.
+    const checkoutAnchorOrder = order.order_group_id
+      ? checkoutOrders[0] ?? order
+      : order;
 
     const effectiveSchoolId = order.school_id || body.schoolId || null;
     const effectiveProjectId = order.project_id || body.projectId || null;
@@ -165,6 +207,23 @@ export async function POST(req: NextRequest) {
       photographerId = schoolRow.photographer_id;
     }
 
+    if (
+      order.order_group_id &&
+      checkoutOrders.some(
+        (member) =>
+          !member.photographer_id || member.photographer_id !== photographerId,
+      )
+    ) {
+      console.error("[stripe:checkout] order-group photographer mismatch", {
+        orderId: order.id,
+        orderGroupId: order.order_group_id,
+      });
+      return NextResponse.json(
+        { ok: false, message: "This combined order is invalid." },
+        { status: 400 },
+      );
+    }
+
     const { data: photographer, error: photographerError } = await sb
       .from("photographers")
       .select(
@@ -218,33 +277,45 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const totalCents = Number(order.total_cents ?? Math.round(Number(order.total_amount ?? 0) * 100));
-    const taxCents = Math.max(0, Math.round(Number(order.tax_cents ?? 0)));
-    const storedSubtotalCents = Math.round(
-      Number(order.subtotal_cents ?? totalCents - taxCents),
-    );
-    if (!Number.isFinite(totalCents) || totalCents <= 0) {
+    const totalCents = sumStoredOrderTotalsCents(checkoutOrders);
+    if (totalCents == null) {
       return NextResponse.json(
         { ok: false, message: "This order total is invalid." },
         { status: 400 },
       );
     }
 
-    // Defense against client-side price tampering. The parents portal still
-    // inserts the `orders` row via the anon key, which means a malicious
-    // caller could set total_cents = 1 and pay a penny for any package.
-    // Two cross-checks before we hand the total to Stripe:
-    //   1. Sum of order_items must match subtotal_cents (±2¢ rounding).
-    //   2. subtotal_cents + tax_cents must match total_cents.
-    //   3. subtotal_cents must be at least the authoritative package price
-    //      from the `packages` table — prevents the attacker from also
-    //      tampering order_items. The full fix is to move the order
-    //      insert itself server-side; this is the interim guard.
-    {
+    // Defense against corrupted or tampered persisted totals. For combined
+    // checkout every member is independently reconciled, then their trusted
+    // total_cents values are summed once for the single Stripe charge.
+    for (const checkoutOrder of checkoutOrders) {
+      const orderTotalCents = storedOrderTotalCents(checkoutOrder);
+      if (orderTotalCents == null) {
+        return NextResponse.json(
+          { ok: false, message: "This order total is invalid." },
+          { status: 400 },
+        );
+      }
+      const rawTaxCents = Math.round(Number(checkoutOrder.tax_cents ?? 0));
+      const taxCents = Math.max(0, rawTaxCents);
+      const storedSubtotalCents = Math.round(Number(
+        checkoutOrder.subtotal_cents ?? orderTotalCents - taxCents,
+      ));
+      if (
+        !Number.isSafeInteger(taxCents) ||
+        !Number.isSafeInteger(storedSubtotalCents) ||
+        storedSubtotalCents <= 0
+      ) {
+        return NextResponse.json(
+          { ok: false, message: "This order total is invalid." },
+          { status: 400 },
+        );
+      }
+
       const { data: itemRows, error: itemError } = await sb
         .from("order_items")
         .select("line_total_cents,unit_price_cents,quantity")
-        .eq("order_id", order.id);
+        .eq("order_id", checkoutOrder.id);
       if (itemError) throw itemError;
 
       if (!itemRows || itemRows.length === 0) {
@@ -254,24 +325,13 @@ export async function POST(req: NextRequest) {
         );
       }
 
-      let computedCents = 0;
-      for (const row of itemRows) {
-        const lineTotal = Number(row.line_total_cents);
-        if (Number.isFinite(lineTotal) && lineTotal > 0) {
-          computedCents += lineTotal;
-          continue;
-        }
-        const unit = Number(row.unit_price_cents);
-        const qty = Number(row.quantity);
-        if (Number.isFinite(unit) && Number.isFinite(qty) && unit > 0 && qty > 0) {
-          computedCents += unit * qty;
-        }
-      }
+      const computedCents = sumStoredOrderItemTotalsCents(itemRows);
 
       // Allow 2¢ of wiggle for rounding across split-per-slot line items.
       if (computedCents <= 0 || Math.abs(computedCents - storedSubtotalCents) > 2) {
         console.error("[stripe:checkout] total mismatch", {
           orderId: order.id,
+          memberOrderId: checkoutOrder.id,
           subtotal: storedSubtotalCents,
           computed: computedCents,
         });
@@ -280,12 +340,12 @@ export async function POST(req: NextRequest) {
           { status: 400 },
         );
       }
-      if (Math.abs(storedSubtotalCents + taxCents - totalCents) > 2) {
+      if (Math.abs(storedSubtotalCents + taxCents - orderTotalCents) > 2) {
         console.error("[stripe:checkout] tax total mismatch", {
-          orderId: order.id,
+          orderId: checkoutOrder.id,
           subtotal: storedSubtotalCents,
           tax: taxCents,
-          total: totalCents,
+          total: orderTotalCents,
         });
         return NextResponse.json(
           { ok: false, message: "This order total is invalid." },
@@ -293,15 +353,15 @@ export async function POST(req: NextRequest) {
         );
       }
 
-      // Authoritative minimum: the base package itself. If this order
-      // references a package_id we look up the real price and require
-      // total_cents >= that floor. Backdrops/extras can inflate it, but
-      // nothing should bring it below the package's own price.
-      if (order.package_id) {
+      // Authoritative minimum for legacy/single orders. Combined orders are
+      // created only by the server and intentionally carry negative sibling
+      // discount rows, so their independent item reconciliation above is the
+      // correct authority and a raw package-price floor would reject them.
+      if (!order.order_group_id && checkoutOrder.package_id) {
         const { data: packageRow, error: packageError } = await sb
           .from("packages")
           .select("id,price_cents,photographer_id")
-          .eq("id", order.package_id)
+          .eq("id", checkoutOrder.package_id)
           .maybeSingle();
         if (packageError) throw packageError;
 
@@ -315,7 +375,7 @@ export async function POST(req: NextRequest) {
             packageRow.photographer_id !== photographerId
           ) {
             console.error("[stripe:checkout] package/photographer mismatch", {
-              orderId: order.id,
+              orderId: checkoutOrder.id,
               orderPackageOwner: packageRow.photographer_id,
               chargePhotographer: photographerId,
             });
@@ -331,7 +391,7 @@ export async function POST(req: NextRequest) {
             storedSubtotalCents + 2 < authoritativePackageCents
           ) {
             console.error("[stripe:checkout] below-package-floor", {
-              orderId: order.id,
+              orderId: checkoutOrder.id,
               stored: storedSubtotalCents,
               packageFloor: authoritativePackageCents,
             });
@@ -345,6 +405,16 @@ export async function POST(req: NextRequest) {
     }
 
     const currency = clean(order.currency || "cad").toLowerCase();
+    if (
+      checkoutOrders.some(
+        (member) => clean(member.currency || "cad").toLowerCase() !== currency,
+      )
+    ) {
+      return NextResponse.json(
+        { ok: false, message: "This combined order has inconsistent currencies." },
+        { status: 400 },
+      );
+    }
     const origin = baseUrl(req);
     const baseGalleryUrl = new URL(`/parents/${encodeURIComponent(body.pin || "")}`, origin);
 
@@ -366,15 +436,21 @@ export async function POST(req: NextRequest) {
 
     const session = await createDirectOrderCheckoutSession({
       accountId: stripeAccountId,
-      orderId: order.id,
+      orderId: checkoutAnchorOrder.id,
       photographerId: photographer.id,
       schoolId: effectiveSchoolId,
       projectId: effectiveProjectId,
-      studentId: order.student_id,
-      customerEmail: order.customer_email || order.parent_email || body.customerEmail || null,
+      studentId: checkoutAnchorOrder.student_id,
+      customerEmail:
+        checkoutAnchorOrder.customer_email ||
+        checkoutAnchorOrder.parent_email ||
+        body.customerEmail ||
+        null,
       currency,
       totalCents,
-      productName: order.package_name || "Photo order",
+      productName: order.order_group_id
+        ? "Combined photo order"
+        : order.package_name || "Photo order",
       description: isEventOrder
         ? `${project?.title || project?.client_name || "Event"} gallery order`
         : school?.school_name
@@ -382,6 +458,7 @@ export async function POST(req: NextRequest) {
           : "Studio OS photo order",
       successUrl: successUrl.toString(),
       cancelUrl: cancelUrl.toString(),
+      orderGroupId: order.order_group_id,
     });
 
     const { error: updateError } = await sb
@@ -392,7 +469,10 @@ export async function POST(req: NextRequest) {
         stripe_checkout_session_id: session.id,
         payment_status: "pending",
       })
-      .eq("id", order.id);
+      .in(
+        "id",
+        checkoutOrders.map((member) => member.id),
+      );
 
     if (updateError) throw updateError;
 
@@ -400,7 +480,7 @@ export async function POST(req: NextRequest) {
       ok: true,
       url: session.url,
       sessionId: session.id,
-      orderId: order.id,
+      orderId: checkoutAnchorOrder.id,
       stripeAccountId,
       planCode: photographer.subscription_plan_code,
     });

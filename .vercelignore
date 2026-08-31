@@ -1,10 +1,12 @@
 .git
-.next
+.next*
 .next-build-backup-*
 .next_buildbak_*
 .studio_os_flutter
 .codex
+.tooling
 node_modules
 mobile
+tmp
 *.zip
 app/parents/[pin]/page1.tsx

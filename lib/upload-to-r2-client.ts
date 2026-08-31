@@ -1,6 +1,8 @@
 /**
  * Client-side helper to upload a file to Cloudflare R2 via our API route.
- * Returns the public URL and storage key.
+ * Returns the durable object reference and storage key. The historical
+ * `publicUrl` field name remains temporarily for client compatibility, but
+ * its value is now the same private-ready object key.
  */
 export async function uploadToR2(
   file: File,

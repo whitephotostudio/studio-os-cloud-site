@@ -120,23 +120,6 @@ function nobgCandidateKeysForOriginalKey(originalKey: string) {
   ]);
 }
 
-function publicCandidateUrl(sourceUrl: string | null | undefined, key: string) {
-  const raw = clean(sourceUrl);
-  if (!/^https:\/\//i.test(raw)) return "";
-  try {
-    const parsed = new URL(raw);
-    if (!/\.r2\.dev$/i.test(parsed.host)) return "";
-    const encodedKey = key
-      .split("/")
-      .filter(Boolean)
-      .map((part) => encodeURIComponent(part))
-      .join("/");
-    return `${parsed.origin}/${encodedKey}`;
-  } catch {
-    return "";
-  }
-}
-
 async function loadHttpsImageBytes(value: string | null | undefined) {
   const raw = clean(value);
   if (!/^https:\/\//i.test(raw)) return null;
@@ -145,17 +128,12 @@ async function loadHttpsImageBytes(value: string | null | undefined) {
   return Buffer.from(await response.arrayBuffer());
 }
 
-async function firstReadableImageObject(keys: string[], sourceUrl?: string | null) {
+async function firstReadableImageObject(keys: string[]) {
   for (const key of keys) {
     try {
       return await downloadR2(key);
     } catch {
       // Try the next known background-removal naming convention.
-    }
-    const publicUrl = publicCandidateUrl(sourceUrl, key);
-    if (publicUrl) {
-      const bytes = await loadHttpsImageBytes(publicUrl);
-      if (bytes) return bytes;
     }
   }
   return null;
@@ -216,7 +194,7 @@ export async function composeBackdropImage(options: {
   if (!originalKey || !backdropUrl) return null;
 
   const [foregroundBuffer, backdropBuffer] = await Promise.all([
-    firstReadableImageObject(nobgCandidateKeysForOriginalKey(originalKey), options.originalUrlOrKey),
+    firstReadableImageObject(nobgCandidateKeysForOriginalKey(originalKey)),
     loadTrustedImageBytes(backdropUrl),
   ]);
   if (!foregroundBuffer || !backdropBuffer) return null;

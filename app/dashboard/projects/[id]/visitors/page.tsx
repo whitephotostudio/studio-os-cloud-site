@@ -18,6 +18,7 @@ import {
   X,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { proxiedPhotoUrl } from "@/lib/photo-url";
 
 /* ── colours ─────────────────────────────────────────────────── */
 const bg = "#f5f5f5";
@@ -206,21 +207,8 @@ function DownloadPreviewGrid({
   );
 }
 
-function isImageUrl(value: string | null | undefined) {
-  const candidate = (value ?? "").trim();
-  return (
-    candidate.startsWith("/") ||
-    candidate.startsWith("data:") ||
-    /^https?:\/\//i.test(candidate)
-  );
-}
-
 function imageUrlFromSku(value: string | null | undefined) {
-  const candidate = (value ?? "").trim();
-  if (!candidate) return null;
-  if (isImageUrl(candidate)) return candidate;
-  if (!/\.(jpe?g|png|webp|avif)(?:$|\?)/i.test(candidate)) return null;
-  return `/api/r2/img/${candidate.split("/").map(encodeURIComponent).join("/")}`;
+  return proxiedPhotoUrl(value) || null;
 }
 
 function FavoritePreviewGrid({
@@ -366,7 +354,7 @@ export default function EventVisitorsPage() {
           const p = pg as Record<string, unknown>;
           setBranding({
             businessName: (p.business_name as string) || "",
-            logoUrl: (p.logo_url as string) || "",
+            logoUrl: proxiedPhotoUrl(p.logo_url as string),
             studioPhone: (p.studio_phone as string) || "",
             studioEmail: (p.studio_email as string) || (p.billing_email as string) || "",
             studioAddress: (p.studio_address as string) || "",

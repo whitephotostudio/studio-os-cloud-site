@@ -4,6 +4,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { uploadToR2 } from "@/lib/upload-to-r2-client";
+import { proxiedPhotoUrl } from "@/lib/photo-url";
 import {
   Plus, Trash2, Pencil, Eye, EyeOff, Upload, X, Star, Check, Palette,
   ChevronRight, Grid3X3, Images, CheckCircle2, Copy, Flame, FolderOpen,
@@ -143,7 +144,7 @@ export default function BackdropsPage() {
         const accessToken = (await supabase.auth.getSession()).data.session?.access_token || "";
         const storageKey = `backdrops/${obj}`;
         const r2Result = await uploadToR2(f, storageKey, accessToken);
-        const url = r2Result?.publicUrl || `${SUPABASE_URL}/storage/v1/object/public/${BUCKET}/${obj}`;
+        const url = r2Result?.key || r2Result?.publicUrl || `${SUPABASE_URL}/storage/v1/object/public/${BUCKET}/${obj}`;
 
         // ✅ PERF: Generate a 560px thumbnail for the backdrop picker so
         // parents aren't downloading the full-resolution image 50× in the
@@ -350,6 +351,7 @@ export default function BackdropsPage() {
   const totalHidden = backdrops.filter(b => !b.active).length;
   const revenuePerClient = backdrops.filter(b => b.tier === "premium").reduce((s, b) => s + b.price_cents, 0);
   const totalEarned = Object.values(revenueBd).reduce((s, v) => s + v, 0);
+  const editPreviewUrl = proxiedPhotoUrl(editUrl);
 
   // ── Stat chip helper ──
   function StatChip({ value, label, color, filterKey }: { value: string; label: string; color: string; filterKey?: string }) {
@@ -500,7 +502,7 @@ export default function BackdropsPage() {
                     <div style={{ display: "flex", gap: 8, padding: "14px 20px", overflowX: "auto" }}>
                       {g.bds.slice(0, 8).map(bd => (
                         <div key={bd.id} style={{ position: "relative", flexShrink: 0 }}>
-                          <img loading="lazy" src={bd.image_url} alt={bd.name} style={{ width: 100, height: 70, objectFit: "cover", borderRadius: 8, display: "block", border: "1px solid #eee" }} />
+                          <img loading="lazy" src={proxiedPhotoUrl(bd.thumbnail_url || bd.image_url)} alt={bd.name} style={{ width: 100, height: 70, objectFit: "cover", borderRadius: 8, display: "block", border: "1px solid #eee" }} />
                           <div style={{ position: "absolute", top: 4, right: 4, background: bd.tier === "premium" ? "#f59e0b" : "#22c55e", color: bd.tier === "premium" ? "#000" : "#fff", fontSize: 8, fontWeight: 800, padding: "1px 5px", borderRadius: 4 }}>{bd.tier === "premium" ? `$${(bd.price_cents / 100).toFixed(2)}` : "FREE"}</div>
                           {!bd.active && <div style={{ position: "absolute", inset: 0, background: "rgba(255,255,255,0.6)", borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center" }}><EyeOff size={14} color="#999" /></div>}
                         </div>
@@ -533,7 +535,7 @@ export default function BackdropsPage() {
                       opacity: bd.active ? 1 : 0.5, transition: "all 0.15s",
                     }}>
                       <div style={{ height: Math.round(thumbSize * 0.6), position: "relative", overflow: "hidden" }}>
-                        <img loading="lazy" src={bd.image_url} alt={bd.name} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+                        <img loading="lazy" src={proxiedPhotoUrl(bd.image_url)} alt={bd.name} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
                         {/* Selection */}
                         <div style={{ position: "absolute", top: 6, left: 6, width: 22, height: 22, borderRadius: "50%", background: sel ? "#6366f1" : "rgba(255,255,255,0.85)", border: sel ? "none" : "1.5px solid #ccc", display: "flex", alignItems: "center", justifyContent: "center" }}>{sel && <Check size={13} color="#fff" strokeWidth={3} />}</div>
                         {/* 2026-04-25: tiny landscape badge so photographer can
@@ -626,7 +628,7 @@ export default function BackdropsPage() {
               <button onClick={() => setEditorOpen(false)} style={{ background: "#f5f5f5", border: "none", borderRadius: 8, padding: 6, cursor: "pointer", display: "flex", color: "#666" }}><X size={18} /></button>
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-              {editUrl && <img loading="lazy" src={editUrl} alt="" style={{ width: "100%", height: 160, objectFit: "cover", borderRadius: 12, border: "1px solid #eee" }} />}
+              {editPreviewUrl && <img loading="lazy" src={editPreviewUrl} alt="" style={{ width: "100%", height: 160, objectFit: "cover", borderRadius: 12, border: "1px solid #eee" }} />}
               <div>
                 <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#666", marginBottom: 5, textTransform: "uppercase" }}>Name</label>
                 <input value={editName} onChange={e => setEditName(e.target.value)} placeholder="e.g. Classic Grey" style={{ width: "100%", border: "1.5px solid #e1e3e8", borderRadius: 10, padding: "10px 14px", fontSize: 14, outline: "none", boxSizing: "border-box" }} />

@@ -18,6 +18,7 @@ import {
   Share2,
   X,
 } from "lucide-react";
+import SchoolCoverImage from "@/components/school-cover-image";
 import { createClient } from "@/lib/supabase/client";
 
 type SchoolRow = {
@@ -33,11 +34,14 @@ type CountRow = { school_id: string; n: number };
 
 type StudentPhotoRow = { school_id: string; photo_url: string | null };
 
-type EventProjectRow = {
+type LinkedProjectRow = {
   title?: string | null;
   client_name?: string | null;
+  workflow_type?: string | null;
   linked_local_school_id: string | null;
   linked_school_id?: string | null;
+  cover_photo_url?: string | null;
+  updated_at?: string | null;
 };
 
 function clean(v: string | null | undefined): string {
@@ -45,7 +49,9 @@ function clean(v: string | null | undefined): string {
 }
 
 function normalizeLookupName(v: string | null | undefined): string {
-  return clean(v).toLowerCase().replace(/[^a-z0-9]+/g, "");
+  return clean(v)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "");
 }
 
 function buildShareUrl(origin: string, school: SchoolRow): string {
@@ -92,9 +98,15 @@ async function shareOrCopy(
 export default function MobileSchoolsPage() {
   const [supabase] = useState(() => createClient());
   const [schools, setSchools] = useState<SchoolRow[]>([]);
-  const [studentsBySchool, setStudentsBySchool] = useState<Record<string, number>>({});
-  const [coversBySchool, setCoversBySchool] = useState<Record<string, string>>({});
-  const [ordersBySchool, setOrdersBySchool] = useState<Record<string, number>>({});
+  const [studentsBySchool, setStudentsBySchool] = useState<
+    Record<string, number>
+  >({});
+  const [coversBySchool, setCoversBySchool] = useState<
+    Record<string, string[]>
+  >({});
+  const [ordersBySchool, setOrdersBySchool] = useState<Record<string, number>>(
+    {},
+  );
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
@@ -119,15 +131,20 @@ export default function MobileSchoolsPage() {
 
       const { data: schoolRows, error: sErr } = await supabase
         .from("schools")
-        .select("id, school_name, local_school_id, gallery_slug, shoot_date, created_at")
+        .select(
+          "id, school_name, local_school_id, gallery_slug, shoot_date, created_at",
+        )
         .eq("photographer_id", photog.id)
         .order("created_at", { ascending: false });
 
       const { data: projectRows, error: pErr } = await supabase
         .from("projects")
-        .select("title, client_name, linked_local_school_id, linked_school_id")
+        .select(
+          "title, client_name, workflow_type, linked_local_school_id, linked_school_id, cover_photo_url, updated_at",
+        )
         .eq("photographer_id", photog.id)
-        .eq("workflow_type", "event");
+        .in("workflow_type", ["event", "school"])
+        .order("updated_at", { ascending: true });
 
       if (cancelled) return;
       if (sErr || pErr) {
@@ -137,16 +154,24 @@ export default function MobileSchoolsPage() {
         return;
       }
 
-      const eventProjects = (projectRows ?? []) as EventProjectRow[];
+      const linkedProjects = (projectRows ?? []) as LinkedProjectRow[];
+      const eventProjects = linkedProjects.filter(
+        (project) => clean(project.workflow_type) === "event",
+      );
       const eventLocalSchoolIds = new Set(
-        eventProjects.map((p) => clean(p.linked_local_school_id)).filter(Boolean),
+        eventProjects
+          .map((p) => clean(p.linked_local_school_id))
+          .filter(Boolean),
       );
       const eventLinkedSchoolIds = new Set(
         eventProjects.map((p) => clean(p.linked_school_id)).filter(Boolean),
       );
       const eventNameKeys = new Set(
         eventProjects
-          .flatMap((p) => [normalizeLookupName(p.title), normalizeLookupName(p.client_name)])
+          .flatMap((p) => [
+            normalizeLookupName(p.title),
+            normalizeLookupName(p.client_name),
+          ])
           .filter(Boolean),
       );
       const candidateSchools = (schoolRows ?? []) as SchoolRow[];
@@ -177,12 +202,41 @@ export default function MobileSchoolsPage() {
       if (cancelled) return;
 
       const stuCounts: Record<string, number> = {};
-      const covers: Record<string, string> = {};
+      const studentCovers: Record<string, string[]> = {};
       for (const row of (studentsRes.data ?? []) as StudentPhotoRow[]) {
         if (!row.school_id) continue;
         stuCounts[row.school_id] = (stuCounts[row.school_id] ?? 0) + 1;
         const url = clean(row.photo_url);
-        if (url && !covers[row.school_id]) covers[row.school_id] = url;
+        if (url) {
+          const schoolCovers = studentCovers[row.school_id] ?? [];
+          if (!schoolCovers.includes(url)) schoolCovers.push(url);
+          studentCovers[row.school_id] = schoolCovers;
+        }
+      }
+      const projectCoverBySchoolId = new Map<string, string>();
+      const projectCoverByLocalId = new Map<string, string>();
+      for (const project of linkedProjects) {
+        if (clean(project.workflow_type) !== "school") continue;
+        const coverUrl = clean(project.cover_photo_url);
+        if (!coverUrl) continue;
+        const schoolId = clean(project.linked_school_id);
+        const localSchoolId = clean(project.linked_local_school_id);
+        if (schoolId) projectCoverBySchoolId.set(schoolId, coverUrl);
+        if (localSchoolId) projectCoverByLocalId.set(localSchoolId, coverUrl);
+      }
+      const covers: Record<string, string[]> = {};
+      for (const school of candidateSchools) {
+        const preferredCover =
+          projectCoverBySchoolId.get(school.id) ||
+          projectCoverByLocalId.get(clean(school.local_school_id)) ||
+          "";
+        covers[school.id] = Array.from(
+          new Set(
+            [preferredCover, ...(studentCovers[school.id] ?? [])].filter(
+              Boolean,
+            ),
+          ),
+        );
       }
       const finalVisibleSchools = candidateSchools.filter((school) => {
         if ((stuCounts[school.id] ?? 0) > 0) return true;
@@ -213,9 +267,10 @@ export default function MobileSchoolsPage() {
   const filtered = useMemo(() => {
     const term = search.trim().toLowerCase();
     if (!term) return schools;
-    return schools.filter((s) =>
-      clean(s.school_name).toLowerCase().includes(term) ||
-      clean(s.local_school_id).toLowerCase().includes(term),
+    return schools.filter(
+      (s) =>
+        clean(s.school_name).toLowerCase().includes(term) ||
+        clean(s.local_school_id).toLowerCase().includes(term),
     );
   }, [schools, search]);
 
@@ -233,12 +288,33 @@ export default function MobileSchoolsPage() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-      <header style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 12 }}>
+      <header
+        style={{
+          display: "flex",
+          alignItems: "flex-end",
+          justifyContent: "space-between",
+          gap: 12,
+        }}
+      >
         <div style={{ display: "grid", gap: 4 }}>
-          <div style={{ fontSize: 11, letterSpacing: "0.12em", fontWeight: 800, color: "#6b7280" }}>
+          <div
+            style={{
+              fontSize: 11,
+              letterSpacing: "0.12em",
+              fontWeight: 800,
+              color: "#6b7280",
+            }}
+          >
             SCHOOLS
           </div>
-          <h1 style={{ margin: 0, fontSize: 22, fontWeight: 900, color: "#111827" }}>
+          <h1
+            style={{
+              margin: 0,
+              fontSize: 22,
+              fontWeight: 900,
+              color: "#111827",
+            }}
+          >
             All schools
           </h1>
         </div>
@@ -368,7 +444,11 @@ export default function MobileSchoolsPage() {
             color: "#6b7280",
           }}
         >
-          <GraduationCap size={28} color="#d1d5db" style={{ marginBottom: 10 }} />
+          <GraduationCap
+            size={28}
+            color="#d1d5db"
+            style={{ marginBottom: 10 }}
+          />
           <div style={{ fontWeight: 800, color: "#111827", fontSize: 14 }}>
             {search ? "No matches" : "No schools yet"}
           </div>
@@ -379,21 +459,29 @@ export default function MobileSchoolsPage() {
           </div>
         </div>
       ) : (
-        <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 10 }}>
+        <ul
+          style={{
+            listStyle: "none",
+            margin: 0,
+            padding: 0,
+            display: "grid",
+            gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+            gap: 10,
+          }}
+        >
           {filtered.map((school) => {
             const students = studentsBySchool[school.id] ?? 0;
             const orderCt = ordersBySchool[school.id] ?? 0;
-            const cover = coversBySchool[school.id];
+            const coverSources = coversBySchool[school.id] ?? [];
             const shootDate = formatShootDate(school.shoot_date);
             // Mockup-inspired status pill: Gallery Released when there's
             // a slug + students, Pending when students exist but no slug,
             // Setup when there are no students yet.
-            const status: { label: string; bg: string; fg: string } =
-              !students
-                ? { label: "Setup", bg: "#fff7ed", fg: "#c2410c" }
-                : clean(school.gallery_slug)
-                  ? { label: "Gallery Released", bg: "#dcfce7", fg: "#15803d" }
-                  : { label: "Pending Delivery", bg: "#fef3c7", fg: "#92400e" };
+            const status: { label: string; bg: string; fg: string } = !students
+              ? { label: "Setup", bg: "#fff7ed", fg: "#c2410c" }
+              : clean(school.gallery_slug)
+                ? { label: "Gallery Released", bg: "#dcfce7", fg: "#15803d" }
+                : { label: "Pending Delivery", bg: "#fef3c7", fg: "#92400e" };
             return (
               <li key={school.id}>
                 <Link
@@ -414,38 +502,27 @@ export default function MobileSchoolsPage() {
                     style={{
                       position: "relative",
                       height: 84,
-                      background: cover
-                        ? "#f3f4f6"
-                        : "linear-gradient(135deg,#1e293b 0%,#0f172a 100%)",
+                      background:
+                        "linear-gradient(135deg,#1e293b 0%,#0f172a 100%)",
                       overflow: "hidden",
                     }}
                   >
-                    {cover ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
-                        src={`${cover}?w=320`}
-                        alt=""
-                        style={{
-                          width: "100%",
-                          height: "100%",
-                          objectFit: "cover",
-                          filter: "brightness(0.85)",
-                        }}
-                      />
-                    ) : (
-                      <div
-                        style={{
-                          position: "absolute",
-                          inset: 0,
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "center",
-                          color: "rgba(255,255,255,0.5)",
-                        }}
-                      >
-                        <GraduationCap size={34} />
-                      </div>
-                    )}
+                    <div
+                      style={{
+                        position: "absolute",
+                        inset: 0,
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        color: "rgba(255,255,255,0.5)",
+                      }}
+                    >
+                      <GraduationCap size={34} />
+                    </div>
+                    <SchoolCoverImage
+                      key={coverSources.join("\n")}
+                      sources={coverSources}
+                    />
                     {/* Status pill over the cover */}
                     <span
                       style={{

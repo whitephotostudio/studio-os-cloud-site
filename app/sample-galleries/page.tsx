@@ -212,13 +212,13 @@ export default function SampleGalleriesPage() {
                     <ArrowRight className="h-4 w-4" />
                   </Link>
                   <Link
-                    href="/sign-up"
-                    data-marketing-event="cta_start_trial"
-                    data-marketing-label="Sample galleries hero"
+                    href="/sample-galleries/demo"
+                    data-marketing-event="sample_gallery_card"
+                    data-marketing-label="Interactive gallery demo"
                     data-marketing-placement="sample_galleries_hero"
                     className="marketing-button premium-button inline-flex items-center justify-center rounded-full border border-white/20 bg-white/10 px-5 py-3 text-white transition hover:bg-white/20"
                   >
-                    Build This Workflow
+                    Try Interactive Demo
                   </Link>
                 </div>
               </Reveal>

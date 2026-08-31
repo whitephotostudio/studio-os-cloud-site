@@ -5,6 +5,13 @@ import {
 } from "@/lib/dashboard-auth";
 import { buildSchoolCandidateFolders } from "@/lib/storage-folder";
 import { listR2FolderImages } from "@/lib/r2";
+import {
+  filterTombstonedSchoolPhotoAssets,
+  loadSchoolPhotoTombstones,
+  schoolPhotoFamilyForKey,
+  storageKeyFromSchoolPhotoReference,
+  tombstoneFamilySet,
+} from "@/lib/school-photo-deletions";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -105,6 +112,9 @@ export async function POST(request: NextRequest) {
 
   const counts: Record<string, number> = {};
   const covers: Record<string, string> = {};
+  const deletedFamilies = tombstoneFamilySet(
+    await loadSchoolPhotoTombstones(service, schoolId),
+  );
 
   await pooledForEach(students, 8, async (student) => {
     try {
@@ -116,7 +126,10 @@ export async function POST(request: NextRequest) {
       const seen = new Set<string>();
       let firstUrl = "";
       for (const folder of folders) {
-        const files = await listR2FolderImages(folder);
+        const files = filterTombstonedSchoolPhotoAssets(
+          await listR2FolderImages(folder),
+          deletedFamilies,
+        );
         for (const f of files) {
           if (seen.has(f.key)) continue;
           seen.add(f.key);
@@ -124,7 +137,13 @@ export async function POST(request: NextRequest) {
         }
       }
       counts[student.id] = seen.size;
-      covers[student.id] = clean(student.photo_url) || firstUrl;
+      const representativeFamily = schoolPhotoFamilyForKey(
+        storageKeyFromSchoolPhotoReference(student.photo_url),
+      );
+      covers[student.id] =
+        representativeFamily && deletedFamilies.has(representativeFamily)
+          ? firstUrl
+          : clean(student.photo_url) || firstUrl;
     } catch {
       counts[student.id] = 0;
       covers[student.id] = clean(student.photo_url);

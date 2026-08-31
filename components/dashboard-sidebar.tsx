@@ -32,6 +32,7 @@ const navActiveStyle: React.CSSProperties = {
 
 const NAV_ITEMS = [
   { href: "/dashboard", label: "Dashboard", match: /^\/dashboard$/ },
+  { href: "/dashboard/clients", label: "Clients", match: /^\/dashboard\/clients/ },
   // Schools owns both the school list AND the school galleries, which live at
   // /dashboard/projects/schools/[id] — so opening a school keeps "Schools"
   // active instead of jumping the sidebar to "Projects".
@@ -140,6 +141,20 @@ export function DashboardSidebar({
         ))}
         {isAdmin && (
           <>
+            <Link
+              href="/dashboard/admin/bookings"
+              onClick={onNavigate}
+              style={/^\/dashboard\/admin\/bookings/.test(pathname) ? navActiveStyle : navItemStyle}
+            >
+              Studio Bookings
+            </Link>
+            <Link
+              href="/dashboard/admin/cloud-flow"
+              onClick={onNavigate}
+              style={/^\/dashboard\/admin\/cloud-flow/.test(pathname) ? navActiveStyle : navItemStyle}
+            >
+              Cloud Flow
+            </Link>
             <Link
               href="/dashboard/admin/users"
               onClick={onNavigate}

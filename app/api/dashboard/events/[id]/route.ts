@@ -21,6 +21,15 @@ import {
   SIGNED_URL_TTL_DASHBOARD_SECONDS,
 } from "@/lib/storage-images";
 import { guardAgreement } from "@/lib/require-agreement";
+import {
+  loadSchoolPhotoTombstones,
+  tombstoneFamilySet,
+} from "@/lib/school-photo-deletions";
+import {
+  projectMediaReferenceMatchesSchoolPhotoFamily,
+  projectPhotoCollectionId,
+  resolveOwnedProjectLinkedSchool,
+} from "@/lib/school-project-photo-mapping";
 
 export const dynamic = "force-dynamic";
 
@@ -87,9 +96,33 @@ function isKnownStorageUrl(value: string) {
   }
 }
 
-function resolveDashboardCoverUrl(value: string | null | undefined) {
+function resolveDashboardCoverUrl(
+  value: string | null | undefined,
+  projectId: string,
+  tombstonedFamilies: ReadonlySet<string> = new Set(),
+  collectionTitles: ReadonlyMap<string, string> = new Map(),
+  collectionId?: string | null,
+  collectionTitle?: string | null,
+) {
   const cover = clean(value);
   if (!cover) return "";
+  const resolvedCollectionId =
+    clean(collectionId) || projectPhotoCollectionId(cover, projectId);
+  const resolvedCollectionTitle =
+    clean(collectionTitle) ||
+    collectionTitles.get(resolvedCollectionId) ||
+    "";
+  if (
+    projectMediaReferenceMatchesSchoolPhotoFamily({
+      reference: cover,
+      families: tombstonedFamilies,
+      projectId,
+      collectionId: resolvedCollectionId,
+      collectionTitle: resolvedCollectionTitle,
+    })
+  ) {
+    return "";
+  }
 
   const isHttpUrl = /^https?:\/\//i.test(cover);
   if (isHttpUrl && !isKnownStorageUrl(cover)) return cover;
@@ -453,25 +486,57 @@ async function sendCampaignEmails(params: {
   };
 }
 
-async function fetchProjectMediaBreakdown(
+async function fetchVisibleProjectMedia(
   service: ReturnType<typeof createDashboardServiceClient>,
   projectId: string,
+  tombstonedFamilies: ReadonlySet<string>,
+  collectionTitles: ReadonlyMap<string, string>,
 ) {
   const collectionMediaCounts: Record<string, number> = {};
   let unassignedMediaCount = 0;
+  let mediaCount = 0;
+  const visibleRows: Array<{
+    id: string;
+    collection_id: string | null;
+    storage_path: string | null;
+    preview_url: string | null;
+    thumbnail_url: string | null;
+    filename: string | null;
+    created_at: string | null;
+    sort_order: number | null;
+  }> = [];
   const pageSize = 1000;
 
   for (let from = 0; ; from += pageSize) {
     const { data, error } = await service
       .from("media")
-      .select("collection_id")
+      .select("id,collection_id,storage_path,preview_url,thumbnail_url,filename,created_at,sort_order")
       .eq("project_id", projectId)
+      .order("sort_order", { ascending: true })
+      .order("created_at", { ascending: true })
+      .order("id", { ascending: true })
       .range(from, from + pageSize - 1);
 
     if (error) throw error;
 
     const rows = data ?? [];
     for (const row of rows) {
+      if (
+        [row.storage_path, row.preview_url, row.thumbnail_url].some((reference) =>
+          projectMediaReferenceMatchesSchoolPhotoFamily({
+            reference,
+            families: tombstonedFamilies,
+            projectId,
+            collectionId: clean(row.collection_id),
+            collectionTitle: collectionTitles.get(clean(row.collection_id)),
+          }),
+        )
+      ) {
+        continue;
+      }
+
+      visibleRows.push(row);
+      mediaCount += 1;
       const collectionId = clean(row.collection_id);
       if (collectionId) {
         collectionMediaCounts[collectionId] =
@@ -484,7 +549,12 @@ async function fetchProjectMediaBreakdown(
     if (rows.length < pageSize) break;
   }
 
-  return { collectionMediaCounts, unassignedMediaCount };
+  return {
+    visibleRows,
+    collectionMediaCounts,
+    unassignedMediaCount,
+    mediaCount,
+  };
 }
 
 export async function GET(
@@ -537,7 +607,21 @@ export async function GET(
     let rolesCount = 0;
     let peopleCount = 0;
 
-    const schoolId = projectRow.linked_school_id || projectRow.school_id || null;
+    const linkedSchoolResolution = await resolveOwnedProjectLinkedSchool({
+      service,
+      project: projectRow,
+      photographerId: photographerRow.id,
+    });
+    if (linkedSchoolResolution.status === "invalid") {
+      return NextResponse.json(
+        { ok: false, message: "Project school link could not be verified." },
+        { status: 409 },
+      );
+    }
+    const schoolId = linkedSchoolResolution.school?.id ?? "";
+    const tombstonedFamilies = schoolId
+      ? tombstoneFamilySet(await loadSchoolPhotoTombstones(service, schoolId))
+      : new Set<string>();
 
     if (schoolId) {
       const { data: studentRows, error: studentsError } = await service
@@ -574,6 +658,13 @@ export async function GET(
 
     if (collectionsError) throw collectionsError;
 
+    const collectionTitles = new Map(
+      (collectionRows ?? []).map((row) => [
+        clean((row as { id?: string | null }).id),
+        clean((row as { title?: string | null }).title),
+      ]),
+    );
+
     const collections = (collectionRows ?? []).filter((row) => {
       const kind = clean((row as { kind?: string | null }).kind).toLowerCase();
       return kind === "album" || kind === "class" || kind === "gallery" || !kind;
@@ -581,6 +672,11 @@ export async function GET(
       ...row,
       cover_photo_url: resolveDashboardCoverUrl(
         (row as { cover_photo_url?: string | null }).cover_photo_url,
+        projectId,
+        tombstonedFamilies,
+        collectionTitles,
+        (row as { id?: string | null }).id,
+        (row as { title?: string | null }).title,
       ),
     }));
 
@@ -599,26 +695,25 @@ export async function GET(
     const mediaPage = Math.max(1, Number(url.searchParams.get("mediaPage")) || 1);
     const mediaLimit = Math.min(1000, Math.max(1, Number(url.searchParams.get("mediaLimit")) || 1000));
     const mediaFrom = (mediaPage - 1) * mediaLimit;
-    const mediaTo = mediaFrom + mediaLimit - 1;
+    const {
+      visibleRows,
+      collectionMediaCounts,
+      unassignedMediaCount,
+      mediaCount,
+    } = await fetchVisibleProjectMedia(
+        service,
+        projectId,
+        tombstonedFamilies,
+        collectionTitles,
+      );
 
-    const { data: mediaRows, error: mediaError, count: mediaTotalCount } = await service
-      .from("media")
-      .select("id,collection_id,storage_path,preview_url,thumbnail_url,filename,created_at,sort_order", { count: "exact" })
-      .eq("project_id", projectId)
-      .order("sort_order", { ascending: true })
-      .order("created_at", { ascending: true })
-      .range(mediaFrom, mediaTo);
-
-    if (mediaError) throw mediaError;
-
-    const { collectionMediaCounts, unassignedMediaCount } =
-      await fetchProjectMediaBreakdown(service, projectId);
-
-    const normalizedMediaRows = (mediaRows ?? []).map((row) => {
+    const normalizedMediaRows = visibleRows
+      .slice(mediaFrom, mediaFrom + mediaLimit)
+      .map((row) => {
       const mediaUrls = buildSignedMediaUrls({
-        storagePath: "storage_path" in row ? row.storage_path : null,
-        previewUrl: "preview_url" in row ? row.preview_url : null,
-        thumbnailUrl: "thumbnail_url" in row ? row.thumbnail_url : null,
+        storagePath: row.storage_path,
+        previewUrl: row.preview_url,
+        thumbnailUrl: row.thumbnail_url,
       }, { ttlSeconds: SIGNED_URL_TTL_DASHBOARD_SECONDS });
 
       return {
@@ -627,7 +722,7 @@ export async function GET(
         preview_url: mediaUrls.previewUrl || null,
         thumbnail_url: mediaUrls.thumbnailUrl || null,
       };
-    });
+      });
 
     return NextResponse.json({
       ok: true,
@@ -635,15 +730,18 @@ export async function GET(
         ...projectRow,
         cover_photo_url: resolveDashboardCoverUrl(
           (projectRow as { cover_photo_url?: string | null }).cover_photo_url,
+          projectId,
+          tombstonedFamilies,
+          collectionTitles,
         ),
       },
       collections,
       media: normalizedMediaRows,
-      mediaCount: mediaTotalCount ?? normalizedMediaRows.length,
+      mediaCount,
       collectionMediaCounts,
       unassignedMediaCount,
       mediaPage,
-      mediaTotalCount: mediaTotalCount ?? normalizedMediaRows.length,
+      mediaTotalCount: mediaCount,
       classesCount,
       rolesCount,
       peopleCount,
@@ -717,6 +815,33 @@ export async function PATCH(
       );
     }
 
+    const linkedSchoolResolution = await resolveOwnedProjectLinkedSchool({
+      service,
+      project: currentProject,
+      photographerId: photographerRow.id,
+    });
+    if (linkedSchoolResolution.status === "invalid") {
+      return NextResponse.json(
+        { ok: false, message: "Project school link could not be verified." },
+        { status: 409 },
+      );
+    }
+    const linkedSchoolId = linkedSchoolResolution.school?.id ?? "";
+    const tombstonedFamilies = linkedSchoolId
+      ? tombstoneFamilySet(await loadSchoolPhotoTombstones(service, linkedSchoolId))
+      : new Set<string>();
+    const patchCollectionTitles = new Map<string, string>();
+    if (tombstonedFamilies.size > 0) {
+      const { data: linkedCollections, error: linkedCollectionsError } = await service
+        .from("collections")
+        .select("id,title")
+        .eq("project_id", projectId);
+      if (linkedCollectionsError) throw linkedCollectionsError;
+      for (const row of linkedCollections ?? []) {
+        patchCollectionTitles.set(clean(row.id), clean(row.title));
+      }
+    }
+
     const updatePayload: Record<string, unknown> = {
       updated_at: new Date().toISOString(),
     };
@@ -724,7 +849,25 @@ export async function PATCH(
     const previousSettings = normalizeEventGallerySettings(currentProject.gallery_settings);
 
     if (hasOwn(body, "cover_photo_url")) {
-      updatePayload.cover_photo_url = clean(body.cover_photo_url) || null;
+      const requestedCover = clean(body.cover_photo_url);
+      const requestedCollectionId = projectPhotoCollectionId(
+        requestedCover,
+        projectId,
+      );
+      const requestedCollectionTitle = patchCollectionTitles.get(
+        requestedCollectionId,
+      );
+      updatePayload.cover_photo_url =
+        requestedCover &&
+        !projectMediaReferenceMatchesSchoolPhotoFamily({
+          reference: requestedCover,
+          families: tombstonedFamilies,
+          projectId,
+          collectionId: requestedCollectionId,
+          collectionTitle: requestedCollectionTitle,
+        })
+          ? requestedCover
+          : null;
     }
     if (hasOwn(body, "cover_focal_x")) {
       updatePayload.cover_focal_x = Math.max(0, Math.min(1, Number(body.cover_focal_x) || 0.5));
@@ -947,6 +1090,9 @@ export async function PATCH(
         ...projectData,
         cover_photo_url: resolveDashboardCoverUrl(
           (projectData as { cover_photo_url?: string | null }).cover_photo_url,
+          projectId,
+          tombstonedFamilies,
+          patchCollectionTitles,
         ),
       },
       releaseEmailResult,

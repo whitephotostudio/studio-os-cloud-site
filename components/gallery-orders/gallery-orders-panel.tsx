@@ -26,6 +26,7 @@ import {
   X,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { proxiedPhotoUrl } from "@/lib/photo-url";
 import { useIsMobile } from "@/lib/use-is-mobile";
 
 // ── Types ────────────────────────────────────────────────────────────
@@ -569,6 +570,7 @@ function OrderCard({
   const parentEmail = order.parent_email ?? order.customer_email ?? "";
   const parentPhone = order.parent_phone ?? "";
   const className = order.student?.class_name ?? order.class?.class_name ?? "";
+  const studentPhotoUrl = proxiedPhotoUrl(order.student?.photo_url);
 
   return (
     <div
@@ -600,10 +602,10 @@ function OrderCard({
             flexShrink: 0,
           }}
         >
-          {order.student?.photo_url ? (
+          {studentPhotoUrl ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img
-              src={order.student.photo_url}
+              src={studentPhotoUrl}
               alt={student}
               style={{ width: "100%", height: "100%", objectFit: "cover" }}
             />

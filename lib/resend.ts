@@ -3,7 +3,14 @@ type ResendTag = {
   value: string;
 };
 
-type SendResendEmailInput = {
+export type ResendAttachmentInput = {
+  filename: string;
+  content?: string | null;
+  path?: string | null;
+  contentId?: string | null;
+};
+
+export type SendResendEmailInput = {
   to: string | string[];
   subject: string;
   html: string;
@@ -11,12 +18,30 @@ type SendResendEmailInput = {
   fromName?: string | null;
   replyTo?: string | null;
   tags?: ResendTag[];
+  attachments?: ResendAttachmentInput[];
   idempotencyKey?: string | null;
 };
 
 type ResendSendResponse = {
   id?: string;
 };
+
+export type ResendSentEmailSummary = {
+  id: string;
+  lastEvent: string;
+};
+
+export class ResendRequestError extends Error {
+  status: number;
+  retryAfterMs: number | null;
+
+  constructor(message: string, status: number, retryAfterMs: number | null) {
+    super(message);
+    this.name = "ResendRequestError";
+    this.status = status;
+    this.retryAfterMs = retryAfterMs;
+  }
+}
 
 function clean(value: string | null | undefined) {
   return (value ?? "").trim();
@@ -44,6 +69,16 @@ export function resolveReplyTo(value: string | null | undefined) {
   return looksLikeEmail(value) ? clean(value) : null;
 }
 
+function retryAfterMilliseconds(value: string | null) {
+  const text = clean(value);
+  if (!text) return null;
+  const seconds = Number(text);
+  if (Number.isFinite(seconds) && seconds >= 0) return Math.ceil(seconds * 1_000);
+  const timestamp = Date.parse(text);
+  if (Number.isNaN(timestamp)) return null;
+  return Math.max(0, timestamp - Date.now());
+}
+
 export async function sendResendEmail(input: SendResendEmailInput) {
   const apiKey = clean(process.env.RESEND_API_KEY);
   if (!apiKey) {
@@ -64,8 +99,20 @@ export async function sendResendEmail(input: SendResendEmailInput) {
       subject: clean(input.subject),
       html: input.html,
       text: clean(input.text) || undefined,
-      replyTo: replyTo || undefined,
+      reply_to: replyTo || undefined,
       tags: input.tags?.filter((tag) => clean(tag.name) && clean(tag.value)) ?? [],
+      attachments: input.attachments
+        ?.filter(
+          (attachment) =>
+            clean(attachment.filename) &&
+            (clean(attachment.content) || clean(attachment.path)),
+        )
+        .map((attachment) => ({
+          filename: clean(attachment.filename),
+          content: clean(attachment.content) || undefined,
+          path: clean(attachment.path) || undefined,
+          content_id: clean(attachment.contentId) || undefined,
+        })),
     }),
     cache: "no-store",
   });
@@ -76,10 +123,45 @@ export async function sendResendEmail(input: SendResendEmailInput) {
   };
 
   if (!response.ok) {
-    throw new Error(payload.error?.message || payload.message || "Failed to send email with Resend.");
+    throw new ResendRequestError(
+      payload.error?.message || payload.message || "Failed to send email with Resend.",
+      response.status,
+      retryAfterMilliseconds(response.headers.get("retry-after")),
+    );
   }
 
   return {
     id: clean(payload.id) || null,
   };
+}
+
+export async function listRecentResendEmailStatuses(limit = 100) {
+  const apiKey = clean(process.env.RESEND_API_KEY);
+  if (!apiKey) return [] as ResendSentEmailSummary[];
+
+  const safeLimit = Math.max(1, Math.min(100, Math.floor(limit)));
+  const response = await fetch(`https://api.resend.com/emails?limit=${safeLimit}`, {
+    headers: { Authorization: `Bearer ${apiKey}` },
+    cache: "no-store",
+  });
+  const payload = (await response.json().catch(() => ({}))) as {
+    data?: Array<{ id?: string; last_event?: string }>;
+    message?: string;
+    error?: { message?: string };
+  };
+
+  if (!response.ok) {
+    throw new ResendRequestError(
+      payload.error?.message || payload.message || "Failed to load email delivery statuses.",
+      response.status,
+      retryAfterMilliseconds(response.headers.get("retry-after")),
+    );
+  }
+
+  return (payload.data ?? [])
+    .map((email) => ({
+      id: clean(email.id),
+      lastEvent: clean(email.last_event).toLowerCase(),
+    }))
+    .filter((email) => email.id);
 }

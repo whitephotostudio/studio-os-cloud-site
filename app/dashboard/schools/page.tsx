@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { Logo } from "@/components/logo";
+import { proxiedPhotoUrl } from "@/lib/photo-url";
 import { useIsMobile } from "@/lib/use-is-mobile";
 import { CalendarDays, Check, GraduationCap, Images, LogOut, MoreHorizontal, Plus, School, Search, Settings, Trash2, Users, X } from "lucide-react";
 
@@ -49,6 +50,8 @@ type SchoolCard = {
   peopleCount: number;
   classesCount: number;
   imagesCount: number;
+  uploadedPhotoCount: number | null;
+  uploadedPhotoCountVerified: boolean;
   coverUrl: string | null;
   coverFocalX: number;
   coverFocalY: number;
@@ -273,10 +276,46 @@ export default function SchoolsPage() {
       }
 
       const schoolIds = uniqueSchools.map((s) => s.id);
-      const { data: peopleRows, error: peopleErr } = await supabase
-        .from("students")
-        .select("school_id,class_name,role,photo_url")
-        .in("school_id", schoolIds);
+      const { data: { session } } = await supabase.auth.getSession();
+      const [peopleResult, uploadedCountResult] = await Promise.all([
+        supabase
+          .from("students")
+          .select("school_id,class_name,role,photo_url")
+          .in("school_id", schoolIds),
+        fetch("/api/dashboard/schools/photo-counts", {
+          headers: session?.access_token
+            ? { Authorization: `Bearer ${session.access_token}` }
+            : {},
+          cache: "no-store",
+        })
+          .then(async (response) => {
+            if (!response.ok) {
+              return {
+                counts: {} as Record<string, number | null>,
+                sources: {} as Record<string, string>,
+              };
+            }
+            const payload = (await response.json()) as {
+              counts?: Record<string, number | null>;
+              sources?: Record<string, string>;
+            };
+            return {
+              counts: payload.counts ?? {},
+              sources: payload.sources ?? {},
+            };
+          })
+          .catch((countError) => {
+            console.warn("[schools] uploaded photo counts unavailable:", countError);
+            return {
+              counts: {} as Record<string, number | null>,
+              sources: {} as Record<string, string>,
+            };
+          }),
+      ]);
+
+      const { data: peopleRows, error: peopleErr } = peopleResult;
+      const uploadedPhotoCounts = uploadedCountResult.counts;
+      const uploadedPhotoCountSources = uploadedCountResult.sources;
 
       if (peopleErr) throw peopleErr;
 
@@ -315,7 +354,13 @@ export default function SchoolsPage() {
           peopleCount: stat?.peopleCount ?? 0,
           classesCount: stat?.classNames.size ?? 0,
           imagesCount: stat?.imagesCount ?? 0,
-          coverUrl: schoolCoverBySchoolId.get(school.id)?.url || schoolCoverByLocalId.get(clean(school.local_school_id))?.url || stat?.firstPhotoUrl || null,
+          uploadedPhotoCount: uploadedPhotoCounts[school.id] ?? null,
+          uploadedPhotoCountVerified: uploadedPhotoCountSources[school.id] === "r2",
+          coverUrl: proxiedPhotoUrl(
+            schoolCoverBySchoolId.get(school.id)?.url ||
+              schoolCoverByLocalId.get(clean(school.local_school_id))?.url ||
+              stat?.firstPhotoUrl,
+          ) || null,
           coverFocalX: schoolCoverBySchoolId.get(school.id)?.fx ?? schoolCoverByLocalId.get(clean(school.local_school_id))?.fx ?? 0.5,
           coverFocalY: schoolCoverBySchoolId.get(school.id)?.fy ?? schoolCoverByLocalId.get(clean(school.local_school_id))?.fy ?? 0.5,
         };
@@ -722,17 +767,28 @@ export default function SchoolsPage() {
                       <div style={{ fontSize: 12, color: ex.color, fontWeight: ex.weight, marginTop: 2 }}>{ex.text}</div>
                     ) : null;
                   })()}
-                  <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 10 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 10, flexWrap: "wrap" }}>
                     <span style={{ fontSize: 12, color: "#6b7280" }}>{school.classesCount} classes</span>
                     <span style={{ fontSize: 12, color: "#d1d5db" }}>&middot;</span>
                     <span style={{ fontSize: 12, color: "#6b7280" }}>{school.peopleCount} students</span>
                     <span style={{ fontSize: 12, color: "#d1d5db" }}>&middot;</span>
-                    <span style={{ fontSize: 12, color: "#6b7280" }}>{school.imagesCount} photos</span>
+                    <span style={{ fontSize: 12, color: "#6b7280" }}>{school.imagesCount} with photos</span>
                   </div>
                   <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10 }}>
                     <span style={{ display: "inline-block", padding: "3px 10px", borderRadius: 6, fontSize: 11, fontWeight: 700, background: "#dbeafe", color: "#1e40af" }}>
                       Synced
                     </span>
+                    {school.uploadedPhotoCount !== null && (
+                      <span
+                        title={school.uploadedPhotoCountVerified
+                          ? "Original photo files verified in cloud"
+                          : "Uploaded photo records; cloud verification is temporarily unavailable"}
+                        style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 10px", borderRadius: 999, fontSize: 11, fontWeight: 800, background: school.uploadedPhotoCountVerified ? "#dcfce7" : "#fef3c7", color: school.uploadedPhotoCountVerified ? "#166534" : "#92400e" }}
+                      >
+                        {school.uploadedPhotoCountVerified ? <Check size={11} /> : <Images size={11} />}
+                        {school.uploadedPhotoCount} uploaded
+                      </span>
+                    )}
                   </div>
                 </div>
               </div>

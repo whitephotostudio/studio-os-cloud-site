@@ -13,6 +13,7 @@ const productLinks = [
 const solutionsLinks = [
   { href: "/photography-workflow-software", label: "Photography Workflow Software" },
   { href: "/online-photo-gallery-ordering-software", label: "Online Gallery & Ordering" },
+  { href: "/online-school-photography-booking", label: "Online School Booking" },
   { href: "/school-photography-software", label: "School Photography Software" },
   { href: "/high-volume-photography-software", label: "High Volume Photography" },
   { href: "/pixieset-alternative", label: "Pixieset Alternative" },
@@ -31,6 +32,13 @@ const compareLinks = [
 
 const resourceLinks = [
   { href: "/sign-in", label: "Photographer Sign In" },
+  { href: "https://www.youtube.com/channel/UC2Ou4lxHAD9BrYq9qa303_Q", label: "YouTube" },
+];
+
+const companyLinks = [
+  { href: "/about", label: "About" },
+  { href: "/contact", label: "Contact & Demo" },
+  { href: "/security", label: "Security" },
   { href: "/privacy", label: "Privacy" },
   { href: "/terms", label: "Terms" },
   { href: "/data-responsibility-agreement", label: "Data Responsibility" },
@@ -70,7 +78,7 @@ export function SiteFooter() {
   return (
     <footer className="border-t border-neutral-200 bg-white text-neutral-950">
       <div className="mx-auto max-w-7xl px-4 py-12 sm:px-6 lg:px-8">
-        <div className="grid gap-10 sm:grid-cols-2 lg:grid-cols-[1.5fr_repeat(4,1fr)]">
+        <div className="grid gap-10 sm:grid-cols-2 lg:grid-cols-[1.35fr_repeat(5,1fr)]">
           <div>
             <Logo small />
             <p className="marketing-caption mt-5 max-w-md text-neutral-500">
@@ -91,6 +99,7 @@ export function SiteFooter() {
           <FooterColumn heading="Solutions" links={solutionsLinks} />
           <FooterColumn heading="Compare" links={compareLinks} />
           <FooterColumn heading="Resources" links={resourceLinks} />
+          <FooterColumn heading="Company" links={companyLinks} />
         </div>
       </div>
       <div className="marketing-caption mx-auto max-w-7xl border-t border-neutral-200 px-4 py-6 text-neutral-500 sm:px-6 lg:px-8">

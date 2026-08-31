@@ -8148,15 +8148,29 @@ export default function ParentGalleryPage() {
     0,
   );
   const checkoutTaxableCents = checkoutItems.reduce((sum, item) => sum + item.lineTotalCents, 0);
+  const configuredShippingFeeCents = Math.max(
+    0,
+    Number(lateOrderPolicy?.shippingFeeCents ?? 0) || 0,
+  );
+  const checkoutShippingFeeCents =
+    shippingEnabledForGallery &&
+    anyPhysicalCheckoutItem &&
+    activeDeliveryMethod === "shipping"
+      ? configuredShippingFeeCents
+      : 0;
+  // The order API taxes the product and shipping subtotal together. Mirror
+  // that server-authoritative calculation here so the estimate a customer
+  // reviews before Stripe matches the amount that will actually be charged.
+  const checkoutPreTaxCents = checkoutTaxableCents + checkoutShippingFeeCents;
   const checkoutTaxPercent = currentGalleryExtras.taxEnabled
     ? currentGalleryExtras.taxRatesByCountry[currentGalleryExtras.taxCountry] ??
       currentGalleryExtras.taxPercent
     : 0;
   const checkoutTaxCents =
     checkoutTaxPercent > 0
-      ? Math.round(checkoutTaxableCents * (checkoutTaxPercent / 100))
+      ? Math.round(checkoutPreTaxCents * (checkoutTaxPercent / 100))
       : 0;
-  const checkoutTotalCents = checkoutTaxableCents + checkoutTaxCents;
+  const checkoutTotalCents = checkoutPreTaxCents + checkoutTaxCents;
 
   function resetCurrentSelection() {
     setSelectedPkg(null);
@@ -13498,9 +13512,26 @@ export default function ParentGalleryPage() {
                                         : `${item.slots.length} print slot${item.slots.length === 1 ? "" : "s"}`}
                                     {item.laneStudentName ? ` • ${item.laneStudentName}` : ""}
                                     {item.compositeTitle ? ` • ${item.compositeTitle}` : ""}
-                                    {item.backdrop ? ` • ${item.backdrop.name}` : ""}
                                     {isLandscape ? " • Landscape" : ""}
                                   </div>
+                                  {item.backdrop && item.category !== "digital" ? (
+                                    <div
+                                      style={{
+                                        marginTop: 7,
+                                        padding: "7px 9px",
+                                        borderRadius: 8,
+                                        border: "1px solid rgba(250, 204, 21, 0.32)",
+                                        background: "rgba(250, 204, 21, 0.09)",
+                                      }}
+                                    >
+                                      <div style={{ color: "#facc15", fontSize: 11, fontWeight: 900 }}>
+                                        Backdrop: {item.backdrop.name}
+                                      </div>
+                                      <div style={{ color: "#d4d4d4", fontSize: 10, lineHeight: 1.45, marginTop: 2 }}>
+                                        Applies to {item.slots.length === 1 ? "the" : "all"} {item.slots.length} print slot{item.slots.length === 1 ? "" : "s"} in this basket item.
+                                      </div>
+                                    </div>
+                                  ) : null}
                                 </div>
                               </div>
                               <div
@@ -13804,6 +13835,9 @@ export default function ParentGalleryPage() {
                             >
                               {m === "shipping" && <Truck size={13} />}
                               {m.charAt(0).toUpperCase() + m.slice(1)}
+                              {m === "shipping" && (
+                                <span>· {formatGalleryMoney(configuredShippingFeeCents)}</span>
+                              )}
                             </button>
                           ))}
                         </div>
@@ -13959,6 +13993,20 @@ export default function ParentGalleryPage() {
                         >
                           <span>Backdrop add-ons</span>
                           <span>${(checkoutBackdropTotalCents / 100).toFixed(2)}</span>
+                        </div>
+                      )}
+                      {anyPhysicalCheckoutItem && activeDeliveryMethod === "shipping" && (
+                        <div
+                          style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            fontSize: 12,
+                            color: "#bbb",
+                            marginBottom: 8,
+                          }}
+                        >
+                          <span>Shipping</span>
+                          <span>{formatGalleryMoney(checkoutShippingFeeCents)}</span>
                         </div>
                       )}
                       {checkoutTaxCents > 0 && (
@@ -14122,6 +14170,26 @@ export default function ParentGalleryPage() {
                   >
                     <X size={18} />
                   </button>
+                </div>
+
+                <div
+                  role="note"
+                  style={{
+                    padding: "10px 12px",
+                    marginBottom: 12,
+                    borderRadius: 8,
+                    background: "rgba(250, 204, 21, 0.08)",
+                    border: "1px solid rgba(250, 204, 21, 0.2)",
+                    color: "#e5e7eb",
+                    fontSize: 11,
+                    lineHeight: 1.55,
+                  }}
+                >
+                  <strong style={{ color: "#facc15" }}>
+                    One backdrop applies to every pose and size in one basket item.
+                  </strong>{" "}
+                  For different backdrops, add each size or pose as a separate basket item.{" "}
+                  Items already in your basket keep their chosen backdrop.
                 </div>
 
                 {/* Nobg status */}

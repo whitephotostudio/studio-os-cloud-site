@@ -27,6 +27,7 @@ import {
   ShoppingBag,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { proxiedPhotoUrl } from "@/lib/photo-url";
 import QrCode from "@/components/qr-code";
 
 type EventProject = {
@@ -241,7 +242,7 @@ export default function MobileEventDetailPage() {
     setSettingsMessage("");
   }, [event]);
 
-  const cover = clean(event?.cover_photo_url);
+  const cover = proxiedPhotoUrl(event?.cover_photo_url);
 
   const status = useMemo(() => {
     if (!photoCount) return { label: "Setup", bg: "#fff7ed", fg: "#c2410c" };

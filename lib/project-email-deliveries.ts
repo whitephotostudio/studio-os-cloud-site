@@ -59,27 +59,22 @@ export async function recordProjectEmailDelivery(
   };
 
   if (dedupeKey) {
-    const { data: existing, error: existingError } = await service
+    // One atomic write is required here: two HTTP retries can reach the
+    // ledger together after the provider has already deduplicated the email.
+    // A check-then-insert would race on the unique dedupe_key index and could
+    // incorrectly report the second retry as a failed delivery.
+    const { error } = await service
       .from("project_email_deliveries")
-      .select("id")
-      .eq("dedupe_key", dedupeKey)
-      .limit(1)
-      .maybeSingle();
-
-    if (existingError) throw existingError;
-
-    if (existing?.id) {
-      const { error: updateError } = await service
-        .from("project_email_deliveries")
-        .update({
+      .upsert(
+        {
           ...payload,
           sent_at: new Date().toISOString(),
-        })
-        .eq("id", existing.id);
+        },
+        { onConflict: "dedupe_key" },
+      );
 
-      if (updateError) throw updateError;
-      return;
-    }
+    if (error) throw error;
+    return;
   }
 
   const { error } = await service.from("project_email_deliveries").insert(payload);

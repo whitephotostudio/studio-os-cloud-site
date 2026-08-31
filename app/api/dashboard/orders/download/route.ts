@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   createDashboardServiceClient,
   resolveDashboardAuth,
@@ -13,7 +14,10 @@ import {
   resolveOrderSubtotalCents,
   resolveOrderTotalCents,
 } from "@/lib/order-display";
-import { r2KeyFromAnyUrl, r2PresignedGetUrl } from "@/lib/r2-signed-urls";
+import {
+  privateMediaKeyFromReference,
+  signedPrivateMediaReference,
+} from "@/lib/private-media-references";
 import {
   backdropCompositeFileName,
   composeBackdropImage,
@@ -187,24 +191,15 @@ function encodePhotoUrl(url: string): string {
 function downloadPhotoUrl(url: string): string {
   const raw = clean(url);
   if (!raw) return "";
+  const resolved = signedPrivateMediaReference(raw, 60 * 60);
+  return /^https?:\/\//i.test(resolved) ? encodePhotoUrl(resolved) : "";
+}
 
-  try {
-    const parsed = new URL(raw);
-    if (/\.r2\.dev$/i.test(parsed.host)) {
-      const key = r2KeyFromAnyUrl(raw);
-      const signed = key ? r2PresignedGetUrl(key, 60 * 60) : "";
-      return signed || encodePhotoUrl(raw);
-    }
-    if (/\.r2\.cloudflarestorage\.com$/i.test(parsed.host) || parsed.pathname.startsWith("/api/r2/img/")) {
-      const key = r2KeyFromAnyUrl(raw);
-      const signed = key ? r2PresignedGetUrl(key, 60 * 60) : "";
-      return signed || encodePhotoUrl(raw);
-    }
-  } catch {
-    return "";
-  }
-
-  return encodePhotoUrl(raw);
+function isPhotoReference(value: string | null | undefined) {
+  const raw = clean(value);
+  return Boolean(
+    raw && (isWebImageUrl(raw) || privateMediaKeyFromReference(raw)),
+  );
 }
 
 function formatDate(d: string) {
@@ -384,7 +379,6 @@ function orderPaymentBreakdownLines(order: {
 }
 
 /** Resolve display items for an order (from DB items, parsed notes, or student photo) */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 type OrderDisplayItem = {
   productName: string;
   photoUrl: string;
@@ -399,7 +393,7 @@ function resolveOrderDisplayItems(order: any): OrderDisplayItem[] {
   const snapshotItems = cartSnapshotToOrderItems(order.cart_snapshot);
   const notesText = clean(order.special_notes) || clean(order.notes);
   const parsedFromNotes = parseNotesItems(notesText);
-  const imageDbItems = dbItems.filter((item: { sku?: string }) => isWebImageUrl(item.sku));
+  const imageDbItems = dbItems.filter((item: { sku?: string }) => isPhotoReference(item.sku));
   const snapshotHasBackdrop = snapshotItems.some((item) => item.backdrop);
   const sourceItems = snapshotHasBackdrop || snapshotItems.length > imageDbItems.length
     ? snapshotItems
@@ -408,7 +402,7 @@ function resolveOrderDisplayItems(order: any): OrderDisplayItem[] {
   if (sourceItems.length > 0) {
     return sourceItems.map((item: { product_name?: string; quantity?: number; sku?: string; backdrop?: CartSnapshotBackdropLike | null; orientation?: "portrait" | "landscape" }, index: number) => ({
       productName: item.product_name ?? parsedFromNotes[index]?.productName ?? "Item",
-      photoUrl: isWebImageUrl(item.sku) ? (item.sku ?? "") : (parsedFromNotes[index]?.photoUrl ?? ""),
+      photoUrl: isPhotoReference(item.sku) ? (item.sku ?? "") : (parsedFromNotes[index]?.photoUrl ?? ""),
       quantity: item.quantity ?? 1,
       backdrop: item.backdrop ?? null,
       orientation: item.orientation ?? "portrait",
@@ -422,7 +416,7 @@ function resolveOrderDisplayItems(order: any): OrderDisplayItem[] {
 }
 
 async function resolveBackdropForDownload(
-  service: { from: (table: string) => any },
+  service: SupabaseClient,
   photographerId: string,
   backdrop: BackdropCompositeSelection | null | undefined,
 ) {
@@ -483,7 +477,7 @@ function buildOrderSummaryHtml(order: any, branding: StudioBranding, photoFileMa
   displayItems.forEach((item: { productName: string; photoUrl: string; quantity: number; backdrop?: CartSnapshotBackdropLike | null }, i: number) => {
     // Look up local filename; fall back to encoded remote URL
     const localFile = photoFileMap.get(item.photoUrl) ?? "";
-    const imgSrc = localFile || (item.photoUrl ? encodePhotoUrl(item.photoUrl) : "");
+    const imgSrc = localFile || (item.photoUrl ? downloadPhotoUrl(item.photoUrl) : "");
     const parsedLabel = parsePackageSlotLabel(item.productName);
     const productName = parsedLabel.baseLabel || item.productName;
     const slotLabel =

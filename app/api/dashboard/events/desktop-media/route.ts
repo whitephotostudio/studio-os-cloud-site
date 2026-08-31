@@ -9,6 +9,15 @@ import { normalizeEventGallerySettings } from "@/lib/event-gallery-settings";
 import { listR2FolderImages } from "@/lib/r2";
 import { normalizeStorageUrl } from "@/lib/storage-images";
 import { guardAgreement } from "@/lib/require-agreement";
+import {
+  loadSchoolPhotoTombstones,
+  tombstoneFamilySet,
+} from "@/lib/school-photo-deletions";
+import {
+  projectMediaReferenceMatchesSchoolPhotoFamily,
+  projectPhotoCollectionId,
+  resolveOwnedProjectLinkedSchool,
+} from "@/lib/school-project-photo-mapping";
 
 export const dynamic = "force-dynamic";
 
@@ -103,6 +112,25 @@ function chooseCoverCandidate(
   return ordered.find((item) => preferredCoverUrl(item)) ?? null;
 }
 
+function mediaItemWasRemovedFromSchoolGallery(
+  item: Pick<NormalizedMediaItem, "storage_path" | "preview_url" | "thumbnail_url">,
+  tombstonedFamilies: ReadonlySet<string>,
+  projectId: string,
+  collectionId: string,
+  collectionTitle?: string | null,
+) {
+  return [item.storage_path, item.preview_url, item.thumbnail_url].some(
+    (reference) =>
+      projectMediaReferenceMatchesSchoolPhotoFamily({
+        reference,
+        families: tombstonedFamilies,
+        projectId,
+        collectionId,
+        collectionTitle,
+      }),
+  );
+}
+
 export async function GET(request: NextRequest) {
   try {
     const { user } = await resolveDashboardAuth(request);
@@ -149,7 +177,7 @@ export async function GET(request: NextRequest) {
 
     const { data: projectRow, error: projectError } = await service
       .from("projects")
-      .select("id")
+      .select("id,workflow_type,linked_school_id,linked_local_school_id")
       .eq("id", cloudProjectId)
       .eq("photographer_id", photographerRow.id)
       .maybeSingle();
@@ -162,9 +190,33 @@ export async function GET(request: NextRequest) {
       );
     }
 
+    const linkedSchoolResolution = await resolveOwnedProjectLinkedSchool({
+      service,
+      project: projectRow,
+      photographerId: photographerRow.id,
+    });
+    if (linkedSchoolResolution.status === "invalid") {
+      return NextResponse.json(
+        { ok: false, message: "Project school link could not be verified." },
+        { status: 409 },
+      );
+    }
+    const linkedSchoolId = linkedSchoolResolution.school?.id ?? "";
+    const tombstonedFamilies = linkedSchoolId
+      ? tombstoneFamilySet(await loadSchoolPhotoTombstones(service, linkedSchoolId))
+      : new Set<string>();
+    const { data: projectCollections, error: projectCollectionsError } = await service
+      .from("collections")
+      .select("id,title")
+      .eq("project_id", cloudProjectId);
+    if (projectCollectionsError) throw projectCollectionsError;
+    const collectionTitles = new Map(
+      (projectCollections ?? []).map((row) => [clean(row.id), clean(row.title)]),
+    );
+
     let mediaQuery = service
       .from("media")
-      .select("collection_id,storage_path")
+      .select("collection_id,storage_path,preview_url,thumbnail_url")
       .eq("project_id", cloudProjectId);
 
     if (collectionIds.length > 0) {
@@ -187,14 +239,33 @@ export async function GET(request: NextRequest) {
     try {
       const { data: allMediaRows, error: allMediaError } = await service
         .from("media")
-        .select("collection_id")
+        .select("collection_id,storage_path,preview_url,thumbnail_url")
         .eq("project_id", cloudProjectId);
       if (!allMediaError && allMediaRows) {
-        totalProjectMediaCount = allMediaRows.length;
         const tally = new Map<string, number>();
         for (const row of allMediaRows as Array<{
           collection_id?: string | null;
+          storage_path?: string | null;
+          preview_url?: string | null;
+          thumbnail_url?: string | null;
         }>) {
+          if (
+            mediaItemWasRemovedFromSchoolGallery(
+              {
+                storage_path: clean(row.storage_path),
+                preview_url: clean(row.preview_url),
+                thumbnail_url: clean(row.thumbnail_url),
+              },
+              tombstonedFamilies,
+              cloudProjectId,
+              clean(row.collection_id),
+              collectionTitles.get(clean(row.collection_id)),
+            )
+          ) {
+            continue;
+          }
+
+          totalProjectMediaCount += 1;
           const cid = clean(row.collection_id);
           if (!cid) continue;
           tally.set(cid, (tally.get(cid) ?? 0) + 1);
@@ -207,11 +278,31 @@ export async function GET(request: NextRequest) {
       console.warn("[desktop-media GET] diagnostic query failed:", diagErr);
     }
 
+    const visibleMediaRows = (mediaRows ?? [])
+      .filter(
+        (row) =>
+          !mediaItemWasRemovedFromSchoolGallery(
+            {
+              storage_path: clean(row.storage_path),
+              preview_url: clean(row.preview_url),
+              thumbnail_url: clean(row.thumbnail_url),
+            },
+            tombstonedFamilies,
+            cloudProjectId,
+            clean(row.collection_id),
+            collectionTitles.get(clean(row.collection_id)),
+          ),
+      )
+      .map((row) => ({
+        collection_id: row.collection_id,
+        storage_path: row.storage_path,
+      }));
+
     return NextResponse.json({
       ok: true,
-      items: mediaRows ?? [],
+      items: visibleMediaRows,
       diagnostic: {
-        scoped_count: (mediaRows ?? []).length,
+        scoped_count: visibleMediaRows.length,
         scoped_collection_ids: collectionIds,
         project_total_count: totalProjectMediaCount,
         collections_with_media: collectionsWithMedia,
@@ -258,7 +349,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: true, inserted: 0, skipped: 0, items: [] });
     }
 
-    const normalizedItems: NormalizedMediaItem[] = items
+    let normalizedItems: NormalizedMediaItem[] = items
       .map((item) => ({
         collection_id: clean(item.collection_id),
         storage_path: clean(item.storage_path),
@@ -273,6 +364,7 @@ export async function POST(request: NextRequest) {
     if (normalizedItems.length === 0) {
       return NextResponse.json({ ok: true, inserted: 0, skipped: items.length, items: [] });
     }
+    const normalizedItemCount = normalizedItems.length;
 
     const service = createDashboardServiceClient();
 
@@ -300,7 +392,7 @@ export async function POST(request: NextRequest) {
 
     const { data: projectRow, error: projectError } = await service
       .from("projects")
-      .select("id,cover_photo_url,gallery_settings")
+      .select("id,cover_photo_url,gallery_settings,workflow_type,linked_school_id,linked_local_school_id")
       .eq("id", cloudProjectId)
       .eq("photographer_id", photographerRow.id)
       .maybeSingle();
@@ -313,13 +405,28 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const linkedSchoolResolution = await resolveOwnedProjectLinkedSchool({
+      service,
+      project: projectRow,
+      photographerId: photographerRow.id,
+    });
+    if (linkedSchoolResolution.status === "invalid") {
+      return NextResponse.json(
+        { ok: false, message: "Project school link could not be verified." },
+        { status: 409 },
+      );
+    }
+    const linkedSchoolId = linkedSchoolResolution.school?.id ?? "";
+    const tombstonedFamilies = linkedSchoolId
+      ? tombstoneFamilySet(await loadSchoolPhotoTombstones(service, linkedSchoolId))
+      : new Set<string>();
     const collectionIds = Array.from(
       new Set(normalizedItems.map((item) => item.collection_id)),
     );
 
     const collectionLookup = await service
       .from("collections")
-      .select("id,project_id,cover_photo_url")
+      .select("id,project_id,title,cover_photo_url")
       .eq("project_id", cloudProjectId)
       .in("id", collectionIds);
     let collectionRows = collectionLookup.data;
@@ -336,6 +443,32 @@ export async function POST(request: NextRequest) {
     // the wrong album", which is recoverable; the previous failure
     // was "photos vanish entirely", which wasn't.
     if ((collectionRows ?? []).length === 0) {
+      // A linked-school collection title is part of the exact mapping back to
+      // its school class/student family. Re-routing it to another collection
+      // would change that identity while leaving the R2 key under the stale
+      // collection id, allowing a removed photo to bypass its tombstone.
+      // Require a project-shell re-sync instead. Unlinked event projects keep
+      // the legacy salvage behavior below because they have no school family.
+      if (linkedSchoolResolution.status === "resolved") {
+        return NextResponse.json(
+          {
+            ok: false,
+            inserted: 0,
+            attempted: 0,
+            skipped: normalizedItemCount,
+            items: [],
+            message:
+              "School album mapping is stale. Re-sync the project shell before uploading photos.",
+            diagnostic: {
+              reason: "stale_school_collection_mapping",
+              received_collection_ids: collectionIds,
+              project_id: cloudProjectId,
+            },
+          },
+          { status: 409 },
+        );
+      }
+
       // 2026-04-28 — Salvage filter now matches the desktop reality.
       // Desktop creates collections with `kind = 'album'` (see
       // cloud_sync_service.dart line ~3506), but the parents portal
@@ -346,7 +479,7 @@ export async function POST(request: NextRequest) {
       // then album, then any non-roster collection — in that order.
       const { data: candidateCollections, error: anyErr } = await service
         .from("collections")
-        .select("id,project_id,cover_photo_url,kind,sort_order")
+        .select("id,project_id,title,cover_photo_url,kind,sort_order")
         .eq("project_id", cloudProjectId)
         .order("sort_order", { ascending: true });
       if (anyErr) throw anyErr;
@@ -384,6 +517,39 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    const collectionTitles = new Map(
+      (collectionRows ?? []).map((row) => [
+        clean((row as { id?: string | null }).id),
+        clean((row as { title?: string | null }).title),
+      ]),
+    );
+    normalizedItems = normalizedItems.filter(
+      (item) =>
+        !mediaItemWasRemovedFromSchoolGallery(
+          item,
+          tombstonedFamilies,
+          cloudProjectId,
+          item.collection_id,
+          collectionTitles.get(item.collection_id),
+        ),
+    );
+    const removedFromGalleryCount = normalizedItemCount - normalizedItems.length;
+
+    if (normalizedItems.length === 0) {
+      return NextResponse.json({
+        ok: true,
+        inserted: 0,
+        attempted: 0,
+        skipped: normalizedItemCount,
+        items: [],
+        diagnostic: {
+          reason: "removed_from_school_gallery",
+          removed_count: removedFromGalleryCount,
+          project_id: cloudProjectId,
+        },
+      });
+    }
+
     const validCollectionIds = new Set(
       (collectionRows ?? []).map((row) => clean((row as { id?: string | null }).id)),
     );
@@ -416,7 +582,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({
         ok: true,
         inserted: 0,
-        skipped: normalizedItems.length,
+        skipped: normalizedItemCount,
         items: [],
         diagnostic: {
           reason: "no_matching_collections",
@@ -510,7 +676,7 @@ export async function POST(request: NextRequest) {
     }
 
     const inserts: Array<Record<string, string | number | boolean | null>> = [];
-    let skipped = normalizedItems.length - resolvedItems.length;
+    let skipped = normalizedItemCount - resolvedItems.length;
 
     for (const item of resolvedItems) {
       const key = `${item.collection_id}::${item.storage_path}`;
@@ -602,7 +768,24 @@ export async function POST(request: NextRequest) {
 
         for (const collection of collectionRowsTyped) {
           const collectionId = clean(collection.id);
-          if (!collectionId || clean(collection.cover_photo_url)) continue;
+          const currentCover = clean(collection.cover_photo_url);
+          if (
+            !collectionId ||
+            (currentCover &&
+              !mediaItemWasRemovedFromSchoolGallery(
+                {
+                  storage_path: currentCover,
+                  preview_url: currentCover,
+                  thumbnail_url: currentCover,
+                },
+                tombstonedFamilies,
+                cloudProjectId,
+                collectionId,
+                collectionTitles.get(collectionId),
+              ))
+          ) {
+            continue;
+          }
 
           const candidate = chooseCoverCandidate(
             resolvedItems.filter((item) => item.collection_id === collectionId),
@@ -631,9 +814,28 @@ export async function POST(request: NextRequest) {
         }
       }
 
+      const currentProjectCover = clean(
+        (projectRow as { cover_photo_url?: string | null } | null)
+          ?.cover_photo_url,
+      );
+      const currentProjectCoverCollectionId = projectPhotoCollectionId(
+        currentProjectCover,
+        cloudProjectId,
+      );
       if (
         normalizedSettings.extras.autoChooseProjectCover &&
-        !clean((projectRow as { cover_photo_url?: string | null } | null)?.cover_photo_url)
+        (!currentProjectCover ||
+          mediaItemWasRemovedFromSchoolGallery(
+            {
+              storage_path: currentProjectCover,
+              preview_url: "",
+              thumbnail_url: "",
+            },
+            tombstonedFamilies,
+            cloudProjectId,
+            currentProjectCoverCollectionId,
+            collectionTitles.get(currentProjectCoverCollectionId),
+          ))
       ) {
         const candidate = chooseCoverCandidate(resolvedItems, coverSource);
         const candidateUrl = candidate ? preferredCoverUrl(candidate) : null;

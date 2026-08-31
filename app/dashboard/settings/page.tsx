@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import { QRCodeSVG } from "qrcode.react";
 import {
   AlertCircle,
   ArrowUpRight,
@@ -3510,16 +3511,14 @@ function MfaSection({
                 Step 1: Scan QR code
               </div>
               <div style={{ fontSize: 14, color: "#64748b", marginBottom: 14 }}>
-                Open your authenticator app (Google Authenticator, 1Password, Authy, etc.) and scan the QR code below.
+                Open Apple Passwords or another authenticator app and scan the QR code below. The QR code is generated locally in your browser.
               </div>
               <div style={{ display: "flex", justifyContent: "center", padding: 16 }}>
-                {/* Render QR code as an img using a QR code API */}
-                <img
-                  loading="lazy"
-                  src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(enrollQrUri)}`}
-                  alt="Scan this QR code with your authenticator app"
-                  width={200}
-                  height={200}
+                <QRCodeSVG
+                  value={enrollQrUri}
+                  size={200}
+                  level="M"
+                  title="Scan this QR code with your authenticator app"
                   style={{ borderRadius: 12 }}
                 />
               </div>

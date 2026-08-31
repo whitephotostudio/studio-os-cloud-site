@@ -7,6 +7,7 @@ import { createClient } from "@/lib/supabase/client";
 import { StudioAssistant } from "@/components/studio-assistant/studio-assistant";
 import { SpotlightLauncher } from "@/components/spotlight-search";
 import { useIsMobile } from "@/lib/use-is-mobile";
+import { proxiedPhotoUrl } from "@/lib/photo-url";
 import {
   getFreeTrialDaysRemaining,
   isFreeTrialActive,
@@ -476,6 +477,7 @@ function ProfileBadge({
 }) {
   const [open, setOpen] = useState(false);
   const initials = initialsOf(businessName);
+  const displayLogoUrl = proxiedPhotoUrl(logoUrl);
 
   // Close popover when clicking outside.
   useEffect(() => {
@@ -520,13 +522,13 @@ function ProfileBadge({
         }}
       >
         {/* Avatar */}
-        {logoUrl ? (
+        {displayLogoUrl ? (
           // Using a plain <img> — the photographer's logo_url lives on arbitrary
           // hosts (Supabase public bucket, R2, etc.) and next/image requires
           // explicit remotePatterns. An <img> keeps this resilient.
           // eslint-disable-next-line @next/next/no-img-element
           <img
-            src={logoUrl}
+            src={displayLogoUrl}
             alt={businessName}
             style={{
               width: 32,
@@ -721,7 +723,7 @@ function DashboardPageContent() {
       if (photographerResult.error) throw photographerResult.error;
 
       // First-visit bootstrap: if no photographer row exists yet, hit the
-      // status endpoint which creates one (with a fresh 7-day trial) via
+      // status endpoint which creates one (with a fresh launch trial) via
       // getOrCreatePhotographerByUser, then re-query so the rest of the
       // dashboard (trial banner, schools, projects, orders) renders right
       // away instead of showing an empty state.
@@ -1345,7 +1347,7 @@ function DashboardPageContent() {
               <div style={{ display: "flex", justifyContent: "space-between", gap: 18, alignItems: "center", flexWrap: "wrap" }}>
                 <div>
                   <div style={{ fontSize: 13, letterSpacing: "0.12em", fontWeight: 800, color: "#2563eb", marginBottom: 8 }}>
-                    7-DAY TRIAL ACTIVE
+                    FREE TRIAL ACTIVE
                   </div>
                   <div style={{ fontSize: 24, lineHeight: 1.2, fontWeight: 900, color: "#0f172a" }}>
                     {dashboardTrialDaysRemaining} day{dashboardTrialDaysRemaining === 1 ? "" : "s"} left in your Studio OS trial

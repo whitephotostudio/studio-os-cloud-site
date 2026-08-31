@@ -41,8 +41,15 @@ import {
   resolveOrderTotalCents,
 } from "@/lib/order-display";
 import { createDigitalDeliveryDownloadUrl } from "@/lib/digital-delivery";
+import {
+  privateMediaKeyFromReference,
+  signedPrivateMediaReference,
+  signPrivateMediaReferencesDeep,
+} from "@/lib/private-media-references";
 
 export const dynamic = "force-dynamic";
+
+const ORDER_HISTORY_MEDIA_TTL_SECONDS = 6 * 60 * 60;
 
 const QuerySchema = z.object({
   pin: z.string().trim().min(3).max(64),
@@ -349,7 +356,21 @@ function formatOrder(
   ctx: { student_name: string | null; allow_private_details?: boolean },
 ) {
   const allowPrivateDetails = ctx.allow_private_details !== false;
-  const notePhotos = parseOrderPhotoSelections(row.special_notes ?? row.notes);
+  const rawSpecialNotes = row.special_notes ?? row.notes ?? null;
+  const notePhotos = parseOrderPhotoSelections(rawSpecialNotes);
+  const signedSpecialNotes = notePhotos.reduce<string | null>(
+    (notes, photo) => {
+      if (!notes) return notes;
+      const signed = signedPrivateMediaReference(
+        photo.url,
+        ORDER_HISTORY_MEDIA_TTL_SECONDS,
+      );
+      return signed && signed !== photo.url
+        ? notes.split(photo.url).join(signed)
+        : notes;
+    },
+    rawSpecialNotes,
+  );
   const rawItems = (row.order_items?.length ? row.order_items : notePhotos.map((photo) => ({
     product_name: photo.label,
     quantity: 1,
@@ -390,19 +411,30 @@ function formatOrder(
       }
     }
   }
-  const items = rawItems.map((it, index) => ({
-    productName: it.product_name ?? "Item",
-    quantity: it.quantity ?? 1,
-    includedInPackage: isPackageComponentItem(row, it, rawItems),
-    lineTotalCents: resolveOrderItemDisplayCents(
-      it,
-      rawItems,
-      orderTotalCents,
-      index,
-    ),
-    unitPriceCents: it.unit_price_cents ?? 0,
-    sku: isWebImageUrl(it.sku) ? it.sku : notePhotos[index]?.url ?? null,
-  }));
+  const items = rawItems.map((it, index) => {
+    const rawSku = clean(it.sku);
+    const imageReference = privateMediaKeyFromReference(rawSku)
+      ? signedPrivateMediaReference(
+          rawSku,
+          ORDER_HISTORY_MEDIA_TTL_SECONDS,
+        )
+      : isWebImageUrl(rawSku)
+        ? rawSku
+        : notePhotos[index]?.url ?? null;
+    return {
+      productName: it.product_name ?? "Item",
+      quantity: it.quantity ?? 1,
+      includedInPackage: isPackageComponentItem(row, it, rawItems),
+      lineTotalCents: resolveOrderItemDisplayCents(
+        it,
+        rawItems,
+        orderTotalCents,
+        index,
+      ),
+      unitPriceCents: it.unit_price_cents ?? 0,
+      sku: imageReference,
+    };
+  });
   return {
     id: row.id,
     shortId: row.id.slice(0, 8).toUpperCase(),
@@ -415,7 +447,10 @@ function formatOrder(
     currency: row.currency ?? "cad",
     packageName: row.package_name ?? null,
     items,
-    cartSnapshot: row.cart_snapshot ?? null,
+    cartSnapshot: signPrivateMediaReferencesDeep(
+      row.cart_snapshot ?? null,
+      ORDER_HISTORY_MEDIA_TTL_SECONDS,
+    ),
     schoolId: row.school_id,
     projectId: row.project_id,
     studentId: row.student_id,
@@ -424,7 +459,7 @@ function formatOrder(
     parentName: allowPrivateDetails ? row.parent_name ?? null : null,
     parentEmail: allowPrivateDetails ? row.parent_email ?? row.customer_email ?? null : null,
     parentPhone: allowPrivateDetails ? row.parent_phone ?? null : null,
-    specialNotes: row.special_notes ?? row.notes ?? null,
+    specialNotes: signedSpecialNotes,
     digitalDownload,
   };
 }

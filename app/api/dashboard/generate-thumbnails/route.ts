@@ -6,7 +6,7 @@ import {
 } from "@/lib/dashboard-auth";
 import { parseJson } from "@/lib/api-validation";
 import { guardAgreement } from "@/lib/require-agreement";
-import { r2Download, r2Upload, r2PublicUrl } from "@/lib/r2";
+import { r2Download, r2Upload } from "@/lib/r2";
 import sharp from "sharp";
 
 const GenerateThumbnailsBodySchema = z.object({
@@ -132,9 +132,14 @@ export async function POST(request: NextRequest) {
   let buffer: Buffer;
   try {
     buffer = await r2Download(storageKey);
-  } catch (err: any) {
+  } catch (err: unknown) {
     return NextResponse.json(
-      { error: err.message || "Failed to download original from R2" },
+      {
+        error:
+          err instanceof Error && err.message
+            ? err.message
+            : "Failed to download original from R2",
+      },
       { status: 500 },
     );
   }
@@ -151,20 +156,23 @@ export async function POST(request: NextRequest) {
       const basePath = storageKey.replace(/\.[^.]+$/, "");
       const resizedKey = `${basePath}_${label}.jpg`;
 
-      const publicUrl = await r2Upload(resizedKey, resized, "image/jpeg");
-      results[`${label}Url`] = publicUrl;
+      const objectReference = await r2Upload(resizedKey, resized, "image/jpeg");
+      results[`${label}Key`] = resizedKey;
+      results[`${label}Url`] = objectReference;
     } catch (err) {
       console.error(`Sharp error for ${label}:`, err);
     }
   }
 
-  // If sharp failed for either label, fall back to the original object URL so
+  // If sharp failed for either label, fall back to the original object key so
   // callers never write NULL into media.preview_url / media.thumbnail_url.
   // Storing NULL there breaks gallery rendering (buildStoredMediaUrls only
   // treats empty string as "missing", not NULL).
-  const originalUrl = r2PublicUrl(storageKey);
+  const originalReference = storageKey;
   return NextResponse.json({
-    thumbnailUrl: results.thumbnailUrl || originalUrl || null,
-    previewUrl: results.previewUrl || originalUrl || null,
+    thumbnailKey: results.thumbnailKey || storageKey,
+    previewKey: results.previewKey || storageKey,
+    thumbnailUrl: results.thumbnailUrl || originalReference,
+    previewUrl: results.previewUrl || originalReference,
   });
 }

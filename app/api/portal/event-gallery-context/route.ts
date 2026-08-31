@@ -12,6 +12,7 @@ import {
 import { filterPackagesForProfile } from "@/lib/package-profile-selection";
 import { hasActiveSubscription } from "@/lib/subscription-gate";
 import { applyCheckoutTaxFallbackToSettings } from "@/lib/checkout-tax";
+import { signedPrivateMediaReference } from "@/lib/private-media-references";
 
 export const dynamic = "force-dynamic";
 
@@ -579,10 +580,18 @@ export async function POST(request: NextRequest) {
       const photographer = photographerResult.data;
       if (photographer) {
         watermarkEnabled = photographer.watermark_enabled !== false;
-        const resolvedLogoUrl = looksLikeImageAssetUrl(photographer.watermark_logo_url)
-          ? photographer.watermark_logo_url
-          : looksLikeImageAssetUrl(photographer.logo_url)
-            ? photographer.logo_url
+        const watermarkLogoCandidate = signedPrivateMediaReference(
+          photographer.watermark_logo_url,
+          SIGNED_URL_TTL_PARENTS_PORTAL_SECONDS,
+        );
+        const studioLogoCandidate = signedPrivateMediaReference(
+          photographer.logo_url,
+          SIGNED_URL_TTL_PARENTS_PORTAL_SECONDS,
+        );
+        const resolvedLogoUrl = looksLikeImageAssetUrl(watermarkLogoCandidate)
+          ? watermarkLogoCandidate
+          : looksLikeImageAssetUrl(studioLogoCandidate)
+            ? studioLogoCandidate
             : "";
         watermarkLogoUrl = resolvedLogoUrl || "";
         studioInfo = {

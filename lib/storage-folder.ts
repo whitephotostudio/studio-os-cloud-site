@@ -1,6 +1,12 @@
 import { listR2FolderImages } from "@/lib/r2";
 import { r2PresignedGetUrl } from "@/lib/r2-signed-urls";
-import { extractStoragePathFromSupabaseUrl } from "@/lib/storage-images";
+import {
+  buildStudentPhotoFolderPrefixes,
+  filterTombstonedSchoolPhotoAssets,
+  loadSchoolPhotoTombstones,
+  tombstoneFamilySet,
+  type SchoolPhotoServiceClient,
+} from "@/lib/school-photo-deletions";
 
 type StudentFolderLike = {
   id: string;
@@ -30,14 +36,6 @@ function clean(value: string | null | undefined) {
 
 function uniqueFolders(values: Array<string | null | undefined>) {
   return Array.from(new Set(values.map((value) => clean(value)).filter(Boolean)));
-}
-
-function folderFromPhotoUrl(photoUrl: string | null | undefined) {
-  const storagePath = extractStoragePathFromSupabaseUrl(photoUrl);
-  if (!storagePath) return null;
-  const lastSlash = storagePath.lastIndexOf("/");
-  if (lastSlash === -1) return null;
-  return storagePath.slice(0, lastSlash);
 }
 
 function photoBaseNameFromFileName(name: string | null | undefined) {
@@ -99,28 +97,52 @@ export function buildSchoolCandidateFolders(params: {
   activeSchool: SchoolFolderLike | null | undefined;
   selectedSchoolId?: string | null;
 }) {
-  const schoolBaseId =
-    clean(params.activeSchool?.local_school_id) ||
-    clean(params.activeSchool?.id) ||
-    clean(params.selectedSchoolId);
+  const activeSchoolId = clean(params.activeSchool?.id);
+  const selectedSchoolId = clean(params.selectedSchoolId);
+  if (
+    !activeSchoolId ||
+    (selectedSchoolId && selectedSchoolId !== activeSchoolId)
+  ) {
+    return [];
+  }
 
-  return uniqueFolders([
-    ...params.studentCandidates.map((student) => folderFromPhotoUrl(student.photo_url)),
-    ...params.studentCandidates.map((student) => {
-      const className = clean(student.class_name);
-      const folderName = clean(student.folder_name);
-      if (!schoolBaseId || !className || !folderName) return null;
-      return `${schoolBaseId}/${className}/${folderName}`;
-    }),
-  ]);
+  const school = {
+    id: activeSchoolId,
+    local_school_id: params.activeSchool?.local_school_id,
+  };
+  return uniqueFolders(
+    params.studentCandidates.flatMap((student) =>
+      buildStudentPhotoFolderPrefixes({ school, student }),
+    ),
+  );
 }
 
-export async function loadFolderMediaRows(folderPaths: string[]) {
+export async function loadFolderMediaRows(
+  folderPaths: string[],
+  options?: {
+    ttlSeconds?: number;
+    service?: SchoolPhotoServiceClient;
+    schoolId?: string | null;
+    tombstonedFamilies?: ReadonlySet<string>;
+  },
+) {
   const mediaRows: FolderMediaRow[] = [];
   const seenPhotoKeys = new Set<string>();
+  let deletedFamilies = options?.tombstonedFamilies ?? new Set<string>();
+
+  if (!options?.tombstonedFamilies && options?.service && clean(options.schoolId)) {
+    const tombstones = await loadSchoolPhotoTombstones(
+      options.service,
+      clean(options.schoolId),
+    );
+    deletedFamilies = tombstoneFamilySet(tombstones);
+  }
 
   for (const folderPath of uniqueFolders(folderPaths)) {
-    const files = await listR2FolderImages(folderPath);
+    const files = filterTombstonedSchoolPhotoAssets(
+      await listR2FolderImages(folderPath, { ttlSeconds: options?.ttlSeconds }),
+      deletedFamilies,
+    );
     for (const file of files) {
       const dedupeKey = photoDedupeKey(file.key, file.url);
       if (seenPhotoKeys.has(dedupeKey)) continue;

@@ -227,6 +227,7 @@ export async function POST(request: NextRequest) {
       cloudProjectId = clean(
         await findSyncedSchoolProjectId(service, schoolId, {
           localSchoolId: school.local_school_id,
+          photographerId: school.photographer_id,
         }),
       );
     }

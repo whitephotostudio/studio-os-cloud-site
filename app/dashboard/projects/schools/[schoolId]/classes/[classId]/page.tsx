@@ -6,12 +6,11 @@ import { useParams, useSearchParams } from "next/navigation";
 import {
   ArrowLeft,
   CheckSquare,
-  ChevronLeft,
-  ChevronRight,
   Eye,
   EyeOff,
   FolderPlus,
   KeyRound,
+  Mail,
   Menu,
   Plus,
   Search,
@@ -31,6 +30,13 @@ import {
   buildStoredMediaUrls,
   extractStoragePathFromSupabaseUrl,
 } from "@/lib/storage-images";
+import { normalizeStudentRecipientEmail } from "@/lib/student-recipient-email";
+import {
+  dedupeGalleryPhotoAssets,
+  GalleryPhotoAsset,
+  photoAssetFromStoredReference,
+  StudentPhotoLightbox,
+} from "@/components/student-photo-lightbox";
 
 type School = {
   id: string;
@@ -58,6 +64,7 @@ type Student = {
   class_name: string | null;
   folder_name: string | null;
   external_student_id: string | null;
+  parent_email: string | null;
 };
 
 type UploadedStudentAsset = {
@@ -145,7 +152,9 @@ export default function SchoolsSchoolClassPage() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const folderInputRef = useRef<HTMLInputElement | null>(null);
   const uploadTargetStudentRef = useRef<Student | null>(null);
+  const emailingStudentRef = useRef<string | null>(null);
   const folderImagesCacheRef = useRef<Map<string, string[]>>(new Map());
+  const folderImageAssetsCacheRef = useRef<Map<string, GalleryPhotoAsset[]>>(new Map());
   const schoolId = String(params?.schoolId ?? "");
   const className = decodeURIComponent(String(params?.classId ?? ""));
 
@@ -155,6 +164,10 @@ export default function SchoolsSchoolClassPage() {
   const [students, setStudents] = useState<Student[]>([]);
   const [error, setError] = useState("");
   const [shareNotice, setShareNotice] = useState("");
+  const [studentEmailFeedback, setStudentEmailFeedback] = useState<{
+    kind: "success" | "error";
+    message: string;
+  } | null>(null);
   const [studentSearch, setStudentSearch] = useState("");
   const [selectedStudentIds, setSelectedStudentIds] = useState<string[]>([]);
   const [visiblePinIds, setVisiblePinIds] = useState<string[]>([]);
@@ -164,18 +177,22 @@ export default function SchoolsSchoolClassPage() {
   const [newStudentFirstName, setNewStudentFirstName] = useState("");
   const [newStudentLastName, setNewStudentLastName] = useState("");
   const [newStudentPin, setNewStudentPin] = useState("");
+  const [newStudentEmail, setNewStudentEmail] = useState("");
   const [queuedStudentFiles, setQueuedStudentFiles] = useState<File[]>([]);
   const [creatingStudent, setCreatingStudent] = useState(false);
   const [uploadingStudentId, setUploadingStudentId] = useState<string | null>(null);
+  const [emailingStudentId, setEmailingStudentId] = useState<string | null>(null);
   const [settingsStudent, setSettingsStudent] = useState<Student | null>(null);
   const [settingsName, setSettingsName] = useState("");
   const [settingsPin, setSettingsPin] = useState("");
+  const [settingsEmail, setSettingsEmail] = useState("");
   const [showSettingsPin, setShowSettingsPin] = useState(false);
   const [settingsSaving, setSettingsSaving] = useState(false);
   const [settingsMsg, setSettingsMsg] = useState("");
   const [lightbox, setLightbox] = useState<Student | null>(null);
   const [lightboxIndex, setLightboxIndex] = useState(0);
   const [photoUrlsMap, setPhotoUrlsMap] = useState<Record<string, string[]>>({});
+  const [photoAssetsMap, setPhotoAssetsMap] = useState<Record<string, GalleryPhotoAsset[]>>({});
 
   async function loadFolderImageUrls(folderPath: string) {
     const cached = folderImagesCacheRef.current.get(folderPath);
@@ -187,21 +204,29 @@ export default function SchoolsSchoolClassPage() {
     );
     const payload = (await response.json().catch(() => ({}))) as {
       ok?: boolean;
-      files?: Array<{ name: string; url: string }>;
+      files?: Array<{ key?: string; name: string; url: string }>;
     };
 
     if (!response.ok || payload.ok === false || !payload.files) {
-      folderImagesCacheRef.current.set(folderPath, []);
-      return [];
+      folderImagesCacheRef.current.delete(folderPath);
+      folderImageAssetsCacheRef.current.delete(folderPath);
+      throw new Error("Could not load this student's photo folder.");
     }
 
-    const urls = payload.files
+    const assets = payload.files
       .filter((file) => !!file.name && /\.(png|jpg|jpeg|webp)$/i.test(file.name))
       .sort((a, b) => naturalCompare(a.name, b.name))
-      .map((file) => clean(file.url))
-      .filter(Boolean);
+      .map((file) => {
+        const fallback = photoAssetFromStoredReference(file.url, file.name);
+        const key = clean(file.key) || fallback?.key || `${folderPath}/${file.name}`;
+        const url = clean(file.url);
+        return url ? { key, name: file.name, url } : null;
+      })
+      .filter((asset): asset is GalleryPhotoAsset => Boolean(asset));
+    const urls = assets.map((asset) => asset.url);
 
     folderImagesCacheRef.current.set(folderPath, urls);
+    folderImageAssetsCacheRef.current.set(folderPath, assets);
     return urls;
   }
 
@@ -246,7 +271,7 @@ export default function SchoolsSchoolClassPage() {
 
         const { data: rows, error: err } = await supabase
           .from("students")
-          .select("id,first_name,last_name,pin,photo_url,class_id,class_name,folder_name,external_student_id")
+          .select("id,first_name,last_name,pin,photo_url,class_id,class_name,folder_name,external_student_id,parent_email")
           .eq("school_id", schoolId)
           .eq("class_name", className)
           .order("last_name", { ascending: true })
@@ -254,7 +279,7 @@ export default function SchoolsSchoolClassPage() {
 
         if (err) throw err;
 
-        let loaded = ((rows ?? []) as Student[]).map((student) => {
+        const loaded = ((rows ?? []) as Student[]).map((student) => {
           const storagePath = extractObjectPathFromPublicUrl(clean(student.photo_url));
           const previewUrl = storagePath
             ? buildStoredMediaUrls({
@@ -269,18 +294,23 @@ export default function SchoolsSchoolClassPage() {
           };
         });
         const urlMap: Record<string, string[]> = {};
+        const assetMap: Record<string, GalleryPhotoAsset[]> = {};
 
         const studentsByFolder = new Map<string, Student[]>();
 
         for (const student of loaded) {
           if (!student.photo_url) {
             urlMap[student.id] = [];
+            assetMap[student.id] = [];
             continue;
           }
 
           const folderPath = extractFolderPathFromPublicUrl(student.photo_url);
           if (!folderPath) {
             urlMap[student.id] = [student.photo_url];
+            assetMap[student.id] = dedupeGalleryPhotoAssets([
+              photoAssetFromStoredReference(student.photo_url),
+            ]);
             continue;
           }
 
@@ -293,17 +323,20 @@ export default function SchoolsSchoolClassPage() {
           Array.from(studentsByFolder.entries()).map(async ([folderPath, folderStudents]) => {
             try {
               const urls = await loadFolderImageUrls(folderPath);
+              const folderAssets = folderImageAssetsCacheRef.current.get(folderPath) ?? [];
               for (const student of folderStudents) {
-                const mergedUrls = [student.photo_url, ...urls].filter(
-                  (value): value is string => Boolean(value),
-                );
-                urlMap[student.id] = mergedUrls.length
-                  ? Array.from(new Set(mergedUrls))
-                  : [];
+                // A successful folder response is authoritative. Do not merge
+                // the representative photo_url here: older desktop versions
+                // may still point it at a photo intentionally removed online.
+                urlMap[student.id] = Array.from(new Set(urls));
+                assetMap[student.id] = dedupeGalleryPhotoAssets(folderAssets);
               }
             } catch {
               for (const student of folderStudents) {
                 urlMap[student.id] = [student.photo_url!];
+                assetMap[student.id] = dedupeGalleryPhotoAssets([
+                  photoAssetFromStoredReference(student.photo_url),
+                ]);
               }
             }
           })
@@ -364,6 +397,7 @@ export default function SchoolsSchoolClassPage() {
         setClassDisplayName(syncedClassTitle);
         setStudents(loaded);
         setPhotoUrlsMap(urlMap);
+        setPhotoAssetsMap(assetMap);
         setSelectedStudentIds((prev) => prev.filter((id) => loaded.some((student) => student.id === id)));
         setVisiblePinIds((prev) => prev.filter((id) => loaded.some((student) => student.id === id)));
       } catch (err: unknown) {
@@ -372,6 +406,7 @@ export default function SchoolsSchoolClassPage() {
         setClassDisplayName(className);
         setStudents([]);
         setPhotoUrlsMap({});
+        setPhotoAssetsMap({});
       } finally {
         if (!cancelled) {
           setLoading(false);
@@ -419,8 +454,17 @@ export default function SchoolsSchoolClassPage() {
     return photoUrlsMap[student.id] ?? (student.photo_url ? [student.photo_url] : []);
   }
 
+  function getPhotoAssets(student: Student) {
+    return (
+      photoAssetsMap[student.id] ??
+      dedupeGalleryPhotoAssets([
+        photoAssetFromStoredReference(student.photo_url),
+      ])
+    );
+  }
+
   function openViewer(student: Student) {
-    if (!getPhotoUrls(student).length) return;
+    if (!getPhotoAssets(student).length) return;
     setOpenStudentMenuId(null);
     setLightbox(student);
     setLightboxIndex(0);
@@ -431,8 +475,62 @@ export default function SchoolsSchoolClassPage() {
     setSettingsStudent(student);
     setSettingsName(fullNameOf(student));
     setSettingsPin(clean(student.pin));
+    setSettingsEmail(clean(student.parent_email));
     setShowSettingsPin(false);
     setSettingsMsg("");
+  }
+
+  async function emailStudentGallery(student: Student) {
+    const studentName = fullNameOf(student);
+    const pin = clean(student.pin);
+    if (!pin) {
+      setError(`${studentName} does not have a gallery PIN yet.`);
+      return;
+    }
+    if (!normalizeStudentRecipientEmail(student.parent_email)) {
+      setError(`${studentName} does not have a parent / recipient email yet.`);
+      return;
+    }
+    const confirmed = typeof window !== "undefined"
+      ? window.confirm(
+          `Send ${studentName}'s private gallery link and PIN ${pin} to their registered email?`,
+        )
+      : false;
+    if (!confirmed) return;
+
+    setOpenStudentMenuId(null);
+    setEmailingStudentId(student.id);
+    setError("");
+    try {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      const response = await fetch(`/api/dashboard/schools/${schoolId}/emails`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session?.access_token ?? ""}`,
+        },
+        body: JSON.stringify({
+          action: "student",
+          studentId: student.id,
+          requestId: crypto.randomUUID(),
+        }),
+      });
+      const payload = await response.json().catch(() => null) as {
+        ok?: boolean;
+        message?: string;
+      } | null;
+      if (!response.ok || payload?.ok === false) {
+        throw new Error(payload?.message || "Could not send this student's gallery email.");
+      }
+      setShareNotice(`Gallery link and private PIN emailed for ${studentName}.`);
+      window.setTimeout(() => setShareNotice(""), 3200);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not send this student's gallery email.");
+    } finally {
+      setEmailingStudentId(null);
+    }
   }
 
   async function copyClassLink() {
@@ -454,15 +552,12 @@ export default function SchoolsSchoolClassPage() {
     setNewStudentFirstName("");
     setNewStudentLastName("");
     setNewStudentPin("");
+    setNewStudentEmail("");
     setQueuedStudentFiles([]);
   }
 
   function classStudentsApiPath() {
     return `/api/dashboard/schools/${schoolId}/classes/${encodeURIComponent(className)}/students`;
-  }
-
-  function studentPhotosApiPath(studentId: string) {
-    return `${classStudentsApiPath()}/${studentId}/photos`;
   }
 
   async function uploadFilesToStudent(student: Student, files: File[]) {
@@ -487,6 +582,7 @@ export default function SchoolsSchoolClassPage() {
     const storageFolderPath =
       currentFolderPath || `${basePath}/${classPath}/${derivedFolderName}`;
     const existingUrls = getPhotoUrls(student);
+    const existingPhotoAssets = getPhotoAssets(student);
 
     setUploadingStudentId(student.id);
     setError("");
@@ -519,11 +615,11 @@ export default function SchoolsSchoolClassPage() {
 
         // Generate pre-sized thumbnails server-side on R2
         const generated = await generateThumbnails(storagePath, accessToken);
-        const publicUrl = generated.previewUrl || r2Result.publicUrl;
-        if (clean(publicUrl)) {
+        const objectReference = generated.previewKey || r2Result.key || storagePath;
+        if (clean(objectReference)) {
           uploadedAssets.push({
             storagePath,
-            publicUrl,
+            publicUrl: objectReference,
             filename: file.name,
             mimeType: file.type || null,
           });
@@ -534,6 +630,13 @@ export default function SchoolsSchoolClassPage() {
         .map((asset) => asset.publicUrl)
         .filter(Boolean);
       if (!uploadedUrls.length) return;
+      const uploadedDisplayUrls = uploadedAssets.map(
+        (asset) =>
+          buildStoredMediaUrls({
+            storagePath: asset.storagePath,
+            previewUrl: asset.publicUrl,
+          }).previewUrl || asset.publicUrl,
+      );
 
       let updatedStudent = student;
       const needsStudentUpdate =
@@ -549,7 +652,7 @@ export default function SchoolsSchoolClassPage() {
           })
           .eq("id", student.id)
           .select(
-            "id,first_name,last_name,pin,photo_url,class_id,class_name,folder_name,external_student_id",
+            "id,first_name,last_name,pin,photo_url,class_id,class_name,folder_name,external_student_id,parent_email",
           )
           .single();
 
@@ -586,9 +689,20 @@ export default function SchoolsSchoolClassPage() {
               : clean(student.photo_url)
                 ? [clean(student.photo_url)]
                 : []),
-            ...uploadedUrls,
+            ...uploadedDisplayUrls,
           ]),
         ),
+      }));
+      setPhotoAssetsMap((prev) => ({
+        ...prev,
+        [student.id]: dedupeGalleryPhotoAssets([
+          ...existingPhotoAssets,
+          ...uploadedAssets.map((asset, index) => ({
+            key: asset.storagePath,
+            name: asset.filename,
+            url: uploadedDisplayUrls[index] || asset.publicUrl,
+          })),
+        ]),
       }));
       setShareNotice(
         uploadedUrls.length === 1
@@ -648,6 +762,7 @@ export default function SchoolsSchoolClassPage() {
       formData.append("studentFirstName", firstName);
       formData.append("studentLastName", lastName);
       formData.append("studentPin", clean(newStudentPin));
+      formData.append("studentEmail", clean(newStudentEmail));
 
       const response = await fetch(classStudentsApiPath(), {
         method: "POST",
@@ -671,6 +786,12 @@ export default function SchoolsSchoolClassPage() {
       setPhotoUrlsMap((prev) => ({
         ...prev,
         [nextStudent.id]: nextStudent.photo_url ? [nextStudent.photo_url] : [],
+      }));
+      setPhotoAssetsMap((prev) => ({
+        ...prev,
+        [nextStudent.id]: dedupeGalleryPhotoAssets([
+          photoAssetFromStoredReference(nextStudent.photo_url),
+        ]),
       }));
       resetCreateStudentForm();
 
@@ -703,6 +824,7 @@ export default function SchoolsSchoolClassPage() {
           body: JSON.stringify({
             studentName: settingsName.trim(),
             studentPin: settingsPin.trim(),
+            studentEmail: settingsEmail.trim(),
           }),
         },
       );
@@ -775,6 +897,11 @@ export default function SchoolsSchoolClassPage() {
         for (const id of uniqueIds) delete next[id];
         return next;
       });
+      setPhotoAssetsMap((prev) => {
+        const next = { ...prev };
+        for (const id of uniqueIds) delete next[id];
+        return next;
+      });
       if (settingsStudent && uniqueIds.includes(settingsStudent.id)) {
         setSettingsStudent(null);
       }
@@ -787,6 +914,87 @@ export default function SchoolsSchoolClassPage() {
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to delete student.");
     }
+  }
+
+  async function removeLightboxPhotos(keys: string[]) {
+    if (!lightbox) return [];
+
+    const uniqueKeys = Array.from(new Set(keys.map((key) => clean(key)).filter(Boolean)));
+    if (!uniqueKeys.length) return getPhotoAssets(lightbox);
+
+    const response = await fetch(
+      `/api/dashboard/schools/${encodeURIComponent(schoolId)}/students/${encodeURIComponent(lightbox.id)}/photos`,
+      {
+        method: "DELETE",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ keys: uniqueKeys }),
+      },
+    );
+    const payload = (await response.json().catch(() => ({}))) as {
+      ok?: boolean;
+      message?: string;
+      deletedKeys?: string[];
+      remainingPhotos?: GalleryPhotoAsset[];
+      photoUrl?: string | null;
+      disposition?: string;
+    };
+
+    if (!response.ok || payload.ok === false || !Array.isArray(payload.remainingPhotos)) {
+      throw new Error(payload.message || "The selected photos could not be removed.");
+    }
+
+    const remainingPhotos = dedupeGalleryPhotoAssets(payload.remainingPhotos);
+    const remainingUrls = remainingPhotos.map((photo) => photo.url);
+    const previousFolderPath = extractFolderPathFromPublicUrl(lightbox.photo_url ?? "");
+    if (previousFolderPath) {
+      folderImagesCacheRef.current.set(previousFolderPath, remainingUrls);
+      folderImageAssetsCacheRef.current.set(previousFolderPath, remainingPhotos);
+    }
+
+    const nextReference = clean(payload.photoUrl);
+    const nextStoragePath = extractObjectPathFromPublicUrl(nextReference);
+    const nextPhotoUrl = nextReference
+      ? nextStoragePath
+        ? buildStoredMediaUrls({
+            storagePath: nextStoragePath,
+            previewUrl: nextReference,
+          }).previewUrl
+        : nextReference
+      : null;
+
+    setPhotoUrlsMap((current) => ({
+      ...current,
+      [lightbox.id]: remainingUrls,
+    }));
+    setPhotoAssetsMap((current) => ({
+      ...current,
+      [lightbox.id]: remainingPhotos,
+    }));
+    setStudents((current) =>
+      current.map((student) =>
+        student.id === lightbox.id
+          ? { ...student, photo_url: nextPhotoUrl }
+          : student,
+      ),
+    );
+    setLightbox((current) =>
+      current?.id === lightbox.id
+        ? { ...current, photo_url: nextPhotoUrl }
+        : current,
+    );
+
+    const removedCount = payload.deletedKeys?.length || uniqueKeys.length;
+    setShareNotice(
+      `${removedCount} photo${removedCount === 1 ? "" : "s"} removed from the online gallery`,
+    );
+    window.setTimeout(() => setShareNotice(""), 2600);
+
+    if (!remainingPhotos.length) {
+      setLightbox(null);
+      setLightboxIndex(0);
+    }
+
+    return remainingPhotos;
   }
 
   function toggleSelectedStudent(studentId: string) {
@@ -818,9 +1026,11 @@ export default function SchoolsSchoolClassPage() {
       const pin = clean(student.pin).toLowerCase();
       const folderName = clean(student.folder_name).toLowerCase();
       const externalId = clean(student.external_student_id).toLowerCase();
+      const parentEmail = clean(student.parent_email).toLowerCase();
       return (
         fullName.includes(query) ||
         pin.includes(query) ||
+        parentEmail.includes(query) ||
         folderName.includes(query) ||
         externalId.includes(query)
       );
@@ -843,11 +1053,35 @@ export default function SchoolsSchoolClassPage() {
     () => Object.values(photoUrlsMap).reduce((sum, urls) => sum + urls.length, 0),
     [photoUrlsMap]
   );
-  const lightboxPhotos = lightbox ? getPhotoUrls(lightbox) : [];
+  const lightboxPhotos = lightbox ? getPhotoAssets(lightbox) : [];
   const folderInputProps: Record<string, string> = { webkitdirectory: "", directory: "" };
 
   return (
     <div style={{ minHeight: "100vh", background: "#faf7f7", padding: 36 }}>
+      {studentEmailFeedback ? (
+        <div
+          role={studentEmailFeedback.kind === "error" ? "alert" : "status"}
+          aria-live={studentEmailFeedback.kind === "error" ? "assertive" : "polite"}
+          style={{
+            position: "fixed",
+            top: 24,
+            right: 24,
+            zIndex: 1000,
+            maxWidth: 420,
+            borderRadius: 12,
+            border: `1px solid ${studentEmailFeedback.kind === "error" ? "#fecaca" : "#bbf7d0"}`,
+            background: studentEmailFeedback.kind === "error" ? "#fef2f2" : "#f0fdf4",
+            color: studentEmailFeedback.kind === "error" ? "#991b1b" : "#166534",
+            boxShadow: "0 12px 30px rgba(15,23,42,0.16)",
+            padding: "12px 16px",
+            fontSize: 13,
+            fontWeight: 800,
+            lineHeight: 1.5,
+          }}
+        >
+          {studentEmailFeedback.message}
+        </div>
+      ) : null}
       <div style={{ maxWidth: 1400, margin: "0 auto" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16, marginBottom: 22 }}>
           <div>
@@ -995,7 +1229,7 @@ export default function SchoolsSchoolClassPage() {
                   <input
                     value={studentSearch}
                     onChange={(event) => setStudentSearch(event.target.value)}
-                    placeholder="Search students, PIN, or folder..."
+                    placeholder="Search students, email, PIN, or folder..."
                     style={{
                       width: "100%",
                       boxSizing: "border-box",
@@ -1229,7 +1463,7 @@ export default function SchoolsSchoolClassPage() {
                           </button>
                           <div style={{ position: "relative" }}>
                             <button
-                              disabled={uploadingStudentId === student.id}
+                              disabled={uploadingStudentId === student.id || emailingStudentId === student.id}
                               onClick={() => setOpenStudentMenuId((prev) => (prev === student.id ? null : student.id))}
                               style={{
                                 width: 40,
@@ -1241,12 +1475,12 @@ export default function SchoolsSchoolClassPage() {
                                 display: "inline-flex",
                                 alignItems: "center",
                                 justifyContent: "center",
-                                cursor: uploadingStudentId === student.id ? "wait" : "pointer",
-                                opacity: uploadingStudentId === student.id ? 0.7 : 1,
+                                cursor: uploadingStudentId === student.id || emailingStudentId === student.id ? "wait" : "pointer",
+                                opacity: uploadingStudentId === student.id || emailingStudentId === student.id ? 0.7 : 1,
                               }}
                               aria-label="Student actions"
                             >
-                              {uploadingStudentId === student.id ? (
+                              {uploadingStudentId === student.id || emailingStudentId === student.id ? (
                                 <span style={{ fontSize: 10, fontWeight: 800 }}>...</span>
                               ) : (
                                 <Menu size={18} />
@@ -1299,6 +1533,26 @@ export default function SchoolsSchoolClassPage() {
                                   }}
                                 >
                                   Edit PIN
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => void emailStudentGallery(student)}
+                                  style={{
+                                    width: "100%",
+                                    textAlign: "left",
+                                    padding: "12px 14px",
+                                    color: "#111111",
+                                    background: "#fff",
+                                    border: 0,
+                                    borderTop: "1px solid #f1f5f9",
+                                    fontWeight: 700,
+                                    cursor: "pointer",
+                                    display: "flex",
+                                    alignItems: "center",
+                                    gap: 8,
+                                  }}
+                                >
+                                  <Mail size={15} /> Email Gallery + PIN
                                 </button>
                                 <button
                                   type="button"
@@ -1433,6 +1687,23 @@ export default function SchoolsSchoolClassPage() {
                 />
               </div>
 
+              <div>
+                <label style={{ display: "block", fontWeight: 700, color: "#111111", marginBottom: 8 }}>
+                  Parent / Recipient Email <span style={{ color: "#667085", fontWeight: 500 }}>(optional)</span>
+                </label>
+                <input
+                  type="email"
+                  value={newStudentEmail}
+                  onChange={(e) => setNewStudentEmail(e.target.value)}
+                  placeholder="parent@example.com"
+                  autoComplete="email"
+                  style={{ width: "100%", boxSizing: "border-box", borderRadius: 14, border: "1px solid #d0d5dd", padding: "13px 14px", fontSize: 15, color: "#111111", outline: "none" }}
+                />
+                <div style={{ color: "#667085", fontSize: 12, marginTop: 6 }}>
+                  Used only for this student&apos;s private gallery and PIN email.
+                </div>
+              </div>
+
               <div style={{ borderRadius: 16, border: "1px solid #e5e7eb", background: "#fafafa", padding: 14 }}>
                 <div style={{ fontWeight: 700, color: "#111111", marginBottom: 10 }}>Photos</div>
                 <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
@@ -1500,7 +1771,7 @@ export default function SchoolsSchoolClassPage() {
             >
               <div>
                 <div style={{ fontSize: 24, fontWeight: 900, color: "#111827" }}>Student Details</div>
-                <div style={{ color: "#667085", marginTop: 4 }}>Update the student name and PIN/password.</div>
+                <div style={{ color: "#667085", marginTop: 4 }}>Update the student name, recipient email, and PIN/password.</div>
               </div>
 
               <button
@@ -1597,6 +1868,41 @@ export default function SchoolsSchoolClassPage() {
                 </div>
               </div>
 
+              <div>
+                <label
+                  style={{
+                    display: "block",
+                    fontSize: 14,
+                    fontWeight: 700,
+                    color: "#344054",
+                    marginBottom: 8,
+                  }}
+                >
+                  Parent / Recipient Email
+                </label>
+                <input
+                  type="email"
+                  value={settingsEmail}
+                  onChange={(event) => setSettingsEmail(event.target.value)}
+                  placeholder="parent@example.com"
+                  autoComplete="email"
+                  style={{
+                    width: "100%",
+                    boxSizing: "border-box",
+                    padding: "10px 12px",
+                    borderRadius: 10,
+                    border: "1px solid #d0d5dd",
+                    fontSize: 13,
+                    background: "#fff",
+                    color: "#344054",
+                    fontWeight: 600,
+                    WebkitTextFillColor: "#344054",
+                    opacity: 1,
+                    outline: "none",
+                  }}
+                />
+              </div>
+
               {settingsMsg ? (
                 <div
                   style={{
@@ -1683,157 +1989,17 @@ export default function SchoolsSchoolClassPage() {
       ) : null}
 
       {lightbox ? (
-        <>
-          <div onClick={() => setLightbox(null)} style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.88)", zIndex: 200 }} />
-
-          <div style={{ position: "fixed", inset: 0, zIndex: 201, display: "flex", flexDirection: "column" }}>
-            <div
-              style={{
-                padding: "16px 18px",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                color: "#fff",
-              }}
-            >
-              <div style={{ minWidth: 0 }}>
-                <div style={{ fontSize: 18, fontWeight: 900 }}>{fullNameOf(lightbox)}</div>
-                <div style={{ fontSize: 12, color: "rgba(255,255,255,0.7)", marginTop: 4 }}>
-                  {lightboxIndex + 1} of {lightboxPhotos.length}
-                </div>
-              </div>
-
-              <button
-                type="button"
-                onClick={() => setLightbox(null)}
-                style={{ background: "none", border: "none", color: "#fff", cursor: "pointer" }}
-              >
-                <X size={24} />
-              </button>
-            </div>
-
-            <div
-              style={{
-                flex: 1,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                padding: "16px 24px",
-                gap: 16,
-              }}
-            >
-              <button
-                type="button"
-                onClick={() => setLightboxIndex((prev) => Math.max(0, prev - 1))}
-                disabled={lightboxIndex === 0}
-                style={{
-                  width: 44,
-                  height: 44,
-                  borderRadius: "50%",
-                  border: "1px solid rgba(255,255,255,0.2)",
-                  background: "rgba(255,255,255,0.1)",
-                  color: "#fff",
-                  cursor: lightboxIndex === 0 ? "default" : "pointer",
-                  opacity: lightboxIndex === 0 ? 0.3 : 1,
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                }}
-              >
-                <ChevronLeft size={22} />
-              </button>
-
-              <div
-                style={{
-                  maxWidth: "min(1000px, 75vw)",
-                  maxHeight: "70vh",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                }}
-              >
-                {lightboxPhotos[lightboxIndex] ? (
-                  <img
-                    src={lightboxPhotos[lightboxIndex]}
-                    alt={fullNameOf(lightbox)}
-                    style={{
-                      maxWidth: "100%",
-                      maxHeight: "70vh",
-                      objectFit: "contain",
-                      borderRadius: 18,
-                      boxShadow: "0 30px 80px rgba(0,0,0,0.4)",
-                    }}
-                  />
-                ) : (
-                  <div
-                    style={{
-                      width: 400,
-                      height: 500,
-                      background: "rgba(255,255,255,0.06)",
-                      border: "1px dashed rgba(255,255,255,0.25)",
-                      borderRadius: 12,
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      color: "rgba(255,255,255,0.6)",
-                    }}
-                  >
-                    No photo available
-                  </div>
-                )}
-              </div>
-
-              <button
-                type="button"
-                onClick={() => setLightboxIndex((prev) => Math.min(lightboxPhotos.length - 1, prev + 1))}
-                disabled={lightboxIndex >= lightboxPhotos.length - 1}
-                style={{
-                  width: 44,
-                  height: 44,
-                  borderRadius: "50%",
-                  border: "1px solid rgba(255,255,255,0.2)",
-                  background: "rgba(255,255,255,0.1)",
-                  color: "#fff",
-                  cursor: lightboxIndex >= lightboxPhotos.length - 1 ? "default" : "pointer",
-                  opacity: lightboxIndex >= lightboxPhotos.length - 1 ? 0.3 : 1,
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                }}
-              >
-                <ChevronRight size={22} />
-              </button>
-            </div>
-
-            <div style={{ padding: "16px 24px 24px", display: "flex", justifyContent: "center", gap: 10, overflowX: "auto" }}>
-              {lightboxPhotos.map((url, index) => (
-                <button
-                  key={`${lightbox.id}-${index}`}
-                  type="button"
-                  onClick={() => setLightboxIndex(index)}
-                  style={{
-                    border: index === lightboxIndex ? "2px solid #fff" : "1px solid rgba(255,255,255,0.2)",
-                    background: "none",
-                    padding: 0,
-                    borderRadius: 6,
-                    overflow: "hidden",
-                    width: 72,
-                    height: 90,
-                    flexShrink: 0,
-                    cursor: "pointer",
-                    opacity: index === lightboxIndex ? 1 : 0.75,
-                  }}
-                >
-                  <img
-                    src={url}
-                    alt={`${fullNameOf(lightbox)} ${index + 1}`}
-                    style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
-                  />
-                </button>
-              ))}
-            </div>
-          </div>
-        </>
+        <StudentPhotoLightbox
+          personName={fullNameOf(lightbox)}
+          photos={lightboxPhotos}
+          index={lightboxIndex}
+          onIndexChange={setLightboxIndex}
+          onClose={() => {
+            setLightbox(null);
+            setLightboxIndex(0);
+          }}
+          onRemoveSelected={removeLightboxPhotos}
+        />
       ) : null}
     </div>
   );

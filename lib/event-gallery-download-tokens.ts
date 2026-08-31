@@ -17,6 +17,11 @@ export type EventGalleryBatchTokenPayload = {
   studioEmail: string;
   fileName: string;
   mediaIds: string[];
+  // Newer download sessions record each batch only after its ZIP stream has
+  // completed. These fields stay optional so already-issued v1 tokens remain
+  // valid; legacy sessions were recorded by the ready endpoint instead.
+  downloadLogId?: string;
+  collectionId?: string | null;
   exp: number;
 };
 

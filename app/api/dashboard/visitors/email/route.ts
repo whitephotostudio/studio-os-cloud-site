@@ -7,6 +7,7 @@ import {
 import { parseJson } from "@/lib/api-validation";
 import { resendConfigured, sendResendEmail } from "@/lib/resend";
 import { guardAgreement } from "@/lib/require-agreement";
+import { signedPrivateMediaReference } from "@/lib/private-media-references";
 
 export const dynamic = "force-dynamic";
 
@@ -24,8 +25,6 @@ const EmailBodySchema = z.object({
   headline: z.string().min(1).max(500),
   message: z.string().max(10_000).default(""),
 });
-
-type EmailBody = z.infer<typeof EmailBodySchema>;
 
 /**
  * POST /api/dashboard/visitors/email
@@ -71,7 +70,10 @@ export async function POST(request: NextRequest) {
     const pg = pgRow as Record<string, unknown> | null;
     const businessName = clean(pg?.business_name as string) || "Studio OS";
     const replyTo = clean(pg?.studio_email as string) || clean(pg?.billing_email as string) || "";
-    const logoUrl = clean(pg?.logo_url as string);
+    const logoUrl = signedPrivateMediaReference(
+      clean(pg?.logo_url as string),
+      60 * 60 * 24 * 7,
+    );
     const studioPhone = clean(pg?.studio_phone as string);
     const studioEmail = clean(pg?.studio_email as string) || clean(pg?.billing_email as string) || "";
     const studioAddress = clean(pg?.studio_address as string);

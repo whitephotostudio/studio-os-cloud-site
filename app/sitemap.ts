@@ -2,6 +2,7 @@ import type { MetadataRoute } from "next";
 
 export default function sitemap(): MetadataRoute.Sitemap {
   const baseUrl = "https://www.studiooscloud.com";
+  const now = new Date();
 
   // Static public pages
   const staticPages: MetadataRoute.Sitemap = [
@@ -18,10 +19,40 @@ export default function sitemap(): MetadataRoute.Sitemap {
       priority: 0.9,
     },
     {
+      url: `${baseUrl}/founding-100`,
+      lastModified: now,
+      changeFrequency: "weekly",
+      priority: 0.9,
+    },
+    {
       url: `${baseUrl}/sample-galleries`,
       lastModified: new Date(),
       changeFrequency: "monthly",
       priority: 0.9,
+    },
+    {
+      url: `${baseUrl}/sample-galleries/demo`,
+      lastModified: now,
+      changeFrequency: "monthly",
+      priority: 0.75,
+    },
+    {
+      url: `${baseUrl}/security`,
+      lastModified: now,
+      changeFrequency: "monthly",
+      priority: 0.65,
+    },
+    {
+      url: `${baseUrl}/about`,
+      lastModified: now,
+      changeFrequency: "monthly",
+      priority: 0.6,
+    },
+    {
+      url: `${baseUrl}/contact`,
+      lastModified: now,
+      changeFrequency: "monthly",
+      priority: 0.6,
     },
     {
       url: `${baseUrl}/studio-os`,
@@ -76,6 +107,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
   // SEO landing pages
   const seoLandingPages: MetadataRoute.Sitemap = [
     "school-photography-software",
+    "online-school-photography-booking",
     "high-volume-photography-software",
     "photography-workflow-software",
     "online-photo-gallery-ordering-software",

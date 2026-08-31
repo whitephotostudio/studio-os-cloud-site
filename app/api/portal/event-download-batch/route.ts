@@ -1,5 +1,5 @@
-import sharp from "sharp";
 import { NextRequest, NextResponse } from "next/server";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { createDashboardServiceClient } from "@/lib/dashboard-auth";
 import {
   verifyEventGalleryBatchToken,
@@ -32,6 +32,15 @@ type MediaRow = {
 
 function clean(value: string | null | undefined) {
   return (value ?? "").trim();
+}
+
+function isMissingDownloadsTable(error: unknown) {
+  return (
+    !!error &&
+    typeof error === "object" &&
+    "code" in error &&
+    (error as { code?: string }).code === "42P01"
+  );
 }
 
 function safeZipFileName(value: string | null | undefined) {
@@ -104,7 +113,7 @@ function chunkValues<T>(values: T[], size: number) {
 }
 
 async function fetchMediaRows(
-  service: { from: (table: string) => any },
+  service: SupabaseClient,
   projectId: string,
   mediaIds: string[],
 ) {
@@ -306,6 +315,7 @@ async function buildPrintReleasePdf(options: {
   replyTo: string;
   logoUrl: string;
 }) {
+  const { default: sharp } = await import("sharp");
   let logoMarkup = "";
   if (clean(options.logoUrl)) {
     try {
@@ -385,6 +395,7 @@ async function addWatermarkToImageBuffer(
     logoMimeType?: string | null;
   },
 ) {
+  const { default: sharp } = await import("sharp");
   const metadata = await sharp(imageBuffer, { animated: false }).metadata();
   const width = metadata.width ?? 0;
   const height = metadata.height ?? 0;
@@ -468,11 +479,12 @@ async function* buildDownloadZipEntries(options: {
   mediaMap: Map<string, MediaRow>;
   logoBuffer: Buffer | null;
   logoMimeType: string | null;
+  onPhotoComplete?: (mediaId: string) => void;
 }): AsyncGenerator<ZipStreamEntry> {
-  const { payload, mediaMap, logoBuffer, logoMimeType } = options;
+  const { payload, mediaMap, logoBuffer, logoMimeType, onPhotoComplete } = options;
   const failedFileNames: string[] = [];
+  const archivedMediaIds: string[] = [];
   const usedNames = new Map<string, number>();
-  let archivedPhotoCount = 0;
 
   for (const mediaId of payload.mediaIds) {
     const row = mediaMap.get(mediaId);
@@ -504,11 +516,12 @@ async function* buildDownloadZipEntries(options: {
         const normalizedName = clean(resolvedFallbackName).includes(".")
           ? resolvedFallbackName
           : `${resolvedFallbackName}${watermarked.outputExt}`;
-        archivedPhotoCount += 1;
         yield {
           name: uniqueDownloadName(normalizedName, usedNames),
           data: new Uint8Array(watermarked.buffer),
         };
+        archivedMediaIds.push(mediaId);
+        onPhotoComplete?.(mediaId);
         continue;
       }
 
@@ -520,11 +533,12 @@ async function* buildDownloadZipEntries(options: {
       const normalizedName = clean(resolvedFallbackName).includes(".")
         ? resolvedFallbackName
         : `${resolvedFallbackName}${outputExt}`;
-      archivedPhotoCount += 1;
       yield {
         name: uniqueDownloadName(normalizedName, usedNames),
         stream: source.stream,
       };
+      archivedMediaIds.push(mediaId);
+      onPhotoComplete?.(mediaId);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       console.error(`[event-download-batch] skipping media ${mediaId} (${fallbackName}): ${message}`);
@@ -532,7 +546,7 @@ async function* buildDownloadZipEntries(options: {
     }
   }
 
-  if (payload.includePrintRelease && archivedPhotoCount > 0) {
+  if (payload.includePrintRelease && archivedMediaIds.length > 0) {
     try {
       const printReleasePdf = await buildPrintReleasePdf({
         studioName: payload.studioName,
@@ -560,6 +574,82 @@ async function* buildDownloadZipEntries(options: {
       data: new TextEncoder().encode(skippedText),
     };
   }
+}
+
+function recordAfterZipCompletion(
+  zipStream: ReadableStream<Uint8Array>,
+  onComplete: () => Promise<void>,
+) {
+  const reader = zipStream.getReader();
+  let released = false;
+
+  const release = () => {
+    if (released) return;
+    released = true;
+    reader.releaseLock();
+  };
+
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const next = await reader.read();
+        if (!next.done) {
+          controller.enqueue(next.value);
+          return;
+        }
+
+        // The source ZIP has emitted its central directory and end record. A
+        // failed/cancelled stream never reaches this point, so only a complete
+        // downloadable archive is counted.
+        try {
+          await onComplete();
+        } catch (error) {
+          // Activity logging must never corrupt an otherwise complete ZIP file.
+          console.error("[event-download-batch] could not record completed ZIP", error);
+        }
+        release();
+        controller.close();
+      } catch (error) {
+        release();
+        controller.error(error);
+      }
+    },
+    async cancel(reason) {
+      try {
+        await reader.cancel(reason);
+      } finally {
+        release();
+      }
+    },
+  });
+}
+
+async function recordCompletedGalleryDownload(options: {
+  service: ReturnType<typeof createDashboardServiceClient>;
+  payload: EventGalleryBatchTokenPayload;
+  mediaIds: string[];
+}) {
+  const downloadLogId = clean(options.payload.downloadLogId);
+  // Legacy v1 sessions have no batch log ID because the ready endpoint already
+  // recorded them. Skipping avoids double-counting those still-valid tokens.
+  if (!downloadLogId || !options.mediaIds.length) return;
+
+  const { error } = await options.service
+    .from("event_gallery_downloads")
+    .upsert(
+      {
+        id: downloadLogId,
+        project_id: options.payload.projectId,
+        collection_id: clean(options.payload.collectionId) || null,
+        viewer_email: clean(options.payload.viewerEmail).toLowerCase(),
+        download_type: "gallery",
+        download_count: options.mediaIds.length,
+        media_ids: options.mediaIds,
+      },
+      { onConflict: "id", ignoreDuplicates: true },
+    );
+
+  if (error && !isMissingDownloadsTable(error)) throw error;
 }
 
 export async function GET(request: NextRequest) {
@@ -634,12 +724,21 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    const zipStream = createZipStream(
+    const completedMediaIds: string[] = [];
+    const sourceZipStream = createZipStream(
       buildDownloadZipEntries({
         payload,
         mediaMap,
         logoBuffer,
         logoMimeType,
+        onPhotoComplete: (mediaId) => completedMediaIds.push(mediaId),
+      }),
+    );
+    const zipStream = recordAfterZipCompletion(sourceZipStream, () =>
+      recordCompletedGalleryDownload({
+        service,
+        payload,
+        mediaIds: completedMediaIds,
       }),
     );
 

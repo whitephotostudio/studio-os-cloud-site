@@ -10,6 +10,13 @@ import {
   normalizeBillingInterval,
   normalizePlanCode,
 } from "@/lib/studio-pricing";
+import { FREE_TRIAL_DAYS } from "@/lib/trial-config";
+
+const publicPlanNames = {
+  starter: "Web Gallery Plan",
+  core: "App Plan",
+  studio: "Studio Plan",
+} as const;
 
 export default function SignUpPage() {
   const supabase = createClient();
@@ -17,6 +24,7 @@ export default function SignUpPage() {
   const [selectedInterval, setSelectedInterval] = useState<"month" | "year">("month");
   const [redirectPath, setRedirectPath] = useState("");
   const [downloadSource, setDownloadSource] = useState(false);
+  const [campaignSource, setCampaignSource] = useState("");
 
   const [fullName, setFullName] = useState("");
   const [businessName, setBusinessName] = useState("");
@@ -29,12 +37,17 @@ export default function SignUpPage() {
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    setSelectedPlan(normalizePlanCode(params.get("plan")));
-    setSelectedInterval(normalizeBillingInterval(params.get("interval")) ?? "month");
-    setRedirectPath(params.get("redirect") ?? "");
-    setDownloadSource(params.get("source") === "download-app");
-    const prefilledEmail = params.get("email");
-    if (prefilledEmail) setEmail(prefilledEmail);
+    const frame = window.requestAnimationFrame(() => {
+      setSelectedPlan(normalizePlanCode(params.get("plan")));
+      setSelectedInterval(normalizeBillingInterval(params.get("interval")) ?? "month");
+      setRedirectPath(params.get("redirect") ?? "");
+      setDownloadSource(params.get("source") === "download-app");
+      setCampaignSource(params.get("source") === "founding-100" ? "founding-100" : "");
+      const prefilledEmail = params.get("email");
+      if (prefilledEmail) setEmail(prefilledEmail);
+    });
+
+    return () => window.cancelAnimationFrame(frame);
   }, []);
 
   async function handleSignUp(e: FormEvent<HTMLFormElement>) {
@@ -51,6 +64,12 @@ export default function SignUpPage() {
           full_name: fullName,
           business_name: businessName,
           phone: phone,
+          ...(campaignSource
+            ? {
+                campaign_source: campaignSource,
+                campaign_joined_at: new Date().toISOString(),
+              }
+            : {}),
         },
         // Land on our friendly /auth/callback page after the user clicks the
         // verification link in their welcome email, then bounce them to the
@@ -76,8 +95,38 @@ export default function SignUpPage() {
       return;
     }
 
+    if (data.user?.id) {
+      void fetch("/api/onboarding/welcome", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId: data.user.id }),
+        keepalive: true,
+      }).catch(() => undefined);
+    }
+
     setAccountCreated(true);
     setMessage("Check your email to confirm your account, then choose where you want to go next.");
+    void fetch("/api/marketing/conversions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        event: "signup_account_created",
+        path: window.location.pathname,
+        placement: campaignSource
+          ? "founding_100_signup"
+          : downloadSource
+            ? "download_signup"
+            : "signup_form",
+        label: campaignSource
+          ? "Founding 100 account created"
+          : selectedPlan
+            ? publicPlanNames[selectedPlan]
+            : "No plan selected",
+        anonymousId:
+          window.localStorage.getItem("studio-os-anonymous-visitor-id") ?? undefined,
+      }),
+      keepalive: true,
+    }).catch(() => undefined);
     setLoading(false);
   }
 
@@ -110,22 +159,24 @@ export default function SignUpPage() {
         <div className="grid w-full gap-12 lg:grid-cols-2">
           <div className="flex flex-col justify-center">
             <p className="mb-4 text-sm font-semibold uppercase tracking-[0.22em] text-neutral-500">
-              Photographer Registration
+              {campaignSource ? "Founding 100 Photographer Registration" : "Photographer Registration"}
             </p>
             <h1 className="max-w-xl text-4xl font-semibold tracking-tight text-neutral-950 md:text-5xl">
-              Start your free 7-day trial
+              {campaignSource
+                ? "Join the Studio OS Founding 100"
+                : `Start your free ${FREE_TRIAL_DAYS}-day trial`}
             </h1>
             <p className="mt-6 max-w-xl text-lg leading-8 text-neutral-600">
-              Get full access to every Studio OS Cloud feature for 7 days — no credit
-              card required. Build your photographer portal, school galleries, and
-              connected online workflow.
+              {campaignSource
+                ? `Get the complete Studio OS workflow for ${FREE_TRIAL_DAYS} days, plus personal setup help as one of the first 100 participating photographers. No credit card required.`
+                : `Get full access to every Studio OS Cloud feature for ${FREE_TRIAL_DAYS} days — no credit card required. Build your photographer portal, school galleries, and connected online workflow.`}
             </p>
 
             <div className="mt-6 inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-medium text-emerald-800">
               <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
               </svg>
-              Full Studio plan access — free for 7 days
+              Full Studio plan access — free for {FREE_TRIAL_DAYS} days
             </div>
 
             {selectedPlan ? (
@@ -134,7 +185,7 @@ export default function SignUpPage() {
                   Selected package
                 </div>
                 <div className="mt-3 text-2xl font-semibold text-neutral-950">
-                  {selectedPlan.charAt(0).toUpperCase() + selectedPlan.slice(1)} ·{" "}
+                  {publicPlanNames[selectedPlan]} ·{" "}
                   {selectedInterval === "year" ? "Annual prepaid" : "Monthly"}
                 </div>
                 <div className="mt-3 text-base text-neutral-600">
@@ -166,7 +217,7 @@ export default function SignUpPage() {
                     Create your free account
                   </h2>
                   <p className="mt-2 text-sm text-neutral-500">
-                    No credit card needed. Your 7-day trial begins after email verification.
+                    No credit card needed. Your {FREE_TRIAL_DAYS}-day trial begins after email verification.
                   </p>
 
                   <form onSubmit={handleSignUp} className="mt-8 space-y-5">
@@ -176,6 +227,8 @@ export default function SignUpPage() {
                       </label>
                       <input
                         type="text"
+                        name="name"
+                        autoComplete="name"
                         value={fullName}
                         onChange={(e) => setFullName(e.target.value)}
                         className="w-full rounded-2xl border border-neutral-200 px-4 py-3 text-sm outline-none transition focus:border-black"
@@ -189,6 +242,8 @@ export default function SignUpPage() {
                       </label>
                       <input
                         type="text"
+                        name="organization"
+                        autoComplete="organization"
                         value={businessName}
                         onChange={(e) => setBusinessName(e.target.value)}
                         className="w-full rounded-2xl border border-neutral-200 px-4 py-3 text-sm outline-none transition focus:border-black"
@@ -202,6 +257,8 @@ export default function SignUpPage() {
                       </label>
                       <input
                         type="tel"
+                        name="tel"
+                        autoComplete="tel"
                         value={phone}
                         onChange={(e) => setPhone(e.target.value)}
                         className="w-full rounded-2xl border border-neutral-200 px-4 py-3 text-sm outline-none transition focus:border-black"
@@ -215,6 +272,8 @@ export default function SignUpPage() {
                       </label>
                       <input
                         type="email"
+                        name="email"
+                        autoComplete="email"
                         value={email}
                         onChange={(e) => setEmail(e.target.value)}
                         required
@@ -229,6 +288,8 @@ export default function SignUpPage() {
                       </label>
                       <input
                         type="password"
+                        name="new-password"
+                        autoComplete="new-password"
                         value={password}
                         onChange={(e) => setPassword(e.target.value)}
                         required

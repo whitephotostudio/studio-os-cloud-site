@@ -3,14 +3,14 @@ import type { Metadata } from "next";
 export const metadata: Metadata = {
   title: "Sign Up — Start Your Free Trial",
   description:
-    "Create your Studio OS Cloud account and start your free trial. Choose from Starter, Core, or Studio plans for your photography business.",
+    "Create your Studio OS Cloud account and start a 30-day launch trial. Choose from Web Gallery, App, or Studio plans for your photography business.",
   alternates: {
     canonical: "https://www.studiooscloud.com/sign-up",
   },
   openGraph: {
     title: "Sign Up for Studio OS Cloud — Free Trial",
     description:
-      "Start your free trial of Studio OS Cloud. The all-in-one photography workflow platform for school, event, and high-volume photographers.",
+      "Start a 30-day launch trial of Studio OS Cloud, the connected photography workflow for school, event, and high-volume photographers.",
     url: "https://www.studiooscloud.com/sign-up",
   },
 };

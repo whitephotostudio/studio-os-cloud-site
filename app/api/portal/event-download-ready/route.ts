@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { validateEventGalleryAccess } from "@/lib/event-gallery-access";
 import {
   buildArchiveBaseName,
@@ -9,7 +10,9 @@ import {
 } from "@/lib/event-gallery-downloads";
 import { createEventGalleryBatchToken } from "@/lib/event-gallery-download-tokens";
 import { normalizeEventGallerySettings } from "@/lib/event-gallery-settings";
-import { validateUuidArray } from "@/lib/request-validation";
+import { validateUuid, validateUuidArray } from "@/lib/request-validation";
+import { signedPrivateMediaReference } from "@/lib/private-media-references";
+import { SIGNED_URL_TTL_PARENTS_PORTAL_SECONDS } from "@/lib/storage-images";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -82,7 +85,7 @@ function chunkValues<T>(values: T[], size: number) {
 }
 
 async function fetchMediaAccessRows(
-  service: { from: (table: string) => any },
+  service: SupabaseClient,
   projectId: string,
   mediaIds: string[],
 ) {
@@ -111,8 +114,16 @@ export async function POST(request: NextRequest) {
       mediaIds?: string[];
     };
 
+    const validatedProjectId = validateUuid(body.projectId, "projectId");
+    if (!validatedProjectId.ok) {
+      return NextResponse.json(
+        { ok: false, message: validatedProjectId.message },
+        { status: 400 },
+      );
+    }
+
     const access = await validateEventGalleryAccess({
-      projectId: body.projectId ?? "",
+      projectId: validatedProjectId.value,
       email: body.email ?? "",
       pin: body.pin ?? "",
     });
@@ -279,21 +290,6 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { error: insertError } = await access.service
-      .from("event_gallery_downloads")
-      .insert({
-        project_id: access.projectId,
-        collection_id: collectionId || null,
-        viewer_email: access.email,
-        download_type: "gallery",
-        download_count: confirmedMediaIds.length,
-        media_ids: confirmedMediaIds,
-      });
-
-    if (insertError && !isMissingDownloadsTable(insertError)) {
-      throw insertError;
-    }
-
     let studioName = "";
     let studioEmail = "";
     let watermarkLogoUrl = "";
@@ -309,10 +305,18 @@ export async function POST(request: NextRequest) {
       if (photographerRow) {
         studioName = clean(photographerRow.business_name);
         studioEmail = clean(photographerRow.studio_email);
-        watermarkLogoUrl = looksLikeImageAssetUrl(photographerRow.watermark_logo_url)
-          ? clean(photographerRow.watermark_logo_url)
-          : looksLikeImageAssetUrl(photographerRow.logo_url)
-            ? clean(photographerRow.logo_url)
+        const watermarkLogoCandidate = signedPrivateMediaReference(
+          photographerRow.watermark_logo_url,
+          SIGNED_URL_TTL_PARENTS_PORTAL_SECONDS,
+        );
+        const studioLogoCandidate = signedPrivateMediaReference(
+          photographerRow.logo_url,
+          SIGNED_URL_TTL_PARENTS_PORTAL_SECONDS,
+        );
+        watermarkLogoUrl = looksLikeImageAssetUrl(watermarkLogoCandidate)
+          ? watermarkLogoCandidate
+          : looksLikeImageAssetUrl(studioLogoCandidate)
+            ? studioLogoCandidate
             : "";
       }
     }
@@ -329,6 +333,7 @@ export async function POST(request: NextRequest) {
     const watermarkText = studioName || galleryName || "PROOF";
 
     const batches = splitMediaIds.map((mediaIds, index) => {
+      const downloadLogId = randomUUID();
       const label = `File ${index + 1} of ${splitMediaIds.length}`;
       const fileName =
         splitMediaIds.length === 1
@@ -350,11 +355,13 @@ export async function POST(request: NextRequest) {
         studioEmail,
         fileName,
         mediaIds,
+        downloadLogId,
+        collectionId: collectionId || null,
         exp: Date.parse(expiresAt),
       });
 
       return {
-        id: randomUUID(),
+        id: downloadLogId,
         label,
         fileName,
         photoCount: mediaIds.length,
@@ -371,11 +378,11 @@ export async function POST(request: NextRequest) {
       batchCount: batches.length,
       createdAt: new Date().toISOString(),
       expiresAt,
-      downloadsUsed: downloadsUsed + confirmedMediaIds.length,
-      downloadsRemaining:
-        downloadsRemaining === null
-          ? null
-          : Math.max(0, downloadsRemaining - confirmedMediaIds.length),
+      // Preparing signed ZIP links is not a completed download. The batch
+      // endpoint records the exact successfully streamed media IDs, so a
+      // failed preparation never consumes quota or inflates activity reports.
+      downloadsUsed,
+      downloadsRemaining,
       batches,
     };
 

@@ -9,7 +9,7 @@
 //
 // This layout gives every /m/* route:
 //   - a sticky top header with the studio logo + a bell icon (unread orders)
-//   - a sticky bottom tab bar (Home / Orders / Schools / Events / Calendar)
+//   - a sticky bottom tab bar (Home / Orders / Clients / Schools / Events / Calendar)
 //   - a centered max-width 480 column so it degrades sanely on desktop
 //
 // Session enforcement mirrors app/dashboard/layout.tsx.  Non-authenticated
@@ -18,7 +18,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Bell, CalendarDays, GraduationCap, Home, PlusCircle, Search, ShoppingBag } from "lucide-react";
+import { Bell, CalendarDays, GraduationCap, Home, PlusCircle, Search, ShoppingBag, UsersRound } from "lucide-react";
 import { AgreementGate } from "@/components/agreement-gate";
 import { SpotlightModal, type SpotlightHit } from "@/components/spotlight-search";
 import InstallPrompt from "@/components/install-prompt";
@@ -94,6 +94,12 @@ const TABS: TabDef[] = [
     label: "Orders",
     icon: ShoppingBag,
     match: (p) => p.startsWith("/m/orders"),
+  },
+  {
+    href: "/m/clients",
+    label: "Clients",
+    icon: UsersRound,
+    match: (p) => p.startsWith("/m/clients"),
   },
   {
     href: "/m/schools",

@@ -1,10 +1,11 @@
 import type { Metadata } from "next";
 import { SeoLandingPage } from "@/components/seo-landing-page";
+import { BreadcrumbJsonLd } from "@/components/json-ld";
 
 export const metadata: Metadata = {
   title: "High Volume Photography Software",
   description:
-    "High-volume photography software for faster capture, ordering, and delivery. Built for school, event, sports, and corporate photographers who shoot hundreds or thousands of subjects per session.",
+    "High-volume photography software for online booking, automatic rosters, faster capture, ordering, and delivery across school and event workflows.",
   alternates: {
     canonical: "https://www.studiooscloud.com/high-volume-photography-software",
   },
@@ -18,11 +19,21 @@ export const metadata: Metadata = {
 
 export default function HighVolumePhotographySoftwarePage() {
   return (
-    <SeoLandingPage
+    <>
+      <BreadcrumbJsonLd
+        items={[
+          { name: "Home", item: "https://www.studiooscloud.com" },
+          {
+            name: "High Volume Photography Software",
+            item: "https://www.studiooscloud.com/high-volume-photography-software",
+          },
+        ]}
+      />
+      <SeoLandingPage
       badge="High Volume Photography"
       headline="High-Volume Photography Software for Faster Capture, Ordering, and Delivery"
       subheadline="Shoot hundreds of subjects, organize instantly, deliver galleries, take orders, and fulfill prints — all from one connected platform."
-      introduction="Studio OS Cloud is high-volume photography software designed for photographers who shoot large numbers of subjects in a single session. Whether you are covering a school picture day with 800 students, a corporate event with 300 headshots, or a sports league with dozens of teams, Studio OS gives you the tools to capture fast, organize automatically, deliver galleries at scale, and process orders without switching between multiple platforms."
+      introduction="Studio OS Cloud is high-volume photography software designed for photographers who shoot large numbers of subjects in a single session. Open a booking link for scheduled school or event work, collect confirmed appointments into a roster, capture quickly, organize automatically, deliver galleries at scale, and process orders without switching between multiple platforms."
       whoItsFor={{
         description:
           "If you regularly shoot sessions with dozens, hundreds, or thousands of subjects, Studio OS Cloud is built for your workflow.",
@@ -73,6 +84,11 @@ export default function HighVolumePhotographySoftwarePage() {
       }}
       features={[
         {
+          name: "Online Booking and Automatic Rosters",
+          description:
+            "Share live appointment availability for school or event jobs and turn confirmed bookings into a time-ordered Studio OS roster.",
+        },
+        {
           name: "Tethered Capture with Live Preview",
           description:
             "Connect your camera to the Studio OS desktop app for instant preview, naming, and organization as you shoot.",
@@ -116,6 +132,11 @@ export default function HighVolumePhotographySoftwarePage() {
       comparisonIntro="High-volume photographers often compare Studio OS Cloud to GotPhoto, PhotoDay, and standalone gallery platforms. Here is how the workflows differ."
       comparisonPoints={[
         {
+          label: "Online booking connected to rosters",
+          studioOs: "Yes",
+          others: "Varies or needs a separate scheduler",
+        },
+        {
           label: "Built-in camera tethering",
           studioOs: "Yes, included",
           others: "Requires separate software",
@@ -148,6 +169,7 @@ export default function HighVolumePhotographySoftwarePage() {
       ]}
       ctaHeading="Built for Volume. Ready When You Are."
       ctaDescription="Start your free trial and see how Studio OS Cloud handles high-volume photography from capture to delivery."
-    />
+      />
+    </>
   );
 }

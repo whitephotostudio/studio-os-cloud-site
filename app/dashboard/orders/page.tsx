@@ -46,6 +46,7 @@ import {
 import { createClient } from "@/lib/supabase/client";
 import { Logo } from "@/components/logo";
 import { useIsMobile } from "@/lib/use-is-mobile";
+import { proxiedPhotoUrl } from "@/lib/photo-url";
 import {
   cartSnapshotToOrderItems,
   cleanOrderCustomerNote,
@@ -971,8 +972,69 @@ function backdropNameFromOrder(order: Order) {
   return clean(noteMatch?.[1]);
 }
 
+function backdropSummaryKey(backdrop: CartSnapshotBackdropLike) {
+  const id = clean(backdrop.id);
+  if (id) return `id:${id}`;
+  const name = clean(backdrop.name).toLowerCase();
+  const image = clean(backdrop.image_url ?? backdrop.imageUrl);
+  return `name:${name}|image:${image}`;
+}
+
+function photoGroupBackdropLabel(group: OrderedPhotoGroup) {
+  return Array.from(
+    new Set(
+      group.items
+        .map((item) =>
+          item.backdrop ? clean(item.backdrop.name) || "Backdrop" : "",
+        )
+        .filter(Boolean),
+    ),
+  ).join(" + ");
+}
+
 function orderBackdropAddOns(order: Order) {
-  const appliedPhotoCount = cartSnapshotToOrderItems(order.cart_snapshot).filter((item) => item.backdrop && clean(item.sku)).length;
+  const snapshotItems = cartSnapshotToOrderItems(order.cart_snapshot);
+  const snapshotGroups = new Map<string, BackdropAddOnSummary>();
+
+  for (const item of snapshotItems) {
+    if (!item.backdrop) continue;
+    const key = backdropSummaryKey(item.backdrop);
+    const existing = snapshotGroups.get(key);
+    if (existing) {
+      if (clean(item.sku)) existing.appliedPhotoCount += 1;
+      continue;
+    }
+    snapshotGroups.set(key, {
+      key: `${order.id}-snapshot-backdrop-${key}`,
+      label: clean(item.backdrop.name) || "Backdrop",
+      detail:
+        clean(item.backdrop.tier).toLowerCase() === "premium"
+          ? "Premium backdrop"
+          : "Included backdrop",
+      imageUrl: dashboardPhotoUrl(item.backdrop.image_url ?? item.backdrop.imageUrl),
+      cents: 0,
+      appliedPhotoCount: clean(item.sku) ? 1 : 0,
+    });
+  }
+
+  // The snapshot repeats an entry backdrop on every flattened print slot, but
+  // the add-on is priced once per cart entry. Sum prices from the original
+  // entries so a three-pose package does not display the backdrop fee 3 times.
+  for (const entry of cartSnapshotEntries(order.cart_snapshot)) {
+    const rawBackdrop = entry.backdrop;
+    if (!rawBackdrop || typeof rawBackdrop !== "object" || Array.isArray(rawBackdrop)) continue;
+    const backdrop = rawBackdrop as CartSnapshotBackdropLike;
+    const summary = snapshotGroups.get(backdropSummaryKey(backdrop));
+    if (!summary) continue;
+    const cents = Number(backdrop.price_cents ?? backdrop.priceCents ?? 0);
+    if (Number.isFinite(cents) && cents > 0) summary.cents += Math.round(cents);
+  }
+
+  if (snapshotGroups.size > 0) return Array.from(snapshotGroups.values());
+
+  // Historical orders may predate cart_snapshot. Keep the order-item/note
+  // fallback for those rows, where an exact per-photo association is absent.
+  const appliedPhotoCount = snapshotItems.filter((item) => item.backdrop && clean(item.sku)).length;
   const noteName = backdropNameFromOrder(order);
   const items = (order.items ?? []).filter(isBackdropOrderItem);
   const addOns = items.map((item, index) => {
@@ -991,15 +1053,13 @@ function orderBackdropAddOns(order: Order) {
   });
 
   if (addOns.length > 0) return addOns;
-  const snapshotBackdrop = cartSnapshotToOrderItems(order.cart_snapshot).find((item) => item.backdrop)?.backdrop;
-  const snapshotImageUrl = dashboardPhotoUrl(snapshotBackdrop?.image_url ?? snapshotBackdrop?.imageUrl);
-  if (snapshotBackdrop || noteName) {
+  if (noteName) {
     return [{
       key: `${order.id}-snapshot-backdrop`,
-      label: noteName || clean(snapshotBackdrop?.name) || "Backdrop",
+      label: noteName,
       detail: "Selected backdrop",
-      imageUrl: snapshotImageUrl,
-      cents: Number(snapshotBackdrop?.price_cents ?? snapshotBackdrop?.priceCents ?? 0) || 0,
+      imageUrl: "",
+      cents: 0,
       appliedPhotoCount,
     }];
   }
@@ -1525,7 +1585,9 @@ function OrdersPageContent() {
     setPgId(photographer.id);
     setPhotographerBranding({
       businessName: (photographer as Record<string, unknown>).business_name as string || "",
-      logoUrl: (photographer as Record<string, unknown>).logo_url as string || "",
+      logoUrl: proxiedPhotoUrl(
+        (photographer as Record<string, unknown>).logo_url as string,
+      ),
       studioPhone: (photographer as Record<string, unknown>).studio_phone as string || "",
       studioEmail: (photographer as Record<string, unknown>).studio_email as string || (photographer as Record<string, unknown>).billing_email as string || "",
       studioAddress: (photographer as Record<string, unknown>).studio_address as string || "",
@@ -3639,9 +3701,9 @@ function OrdersPageContent() {
                             {isDashboardCompositeReference(photoGroup.url) ? "Download Print File" : "Download Original"}
                           </a>
                         ) : null}
-                        {isDashboardCompositeReference(photoGroup.url) && selectedBackdropAddOns[0] ? (
+                        {isDashboardCompositeReference(photoGroup.url) && photoGroupBackdropLabel(photoGroup) ? (
                           <div style={{ marginTop: 5, fontSize: 11, color: "#111827", fontWeight: 900, lineHeight: 1.3 }}>
-                            Backdrop: {selectedBackdropAddOns[0].label} applied
+                            Backdrop: {photoGroupBackdropLabel(photoGroup)} applied
                           </div>
                         ) : null}
                       </div>
@@ -3674,6 +3736,11 @@ function OrdersPageContent() {
                                     <span style={{ fontSize: 11, color: textMuted, background: "#fff", border: `1px solid ${borderColor}`, borderRadius: 999, padding: "2px 7px", fontWeight: 700 }}>Qty {itemQty}</span>
                                     {slot ? (
                                       <span style={{ fontSize: 11, color: textMuted, background: "#fff", border: `1px solid ${borderColor}`, borderRadius: 999, padding: "2px 7px", fontWeight: 700 }}>{slot}</span>
+                                    ) : null}
+                                    {item.backdrop ? (
+                                      <span style={{ fontSize: 11, color: "#854d0e", background: "#fefce8", border: "1px solid #fde68a", borderRadius: 999, padding: "2px 7px", fontWeight: 900 }}>
+                                        Backdrop: {clean(item.backdrop.name) || "Backdrop"}
+                                      </span>
                                     ) : null}
                                     <span style={{ fontSize: 11, color: textMuted, background: "#fff", border: `1px solid ${borderColor}`, borderRadius: 999, padding: "2px 7px", fontWeight: 700 }}>{poseLabel(groupIndex, selectedOrderedPhotoGroups.length)}</span>
                                   </div>

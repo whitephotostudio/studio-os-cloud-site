@@ -1,15 +1,19 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { recordOwnerActivity } from "@/lib/admin-notification-center";
+import { getClientIp, rateLimit } from "@/lib/rate-limit";
 
 const allowedEvents = new Set([
+  "cta_book_demo",
   "cta_download_app",
+  "cta_founding_100",
   "cta_parents_portal",
   "cta_photographer_sign_in",
   "cta_sample_galleries",
   "cta_start_trial",
   "cta_view_pricing",
   "sample_gallery_card",
+  "signup_account_created",
 ]);
 
 const payloadSchema = z.object({
@@ -23,6 +27,17 @@ const payloadSchema = z.object({
 });
 
 export async function POST(request: Request) {
+  const ip = getClientIp(request);
+  const limit = await rateLimit(ip, {
+    namespace: "marketing-conversions",
+    limit: 60,
+    windowSeconds: 60,
+  });
+
+  if (!limit.allowed) {
+    return new NextResponse(null, { status: 204 });
+  }
+
   let payload: unknown;
 
   try {

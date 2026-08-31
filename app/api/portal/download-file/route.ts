@@ -2,11 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
 
-const R2_PUBLIC_URL = (
-  process.env.NEXT_PUBLIC_R2_PUBLIC_URL ||
-  process.env.R2_PUBLIC_URL ||
-  ""
-).replace(/\/$/, "");
 const SUPABASE_URL = (
   process.env.NEXT_PUBLIC_SUPABASE_URL ||
   process.env.SUPABASE_URL ||
@@ -66,10 +61,6 @@ function matchesOriginPrefix(target: URL, baseUrl: string) {
 
 function isAllowedDownloadUrl(target: URL) {
   if (isAllowedSignedR2Url(target)) {
-    return true;
-  }
-
-  if (matchesOriginPrefix(target, R2_PUBLIC_URL)) {
     return true;
   }
 

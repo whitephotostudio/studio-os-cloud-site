@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createDashboardServiceClient } from "@/lib/dashboard-auth";
+import { getClientIp, rateLimit } from "@/lib/rate-limit";
 import {
   sanitizeEventGallerySettingsForClient,
 } from "@/lib/event-gallery-settings";
@@ -16,6 +17,20 @@ import {
   buildSignedMediaUrls,
   SIGNED_URL_TTL_PARENTS_PORTAL_SECONDS,
 } from "@/lib/storage-images";
+import { signBackdropRows } from "@/lib/backdrop-media-references";
+import {
+  signedPrivateMediaReference,
+  signPhotoUrlRows,
+} from "@/lib/private-media-references";
+import { hasCalendarBoundaryPassed } from "@/lib/calendar-dates";
+import { isUuid } from "@/lib/r2-access-security";
+import { findSyncedSchoolProjectId } from "@/lib/school-sync";
+import {
+  clearOutOfScopeSchoolPhotoReferences,
+  clearTombstonedSchoolPhotoReferences,
+  loadSchoolPhotoTombstones,
+  tombstoneFamilySet,
+} from "@/lib/school-photo-deletions";
 
 export const dynamic = "force-dynamic";
 
@@ -113,6 +128,14 @@ type CompositeMediaRow = {
 
 function clean(value: string | null | undefined) {
   return (value ?? "").trim();
+}
+
+function looksLikeEmail(value: string | null | undefined) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(clean(value));
+}
+
+function normalizedSchoolStatus(value: string | null | undefined) {
+  return clean(value).toLowerCase().replaceAll("-", "_");
 }
 
 function looksLikeImageAssetUrl(value: string | null | undefined) {
@@ -219,31 +242,14 @@ async function loadSchoolCompositeMedia(
   className: string | null | undefined | Array<string | null | undefined>,
 ) {
   const classCandidates = compositeClassCandidates(className);
-  if (!school?.id) return [] as CompositeMediaRow[];
-
-  const projectBySchoolId = await service
-    .from("projects")
-    .select("id")
-    .eq("workflow_type", "school")
-    .eq("linked_school_id", school.id)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  if (projectBySchoolId.error) throw projectBySchoolId.error;
-
-  let projectId = clean(projectBySchoolId.data?.id);
-  if (!projectId && school.local_school_id) {
-    const localProject = await service
-      .from("projects")
-      .select("id")
-      .eq("workflow_type", "school")
-      .eq("linked_local_school_id", school.local_school_id)
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    if (localProject.error) throw localProject.error;
-    projectId = clean(localProject.data?.id);
+  if (!school?.id || !clean(school.photographer_id)) {
+    return [] as CompositeMediaRow[];
   }
+
+  const projectId = await findSyncedSchoolProjectId(service, school.id, {
+    localSchoolId: school.local_school_id,
+    photographerId: school.photographer_id,
+  });
 
   if (!projectId) return [] as CompositeMediaRow[];
 
@@ -332,6 +338,26 @@ async function loadSchoolCompositeMedia(
 
 export async function POST(request: NextRequest) {
   try {
+    const limitResult = await rateLimit(getClientIp(request), {
+      namespace: "pin-auth-school",
+      limit: 8,
+      windowSeconds: 10,
+    });
+    if (!limitResult.allowed) {
+      return NextResponse.json(
+        { ok: false, message: "Too many attempts. Please wait a few seconds and try again." },
+        {
+          status: 429,
+          headers: {
+            "Retry-After": Math.max(
+              1,
+              Math.ceil((limitResult.resetAt - Date.now()) / 1000),
+            ).toString(),
+          },
+        },
+      );
+    }
+
     const { pin, schoolId, email } = (await request.json()) as {
       pin?: string;
       schoolId?: string;
@@ -342,8 +368,11 @@ export async function POST(request: NextRequest) {
     const selectedSchoolId = clean(schoolId);
     const selectedEmail = clean(email).toLowerCase();
 
-    if (!selectedPin) {
-      return NextResponse.json({ ok: false, message: "Missing PIN." }, { status: 400 });
+    if (!selectedPin || !isUuid(selectedSchoolId) || !looksLikeEmail(selectedEmail)) {
+      return NextResponse.json(
+        { ok: false, message: "School, PIN, and email are required." },
+        { status: 400 },
+      );
     }
 
     const service = createDashboardServiceClient();
@@ -357,40 +386,37 @@ export async function POST(request: NextRequest) {
       : { data: null as SchoolRow | null, error: null };
 
     if (currentSchoolError) throw currentSchoolError;
-
-    const schoolNameForMatch = clean(currentSchool?.school_name);
-    let schoolIdsToSearch: string[] = [];
-    let schoolRowsForMatch: SchoolRow[] = currentSchool ? [currentSchool] : [];
-
-    if (schoolNameForMatch) {
-      const { data: sameNameSchools, error: sameNameError } = await service
-        .from("schools")
-        .select("id,school_name,photographer_id,package_profile_id,local_school_id,status,portal_status,order_due_date,expiration_date,access_mode,access_pin,email_required,gallery_settings,screenshot_protection_desktop,screenshot_protection_mobile,screenshot_protection_watermark,group_label_singular,group_label_plural")
-        .ilike("school_name", schoolNameForMatch)
-        .order("created_at", { ascending: false });
-
-      if (sameNameError) throw sameNameError;
-
-      schoolRowsForMatch = (sameNameSchools as SchoolRow[] | null) ?? schoolRowsForMatch;
-      schoolIdsToSearch = Array.from(
-        new Set([
-          ...schoolRowsForMatch.map((row) => row.id),
-          ...(selectedSchoolId ? [selectedSchoolId] : []),
-        ]),
+    if (!currentSchool) {
+      return NextResponse.json(
+        { ok: false, message: "Gallery not found." },
+        { status: 404 },
       );
-    } else if (selectedSchoolId) {
-      schoolIdsToSearch = [selectedSchoolId];
+    }
+    if (hasCalendarBoundaryPassed(currentSchool.expiration_date)) {
+      return NextResponse.json(
+        { ok: false, message: "This gallery is no longer available." },
+        { status: 409 },
+      );
+    }
+    if (
+      normalizedSchoolStatus(currentSchool.portal_status ?? currentSchool.status) ===
+      "pre_release"
+    ) {
+      return NextResponse.json(
+        { ok: false, message: "This gallery is not available yet." },
+        { status: 409 },
+      );
     }
 
-    const studentQuery = service
-      .from("students")
-        .select("id,first_name,last_name,photo_url,class_id,school_id,class_name,folder_name,pin")
-      .eq("pin", selectedPin);
+    // Keep the response shape expected by the portal while treating the
+    // selected immutable school ID as the complete authorization boundary.
+    const schoolRowsForMatch: SchoolRow[] = [currentSchool];
 
-    const { data: studentRows, error: studentsError } =
-      schoolIdsToSearch.length > 0
-        ? await studentQuery.in("school_id", schoolIdsToSearch)
-        : await studentQuery;
+    const { data: studentRows, error: studentsError } = await service
+      .from("students")
+      .select("id,first_name,last_name,photo_url,class_id,school_id,class_name,folder_name,pin")
+      .eq("pin", selectedPin)
+      .eq("school_id", selectedSchoolId);
 
     if (studentsError) throw studentsError;
 
@@ -403,30 +429,43 @@ export async function POST(request: NextRequest) {
     }
 
     const primaryStudent =
-      studentCandidates.find((row) => row.school_id === selectedSchoolId && !!row.photo_url) ??
-      studentCandidates.find((row) => !!row.photo_url) ??
-      studentCandidates.find((row) => row.school_id === selectedSchoolId) ??
-      studentCandidates[0];
-
-    const knownSchoolsById = new Map<string, SchoolRow>();
-    for (const row of schoolRowsForMatch) {
-      knownSchoolsById.set(row.id, row);
+      studentCandidates.find((row) => !!row.photo_url) ?? studentCandidates[0];
+    const activeSchool = currentSchool;
+    if (hasCalendarBoundaryPassed(activeSchool.expiration_date)) {
+      return NextResponse.json(
+        { ok: false, message: "This gallery is no longer available." },
+        { status: 409 },
+      );
     }
-    if (currentSchool?.id) {
-      knownSchoolsById.set(currentSchool.id, currentSchool);
+    if (
+      normalizedSchoolStatus(activeSchool.portal_status ?? activeSchool.status) ===
+      "pre_release"
+    ) {
+      return NextResponse.json(
+        { ok: false, message: "This gallery is not available yet." },
+        { status: 409 },
+      );
     }
 
-    let activeSchool = knownSchoolsById.get(primaryStudent.school_id) ?? null;
-    if (!activeSchool && primaryStudent.school_id) {
-      const { data: fetchedSchool, error: fetchedSchoolError } = await service
-        .from("schools")
-        .select("id,school_name,photographer_id,package_profile_id,local_school_id,status,portal_status,order_due_date,expiration_date,access_mode,access_pin,email_required,gallery_settings,screenshot_protection_desktop,screenshot_protection_mobile,screenshot_protection_watermark,group_label_singular,group_label_plural")
-        .eq("id", primaryStudent.school_id)
-        .maybeSingle<SchoolRow>();
-
-      if (fetchedSchoolError) throw fetchedSchoolError;
-      activeSchool = fetchedSchool ?? null;
-    }
+    const tombstonedFamilies = tombstoneFamilySet(
+      await loadSchoolPhotoTombstones(service, activeSchool.id),
+    );
+    const activeStudentCandidates = studentCandidates.filter(
+      (student) => student.school_id === activeSchool.id,
+    );
+    const visibleStudentCandidates = clearTombstonedSchoolPhotoReferences(
+      activeStudentCandidates,
+      tombstonedFamilies,
+    );
+    const scopedVisibleStudentCandidates =
+      clearOutOfScopeSchoolPhotoReferences(
+        visibleStudentCandidates,
+        activeSchool,
+      );
+    const visiblePrimaryStudent =
+      scopedVisibleStudentCandidates.find(
+        (student) => student.id === primaryStudent.id,
+      ) ?? scopedVisibleStudentCandidates[0];
 
     const activeProject: ProjectRow | null = activeSchool
       ? {
@@ -526,16 +565,27 @@ export async function POST(request: NextRequest) {
           publicGallerySettings.extras.priceSheetProfileId ||
           photographerDefaultProfileId,
       }).packages;
-      backdropRows = (backdropsResult.data ?? []) as BackdropRow[];
+      backdropRows = signBackdropRows(
+        (backdropsResult.data ?? []) as BackdropRow[],
+        SIGNED_URL_TTL_PARENTS_PORTAL_SECONDS,
+      );
 
       const photographer = photographerResult.data;
       if (photographer) {
         photographerId = photographer.id ?? photographerId;
         watermarkEnabled = photographer.watermark_enabled !== false;
-        const resolvedLogoUrl = looksLikeImageAssetUrl(photographer.watermark_logo_url)
-          ? photographer.watermark_logo_url
-          : looksLikeImageAssetUrl(photographer.logo_url)
-            ? photographer.logo_url
+        const watermarkLogoCandidate = signedPrivateMediaReference(
+          photographer.watermark_logo_url,
+          SIGNED_URL_TTL_PARENTS_PORTAL_SECONDS,
+        );
+        const studioLogoCandidate = signedPrivateMediaReference(
+          photographer.logo_url,
+          SIGNED_URL_TTL_PARENTS_PORTAL_SECONDS,
+        );
+        const resolvedLogoUrl = looksLikeImageAssetUrl(watermarkLogoCandidate)
+          ? watermarkLogoCandidate
+          : looksLikeImageAssetUrl(studioLogoCandidate)
+            ? studioLogoCandidate
             : "";
         watermarkLogoUrl = resolvedLogoUrl || "";
         studioInfo = {
@@ -566,10 +616,16 @@ export async function POST(request: NextRequest) {
     );
     const loadedMediaRows = await loadFolderMediaRows(
       buildSchoolCandidateFolders({
-        studentCandidates,
+        studentCandidates: activeStudentCandidates,
         activeSchool,
-        selectedSchoolId,
+        selectedSchoolId: activeSchool.id,
       }),
+      {
+        service,
+        schoolId: activeSchool.id,
+        tombstonedFamilies,
+        ttlSeconds: SIGNED_URL_TTL_PARENTS_PORTAL_SECONDS,
+      },
     );
     nobgUrls = await loadNoBgUrlMapForMediaRows(loadedMediaRows, {
       ttlSeconds: SIGNED_URL_TTL_PARENTS_PORTAL_SECONDS,
@@ -605,12 +661,25 @@ export async function POST(request: NextRequest) {
         "Classes",
     };
 
+    const signedStudentCandidates = signPhotoUrlRows(
+      scopedVisibleStudentCandidates,
+      SIGNED_URL_TTL_PARENTS_PORTAL_SECONDS,
+    );
+    const signedPrimaryStudent = {
+      ...visiblePrimaryStudent,
+      photo_url:
+        signedPrivateMediaReference(
+          visiblePrimaryStudent.photo_url,
+          SIGNED_URL_TTL_PARENTS_PORTAL_SECONDS,
+        ) || null,
+    };
+
     return NextResponse.json({
       ok: true,
       currentSchool,
       schoolRowsForMatch,
-      studentCandidates,
-      primaryStudent,
+      studentCandidates: signedStudentCandidates,
+      primaryStudent: signedPrimaryStudent,
       activeSchool,
       activeProject,
       gallerySettings: publicGallerySettings,

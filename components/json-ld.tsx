@@ -27,12 +27,15 @@ export function OrganizationJsonLd() {
       data={{
         "@context": "https://schema.org",
         "@type": "Organization",
+        "@id": "https://www.studiooscloud.com/#organization",
         name: "Studio OS Cloud",
         url: "https://www.studiooscloud.com",
         logo: "https://www.studiooscloud.com/studio_os_logo.png",
         description:
           "Premium photography gallery and workflow platform connecting Projects, client galleries, ordering, and delivery in one system.",
-        sameAs: [],
+        sameAs: [
+          "https://www.youtube.com/channel/UC2Ou4lxHAD9BrYq9qa303_Q",
+        ],
         contactPoint: {
           "@type": "ContactPoint",
           contactType: "customer support",
@@ -50,18 +53,23 @@ export function SoftwareApplicationJsonLd() {
       data={{
         "@context": "https://schema.org",
         "@type": "SoftwareApplication",
+        "@id": "https://www.studiooscloud.com/#software-application",
         name: "Studio OS Cloud",
         applicationCategory: "PhotographyApplication",
-        operatingSystem: "Web, macOS, Windows",
+        operatingSystem: "Web, macOS",
         description:
           "Premium photography gallery and workflow platform for portrait, wedding, event, school, sports, and volume photographers. Includes online galleries, client ordering, digital delivery, Projects, connected desktop and cloud workflow, AI background tools, and production control.",
         url: "https://www.studiooscloud.com",
+        inLanguage: "en",
+        provider: {
+          "@id": "https://www.studiooscloud.com/#organization",
+        },
         offers: [
           {
             "@type": "Offer",
-            name: "Starter Plan",
+            name: "Web Gallery Plan",
             price: "49.00",
-            priceCurrency: "USD",
+            priceCurrency: "CAD",
             priceValidUntil: "2027-12-31",
             description:
               "Premium online galleries, client ordering, digital delivery, and private client access in the cloud.",
@@ -69,9 +77,9 @@ export function SoftwareApplicationJsonLd() {
           },
           {
             "@type": "Offer",
-            name: "Core Plan",
+            name: "App Plan",
             price: "99.00",
-            priceCurrency: "USD",
+            priceCurrency: "CAD",
             priceValidUntil: "2027-12-31",
             description:
               "Connected desktop and cloud workflow with capture control, Projects, AI background tools, and online galleries.",
@@ -81,7 +89,7 @@ export function SoftwareApplicationJsonLd() {
             "@type": "Offer",
             name: "Studio Plan",
             price: "199.00",
-            priceCurrency: "USD",
+            priceCurrency: "CAD",
             priceValidUntil: "2027-12-31",
             description:
               "Multi-photographer plan with advanced structured workflow tools for studios and high-volume teams.",
@@ -89,6 +97,9 @@ export function SoftwareApplicationJsonLd() {
           },
         ],
         featureList: [
+          "Online school and event booking",
+          "Automatic booking-to-student-roster workflow",
+          "Stripe-powered appointment payments",
           "Online photo galleries",
           "Client ordering system",
           "Digital delivery",
@@ -97,7 +108,7 @@ export function SoftwareApplicationJsonLd() {
           "Direct camera tethering",
           "Order review before print",
           "AI background replacement",
-          "School roster management",
+          "Student roster management",
           "Multi-photographer capture support",
           "Automated email campaigns",
           "Gallery analytics",
@@ -120,6 +131,7 @@ export function PricingJsonLd() {
       data={{
         "@context": "https://schema.org",
         "@type": "Product",
+        "@id": "https://www.studiooscloud.com/pricing#product",
         name: "Studio OS Cloud",
         description:
           "Professional photography workflow platform with capture, galleries, ordering, and delivery.",
@@ -128,46 +140,49 @@ export function PricingJsonLd() {
           name: "Studio OS",
         },
         url: "https://www.studiooscloud.com/pricing",
+        seller: {
+          "@id": "https://www.studiooscloud.com/#organization",
+        },
         offers: {
           "@type": "AggregateOffer",
           lowPrice: "49.00",
           highPrice: "199.00",
-          priceCurrency: "USD",
+          priceCurrency: "CAD",
           offerCount: 3,
           offers: [
             {
               "@type": "Offer",
-              name: "Starter",
+              name: "Web Gallery Plan",
               price: "49.00",
-              priceCurrency: "USD",
+              priceCurrency: "CAD",
               priceSpecification: {
                 "@type": "UnitPriceSpecification",
                 price: "49.00",
-                priceCurrency: "USD",
+                priceCurrency: "CAD",
                 billingDuration: "P1M",
               },
             },
             {
               "@type": "Offer",
-              name: "Core",
+              name: "App Plan",
               price: "99.00",
-              priceCurrency: "USD",
+              priceCurrency: "CAD",
               priceSpecification: {
                 "@type": "UnitPriceSpecification",
                 price: "99.00",
-                priceCurrency: "USD",
+                priceCurrency: "CAD",
                 billingDuration: "P1M",
               },
             },
             {
               "@type": "Offer",
-              name: "Studio",
+              name: "Studio Plan",
               price: "199.00",
-              priceCurrency: "USD",
+              priceCurrency: "CAD",
               priceSpecification: {
                 "@type": "UnitPriceSpecification",
                 price: "199.00",
-                priceCurrency: "USD",
+                priceCurrency: "CAD",
                 billingDuration: "P1M",
               },
             },
@@ -198,15 +213,44 @@ export function FaqJsonLd() {
   );
 }
 
-/** WebSite schema with search action - helps Google show a sitelinks search box */
+/** Reusable FAQ schema for focused public feature pages. */
+export function FaqListJsonLd({
+  items,
+}: {
+  items: Array<{ question: string; answer: string }>;
+}) {
+  return (
+    <JsonLd
+      data={{
+        "@context": "https://schema.org",
+        "@type": "FAQPage",
+        mainEntity: items.map((item) => ({
+          "@type": "Question",
+          name: item.question,
+          acceptedAnswer: {
+            "@type": "Answer",
+            text: item.answer,
+          },
+        })),
+      }}
+    />
+  );
+}
+
+/** WebSite schema - connects the public site to the Studio OS Cloud organization */
 export function WebSiteJsonLd() {
   return (
     <JsonLd
       data={{
         "@context": "https://schema.org",
         "@type": "WebSite",
+        "@id": "https://www.studiooscloud.com/#website",
         name: "Studio OS Cloud",
         url: "https://www.studiooscloud.com",
+        inLanguage: "en",
+        publisher: {
+          "@id": "https://www.studiooscloud.com/#organization",
+        },
         description:
           "Premium photography gallery and workflow platform for photographers who need more than a standalone gallery.",
       }}

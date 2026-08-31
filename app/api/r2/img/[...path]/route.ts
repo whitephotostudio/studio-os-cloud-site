@@ -5,7 +5,13 @@ import {
 } from "@/lib/dashboard-auth";
 import { r2PresignedGetUrl } from "@/lib/r2-signed-urls";
 import { r2Download } from "@/lib/r2";
-import sharp from "sharp";
+import { isUuid, normalizeR2Key } from "@/lib/r2-access-security";
+import {
+  loadSchoolPhotoTombstones,
+  safeLocalSchoolStorageId,
+  schoolPhotoFamilyForKey,
+  tombstoneFamilySet,
+} from "@/lib/school-photo-deletions";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -39,22 +45,33 @@ function clean(value: string | null | undefined) {
   return (value ?? "").trim();
 }
 
+async function loadTombstonedFamilies(
+  service: ReturnType<typeof createDashboardServiceClient>,
+  schoolId: string,
+) {
+  return tombstoneFamilySet(
+    await loadSchoolPhotoTombstones(service, schoolId),
+  );
+}
+
 export async function GET(
   request: NextRequest,
   context: { params: Promise<{ path: string[] }> },
 ) {
   try {
     const { path } = await context.params;
-    const storagePath = (path ?? []).map(decodeURIComponent).join("/");
-    if (!storagePath) {
+    const rawStoragePath = (path ?? []).map(decodeURIComponent).join("/");
+    if (!rawStoragePath) {
       return NextResponse.json(
         { ok: false, message: "Missing storage path." },
         { status: 400 },
       );
     }
 
-    // Reject path traversal attempts before doing any work.
-    if (storagePath.includes("..") || storagePath.startsWith("/")) {
+    const storagePath = normalizeR2Key(rawStoragePath, {
+      allowQueryCharacters: true,
+    });
+    if (!storagePath) {
       return NextResponse.json(
         { ok: false, message: "Invalid storage path." },
         { status: 400 },
@@ -89,76 +106,131 @@ export async function GET(
 
     // ── Authorization: confirm the photographer is allowed to view this path ──
     //
-    // Allowed shapes:
-    //   1. <photographerId>/...                       — school-mode photos
-    //   2. nobg-photos/<photographerId>/...           — background-removed PNGs
-    //   3. projects/<projectId>/...  where the project belongs to this photographer
-    //   4. thumbs/<photographerId>/...                — old thumbnails bucket
-    //   5. schools/<schoolId>/...                      — school composites/exports
-    //   6. <school.local_school_id>/...                — desktop school sync photos
+    // Keep this compatibility list aligned with the R2 gateway namespaces.
+    // Historical rows can use a database school id, local school id, project
+    // id, or a nested no-background namespace.
     let authorized = false;
+    let authorizedSchoolId: string | null = null;
+    const segments = storagePath.split("/").filter(Boolean);
+    const [firstSegment = "", secondSegment = "", thirdSegment = ""] = segments;
 
-    const firstSegment = storagePath.split("/")[0] ?? "";
-    const secondSegment = storagePath.split("/")[1] ?? "";
-    if (firstSegment === photographerId) {
-      authorized = true;
-    } else if (
-      storagePath.startsWith(`nobg-photos/${photographerId}/`) ||
-      storagePath.startsWith(`thumbs/${photographerId}/`)
-    ) {
-      authorized = true;
-    } else if (storagePath.startsWith("projects/")) {
-      // projects/<projectId>/...  — verify the project belongs to this photographer
-      const projectId = storagePath.split("/")[1] ?? "";
-      if (projectId) {
-        const { data: projectRow, error: projectError } = await service
-          .from("projects")
-          .select("id")
-          .eq("id", projectId)
-          .eq("photographer_id", photographerId)
-          .maybeSingle();
-        if (projectError) throw projectError;
-        if (projectRow) authorized = true;
-      }
-    } else if (storagePath.startsWith("schools/")) {
-      // schools/<schoolId>/... — class composites and school export files.
-      const schoolId = storagePath.split("/")[1] ?? "";
-      if (schoolId) {
-        const { data: schoolRow, error: schoolError } = await service
-          .from("schools")
-          .select("id")
-          .eq("id", schoolId)
-          .eq("photographer_id", photographerId)
-          .maybeSingle();
-        if (schoolError) throw schoolError;
-        if (schoolRow) authorized = true;
-      }
+    async function ownsProject(projectId: string) {
+      if (!isUuid(projectId)) return false;
+      const { data, error } = await service
+        .from("projects")
+        .select("id")
+        .eq("id", projectId)
+        .eq("photographer_id", photographerId)
+        .maybeSingle();
+      if (error) throw error;
+      return Boolean(data?.id);
     }
 
-    if (!authorized && firstSegment) {
-      const localSchoolId = firstSegment === "nobg-photos" ? secondSegment : firstSegment;
-      if (localSchoolId) {
-        const { data: schoolRow, error: schoolError } = await service
+    async function resolveSchoolNamespace(schoolIdOrLocalId: string) {
+      const candidate = safeLocalSchoolStorageId(schoolIdOrLocalId);
+      if (!candidate) return { schoolId: null, claimed: false };
+      const [byIdResult, byLocalIdResult] = await Promise.all([
+        isUuid(candidate)
+          ? service
           .from("schools")
-          .select("id")
-          .eq("photographer_id", photographerId)
-          .eq("local_school_id", localSchoolId)
-          .maybeSingle();
-        if (schoolError) throw schoolError;
-        if (schoolRow) authorized = true;
+          .select("id,photographer_id")
+          .eq("id", candidate)
+          .limit(2)
+          : Promise.resolve({ data: [], error: null }),
+        service
+          .from("schools")
+          .select("id,photographer_id")
+          .eq("local_school_id", candidate)
+          .limit(2),
+      ]);
+      if (byIdResult.error) throw byIdResult.error;
+      if (byLocalIdResult.error) throw byLocalIdResult.error;
+      const matches = Array.from(
+        new Map(
+          [...(byIdResult.data ?? []), ...(byLocalIdResult.data ?? [])].map(
+            (row) => [row.id, row],
+          ),
+        ).values(),
+      );
+      if (matches.length !== 1) {
+        return { schoolId: null, claimed: matches.length > 0 };
+      }
+      return {
+        schoolId:
+          matches[0]?.photographer_id === photographerId
+            ? matches[0].id
+            : null,
+        claimed: true,
+      };
+    }
+
+    async function ownedSchoolId(schoolIdOrLocalId: string) {
+      return (await resolveSchoolNamespace(schoolIdOrLocalId)).schoolId;
+    }
+
+    if (firstSegment === "backdrops") {
+      authorized = secondSegment === photographerId;
+    } else if (firstSegment === "projects" || firstSegment === "probes") {
+      authorized = await ownsProject(secondSegment);
+    } else if (firstSegment === "schools" || firstSegment === "photos") {
+      authorizedSchoolId = await ownedSchoolId(secondSegment);
+      authorized = Boolean(authorizedSchoolId);
+    } else if (firstSegment === "nobg-photos") {
+      if (secondSegment === "projects") {
+        authorized = await ownsProject(thirdSegment);
+      } else if (secondSegment === "schools") {
+        authorizedSchoolId = await ownedSchoolId(thirdSegment);
+        authorized = Boolean(authorizedSchoolId);
+      } else {
+        const resolution = await resolveSchoolNamespace(secondSegment);
+        authorizedSchoolId = resolution.schoolId;
+        authorized = Boolean(authorizedSchoolId);
+        if (!resolution.claimed && secondSegment === photographerId) {
+          authorized = true;
+        }
+      }
+    } else if (firstSegment === "thumbs") {
+      const resolution = await resolveSchoolNamespace(secondSegment);
+      authorizedSchoolId = resolution.schoolId;
+      authorized = Boolean(authorizedSchoolId);
+      if (!resolution.claimed && secondSegment === photographerId) {
+        authorized = true;
+      }
+    } else if (firstSegment) {
+      const resolution = await resolveSchoolNamespace(firstSegment);
+      authorizedSchoolId = resolution.schoolId;
+      authorized = Boolean(authorizedSchoolId);
+      if (!resolution.claimed && firstSegment === photographerId) {
+        authorized = true;
       }
     }
 
     if (!authorized) {
-      console.warn(
-        "[r2/img] photographer %s tried to access unauthorized path: %s",
-        photographerId,
-        storagePath,
-      );
+      console.warn("[r2/img] rejected an unauthorized object path");
       return NextResponse.json(
         { ok: false, message: "Not authorized for this image." },
         { status: 403 },
       );
+    }
+
+    // A soft-removed school photo must stay unavailable even through an old
+    // cached proxy URL. Match the whole logical family so preview/thumbnail
+    // and no-background variants cannot bypass the tombstone.
+    const storageFamily = schoolPhotoFamilyForKey(storagePath);
+    if (storageFamily && authorizedSchoolId) {
+      const deletedFamilies = await loadTombstonedFamilies(
+        service,
+        authorizedSchoolId,
+      );
+      if (deletedFamilies.has(storageFamily)) {
+        return NextResponse.json(
+          { ok: false, message: "This photo was removed from the gallery." },
+          {
+            status: 410,
+            headers: { "Cache-Control": "private, no-store, max-age=0" },
+          },
+        );
+      }
     }
 
     // ── On-demand thumbnail: ?w=<px> downloads the object, resizes it with
@@ -171,6 +243,10 @@ export async function GET(
       : 0;
     if (thumbWidth > 0) {
       try {
+        // Keep Sharp off the critical image-redirect path. If its optional
+        // native runtime is unavailable, normal previews must still redirect
+        // to the existing R2 object instead of failing while this route loads.
+        const { default: sharp } = await import("sharp");
         const original = await r2Download(storagePath);
         const resized = await sharp(original)
           .rotate()

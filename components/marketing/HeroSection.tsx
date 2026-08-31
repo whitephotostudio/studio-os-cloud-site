@@ -56,7 +56,7 @@ export function HeroSection() {
               data-marketing-placement="home_hero"
               className="marketing-button premium-button inline-flex items-center justify-center gap-2 rounded-full bg-white px-5 py-3 text-neutral-950 shadow-[0_20px_60px_rgba(255,255,255,0.18)] transition hover:bg-neutral-100"
             >
-              Get Early Access
+              Start 30-Day Free Trial
               <ArrowRight className="h-4 w-4" />
             </Link>
             <Link

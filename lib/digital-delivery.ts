@@ -1,4 +1,5 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   buildArchiveBaseName,
 } from "@/lib/event-gallery-downloads";
@@ -20,9 +21,7 @@ import {
   type BackdropCompositeSelection,
 } from "@/lib/backdrop-composites";
 
-type ServiceClient = {
-  from: (table: string) => any;
-};
+type ServiceClient = Pick<SupabaseClient, "from">;
 
 type OrderRow = {
   id: string;
@@ -434,6 +433,10 @@ async function resolveDeliveryFiles(params: {
         activeSchool: params.school,
         selectedSchoolId: params.order.school_id,
       }),
+      {
+        service: params.service,
+        schoolId: params.order.school_id,
+      },
     );
     for (const row of rows) {
       const key = row.storage_path;

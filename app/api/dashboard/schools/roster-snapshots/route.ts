@@ -7,16 +7,26 @@ import {
 import { parseJson } from "@/lib/api-validation";
 import { recordAudit } from "@/lib/audit";
 import { guardAgreement } from "@/lib/require-agreement";
+import {
+  normalizeStudentRecipientEmail,
+  studentRecipientEmailError,
+} from "@/lib/student-recipient-email";
 
 export const dynamic = "force-dynamic";
 
 const StudentPayloadSchema = z.object({
   student_id: z.string().max(200).nullable().optional(),
+  external_student_id: z.string().max(200).nullable().optional(),
   first_name: z.string().max(200).nullable().optional(),
   last_name: z.string().max(200).nullable().optional(),
   pin: z.string().max(64).nullable().optional(),
+  pin5: z.string().max(64).nullable().optional(),
   class_name: z.string().max(200).nullable().optional(),
+  class: z.string().max(200).nullable().optional(),
   folder_name: z.string().max(500).nullable().optional(),
+  parent_email: z.string().max(254).nullable().optional(),
+  parentEmail: z.string().max(254).nullable().optional(),
+  email: z.string().max(254).nullable().optional(),
 });
 
 const TeacherPayloadSchema = z.object({
@@ -55,11 +65,17 @@ const RosterSnapshotBodySchema = z.object({
 
 type StudentPayload = {
   student_id?: string | null;
+  external_student_id?: string | null;
   first_name?: string | null;
   last_name?: string | null;
   pin?: string | null;
+  pin5?: string | null;
   class_name?: string | null;
+  class?: string | null;
   folder_name?: string | null;
+  parent_email?: string | null;
+  parentEmail?: string | null;
+  email?: string | null;
 };
 
 type TeacherPayload = {
@@ -89,6 +105,39 @@ type PostBody = {
 
 function clean(value: string | null | undefined) {
   return (value ?? "").trim();
+}
+
+function hasOwn(value: object, key: string) {
+  return Object.prototype.hasOwnProperty.call(value, key);
+}
+
+function canonicalSnapshotStudent(student: StudentPayload) {
+  const emailKeyProvided =
+    hasOwn(student, "parent_email") ||
+    hasOwn(student, "parentEmail") ||
+    hasOwn(student, "email");
+  const rawEmail = hasOwn(student, "parent_email")
+    ? student.parent_email
+    : hasOwn(student, "parentEmail")
+      ? student.parentEmail
+      : student.email;
+
+  const parentEmail = normalizeStudentRecipientEmail(rawEmail);
+  const emailProvided = emailKeyProvided && parentEmail !== null;
+  return {
+    emailError: emailKeyProvided ? studentRecipientEmailError(rawEmail) : null,
+    value: {
+      student_id: clean(student.student_id) || clean(student.external_student_id),
+      first_name: clean(student.first_name),
+      last_name: clean(student.last_name),
+      pin: clean(student.pin) || clean(student.pin5),
+      class_name: clean(student.class_name) || clean(student.class),
+      folder_name: clean(student.folder_name),
+      ...(emailProvided
+        ? { parent_email: parentEmail }
+        : {}),
+    },
+  };
 }
 
 async function resolveSchoolOwnership(
@@ -205,7 +254,18 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const students = Array.isArray(body.students) ? body.students : [];
+    const rawStudents = Array.isArray(body.students) ? body.students : [];
+    const students: ReturnType<typeof canonicalSnapshotStudent>["value"][] = [];
+    for (const student of rawStudents) {
+      const canonical = canonicalSnapshotStudent(student);
+      if (canonical.emailError) {
+        return NextResponse.json(
+          { ok: false, message: canonical.emailError },
+          { status: 400 },
+        );
+      }
+      students.push(canonical.value);
+    }
     const teachers = Array.isArray(body.teachers) ? body.teachers : [];
     if (students.length === 0 && teachers.length === 0) {
       return NextResponse.json(

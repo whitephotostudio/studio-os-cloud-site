@@ -1237,6 +1237,11 @@ export default function ProjectDetailPage() {
               <h1 style={{ margin: 0, fontSize: 26, fontWeight: 900, color: "#111111", display: "inline-flex", alignItems: "center", gap: 8 }}>{projectName}{projectLocked ? <Lock size={16} style={{ color: "#b91c1c" }} /> : null}</h1>
               <div style={{ color: "#b91c1c", fontWeight: 800 }}>{clean(project.portal_status) || clean(project.status) || "Active"}</div>
             </div>
+            <div style={{ color: "#4b5563", fontSize: 13, marginTop: 5 }}>
+              {projectLocked
+                ? "Project access: one shared project PIN for every recipient."
+                : "Project access: one shared gallery link with no PIN required."}
+            </div>
           </div>
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "flex-end" }}>
             <button onClick={() => { setShareView("menu"); setShareModalOpen(true); }} style={{ borderRadius: 10, border: "1px solid #111111", background: "#111111", color: "#fff", padding: "12px 16px", fontWeight: 800, cursor: "pointer" }}>Share Gallery</button>
@@ -1794,12 +1799,16 @@ export default function ProjectDetailPage() {
                 </div>
                 <div style={{ color: "#4b5563", fontSize: 13, marginTop: 4 }}>
                   {shareView === "menu"
-                    ? `Share the ${projectName} gallery`
+                    ? projectLocked
+                      ? `Share the ${projectName} gallery with one project-wide PIN.`
+                      : `Share the ${projectName} gallery link.`
                     : shareView === "report"
                       ? "View who has opened and favorited this event gallery."
                       : shareView === "favorites"
                         ? "Review the photos clients loved most and download them in one step."
-                      : "Compose a gallery email and launch it in your mail app."}
+                        : projectLocked
+                          ? "Every recipient receives the same project link and shared project PIN."
+                          : "Every recipient receives the same public project gallery link."}
                 </div>
               </div>
               <button onClick={() => { setShareModalOpen(false); setShareView("menu"); }} style={{ border: 0, background: "transparent", cursor: "pointer", color: "#6b7280" }}>
@@ -1832,6 +1841,7 @@ export default function ProjectDetailPage() {
                         {favoritesSummary.preRegisteredCount
                           ? ` • ${favoritesSummary.preRegisteredCount} prerelease`
                           : ""}
+                        {projectLocked ? " • one shared project PIN" : ""}
                       </div>
                     </div>
                   </div>

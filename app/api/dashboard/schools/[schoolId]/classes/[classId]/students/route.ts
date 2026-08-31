@@ -15,6 +15,10 @@ import {
   uploadStudentAssets,
 } from "@/lib/dashboard-school-students";
 import { guardAgreement } from "@/lib/require-agreement";
+import {
+  normalizeStudentRecipientEmail,
+  studentRecipientEmailError,
+} from "@/lib/student-recipient-email";
 
 export const dynamic = "force-dynamic";
 
@@ -64,6 +68,15 @@ export async function POST(
     const studentFirstName = clean(String(formData.get("studentFirstName") ?? ""));
     const studentLastName = clean(String(formData.get("studentLastName") ?? ""));
     const studentPin = clean(String(formData.get("studentPin") ?? ""));
+    const studentEmailRaw = String(formData.get("studentEmail") ?? "");
+    const studentEmail = normalizeStudentRecipientEmail(studentEmailRaw);
+    const emailError = studentRecipientEmailError(studentEmailRaw);
+    if (emailError) {
+      return NextResponse.json(
+        { ok: false, message: emailError },
+        { status: 400 },
+      );
+    }
     const files = collectImageFiles(formData);
 
     const fallbackName = studentName || [studentFirstName, studentLastName].filter(Boolean).join(" ");
@@ -123,6 +136,27 @@ export async function POST(
       );
     }
 
+    if (studentPin) {
+      const { data: pinMatch, error: pinError } = await service
+        .from("students")
+        .select("id")
+        .eq("school_id", school.id)
+        .eq("pin", studentPin)
+        .limit(1)
+        .maybeSingle();
+      if (pinError) throw pinError;
+      if (pinMatch?.id) {
+        return NextResponse.json(
+          {
+            ok: false,
+            message:
+              "That gallery PIN is already assigned to another student in this school.",
+          },
+          { status: 409 },
+        );
+      }
+    }
+
     const folderName = files.length
       ? `${safeStorageSegment(fallbackName, "Student")}-${Date.now()}`
       : null;
@@ -137,15 +171,26 @@ export async function POST(
         first_name: firstName,
         last_name: lastName,
         pin: studentPin,
+        parent_email: studentEmail,
         folder_name: folderName,
         photo_url: null,
-        external_student_id: null,
+        external_student_id: `manual-${crypto.randomUUID()}`,
       })
       .select(
-        "id,school_id,first_name,last_name,pin,photo_url,class_id,class_name,folder_name,external_student_id",
+        "id,school_id,first_name,last_name,pin,photo_url,class_id,class_name,folder_name,external_student_id,parent_email",
       )
       .single<DashboardStudentRow>();
 
+    if (insertError?.code === "23505") {
+      return NextResponse.json(
+        {
+          ok: false,
+          message:
+            "That gallery PIN is already assigned to another student in this school.",
+        },
+        { status: 409 },
+      );
+    }
     if (insertError) throw insertError;
     if (!insertedRow?.id) {
       throw new Error("Student could not be created.");
@@ -187,7 +232,7 @@ export async function POST(
           .eq("id", nextStudent.id)
           .eq("school_id", schoolId)
           .select(
-            "id,school_id,first_name,last_name,pin,photo_url,class_id,class_name,folder_name,external_student_id",
+            "id,school_id,first_name,last_name,pin,photo_url,class_id,class_name,folder_name,external_student_id,parent_email",
           )
           .single<DashboardStudentRow>();
 
@@ -198,6 +243,7 @@ export async function POST(
       const { data: listedFiles, error: listError } = await listStorageFolderAssets(
         service,
         uploaded.folderPath,
+        schoolId,
       );
 
       if (listError) throw listError;

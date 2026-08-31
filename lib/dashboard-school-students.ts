@@ -4,11 +4,15 @@ import {
   ensureSchoolCollectionId,
 } from "@/lib/school-sync";
 import {
-  buildStoredMediaUrls,
   buildSignedMediaUrls,
   extractStoragePathFromSupabaseUrl,
 } from "@/lib/storage-images";
 import { listR2FolderImages, r2DeleteWithVariants, r2Upload } from "@/lib/r2";
+import {
+  filterTombstonedSchoolPhotoAssets,
+  loadSchoolPhotoTombstones,
+  tombstoneFamilySet,
+} from "@/lib/school-photo-deletions";
 
 type SupabaseClientLike = SupabaseClient;
 
@@ -32,6 +36,7 @@ export type DashboardStudentRow = {
   class_name: string | null;
   folder_name: string | null;
   external_student_id: string | null;
+  parent_email: string | null;
 };
 
 export type UploadedStudentAsset = {
@@ -132,7 +137,7 @@ export async function loadOwnedStudent(params: {
   const { data, error } = await params.service
     .from("students")
     .select(
-      "id,school_id,first_name,last_name,pin,photo_url,class_id,class_name,folder_name,external_student_id",
+      "id,school_id,first_name,last_name,pin,photo_url,class_id,class_name,folder_name,external_student_id,parent_email",
     )
     .eq("id", params.studentId)
     .eq("school_id", params.schoolId)
@@ -237,17 +242,27 @@ export async function syncStudentAssets(params: {
   return syncTarget;
 }
 
-export function listStorageFolderAssets(
+export async function listStorageFolderAssets(
   service: SupabaseClientLike,
   folderPath: string,
+  schoolId?: string,
 ) {
-  void service;
-  return listR2FolderImages(folderPath)
-    .then((files) => ({ data: files, error: null }))
-    .catch((error) => ({
+  try {
+    let files = await listR2FolderImages(folderPath);
+    if (clean(schoolId)) {
+      const tombstones = await loadSchoolPhotoTombstones(service, clean(schoolId));
+      files = filterTombstonedSchoolPhotoAssets(
+        files,
+        tombstoneFamilySet(tombstones),
+      );
+    }
+    return { data: files, error: null };
+  } catch (error) {
+    return {
       data: null,
       error: error instanceof Error ? error : new Error("Failed to list storage folder."),
-    }));
+    };
+  }
 }
 
 export function storageFilePublicUrl(

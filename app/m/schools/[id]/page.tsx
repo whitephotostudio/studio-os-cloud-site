@@ -30,6 +30,7 @@ import {
 import { createClient } from "@/lib/supabase/client";
 import { proxiedPhotoUrl } from "@/lib/photo-url";
 import QrCode from "@/components/qr-code";
+import SchoolCoverImage from "@/components/school-cover-image";
 
 type School = {
   id: string;
@@ -39,6 +40,7 @@ type School = {
   status: string | null;
   access_mode: string | null;
   access_pin: string | null;
+  cover_photo_url: string | null;
 };
 
 type Student = {
@@ -69,6 +71,28 @@ function clean(v: string | null | undefined): string {
   return (v ?? "").trim();
 }
 
+function StudentThumbnail({ source }: { source: string | null }) {
+  const normalizedSource = proxiedPhotoUrl(source);
+  const [failedSource, setFailedSource] = useState("");
+
+  if (!normalizedSource || failedSource === normalizedSource) return null;
+
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      key={normalizedSource}
+      src={normalizedSource}
+      alt=""
+      onError={() => setFailedSource(normalizedSource)}
+      style={{
+        width: "100%",
+        height: "100%",
+        objectFit: "cover",
+      }}
+    />
+  );
+}
+
 const statusOptions = [
   { value: "active", label: "Active" },
   { value: "inactive", label: "Inactive" },
@@ -80,10 +104,15 @@ type GalleryStatus = (typeof statusOptions)[number]["value"];
 
 function normalizeStatus(value: string | null | undefined): GalleryStatus {
   const normalized = clean(value).toLowerCase().replace("-", "_");
-  if (normalized === "active" || normalized === "inactive" || normalized === "closed") {
+  if (
+    normalized === "active" ||
+    normalized === "inactive" ||
+    normalized === "closed"
+  ) {
     return normalized;
   }
-  if (normalized === "pre_release" || normalized === "pre_released") return "pre_release";
+  if (normalized === "pre_release" || normalized === "pre_released")
+    return "pre_release";
   return "inactive";
 }
 
@@ -168,11 +197,15 @@ export default function MobileSchoolDetailPage() {
   const [copied, setCopied] = useState<string>("");
   const [toast, setToast] = useState("");
   const [focusStudentId, setFocusStudentId] = useState<string | null>(null);
-  const [settingsStatus, setSettingsStatus] = useState<GalleryStatus>("inactive");
-  const [settingsAccessMode, setSettingsAccessMode] = useState<"public" | "pin">("public");
+  const [settingsStatus, setSettingsStatus] =
+    useState<GalleryStatus>("inactive");
+  const [settingsAccessMode, setSettingsAccessMode] = useState<
+    "public" | "pin"
+  >("public");
   const [settingsPin, setSettingsPin] = useState("");
   const [settingsSaving, setSettingsSaving] = useState(false);
   const [settingsMessage, setSettingsMessage] = useState("");
+  const [projectCover, setProjectCover] = useState("");
 
   useEffect(() => {
     if (!id) return;
@@ -187,7 +220,9 @@ export default function MobileSchoolDetailPage() {
 
       const { data: schoolRow, error: schoolErr } = await supabase
         .from("schools")
-        .select("id, school_name, local_school_id, gallery_slug, status, access_mode, access_pin")
+        .select(
+          "id, school_name, local_school_id, gallery_slug, status, access_mode, access_pin, cover_photo_url",
+        )
         .eq("id", id)
         .maybeSingle();
       if (cancelled) return;
@@ -196,7 +231,36 @@ export default function MobileSchoolDetailPage() {
         setLoading(false);
         return;
       }
-      setSchool((schoolRow as School | null) ?? null);
+      const loadedSchool = (schoolRow as School | null) ?? null;
+      setSchool(loadedSchool);
+
+      let savedProjectCover = "";
+      const { data: projectBySchool } = await supabase
+        .from("projects")
+        .select("cover_photo_url")
+        .eq("workflow_type", "school")
+        .eq("linked_school_id", id)
+        .not("cover_photo_url", "is", null)
+        .order("updated_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      savedProjectCover = clean(projectBySchool?.cover_photo_url);
+
+      const localSchoolId = clean(loadedSchool?.local_school_id);
+      if (!savedProjectCover && localSchoolId) {
+        const { data: projectByLocalId } = await supabase
+          .from("projects")
+          .select("cover_photo_url")
+          .eq("workflow_type", "school")
+          .eq("linked_local_school_id", localSchoolId)
+          .not("cover_photo_url", "is", null)
+          .order("updated_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        savedProjectCover = clean(projectByLocalId?.cover_photo_url);
+      }
+      if (cancelled) return;
+      setProjectCover(savedProjectCover);
 
       const [studentsRes, ordersRes] = await Promise.all([
         supabase
@@ -238,7 +302,9 @@ export default function MobileSchoolDetailPage() {
   useEffect(() => {
     if (!school) return;
     setSettingsStatus(normalizeStatus(school.status));
-    setSettingsAccessMode(clean(school.access_mode).toLowerCase() === "pin" ? "pin" : "public");
+    setSettingsAccessMode(
+      clean(school.access_mode).toLowerCase() === "pin" ? "pin" : "public",
+    );
     setSettingsPin(clean(school.access_pin));
     setSettingsMessage("");
   }, [school]);
@@ -268,16 +334,27 @@ export default function MobileSchoolDetailPage() {
     return () => window.clearTimeout(clearId);
   }, [focusStudentIdFromUrl, students]);
 
-  const cover = useMemo(() => {
-    const first = students.find((s) => clean(s.photo_url));
-    return clean(first?.photo_url);
-  }, [students]);
+  const coverSources = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          [
+            projectCover,
+            clean(school?.cover_photo_url),
+            ...students.map((student) => clean(student.photo_url)),
+          ].filter(Boolean),
+        ),
+      ),
+    [projectCover, school?.cover_photo_url, students],
+  );
 
   const filteredStudents = useMemo(() => {
     const term = search.trim().toLowerCase();
     if (!term) return students;
     return students.filter((s) => {
-      const name = [clean(s.first_name), clean(s.last_name)].join(" ").toLowerCase();
+      const name = [clean(s.first_name), clean(s.last_name)]
+        .join(" ")
+        .toLowerCase();
       const klass = clean(s.class_name).toLowerCase();
       const pin = clean(s.pin).toLowerCase();
       return name.includes(term) || klass.includes(term) || pin.includes(term);
@@ -285,7 +362,8 @@ export default function MobileSchoolDetailPage() {
   }, [students, search]);
 
   const status = useMemo(() => {
-    if (!students.length) return { label: "Setup", bg: "#fff7ed", fg: "#c2410c" };
+    if (!students.length)
+      return { label: "Setup", bg: "#fff7ed", fg: "#c2410c" };
     if (clean(school?.gallery_slug))
       return { label: "Gallery Released", bg: "#dcfce7", fg: "#15803d" };
     return { label: "Pending Delivery", bg: "#fef3c7", fg: "#92400e" };
@@ -330,8 +408,9 @@ export default function MobileSchoolDetailPage() {
     const origin = typeof window !== "undefined" ? window.location.origin : "";
     const url = `${origin}/parents?mode=school&school=${school.id}`;
     const name =
-      [clean(student.first_name), clean(student.last_name)].filter(Boolean).join(" ") ||
-      "your child";
+      [clean(student.first_name), clean(student.last_name)]
+        .filter(Boolean)
+        .join(" ") || "your child";
     const schoolName = clean(school.school_name) || "School";
     const msg = `${schoolName} gallery is live. Visit ${url} and sign in with your email and PIN ${pin} to see ${name}'s photos.`;
     await shareOrCopy(url, msg, showToast);
@@ -385,13 +464,16 @@ export default function MobileSchoolDetailPage() {
               ...prev,
               status: settingsStatus,
               access_mode: settingsAccessMode,
-              access_pin: settingsAccessMode === "pin" ? clean(settingsPin) : null,
+              access_pin:
+                settingsAccessMode === "pin" ? clean(settingsPin) : null,
             }
           : prev,
       );
       setSettingsMessage("Saved");
     } catch (err) {
-      setSettingsMessage(err instanceof Error ? err.message : "Could not save settings.");
+      setSettingsMessage(
+        err instanceof Error ? err.message : "Could not save settings.",
+      );
     } finally {
       setSettingsSaving(false);
     }
@@ -440,7 +522,9 @@ export default function MobileSchoolDetailPage() {
 
   if (!school) {
     return (
-      <div style={{ textAlign: "center", padding: "40px 20px", color: "#6b7280" }}>
+      <div
+        style={{ textAlign: "center", padding: "40px 20px", color: "#6b7280" }}
+      >
         <GraduationCap size={28} color="#d1d5db" style={{ marginBottom: 10 }} />
         <div style={{ fontWeight: 800, color: "#111827", fontSize: 14 }}>
           School not found
@@ -496,38 +580,27 @@ export default function MobileSchoolDetailPage() {
           style={{
             position: "relative",
             height: 150,
-            background: cover
-              ? "#111"
-              : "linear-gradient(135deg,#1e293b 0%,#0f172a 100%)",
+            background: "linear-gradient(135deg,#1e293b 0%,#0f172a 100%)",
             overflow: "hidden",
           }}
         >
-          {proxiedPhotoUrl(cover) ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={proxiedPhotoUrl(cover)}
-              alt=""
-              style={{
-                width: "100%",
-                height: "100%",
-                objectFit: "cover",
-                filter: "brightness(0.78)",
-              }}
-            />
-          ) : (
-            <div
-              style={{
-                position: "absolute",
-                inset: 0,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                color: "rgba(255,255,255,0.5)",
-              }}
-            >
-              <GraduationCap size={40} />
-            </div>
-          )}
+          <div
+            style={{
+              position: "absolute",
+              inset: 0,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              color: "rgba(255,255,255,0.5)",
+            }}
+          >
+            <GraduationCap size={40} />
+          </div>
+          <SchoolCoverImage
+            key={coverSources.join("\n")}
+            sources={coverSources}
+            brightness={0.78}
+          />
           <div
             style={{
               position: "absolute",
@@ -561,7 +634,14 @@ export default function MobileSchoolDetailPage() {
               color: "#fff",
             }}
           >
-            <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: "0.12em", opacity: 0.9 }}>
+            <div
+              style={{
+                fontSize: 11,
+                fontWeight: 800,
+                letterSpacing: "0.12em",
+                opacity: 0.9,
+              }}
+            >
               SCHOOL
             </div>
             <div
@@ -607,10 +687,31 @@ export default function MobileSchoolDetailPage() {
             {galleryUrl() || "—"}
           </div>
           {galleryUrl() ? (
-            <div style={{ display: "flex", justifyContent: "center", paddingTop: 4 }}>
-              <div style={{ background: "#fff", padding: 12, borderRadius: 14, border: "1px solid #e5e7eb", textAlign: "center" }}>
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "center",
+                paddingTop: 4,
+              }}
+            >
+              <div
+                style={{
+                  background: "#fff",
+                  padding: 12,
+                  borderRadius: 14,
+                  border: "1px solid #e5e7eb",
+                  textAlign: "center",
+                }}
+              >
                 <QrCode value={galleryUrl()} size={188} />
-                <div style={{ fontSize: 11, fontWeight: 700, color: "#6b7280", marginTop: 8 }}>
+                <div
+                  style={{
+                    fontSize: 11,
+                    fontWeight: 700,
+                    color: "#6b7280",
+                    marginTop: 8,
+                  }}
+                >
                   Scan to open the gallery
                 </div>
               </div>
@@ -678,17 +779,44 @@ export default function MobileSchoolDetailPage() {
           gap: 12,
         }}
       >
-        <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            gap: 10,
+            alignItems: "center",
+          }}
+        >
           <div>
-            <div style={{ fontSize: 10, letterSpacing: "0.12em", fontWeight: 900, color: "#6b7280" }}>
+            <div
+              style={{
+                fontSize: 10,
+                letterSpacing: "0.12em",
+                fontWeight: 900,
+                color: "#6b7280",
+              }}
+            >
               QUICK CONTROLS
             </div>
-            <div style={{ marginTop: 2, fontSize: 15, fontWeight: 950, color: "#111827" }}>
+            <div
+              style={{
+                marginTop: 2,
+                fontSize: 15,
+                fontWeight: 950,
+                color: "#111827",
+              }}
+            >
               Status and gallery PIN
             </div>
           </div>
           {settingsMessage ? (
-            <span style={{ fontSize: 12, fontWeight: 900, color: settingsMessage === "Saved" ? "#15803d" : "#b91c1c" }}>
+            <span
+              style={{
+                fontSize: 12,
+                fontWeight: 900,
+                color: settingsMessage === "Saved" ? "#15803d" : "#b91c1c",
+              }}
+            >
               {settingsMessage}
             </span>
           ) : null}
@@ -705,7 +833,9 @@ export default function MobileSchoolDetailPage() {
           Open full school settings
         </Link>
 
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+        <div
+          style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}
+        >
           {statusOptions.map((option) => {
             const active = settingsStatus === option.value;
             return (
@@ -729,7 +859,9 @@ export default function MobileSchoolDetailPage() {
           })}
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+        <div
+          style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}
+        >
           {[
             { value: "public" as const, label: "Public" },
             { value: "pin" as const, label: "PIN protected" },
@@ -923,18 +1055,7 @@ export default function MobileSchoolDetailPage() {
                       flexShrink: 0,
                     }}
                   >
-                    {proxiedPhotoUrl(student.photo_url) ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
-                        src={proxiedPhotoUrl(student.photo_url)}
-                        alt=""
-                        style={{
-                          width: "100%",
-                          height: "100%",
-                          objectFit: "cover",
-                        }}
-                      />
-                    ) : null}
+                    <StudentThumbnail source={student.photo_url} />
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div
@@ -979,10 +1100,7 @@ export default function MobileSchoolDetailPage() {
                           gap: 4,
                         }}
                       >
-                        PIN:{" "}
-                        {revealed
-                          ? clean(student.pin)
-                          : "• • • •"}
+                        PIN: {revealed ? clean(student.pin) : "• • • •"}
                         {copied === student.id ? (
                           <Check size={11} />
                         ) : (
@@ -1082,7 +1200,12 @@ export default function MobileSchoolDetailPage() {
             </div>
             <Link
               href={`/dashboard/projects/schools/${school.id}/orders`}
-              style={{ fontSize: 12, fontWeight: 800, color: "#cc0000", textDecoration: "none" }}
+              style={{
+                fontSize: 12,
+                fontWeight: 800,
+                color: "#cc0000",
+                textDecoration: "none",
+              }}
             >
               View all
             </Link>

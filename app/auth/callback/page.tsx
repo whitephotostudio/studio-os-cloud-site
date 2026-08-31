@@ -5,6 +5,7 @@ import Link from "next/link";
 import { SiteHeader } from "@/components/site-header";
 import { SiteFooter } from "@/components/site-footer";
 import { createClient } from "@/lib/supabase/client";
+import { FREE_TRIAL_DAYS } from "@/lib/trial-config";
 
 type CallbackState =
   | { kind: "loading" }
@@ -17,7 +18,7 @@ type CallbackState =
  * Supabase email confirmation links redirect the user back here after they
  * click the link in their welcome email. We finish the auth exchange, show
  * a friendly "you're verified" screen, and then bounce them into the
- * dashboard so their 7-day trial starts immediately.
+ * dashboard so their trial starts immediately.
  *
  * Supports two link formats:
  *   1. PKCE (?code=...)        — exchangeCodeForSession
@@ -163,7 +164,7 @@ export default function AuthCallbackPage() {
                     , <span className="font-semibold">{state.email}</span>
                   </>
                 ) : null}
-                . Your 7-day free trial is now active. Taking you to your
+                . Your {FREE_TRIAL_DAYS}-day free trial is now active. Taking you to your
                 dashboard...
               </p>
               <div className="mt-8 flex flex-wrap gap-3">

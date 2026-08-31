@@ -13,12 +13,17 @@ import {
   splitDisplayName,
 } from "@/lib/dashboard-school-students";
 import { guardAgreement } from "@/lib/require-agreement";
+import {
+  normalizeStudentRecipientEmail,
+  studentRecipientEmailError,
+} from "@/lib/student-recipient-email";
 
 export const dynamic = "force-dynamic";
 
 const StudentPatchBodySchema = z.object({
   studentName: z.string().max(500).optional(),
   studentPin: z.string().max(64).optional(),
+  studentEmail: z.string().max(254).nullable().optional(),
 });
 
 function clean(value: string | null | undefined) {
@@ -92,6 +97,39 @@ export async function PATCH(
     const fullName = clean(body.studentName);
     const { firstName, lastName } = splitDisplayName(fullName);
     const nextPin = clean(body.studentPin);
+    const emailProvided = body.studentEmail !== undefined;
+    const emailError = emailProvided
+      ? studentRecipientEmailError(body.studentEmail)
+      : null;
+    if (emailError) {
+      return NextResponse.json(
+        { ok: false, message: emailError },
+        { status: 400 },
+      );
+    }
+    const nextEmail = normalizeStudentRecipientEmail(body.studentEmail);
+
+    if (nextPin && nextPin !== clean(student.pin)) {
+      const { data: pinMatch, error: pinError } = await service
+        .from("students")
+        .select("id")
+        .eq("school_id", schoolId)
+        .eq("pin", nextPin)
+        .neq("id", student.id)
+        .limit(1)
+        .maybeSingle();
+      if (pinError) throw pinError;
+      if (pinMatch?.id) {
+        return NextResponse.json(
+          {
+            ok: false,
+            message:
+              "That gallery PIN is already assigned to another student in this school.",
+          },
+          { status: 409 },
+        );
+      }
+    }
 
     const { data: updatedRow, error: updateError } = await service
       .from("students")
@@ -99,14 +137,25 @@ export async function PATCH(
         first_name: firstName || student.first_name,
         last_name: fullName ? lastName : student.last_name,
         pin: nextPin || student.pin,
+        ...(emailProvided ? { parent_email: nextEmail } : {}),
       })
       .eq("id", student.id)
       .eq("school_id", schoolId)
       .select(
-        "id,school_id,first_name,last_name,pin,photo_url,class_id,class_name,folder_name,external_student_id",
+        "id,school_id,first_name,last_name,pin,photo_url,class_id,class_name,folder_name,external_student_id,parent_email",
       )
       .single<DashboardStudentRow>();
 
+    if (updateError?.code === "23505") {
+      return NextResponse.json(
+        {
+          ok: false,
+          message:
+            "That gallery PIN is already assigned to another student in this school.",
+        },
+        { status: 409 },
+      );
+    }
     if (updateError) throw updateError;
 
     const auditDiff = diffFields(
@@ -117,6 +166,8 @@ export async function PATCH(
     // Pin changes are sensitive — record that it changed, but don't log the value.
     const pinChanged =
       clean(body.studentPin) !== "" && clean(body.studentPin) !== clean(student.pin ?? "");
+    const emailChanged =
+      emailProvided && nextEmail !== normalizeStudentRecipientEmail(student.parent_email);
     await recordAudit({
       request,
       actorUserId: user.id,
@@ -127,7 +178,7 @@ export async function PATCH(
       targetPhotographerId: photographerRow.id,
       before: auditDiff.before,
       after: auditDiff.after,
-      metadata: { schoolId, pinChanged },
+      metadata: { schoolId, pinChanged, emailChanged },
       result: "ok",
     });
 

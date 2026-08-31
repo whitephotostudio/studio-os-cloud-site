@@ -11,13 +11,12 @@
 
 import {
   isPackageComponentItem,
-  isWebImageUrl,
   parseOrderPhotoSelections,
   resolveOrderItemDisplayCents,
   resolveOrderSubtotalCents,
   resolveOrderTotalCents,
 } from "./order-display";
-import { r2KeyFromAnyUrl, r2PresignedGetUrl } from "./r2-signed-urls";
+import { signedPrivateMediaReference } from "./private-media-references";
 
 export type OrderReceiptOrder = {
   id: string;
@@ -90,23 +89,11 @@ function formatDate(iso: string | null | undefined) {
 function emailImageUrl(url: string | null | undefined) {
   const raw = clean(url);
   if (!raw) return "";
-
-  try {
-    const parsed = new URL(raw);
-    if (
-      /\.r2\.dev$/i.test(parsed.host) ||
-      /\.r2\.cloudflarestorage\.com$/i.test(parsed.host) ||
-      parsed.pathname.startsWith("/api/r2/img/")
-    ) {
-      const key = r2KeyFromAnyUrl(raw);
-      const signed = key ? r2PresignedGetUrl(key, 60 * 60 * 24 * 7) : "";
-      return signed || raw;
-    }
-  } catch {
-    // Keep non-URL values out of email image tags.
-  }
-
-  return isWebImageUrl(raw) ? raw : "";
+  const resolved = signedPrivateMediaReference(raw, 60 * 60 * 24 * 7);
+  return /^https?:\/\//i.test(resolved) &&
+    /\.(png|jpe?g|webp|gif|avif)(?:[?#].*)?$/i.test(resolved)
+    ? resolved
+    : "";
 }
 
 /**
@@ -137,6 +124,7 @@ export function buildOrderReceiptEmail(input: {
   const subtotalCents = resolveOrderSubtotalCents(order, items);
   const taxCents = order.tax_cents ?? 0;
   const studioName = clean(photographer.business_name) || "Your Studio";
+  const studioLogoUrl = emailImageUrl(photographer.logo_url);
   const orderId = clean(order.id).slice(0, 8).toUpperCase();
   const fullOrderId = clean(order.id);
   const parentName = clean(order.parent_name) || "there";
@@ -158,10 +146,7 @@ export function buildOrderReceiptEmail(input: {
 
   const notePhotos = parseOrderPhotoSelections(order.special_notes);
   const itemPhotoUrl = (item: OrderReceiptItem, index: number) => {
-    const raw = isWebImageUrl(item.sku)
-      ? clean(item.sku)
-      : clean(notePhotos[index]?.url);
-    return emailImageUrl(raw);
+    return emailImageUrl(item.sku) || emailImageUrl(notePhotos[index]?.url);
   };
 
   const itemRowsHtml = visibleItems
@@ -224,8 +209,8 @@ export function buildOrderReceiptEmail(input: {
     <!-- Studio header -->
     <tr>
       <td style="background:#111;padding:28px 32px;text-align:center;">
-        ${photographer.logo_url
-          ? `<img src="${esc(photographer.logo_url)}" alt="${esc(studioName)}" width="140" style="max-width:140px;max-height:48px;display:inline-block;margin-bottom:8px;" /><br/>`
+        ${studioLogoUrl
+          ? `<img src="${esc(studioLogoUrl)}" alt="${esc(studioName)}" width="140" style="max-width:140px;max-height:48px;display:inline-block;margin-bottom:8px;" /><br/>`
           : ""}
         <span style="font-size:12px;letter-spacing:0.08em;text-transform:uppercase;color:rgba(255,255,255,0.7);">${esc(studioName)}</span>
       </td>

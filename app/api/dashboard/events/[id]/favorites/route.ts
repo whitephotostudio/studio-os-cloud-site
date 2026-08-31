@@ -7,6 +7,7 @@ import {
   buildSignedMediaUrls,
   SIGNED_URL_TTL_DASHBOARD_SECONDS,
 } from "@/lib/storage-images";
+import { signedPrivateMediaReference } from "@/lib/private-media-references";
 
 export const dynamic = "force-dynamic";
 
@@ -220,7 +221,17 @@ export async function GET(
     );
     const preRegisteredSet = new Set(preRegisteredEmails);
     const collectionMap = new Map(
-      collections.map((row) => [row.id, row] as const),
+      collections.map((row) => [
+        row.id,
+        {
+          ...row,
+          cover_photo_url:
+            signedPrivateMediaReference(
+              row.cover_photo_url,
+              SIGNED_URL_TTL_DASHBOARD_SECONDS,
+            ) || null,
+        },
+      ] as const),
     );
 
     const mediaIds = Array.from(
