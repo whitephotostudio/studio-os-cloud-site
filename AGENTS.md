@@ -312,6 +312,16 @@ When completing tasks:
 
 ---
 
+## Release Safety
+
+- Begin each new task from a clean Git worktree. If unrelated changes are present, stop and report them before editing.
+- Keep each change focused and commit it before preparing a production release.
+- Never run `vercel --prod` or `vercel deploy --prod` directly.
+- Production deployments must use `npm run deploy:production` so the clean-worktree guard and production build run first.
+- Never bypass the release guard, delete unrelated work, or deploy from a dirty checkout.
+
+---
+
 ## Final Reminder
 
 Studio OS Cloud should feel like:

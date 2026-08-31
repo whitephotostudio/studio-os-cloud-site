@@ -6,6 +6,9 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
+    "release:check": "node scripts/assert-clean-worktree.mjs && npm run build",
+    "predeploy:production": "npm run release:check",
+    "deploy:production": "npx vercel deploy --prod",
     "seo:crawl": "node scripts/seo-crawl.mjs",
     "lint": "eslint",
     "test:security": "node --test tests/security/*.test.mjs"
