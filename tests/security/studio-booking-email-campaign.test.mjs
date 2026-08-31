@@ -25,6 +25,15 @@ registerHooks({
         context,
       );
     }
+    if (
+      specifier === "./r2-signed-urls" &&
+      context.parentURL?.endsWith("/lib/storage-images.ts")
+    ) {
+      return nextResolve(
+        new URL("./r2-signed-urls.ts", context.parentURL).href,
+        context,
+      );
+    }
     return nextResolve(specifier, context);
   },
 });

@@ -52,8 +52,8 @@ test("authenticated image proxy covers every active owned R2 namespace", () => {
   }
   assert.match(imageProxySource, /secondSegment === photographerId/);
   assert.match(imageProxySource, /ownsProject\(thirdSegment\)/);
-  assert.match(imageProxySource, /ownsSchool\(thirdSegment\)/);
-  assert.match(imageProxySource, /normalizeR2Key\(rawStoragePath\)/);
+  assert.match(imageProxySource, /ownedSchoolId\(thirdSegment\)/);
+  assert.match(imageProxySource, /normalizeR2Key\(rawStoragePath,/);
   assert.doesNotMatch(imageProxySource, /unauthorized path: %s/);
   assert.doesNotMatch(imageProxySource, /^import sharp from ["']sharp["'];/m);
   assert.match(imageProxySource, /await import\(["']sharp["']\)/);
