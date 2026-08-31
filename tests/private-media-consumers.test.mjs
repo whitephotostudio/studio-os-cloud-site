@@ -272,13 +272,17 @@ test("parent folder media uses the six-hour portal TTL end to end", () => {
   assert.match(r2Source, /url: r2PresignedGetUrl\(key, ttlSeconds\)/);
   assert.match(
     storageFolderSource,
-    /loadFolderMediaRows\([\s\S]{0,180}options\?: \{ ttlSeconds\?: number \}[\s\S]{0,260}listR2FolderImages\(folderPath, options\)/,
+    /loadFolderMediaRows\([\s\S]{0,220}ttlSeconds\?: number/,
+  );
+  assert.match(
+    storageFolderSource,
+    /listR2FolderImages\(folderPath, \{ ttlSeconds: options\?\.ttlSeconds \}\)/,
   );
 
   for (const portalSource of [galleryContextSource, schoolAccessSource]) {
     assert.match(
       portalSource,
-      /loadFolderMediaRows\([\s\S]{0,650}\{ ttlSeconds: SIGNED_URL_TTL_PARENTS_PORTAL_SECONDS \},?\s*\)/,
+      /loadFolderMediaRows\([\s\S]{0,850}ttlSeconds: SIGNED_URL_TTL_PARENTS_PORTAL_SECONDS,[\s\S]{0,80}\},?\s*\)/,
     );
   }
 });
