@@ -60,6 +60,7 @@ export type PersistedCartItem = {
   backdropAddOnCents: number;
   lineTotalCents: number;
   selectedImageUrl: string | null;
+  retouchSelections?: Array<{ imageUrl: string; notes: string }>;
   digitalSelections?: Array<{
     mediaId: string;
     url: string;

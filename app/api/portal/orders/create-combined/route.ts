@@ -51,6 +51,7 @@ import { getClientIp, rateLimit } from "@/lib/rate-limit";
 import { hasActiveSubscription } from "@/lib/subscription-gate";
 import { parseJson } from "@/lib/api-validation";
 import { durablePrivateMediaReference } from "@/lib/private-media-references";
+import { isRetouchPackage, parseRetouchSelections, retouchSelectionIssue, retouchNotesBlock, customerNotesBlock, retouchSlots, type RetouchSelection } from "@/lib/retouching";
 import {
   computeCombineTotals,
   type CombineGroup,
@@ -94,12 +95,22 @@ const BackdropSchema = z
   .nullable()
   .optional();
 
+const RetouchSelectionsSchema = z.unknown().transform((raw, ctx) => {
+  const result = parseRetouchSelections(raw);
+  if (!result.ok) {
+    ctx.addIssue({ code: "custom", message: result.message });
+    return z.NEVER;
+  }
+  return result.value;
+});
+
 const EntrySchema = z.object({
   packageId: z.string().uuid(),
   quantity: z.number().int().min(1).max(MAX_QUANTITY),
   backdrop: BackdropSchema,
   slots: z.array(SlotSchema).max(MAX_SLOTS).optional().default([]),
   selectedImageUrl: z.string().trim().max(MAX_IMAGE_URL_LENGTH).nullable().optional(),
+  retouchSelections: RetouchSelectionsSchema,
   isComposite: z.boolean().optional().default(false),
   compositeTitle: z.string().trim().max(MAX_COMPOSITE_TITLE_LENGTH).nullable().optional(),
   // 2026-04-25: backdrop orientation chosen by the parent.  Server doesn't
@@ -367,7 +378,7 @@ export async function POST(request: NextRequest) {
 
     const { data: packageRows, error: packageErr } = await sb
       .from("packages")
-      .select("id, name, price_cents, photographer_id, category, active")
+      .select("id, name, price_cents, photographer_id, category, active, is_retouch_addon")
       .in("id", allPackageIds);
     if (packageErr) throw packageErr;
     const packageMap = new Map<string, {
@@ -377,6 +388,7 @@ export async function POST(request: NextRequest) {
       photographer_id: string | null;
       category: string | null;
       active: boolean | null;
+      is_retouch_addon?: boolean | null;
     }>();
     for (const row of (packageRows ?? []) as Array<typeof packageMap extends Map<string, infer V> ? V : never>) {
       packageMap.set(clean(row.id), row);
@@ -412,6 +424,7 @@ export async function POST(request: NextRequest) {
       price_cents: number | null;
       photographer_id: string | null;
       active: boolean | null;
+      is_retouch_addon?: boolean | null;
     }>();
     if (allBackdropIds.length > 0) {
       const { data: backdropRows, error: backdropErr } = await sb
@@ -452,6 +465,7 @@ export async function POST(request: NextRequest) {
       isComposite: boolean;
       compositeTitle: string | null;
       isDigital: boolean;
+      retouchSelections: RetouchSelection[];
       slots: { label: string; assignedImageUrl: string | null }[];
       selectedImageUrl: string | null;
       backdrop: {
@@ -472,6 +486,18 @@ export async function POST(request: NextRequest) {
     for (const grp of resolvedGroups) {
       for (const entry of grp.input.entries) {
         const pkg = packageMap.get(entry.packageId)!;
+        const retouchSelections = entry.retouchSelections.map((selection) => ({
+          imageUrl: durablePrivateMediaReference(selection.imageUrl),
+          notes: selection.notes,
+        }));
+        const retouchIssue = retouchSelectionIssue(pkg, retouchSelections, entry.quantity);
+        if (retouchIssue) return NextResponse.json({ ok: false, message: retouchIssue }, { status: 400 });
+        if (isRetouchPackage(pkg)) {
+          entry.slots = retouchSlots(clean(pkg.name) || "Retouching", retouchSelections);
+          entry.selectedImageUrl = retouchSelections[0]?.imageUrl ?? null;
+          entry.backdrop = null;
+          entry.isComposite = false;
+        }
         const packagePriceCents = Math.round(Number(pkg.price_cents));
         const packageSubtotalCents = packagePriceCents * entry.quantity;
 
@@ -518,7 +544,8 @@ export async function POST(request: NextRequest) {
           lineTotalCents: packageSubtotalCents + backdropAddOnCents,
           isComposite: !!entry.isComposite,
           compositeTitle: entry.compositeTitle ?? null,
-          isDigital: isDigitalCategory(pkg.category, pkg.name),
+          isDigital: !isRetouchPackage(pkg) && isDigitalCategory(pkg.category, pkg.name),
+          retouchSelections,
           slots: (entry.slots ?? []).map((s) => ({
             label: clean(s.label) || "Item",
             assignedImageUrl: s.assignedImageUrl
@@ -548,7 +575,7 @@ export async function POST(request: NextRequest) {
       subtotalCents: groupSubtotalsByIndex.get(g.groupIndex) ?? 0,
     }));
 
-    const anyPhysical = resolvedEntries.some((e) => !e.isDigital);
+    const anyPhysical = resolvedEntries.some((e) => !e.isDigital && !e.retouchSelections.length);
     const shippingEnabledForAllGroups =
       resolvedGroups.length > 0 && resolvedGroups.every((g) => g.shippingEnabled);
     if (body.delivery.method === "shipping" && !shippingEnabledForAllGroups) {
@@ -660,6 +687,7 @@ export async function POST(request: NextRequest) {
             : "";
         return [
           `ORDER ITEM ${idx + 1}: ${entryName}`,
+          retouchNotesBlock(entry.retouchSelections),
           compositeNote,
           backdropNote,
           entry.isDigital
@@ -701,7 +729,7 @@ export async function POST(request: NextRequest) {
         .filter(Boolean)
         .join("\n");
 
-      const combinedNotes = [body.notes, ...entryNotes, shippingBlock, combineMetaBlock]
+      const combinedNotes = [customerNotesBlock(body.notes ?? ""), ...entryNotes, shippingBlock, combineMetaBlock]
         .filter(Boolean)
         .join("\n\n");
 
@@ -739,6 +767,7 @@ export async function POST(request: NextRequest) {
           : null,
         slots: entry.slots ?? [],
         selectedImageUrl: entry.selectedImageUrl ?? null,
+        retouchSelections: entry.retouchSelections,
         isComposite: !!entry.isComposite,
         compositeTitle: entry.compositeTitle ?? null,
         orientation: entry.orientation ?? "portrait",

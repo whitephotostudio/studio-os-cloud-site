@@ -8,6 +8,7 @@ import { getClientIp, rateLimit } from "@/lib/rate-limit";
 import { hasActiveSubscription } from "@/lib/subscription-gate";
 import { resolveShipping } from "@/lib/combine-orders";
 import { durablePrivateMediaReference } from "@/lib/private-media-references";
+import { isRetouchPackage, parseRetouchSelections, retouchSelectionIssue, retouchNotesBlock, customerNotesBlock, retouchSlots, type RetouchSelection } from "@/lib/retouching";
 import {
   ensureObjectBody,
   validateEmail,
@@ -75,6 +76,7 @@ type EntryPayload = {
   } | null;
   slots: SlotPayload[];
   selectedImageUrl: string | null;
+  retouchSelections: RetouchSelection[];
   digitalSelections: DigitalSelectionPayload[];
   isComposite: boolean;
   compositeTitle: string | null;
@@ -124,6 +126,7 @@ type PackageRow = {
   category: string | null;
   items?: Array<string | { qty?: number | string | null; name?: string | null; type?: string | null; size?: string | null; finish?: string | null }> | null;
   active: boolean | null;
+  is_retouch_addon?: boolean | null;
 };
 
 type EventMediaRow = {
@@ -174,7 +177,8 @@ function clean(value: string | null | undefined) {
   return (value ?? "").trim();
 }
 
-function isDigitalCategory(pkg: Pick<PackageRow, "category" | "name">) {
+function isDigitalCategory(pkg: Pick<PackageRow, "category" | "name" | "is_retouch_addon">) {
+  if (isRetouchPackage(pkg)) return false;
   const cat = clean(pkg.category).toLowerCase();
   if (cat === "digital") return true;
   const name = clean(pkg.name).toLowerCase();
@@ -473,6 +477,8 @@ function validateEntries(
       `entries[${i}].digitalSelections`,
     );
     if (!digitalSelectionsResult.ok) return digitalSelectionsResult;
+    const retouchSelectionsResult = parseRetouchSelections(entry.retouchSelections);
+    if (!retouchSelectionsResult.ok) return retouchSelectionsResult;
 
     const selectedImage = validateOptionalString(
       entry.selectedImageUrl,
@@ -494,6 +500,7 @@ function validateEntries(
       backdrop,
       slots: slotsResult.value,
       selectedImageUrl: selectedImage.value || null,
+      retouchSelections: retouchSelectionsResult.value,
       digitalSelections: digitalSelectionsResult.value,
       isComposite: entry.isComposite === true,
       compositeTitle: compositeTitle.value || null,
@@ -598,6 +605,10 @@ export async function POST(request: NextRequest) {
         assignedImageUrl: slot.assignedImageUrl
           ? durablePrivateMediaReference(slot.assignedImageUrl)
           : null,
+      })),
+      retouchSelections: entry.retouchSelections.map((selection) => ({
+        imageUrl: durablePrivateMediaReference(selection.imageUrl),
+        notes: selection.notes,
       })),
       digitalSelections: entry.digitalSelections.map((selection) => ({
         ...selection,
@@ -768,7 +779,7 @@ export async function POST(request: NextRequest) {
 
     const { data: packageRows, error: packageError } = await sb
       .from("packages")
-      .select("id,name,price_cents,photographer_id,category,items,active")
+      .select("id,name,price_cents,photographer_id,category,items,active,is_retouch_addon")
       .in("id", packageIds);
     if (packageError) throw packageError;
 
@@ -873,6 +884,15 @@ export async function POST(request: NextRequest) {
     const resolved: ResolvedEntry[] = [];
     for (const entry of entries) {
       const pkg = packageMap.get(entry.packageId) as PackageRow;
+      const retouchIssue = retouchSelectionIssue(pkg, entry.retouchSelections, entry.quantity);
+      if (retouchIssue) return NextResponse.json({ ok: false, message: retouchIssue }, { status: 400 });
+      if (isRetouchPackage(pkg)) {
+        entry.slots = retouchSlots(clean(pkg.name) || "Retouching", entry.retouchSelections);
+        entry.selectedImageUrl = entry.retouchSelections[0]?.imageUrl ?? null;
+        entry.backdrop = null;
+        entry.isComposite = false;
+        entry.digitalSelections = [];
+      }
       const packagePriceCents = Math.round(Number(pkg.price_cents));
       const isDigital = isDigitalCategory(pkg);
       const digitalLimit = getDigitalFavoritesPackLimit(pkg);
@@ -951,7 +971,7 @@ export async function POST(request: NextRequest) {
     }
 
     // ── delivery method normalization (must run before shipping math) ────
-    const anyPhysical = resolved.some((e) => !e.isDigital);
+    const anyPhysical = resolved.some((e) => !e.isDigital && !isRetouchPackage(e.pkg));
     if (!anyPhysical && delivery.method === "shipping") {
       // Digital-only carts don't ship anywhere; quietly treat as pickup.
       (delivery as unknown as { method: string }).method = "pickup";
@@ -1049,6 +1069,7 @@ export async function POST(request: NextRequest) {
 
       return [
         `ORDER ITEM ${index + 1}: ${entryName}`,
+        retouchNotesBlock(entry.retouchSelections),
         compositeNote,
         backdropNote,
         entry.isDigital
@@ -1078,7 +1099,7 @@ export async function POST(request: NextRequest) {
           : pickupLines.join("\n")
         : "";
 
-    const combinedNotes = [notes, ...entryNotes, shippingBlock]
+    const combinedNotes = [customerNotesBlock(notes), ...entryNotes, shippingBlock]
       .filter(Boolean)
       .join("\n\n");
 
@@ -1119,6 +1140,7 @@ export async function POST(request: NextRequest) {
         : null,
       slots: entry.slots ?? [],
       selectedImageUrl: entry.selectedImageUrl ?? null,
+      retouchSelections: entry.retouchSelections ?? [],
       digitalSelections: entry.digitalSelections ?? [],
       digitalLimit: entry.digitalLimit,
       isComposite: !!entry.isComposite,

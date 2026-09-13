@@ -62,6 +62,8 @@ import {
   type PersistedCartItem,
 } from "@/lib/combine-cart-storage";
 import OrdersHistoryPanel from "@/components/parents/orders-history-panel";
+import { RetouchPhotoFields, type RetouchPhotoOption } from "@/components/parents/retouch-photo-fields";
+import { isRetouchPackage, retouchPhotoLimit, retouchSelectionIssue, retouchSlots, type RetouchSelection } from "@/lib/retouching";
 import { calendarDateInputValue, hasCalendarBoundaryPassed } from "@/lib/calendar-dates";
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -331,6 +333,7 @@ type CartLineItem = {
   lineTotalCents: number;
   slots: ItemSlot[];
   selectedImageUrl: string | null;
+  retouchSelections?: RetouchSelection[];
   digitalSelections?: DigitalSelection[];
   digitalLimit?: number | null;
   isCompositeOrder: boolean;
@@ -4005,6 +4008,7 @@ export default function ParentGalleryPage() {
         backdropAddOnCents: item.backdropAddOnCents,
         lineTotalCents: item.lineTotalCents,
         selectedImageUrl: item.selectedImageUrl,
+        retouchSelections: item.retouchSelections ?? [],
         digitalSelections: item.digitalSelections ?? [],
         digitalLimit: item.digitalLimit ?? null,
         isCompositeOrder: item.isCompositeOrder,
@@ -4182,6 +4186,7 @@ export default function ParentGalleryPage() {
               assignedImageUrl: s.assignedImageUrl,
             })) as ItemSlot[],
             selectedImageUrl: i.selectedImageUrl,
+            retouchSelections: i.retouchSelections ?? [],
             digitalSelections: i.digitalSelections ?? [],
             digitalLimit: i.digitalLimit ?? null,
             isCompositeOrder: i.isCompositeOrder,
@@ -4282,6 +4287,7 @@ export default function ParentGalleryPage() {
       backdrop?: { id?: string; blurred?: boolean; blurAmount?: number } | null;
       slots?: Array<{ label?: string; assignedImageUrl?: string | null }>;
       selectedImageUrl?: string | null;
+      retouchSelections?: RetouchSelection[];
       digitalSelections?: DigitalSelection[];
       digitalLimit?: number | null;
       isComposite?: boolean;
@@ -4338,6 +4344,7 @@ export default function ParentGalleryPage() {
           assignedImageUrl: s.assignedImageUrl ?? null,
         })) as ItemSlot[],
         selectedImageUrl: raw.selectedImageUrl ?? null,
+        retouchSelections: raw.retouchSelections ?? [],
         digitalSelections: raw.digitalSelections ?? [],
         digitalLimit: raw.digitalLimit ?? null,
         isCompositeOrder: !!raw.isComposite,
@@ -7658,7 +7665,7 @@ export default function ParentGalleryPage() {
     const compositeImage = firstCompositeGalleryImage;
     const digitalPackage = pendingDigitalPackage;
     const eligiblePrints = packages
-      .filter((pkg) => !pkg.is_retouch_addon)
+      .filter((pkg) => !isRetouchPackage(pkg))
       .filter((pkg) => isCompositeEligiblePackage(pkg));
 
     setGroupPhotoDigitalNoticeOpen(false);
@@ -7793,7 +7800,7 @@ export default function ParentGalleryPage() {
       // 2026-04-26: hide retouching add-on packages from the main grid.
       // They only surface via the upsell modal at checkout, with explicit
       // copy clarifying that retouching is a SERVICE, not digital files.
-      const visible = packages.filter((pkg) => !pkg.is_retouch_addon);
+      const visible = packages.filter((pkg) => !isRetouchPackage(pkg));
       return isCompositeSelection
         ? visible.filter((pkg) => isCompositeEligiblePackage(pkg))
         : visible;
@@ -7802,7 +7809,7 @@ export default function ParentGalleryPage() {
   );
   // The retouching add-on packages, surfaced ONLY via the upsell modal.
   const retouchAddonPackages = useMemo(
-    () => packages.filter((pkg) => pkg.is_retouch_addon === true),
+    () => packages.filter(isRetouchPackage),
     [packages],
   );
   const packagesInCategory = storefrontPackages.filter(
@@ -8138,7 +8145,31 @@ export default function ParentGalleryPage() {
     return "";
   }, [checkoutItems]);
   const basketItemCount = cartItems.length;
-  const anyPhysicalCheckoutItem = checkoutItems.some((item) => item.category !== "digital");
+  const anyPhysicalCheckoutItem = checkoutItems.some((item) => item.category !== "digital" && !isRetouchPackage({ name: item.packageName }) && !item.retouchSelections?.length);
+  const retouchPhotoOptions = useMemo<RetouchPhotoOption[]>(() => {
+    const options = new Map<string, RetouchPhotoOption>();
+    // Only this gallery's purchases are selectable. Sibling selections stay
+    // attached to their own lane when the cart is combined at checkout.
+    const entries = checkoutItems.filter((item) =>
+      (!item.laneKey || item.laneKey === currentLane?.laneKey) &&
+      !isRetouchPackage({ name: item.packageName }) && !item.isCompositeOrder,
+    );
+    for (const item of entries) {
+      const pkg = packages.find((candidate) => candidate.id === item.packageId);
+      const urls = [
+        ...item.slots.map((slot) => slot.assignedImageUrl),
+        ...(item.digitalSelections ?? []).map((photo) => photo.url),
+        item.selectedImageUrl,
+        ...(pkg && isAllDigitalsPackage(pkg) ? images.filter((photo) => !isCompositeGalleryImage(photo)).map((photo) => photo.url) : []),
+      ];
+      for (const url of urls) {
+        if (!url || options.has(url)) continue;
+        const photo = images.find((candidate) => candidate.url === url);
+        options.set(url, { imageUrl: url, thumbnailUrl: photo?.thumbnailUrl, label: photo?.filename || `Photo ${options.size + 1}` });
+      }
+    }
+    return [...options.values()];
+  }, [checkoutItems, currentLane?.laneKey, images, packages]);
   const checkoutSubtotalCents = checkoutItems.reduce(
     (sum, item) => sum + item.packageSubtotalCents,
     0,
@@ -8270,11 +8301,10 @@ export default function ParentGalleryPage() {
     setCartItems((prev) => prev.filter((item) => item.id !== cartItemId));
   }
 
-  // 2026-04-26: Retouching upsell modal — add a retouch add-on package to
-  // the cart as a service line item.  No slots, no backdrop, no image —
-  // it's a SERVICE.  We use packageSubtotalCents = price_cents (qty 1)
-  // so the receipt + checkout math line up with everything else.
-  function addRetouchAddonToCart(pkg: PackageRow) {
+  // Each retouching service carries the exact poses and customer instructions.
+  function addRetouchAddonToCart(pkg: PackageRow, selections: RetouchSelection[]) {
+    const issue = retouchSelectionIssue(pkg, selections);
+    if (issue) { setOrderError(issue); return; }
     const itemId =
       typeof crypto !== "undefined" && "randomUUID" in crypto
         ? crypto.randomUUID()
@@ -8288,8 +8318,9 @@ export default function ParentGalleryPage() {
       packageSubtotalCents: pkg.price_cents,
       backdropAddOnCents: 0,
       lineTotalCents: pkg.price_cents,
-      slots: [],
-      selectedImageUrl: null,
+      slots: retouchSlots(pkg.name, selections),
+      selectedImageUrl: selections[0]?.imageUrl ?? null,
+      retouchSelections: selections,
       isCompositeOrder: false,
       compositeTitle: null,
       backdrop: null,
@@ -8520,6 +8551,12 @@ export default function ParentGalleryPage() {
       return;
     }
 
+    for (const item of checkoutItems) {
+      const pkg = packages.find((candidate) => candidate.id === item.packageId);
+      const issue = retouchSelectionIssue(pkg ?? { name: item.packageName, is_retouch_addon: !!item.retouchSelections?.length }, item.retouchSelections ?? [], item.quantity);
+      if (issue) { setOrderError(issue); return; }
+    }
+
     // 2026-04-26: Retouching upsell intercept.  Before we send the parent
     // to Stripe, surface the retouching add-on modal — UNLESS we've already
     // shown it on this submit cycle, OR a retouch line is already in the
@@ -8538,6 +8575,7 @@ export default function ParentGalleryPage() {
         : false);
     if (
       retouchAddonPackages.length > 0 &&
+      retouchPhotoOptions.length > 0 &&
       !retouchUpsellShown &&
       !hasRetouchInCart
     ) {
@@ -8614,6 +8652,7 @@ export default function ParentGalleryPage() {
         assignedImageUrl: slot.assignedImageUrl ?? null,
       })),
       selectedImageUrl: entry.selectedImageUrl ?? null,
+      retouchSelections: entry.retouchSelections ?? [],
       digitalSelections: entry.digitalSelections ?? [],
       isComposite: !!entry.isCompositeOrder,
       compositeTitle: entry.compositeTitle ?? null,
@@ -8703,6 +8742,7 @@ export default function ParentGalleryPage() {
               assignedImageUrl: slot.assignedImageUrl ?? null,
             })),
             selectedImageUrl: entry.selectedImageUrl ?? null,
+            retouchSelections: entry.retouchSelections ?? [],
             digitalSelections: entry.digitalSelections ?? [],
             isComposite: !!entry.isCompositeOrder,
             compositeTitle: entry.compositeTitle ?? null,
@@ -9669,6 +9709,7 @@ export default function ParentGalleryPage() {
       <RetouchUpsellModal
         open={retouchUpsellOpen && retouchAddonPackages.length > 0}
         packages={retouchAddonPackages}
+        photos={retouchPhotoOptions}
         onAdd={addRetouchAddonToCart}
         onSkip={dismissRetouchUpsell}
       />
@@ -9679,7 +9720,7 @@ export default function ParentGalleryPage() {
         onShopPrints={shopGroupPhotoPrints}
         onClose={closeGroupPhotoDigitalNotice}
         hasPrintOptions={packages.some(
-          (pkg) => !pkg.is_retouch_addon && isCompositeEligiblePackage(pkg),
+          (pkg) => !isRetouchPackage(pkg) && isCompositeEligiblePackage(pkg),
         )}
       />
 
@@ -13503,7 +13544,9 @@ export default function ParentGalleryPage() {
                                     {item.isCompositeOrder ? `Composite • ${item.packageName}` : item.packageName}
                                   </div>
                                   <div style={{ fontSize: 11, color: "#8a8a8a", lineHeight: 1.6 }}>
-                                    {item.category === "digital"
+                                    {isRetouchPackage({ name: item.packageName }) || item.retouchSelections?.length
+                                      ? `${item.retouchSelections?.length ?? 0} photo(s) selected for retouching`
+                                      : item.category === "digital"
                                       ? item.digitalLimit
                                         ? `${item.digitalSelections?.length ?? 0} of ${item.digitalLimit} digital image${item.digitalLimit === 1 ? "" : "s"} selected`
                                         : `${item.quantity} digital download${item.quantity === 1 ? "" : "s"}`
@@ -13514,6 +13557,16 @@ export default function ParentGalleryPage() {
                                     {item.compositeTitle ? ` • ${item.compositeTitle}` : ""}
                                     {isLandscape ? " • Landscape" : ""}
                                   </div>
+                                  {(isRetouchPackage({ name: item.packageName }) || item.retouchSelections?.length) ? (
+                                    <RetouchPhotoFields
+                                      photos={item.laneKey && item.laneKey !== currentLane?.laneKey
+                                        ? (item.retouchSelections ?? []).map((selection, index) => ({ imageUrl: selection.imageUrl, label: `Photo ${index + 1}` }))
+                                        : [...retouchPhotoOptions, ...(item.retouchSelections ?? []).filter((selection) => !retouchPhotoOptions.some((photo) => photo.imageUrl === selection.imageUrl)).map((selection, index) => ({ imageUrl: selection.imageUrl, label: `Selected photo ${index + 1}` }))]}
+                                      value={item.retouchSelections ?? []}
+                                      limit={retouchPhotoLimit({ name: item.packageName }, item.quantity)}
+                                      onChange={(retouchSelections) => setCartItems((items) => items.map((line) => line.id === item.id ? { ...line, retouchSelections, slots: retouchSlots(line.packageName, retouchSelections), selectedImageUrl: retouchSelections[0]?.imageUrl ?? null } : line))}
+                                    />
+                                  ) : null}
                                   {item.backdrop && item.category !== "digital" ? (
                                     <div
                                       style={{
@@ -15338,15 +15391,21 @@ function GroupPhotoDigitalNoticeModal({
 function RetouchUpsellModal({
   open,
   packages,
+  photos,
   onAdd,
   onSkip,
 }: {
   open: boolean;
   packages: PackageRow[];
-  onAdd: (pkg: PackageRow) => void;
+  photos: RetouchPhotoOption[];
+  onAdd: (pkg: PackageRow, selections: RetouchSelection[]) => void;
   onSkip: () => void;
 }) {
   const [mounted, setMounted] = useState(false);
+  const [selectedPackageId, setSelectedPackageId] = useState("");
+  const [selections, setSelections] = useState<RetouchSelection[]>([]);
+  const selectedPackage = packages.find((pkg) => pkg.id === selectedPackageId) ?? packages[0];
+  const selectedPhotos = selections.filter((selection) => photos.some((photo) => photo.imageUrl === selection.imageUrl));
   useEffect(() => {
     setMounted(true);
   }, []);
@@ -15489,7 +15548,11 @@ function RetouchUpsellModal({
             <button
               key={pkg.id}
               type="button"
-              onClick={() => onAdd(pkg)}
+              onClick={() => {
+                setSelectedPackageId(pkg.id);
+                setSelections((value) => value.slice(0, retouchPhotoLimit(pkg)));
+              }}
+              aria-pressed={selectedPackage?.id === pkg.id}
               style={{
                 width: "100%",
                 textAlign: "left",
@@ -15574,12 +15637,23 @@ function RetouchUpsellModal({
                     borderRadius: 999,
                   }}
                 >
-                  Add
+                  {selectedPackage?.id === pkg.id ? "Selected" : "Choose"}
                 </div>
               </div>
             </button>
           ))}
         </div>
+
+        {selectedPackage && (
+          <>
+            <RetouchPhotoFields photos={photos} value={selectedPhotos} limit={retouchPhotoLimit(selectedPackage)} onChange={setSelections} />
+            <button type="button" disabled={!!retouchSelectionIssue(selectedPackage, selectedPhotos)}
+              onClick={() => { onAdd(selectedPackage, selectedPhotos); setSelections([]); }}
+              style={{ width: "100%", margin: "16px 0 12px", padding: "12px 14px", border: 0, borderRadius: 999, background: "#86d39a", color: "#0b2412", fontSize: 13, fontWeight: 800, cursor: "pointer", opacity: selectedPhotos.length ? 1 : 0.5 }}>
+              Add retouching for {selectedPhotos.length || "selected"} photo{selectedPhotos.length === 1 ? "" : "s"}
+            </button>
+          </>
+        )}
 
         {/* No thanks */}
         <button
