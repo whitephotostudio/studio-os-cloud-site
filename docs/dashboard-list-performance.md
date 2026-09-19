@@ -27,4 +27,6 @@ Both lists keep a five-minute, account-scoped memory snapshot for immediate retu
 - Read-only production database comparison, September 19, 2026: the old count scan transferred 6,890 records (675,221 JSON bytes) over seven sequential requests in 2,683 ms. The replacement returned the same count across 22 projects in 1,039 ms and 1,534 bytes. These are individual query-path measurements, not full page-load timings or a guaranteed benchmark.
 - Database relationship-count support was verified on the deployed schema; no schema changes or migrations are required. [PostgREST relationship documentation](https://docs.postgrest.org/en/stable/references/api/resource_embedding.html).
 
-Production release and live-page verification follow the guarded deployment.
+Released commit `47dfa12` with `npm run deploy:production`; the clean-worktree guard, 255 tests and production build passed. Deployment `dpl_AbumpFYc15qSfJpUcTqzmnBj2fTH` is READY and verified on the `www.studiooscloud.com` production alias.
+
+Live authenticated browser verification showed the same 21 visible project cards and their photo/album totals, and the same school list/statistics as before deployment. Warm navigation from Schools to Projects displayed a cached card in 118 ms; Projects to Schools displayed one in 121 ms without the loading message. These are single automated browser observations from navigation to a visible cached card, including control overhead, not hard-refresh or all-images-loaded timings. No production data was changed.
