@@ -1,9 +1,10 @@
 "use client";
 
-import { KeyboardEvent, useEffect, useMemo, useState } from "react";
+import { KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { readDashboardListCache, writeDashboardListCache, invalidateDashboardListCache, clearDashboardListCache } from "@/lib/dashboard-list-cache";
 import { Logo } from "@/components/logo";
 import { useIsMobile } from "@/lib/use-is-mobile";
 import { ArrowLeft, CalendarDays, Check, ImagePlus, LogOut, MoreHorizontal, Search, Settings, Trash2, Users, X } from "lucide-react";
@@ -23,15 +24,10 @@ type ProjectRow = {
   cover_focal_y?: number | null;
 };
 
-type CollectionRow = {
-  id: string;
-  project_id?: string | null;
-  kind?: string | null;
-};
-
-type MediaRow = {
-  id: string;
-  project_id?: string | null;
+type ProjectList = {
+  projects: ProjectRow[];
+  albumCounts: Record<string, number>;
+  imageCounts: Record<string, number>;
 };
 
 const sidebar: React.CSSProperties = {
@@ -135,6 +131,8 @@ export default function EventsPage() {
   const supabase = createClient();
   const router = useRouter();
   const isMobile = useIsMobile();
+  const loadVersion = useRef(0);
+  const cacheUserId = useRef("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [projects, setProjects] = useState<ProjectRow[]>([]);
@@ -156,21 +154,37 @@ export default function EventsPage() {
 
   useEffect(() => {
     let mounted = true;
+    const version = ++loadVersion.current;
+    const isCurrent = () => mounted && version === loadVersion.current;
 
     async function load() {
       try {
         setLoading(true);
         setError("");
-        const {
-          data: { user },
-        } = await supabase.auth.getUser();
-        setUserEmail(user?.email ?? "");
+        // Local session identifies the memory cache; the API still verifies auth.
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!isCurrent()) return;
+        if (!session?.user) {
+          clearDashboardListCache();
+          window.location.href = "/sign-in";
+          return;
+        }
+        cacheUserId.current = session.user.id;
+        setUserEmail(session.user.email ?? "");
+        const cached = readDashboardListCache<ProjectList>(session.user.id, "projects");
+        if (cached) {
+          setProjects(cached.projects);
+          setAlbumCounts(cached.albumCounts);
+          setImageCounts(cached.imageCounts);
+          setLoading(false);
+        }
 
         const response = await fetch("/api/dashboard/events", {
           method: "GET",
           cache: "no-store",
         });
 
+        if (!isCurrent()) return;
         const payload = (await response.json()) as {
           ok?: boolean;
           message?: string;
@@ -179,7 +193,8 @@ export default function EventsPage() {
           imageCounts?: Record<string, number>;
         };
 
-        if (response.status === 401) {
+        if (response.status === 401 || response.status === 403) {
+          clearDashboardListCache();
           window.location.href = "/sign-in";
           return;
         }
@@ -188,13 +203,18 @@ export default function EventsPage() {
           throw new Error(payload.message || "Failed to load events.");
         }
 
-        if (!mounted) return;
+        if (!isCurrent()) return;
+        writeDashboardListCache(session.user.id, "projects", {
+          projects: payload.projects ?? [],
+          albumCounts: payload.albumCounts ?? {},
+          imageCounts: payload.imageCounts ?? {},
+        });
         setProjects(payload.projects ?? []);
         setAlbumCounts(payload.albumCounts ?? {});
         setImageCounts(payload.imageCounts ?? {});
         setLoading(false);
       } catch (err) {
-        if (!mounted) return;
+        if (!isCurrent()) return;
         setError(err instanceof Error ? err.message : "Failed to load events.");
         setLoading(false);
       }
@@ -258,7 +278,13 @@ export default function EventsPage() {
           })
         )
       );
-      setProjects((prev) => prev.filter((p) => !ids.includes(p.id)));
+      ++loadVersion.current;
+      invalidateDashboardListCache("projects");
+      setProjects((prev) => {
+        const remaining = prev.filter((p) => !ids.includes(p.id));
+        writeDashboardListCache(cacheUserId.current, "projects", { projects: remaining, albumCounts, imageCounts });
+        return remaining;
+      });
       setSelectedIds(new Set());
       setShowDeleteConfirm(false);
       setContextMenuId(null);
@@ -403,9 +429,12 @@ export default function EventsPage() {
           </div>
         </div>
 
+        {error && projects.length > 0 && (
+          <div role="status" className="mb-4 rounded-xl bg-amber-50 p-4 text-amber-900">Could not refresh projects. Showing the last loaded list.</div>
+        )}
         {loading ? (
           <div className="rounded-[28px] border border-[#d9dfeb] bg-white p-10 text-lg text-[#667085]">Loading events…</div>
-        ) : error ? (
+        ) : error && projects.length === 0 ? (
           <div className="rounded-[28px] border border-[#f0c6c6] bg-[#fff5f5] p-6 text-[#b42318]">{error}</div>
         ) : filteredProjects.length === 0 ? (
           <div className="rounded-[28px] border border-[#d9dfeb] bg-white p-10 text-lg text-[#667085]">No events found.</div>

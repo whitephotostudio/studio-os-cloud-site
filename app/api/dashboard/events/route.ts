@@ -36,6 +36,7 @@ type ProjectRow = {
   cover_focal_y?: number | null;
   linked_local_school_id?: string | null;
   linked_school_id?: string | null;
+  media?: { count: number }[];
 };
 
 type CollectionRow = {
@@ -44,19 +45,11 @@ type CollectionRow = {
   kind?: string | null;
 };
 
-type MediaRow = {
-  id: string;
-  project_id?: string | null;
-};
-
 type SchoolLookupRow = {
   id: string;
   school_name?: string | null;
   local_school_id?: string | null;
-};
-
-type StudentSchoolRow = {
-  school_id?: string | null;
+  students?: { count: number }[];
 };
 
 function clean(value: string | null | undefined) {
@@ -142,30 +135,6 @@ async function fetchCollectionRowsForProjects(
     if (error) throw error;
 
     const pageRows = (data ?? []) as CollectionRow[];
-    rows.push(...pageRows);
-    if (pageRows.length < pageSize) break;
-  }
-
-  return rows;
-}
-
-async function fetchMediaRowsForProjects(
-  service: ReturnType<typeof createDashboardServiceClient>,
-  projectIds: string[],
-) {
-  const rows: MediaRow[] = [];
-  const pageSize = 1000;
-
-  for (let from = 0; ; from += pageSize) {
-    const { data, error } = await service
-      .from("media")
-      .select("id,project_id")
-      .in("project_id", projectIds)
-      .range(from, from + pageSize - 1);
-
-    if (error) throw error;
-
-    const pageRows = (data ?? []) as MediaRow[];
     rows.push(...pageRows);
     if (pageRows.length < pageSize) break;
   }
@@ -312,10 +281,11 @@ export async function GET(request: NextRequest) {
     const from = (page - 1) * limit;
     const to = from + limit - 1;
 
-    const { data: projectRows, error: projectsError, count: totalCount } = await service
+    // Count related photos in the database instead of transferring every media row.
+    const [projectResult, schoolLookupResult] = await Promise.all([service
       .from("projects")
       .select(
-        "id,title,client_name,workflow_type,source_type,status,portal_status,shoot_date,event_date,expiration_date,cover_photo_url,cover_focal_x,cover_focal_y,gallery_slug,linked_local_school_id,linked_school_id",
+        "id,title,client_name,workflow_type,source_type,status,portal_status,shoot_date,event_date,expiration_date,cover_photo_url,cover_focal_x,cover_focal_y,gallery_slug,linked_local_school_id,linked_school_id,media(count)",
         { count: "exact" },
       )
       .eq("photographer_id", photographerRow.id)
@@ -324,40 +294,19 @@ export async function GET(request: NextRequest) {
       .order("event_date", { ascending: false })
       .order("shoot_date", { ascending: false })
       .order("created_at", { ascending: false })
-      .range(from, to);
-
-    if (projectsError) throw projectsError;
-
-    const rawProjects = (projectRows ?? []) as ProjectRow[];
-    const rawIds = rawProjects.map((row) => row.id);
-
-    const [schoolLookupResult, rawMediaRows] = await Promise.all([
-      service
-        .from("schools")
-        .select("id,school_name,local_school_id")
+      .range(from, to),
+      service.from("schools")
+        .select("id,school_name,local_school_id,students(count)")
         .eq("photographer_id", photographerRow.id),
-      rawIds.length ? fetchMediaRowsForProjects(service, rawIds) : Promise.resolve([] as MediaRow[]),
     ]);
-
+    const { data: projectRows, error: projectsError, count: totalCount } = projectResult;
+    if (projectsError) throw projectsError;
     if (schoolLookupResult.error) throw schoolLookupResult.error;
 
+    const rawProjects = (projectRows ?? []) as ProjectRow[];
     const schoolRows = (schoolLookupResult.data ?? []) as SchoolLookupRow[];
-    const schoolIds = schoolRows.map((row) => clean(row.id)).filter(Boolean);
-    const studentRows: StudentSchoolRow[] = [];
-
-    for (let from = 0; schoolIds.length > 0; from += 1000) {
-      const pageIds = schoolIds.slice(from, from + 1000);
-      if (!pageIds.length) break;
-      const { data, error } = await service
-        .from("students")
-        .select("school_id")
-        .in("school_id", pageIds);
-      if (error) throw error;
-      studentRows.push(...((data ?? []) as StudentSchoolRow[]));
-    }
-
     const schoolIdsWithPeople = new Set(
-      studentRows.map((row) => clean(row.school_id)).filter(Boolean),
+      schoolRows.filter((row) => (row.students?.[0]?.count ?? 0) > 0).map((row) => row.id),
     );
     const realSchoolLocalIds = new Set<string>();
     const realSchoolNames = new Set<string>();
@@ -369,12 +318,9 @@ export async function GET(request: NextRequest) {
       if (nameKey) realSchoolNames.add(nameKey);
     }
 
-    const rawImageCounts: Record<string, number> = {};
-    for (const row of rawMediaRows) {
-      const projectId = clean(row.project_id);
-      if (!projectId) continue;
-      rawImageCounts[projectId] = (rawImageCounts[projectId] ?? 0) + 1;
-    }
+    const rawImageCounts = Object.fromEntries(
+      rawProjects.map((row) => [row.id, row.media?.[0]?.count ?? 0]),
+    );
 
     const filteredProjects = rawProjects.filter((project) => {
       if (clean(project.linked_school_id)) return false;
@@ -393,10 +339,11 @@ export async function GET(request: NextRequest) {
       );
     });
 
-    const projects = filteredProjects.map((project) => ({
-      ...project,
-      cover_photo_url: resolveDashboardCoverUrl(project.cover_photo_url),
-    }));
+    const projects = filteredProjects.map((project) => {
+      const card = { ...project, cover_photo_url: resolveDashboardCoverUrl(project.cover_photo_url) };
+      delete card.media;
+      return card;
+    });
     const ids = projects.map((row) => row.id);
 
     if (!ids.length) {
@@ -410,10 +357,7 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    const [collectionRows, mediaRows] = await Promise.all([
-      fetchCollectionRowsForProjects(service, ids),
-      Promise.resolve(rawMediaRows.filter((row) => ids.includes(clean(row.project_id)))),
-    ]);
+    const collectionRows = await fetchCollectionRowsForProjects(service, ids);
 
     const albumCounts: Record<string, number> = {};
     for (const row of collectionRows) {
@@ -424,12 +368,7 @@ export async function GET(request: NextRequest) {
       albumCounts[projectId] = (albumCounts[projectId] ?? 0) + 1;
     }
 
-    const imageCounts: Record<string, number> = {};
-    for (const row of mediaRows) {
-      const projectId = clean(row.project_id);
-      if (!projectId) continue;
-      imageCounts[projectId] = (imageCounts[projectId] ?? 0) + 1;
-    }
+    const imageCounts = Object.fromEntries(ids.map((id) => [id, rawImageCounts[id] ?? 0]));
 
     return NextResponse.json({
       ok: true,

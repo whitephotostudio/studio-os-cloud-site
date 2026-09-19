@@ -25,7 +25,11 @@ test("the schools dashboard resolves cover references while building cards", () 
   );
   assert.match(
     schoolsPageSource,
-    /coverUrl:\s*proxiedPhotoUrl\(\s*schoolCoverBySchoolId\.get\(school\.id\)\?\.url\s*\|\|\s*schoolCoverByLocalId\.get\(clean\(school\.local_school_id\)\)\?\.url\s*\|\|\s*stat\?\.firstPhotoUrl,?\s*\)\s*\|\|\s*null/,
+    /coverUrl:\s*proxiedPhotoUrl\(cover\?\.url\)/,
+  );
+  assert.match(
+    schoolsPageSource,
+    /coverUrl:\s*proxiedPhotoUrl\(cover\?\.url\s*\|\|\s*stat\?\.firstPhotoUrl\)/,
   );
   assert.doesNotMatch(
     schoolsPageSource,
