@@ -52,3 +52,5 @@ The native iPhone workspace currently exposes Home, Clients, Sales, More, and a 
 The live website and the installed notarized Mac app were not replaced by this preparation.
 
 The native build also surfaced older CocoaPods deployment targets incompatible with Xcode 27. The native Podfile now raises those targets to the app's existing iOS 15.5 minimum. Flutter separately warns about ML Kit arm64 simulator support, which must be resolved or verified before Duo simulator testing.
+
+After the deployment-target correction, the unsigned iOS Release build succeeded on Xcode 27.0 (69.8 MB). This validates device-target compilation, not signing, App Store distribution, simulator support or physical camera behavior.
