@@ -1,0 +1,37 @@
+.surface {
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+
+.workspace {
+  width: 100%;
+  max-width: 1040px;
+  min-width: 0;
+  min-height: 100vh;
+  min-height: 100dvh;
+  box-sizing: border-box;
+  /* The camera and system controls may inset either side independently. */
+  padding-left: env(safe-area-inset-left, 0px);
+  padding-right: env(safe-area-inset-right, 0px);
+}
+
+.content {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.headerActions > a,
+.headerActions > button {
+  min-width: 44px;
+  min-height: 44px;
+}
+
+.navigation {
+  min-width: 0;
+}
+
+.navigation > a {
+  min-width: 0;
+  min-height: 48px;
+  overflow-wrap: anywhere;
+}
