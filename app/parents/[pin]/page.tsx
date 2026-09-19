@@ -8321,7 +8321,6 @@ export default function ParentGalleryPage() {
     setSelectedOrientation("portrait");
     setConfirmedOrientation("portrait");
     setOrientationNotice(null);
-    setCompositeDataUrl(null);
   }
 
   /** Given an image URL (from slot assignment), find its nobg URL if available */
