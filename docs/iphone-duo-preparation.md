@@ -2,6 +2,8 @@
 
 Prepared September 19, 2026. These are compatibility changes in source, not a claim of device certification or an App Store release.
 
+**App identity clarification:** The existing Studio OS iPhone app is the Capacitor app `com.studiooscloud.mobile`, uploaded to Apple in June. It loads the live `/m` website and receives the published website changes when its web content reloads. Native Flutter changes, unsigned-build results, and pending Flutter distribution described below concern a separate iOS target. See [verified mobile distribution history](mobile-app-distribution-history.md).
+
 Apple's current guidance recommends flexible window-based layouts, asymmetric safe-area handling, and testing opened, closed, rotated, and Split View configurations. Full-screen native optimization uses Xcode 27.1 / iOS 27.1.
 
 Sources:
@@ -47,7 +49,7 @@ Native changes are in the desktop source workspace, documented at:
 
 This Mac currently has Xcode 27.0 and iOS 27.0 simulators; the Duo-specific Xcode 27.1 beta runtime is not installed. Validate fold transitions, both Split View sides, software keyboard, text scaling, camera/QR capture, photo uploads, and preserved in-progress input in Apple's Duo simulator and then on hardware.
 
-The native iPhone workspace currently exposes Home, Clients, Sales, More, and a Jobs preparation page. Desktop production features are not automatically brought to iPhone by these layout changes. Native signing, the production iOS bundle identity, and TestFlight/App Store distribution remain separate release work.
+The separate Flutter iPhone workspace currently exposes Home, Clients, Sales, More, and a Jobs preparation page. Desktop production features are not automatically brought to iPhone by these layout changes. Signing, the production iOS bundle identity, and TestFlight/App Store distribution for this Flutter target remain separate release work.
 
 The mobile website was subsequently published on September 19, 2026; see the publication record below. The native iPhone changes remain unreleased, and the installed notarized Mac app is unchanged.
 
@@ -66,4 +68,4 @@ Published with `npm run deploy:production` from clean commit `ff581a8`. The rele
 
 Verified the authenticated live home at 320×626, 626×890 and 890×626 CSS pixels: the workspace fills the available width, header actions remain visible, and there is no horizontal page overflow. An unfinished search remained intact when resizing from wide to compact. The live manifest returns HTTP 200 with `orientation: any`. Temporary browser size overrides and test tabs were cleaned up.
 
-This publishes the mobile website changes only. It does not publish an App Store/TestFlight build or establish physical iPhone Duo camera compatibility.
+This publishes the mobile website changes, including the live web content used by the existing Capacitor iPhone app. No new App Store/TestFlight binary was uploaded during this publication. It does not establish physical iPhone Duo camera compatibility.
