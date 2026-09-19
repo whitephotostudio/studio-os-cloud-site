@@ -64,7 +64,7 @@ import {
 } from "@/lib/combine-cart-storage";
 import OrdersHistoryPanel from "@/components/parents/orders-history-panel";
 import { RetouchPhotoFields, type RetouchPhotoOption } from "@/components/parents/retouch-photo-fields";
-import { isRetouchPackage, retouchPhotoLimit, retouchSelectionIssue, retouchSlots, type RetouchSelection } from "@/lib/retouching";
+import { isRetouchPackage, isRetouchPrintPurchase, retouchPrintPurchaseIssue, RETOUCH_PRINT_REQUIRED, retouchPhotoLimit, retouchSelectionIssue, retouchSlots, type RetouchSelection } from "@/lib/retouching";
 import { calendarDateInputValue, hasCalendarBoundaryPassed } from "@/lib/calendar-dates";
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -7557,6 +7557,12 @@ export default function ParentGalleryPage() {
     options?: { skipGroupPhotoNotice?: boolean; quantityOverride?: number },
   ) {
     if (orderingDisabled) return;
+    if (isRetouchPackage(pkg)) {
+      setOrderError(RETOUCH_PRINT_REQUIRED);
+      showGalleryActionNotice(RETOUCH_PRINT_REQUIRED);
+      openCartCheckout();
+      return;
+    }
 
     if (
       !options?.skipGroupPhotoNotice &&
@@ -7959,6 +7965,16 @@ export default function ParentGalleryPage() {
     () => (currentDraftCartItem ? [...cartItems, currentDraftCartItem] : cartItems),
     [cartItems, currentDraftCartItem],
   );
+  function retouchPolicyEntry(item: CartLineItem) {
+    const configured = packages.find((pkg) => pkg.id === item.packageId);
+    return {
+      pkg: configured ?? { name: item.packageName, category: item.category, is_retouch_addon: !!item.retouchSelections?.length },
+      galleryKey: item.laneKey || currentLane?.laneKey || "",
+      quantity: item.quantity,
+    };
+  }
+  const retouchCheckoutIssue = retouchPrintPurchaseIssue(checkoutItems.map(retouchPolicyEntry));
+
   const digitalFavoritesPackIssue = useMemo(() => {
     for (const item of checkoutItems) {
       const limit = item.digitalLimit ?? null;
@@ -7981,16 +7997,10 @@ export default function ParentGalleryPage() {
     // attached to their own lane when the cart is combined at checkout.
     const entries = checkoutItems.filter((item) =>
       (!item.laneKey || item.laneKey === currentLane?.laneKey) &&
-      !isRetouchPackage({ name: item.packageName }) && !item.isCompositeOrder,
+      isRetouchPrintPurchase(packages.find((pkg) => pkg.id === item.packageId) ?? { name: item.packageName, category: item.category, is_retouch_addon: !!item.retouchSelections?.length }) && !item.isCompositeOrder,
     );
     for (const item of entries) {
-      const pkg = packages.find((candidate) => candidate.id === item.packageId);
-      const urls = [
-        ...item.slots.map((slot) => slot.assignedImageUrl),
-        ...(item.digitalSelections ?? []).map((photo) => photo.url),
-        item.selectedImageUrl,
-        ...(pkg && isAllDigitalsPackage(pkg) ? images.filter((photo) => !isCompositeGalleryImage(photo)).map((photo) => photo.url) : []),
-      ];
+      const urls = item.slots.map((slot) => slot.assignedImageUrl);
       for (const url of urls) {
         if (!url || options.has(url)) continue;
         const photo = images.find((candidate) => candidate.url === url);
@@ -8048,6 +8058,11 @@ export default function ParentGalleryPage() {
 
   function addCurrentSelectionToCart() {
     if (!currentDraftCartItem) return;
+    if (isRetouchPackage(retouchPolicyEntry(currentDraftCartItem).pkg)) {
+      setOrderError(RETOUCH_PRINT_REQUIRED);
+      showGalleryActionNotice(RETOUCH_PRINT_REQUIRED);
+      return;
+    }
     if (currentDraftCartItem.digitalLimit) {
       const count = currentDraftCartItem.digitalSelections?.length ?? 0;
       if (count < 1) {
@@ -8127,13 +8142,32 @@ export default function ParentGalleryPage() {
   }, [justAddedPrintId]);
 
   function removeCartItem(cartItemId: string) {
-    setCartItems((prev) => prev.filter((item) => item.id !== cartItemId));
+    const remaining = cartItems.filter((item) => item.id !== cartItemId);
+    const removed = cartItems.find((item) => item.id === cartItemId);
+    const nextCheckout = currentDraftCartItem ? [...remaining, currentDraftCartItem] : remaining;
+    if (removed && isRetouchPrintPurchase(retouchPolicyEntry(removed).pkg) &&
+        retouchPrintPurchaseIssue(nextCheckout.map(retouchPolicyEntry))) {
+      const message = "Remove the retouching add-on before removing the last print from this gallery. Retouching does not include a printed photo.";
+      setOrderError(message);
+      showGalleryActionNotice(message);
+      return;
+    }
+    setCartItems(remaining);
+    setOrderError("");
   }
 
   // Each retouching service carries the exact poses and customer instructions.
   function addRetouchAddonToCart(pkg: PackageRow, selections: RetouchSelection[]) {
-    const issue = retouchSelectionIssue(pkg, selections);
+    const purchaseIssue = retouchPrintPurchaseIssue([
+      ...checkoutItems.map(retouchPolicyEntry),
+      { pkg, galleryKey: currentLane?.laneKey || "", quantity: 1 },
+    ]);
+    const issue = purchaseIssue || retouchSelectionIssue(pkg, selections);
     if (issue) { setOrderError(issue); return; }
+    if (selections.some((selection) => !retouchPhotoOptions.some((photo) => photo.imageUrl === selection.imageUrl))) {
+      setOrderError("Choose retouching only for photos included in your prints.");
+      return;
+    }
     const itemId =
       typeof crypto !== "undefined" && "randomUUID" in crypto
         ? crypto.randomUUID()
@@ -8162,7 +8196,22 @@ export default function ParentGalleryPage() {
       laneSchoolName: currentLane?.schoolName,
       laneStudentName: currentLane?.studentName,
     };
-    setCartItems((prev) => [...prev, line]);
+    // Save the selected print and its add-on together. Otherwise browsing away
+    // clears the unsaved print while leaving only the retouching charge behind.
+    const savedDraft = currentDraftCartItem ? {
+      ...currentDraftCartItem,
+      id: `${itemId}_product`,
+      laneKey: currentLane?.laneKey,
+      laneSchoolId: currentLane?.schoolId,
+      laneStudentId: currentLane?.studentId,
+      lanePin: currentLane?.pin,
+      laneEmail: currentLane?.email,
+      laneSchoolName: currentLane?.schoolName,
+      laneStudentName: currentLane?.studentName,
+    } : null;
+    setCartItems((prev) => [...prev, ...(savedDraft ? [savedDraft] : []), line]);
+    if (savedDraft) resetCurrentSelection();
+    setOrderError("");
     setRetouchUpsellShown(true);
     setRetouchUpsellOpen(false);
   }
@@ -8368,6 +8417,10 @@ export default function ParentGalleryPage() {
     if (isSchoolMode && !student) return;
     if (checkoutItems.length === 0) {
       setOrderError("Add at least one product before checkout.");
+      return;
+    }
+    if (retouchCheckoutIssue) {
+      setOrderError(retouchCheckoutIssue);
       return;
     }
     if (!parentEmail.trim()) {
@@ -9535,7 +9588,7 @@ export default function ParentGalleryPage() {
           digital photo files.  Portaled to document.body so it sits above
           the cart drawer + screenshot watermark overlays. */}
       <RetouchUpsellModal
-        open={retouchUpsellOpen && retouchAddonPackages.length > 0}
+        open={retouchUpsellOpen && retouchAddonPackages.length > 0 && retouchPhotoOptions.length > 0}
         packages={retouchAddonPackages}
         photos={retouchPhotoOptions}
         onAdd={addRetouchAddonToCart}
@@ -13266,6 +13319,11 @@ export default function ParentGalleryPage() {
                       gap: 14,
                     }}
                   >
+                    {retouchCheckoutIssue && (
+                      <div role="alert" style={{ color: "#fde68a", background: "#332b15", padding: 14, borderRadius: 10 }}>
+                        {retouchCheckoutIssue}
+                      </div>
+                    )}
                     {cartItems.length > 0 && (
                       <div
                         style={{
@@ -13951,7 +14009,7 @@ export default function ParentGalleryPage() {
                         placing ||
                         orderingDisabled ||
                         checkoutItems.length === 0 ||
-                        !!digitalFavoritesPackIssue
+                        (!!digitalFavoritesPackIssue || !!retouchCheckoutIssue)
                       }
                       style={{
                         width: "100%",
@@ -13959,14 +14017,14 @@ export default function ParentGalleryPage() {
                           placing ||
                           orderingDisabled ||
                           checkoutItems.length === 0 ||
-                          !!digitalFavoritesPackIssue
+                          (!!digitalFavoritesPackIssue || !!retouchCheckoutIssue)
                             ? "#222"
                             : "#fff",
                         color:
                           placing ||
                           orderingDisabled ||
                           checkoutItems.length === 0 ||
-                          !!digitalFavoritesPackIssue
+                          (!!digitalFavoritesPackIssue || !!retouchCheckoutIssue)
                             ? "#555"
                             : "#000",
                         border: "none",
@@ -13978,7 +14036,7 @@ export default function ParentGalleryPage() {
                           placing ||
                           orderingDisabled ||
                           checkoutItems.length === 0 ||
-                          !!digitalFavoritesPackIssue
+                          (!!digitalFavoritesPackIssue || !!retouchCheckoutIssue)
                             ? "not-allowed"
                             : "pointer",
                       }}
@@ -15363,11 +15421,10 @@ function RetouchUpsellModal({
             textAlign: "center",
           }}
         >
-          <strong style={{ color: "#fff8e0" }}>Heads up:</strong>{" "}
-          retouching is an{" "}
-          <strong style={{ color: "#fff8e0" }}>optional service</strong>{" "}
-          our team performs on the photos you ordered. It’s{" "}
-          <em>not</em> a digital file delivery.
+          <strong style={{ color: "#fff8e0" }}>Print purchase required.</strong>{" "}
+          Retouching is an optional editing service for photos in your print order.
+          It does not include a printed photo or a digital download.
+          Your print or print package must stay in the basket with this add-on.
         </div>
 
         {/* Add-on cards */}

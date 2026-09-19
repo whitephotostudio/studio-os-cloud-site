@@ -51,7 +51,7 @@ import { getClientIp, rateLimit } from "@/lib/rate-limit";
 import { hasActiveSubscription } from "@/lib/subscription-gate";
 import { parseJson } from "@/lib/api-validation";
 import { durablePrivateMediaReference } from "@/lib/private-media-references";
-import { isRetouchPackage, parseRetouchSelections, retouchSelectionIssue, retouchNotesBlock, customerNotesBlock, retouchSlots, type RetouchSelection } from "@/lib/retouching";
+import { isRetouchPackage, retouchPrintPurchaseIssue, parseRetouchSelections, retouchSelectionIssue, retouchNotesBlock, customerNotesBlock, retouchSlots, type RetouchSelection } from "@/lib/retouching";
 import {
   computeCombineTotals,
   type CombineGroup,
@@ -378,7 +378,7 @@ export async function POST(request: NextRequest) {
 
     const { data: packageRows, error: packageErr } = await sb
       .from("packages")
-      .select("id, name, price_cents, photographer_id, category, active, is_retouch_addon")
+      .select("id, name, price_cents, photographer_id, category, items, active, is_retouch_addon")
       .in("id", allPackageIds);
     if (packageErr) throw packageErr;
     const packageMap = new Map<string, {
@@ -387,6 +387,7 @@ export async function POST(request: NextRequest) {
       price_cents: number | null;
       photographer_id: string | null;
       category: string | null;
+      items?: Array<string | { qty?: number | string | null; name?: string | null; type?: string | null; size?: string | null; finish?: string | null }> | null;
       active: boolean | null;
       is_retouch_addon?: boolean | null;
     }>();
@@ -414,6 +415,14 @@ export async function POST(request: NextRequest) {
           { status: 400 },
         );
       }
+    }
+
+    // A sibling's print cannot unlock a retouching-only order for another student.
+    for (const group of resolvedGroups) {
+      const purchaseIssue = retouchPrintPurchaseIssue(group.input.entries.map((entry) => ({
+        pkg: packageMap.get(entry.packageId)!, quantity: entry.quantity,
+      })));
+      if (purchaseIssue) return NextResponse.json({ ok: false, message: purchaseIssue }, { status: 400 });
     }
 
     const backdropMap = new Map<string, {
