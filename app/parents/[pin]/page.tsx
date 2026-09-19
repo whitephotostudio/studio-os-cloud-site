@@ -45,6 +45,7 @@ import {
 } from "@/lib/event-gallery-downloads";
 import { createZipBlob } from "@/lib/zip";
 import ScreenshotProtection from "@/components/screenshot-protection";
+import { ProductPhotoSurface, type ProductBackdrop } from "@/components/parents/product-photo-surface";
 import {
   CombineOrdersDrawer,
   type CombineDrawerSchoolOption,
@@ -2221,45 +2222,9 @@ function renderPhotoSurface(
   imageUrl?: string | null,
   style?: React.CSSProperties,
   imageFilter?: string,
+  backdrop?: ProductBackdrop | null,
 ) {
-  if (!imageUrl) {
-    return (
-      <div
-        style={{
-          width: "100%",
-          height: "100%",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          background:
-            "linear-gradient(135deg, rgba(255,255,255,0.14), rgba(255,255,255,0.04))",
-          color: "rgba(255,255,255,0.55)",
-          fontSize: 11,
-          fontWeight: 700,
-          letterSpacing: "0.1em",
-          textTransform: "uppercase",
-          ...style,
-        }}
-      >
-        Preview
-      </div>
-    );
-  }
-
-  return (
-    <img
-      src={imageUrl}
-      alt=""
-      style={{
-        width: "100%",
-        height: "100%",
-        objectFit: "contain",
-        display: "block",
-        filter: imageFilter,
-        ...style,
-      }}
-    />
-  );
+  return <ProductPhotoSurface imageUrl={imageUrl} style={style} imageFilter={imageFilter} backdrop={backdrop} />;
 }
 
 function parsePrintRatio(sizeLabel?: string | null, orientation: "portrait" | "landscape" = "portrait") {
@@ -2414,6 +2379,7 @@ function renderPremiumMockup(
   // of the source photo's natural aspect; passing "portrait" forces the
   // opposite; undefined falls back to the photo's natural aspect.
   orientationOverride?: "portrait" | "landscape",
+  backdrop?: ProductBackdrop | null,
 ) {
   const isLandscapePhoto =
     orientationOverride === "landscape"
@@ -2539,6 +2505,7 @@ function renderPremiumMockup(
           imageUrl,
           { objectFit: "cover", objectPosition: "center center" },
           imageFilter,
+          backdrop,
         )}
       </div>
       {extra}
@@ -2622,7 +2589,7 @@ function renderPremiumMockup(
             }}
           >
             <div style={{ width: "100%", height: "100%", overflow: "hidden", borderRadius: 8 }}>
-              {renderPhotoSurface(imageUrl)}
+              {renderPhotoSurface(imageUrl, undefined, imageFilter, backdrop)}
             </div>
           </div>
         ))}
@@ -2644,7 +2611,7 @@ function renderPremiumMockup(
           }}
         >
           <div style={{ width: "100%", height: "100%", borderRadius: 10, overflow: "hidden", background: "#0c111a" }}>
-            {renderPhotoSurface(imageUrl)}
+            {renderPhotoSurface(imageUrl, undefined, imageFilter, backdrop)}
           </div>
         </div>
         <div
@@ -2703,7 +2670,7 @@ function renderPremiumMockup(
             }}
           >
             <div style={{ width: "100%", height: "100%", borderRadius: 10, overflow: "hidden" }}>
-              {renderPhotoSurface(imageUrl)}
+              {renderPhotoSurface(imageUrl, undefined, imageFilter, backdrop)}
             </div>
           </div>
         </div>
@@ -2724,7 +2691,7 @@ function renderPremiumMockup(
           }}
         >
           <div style={{ width: "72%", height: "72%", borderRadius: 999, overflow: "hidden" }}>
-            {renderPhotoSurface(imageUrl)}
+            {renderPhotoSurface(imageUrl, undefined, imageFilter, backdrop)}
           </div>
         </div>
         <div
@@ -4123,7 +4090,6 @@ export default function ParentGalleryPage() {
   const [backdropCategory, setBackdropCategory] = useState("all");
   const [nobgUrls, setNobgUrls] = useState<Record<string, string>>({});
   const [nobgStatus, setNobgStatus] = useState<"idle" | "loading" | "ready">("idle");
-  const [compositeDataUrl, setCompositeDataUrl] = useState<string | null>(null);
   const [showPremiumModal, setShowPremiumModal] = useState(false);
   const [premiumTarget, setPremiumTarget] = useState<BackdropRow | null>(null);
   const [watermarkEnabled, setWatermarkEnabled] = useState(true);
@@ -5617,10 +5583,8 @@ export default function ParentGalleryPage() {
     if (selectedOrientation !== "portrait") setSelectedOrientation("portrait");
     if (confirmedOrientation !== "portrait") setConfirmedOrientation("portrait");
     if (orientationNotice) setOrientationNotice(null);
-    if (compositeDataUrl) setCompositeDataUrl(null);
   }, [
     backdropPickerOpen,
-    compositeDataUrl,
     confirmedBackdrop,
     confirmedBlurBackground,
     confirmedBlurAmount,
@@ -7894,159 +7858,24 @@ export default function ParentGalleryPage() {
   // ── Backdrop helpers (school mode only) ─────────────────────────────────
   const hasBackdrops = isSchoolMode && !isCompositeSelection && backdrops.length > 0;
   const currentNobgUrl = selectedImage ? (nobgUrls[selectedImage.id] ?? null) : null;
-  const confirmedBackdropVerticalOffset = getBackdropForegroundVerticalOffset(selectedImageAspectRatio);
-  // Generate a composite data URL for use in buy section mockups.
-  //
-  // 2026-04-25: now honors `confirmedOrientation`.  Previously the canvas
-  // was hardcoded to 600×800 portrait + cover math for the foreground,
-  // which meant: when the parent flipped to Landscape, the print mockups
-  // (Wall / Desk / Close-up) STILL got a portrait composite — and the
-  // landscape print frame then cover-cropped that portrait composite
-  // horizontally, chopping the kid's head/sides off.  Visible bug Harout
-  // flagged: "the wall and the desk photos are way off".
-  //
-  // Fix:
-  //   • Pick canvas dimensions based on confirmed orientation:
-  //     portrait → 600×800 (3:4) | landscape → 1067×800 (4:3)
-  //   • Foreground placement matches CompositeCanvas's draw logic for
-  //     each orientation: portrait uses cover math (preserves original
-  //     framing), landscape uses contain math + foregroundScale +
-  //     foregroundVerticalOffset (centers the portrait subject inside
-  //     the landscape frame, scenery flanks naturally).
-  useEffect(() => {
-    const activeConfirmedBackdrop = confirmedBackdrop;
-    if (!activeConfirmedBackdrop || !currentNobgUrl || !selectedImage) {
-      setCompositeDataUrl(null);
-      return;
-    }
-
-    let cancelled = false;
-    const canvas = document.createElement("canvas");
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-
-    const isLandscape =
-      confirmedOrientation === "landscape" &&
-      activeConfirmedBackdrop.supports_landscape === true;
-    // Portrait 3:4, landscape 4:3.  The print mockups cover-crop these
-    // into the print's exact ratio (5x7 portrait = 5/7 ≈ 0.71, landscape
-    // = 7/5 = 1.4).  Both fit cleanly into the matching frame ratio.
-    const W = isLandscape ? 1067 : 600;
-    const H = isLandscape ? 800 : 800;
-    canvas.width = W;
-    canvas.height = H;
-
-    const bgImg = new Image();
-    bgImg.crossOrigin = "anonymous";
-    const fgImg = new Image();
-    fgImg.crossOrigin = "anonymous";
-
-    let bgDone = false, fgDone = false;
-
-    function draw() {
-      if (cancelled || !bgDone || !fgDone) return;
-      ctx!.clearRect(0, 0, W, H);
-      // BG cover
-      const bgR = bgImg.naturalWidth / bgImg.naturalHeight;
-      const cR = W / H;
-      let sx = 0, sy = 0, sw = bgImg.naturalWidth, sh = bgImg.naturalHeight;
-      if (bgR > cR) { sw = bgImg.naturalHeight * cR; sx = (bgImg.naturalWidth - sw) / 2; }
-      else { sh = bgImg.naturalWidth / cR; sy = (bgImg.naturalHeight - sh) / 2; }
-      const effectiveBackdropBlurPx = confirmedBlurBackground
-        ? getEffectiveBackdropBlurPx(confirmedBlurAmount)
-        : 0;
-      if (effectiveBackdropBlurPx > 0) {
-        ctx!.filter = `blur(${effectiveBackdropBlurPx}px)`;
-      }
-      ctx!.drawImage(bgImg, sx, sy, sw, sh, 0, 0, W, H);
-      if (effectiveBackdropBlurPx > 0) {
-        ctx!.filter = "none";
-      }
-      // Foreground placement
-      const fgRatio = fgImg.naturalWidth / fgImg.naturalHeight;
-      if (isLandscape) {
-        // Landscape composite: contain math.  Portrait subject fits to
-        // canvas height, gets centered horizontally with backdrop scenery
-        // visible on either side.  Apply the landscape foreground scale +
-        // vertical offset to anchor the subject the way the live preview
-        // CompositeCanvas does.
-        const fgScale = getLandscapeForegroundScale(selectedImageAspectRatio);
-        const fgVOffset = getLandscapeForegroundVerticalOffset(
-          selectedImageAspectRatio,
-        );
-        let dw: number, dh: number;
-        if (fgRatio > cR) {
-          dw = W;
-          dh = W / fgRatio;
-        } else {
-          dh = H;
-          dw = H * fgRatio;
+  // Keep the portrait as a separate image in every store mockup. Exporting a
+  // flattened canvas can lose a signed-storage cutout or fail CORS checks.
+  const productBackdrop: ProductBackdrop | null =
+    confirmedBackdrop && currentNobgUrl && !isCompositeSelection
+      ? {
+          url: confirmedBackdrop.thumbnail_url || confirmedBackdrop.image_url,
+          fallbackUrl: confirmedBackdrop.image_url,
+          foregroundUrl: currentNobgUrl,
+          landscape: confirmedOrientation === "landscape" && confirmedBackdrop.supports_landscape === true,
+          foregroundScale: getLandscapeForegroundScale(selectedImageAspectRatio),
+          foregroundVerticalOffset: getLandscapeForegroundVerticalOffset(selectedImageAspectRatio),
+          blurPx: confirmedBlurBackground ? getEffectiveBackdropBlurPx(confirmedBlurAmount) : 0,
         }
-        dw *= fgScale;
-        dh *= fgScale;
-        const dx = (W - dw) / 2;
-        const dy = (H - dh) / 2 + H * fgVOffset;
-        ctx!.drawImage(fgImg, dx, dy, dw, dh);
-      } else {
-        // Portrait composite: cover math (preserves original photo
-        // framing so the subject doesn't look zoomed).
-        let fgSx = 0;
-        let fgSy = 0;
-        let fgSw = fgImg.naturalWidth;
-        let fgSh = fgImg.naturalHeight;
-        if (fgRatio > cR) {
-          fgSw = fgImg.naturalHeight * cR;
-          fgSx = (fgImg.naturalWidth - fgSw) / 2;
-        } else {
-          fgSh = fgImg.naturalWidth / cR;
-          fgSy = (fgImg.naturalHeight - fgSh) / 2;
-        }
-        ctx!.drawImage(fgImg, fgSx, fgSy, fgSw, fgSh, 0, 0, W, H);
-      }
-      if (!cancelled) {
-        setCompositeDataUrl(canvas.toDataURL("image/png"));
-      }
-    }
-
-    // Try thumbnail_url first (proven to work in the viewer), fall back to
-    // image_url if thumbnail is missing or fails to load. This mirrors the
-    // URL chain used by CompositeCanvas / MiniComposite so the packages
-    // mockups composite the applied backdrop correctly.
-    const backdropPrimary = activeConfirmedBackdrop.thumbnail_url || activeConfirmedBackdrop.image_url;
-    const backdropFallback = activeConfirmedBackdrop.image_url;
-    let bgTriedFallback = false;
-
-    bgImg.onload = () => { bgDone = true; draw(); };
-    fgImg.onload = () => { fgDone = true; draw(); };
-    bgImg.onerror = () => {
-      if (!bgTriedFallback && backdropFallback && backdropFallback !== backdropPrimary) {
-        bgTriedFallback = true;
-        bgImg.src = backdropFallback;
-        return;
-      }
-      bgDone = true;
-      draw();
-    };
-    fgImg.onerror = () => { fgDone = true; draw(); };
-
-    bgImg.src = backdropPrimary;
-    fgImg.src = currentNobgUrl;
-
-    return () => { cancelled = true; };
-  }, [
-    confirmedBackdrop,
-    confirmedBackdropVerticalOffset,
-    confirmedBlurAmount,
-    confirmedBlurBackground,
-    confirmedOrientation,
-    currentNobgUrl,
-    selectedImage,
-    selectedImageAspectRatio,
-  ]);
-
-  // Use composite in buy section when backdrop is confirmed
-  const effectiveImageUrl = compositeDataUrl ?? selectedImage?.url ?? null;
-  const effectiveImageAspectRatio = useImageAspectRatio(effectiveImageUrl);
+      : null;
+  const effectiveImageUrl = selectedImage?.url ?? null;
+  const effectiveImageAspectRatio = productBackdrop
+    ? productBackdrop.landscape ? 1067 / 800 : 600 / 800
+    : selectedImageAspectRatio;
 
   // Premium backdrop pricing — added to checkout total
   const premiumBackdropCents =
@@ -12385,6 +12214,7 @@ export default function ParentGalleryPage() {
                             effectiveImageAspectRatio,
                             isCompositeSelection,
                             confirmedOrientation,
+                            productBackdrop,
                           )}
 
                               <div
@@ -12502,6 +12332,7 @@ export default function ParentGalleryPage() {
                                     effectiveImageAspectRatio,
                                     isCompositeSelection,
                                     confirmedOrientation,
+                                    productBackdrop,
                                   )}
                                 </div>
                                 <div
@@ -12594,10 +12425,7 @@ export default function ParentGalleryPage() {
                       >
                         {confirmedBackdrop && currentNobgUrl ? (
                           // Backdrop applied: composite the photo onto it the
-                          // same way the package slots do (MiniComposite renders
-                          // a live canvas, so the cut-out subject always shows —
-                          // unlike the flattened compositeDataUrl, which can drop
-                          // the foreground).
+                          // same way the package slots do.
                           <div
                             style={{
                               width: 200,
@@ -12852,6 +12680,7 @@ export default function ParentGalleryPage() {
                             effectiveImageAspectRatio,
                             isCompositeSelection,
                             confirmedOrientation,
+                            productBackdrop,
                           )}
                           <div
                             style={{
