@@ -50,3 +50,5 @@ This Mac currently has Xcode 27.0 and iOS 27.0 simulators; the Duo-specific Xcod
 The native iPhone workspace currently exposes Home, Clients, Sales, More, and a Jobs preparation page. Desktop production features are not automatically brought to iPhone by these layout changes. Native signing, the production iOS bundle identity, and TestFlight/App Store distribution remain separate release work.
 
 The live website and the installed notarized Mac app were not replaced by this preparation.
+
+The native build also surfaced older CocoaPods deployment targets incompatible with Xcode 27. The native Podfile now raises those targets to the app's existing iOS 15.5 minimum. Flutter separately warns about ML Kit arm64 simulator support, which must be resolved or verified before Duo simulator testing.
