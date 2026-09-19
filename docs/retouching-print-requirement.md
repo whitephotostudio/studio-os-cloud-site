@@ -22,4 +22,8 @@ Fifteen regression tests cover empty and digital-only baskets, legacy named/flag
 
 Browser verification used the actual gallery handlers and retouching dialog in an isolated local fixture: retouching alone left the basket empty with the print-required message; choosing a print enabled the dialog; adding retouching saved both lines and cleared the transient draft; removing the print was refused with an explanation. No customer order was created during these checks.
 
-Production deployment and verification are recorded after the guarded release.
+All 246 automated tests passed, along with TypeScript, focused ESLint, the clean-worktree release guard and the production build.
+
+Released commit `e75a8cd` through `npm run deploy:production` on September 19, 2026. Deployment `dpl_ALAPd1FrGYs5Kg2FEcumQyMUA7BZ` is READY and aliased to `https://www.studiooscloud.com` (also `https://studiooscloud.com`).
+
+Live Safari verification confirmed the new print-required explanation, adding retouching alongside a print package, and refusing to remove the last print while retouching remains. Removing retouching first then allowed the print to be removed. The temporary basket items were cleared; no customer order or payment was created.
