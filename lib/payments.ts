@@ -1,4 +1,4 @@
-import { scheduleOrderRefundEmails, type ConfirmedRefund } from "@/lib/order-refund-notifications";
+import type { ConfirmedRefund } from "@/lib/order-refund-notifications";
 import { allocateRefundCents, orderCheckoutIdempotencyKey } from "@/lib/order-payment-policy";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { createDashboardServiceClient } from "@/lib/dashboard-auth";
@@ -2797,6 +2797,5 @@ export async function reconcileOrderRefundFromStripe(service: ServiceClient, acc
     const { error } = await service.from("orders").update({ status: "refund_pending" }).in("id", ids).neq("status", "refunded");
     if (error) throw error;
   }
-  await scheduleOrderRefundEmails(service, { account, paymentIntentId, orderId: intent.metadata.order_id, refunds: verifiedRefunds });
-  return result;
+  return result ? { ...result, verifiedRefunds } : null;
 }

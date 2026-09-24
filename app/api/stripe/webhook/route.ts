@@ -1,3 +1,4 @@
+import { scheduleOrderRefundEmails } from "@/lib/order-refund-notifications";
 import { NextRequest, NextResponse } from "next/server";
 import { createDashboardServiceClient } from "@/lib/dashboard-auth";
 import { syncPhotographyKeysByPhotographerId } from "@/lib/studio-os-app";
@@ -695,7 +696,8 @@ export async function POST(req: NextRequest) {
       case "refund.updated":
       case "refund.failed": {
         if (event.account && typeof object.payment_intent === "string") {
-          await reconcileOrderRefundFromStripe(service, event.account, object.payment_intent);
+          const result = await reconcileOrderRefundFromStripe(service, event.account, object.payment_intent);
+          if (result) await scheduleOrderRefundEmails(service, { account: event.account, paymentIntentId: object.payment_intent, orderId: result.orderId, refunds: result.verifiedRefunds });
         }
         break;
       }
@@ -710,6 +712,7 @@ export async function POST(req: NextRequest) {
             : null;
 
           if (refundResult) {
+            await scheduleOrderRefundEmails(service, { account: event.account, paymentIntentId: charge.payment_intent!, orderId: refundResult.orderId, refunds: refundResult.verifiedRefunds });
             await recordAudit({
               request: req,
               actorUserId: null,

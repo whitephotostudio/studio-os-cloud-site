@@ -23,7 +23,7 @@ Apply and record `20260924180000_order_refund_emails.sql` transactionally before
 - `lib/order-refund-email.ts`: client and photographer templates.
 - `lib/order-refund-notifications.ts`: validated recipient scope, outbox and delivery worker.
 - `supabase/migrations/20260924180000_order_refund_emails.sql`: service-only ledger and lease function.
-- `lib/payments.ts`, `app/api/dashboard/orders/payment/route.ts`: verified-refund hooks.
+- `lib/payments.ts`, `app/api/dashboard/orders/payment/route.ts`, `app/api/stripe/webhook/route.ts`: verified-refund hooks.
 - `lib/resend.ts`: opt-in delivery timeout.
 - `app/api/cron/order-refund-emails/route.ts`, `vercel.json`: authenticated retry worker.
 - `scripts/verify-payment-release.mjs`, `tests/payment-release-verification.test.mjs`: live release checks.
