@@ -73,4 +73,39 @@ from June 15, 2026. These are historical failures, not evidence of a new outage.
 A follow-up migration exposes older flagged records alongside the current history
 page so they cannot be hidden behind newer activity. No messages were resent.
 
-Deployment and production verification will be recorded after the guarded release.
+## Production release
+
+- Code commit: `6d12d9a` (with base implementation `4c58410`).
+- Applied and recorded additive migrations `20260925010000` and `20260925013000`.
+- Guarded release passed 340 tests and both local/Vercel production builds.
+- Deployment `dpl_2iyikwRpruNckwZoyxVARqQtUaQa` promoted to
+  `https://www.studiooscloud.com` on September 24, 2026 at about 19:12 UTC.
+- Public HTML returned HTTP 200 and the matching deployment ID. Anonymous
+  overview and account-history API calls returned HTTP 401 with private,
+  no-store cache headers. Anonymous database RPC access was denied.
+- Signed-in owner browser verification displayed the new sidebar entry, eight
+  accounts, five active trials, the owner account timeline, five historical
+  failed campaign messages, activated devices, separately denominated CAD/USD
+  customer sales, and refund notifications with explicit delivery uncertainty.
+- Latest bounded database snapshot took 155 ms. No trial dates, refunds,
+  customer orders, or outgoing notifications were changed by this release.
+- The queued hourly implementation automation remains paused because this
+  work is complete. No new monitoring automation was introduced.
+
+
+## Changed files
+
+- `app/dashboard/admin/overview/page.tsx`
+- `app/dashboard/admin/overview/overview.module.css`
+- `app/api/dashboard/admin/overview/route.ts`
+- `app/api/dashboard/admin/overview/accounts/[id]/route.ts`
+- `lib/owner-admin.ts`
+- `lib/owner-overview.ts`
+- `components/dashboard-sidebar.tsx`
+- `app/dashboard/admin/users/page.tsx`
+- `app/api/dashboard/admin/users/route.ts`
+- `supabase/migrations/20260925010000_owner_overview.sql`
+- `supabase/migrations/20260925013000_owner_attention_history.sql`
+- `tests/owner-overview.test.mjs`
+- `docs/owner-overview-plan-2026-09-24.md`
+- `docs/owner-overview-release-2026-09-24.md`
