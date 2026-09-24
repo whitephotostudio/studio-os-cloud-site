@@ -2,14 +2,14 @@
 
 ## Incident evidence
 
-Read-only production order lookup on September 24, 2026 found two identical carts for the reported customer. Both database rows are `paid` / `succeeded`, each CAD 103.60, with distinct Stripe PaymentIntent references:
+Read-only production order lookup on September 24, 2026 found two identical carts for the reported customer. At the initial inspection, both database rows were `paid` / `succeeded`, each CAD 103.60, with distinct Stripe PaymentIntent references:
 
 | Cloud order | Created (UTC, September 23) | Paid (UTC) | Payment reference |
 |---|---|---|---|
 | `7d42207e-bad1-4d14-8041-870304f807a8` | 21:59:23 | 22:00:12 | `pi_3UIyCyLqg5vdCgpU14DtxZrw` |
 | `1d7498f7-4e57-4964-89d7-6d34e0093245` | 22:02:43 | 22:03:18 | `pi_3UIyFyLqg5vdCgpU2aPV7Wqe` |
 
-Their saved carts match, including products, quantities, image selections, backdrop and retouching instructions. Direct production Stripe verification now confirms that both distinct PaymentIntents succeeded, both charges were paid and captured, and each received CAD 103.60. Both had CAD 0 refunded and no pending refunds at verification. This confirms the duplicate charge; it does not establish what the browser or network did. The local Stripe credential was expired. Follow-up diagnosis established that Vercel intentionally exports Secret values as `[SENSITIVE]`; the earlier hosting-export HTTP 401 tested that placeholder, not the actual production Stripe key. It is not evidence of a broken live key. A read-only release verification script now runs inside the remote build with the real environment, checks payment/webhook configuration and the selected incident payments, and blocks promotion on verification failure. No customer refund or cancellation has been authorized or performed.
+Their saved carts match, including products, quantities, image selections, backdrop and retouching instructions. Direct production Stripe verification now confirms that both distinct PaymentIntents succeeded, both charges were paid and captured, and each received CAD 103.60. Both had CAD 0 refunded and no pending refunds at verification. This confirms the duplicate charge; it does not establish what the browser or network did. The local Stripe credential was expired. Follow-up diagnosis established that Vercel intentionally exports Secret values as `[SENSITIVE]`; the earlier hosting-export HTTP 401 tested that placeholder, not the actual production Stripe key. It is not evidence of a broken live key. A read-only release verification script now runs inside the remote build with the real environment, checks payment/webhook configuration and the selected incident payments, and blocks promotion on verification failure. The studio owner subsequently used the new desktop controls to refund only the later duplicate. See the final incident state below; the agent did not initiate either a refund or cancellation.
 
 ## Findings and changes
 
@@ -24,18 +24,18 @@ Their saved carts match, including products, quantities, image selections, backd
 
 ## Verification
 
-The changes include executable database, API and widget tests for concurrent/repeated submissions, lost responses, transaction rollback, cross-studio access, missing MFA, amount changes, combined scope, pending refunds, cancellation races, refund allocation, production holds and small-screen layout. All Stripe mutations in tests use fakes; no real money was moved.
+The changes include executable database, API and widget tests for concurrent/repeated submissions, lost responses, transaction rollback, cross-studio access, missing MFA, amount changes, combined scope, pending refunds, cancellation races, refund allocation, production holds and small-screen layout. All Stripe mutations in automated tests use fakes. Separately, the studio owner completed one real duplicate refund through the new desktop controls; the resulting Stripe amount, cloud state and desktop state were verified.
 
 Website checks after merging the current production baseline: **275 tests passed**, TypeScript validation passed, focused lint passed, and `npm run build` succeeded.
 Desktop checks: **698 tests passed**, `flutter analyze --no-pub` reported no issues, the refund dialog was rendered and visually reviewed, and `flutter build macos --release --no-pub` succeeded. Existing native build warnings remain (Objective-C architecture naming and Core Image deprecations); compilation completed.
 
 ## Release procedure
 
-1. Apply `supabase/migrations/20260924160000_order_payment_safety.sql` to the matching Supabase project before deploying the website. It is additive and service-role only; it does not modify historical order amounts or issue refunds.
+1. Apply `supabase/migrations/20260924160000_order_payment_safety.sql` and `supabase/migrations/20260924163000_touch_order_payment_state.sql` to the matching Supabase project before deploying the website. It is additive and service-role only; it does not modify historical order amounts or issue refunds.
 2. Verify the production Stripe environment and connected account. Exercise duplicate-submit, lost-response, cancellation and refund flows with Stripe test-mode credentials in staging. Confirm the endpoint receives `charge.refunded`, `refund.updated` and `refund.failed` events alongside existing payment events.
 3. The website changes are committed on `codex/payment-safety`. Use the repository's guarded `npm run deploy:production` command from a clean checkout with `--skip-domain` and the `STUDIO_PAYMENT_RELEASE_VERIFY=1` build flag. Verify the read-only release-check output and deployment before promoting it. Do not use a direct production deployment command.
 4. Distribute/install the matching desktop build on every production workstation after the website endpoint and migration are live, before using the new refund controls. The new desktop buttons report unavailable until that endpoint exists.
-5. Review both incident payments directly in Stripe, identify the order to retain, and explicitly authorize one refund. Do not delete either financial record as a substitute for refunding.
+5. For future incidents, review the distinct payments and identify the order to retain before the studio owner confirms one duplicate refund. Preserve both financial records. This incident is resolved as recorded below; do not refund the retained order.
 
 No test suite proves the absence of every bug. These checks target the observed failure modes; the precise trigger of the customer's incident remains unverified.
 
@@ -47,15 +47,15 @@ Website project (`/Users/harout/Downloads/Projects/studio-os-cloud-site`):
 
 - Checkout: `app/parents/[pin]/page.tsx`, both `app/api/portal/orders/create*/route.ts` routes, `app/api/stripe/checkout/route.ts`, `lib/checkout-attempt.ts`, `lib/checkout-attempt-client.ts`.
 - Payment controls and reconciliation: `app/api/dashboard/orders/payment/route.ts`, `components/order-payment-controls.tsx`, `app/dashboard/orders/page.tsx`, `lib/order-payment-policy.ts`, `lib/order-payment-lock.ts`, `lib/payments.ts`, `lib/dashboard-auth.ts`, `lib/digital-delivery.ts`, `app/api/stripe/webhook/route.ts`.
-- Database/tests: `supabase/migrations/20260924160000_order_payment_safety.sql`, `tests/order-payment-{database,route,safety}.test.mjs`, `tests/stripe-combined-checkout.test.mjs`, `package.json`, `package-lock.json` (local PostgreSQL test dependency).
+- Database/tests: `supabase/migrations/20260924160000_order_payment_safety.sql`, `supabase/migrations/20260924163000_touch_order_payment_state.sql`, `tests/order-payment-{database,route,safety}.test.mjs`, `tests/stripe-combined-checkout.test.mjs`, `package.json`, `package-lock.json` (local PostgreSQL test dependency).
 
 Desktop project (`/Users/harout/Downloads/Whitephoto_Studio_App_MVP_Source`):
 
 - `lib/screens/orders_screen.dart`, `lib/screens/digital_orders_screen.dart`, `lib/services/supabase_sync.dart`.
 - New `lib/services/order_payment_state.dart`, `lib/services/order_payment_service.dart`, `lib/widgets/order_payment_dialog.dart`, `test/order_payment_safety_test.dart`.
-- This investigation/release note and `output/payment-safety/refund-dialog.png`.
+- `pubspec.yaml` (release version `0.1.11+15`), this investigation/release note and `output/payment-safety/refund-dialog.png`.
 
-The desktop project already contained substantial unrelated uncommitted work. It was not reset, committed or released as a whole. The companion website was clean before this task and the change is isolated on `codex/payment-safety`.
+The desktop project already contained substantial unrelated uncommitted work. It was not reset or committed. The tested desktop source tree, including that existing work, was frozen in the separate release snapshot `studio-os-macos-payment-release-20260924` for the signed Mac release; `.release/source-sha256.json` records its source inventory. The companion website was clean before this task and the change is isolated on `codex/payment-safety`.
 
 ## Hosting verification
 
@@ -70,4 +70,12 @@ The desktop project already contained substantial unrelated uncommitted work. It
 - Promoted deployment `dpl_B4u1ZxCgKEq38kiwSUiGPhHm9bpV` (`studio-os-cloud-site-9ix6l37jc-whitephotostudio-7289s-projects.vercel.app`). Verified `https://www.studiooscloud.com` and production alias assignment afterward.
 - Previous production deployment retained for rollback: `dpl_ADbVPKeRRmufsHV54RjMZvyZpJHF`.
 - Live verification also found the bare hostname redirects HTTP 308. The desktop payment service now addresses `www.studiooscloud.com` directly; a native Dart POST verified the canonical endpoint returns the expected unauthenticated rejection without redirecting.
-- Live charges were read only. Refund/cancellation money movement remains covered by fakes; a Stripe test-mode end-to-end transaction was not run.
+- The release verifier read financial state only. The owner subsequently completed the real duplicate refund in the native UI. A separate Stripe test-mode end-to-end transaction was not run.
+
+## Final incident state and sync verification
+
+The studio owner refunded CAD 103.60 from the later duplicate, native order **#10e5a686**, cloud ID `1d7498f7-4e57-4964-89d7-6d34e0093245`. The native payment dialog read Stripe and showed charged CAD 103.60 / refunded CAD 103.60 with no further payment action available. Cloud fields are `status=refunded`, `payment_status=refunded`, `refund_status=refunded`, `refund_amount_cents=10360`.
+
+The retained order is native **#5e51bd3c**, cloud ID `7d42207e-bad1-4d14-8041-870304f807a8`. It remains `paid` / `succeeded`, with no refund. It appears directly below the duplicate under All, and is available under Needs action. Its “Needs attention” label means production review/retouching is pending; it does not mean payment failed. Paid revenue decreased by exactly CAD 103.60, from CAD 7,231.62 to CAD 7,128.02. Only the duplicate is excluded from production.
+
+Live inspection found that the production database did not automatically advance `orders.updated_at` after financial state changes. Migration `20260924163000` now updates that timestamp when status, payment status, refund status or refunded amount actually changes, after the existing terminal-state protection runs. The known duplicate's timestamp was repaired with a guarded metadata-only update; the retained order was unchanged. The migration and its history record were committed in one production transaction. The executable PostgreSQL test passed, and a production-schema test verified timestamp advancement plus rejection of stale reopen attempts, then rolled back its synthetic row. No payment API was called for this fix.
