@@ -11,6 +11,7 @@ function env(name: string) {
 
 export type DashboardAuthContext = {
   user: { id: string; email?: string | null } | null;
+  mfaSatisfied?: boolean;
 };
 
 export async function resolveDashboardAuth(
@@ -27,7 +28,10 @@ export async function resolveDashboardAuth(
   if (bearer) {
     const { data } = await anonClient.auth.getUser(bearer);
     if (data.user) {
-      return { user: data.user };
+      const hasMfa = data.user.factors?.some((factor) => factor.status === "verified") ?? false;
+      let aal = "";
+      try { aal = JSON.parse(Buffer.from(bearer.split(".")[1], "base64url").toString()).aal; } catch { /* fail closed for MFA */ }
+      return { user: data.user, mfaSatisfied: !hasMfa || aal === "aal2" };
     }
   }
 
@@ -56,7 +60,9 @@ export async function resolveDashboardAuth(
     data: { user },
   } = await serverClient.auth.getUser();
 
-  return { user };
+  const hasMfa = user?.factors?.some((factor) => factor.status === "verified") ?? false;
+  const { data: assurance } = hasMfa ? await serverClient.auth.mfa.getAuthenticatorAssuranceLevel() : { data: null };
+  return { user, mfaSatisfied: !hasMfa || assurance?.currentLevel === "aal2" };
 }
 
 export function createDashboardServiceClient() {

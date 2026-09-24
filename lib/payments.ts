@@ -1,3 +1,4 @@
+import { allocateRefundCents, orderCheckoutIdempotencyKey } from "@/lib/order-payment-policy";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { createDashboardServiceClient } from "@/lib/dashboard-auth";
 import { syncPhotographyKeysByPhotographerId } from "@/lib/studio-os-app";
@@ -407,6 +408,7 @@ export async function stripeRequest<T>(
     },
     body: options.body?.toString(),
     cache: "no-store",
+    signal: AbortSignal.timeout(20_000),
   });
 
   const text = await response.text();
@@ -1915,7 +1917,7 @@ export async function finalizePaidOrder(
   const { data: order, error: orderError } = await service
     .from("orders")
     .select(
-      "id,package_name,status,notes,photographer_id,paid_at,payment_status,counted_for_monthly_usage,monthly_usage_billing_period",
+      "id,package_name,status,notes,photographer_id,paid_at,payment_status,stripe_checkout_session_id,stripe_payment_intent_id,counted_for_monthly_usage,monthly_usage_billing_period",
     )
     .eq("id", input.orderId)
     .maybeSingle();
@@ -1924,7 +1926,15 @@ export async function finalizePaidOrder(
   if (!order) return null;
 
   const currentStatus = (order.status ?? "").toLowerCase();
-  if ((currentStatus === "paid" || currentStatus === "digital_paid") && order.paid_at) {
+  if (["refunded", "refund_pending", "cancelled", "canceled", "cancel_pending"].includes(currentStatus) ||
+      (order.paid_at && ["paid", "succeeded", "no_payment_required", "partially_refunded", "refunded"].includes((order.payment_status ?? "").toLowerCase()))) {
+    const references: Record<string, string> = {};
+    if (!order.stripe_checkout_session_id && input.checkoutSessionId) references.stripe_checkout_session_id = input.checkoutSessionId;
+    if (!order.stripe_payment_intent_id && input.paymentIntentId) references.stripe_payment_intent_id = input.paymentIntentId;
+    if (Object.keys(references).length) {
+      const { error } = await service.from("orders").update(references).eq("id", order.id);
+      if (error) throw error;
+    }
     return order;
   }
 
@@ -1939,8 +1949,8 @@ export async function finalizePaidOrder(
       status: nextStatus,
       payment_status: (input.paymentStatus ?? "paid").toLowerCase(),
       paid_at: paidAt,
-      stripe_checkout_session_id: input.checkoutSessionId ?? null,
-      stripe_payment_intent_id: input.paymentIntentId ?? null,
+      ...(input.checkoutSessionId ? { stripe_checkout_session_id: input.checkoutSessionId } : {}),
+      ...(input.paymentIntentId ? { stripe_payment_intent_id: input.paymentIntentId } : {}),
       notes: mergedNotes,
       seen_by_photographer: false,
     })
@@ -2253,7 +2263,7 @@ export async function markOrderPaymentFailure(
       payment_status: "failed",
       notes: mergedNotes,
     })
-    .eq("id", order.id);
+    .eq("id", order.id).is("paid_at", null).not("status", "in", "(cancelled,canceled,refunded,refund_pending)");
 
   if (updateError) throw updateError;
   return order.id;
@@ -2312,7 +2322,7 @@ export async function markOrderRefunded(
   const mergedNotes = await appendOrderNote(order.notes ?? null, input.note);
 
   const refundedAt = new Date().toISOString();
-  const fullyRefunded = !input.partial;
+  const fullyRefunded = !input.partial || order.refund_status === "refunded";
   const nextPaymentStatus = fullyRefunded ? "refunded" : "partially_refunded";
   const nextRefundStatus = fullyRefunded ? "refunded" : "partially_refunded";
   // On a full refund, flip the order status so the Flutter print queue and the
@@ -2399,6 +2409,7 @@ export async function createDirectOrderCheckoutSession(input: {
    * to every member order. Single-order checkouts leave it null/undefined.
    */
   orderGroupId?: string | null;
+  previousExpiredSessionId?: string | null;
 }) {
   const params = new URLSearchParams();
   params.set("mode", "payment");
@@ -2437,7 +2448,7 @@ export async function createDirectOrderCheckoutSession(input: {
     method: "POST",
     body: params,
     account: input.accountId,
-    idempotencyKey: `studio-os-order-session-${input.orderId}`,
+    idempotencyKey: orderCheckoutIdempotencyKey(input.orderId, input.previousExpiredSessionId),
   });
 }
 
@@ -2731,6 +2742,12 @@ export async function markOrderOrGroupRefunded(
     return markOrderRefunded(service, input);
   }
 
+  const { data: memberRows, error: memberError } = await service.from("orders").select("id,total_cents,total_amount").in("id", ids).order("id");
+  if (memberError) throw memberError;
+  const members = memberRows ?? [];
+  const allocations = allocateRefundCents(input.refundAmountCents ?? 0, members.map((row) => Number(row.total_cents ?? Math.round(Number(row.total_amount ?? 0) * 100))));
+  const amountById = new Map(members.map((row, index) => [row.id, allocations[index]]));
+
   let primaryResult: MarkOrderRefundedResult | null = null;
   let firstError: unknown = null;
   for (const id of ids) {
@@ -2740,7 +2757,7 @@ export async function markOrderOrGroupRefunded(
         paymentIntentId: null,
         partial: input.partial,
         note: input.note,
-        refundAmountCents: input.refundAmountCents ?? null,
+        refundAmountCents: amountById.get(id) ?? 0,
       });
       if (!primaryResult && result) primaryResult = result;
     } catch (err) {
@@ -2749,4 +2766,33 @@ export async function markOrderOrGroupRefunded(
   }
   if (firstError) throw firstError;
   return primaryResult;
+}
+
+/** Read current Stripe refund state instead of trusting webhook delivery order. */
+export async function reconcileOrderRefundFromStripe(service: ServiceClient, account: string, paymentIntentId: string) {
+  const intent = await stripeRequest<{ id: string; amount: number; metadata?: Record<string, string> }>(`payment_intents/${encodeURIComponent(paymentIntentId)}`, { account });
+  if (!intent.metadata?.order_id) return null;
+  const { data: owner, error: ownerError } = await service.from("orders").select("photographer_id").eq("id", intent.metadata.order_id).maybeSingle();
+  if (ownerError) throw ownerError;
+  if (!owner || owner.photographer_id !== intent.metadata.photographer_id) throw new Error("Refund order ownership mismatch");
+  const { data: photographer, error: pe } = await service.from("photographers").select("stripe_account_id,stripe_connected_account_id").eq("id", owner.photographer_id).single();
+  if (pe || !photographer || getConnectedAccountId(photographer) !== account) throw new Error("Refund account mismatch");
+  let startingAfter = ""; let confirmedCents = 0; let pending = false;
+  do {
+    const query = new URLSearchParams({ payment_intent: paymentIntentId, limit: "100" });
+    if (startingAfter) query.set("starting_after", startingAfter);
+    const page = await stripeRequest<{ data: { id: string; amount: number; status: string }[]; has_more: boolean }>("refunds", { account, query });
+    confirmedCents += page.data.filter((r) => r.status === "succeeded").reduce((sum, r) => sum + r.amount, 0);
+    pending ||= page.data.some((r) => r.status === "pending" || r.status === "requires_action");
+    startingAfter = page.has_more ? page.data.at(-1)?.id || "" : "";
+  } while (startingAfter);
+  let result: MarkOrderRefundedResult | null = null;
+  if (confirmedCents > 0) result = await markOrderOrGroupRefunded(service, { orderId: intent.metadata.order_id, partial: confirmedCents < intent.amount,
+    refundAmountCents: confirmedCents, note: `Stripe refund status verified for ${paymentIntentId}.` });
+  if (pending) {
+    const ids = await expandOrderIdsForGroup(service, { orderId: intent.metadata.order_id });
+    const { error } = await service.from("orders").update({ status: "refund_pending" }).in("id", ids).neq("status", "refunded");
+    if (error) throw error;
+  }
+  return result;
 }

@@ -292,6 +292,7 @@ export function createDigitalDeliveryDownloadUrl(
 function isPaidEnough(order: OrderRow) {
   const status = lower(order.status);
   const paymentStatus = lower(order.payment_status);
+  if (["refunded", "refund_pending", "cancelled", "canceled", "cancel_pending"].includes(status) || paymentStatus === "refunded") return false;
   if (order.paid_at) return true;
   if (paymentStatus === "paid" || paymentStatus === "succeeded") return true;
   return [

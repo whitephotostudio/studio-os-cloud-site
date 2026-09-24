@@ -13,7 +13,7 @@ import {
   handleCreditChargeRefunded,
   handleCreditPackCheckoutCompleted,
   markOrderOrGroupPaymentFailure,
-  markOrderOrGroupRefunded,
+  reconcileOrderRefundFromStripe,
   normalizeBillingInterval,
   normalizePlanCode,
   type PhotographerBillingRow,
@@ -692,19 +692,22 @@ export async function POST(req: NextRequest) {
         break;
       }
 
+      case "refund.updated":
+      case "refund.failed": {
+        if (event.account && typeof object.payment_intent === "string") {
+          await reconcileOrderRefundFromStripe(service, event.account, object.payment_intent);
+        }
+        break;
+      }
+
       case "charge.refunded": {
         const charge = object as unknown as StripeCharge;
         if (charge.metadata?.pack_code) {
           await handleCreditChargeRefunded(service, charge);
         } else if (event.account && (charge.metadata?.order_id || charge.payment_intent)) {
-          const partial = charge.amount_refunded < charge.amount;
-          const refundResult = await markOrderOrGroupRefunded(service, {
-            paymentIntentId: charge.payment_intent ?? null,
-            orderId: charge.metadata?.order_id ?? null,
-            partial,
-            refundAmountCents: charge.amount_refunded,
-            note: `[Stripe charge ${charge.id}] refund recorded`,
-          });
+          const refundResult = charge.payment_intent
+            ? await reconcileOrderRefundFromStripe(service, event.account, charge.payment_intent)
+            : null;
 
           if (refundResult) {
             await recordAudit({

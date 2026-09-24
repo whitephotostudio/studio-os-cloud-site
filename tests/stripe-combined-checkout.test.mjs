@@ -123,6 +123,6 @@ test("Stripe checkout loads, validates, and labels the complete order group", ()
   );
   assert.match(
     paymentsSource,
-    /idempotencyKey: `studio-os-order-session-\$\{input\.orderId\}`/,
+    /idempotencyKey: orderCheckoutIdempotencyKey\(input\.orderId, input\.previousExpiredSessionId\)/,
   );
 });

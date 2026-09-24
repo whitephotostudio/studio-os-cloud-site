@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+import { checkoutAttemptIdentity } from "@/lib/checkout-attempt";
 // POST /api/portal/orders/create-combined
 //
 // Multi-student / cross-year combined checkout.  Companion to the legacy
@@ -610,20 +612,9 @@ export async function POST(request: NextRequest) {
 
     // ── Insert N orders linked by order_group_id ────────────────────────
 
-    const { data: groupIdRow, error: groupIdErr } = await sb.rpc(
-      "gen_random_uuid",
-    );
-    let orderGroupId =
-      typeof groupIdRow === "string" && groupIdRow ? groupIdRow : null;
-    if (!orderGroupId) {
-      // Fallback: postgres extension is enabled by default but in case it's
-      // not exposed via RPC, we generate a v4 UUID here.  This is purely a
-      // safety net — it should never fire on this database.
-      orderGroupId = (typeof crypto !== "undefined" && "randomUUID" in crypto
-        ? crypto.randomUUID()
-        : `${Date.now()}-${Math.random().toString(16).slice(2)}`);
-    }
-    void groupIdErr;
+    const orderGroupId = randomUUID();
+    const ordersToInsert: Record<string, unknown>[] = [];
+    const allItemsToInsert: Record<string, unknown>[] = [];
 
     const parentName = body.parent.name || null;
     const parentPhone = body.parent.phone || null;
@@ -773,9 +764,9 @@ export async function POST(request: NextRequest) {
         orientation: entry.orientation ?? "portrait",
       }));
 
-      const { data: orderRow, error: orderErr } = await sb
-        .from("orders")
-        .insert({
+      const orderRow = { id: randomUUID() };
+      ordersToInsert.push({
+          id: orderRow.id,
           photographer_id: sharedPhotographerId,
           parent_name: parentName,
           parent_email: body.parent.email,
@@ -800,20 +791,7 @@ export async function POST(request: NextRequest) {
           project_id: null,
           order_group_id: orderGroupId,
           cart_snapshot: laneCartSnapshot,
-        })
-        .select("id")
-        .single();
-
-      if (orderErr || !orderRow) {
-        // Roll back any orders we already inserted in this group so we
-        // don't leave a half-formed group floating in the DB.
-        const insertedIds = Array.from(insertedOrderIdByGroupIndex.values());
-        if (insertedIds.length > 0) {
-          await sb.from("orders").delete().in("id", insertedIds);
-        }
-        throw orderErr ?? new Error("Failed to create combined order.");
-      }
-
+        });
       insertedOrderIdByGroupIndex.set(gi, orderRow.id as string);
 
       // Insert order_items for this group.
@@ -942,15 +920,7 @@ export async function POST(request: NextRequest) {
         });
       }
 
-      const { error: itemsErr } = await sb.from("order_items").insert(itemsToInsert);
-      if (itemsErr) {
-        // Rollback all inserted orders in the group.
-        const insertedIds = Array.from(insertedOrderIdByGroupIndex.values());
-        if (insertedIds.length > 0) {
-          await sb.from("orders").delete().in("id", insertedIds);
-        }
-        throw itemsErr;
-      }
+      allItemsToInsert.push(...itemsToInsert);
     }
 
     const orderIds = Array.from(insertedOrderIdByGroupIndex.values());
@@ -959,7 +929,7 @@ export async function POST(request: NextRequest) {
       throw new Error("Failed to identify primary order in group.");
     }
 
-    return NextResponse.json({
+    const response = {
       ok: true,
       orderGroupId,
       orderIds,
@@ -976,7 +946,14 @@ export async function POST(request: NextRequest) {
         forcedLate: combineTotals.shipping.forcedDueToLate,
         grandTotalCents: combineTotals.grandTotalCents,
       },
+    };
+    const attempt = checkoutAttemptIdentity(`combined:${request.headers.get("X-Checkout-Purchase") || "initial"}`, body, request.headers.get("Idempotency-Key"));
+    const { data: result, error: persistError } = await sb.rpc("create_checkout_order_once", {
+      p_key: attempt.key, p_hash: attempt.hash, p_orders: ordersToInsert, p_items: allItemsToInsert,
+      p_response: response,
     });
+    if (persistError) throw persistError;
+    return NextResponse.json(result);
   } catch (error) {
     console.error("[portal:orders:create-combined]", error);
     return NextResponse.json(

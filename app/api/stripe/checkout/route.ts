@@ -1,3 +1,4 @@
+import { lockOrderPayment } from "@/lib/order-payment-lock";
 import { NextRequest, NextResponse } from "next/server";
 import { createDashboardServiceClient } from "@/lib/dashboard-auth";
 import {
@@ -6,6 +7,7 @@ import {
   getConnectedAccountId,
   isStripeBillingActive,
   retrieveStripeAccount,
+  retrieveCheckoutSession,
   syncConnectState,
 } from "@/lib/payments";
 import {
@@ -86,6 +88,7 @@ function baseUrl(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  let release: (() => Promise<void>) | undefined;
   try {
     const body = (await req.json()) as CheckoutBody;
     if (!body.orderId) {
@@ -127,6 +130,15 @@ export async function POST(req: NextRequest) {
           { status: 400 },
         );
       }
+    }
+
+    release = await lockOrderPayment(sb, order.order_group_id || order.id);
+    // Re-read under the same lock cancellation uses; the initial query may be stale.
+    const { data: currentOrders, error: currentError } = await sb.from("orders").select("id,status,payment_status,stripe_checkout_session_id").in("id", checkoutOrders.map((o) => o.id));
+    if (currentError) throw currentError;
+    checkoutOrders = checkoutOrders.map((member) => ({ ...member, ...currentOrders?.find((row) => row.id === member.id) }));
+    if (checkoutOrders.some((member) => ["cancelled", "canceled", "cancel_pending", "refunded", "refund_pending"].includes(member.status || "") || ["refunded", "partially_refunded"].includes(member.payment_status || ""))) {
+      return NextResponse.json({ ok: false, message: "This order is closed and cannot be charged again." }, { status: 409 });
     }
 
     if (
@@ -434,6 +446,19 @@ export async function POST(req: NextRequest) {
     const cancelUrl = new URL(baseGalleryUrl.toString());
     cancelUrl.searchParams.set("checkout", "cancel");
 
+    const existingSessionId = checkoutOrders.find((member) => member.stripe_checkout_session_id)?.stripe_checkout_session_id;
+    let expiredSessionId: string | null = null;
+    if (existingSessionId) {
+      const existing = await retrieveCheckoutSession(existingSessionId, stripeAccountId);
+      if (existing.status === "open" && existing.url) return NextResponse.json({ ok: true, url: existing.url, sessionId: existing.id });
+      if (existing.status !== "expired") return NextResponse.json({ ok: false, message: "Payment was already submitted. Check your order confirmation before trying again." }, { status: 409 });
+      expiredSessionId = existing.id;
+    }
+    // This marker stays on ambiguous network failure. Cancellation must not
+    // claim success while an unrecorded Stripe session might still be payable.
+    const { error: startingError } = await sb.from("orders").update({ status: "checkout_starting" }).in("id", checkoutOrders.map((member) => member.id));
+    if (startingError) throw startingError;
+
     const session = await createDirectOrderCheckoutSession({
       accountId: stripeAccountId,
       orderId: checkoutAnchorOrder.id,
@@ -459,6 +484,7 @@ export async function POST(req: NextRequest) {
       successUrl: successUrl.toString(),
       cancelUrl: cancelUrl.toString(),
       orderGroupId: order.order_group_id,
+      previousExpiredSessionId: expiredSessionId,
     });
 
     const { error: updateError } = await sb
@@ -472,7 +498,7 @@ export async function POST(req: NextRequest) {
       .in(
         "id",
         checkoutOrders.map((member) => member.id),
-      );
+      ).eq("status", "checkout_starting");
 
     if (updateError) throw updateError;
 
@@ -490,5 +516,7 @@ export async function POST(req: NextRequest) {
       { ok: false, message: "Failed to create Stripe checkout." },
       { status: 500 },
     );
+  } finally {
+    await release?.();
   }
 }

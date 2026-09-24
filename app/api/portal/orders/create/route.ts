@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+import { checkoutAttemptIdentity } from "@/lib/checkout-attempt";
 import { NextRequest, NextResponse } from "next/server";
 import { createDashboardServiceClient } from "@/lib/dashboard-auth";
 import { validateEventGalleryAccess } from "@/lib/event-gallery-access";
@@ -1148,7 +1150,9 @@ export async function POST(request: NextRequest) {
       orientation: (entry as { orientation?: "portrait" | "landscape" }).orientation ?? "portrait",
     }));
 
+    const orderId = randomUUID();
     const orderInsert: Record<string, unknown> = {
+      id: orderId,
       photographer_id: photographerId,
       parent_name: parentName,
       parent_email: parent.email,
@@ -1181,16 +1185,6 @@ export async function POST(request: NextRequest) {
       orderInsert.student_id = null;
       orderInsert.class_id = null;
     }
-
-    const { data: orderRow, error: orderErr } = await sb
-      .from("orders")
-      .insert(orderInsert)
-      .select("id")
-      .single();
-
-    if (orderErr || !orderRow) throw orderErr ?? new Error("Failed to create order.");
-
-    const orderId = orderRow.id;
 
     // ── build + insert order_items ──────────────────────────────────────
     const itemsToInsert: OrderItemInsert[] = [];
@@ -1315,19 +1309,13 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    const { error: itemsError } = await sb.from("order_items").insert(itemsToInsert);
-    if (itemsError) {
-      // Best-effort rollback of the orphan orders row.
-      await sb.from("orders").delete().eq("id", orderId);
-      throw itemsError;
-    }
-
-    return NextResponse.json({
-      ok: true,
-      orderId,
-      mode,
-      projectTitle,
+    const attempt = checkoutAttemptIdentity(`single:${request.headers.get("X-Checkout-Purchase") || "initial"}`, body, request.headers.get("Idempotency-Key"));
+    const { data: result, error: persistError } = await sb.rpc("create_checkout_order_once", {
+      p_key: attempt.key, p_hash: attempt.hash, p_orders: [orderInsert], p_items: itemsToInsert,
+      p_response: { ok: true, orderId, mode, projectTitle },
     });
+    if (persistError) throw persistError;
+    return NextResponse.json(result);
   } catch (error) {
     console.error("[portal:orders:create]", error);
     return NextResponse.json(

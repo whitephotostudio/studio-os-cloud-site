@@ -1,5 +1,7 @@
 "use client";
 
+import { OrderPaymentControls } from "@/components/order-payment-controls";
+
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
@@ -231,6 +233,10 @@ function orderShortId(order: Pick<Order, "id">) {
 }
 
 const STATUS_COLORS: Record<string, { bg: string; color: string; label: string }> = {
+  cancel_pending: { bg: "#fff7ed", color: "#9a3412", label: "Cancellation pending" },
+  refunded: { bg: "#f1f5f9", color: "#475569", label: "Refunded" },
+  refund_pending: { bg: "#fff7ed", color: "#9a3412", label: "Refund pending" },
+  cancelled: { bg: "#f1f5f9", color: "#475569", label: "Cancelled" },
   new: { bg: "#fef2f2", color: "#ef4444", label: "New" },
   reviewed: { bg: "#fffbeb", color: "#d97706", label: "Reviewed" },
   sent_to_print: { bg: "#fff5f5", color: "#cc0000", label: "Sent to Print" },
@@ -1153,6 +1159,7 @@ function buildCombinedPackageSummary(orders: Order[]) {
 }
 
 function isPaidOrder(order: Order) {
+  if (["refunded", "refund_pending", "cancelled", "canceled", "cancel_pending"].includes(clean(order.status).toLowerCase())) return false;
   const paymentStatus = clean(order.payment_status).toLowerCase();
   return (
     paymentStatus === "succeeded" ||
@@ -1175,6 +1182,7 @@ function isPaymentFailed(order: Order) {
 
 function getOrderDisplayStatus(order: Order) {
   const status = clean(order.status).toLowerCase();
+  if (["refunded", "refund_pending", "cancelled", "canceled", "cancel_pending"].includes(status)) return status;
 
   if (isPaymentFailed(order)) return "payment_pending";
   if (hasStartedCheckout(order) || isUnpaidCheckoutShadow(order)) return "payment_pending";
@@ -1199,6 +1207,7 @@ function getGroupDisplayStatus(orders: Order[]) {
 }
 
 function paymentStateLabel(order: Order) {
+  if (["refunded", "refund_pending", "cancelled", "canceled", "cancel_pending"].includes(order.status)) return STATUS_COLORS[order.status]?.label || "Cancelled";
   if (isPaidOrder(order)) return "Processed";
   if (isPaymentFailed(order)) return "Payment Failed";
   if (hasStartedCheckout(order) || isUnpaidCheckoutShadow(order)) return "Cart / Pending";
@@ -1206,6 +1215,7 @@ function paymentStateLabel(order: Order) {
 }
 
 function paymentStateDescription(order: Order) {
+  if (["refunded", "refund_pending", "cancelled", "canceled", "cancel_pending"].includes(order.status)) return "This order is excluded from production. Open payment details for the current Stripe status.";
   if (isPaidOrder(order)) {
     return clean(order.paid_at)
       ? `Stripe payment received ${formatDate(order.paid_at)}`
@@ -3424,6 +3434,7 @@ function OrdersPageContent() {
                 scrollMarginTop: 72,
               }}
             >
+              <OrderPaymentControls key={selected.id} orderId={selected.id} supabase={supabase} onChanged={load} />
               {/* ── Order Header ── */}
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: isMobile ? 14 : 20, gap: 10 }}>
                 <div style={{ minWidth: 0 }}>

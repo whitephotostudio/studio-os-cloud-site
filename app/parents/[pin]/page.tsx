@@ -1,5 +1,7 @@
 "use client";
 
+import { checkoutAttemptForPayload } from "@/lib/checkout-attempt-client";
+
 import { FormEvent, SyntheticEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
@@ -8529,7 +8531,16 @@ export default function ParentGalleryPage() {
     }
   }
 
+  const checkoutSubmitBusy = useRef(false);
   async function handlePlaceOrder(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    if (checkoutSubmitBusy.current) return;
+    checkoutSubmitBusy.current = true;
+    try { await placeOrderAttempt(e); }
+    finally { checkoutSubmitBusy.current = false; }
+  }
+
+  async function placeOrderAttempt(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
 
     if (orderingDisabled) {
@@ -8749,15 +8760,13 @@ export default function ParentGalleryPage() {
             orientation: entry.orientation ?? "portrait",
           })),
         }));
+        const combinedBody = { groups: groupsPayload, parent: parentPayload, delivery: deliveryPayload, notes: notesPayload };
+        const purchaseIntent = sessionStorage.getItem("studio-os-checkout-purchase") || "initial";
+        const attemptId = await checkoutAttemptForPayload(`combined:${purchaseIntent}`, combinedBody);
         const combinedRes = await fetch("/api/portal/orders/create-combined", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            groups: groupsPayload,
-            parent: parentPayload,
-            delivery: deliveryPayload,
-            notes: notesPayload,
-          }),
+          headers: { "Content-Type": "application/json", "Idempotency-Key": attemptId, "X-Checkout-Purchase": purchaseIntent },
+          body: JSON.stringify(combinedBody),
         });
         const combinedJson = (await combinedRes.json()) as {
           ok: boolean;
@@ -8773,9 +8782,11 @@ export default function ParentGalleryPage() {
         }
         createdOrderId = combinedJson.primaryOrderId;
       } else {
+        const purchaseIntent = sessionStorage.getItem("studio-os-checkout-purchase") || "initial";
+        const attemptId = await checkoutAttemptForPayload(`single:${purchaseIntent}`, createBody);
         const createRes = await fetch("/api/portal/orders/create", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", "Idempotency-Key": attemptId, "X-Checkout-Purchase": purchaseIntent },
           body: JSON.stringify(createBody),
         });
         const createJson = (await createRes.json()) as {
@@ -10785,6 +10796,9 @@ export default function ParentGalleryPage() {
               surface: galleryTone.surface,
             }}
             onReorder={(snapshot, sourceOrderId) => {
+              // An explicit reorder is a new purchase; normal retries retain
+              // their existing intent even after navigation or reload.
+              sessionStorage.setItem("studio-os-checkout-purchase", crypto.randomUUID());
               // Stash the snapshot in sessionStorage and switch back to
               // the photos view.  The reorder-hydration effect (declared
               // up by the combine-cart hydration) reads the snapshot,
