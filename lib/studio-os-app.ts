@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { createDashboardServiceClient } from "@/lib/dashboard-auth";
-import { isFreeTrialActive } from "@/lib/payments";
-import { normalizePlanCode, type PlanCode } from "@/lib/studio-pricing";
+import { resolveSubscriptionAccess, type SubscriptionAccessRow } from "@/lib/subscription-access";
+import { type PlanCode } from "@/lib/studio-pricing";
 
 type ServiceClient = ReturnType<typeof createDashboardServiceClient>;
 
@@ -161,11 +161,6 @@ function normalizedEmail(value: string | null | undefined) {
   return clean(value).toLowerCase();
 }
 
-function isSubscriptionActive(status: string | null | undefined) {
-  const normalized = clean(status).toLowerCase();
-  return normalized === "active" || normalized === "trialing" || normalized === "trial";
-}
-
 function normalizeReleaseState(value: string | null | undefined): StudioAppReleaseState {
   const normalized = clean(value).toLowerCase();
   if (normalized === "beta" || normalized === "public") return normalized;
@@ -192,30 +187,19 @@ export function getIncludedPhotographyKeyCount(planCode: PlanCode | null) {
   return 0;
 }
 
-export function getExtraPhotographyKeyCount(photographer: Pick<StudioAppPhotographerRow, "subscription_plan_code" | "extra_desktop_keys" | "subscription_status">) {
-  const planCode = normalizePlanCode(photographer.subscription_plan_code);
-  if (planCode !== "studio" || !isSubscriptionActive(photographer.subscription_status)) {
-    return 0;
-  }
+type KeyAccessRow = SubscriptionAccessRow & { extra_desktop_keys?: number | null };
 
-  return Math.max(0, Number(photographer.extra_desktop_keys ?? 0));
+export function getExtraPhotographyKeyCount(photographer: KeyAccessRow) {
+  const access = resolveSubscriptionAccess(photographer);
+  if (access.planCode !== "studio" || !access.accessEnabled || access.trialActive) return 0;
+  return Math.max(0, Math.floor(Number(photographer.extra_desktop_keys ?? 0)));
 }
 
-export function getAllowedPhotographyKeyCount(
-  photographer: Pick<
-    StudioAppPhotographerRow,
-    "subscription_plan_code" | "subscription_status" | "extra_desktop_keys" | "is_platform_admin"
-  >,
-) {
-  // Platform owners get a fixed 4-key bundle regardless of stored plan.
+export function getAllowedPhotographyKeyCount(photographer: KeyAccessRow) {
   if (photographer.is_platform_admin) return 4;
-
-  const planCode = normalizePlanCode(photographer.subscription_plan_code);
-  if (!planCode || !isSubscriptionActive(photographer.subscription_status)) {
-    return 0;
-  }
-
-  return getIncludedPhotographyKeyCount(planCode) + getExtraPhotographyKeyCount(photographer);
+  const access = resolveSubscriptionAccess(photographer);
+  if (!access.accessEnabled) return 0;
+  return getIncludedPhotographyKeyCount(access.planCode) + getExtraPhotographyKeyCount(photographer);
 }
 
 function generatePhotographyKeyCode() {
@@ -337,17 +321,12 @@ export function resolveStudioAppEntitlement(
   photographer: StudioAppPhotographerRow,
   release: StudioAppReleaseRow,
 ): StudioAppEntitlement {
-  const isPlatformAdmin = Boolean(photographer.is_platform_admin);
-  // Platform admins (owners) are always treated as Studio-plan, subscription-active.
-  // This guarantees full desktop-app entitlement regardless of stored billing rows.
-  const planCode = isPlatformAdmin
-    ? "studio"
-    : normalizePlanCode(photographer.subscription_plan_code);
+  const access = resolveSubscriptionAccess(photographer);
+  const isPlatformAdmin = access.isOwner;
+  const planCode = access.planCode;
   const releaseState = normalizeReleaseState(release.release_state);
-  const freeTrialRunning = isFreeTrialActive(photographer);
-  const subscriptionActive =
-    isPlatformAdmin || isSubscriptionActive(photographer.subscription_status) || freeTrialRunning;
-  const appEligibleByPlan = canUseStudioAppPlan(planCode) || freeTrialRunning;
+  const subscriptionActive = access.accessEnabled;
+  const appEligibleByPlan = canUseStudioAppPlan(planCode);
   const betaAccess = Boolean(photographer.studio_app_beta_access);
   const rolloutEnabled =
     releaseState === "public" || betaAccess || isPlatformAdmin;
@@ -358,16 +337,8 @@ export function resolveStudioAppEntitlement(
   const includedKeys = isPlatformAdmin
     ? OWNER_INCLUDED_KEYS
     : getIncludedPhotographyKeyCount(planCode);
-  const extraKeys = isPlatformAdmin
-    ? OWNER_EXTRA_KEYS
-    : subscriptionActive && planCode === "studio"
-    ? Math.max(0, Number(photographer.extra_desktop_keys ?? 0))
-    : 0;
-  const totalAllowedKeys = isPlatformAdmin
-    ? OWNER_INCLUDED_KEYS + OWNER_EXTRA_KEYS
-    : subscriptionActive && appEligibleByPlan
-    ? includedKeys + extraKeys
-    : 0;
+  const extraKeys = isPlatformAdmin ? OWNER_EXTRA_KEYS : getExtraPhotographyKeyCount(photographer);
+  const totalAllowedKeys = getAllowedPhotographyKeyCount(photographer);
   const appAccessEnabled = subscriptionActive && appEligibleByPlan && rolloutEnabled;
   const canDownload =
     appAccessEnabled &&
@@ -420,7 +391,7 @@ export async function syncPhotographyKeysForPhotographer(
 ) {
   const allowedKeys = getAllowedPhotographyKeyCount(photographer);
   const includedKeys = getIncludedPhotographyKeyCount(
-    normalizePlanCode(photographer.subscription_plan_code),
+    resolveSubscriptionAccess(photographer).planCode,
   );
   let keys = (await loadPhotographyKeys(service, photographer.id)).filter(
     (row) => row.status !== "revoked",
@@ -439,10 +410,12 @@ export async function syncPhotographyKeysForPhotographer(
       })),
     );
 
-    if (insertError) throw insertError;
+    // Another first-visit request may have provisioned these same slots.
+    if (insertError && insertError.code !== "23505") throw insertError;
     keys = (await loadPhotographyKeys(service, photographer.id)).filter(
       (row) => row.status !== "revoked",
     );
+    if (keys.length < allowedKeys) throw insertError ?? new Error("Unable to provision Photography Keys.");
   }
 
   for (const [index, key] of keys.entries()) {

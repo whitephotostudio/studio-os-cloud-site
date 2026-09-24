@@ -326,11 +326,11 @@ export default function SignUpPage() {
                     <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                       <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
                     </svg>
-                    Trial activated
+                    Account created
                   </div>
 
                   <h2 className="mt-5 text-3xl font-semibold tracking-tight text-neutral-950">
-                    Congratulations, your free trial is ready.
+                    Confirm your email to start your free trial.
                   </h2>
                   <p className="mt-3 text-sm leading-7 text-neutral-600">
                     {message}

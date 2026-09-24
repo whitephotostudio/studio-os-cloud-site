@@ -873,7 +873,7 @@ export default function AdminUsersPage() {
                 <div>Contact</div>
                 <div>Trial</div>
                 <div>Plan</div>
-                <div>Last active</div>
+                <div>Last sign-in</div>
                 <div />
               </div>
 
@@ -973,7 +973,7 @@ export default function AdminUsersPage() {
                         <PlanBadge plan={u.subscriptionPlanCode} interval={u.subscriptionBillingInterval} />
                       </div>
 
-                      {/* Last active */}
+                      {/* Last sign-in */}
                       <div style={{ fontSize: 12, color: textMuted }}>
                         {relativeTime(u.lastSignIn)}
                       </div>

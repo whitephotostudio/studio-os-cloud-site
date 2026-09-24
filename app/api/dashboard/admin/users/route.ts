@@ -7,6 +7,8 @@ import {
 import { parseJson } from "@/lib/api-validation";
 import { getOrCreatePhotographerByUser } from "@/lib/payments";
 
+import { resolveSubscriptionAccess } from "@/lib/subscription-access";
+
 export const dynamic = "force-dynamic";
 
 const PhotographerIdField = z.string().uuid("photographerId must be a UUID.");
@@ -206,30 +208,14 @@ export async function GET(request: NextRequest) {
 
     const now = new Date();
     const enriched = (users ?? []).map((u) => {
-      const trialEnd = u.trial_ends_at ? new Date(u.trial_ends_at) : null;
-      const subStatus = ((u.subscription_status as string) ?? "").trim().toLowerCase();
+      const access = resolveSubscriptionAccess(u, now.getTime());
       const hasStripeSubscription = Boolean(u.stripe_subscription_id);
-      const hasPaidSubscription =
-        hasStripeSubscription && (subStatus === "active" || subStatus === "trialing" || subStatus === "trial");
-
-      const isOwner = Boolean(u.is_platform_admin);
-
-      let trialStatus: "active" | "expired" | "none" | "converted" | "owner" = "none";
-      if (isOwner) {
-        // Platform admins (owners) never expire and aren't subject to trial logic.
-        trialStatus = "owner";
-      } else if (hasPaidSubscription && hasStripeSubscription) {
-        trialStatus = "converted";
-      } else if (trialEnd && trialEnd > now) {
-        trialStatus = "active";
-      } else if (trialEnd && trialEnd <= now) {
-        trialStatus = "expired";
-      }
-
-      const trialDaysRemaining =
-        trialEnd && trialEnd > now
-          ? Math.ceil((trialEnd.getTime() - now.getTime()) / (1000 * 60 * 60 * 24))
-          : 0;
+      const isOwner = access.isOwner;
+      const trialStatus = isOwner ? "owner"
+        : hasStripeSubscription && access.billingActive ? "converted"
+        : access.trialActive ? "active"
+        : access.trialExpired ? "expired" : "none";
+      const trialDaysRemaining = access.trialDaysRemaining;
 
       const authMeta = authMetaMap.get(u.user_id as string);
       const keysEntry = keysByPhotographer.get(u.id as string) ?? { active: 0, total: 0 };
@@ -263,7 +249,7 @@ export async function GET(request: NextRequest) {
         email: u.billing_email || u.studio_email || authMeta?.email || "—",
         phone: u.studio_phone || authMeta?.phone || null,
         address: u.studio_address || null,
-        subscriptionPlanCode: u.subscription_plan_code,
+        subscriptionPlanCode: access.planCode,
         subscriptionBillingInterval: u.subscription_billing_interval || null,
         subscriptionStatus: u.subscription_status || "inactive",
         subscriptionCurrentPeriodEnd: u.subscription_current_period_end,
@@ -276,7 +262,7 @@ export async function GET(request: NextRequest) {
         creditTotalUsed: creditsEntry.totalUsed,
         totalSpentCents,
         trialStartsAt: u.trial_starts_at,
-        trialEndsAt: u.trial_ends_at,
+        trialEndsAt: access.trialEndsAt,
         trialStatus,
         trialDaysRemaining,
         isPlatformAdmin: Boolean(u.is_platform_admin),

@@ -1,5 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { isFreeTrialActive, isStripeBillingActive } from "@/lib/payments";
+import { resolveSubscriptionAccess } from "@/lib/subscription-access";
 
 /**
  * Defense-in-depth check for portal (public gallery) routes.
@@ -25,11 +25,7 @@ export type SubscriptionGateRow = {
 };
 
 export function hasActiveSubscription(photographer: SubscriptionGateRow | null | undefined) {
-  if (!photographer) return false;
-  if (photographer.is_platform_admin) return true;
-  if (isStripeBillingActive(photographer.subscription_status)) return true;
-  if (isFreeTrialActive(photographer)) return true;
-  return false;
+  return Boolean(photographer && resolveSubscriptionAccess(photographer).accessEnabled);
 }
 
 /**

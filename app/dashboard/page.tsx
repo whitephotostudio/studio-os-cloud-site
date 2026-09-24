@@ -12,7 +12,8 @@ import {
   getFreeTrialDaysRemaining,
   isFreeTrialActive,
   resolveFreeTrialEndsAt,
-} from "@/lib/payments";
+  resolveSubscriptionAccess,
+} from "@/lib/subscription-access";
 import { resolveOrderTotalCents } from "@/lib/order-display";
 import {
   FolderOpen,
@@ -40,6 +41,7 @@ type Photographer = {
   logo_url?: string | null;
   is_platform_admin?: boolean | null;
   subscription_status?: string | null;
+  subscription_plan_code?: string | null;
   trial_starts_at?: string | null;
   trial_ends_at?: string | null;
   created_at?: string | null;
@@ -715,50 +717,35 @@ function DashboardPageContent() {
 
       const photographerResult = await supabase
         .from("photographers")
-        .select("id,business_name,logo_url,is_platform_admin,subscription_status,trial_starts_at,trial_ends_at,created_at")
+        .select("id,business_name,logo_url,is_platform_admin,subscription_status,subscription_plan_code,trial_starts_at,trial_ends_at,created_at")
         .eq("user_id", user.id)
         .maybeSingle();
       let photographerRow = photographerResult.data;
 
       if (photographerResult.error) throw photographerResult.error;
 
-      // First-visit bootstrap: if no photographer row exists yet, hit the
-      // status endpoint which creates one (with a fresh launch trial) via
-      // getOrCreatePhotographerByUser, then re-query so the rest of the
-      // dashboard (trial banner, schools, projects, orders) renders right
-      // away instead of showing an empty state.
-      if (!photographerRow) {
-        try {
-          await fetch("/api/studio-os-app/status", {
-            method: "GET",
-            cache: "no-store",
-            credentials: "include",
-            headers: authHeaders,
-          });
-          const retry = await supabase
-            .from("photographers")
-            .select("id,business_name,logo_url,is_platform_admin,subscription_status,trial_starts_at,trial_ends_at,created_at")
-            .eq("user_id", user.id)
-            .maybeSingle();
-          photographerRow = retry.data;
-          if (retry.error) throw retry.error;
-        } catch (bootstrapErr) {
-          console.error("[dashboard] bootstrap failed:", bootstrapErr);
+      // The signup trigger creates a placeholder, so an existing row can still
+      // need initialization. Complete it before evaluating expiry or rendering.
+      let bootstrapStudioAppResponse: Response | null = null;
+      if (!photographerRow || (!photographerRow.is_platform_admin &&
+          photographerRow.subscription_status === "trial" &&
+          (!photographerRow.subscription_plan_code || !photographerRow.trial_starts_at || !photographerRow.trial_ends_at))) {
+        bootstrapStudioAppResponse = await fetch("/api/studio-os-app/status", {
+          method: "GET", cache: "no-store", credentials: "include", headers: authHeaders,
+        });
+        if (!bootstrapStudioAppResponse.ok) {
+          throw new Error("Unable to finish account setup. Please refresh to try again.");
         }
+        const retry = await supabase.from("photographers")
+          .select("id,business_name,logo_url,is_platform_admin,subscription_status,subscription_plan_code,trial_starts_at,trial_ends_at,created_at")
+          .eq("user_id", user.id).maybeSingle();
+        if (retry.error) throw retry.error;
+        photographerRow = retry.data;
       }
 
-      // Trial / billing gate — redirect expired trials to pricing.
-      // Platform admins and users with active Stripe subs skip this.
-      if (photographerRow && !photographerRow.is_platform_admin) {
-        const sub = (photographerRow.subscription_status ?? "").trim().toLowerCase();
-        const hasPaidSub = sub === "active" || sub === "trialing" || sub === "trial";
-        if (!hasPaidSub) {
-          const trialOk = isFreeTrialActive(photographerRow);
-          if (!trialOk) {
-            window.location.href = "/pricing?trial_expired=1";
-            return;
-          }
-        }
+      if (photographerRow && !resolveSubscriptionAccess(photographerRow).accessEnabled) {
+        window.location.href = "/pricing?trial_expired=1";
+        return;
       }
 
       if (!photographerRow) {
@@ -796,7 +783,7 @@ function DashboardPageContent() {
           method: "GET",
           cache: "no-store",
         }),
-        fetch("/api/studio-os-app/status", {
+        bootstrapStudioAppResponse ?? fetch("/api/studio-os-app/status", {
           method: "GET",
           cache: "no-store",
           credentials: "include",

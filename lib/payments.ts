@@ -26,6 +26,11 @@ import {
   type PlanDefinition,
 } from "@/lib/studio-pricing";
 import { FREE_TRIAL_DAYS } from "@/lib/trial-config";
+import { isStripeBillingActive } from "@/lib/subscription-access";
+export {
+  isStripeBillingActive, isTrialStatus, resolveFreeTrialEndsAt,
+  getFreeTrialDaysRemaining, isFreeTrialActive, isFreeTrialExpired,
+} from "@/lib/subscription-access";
 
 export {
   ANNUAL_DISCOUNT_PERCENT,
@@ -312,11 +317,6 @@ const CREDIT_PACK_LOOKUP_KEYS: Record<CreditPackCode, string> = {
   background_credits_10000: "studio-os-background-credits-10000-v2",
 };
 
-export function isStripeBillingActive(status: string | null | undefined) {
-  const normalized = (status ?? "").trim().toLowerCase();
-  return normalized === "active" || normalized === "trialing";
-}
-
 export function asIsoTimestamp(unixSeconds: number | null | undefined) {
   if (!unixSeconds || !Number.isFinite(unixSeconds)) return null;
   return new Date(unixSeconds * 1000).toISOString();
@@ -506,162 +506,40 @@ export async function getPhotographerByUserId(service: ServiceClient, userId: st
   return (data as PhotographerBillingRow | null) ?? null;
 }
 
-export function isTrialStatus(status: string | null | undefined) {
-  const normalized = (status ?? "").trim().toLowerCase();
-  return normalized === "trial" || normalized === "trialing";
-}
-
-export function resolveFreeTrialEndsAt(photographer: {
-  trial_ends_at?: string | null;
-  trial_starts_at?: string | null;
-  created_at?: string | null;
-  subscription_status?: string | null;
-}) {
-  if (photographer.trial_ends_at) return photographer.trial_ends_at;
-  if (!isTrialStatus(photographer.subscription_status)) return null;
-
-  const anchor = photographer.trial_starts_at ?? photographer.created_at;
-  if (!anchor) return null;
-
-  const parsed = new Date(anchor);
-  if (Number.isNaN(parsed.getTime())) return null;
-
-  parsed.setDate(parsed.getDate() + FREE_TRIAL_DAYS);
-  return parsed.toISOString();
-}
-
-export function getFreeTrialDaysRemaining(photographer: {
-  trial_ends_at?: string | null;
-  trial_starts_at?: string | null;
-  created_at?: string | null;
-  subscription_status?: string | null;
-}) {
-  const trialEndsAt = resolveFreeTrialEndsAt(photographer);
-  if (!trialEndsAt) return 0;
-
-  return Math.max(
-    0,
-    Math.ceil(
-      (new Date(trialEndsAt).getTime() - Date.now()) / (1000 * 60 * 60 * 24),
-    ),
-  );
-}
-
-/**
- * Returns true when a photographer's free trial is still running.
- * A paid/trialing Stripe subscription always overrides the local trial.
- */
-export function isFreeTrialActive(photographer: {
-  trial_ends_at?: string | null;
-  trial_starts_at?: string | null;
-  created_at?: string | null;
-  subscription_status?: string | null;
-  is_platform_admin?: boolean | null;
-}) {
-  // Platform owners (admins) bypass trial logic entirely.
-  if (photographer.is_platform_admin) return false;
-  // If they already have a paid Stripe subscription, trial doesn't matter.
-  if (isStripeBillingActive(photographer.subscription_status)) return false;
-  const trialEndsAt = resolveFreeTrialEndsAt(photographer);
-  if (!trialEndsAt) return false;
-  return new Date(trialEndsAt) > new Date();
-}
-
-/**
- * Returns true when the free trial existed and has expired, and the user
- * does NOT have a paid subscription.
- */
-export function isFreeTrialExpired(photographer: {
-  trial_ends_at?: string | null;
-  trial_starts_at?: string | null;
-  created_at?: string | null;
-  subscription_status?: string | null;
-  is_platform_admin?: boolean | null;
-}) {
-  // Platform owners (admins) never expire.
-  if (photographer.is_platform_admin) return false;
-  if (isStripeBillingActive(photographer.subscription_status)) return false;
-  const trialEndsAt = resolveFreeTrialEndsAt(photographer);
-  if (!trialEndsAt) return false;
-  return new Date(trialEndsAt) <= new Date();
-}
-
 export async function getOrCreatePhotographerByUser(
   service: ServiceClient,
   user: { id: string; email?: string | null },
 ) {
   const existing = await getPhotographerByUserId(service, user.id);
-  if (existing) return existing;
+  const needsTrialInitialization = existing && !existing.is_platform_admin &&
+    existing.subscription_status === "trial" && !existing.stripe_subscription_id &&
+    (!existing.subscription_plan_code?.trim() || !existing.trial_starts_at || !existing.trial_ends_at);
+  if (existing && !needsTrialInitialization) return existing;
 
-  const defaultName = user.email?.split("@")[0]?.trim() || "Studio OS Photographer";
-  const now = new Date();
-  const trialEnd = new Date(now);
-  trialEnd.setDate(trialEnd.getDate() + FREE_TRIAL_DAYS);
+  // The database verifies email confirmation and locks the profile. Repeated or
+  // concurrent requests cannot reset a trial or overwrite a paid subscription.
+  const { data: initialized, error } = await service
+    .rpc("initialize_photographer_trial", { p_user_id: user.id })
+    .single<{ photographer_id: string; trial_initialized: boolean }>();
+  if (error) throw error;
+  const photographer = await getPhotographerByUserId(service, user.id);
+  if (!photographer) throw new Error("Unable to initialize photographer account.");
 
-  // Try inserting with trial fields first; fall back without them if the
-  // migration hasn't been run yet.
-  let { data, error } = await service
-    .from("photographers")
-    .insert({
-      user_id: user.id,
-      business_name: defaultName,
-      brand_color: "#0f172a",
-      billing_email: user.email ?? null,
-      billing_currency: DEFAULT_BILLING_CURRENCY,
-      order_usage_rate_cents: ORDER_USAGE_RATE_CENTS,
-      extra_desktop_keys: 0,
-      subscription_billing_interval: "month",
-      subscription_status: "trial",
-      subscription_plan_code: "studio",
-      trial_starts_at: now.toISOString(),
-      trial_ends_at: trialEnd.toISOString(),
-    })
-    .select(PHOTOGRAPHER_SELECT_FULL)
-    .single();
-
-  if (error) {
-    const msg = (error.message ?? "").toLowerCase();
-    if (msg.includes("trial_starts_at") || msg.includes("trial_ends_at")) {
-      // Trial columns don't exist yet — insert without them.
-      const fallback = await service
-        .from("photographers")
-        .insert({
-          user_id: user.id,
-          business_name: defaultName,
-          brand_color: "#0f172a",
-          billing_email: user.email ?? null,
-          billing_currency: DEFAULT_BILLING_CURRENCY,
-          order_usage_rate_cents: ORDER_USAGE_RATE_CENTS,
-          extra_desktop_keys: 0,
-          subscription_billing_interval: "month",
-          subscription_status: "trial",
-          subscription_plan_code: "studio",
-        })
-        .select(PHOTOGRAPHER_SELECT_BASE)
-        .single();
-      data = fallback.data as typeof data;
-      error = fallback.error;
-    }
-    if (error) throw error;
-  }
-
-  const createdPhotographer = data as PhotographerBillingRow;
-  if (!createdPhotographer.is_platform_admin) {
+  if (initialized?.trial_initialized && !photographer.is_platform_admin) {
     await notifyOwnerForSetting("alertOnNewRegistration", {
       title: "New Studio OS photographer",
       message: [
-        createdPhotographer.business_name || defaultName,
-        createdPhotographer.billing_email || user.email || "No email captured",
-        `Trial ends: ${trialEnd.toLocaleDateString("en-CA")}`,
+        photographer.business_name || "Studio OS Photographer",
+        photographer.billing_email || user.email || "No email captured",
+        `Trial ends: ${new Date(photographer.trial_ends_at!).toLocaleDateString("en-CA")}`,
       ].join("\n"),
       url: ownerUrl("/dashboard/admin/users"),
       urlTitle: "Open admin users",
       priority: 0,
       sound: "pushover",
-    });
+    }).catch((error) => console.warn("[trial] Owner notification failed:", error));
   }
-
-  return createdPhotographer;
+  return photographer;
 }
 
 export async function ensurePlatformCustomer(

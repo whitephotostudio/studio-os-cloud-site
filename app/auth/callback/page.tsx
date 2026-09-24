@@ -164,7 +164,7 @@ export default function AuthCallbackPage() {
                     , <span className="font-semibold">{state.email}</span>
                   </>
                 ) : null}
-                . Your {FREE_TRIAL_DAYS}-day free trial is now active. Taking you to your
+                . Your {FREE_TRIAL_DAYS}-day free trial will be ready in your
                 dashboard...
               </p>
               <div className="mt-8 flex flex-wrap gap-3">
