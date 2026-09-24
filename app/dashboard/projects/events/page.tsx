@@ -1,5 +1,7 @@
 "use client";
 
+import { formatCalendarDate } from "@/lib/calendar-dates";
+
 import { KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -64,16 +66,6 @@ function projectSubtitleOf(project: ProjectRow) {
   return clean(project.client_name) || "Client gallery";
 }
 
-function formatDisplayDate(value: string | null | undefined) {
-  if (!value) return "No date set";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "No date set";
-  return date.toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
-}
 
 function statusLabel(project: ProjectRow) {
   return clean(project.portal_status) || clean(project.status) || "inactive";
@@ -580,7 +572,7 @@ export default function EventsPage() {
                       <div style={{ fontSize: 13, color: "#6b7280", marginTop: 2 }}>{projectSubtitleOf(project)}</div>
                     )}
                     <div style={{ fontSize: 12, color: "#9ca3af", marginTop: 4 }}>
-                      {formatDisplayDate(project.event_date || project.shoot_date)}
+                      {formatCalendarDate(project.event_date || project.shoot_date)}
                     </div>
                     {(() => {
                       const ex = expiryInfo(project.expiration_date);

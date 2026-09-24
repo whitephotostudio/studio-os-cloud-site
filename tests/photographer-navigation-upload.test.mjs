@@ -69,3 +69,16 @@ test('server agreement gate keeps writes closed while separating unavailable dat
  const response=await guardAgreement({service:{from:()=>query},userId:owner});assert.equal(response.ok?200:response.status,status);
  }
 });
+
+const {formatCalendarDate}=load('lib/calendar-dates');
+test('shoot calendar dates retain their day across photographer time zones and daylight-saving changes',()=>{
+ const original=process.env.TZ;
+ try{for(const zone of ['America/Toronto','America/Los_Angeles','Australia/Sydney','Pacific/Honolulu']){
+  process.env.TZ=zone;
+  assert.equal(formatCalendarDate('2026-09-24'),'Sep 24, 2026');
+  assert.equal(formatCalendarDate('2026-09-24T00:00:00Z'),'Sep 24, 2026');
+  assert.equal(formatCalendarDate('2026-03-08'),'Mar 8, 2026');
+  assert.equal(formatCalendarDate('2026-11-01'),'Nov 1, 2026');
+ }}finally{if(original===undefined)delete process.env.TZ;else process.env.TZ=original;}
+ assert.equal(formatCalendarDate('2026-02-31'),'No date set');assert.equal(formatCalendarDate(null),'No date set');
+});

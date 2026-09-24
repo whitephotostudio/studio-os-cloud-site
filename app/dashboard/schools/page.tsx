@@ -1,5 +1,7 @@
 "use client";
 
+import { formatCalendarDate } from "@/lib/calendar-dates";
+
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -761,7 +763,7 @@ export default function SchoolsPage() {
                     {school.school_name}
                   </div>
                   <div style={{ fontSize: 12, color: "#9ca3af", marginTop: 4 }}>
-                    {school.shoot_date ? `Shoot ${formatDate(school.shoot_date)}` : formatDate(school.created_at)}
+                    {school.shoot_date ? `Shoot ${formatCalendarDate(school.shoot_date, "No date")}` : formatDate(school.created_at)}
                   </div>
                   {(() => {
                     const ex = expiryInfo(school.expiration_date);

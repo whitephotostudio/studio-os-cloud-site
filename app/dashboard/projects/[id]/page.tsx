@@ -1,5 +1,7 @@
 "use client";
 
+import { formatCalendarDate } from "@/lib/calendar-dates";
+
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
@@ -157,16 +159,6 @@ function hasPinProtection(mode: string | null | undefined, pin: string | null | 
   return normalizedAccessMode(mode) === "pin" && clean(pin).length > 0;
 }
 
-function formatDisplayDate(value: string | null | undefined) {
-  if (!value) return "No date set";
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return "No date set";
-  return d.toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
-}
 
 function formatActivityDate(value: string | null | undefined) {
   if (!value) return "No activity yet";
@@ -1278,7 +1270,7 @@ export default function ProjectDetailPage() {
                 Edit Cover Photo
               </button>
             )}
-            <div style={{ color: "#4b5563", fontSize: 13, marginTop: 10 }}>Shoot Date: {formatDisplayDate(projectDate)}</div>
+            <div style={{ color: "#4b5563", fontSize: 13, marginTop: 10 }}>Shoot Date: {formatCalendarDate(projectDate)}</div>
 
             <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
               <Link href={`/dashboard/projects/${projectId}/settings`} style={{ flex: 1, borderRadius: 10, border: "1px solid #111111", background: "#fff", color: "#b91c1c", padding: "12px 14px", fontWeight: 800, cursor: "pointer", textDecoration: "none", display: "inline-flex", alignItems: "center", justifyContent: "center", boxSizing: "border-box" }}>

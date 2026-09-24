@@ -90,3 +90,14 @@ export function hasCalendarBoundaryPassed(
   const boundary = calendarBoundaryEnd(value);
   return Boolean(boundary && now > boundary);
 }
+
+/** A shoot date is a calendar day, not a UTC instant to shift into the browser's zone. */
+export function formatCalendarDate(value: string | null | undefined, fallback = "No date set") {
+  const day = calendarDateInputValue(value);
+  if (!day) return fallback;
+  const date = new Date(`${day}T00:00:00Z`);
+  if (Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== day) return fallback;
+  return date.toLocaleDateString("en-US", {
+    timeZone: "UTC", month: "short", day: "numeric", year: "numeric",
+  });
+}
