@@ -26,4 +26,13 @@ The owner explicitly approved fresh 30-day trials for the five affected accounts
 
 ## Release
 
-Pending production migration, guarded deployment, account recovery and live verification. The previous website deployment is `dpl_HRpNXzuPQ2DfxrpcMwCT9VDqYmD3`. The new function is additive and compatible with that version; recovery grants valid Studio trials that the previous version also understands. Do not roll back restored trial windows or delete issued keys as part of a website rollback.
+Completed on September 24, 2026:
+
+- Applied and recorded migration `20260924190000`; confirmed only the service role can execute the initializer.
+- The guarded release passed all 309 tests, TypeScript, and local/remote production builds. Commit `17ded98` produced deployment `dpl_Gwj7wDfUL7e6NuxxMKBrx1tH2fo9`, promoted to https://www.studiooscloud.com. The public site's script deployment IDs were checked against this exact deployment after promotion.
+- Recovered Joshua Poe, Shimiko Phelps, Mohammed Radhi, vkpk and Divya Dugar transactionally. Each has a Studio trial and two active keys. The shared window is September 24 at 13:15:36 through October 24 at 13:15:36, America/Toronto (17:15:36 UTC).
+- Verified eight registered accounts remain: five active trials, one unrelated expired trial, and two owners. The three unaffected profiles' plan, status, subscription reference and trial dates match the pre-repair snapshot.
+- Used a temporary test account against the deployed API and production database to verify the signup placeholder, rejection before confirmation, six simultaneous initialization requests producing exactly one initialization, repeated status requests producing the same two keys, desktop activation/validation, denial after expiry, and rejection of unauthenticated access. No customer identity or device was used. The temporary account, profile, keys and activation were removed afterward.
+- Public homepage, sign-in and signup return 200; unauthenticated desktop-status and admin-directory requests return 401. No customer emails or financial operations were performed by this repair.
+
+The previous website deployment is `dpl_HRpNXzuPQ2DfxrpcMwCT9VDqYmD3`. The new function is additive and compatible with that version; recovery grants valid Studio trials that the previous version also understands. Do not roll back restored trial windows or delete issued keys as part of a website rollback.
