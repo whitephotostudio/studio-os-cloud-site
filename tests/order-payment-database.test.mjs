@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { PGlite } from '@electric-sql/pglite';
 
 const migration = readFileSync(new URL('../supabase/migrations/20260924160000_order_payment_safety.sql', import.meta.url),'utf8');
+const syncMigration = readFileSync(new URL('../supabase/migrations/20260924163000_touch_order_payment_state.sql', import.meta.url),'utf8');
 test('database replays interrupted/concurrent checkouts atomically and protects financial closure', async () => {
   const db = new PGlite();
   try {
@@ -11,9 +12,10 @@ test('database replays interrupted/concurrent checkouts atomically and protects 
       create table orders (id uuid primary key, photographer_id uuid, parent_name text,parent_email text,parent_phone text,
       customer_name text,customer_email text,package_id uuid,package_name text,package_price numeric,special_notes text,notes text,
       status text,payment_status text,seen_by_photographer boolean,subtotal_cents integer,tax_cents integer,total_cents integer,total_amount numeric,
-      currency text,cart_snapshot jsonb,school_id uuid,class_id uuid,student_id uuid,project_id uuid,order_group_id uuid,refund_status text,refund_amount_cents integer);
+      currency text,cart_snapshot jsonb,school_id uuid,class_id uuid,student_id uuid,project_id uuid,order_group_id uuid,refund_status text,refund_amount_cents integer,updated_at timestamptz default now());
       create table order_items(id uuid default gen_random_uuid(), order_id uuid references orders(id),product_name text,quantity integer check(quantity>0),price numeric,unit_price_cents integer,line_total_cents integer,sku text);`);
     await db.exec(migration);
+    await db.exec(syncMigration);
     const order = {id:crypto.randomUUID(),photographer_id:crypto.randomUUID(),total_cents:10360,subtotal_cents:9168,tax_cents:1192,currency:'cad'};
     const item = {order_id:order.id,product_name:'Prints',quantity:1,price:91.68,unit_price_cents:9168,line_total_cents:9168};
     const create = (key,hash,orders=[order],items=[item]) => db.query('select create_checkout_order_once($1,$2,$3,$4,$5) as result',[key,hash,JSON.stringify(orders),JSON.stringify(items),JSON.stringify({ok:true,orderId:orders[0].id})]);
@@ -32,11 +34,16 @@ test('database replays interrupted/concurrent checkouts atomically and protects 
     const token=crypto.randomUUID();
     assert.equal((await db.query('select acquire_order_payment_lock($1,$2) as locked',[order.id,token])).rows[0].locked,true);
     assert.equal((await db.query('select acquire_order_payment_lock($1,$2) as locked',[order.id,crypto.randomUUID()])).rows[0].locked,false);
+    await db.query("update orders set updated_at='2000-01-01T00:00:00Z' where id=$1",[order.id]);
+    const beforeRefund = Date.now();
     await db.query("update orders set status='refunded',payment_status='refunded',refund_status='refunded',refund_amount_cents=10360 where id=$1",[order.id]);
+    const refundUpdatedAt = (await db.query('select updated_at from orders where id=$1',[order.id])).rows[0].updated_at;
+    assert.ok(new Date(refundUpdatedAt).getTime() >= beforeRefund, 'An old order refund must advance the incremental sync timestamp');
     for(const stale of ['paid','ready','completed','refund_pending']) {
       await db.query('update orders set status=$1,payment_status=\'paid\' where id=$2',[stale,order.id]);
       const row=(await db.query('select status,payment_status from orders where id=$1',[order.id])).rows[0];
       assert.deepEqual(row,{status:'refunded',payment_status:'refunded'});
+      assert.deepEqual((await db.query('select updated_at from orders where id=$1',[order.id])).rows[0].updated_at,refundUpdatedAt, 'Rejected stale updates must not change the sync timestamp');
     }
     await db.exec('set role anon');
     await assert.rejects(()=>create('anon','anon-cart'));
