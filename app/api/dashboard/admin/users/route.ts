@@ -8,6 +8,7 @@ import { parseJson } from "@/lib/api-validation";
 import { getOrCreatePhotographerByUser } from "@/lib/payments";
 
 import { resolveSubscriptionAccess } from "@/lib/subscription-access";
+import { buildAdminTrialChange } from "@/lib/admin-trial-change";
 
 export const dynamic = "force-dynamic";
 
@@ -351,67 +352,31 @@ export async function POST(request: NextRequest) {
 
     const targetId = body.photographerId;
 
-    if (body.action === "extend_trial") {
-      const extraDays = body.extraDays ?? 30;
-
+    if (body.action === "extend_trial" || body.action === "revoke_trial") {
       const { data: target, error: fetchError } = await service
         .from("photographers")
-        .select("id,trial_starts_at,trial_ends_at,subscription_status")
-        .eq("id", targetId)
-        .single();
-
+        .select("id,trial_starts_at,trial_ends_at,subscription_status,is_platform_admin,stripe_subscription_id")
+        .eq("id", targetId).single();
       if (fetchError || !target) {
-        return NextResponse.json(
-          { ok: false, message: "Photographer not found." },
-          { status: 404 },
-        );
+        return NextResponse.json({ ok: false, message: "Photographer not found." }, { status: 404 });
       }
-
-      const base = target.trial_ends_at ? new Date(target.trial_ends_at as string) : new Date();
-      const startFrom = base > new Date() ? base : new Date();
-      const newEnd = new Date(startFrom);
-      newEnd.setDate(newEnd.getDate() + extraDays);
-
-      const updates: Record<string, unknown> = {
-        trial_ends_at: newEnd.toISOString(),
-      };
-      if (!target.trial_starts_at) {
-        updates.trial_starts_at = new Date().toISOString();
+      let updates: ReturnType<typeof buildAdminTrialChange>;
+      try {
+        updates = buildAdminTrialChange(target, body.action, body.action === "extend_trial" ? body.extraDays ?? 30 : 0);
+      } catch (error) {
+        return NextResponse.json({ ok: false, message: error instanceof Error ? error.message : "This account cannot use trial actions." }, { status: 409 });
       }
-      const subStatus = ((target.subscription_status as string) ?? "").trim().toLowerCase();
-      if (subStatus !== "active") {
-        updates.subscription_status = "trial";
-        updates.subscription_plan_code = "studio";
-      }
-
-      const { error: updateError } = await service
-        .from("photographers")
-        .update(updates)
-        .eq("id", targetId);
-
+      const { data: changed, error: updateError } = await service.from("photographers")
+        .update(updates).eq("id", targetId)
+        // Do not overwrite a billing update that arrived since the read.
+        .eq("subscription_status", target.subscription_status)
+        .eq("is_platform_admin", false).is("stripe_subscription_id", null)
+        .select("id").maybeSingle();
       if (updateError) throw updateError;
-
-      return NextResponse.json({
-        ok: true,
-        message: `Trial extended by ${extraDays} days (new end: ${newEnd.toLocaleDateString()}).`,
-      });
-    }
-
-    if (body.action === "revoke_trial") {
-      const { error: updateError } = await service
-        .from("photographers")
-        .update({
-          trial_ends_at: new Date().toISOString(),
-          subscription_status: "inactive",
-        })
-        .eq("id", targetId);
-
-      if (updateError) throw updateError;
-
-      return NextResponse.json({
-        ok: true,
-        message: "Trial revoked. User will be redirected to pricing on next visit.",
-      });
+      if (!changed) return NextResponse.json({ ok: false, message: "Account changed. Refresh and try again." }, { status: 409 });
+      return NextResponse.json({ ok: true, message: body.action === "revoke_trial"
+        ? "Trial ended. Paid subscriptions were not changed."
+        : `Trial extended (new end: ${new Date(updates.trial_ends_at).toLocaleDateString()}).` });
     }
 
     if (body.action === "delete_user") {

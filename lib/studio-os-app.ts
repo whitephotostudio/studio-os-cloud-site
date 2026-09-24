@@ -1,4 +1,3 @@
-import { randomBytes } from "node:crypto";
 import { createDashboardServiceClient } from "@/lib/dashboard-auth";
 import { resolveSubscriptionAccess, type SubscriptionAccessRow } from "@/lib/subscription-access";
 import { type PlanCode } from "@/lib/studio-pricing";
@@ -202,11 +201,6 @@ export function getAllowedPhotographyKeyCount(photographer: KeyAccessRow) {
   return getIncludedPhotographyKeyCount(access.planCode) + getExtraPhotographyKeyCount(photographer);
 }
 
-function generatePhotographyKeyCode() {
-  const chunk = () => randomBytes(2).toString("hex").toUpperCase();
-  return `SOK-${chunk()}-${chunk()}-${chunk()}-${chunk()}`;
-}
-
 export function normalizePhotographyKeyCode(input: string | null | undefined) {
   return clean(input).toUpperCase().replace(/\s+/g, "");
 }
@@ -283,21 +277,6 @@ export async function loadStudioAppPhotographer(
 
   if (error) throw error;
   return (data as StudioAppPhotographerRow | null) ?? null;
-}
-
-async function loadPhotographyKeys(service: ServiceClient, photographerId: string) {
-  const { data, error } = await service
-    .from("photography_keys")
-    .select(KEY_SELECT)
-    .eq("photographer_id", photographerId)
-    .order("slot_index", { ascending: true })
-    .order("created_at", { ascending: true });
-
-  if (error) throw error;
-  return ((data ?? []) as PhotographyKeyRow[]).sort((left, right) => {
-    if (left.slot_index !== right.slot_index) return left.slot_index - right.slot_index;
-    return left.created_at.localeCompare(right.created_at);
-  });
 }
 
 async function loadKeyActivations(service: ServiceClient, photographyKeyIds: string[]) {
@@ -389,84 +368,11 @@ export async function syncPhotographyKeysForPhotographer(
   service: ServiceClient,
   photographer: StudioAppPhotographerRow,
 ) {
-  const allowedKeys = getAllowedPhotographyKeyCount(photographer);
-  const includedKeys = getIncludedPhotographyKeyCount(
-    resolveSubscriptionAccess(photographer).planCode,
-  );
-  let keys = (await loadPhotographyKeys(service, photographer.id)).filter(
-    (row) => row.status !== "revoked",
-  );
-
-  const missingKeys = Math.max(0, allowedKeys - keys.length);
-  if (missingKeys > 0) {
-    const { error: insertError } = await service.from("photography_keys").insert(
-      Array.from({ length: missingKeys }, (_, index) => ({
-        photographer_id: photographer.id,
-        slot_index: keys.length + index + 1,
-        label: buildDefaultKeyLabel(keys.length + index + 1),
-        key_code: generatePhotographyKeyCode(),
-        status: "active",
-        is_extra_key: keys.length + index + 1 > includedKeys,
-      })),
-    );
-
-    // Another first-visit request may have provisioned these same slots.
-    if (insertError && insertError.code !== "23505") throw insertError;
-    keys = (await loadPhotographyKeys(service, photographer.id)).filter(
-      (row) => row.status !== "revoked",
-    );
-    if (keys.length < allowedKeys) throw insertError ?? new Error("Unable to provision Photography Keys.");
-  }
-
-  for (const [index, key] of keys.entries()) {
-    const desiredStatus: PhotographyKeyStatus = index < allowedKeys ? "active" : "suspended";
-    const desiredSlotIndex = index + 1;
-    const desiredExtraKey = desiredSlotIndex > includedKeys;
-    const desiredLabel = clean(key.label) || buildDefaultKeyLabel(desiredSlotIndex);
-
-    if (
-      key.status !== desiredStatus ||
-      key.slot_index !== desiredSlotIndex ||
-      Boolean(key.is_extra_key) !== desiredExtraKey ||
-      clean(key.label) !== desiredLabel
-    ) {
-      const { error: updateError } = await service
-        .from("photography_keys")
-        .update({
-          status: desiredStatus,
-          slot_index: desiredSlotIndex,
-          is_extra_key: desiredExtraKey,
-          label: desiredLabel,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", key.id);
-
-      if (updateError) throw updateError;
-    }
-  }
-
-  const refresh = (await loadPhotographyKeys(service, photographer.id)).filter(
-    (row) => row.status !== "revoked",
-  );
-  const suspendedKeyIds = refresh
-    .filter((row) => row.status !== "active")
-    .map((row) => row.id);
-
-  if (suspendedKeyIds.length) {
-    const { error: deactivateError } = await service
-      .from("photography_key_activations")
-      .update({
-        status: "deactivated",
-        deactivated_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      })
-      .in("photography_key_id", suspendedKeyIds)
-      .eq("status", "active");
-
-    if (deactivateError) throw deactivateError;
-  }
-
-  return refresh;
+  const { data, error } = await service.rpc("sync_photography_keys", {
+    p_photographer_id: photographer.id,
+  });
+  if (error) throw error;
+  return (data ?? []) as PhotographyKeyRow[];
 }
 
 export async function syncPhotographyKeysByPhotographerId(
@@ -598,53 +504,14 @@ export async function activatePhotographyKey(
     throw new Error("Device ID is required to activate this Photography Key.");
   }
 
-  const activeActivation = await findActiveActivationForKey(service, freshKey.id);
-  const now = new Date().toISOString();
-
-  if (activeActivation && activeActivation.device_id !== deviceId) {
-    throw new Error(
-      `This Photography Key is already activated on ${clean(activeActivation.device_name) || "another device"}.`,
-    );
-  }
-
-  if (activeActivation) {
-    const { error: updateActivationError } = await service
-      .from("photography_key_activations")
-      .update({
-        device_name: clean(input.deviceName) || activeActivation.device_name,
-        platform: clean(input.platform) || activeActivation.platform,
-        app_version: clean(input.appVersion) || activeActivation.app_version,
-        last_validated_at: now,
-        updated_at: now,
-      })
-      .eq("id", activeActivation.id);
-
-    if (updateActivationError) throw updateActivationError;
-  } else {
-    const { error: insertActivationError } = await service
-      .from("photography_key_activations")
-      .insert({
-        photography_key_id: freshKey.id,
-        device_id: deviceId,
-        device_name: clean(input.deviceName) || null,
-        platform: clean(input.platform) || null,
-        app_version: clean(input.appVersion) || null,
-        status: "active",
-      });
-
-    if (insertActivationError) throw insertActivationError;
-  }
-
-  const { error: keyUpdateError } = await service
-    .from("photography_keys")
-    .update({
-      last_activated_at: now,
-      last_validated_at: now,
-      updated_at: now,
-    })
-    .eq("id", freshKey.id);
-
-  if (keyUpdateError) throw keyUpdateError;
+  const { error: activationError } = await service.rpc("activate_photography_key", {
+    p_key_id: freshKey.id,
+    p_device_id: deviceId,
+    p_device_name: clean(input.deviceName) || null,
+    p_platform: clean(input.platform) || null,
+    p_app_version: clean(input.appVersion) || null,
+  });
+  if (activationError) throw activationError;
 
   return {
     key: freshKey,

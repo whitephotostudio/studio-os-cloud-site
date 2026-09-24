@@ -5,6 +5,7 @@ import Link from "next/link";
 import { SiteHeader } from "@/components/site-header";
 import { SiteFooter } from "@/components/site-footer";
 import { createClient } from "@/lib/supabase/client";
+import { resolveSignInRedirect } from "@/lib/sign-in-redirect";
 
 type StudioAppSignInStatus = {
   ok?: boolean;
@@ -129,7 +130,7 @@ export default function SignInPage() {
         }
         if (error.message === "Invalid login credentials") {
           setMessage(
-            "That email already has an account, but the password did not match. Try again or use Forgot password.",
+            "The email or password did not match. Try again or use Forgot password.",
           );
         } else {
           setMessage(error.message);
@@ -210,8 +211,7 @@ export default function SignInPage() {
   }
 
   async function redirectAfterSignIn(accessToken: string | null) {
-    const params = new URLSearchParams(window.location.search);
-    const requestedRedirect = params.get("redirect") || "/dashboard";
+    const requestedRedirect = resolveSignInRedirect(window.location.search);
 
     try {
       const res = await fetch("/api/studio-os-app/status", {
@@ -219,6 +219,7 @@ export default function SignInPage() {
         headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : {},
         credentials: "include",
         cache: "no-store",
+        signal: AbortSignal.timeout(8000),
       });
 
       const studioStatus = (await res.json().catch(() => ({}))) as StudioAppSignInStatus;

@@ -34,12 +34,7 @@ export async function hasAcceptedCurrentAgreement({
     .limit(1)
     .maybeSingle();
 
-  if (error) {
-    // Be conservative: if we can't tell, treat as not-accepted so the
-    // modal appears. That's safer than letting a potential non-acceptor
-    // slip through during a transient DB hiccup.
-    return false;
-  }
+  if (error) throw new Error("Could not check agreement status. Please try again.");
   return Boolean(data?.id);
 }
 
@@ -53,7 +48,14 @@ export type AgreementGuardResult =
  * they haven't. Routes can just `if (!check.ok) return NextResponse.json(check.body, { status: check.status });`.
  */
 export async function guardAgreement(args: HasAcceptedArgs): Promise<AgreementGuardResult> {
-  const accepted = await hasAcceptedCurrentAgreement(args);
+  let accepted: boolean;
+  try {
+    accepted = await hasAcceptedCurrentAgreement(args);
+  } catch {
+    return { ok: false, status: 503, body: {
+      error: "Could not check agreement status. Please try again.", code: "agreement_unavailable",
+    } };
+  }
   if (accepted) return { ok: true };
   return {
     ok: false,

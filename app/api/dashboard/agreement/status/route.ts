@@ -33,10 +33,12 @@ export async function GET(request: NextRequest) {
   }
 
   const service = createDashboardServiceClient();
-  const accepted = await hasAcceptedCurrentAgreement({
-    service,
-    userId: user.id,
-  });
+  let accepted: boolean;
+  try {
+    accepted = await hasAcceptedCurrentAgreement({ service, userId: user.id });
+  } catch {
+    return NextResponse.json({ error: "Could not check agreement status. Please try again." }, { status: 503 });
+  }
 
   return NextResponse.json(
     {

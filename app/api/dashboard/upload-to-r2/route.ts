@@ -6,8 +6,7 @@ import {
 import { r2Upload } from "@/lib/r2";
 import { guardAgreement } from "@/lib/require-agreement";
 import sharp from "sharp";
-
-type ServiceClient = ReturnType<typeof createDashboardServiceClient>;
+import { assertKeyOwnedByPhotographer } from "@/lib/upload-ownership";
 
 function clean(value: string | null | undefined) {
   return (value ?? "").trim();
@@ -29,75 +28,6 @@ function withExtension(value: string, nextExtension: string) {
 
 function isProjectAlbumOriginalKey(key: string) {
   return /^projects\/[^/]+\/albums\/[^/]+\//i.test(clean(key));
-}
-
-/**
- * Verify the upload key is inside a namespace this photographer actually owns.
- *
- * Supported key shapes (all rooted at the photographer's own resources):
- *   - projects/{projectId}/...            → must own projects.id
- *   - backdrops/{backdropId-or-path}/...  → must own a backdrops row whose id
- *                                           or storage_path matches
- *   - {schoolId-or-localSchoolId}/...     → must own a schools row whose id or
- *                                           local_school_id matches the first
- *                                           segment
- *
- * Anything else (or a key that doesn't positively match an owned resource) is
- * rejected — callers cannot write outside their own namespace.
- */
-async function assertKeyOwnedByPhotographer(
-  service: ServiceClient,
-  photographerId: string,
-  rawKey: string,
-): Promise<{ ok: true } | { ok: false; reason: string }> {
-  const key = clean(rawKey);
-  if (!key) return { ok: false, reason: "empty key" };
-  if (key.includes("..") || key.startsWith("/")) {
-    return { ok: false, reason: "invalid path" };
-  }
-
-  const segments = key.split("/").filter(Boolean);
-  if (segments.length < 2) return { ok: false, reason: "key too short" };
-
-  const first = segments[0];
-  const second = segments[1];
-
-  // projects/{projectId}/...
-  if (first === "projects") {
-    const { data } = await service
-      .from("projects")
-      .select("id")
-      .eq("id", second)
-      .eq("photographer_id", photographerId)
-      .maybeSingle();
-    return data?.id
-      ? { ok: true }
-      : { ok: false, reason: "project not owned by caller" };
-  }
-
-  // backdrops/{photographerId}/...  — the frontend always writes uploads under
-  // the photographer's own id, so we can authorize purely on the path shape
-  // without a DB lookup. (Earlier versions of this check queried a
-  // non-existent `backdrops` table and silently rejected every upload.)
-  if (first === "backdrops") {
-    return second === photographerId
-      ? { ok: true }
-      : { ok: false, reason: "backdrop path does not match caller's photographer id" };
-  }
-
-  // Otherwise treat the first segment as a schoolId or local_school_id this
-  // photographer owns.
-  const { data: schoolRow } = await service
-    .from("schools")
-    .select("id")
-    .eq("photographer_id", photographerId)
-    .or(`id.eq.${first},local_school_id.eq.${first}`)
-    .limit(1)
-    .maybeSingle();
-
-  return schoolRow?.id
-    ? { ok: true }
-    : { ok: false, reason: "key does not map to a resource owned by caller" };
 }
 
 function shouldNormalizeProjectUploadToJpeg(file: File, key: string) {
@@ -215,10 +145,10 @@ export async function POST(request: NextRequest) {
 
     const publicUrl = await r2Upload(uploadKey, uploadBuffer, contentType);
     return NextResponse.json({ publicUrl, key: uploadKey, contentType });
-  } catch (err: any) {
+  } catch (err) {
     console.error("R2 upload error:", err);
     return NextResponse.json(
-      { error: err.message || "Upload failed" },
+      { error: err instanceof Error ? err.message : "Upload failed" },
       { status: 500 },
     );
   }

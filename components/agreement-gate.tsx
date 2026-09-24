@@ -20,12 +20,13 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { AlertTriangle } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { loadAgreementStatus } from "@/lib/agreement-status";
 import {
   AGREEMENT_POLICY_LINKS,
   CURRENT_AGREEMENT_VERSION,
 } from "@/lib/agreement";
 
-type Status = "loading" | "required" | "ok" | "no-session";
+type Status = "loading" | "required" | "ok" | "no-session" | "unavailable";
 
 export function AgreementGate({ children }: { children: React.ReactNode }) {
   const [status, setStatus] = useState<Status>("loading");
@@ -34,33 +35,11 @@ export function AgreementGate({ children }: { children: React.ReactNode }) {
   const [error, setError] = useState("");
 
   const refreshStatus = useCallback(async () => {
+    setStatus("loading");
     try {
-      const res = await fetch("/api/dashboard/agreement/status", {
-        method: "GET",
-        credentials: "include",
-        cache: "no-store",
-      });
-      if (!res.ok) {
-        // Network/server trouble — default to "required" to be safe.
-        setStatus("required");
-        return;
-      }
-      let payload: {
-        accepted?: boolean;
-        authenticated?: boolean;
-      } = {};
-      try {
-        payload = await res.json();
-      } catch {
-        payload = {};
-      }
-      if (!payload.authenticated) {
-        setStatus("no-session");
-        return;
-      }
-      setStatus(payload.accepted ? "ok" : "required");
+      setStatus(await loadAgreementStatus());
     } catch {
-      setStatus("required");
+      setStatus("unavailable");
     }
   }, []);
 
@@ -78,6 +57,7 @@ export function AgreementGate({ children }: { children: React.ReactNode }) {
         credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: "{}",
+        signal: AbortSignal.timeout(15000),
       });
       if (!res.ok) {
         let message = "We couldn't record your acceptance. Please try again.";
@@ -123,6 +103,15 @@ export function AgreementGate({ children }: { children: React.ReactNode }) {
     <>
       {children}
       {status === "loading" ? <LoadingSplash /> : null}
+      {status === "unavailable" ? (
+        <div role="alert" style={{ position: "fixed", inset: 0, zIndex: 9999, background: "#f0f0f0", display: "grid", placeItems: "center", padding: 24 }}>
+          <div style={{ maxWidth: 420, textAlign: "center" }}>
+            <h2>We couldn’t finish checking your account</h2>
+            <p>Please check your connection and try again. You’re still signed in.</p>
+            <button type="button" onClick={() => void refreshStatus()} style={{ padding: "12px 24px", background: "#111827", color: "white", borderRadius: 10 }}>Try again</button>
+          </div>
+        </div>
+      ) : null}
       {status === "required" ? (
         <AgreementModal
           agreed={agreed}

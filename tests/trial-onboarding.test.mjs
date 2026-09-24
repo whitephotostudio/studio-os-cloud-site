@@ -84,12 +84,18 @@ async function fixture() {
  business_name text,billing_email text,studio_email text,is_platform_admin boolean not null default false,
  subscription_status text not null default 'trial',subscription_plan_code text,stripe_subscription_id text,
  trial_starts_at timestamptz,trial_ends_at timestamptz,created_at timestamptz default now(),
- extra_desktop_keys integer default 0,studio_app_beta_access boolean default false);
+ studio_id uuid,extra_desktop_keys integer default 0,studio_app_beta_access boolean default false);
  create function public.handle_new_user() returns trigger language plpgsql as $$ begin
  insert into public.photographers(user_id,business_name) values(new.id,'My Photography Business');return new;end;$$;
  create trigger on_auth_user_created after insert on auth.users for each row execute function public.handle_new_user();`);
  await db.exec(loadSource('supabase/migrations/20260403143000_add_studio_os_app_beta_rollout.sql'));
  await db.exec(loadSource('supabase/migrations/20260924190000_initialize_photographer_trials.sql'));
+ await db.exec(`create function auth.uid() returns uuid language sql as $$ select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid $$;
+ create table subscriptions(user_id uuid, is_admin boolean default false, status text, plan text);
+ create table desktop_app_device_registrations(scope_key text,user_id uuid,studio_id uuid,device_id text,device_name text,
+ platform text,app_version text,released_at timestamptz,last_seen_at timestamptz default now(),updated_at timestamptz default now(),unique(scope_key,device_id));`);
+ await db.exec(loadSource('supabase/migrations/20260924220000_repair_desktop_access_lifecycle.sql'));
+ await db.query("select set_config('request.jwt.claim.sub',$1,false)",[userId]);
  await db.query("update studio_app_releases set release_state='public',mac_download_url='https://example.invalid/mac.dmg'");
  await db.query("insert into auth.users(id,email,raw_user_meta_data) values($1,'tester@example.invalid',$2)",[userId,{business_name:'Photo Studio'}]);
  const notified=[];
@@ -112,7 +118,11 @@ async function fixture() {
   }catch(error){return {data:null,error};}}
   return chain;
  }
- const service={from,rpc(name,{p_user_id}){assert.equal(name,'initialize_photographer_trial');return {single:async()=>{try{return {data:(await db.query('select * from initialize_photographer_trial($1)',[p_user_id])).rows[0],error:null};}catch(error){return {data:null,error};}}};}};
+ const service={from,rpc(name,args){
+  assert.ok(['initialize_photographer_trial','sync_photography_keys','activate_photography_key'].includes(name));
+  const run=async(single=false)=>{try{const result=await db.query(`select * from ${name}(${Object.keys(args).map((k,i)=>`${ident(k)} => $${i+1}`).join(',')})`,Object.values(args));return {data:single?result.rows[0]:result.rows,error:null};}catch(error){return {data:null,error};}};
+  return {single:()=>run(true),then:(a,b)=>run().then(a,b)};
+ }};
  const load=modules({'@/lib/dashboard-auth':{createDashboardServiceClient:()=>service,resolveDashboardAuth:async()=>({user:{id:userId,email:'tester@example.invalid'}})},'@/lib/admin-notification-center':{notifyOwnerForSetting:async(...args)=>notified.push(args)},'@/lib/owner-notifications':{ownerUrl:path=>'https://example.invalid'+path},'next/server':{NextResponse:{json:(body,init)=>Response.json(body,init)}}});
  const confirm=()=>db.query('update auth.users set email_confirmed_at=now() where id=$1',[userId]);
  const profile=async()=>(await db.query('select * from photographers where user_id=$1',[userId])).rows[0];
@@ -200,5 +210,82 @@ test('authorized five-account recovery is atomic, grants ten keys, preserves oth
   assert.deepEqual(await f.profile(),unrelated);
   await assert.rejects(()=>f.db.exec(source),/preconditions changed/);await f.db.exec('rollback');
   assert.deepEqual((await f.db.query('select * from photographers where id=any($1)',[ids])).rows,rows);
+ }finally{await f.db.close();}
+});
+
+const claim=async(f,device='mac-a')=>(await f.db.query('select * from claim_desktop_app_access($1)',[device])).rows[0];
+const releaseDevice=async(f,device='mac-a')=>(await f.db.query('select release_desktop_app_access($1) released',[device])).rows[0].released;
+
+test('native first login initializes and provisions without a website visit; sign-out frees the same key for reactivation',async()=>{
+ const f=await fixture();try{
+  assert.equal((await claim(f)).allowed,false);await f.confirm();
+  const result=await claim(f);assert.equal(result.allowed,true);assert.equal(result.seat_limit,2);assert.equal(result.active_device_count,1);
+  const before=await f.profile();const keys=(await f.db.query('select id,key_code from photography_keys order by slot_index')).rows;
+  for(let i=0;i<3;i++){
+   assert.equal(await releaseDevice(f),true);assert.equal(await releaseDevice(f),false);
+   assert.equal((await claim(f)).allowed,true);
+  }
+  assert.deepEqual((await f.db.query('select id,key_code from photography_keys order by slot_index')).rows,keys);
+  assert.deepEqual(await f.profile(),before);assert.equal((await f.db.query('select count(*)::int n from photography_key_activations')).rows[0].n,1);
+ }finally{await f.db.close();}
+});
+
+test('native retries are idempotent, two devices fit, third is refused, and released seat is reusable',async()=>{
+ const f=await fixture();try{await f.confirm();
+  const repeated=await Promise.all(Array.from({length:6},()=>claim(f)));assert.ok(repeated.every(r=>r.allowed));
+  assert.equal((await claim(f,'mac-b')).allowed,true);const denied=await claim(f,'mac-c');assert.equal(denied.allowed,false);assert.equal(denied.active_device_count,2);
+  await releaseDevice(f);assert.equal((await claim(f,'mac-c')).allowed,true);
+ }finally{await f.db.close();}
+});
+
+test('native policy matches web allowance, including paid extra keys, expiration, downgrade and owner bypass',async()=>{
+ const f=await fixture();try{await f.confirm();await claim(f);
+  for(const [status,plan,extra,owner,expected] of [['active','core',3,false,1],['active','studio',3,false,5],['trialing','core',0,false,1],['active','starter',9,false,0],['canceled','studio',0,false,0],['past_due','studio',0,false,0],['trial','studio',9,false,2],['active','studio',0,true,4]]){
+   await f.db.query("update photographers set subscription_status=$1,subscription_plan_code=$2,extra_desktop_keys=$3,is_platform_admin=$4",[status,plan,extra,owner]);
+   const result=await claim(f);const p=await f.profile();assert.equal(app.getAllowedPhotographyKeyCount(p),expected);
+   assert.equal((await f.db.query("select count(*)::int n from photography_keys where status='active'")).rows[0].n,expected);
+   assert.equal(result.allowed,expected>0);assert.equal(result.is_admin,owner);
+   if(owner){for(let i=0;i<6;i++)assert.equal((await claim(f,'owner-'+i)).allowed,true);}
+  }
+  await f.db.query("update photographers set is_platform_admin=false,subscription_status='trial',trial_ends_at=now()-interval '1 second'");
+  assert.equal((await claim(f)).allowed,false);assert.equal((await f.db.query("select count(*)::int n from photography_key_activations where status='active'")).rows[0].n,0);
+ }finally{await f.db.close();}
+});
+
+test('stale legacy subscriptions cannot block a trial or revive canceled access',async()=>{
+ const f=await fixture();try{await f.confirm();await f.db.query("insert into subscriptions(user_id,status,plan) values($1,'inactive','starter')",[userId]);assert.equal((await claim(f)).allowed,true);
+ await f.db.query("update subscriptions set status='active',plan='studio'");await f.db.query("update photographers set subscription_status='canceled'");assert.equal((await claim(f)).allowed,false);
+ }finally{await f.db.close();}
+});
+
+test('revoked key stays revoked, replacements preserve other codes and active devices',async()=>{
+ const f=await fixture();try{await f.confirm();await claim(f);await claim(f,'mac-b');
+ const keys=(await f.db.query('select * from photography_keys order by slot_index')).rows;
+ await f.db.query("update photography_keys set status='revoked' where id=$1",[keys[0].id]);assert.equal((await claim(f)).allowed,true);
+ assert.equal((await f.db.query('select status from photography_keys where id=$1',[keys[0].id])).rows[0].status,'revoked');
+ assert.equal((await f.db.query('select key_code from photography_keys where id=$1',[keys[1].id])).rows[0].key_code,keys[1].key_code);
+ assert.equal((await f.db.query("select status from photography_key_activations where photography_key_id=$1",[keys[0].id])).rows[0].status,'deactivated');
+ assert.equal((await claim(f,'mac-b')).allowed,true);
+ }finally{await f.db.close();}
+});
+
+test('key-code activation can reclaim a released device and never takes another device’s seat',async()=>{
+ const f=await fixture();try{await f.confirm();await claim(f);
+ const key=(await f.db.query('select * from photography_keys order by slot_index')).rows[0];
+ const api=f.load('@/lib/studio-os-app');await releaseDevice(f);
+ await api.activatePhotographyKey(f.service,{keyCode:key.key_code,deviceId:'mac-a'});
+ await api.activatePhotographyKey(f.service,{keyCode:key.key_code,deviceId:'mac-a'});
+ await assert.rejects(()=>api.activatePhotographyKey(f.service,{keyCode:key.key_code,deviceId:'mac-other'}),/already activated/);
+ }finally{await f.db.close();}
+});
+
+test('native release and claim are caller-scoped and key maintenance is service-only',async()=>{
+ const f=await fixture();try{await f.confirm();await claim(f);
+ const other='22222222-2222-4222-8222-222222222222';await f.db.query("insert into auth.users(id,email,email_confirmed_at) values($1,'second@example.invalid',now())",[other]);
+ await f.db.query("select set_config('request.jwt.claim.sub',$1,false)",[other]);assert.equal(await releaseDevice(f),false);assert.equal((await claim(f)).allowed,true);
+ assert.equal((await f.db.query("select count(*)::int n from photography_key_activations where status='active'")).rows[0].n,2);
+ await f.db.exec('set role authenticated');await assert.rejects(()=>f.db.query('select * from sync_photography_keys($1)',[userId]),/permission denied/);
+ await assert.rejects(()=>f.db.query('select activate_photography_key($1,$2)',[userId,'forged']),/permission denied/);await f.db.exec('reset role');
+ await f.db.exec('set role anon');await assert.rejects(()=>claim(f),/permission denied/);await f.db.exec('reset role');
  }finally{await f.db.close();}
 });
