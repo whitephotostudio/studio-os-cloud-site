@@ -31,3 +31,29 @@ test('webhook verification accepts the production www alias and rejects lookalik
   await run('https://www.example.com/api/stripe/webhook?source=connect');
   await assert.rejects(() => run('https://www.example.com.evil.invalid/api/stripe/webhook'), /subscription is missing/);
 });
+test('explicit webhook configuration only adds refund events to the existing payment endpoint', async () => {
+  const existing = { ...endpoint, id: 'we_selected', enabled_events: ['checkout.session.completed', 'payment_intent.succeeded', 'payment_intent.payment_failed', 'charge.refunded'] };
+  const mutations = [];
+  const logs = [];
+  await verifyPaymentRelease({ ...env, STUDIO_PAYMENT_REFUND_WEBHOOK_ID: existing.id }, async (url, options) => {
+    if (options.method === 'POST') {
+      assert.equal(url, 'https://api.stripe.com/v1/webhook_endpoints/we_selected');
+      assert.deepEqual([...new Set(options.body.keys())], ['enabled_events[]']);
+      const events = options.body.getAll('enabled_events[]');
+      assert.deepEqual(events, [...existing.enabled_events, 'refund.updated', 'refund.failed']);
+      mutations.push(url);
+      return { ok: true, json: async () => ({ ...existing, enabled_events: events }) };
+    }
+    return { ok: true, json: async () => url.includes('webhook_endpoints') ? { data: [existing] } : {} };
+  }, (line) => logs.push(line));
+  assert.equal(mutations.length, 1);
+  assert.match(logs.at(-1), /"financialMutations":0/);
+});
+test('webhook configuration refuses a different destination or an unknown endpoint', async () => {
+  for (const existing of [{ ...endpoint, id: 'we_other' }, { ...endpoint, id: 'we_selected', url: 'https://unrelated.example/api/stripe/webhook' }]) {
+    await assert.rejects(() => verifyPaymentRelease({ ...env, STUDIO_PAYMENT_REFUND_WEBHOOK_ID: 'we_selected' }, async (url, options) => {
+      assert.equal(options.method, 'GET');
+      return { ok: true, json: async () => url.includes('webhook_endpoints') ? { data: [existing] } : {} };
+    }, () => {}), /not the existing production/);
+  }
+});

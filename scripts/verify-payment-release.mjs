@@ -2,6 +2,7 @@ import { pathToFileURL } from 'node:url';
 
 // Run inside the remote build: Vercel deliberately exports Secret values as
 // [SENSITIVE]. Never export secrets, log provider error bodies, or move money.
+// An explicitly selected existing payment webhook may add two refund events.
 export async function verifyPaymentRelease(env = process.env, fetcher = fetch, report = console.log) {
   if (env.STUDIO_PAYMENT_RELEASE_VERIFY !== '1') return;
   const key = (env.STRIPE_SECRET_KEY || '').trim();
@@ -36,6 +37,31 @@ export async function verifyPaymentRelease(env = process.env, fetcher = fetch, r
     return url.protocol === 'https:' && url.hostname.replace(/^www\./, '') === expectedOrigin.hostname.replace(/^www\./, '') &&
       url.port === expectedOrigin.port && url.pathname.replace(/\/$/, '') === '/api/stripe/webhook';
   };
+  const configureId = env.STUDIO_PAYMENT_REFUND_WEBHOOK_ID;
+  if (configureId) {
+    const endpoint = endpoints.data.find((e) => e.id === configureId);
+    if (!endpoint || !matchesOrigin(endpoint.url) || endpoint.status !== 'enabled' || !endpoint.livemode ||
+        !['checkout.session.completed', 'payment_intent.succeeded', 'charge.refunded'].every((event) => endpoint.enabled_events.includes('*') || endpoint.enabled_events.includes(event))) {
+      throw new Error('The selected webhook is not the existing production order-payment endpoint.');
+    }
+    const addedEvents = ['refund.updated', 'refund.failed'].filter((event) => !endpoint.enabled_events.includes('*') && !endpoint.enabled_events.includes(event));
+    if (addedEvents.length) {
+      const body = new URLSearchParams();
+      for (const event of [...endpoint.enabled_events, ...addedEvents]) body.append('enabled_events[]', event);
+      const response = await fetcher(`https://api.stripe.com/v1/webhook_endpoints/${encodeURIComponent(endpoint.id)}`, {
+        method: 'POST', headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/x-www-form-urlencoded' },
+        body, signal: AbortSignal.timeout(20000),
+      });
+      if (!response.ok) throw new Error(`Refund webhook configuration failed (HTTP ${response.status}); provider details withheld.`);
+      const updated = await response.json();
+      if (updated.id !== endpoint.id || updated.url !== endpoint.url || !updated.livemode || updated.status !== 'enabled' ||
+          ![...endpoint.enabled_events, ...addedEvents].every((event) => updated.enabled_events.includes(event))) {
+        throw new Error('Updated webhook subscription could not be verified.');
+      }
+      endpoints.data[endpoints.data.indexOf(endpoint)] = updated;
+      report(JSON.stringify({ check: 'stripe-refund-webhook-update', endpointId: endpoint.id, addedEvents }));
+    }
+  }
   const matching = endpoints.data.filter((e) => matchesOrigin(e.url) && e.status === 'enabled' && e.livemode);
   const requiredEvents = ['checkout.session.completed', 'payment_intent.succeeded', 'charge.refunded', 'refund.updated', 'refund.failed'];
   const missingEvents = requiredEvents.filter((event) => !matching.some((e) => e.enabled_events.includes('*') || e.enabled_events.includes(event)));
