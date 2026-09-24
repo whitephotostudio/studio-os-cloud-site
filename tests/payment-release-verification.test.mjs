@@ -1,0 +1,28 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { verifyPaymentRelease } from '../scripts/verify-payment-release.mjs';
+
+const env = { STUDIO_PAYMENT_RELEASE_VERIFY: '1', STRIPE_SECRET_KEY: 'sk_live_fake', SUPABASE_SERVICE_ROLE_KEY: 'fake-service',
+  NEXT_PUBLIC_SUPABASE_URL: 'https://example.supabase.co', STUDIO_PAYMENT_EXPECTED_PROJECT_REF: 'example',
+  STUDIO_PAYMENT_EXPECTED_APP_URL: 'https://example.com' };
+const endpoint = { url: 'https://example.com/api/stripe/webhook', status: 'enabled', livemode: true, enabled_events: ['*'] };
+test('release check rejects masked credentials before making a network request', async () => {
+  await assert.rejects(() => verifyPaymentRelease({ ...env, STRIPE_SECRET_KEY: '[SENSITIVE]' }, () => assert.fail('must not call providers')), /real production Stripe secret/);
+});
+test('release checks only read provider state and do not log credentials', async () => {
+  const logs = [];
+  await verifyPaymentRelease(env, async (url, options) => {
+    assert.equal(options.method, 'GET');
+    const body = url.includes('webhook_endpoints') ? { data: [endpoint], has_more: false } : url.endsWith('/account') ? { id: 'acct_example' } : [];
+    return { ok: true, json: async () => body };
+  }, (line) => logs.push(line));
+  assert.match(logs.at(-1), /"financialMutations":0/);
+  assert.ok(!logs.join('').includes(env.STRIPE_SECRET_KEY));
+  assert.ok(!logs.join('').includes(env.SUPABASE_SERVICE_ROLE_KEY));
+});
+test('missing refund webhook subscriptions block release', async () => {
+  await assert.rejects(() => verifyPaymentRelease(env, async (url) => ({ ok: true, json: async () => url.includes('webhook_endpoints') ? { data: [{ ...endpoint, enabled_events: ['checkout.session.completed'] }] } : {} }), () => {}), /missing: payment_intent.succeeded, charge.refunded, refund.updated, refund.failed/);
+});
+test('Stripe authentication errors never expose the provider response body', async () => {
+  await assert.rejects(() => verifyPaymentRelease(env, async () => ({ ok: false, status: 401, json: () => assert.fail('must not read error bodies') }), () => {}), /HTTP 401/);
+});

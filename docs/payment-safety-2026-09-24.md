@@ -9,7 +9,7 @@ Read-only production order lookup on September 24, 2026 found two identical cart
 | `7d42207e-bad1-4d14-8041-870304f807a8` | 21:59:23 | 22:00:12 | `pi_3UIyCyLqg5vdCgpU14DtxZrw` |
 | `1d7498f7-4e57-4964-89d7-6d34e0093245` | 22:02:43 | 22:03:18 | `pi_3UIyFyLqg5vdCgpU2aPV7Wqe` |
 
-Their saved carts match, including products, quantities, image selections, backdrop and retouching instructions. This supports the duplicate-payment report. It does not establish what the browser or network did. The local Stripe credential was expired. A read-only check using the configured hosting credentials also received Stripe HTTP 401 authentication rejection. Direct Stripe settlement and existing-refund verification could not be completed; this does not by itself establish whether the currently deployed runtime uses the same credentials. No refund, cancellation, customer email, production database migration, or production deployment was performed.
+Their saved carts match, including products, quantities, image selections, backdrop and retouching instructions. This supports the duplicate-payment report. It does not establish what the browser or network did. The local Stripe credential was expired. Follow-up diagnosis established that Vercel intentionally exports Secret values as `[SENSITIVE]`; the earlier hosting-export HTTP 401 tested that placeholder, not the actual production Stripe key. It is not evidence of a broken live key. A read-only release verification script now runs inside the remote build with the real environment, checks payment/webhook configuration and the selected incident payments, and blocks promotion on verification failure. No customer refund or cancellation has been authorized or performed.
 
 ## Findings and changes
 
@@ -29,11 +29,11 @@ The changes include executable database, API and widget tests for concurrent/rep
 Website checks: **238 tests passed**, TypeScript validation passed, focused lint passed, and `npm run build` succeeded.
 Desktop checks: **698 tests passed**, `flutter analyze --no-pub` reported no issues, the refund dialog was rendered and visually reviewed, and `flutter build macos --release --no-pub` succeeded. Existing native build warnings remain (Objective-C architecture naming and Core Image deprecations); compilation completed.
 
-## Release steps still required
+## Release procedure
 
 1. Apply `supabase/migrations/20260924160000_order_payment_safety.sql` to the matching Supabase project before deploying the website. It is additive and service-role only; it does not modify historical order amounts or issue refunds.
 2. Verify the production Stripe environment and connected account. Exercise duplicate-submit, lost-response, cancellation and refund flows with Stripe test-mode credentials in staging. Confirm the endpoint receives `charge.refunded`, `refund.updated` and `refund.failed` events alongside existing payment events.
-3. Commit this focused website change, then use the repository's guarded `npm run deploy:production` command from a clean checkout. Do not use a direct production deployment command.
+3. The website changes are committed on `codex/payment-safety`. Use the repository's guarded `npm run deploy:production` command from a clean checkout with `--skip-domain` and the `STUDIO_PAYMENT_RELEASE_VERIFY=1` build flag. Verify the read-only release-check output and deployment before promoting it. Do not use a direct production deployment command.
 4. Distribute/install the matching desktop build on every production workstation after the website endpoint and migration are live, before using the new refund controls. The new desktop buttons report unavailable until that endpoint exists.
 5. Review both incident payments directly in Stripe, identify the order to retain, and explicitly authorize one refund. Do not delete either financial record as a substitute for refunding.
 
@@ -56,3 +56,7 @@ Desktop project (`/Users/harout/Downloads/Whitephoto_Studio_App_MVP_Source`):
 - This investigation/release note and `output/payment-safety/refund-dialog.png`.
 
 The desktop project already contained substantial unrelated uncommitted work. It was not reset, committed or released as a whole. The companion website was clean before this task and the change is isolated on `codex/payment-safety`.
+
+## Hosting verification
+
+`scripts/verify-payment-release.mjs` is an opt-in prebuild check, enabled only for the requested release. It uses GET requests only, does not expose credentials or provider error bodies, and does not issue refunds, cancel orders, create checkout sessions, or send messages. Its four regression tests cover masked credentials, read-only requests, missing refund webhook subscriptions and safe authentication failures. Production migration access and schema compatibility were verified with the authenticated Supabase CLI. The migration must be applied in a transaction and recorded under version `20260924160000`; unrelated historical migration drift must not be pushed.
