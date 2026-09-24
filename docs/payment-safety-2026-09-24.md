@@ -9,7 +9,7 @@ Read-only production order lookup on September 24, 2026 found two identical cart
 | `7d42207e-bad1-4d14-8041-870304f807a8` | 21:59:23 | 22:00:12 | `pi_3UIyCyLqg5vdCgpU14DtxZrw` |
 | `1d7498f7-4e57-4964-89d7-6d34e0093245` | 22:02:43 | 22:03:18 | `pi_3UIyFyLqg5vdCgpU2aPV7Wqe` |
 
-Their saved carts match, including products, quantities, image selections, backdrop and retouching instructions. This supports the duplicate-payment report. It does not establish what the browser or network did. The local Stripe credential was expired. Follow-up diagnosis established that Vercel intentionally exports Secret values as `[SENSITIVE]`; the earlier hosting-export HTTP 401 tested that placeholder, not the actual production Stripe key. It is not evidence of a broken live key. A read-only release verification script now runs inside the remote build with the real environment, checks payment/webhook configuration and the selected incident payments, and blocks promotion on verification failure. No customer refund or cancellation has been authorized or performed.
+Their saved carts match, including products, quantities, image selections, backdrop and retouching instructions. Direct production Stripe verification now confirms that both distinct PaymentIntents succeeded, both charges were paid and captured, and each received CAD 103.60. Both had CAD 0 refunded and no pending refunds at verification. This confirms the duplicate charge; it does not establish what the browser or network did. The local Stripe credential was expired. Follow-up diagnosis established that Vercel intentionally exports Secret values as `[SENSITIVE]`; the earlier hosting-export HTTP 401 tested that placeholder, not the actual production Stripe key. It is not evidence of a broken live key. A read-only release verification script now runs inside the remote build with the real environment, checks payment/webhook configuration and the selected incident payments, and blocks promotion on verification failure. No customer refund or cancellation has been authorized or performed.
 
 ## Findings and changes
 
@@ -26,7 +26,7 @@ Their saved carts match, including products, quantities, image selections, backd
 
 The changes include executable database, API and widget tests for concurrent/repeated submissions, lost responses, transaction rollback, cross-studio access, missing MFA, amount changes, combined scope, pending refunds, cancellation races, refund allocation, production holds and small-screen layout. All Stripe mutations in tests use fakes; no real money was moved.
 
-Website checks: **238 tests passed**, TypeScript validation passed, focused lint passed, and `npm run build` succeeded.
+Website checks after merging the current production baseline: **275 tests passed**, TypeScript validation passed, focused lint passed, and `npm run build` succeeded.
 Desktop checks: **698 tests passed**, `flutter analyze --no-pub` reported no issues, the refund dialog was rendered and visually reviewed, and `flutter build macos --release --no-pub` succeeded. Existing native build warnings remain (Objective-C architecture naming and Core Image deprecations); compilation completed.
 
 ## Release procedure
@@ -59,4 +59,15 @@ The desktop project already contained substantial unrelated uncommitted work. It
 
 ## Hosting verification
 
-`scripts/verify-payment-release.mjs` is an opt-in prebuild check, enabled only for the requested release. It uses GET requests only, does not expose credentials or provider error bodies, and does not issue refunds, cancel orders, create checkout sessions, or send messages. Its four regression tests cover masked credentials, read-only requests, missing refund webhook subscriptions and safe authentication failures. Production migration access and schema compatibility were verified with the authenticated Supabase CLI. The migration must be applied in a transaction and recorded under version `20260924160000`; unrelated historical migration drift must not be pushed.
+`scripts/verify-payment-release.mjs` is an opt-in prebuild check, enabled only for the requested release. Financial verification uses GET requests only. A separately supplied exact existing webhook ID permits adding only `refund.updated` and `refund.failed`, preserving its URL and existing events. It does not expose credentials or provider error bodies, and does not issue refunds, cancel orders, create checkout sessions, or send messages. Its seven regression tests cover masked credentials, read-only financial requests, canonical/www webhook matching, missing refund subscriptions, safe authentication failures and tightly scoped webhook configuration. Production migration access and schema compatibility were verified with the authenticated Supabase CLI. The migration must be applied in a transaction and recorded under version `20260924160000`; unrelated historical migration drift must not be pushed.
+
+## Website release completed — September 24, 2026
+
+- Applied and recorded migration `20260924160000` in production project `bwqhzczxoevouiondjak` as one transaction. Existing migration history was preserved. A production-schema transaction verified retry replay, second-tab replay, lock exclusion and terminal-state protection, then rolled back all synthetic records (zero persisted).
+- Merged the existing September 19 production baseline, including retouching purchase rules, portrait previews, dashboard performance and mobile layouts. The retouching behavior tests were adapted to the transactional persistence API; their business assertions remain intact.
+- Added `refund.updated` and `refund.failed` to existing Stripe payment webhook `we_1TIBXDPxlnWeytFA1UniR0oO`; all four previous events and its www URL remain configured. Production authentication and both incident payment checks passed.
+- Ran the guarded production deployment from clean commit `1120ccb` with domain promotion held. All 275 tests and local/remote production builds passed. Verified homepage/sign-in availability, rejection of unauthenticated payment reads/actions, and rejection of unsigned webhook requests before promotion.
+- Promoted deployment `dpl_B4u1ZxCgKEq38kiwSUiGPhHm9bpV` (`studio-os-cloud-site-9ix6l37jc-whitephotostudio-7289s-projects.vercel.app`). Verified `https://www.studiooscloud.com` and production alias assignment afterward.
+- Previous production deployment retained for rollback: `dpl_ADbVPKeRRmufsHV54RjMZvyZpJHF`.
+- Live verification also found the bare hostname redirects HTTP 308. The desktop payment service now addresses `www.studiooscloud.com` directly; a native Dart POST verified the canonical endpoint returns the expected unauthenticated rejection without redirecting.
+- Live charges were read only. Refund/cancellation money movement remains covered by fakes; a Stripe test-mode end-to-end transaction was not run.
