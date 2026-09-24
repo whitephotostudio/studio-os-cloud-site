@@ -9,6 +9,7 @@ import { getOrCreatePhotographerByUser } from "@/lib/payments";
 
 import { resolveSubscriptionAccess } from "@/lib/subscription-access";
 import { buildAdminTrialChange } from "@/lib/admin-trial-change";
+import { recordAudit } from "@/lib/audit";
 
 export const dynamic = "force-dynamic";
 
@@ -74,7 +75,7 @@ export async function GET(request: NextRequest) {
 
     const photographerIds = (users ?? []).map((u) => u.id as string);
 
-    // Photography keys per photographer (active = activated/usable, total = ever provisioned).
+    // Available keys do not prove a device has been activated.
     const keysByPhotographer = new Map<string, { active: number; total: number }>();
     if (photographerIds.length > 0) {
       const { data: keyRows } = await service
@@ -374,6 +375,12 @@ export async function POST(request: NextRequest) {
         .select("id").maybeSingle();
       if (updateError) throw updateError;
       if (!changed) return NextResponse.json({ ok: false, message: "Account changed. Refresh and try again." }, { status: 409 });
+      await recordAudit({ request, actorUserId: user.id, actorPhotographerId: photographer.id,
+        result: "ok",
+        targetPhotographerId: targetId, action: `admin.${body.action}`, entityType: "photographer", entityId: targetId,
+        before: { trial_ends_at: target.trial_ends_at, subscription_status: target.subscription_status },
+        after: { trial_ends_at: updates.trial_ends_at, subscription_status: updates.subscription_status },
+      });
       return NextResponse.json({ ok: true, message: body.action === "revoke_trial"
         ? "Trial ended. Paid subscriptions were not changed."
         : `Trial extended (new end: ${new Date(updates.trial_ends_at).toLocaleDateString()}).` });

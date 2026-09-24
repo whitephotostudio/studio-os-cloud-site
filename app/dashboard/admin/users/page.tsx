@@ -675,6 +675,7 @@ export default function AdminUsersPage() {
             </div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <Link href="/dashboard/admin/overview" style={{ color: "#4354b8", fontSize: 13, fontWeight: 600 }}>Owner overview</Link>
             <button
               onClick={sendTestOwnerNotification}
               disabled={actionBusy === TEST_NOTIFICATION_ACTION_ID}
@@ -1004,6 +1005,7 @@ export default function AdminUsersPage() {
                           }}
                         >
                           <div style={{ fontWeight: 700, marginBottom: 12, fontSize: 13 }}>Client Details</div>
+                          <Link href={`/dashboard/admin/overview?account=${u.id}`} style={{ color: "#4354b8", display: "inline-block", marginBottom: 12 }}>View progress &amp; account history →</Link>
                           <div style={detailRow}>
                             <span style={detailLabel}>Full name</span>
                             <span>{u.fullName || "—"}</span>
@@ -1195,7 +1197,7 @@ export default function AdminUsersPage() {
                         <div>
                           <div style={{ fontWeight: 700, marginBottom: 10, fontSize: 13 }}>Photography Keys</div>
                           <div style={detailRow}>
-                            <span style={detailLabel}>Active keys</span>
+                            <span style={detailLabel}>Available keys</span>
                             <span>{formatNumber(u.photographyKeysActive)}</span>
                           </div>
                           <div style={detailRow}>
@@ -1229,7 +1231,7 @@ export default function AdminUsersPage() {
                         </div>
 
                         <div>
-                          <div style={{ fontWeight: 700, marginBottom: 10, fontSize: 13 }}>Lifetime Spending</div>
+                          <div style={{ fontWeight: 700, marginBottom: 10, fontSize: 13 }}>Credit Pack Estimate</div>
                           <div style={detailRow}>
                             <span style={detailLabel}>Credit packs</span>
                             <span style={{ fontWeight: 700, color: "#059669" }}>
@@ -1237,7 +1239,7 @@ export default function AdminUsersPage() {
                             </span>
                           </div>
                           <div style={{ marginTop: 8, fontSize: 11, color: textMuted, lineHeight: 1.4 }}>
-                            Subscription charges (monthly/yearly plan fees) are billed by Stripe and not summarized here.
+                            Uses current catalog prices, not verified payments. See the owner overview for recorded subscription receipts.
                           </div>
                         </div>
                       </div>

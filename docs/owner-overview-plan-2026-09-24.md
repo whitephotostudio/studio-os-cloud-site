@@ -1,8 +1,8 @@
-# Owner overview — deferred implementation
+# Owner overview — implementation plan
 
-Requested on September 24, 2026. Build after the Supabase Disk IO capacity
-incident has been addressed. This document records the requested work; it does
-not mean the feature is implemented or deployed.
+Requested on September 24, 2026. The database capacity upgrade is complete.
+Implementation and verification are recorded in
+[the release report](owner-overview-release-2026-09-24.md).
 
 ## First delivery
 

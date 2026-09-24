@@ -141,6 +141,10 @@ export function DashboardSidebar({
         ))}
         {isAdmin && (
           <>
+            <Link href="/dashboard/admin/overview" onClick={onNavigate}
+              style={/^\/dashboard\/admin\/overview/.test(pathname) ? navActiveStyle : navItemStyle}>
+              Owner Overview
+            </Link>
             <Link
               href="/dashboard/admin/bookings"
               onClick={onNavigate}
