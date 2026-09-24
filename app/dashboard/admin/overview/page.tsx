@@ -84,6 +84,7 @@ function AccountHistory({ account }: { account: OwnerAccount }) {
     {loading && <p role="status">Loading account history…</p>}
     {error && <div className={styles.error} role="alert">{error}<button className={styles.button} onClick={() => setRefresh(v => v + 1)}>Retry</button></div>}
     {history && <>
+      {history.attention_entries.length > 0 && <section className={styles.attention}><TriangleAlert size={18} /><div><h3>Records to review</h3><p className={styles.help}>Up to 25 recorded notification/payment issues and recent errors, including older failed messages. Review whether they still need action.</p><ul className={styles.coverage}>{history.attention_entries.map(entry => <li key={entry.id}><strong>{entry.kind === "audit" ? historyTitle(entry.title) : entry.title.replaceAll("_", " ")}</strong> · {date(entry.at)} · {entry.state.replaceAll("_", " ")}{entry.recipient && <span> · {entry.recipient}</span>}</li>)}</ul></div></section>}
       <div className={styles.detailColumns}>
         <section><h3>Activated devices</h3><p className={styles.help}>Up to 20 current registrations. A registration may belong to a device that is offline.</p>
           {!history.devices.length ? <p>No active device registrations recorded.</p> : history.devices.map((device, index) => <div className={styles.device} key={index}>

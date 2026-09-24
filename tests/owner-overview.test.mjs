@@ -30,6 +30,7 @@ before(async()=>{
  create table crm_email_events(id uuid primary key,photographer_id uuid,outbox_id uuid,event_type text,occurred_at timestamptz);
  create table stripe_events(id text primary key,event_type text,processed_at timestamptz,livemode boolean,stripe_account text,payload jsonb);`);
  await db.exec(source('supabase/migrations/20260925010000_owner_overview.sql'));
+ await db.exec(source('supabase/migrations/20260925013000_owner_attention_history.sql'));
  for(let n=1;n<=4;n++){
   await db.query("insert into auth.users(id,email,email_confirmed_at) values($1,$2,now())",[id(n),`person${n}@example.invalid`]);
   await db.query("insert into photographers(id,user_id,business_name,is_platform_admin) values($1,$1,$2,$3)",[id(n),['','Owner','Incomplete','Expired','Active'][n],n===1]);
@@ -163,4 +164,10 @@ test('device release history survives reactivation without duplicate timeline en
  let events=(await history()).entries.filter(e=>e.title==='device.release'||e.title==='Desktop device released');assert.equal(events.length,1);
  await db.query('update desktop_app_device_registrations set released_at=null where id=$1',[id(43)]);
  events=(await history()).entries.filter(e=>e.title==='device.release');assert.equal(events.length,1);
+});
+
+
+test('old failed notifications remain directly visible even behind newer history pages',async()=>{
+ await db.query("insert into project_email_deliveries values($1,$2,'2020-01-01',null,'failed','gallery_invite','old@example.invalid')",[id(990),id(4)]);
+ const h=await history();assert.ok(!h.entries.some(e=>e.id==='project-email:'+id(990)));assert.ok(h.attention_entries.some(e=>e.id==='project-email:'+id(990)));assert.ok(h.attention_entries.length<=25);
 });

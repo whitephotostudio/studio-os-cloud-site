@@ -18,6 +18,7 @@ export type OwnerSnapshot = {
 };
 export type OwnerHistory = {
   checked_at: string; page: number; has_more: boolean;
+  attention_entries: OwnerHistory["entries"];
   entries: { id: string; at: string; kind: string; title: string; state: string; recipient: string | null; author: string | null; detail: string | null }[];
   devices: { device_name: string | null; platform: string | null; app_version: string | null; last_seen_at: string | null }[];
   sales: { currency: string; paid_orders: number; paid_cents: number; refunded_cents: number; pending_adjustments: number }[];

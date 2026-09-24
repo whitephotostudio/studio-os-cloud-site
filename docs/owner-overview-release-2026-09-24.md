@@ -43,7 +43,7 @@ bound the impact on the recently resized database.
 
 ## Validation
 
-- 339 tests passed, including 13 new database/API regressions: access control,
+- 340 tests passed, including 14 new database/API regressions: access control,
   MFA, incomplete vs expired trials, literal search, missing profiles, pagination,
   device deduplication, key/privacy boundaries, note isolation/retry behavior,
   sent vs delivered mail, device release history and financial separation.
@@ -66,5 +66,11 @@ Notification sources without delivery events remain unverified in the timeline,
 even if a previous manual provider check established delivery. Recent recorded
 errors need human review; no automatic resolution is inferred. Database capacity
 and complete checkout/upload journeys are not continuously tested by this page.
+
+The live snapshot completed in 175 ms and denied anonymous RPC access. The only
+flagged account was the owner studio, with five failed gallery invitation records
+from June 15, 2026. These are historical failures, not evidence of a new outage.
+A follow-up migration exposes older flagged records alongside the current history
+page so they cannot be hidden behind newer activity. No messages were resent.
 
 Deployment and production verification will be recorded after the guarded release.
