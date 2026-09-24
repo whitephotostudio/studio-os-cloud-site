@@ -8,54 +8,12 @@ import { parseJson } from "@/lib/api-validation";
 import { guardAgreement } from "@/lib/require-agreement";
 import { r2Download, r2Upload } from "@/lib/r2";
 import sharp from "sharp";
+import { assertKeyOwnedByPhotographer } from "@/lib/upload-ownership";
 
 const GenerateThumbnailsBodySchema = z.object({
   storagePath: z.string().max(2000).optional(),
   key: z.string().max(2000).optional(),
 });
-
-function clean(value: string | null | undefined) {
-  return (value ?? "").trim();
-}
-
-async function photographerOwnsKey(
-  service: ReturnType<typeof createDashboardServiceClient>,
-  photographerId: string,
-  rawKey: string,
-): Promise<boolean> {
-  const key = clean(rawKey);
-  if (!key || key.includes("..") || key.startsWith("/")) return false;
-  const segments = key.split("/").filter(Boolean);
-  if (segments.length < 2) return false;
-
-  const [first, second] = segments;
-
-  if (first === "projects") {
-    const { data } = await service
-      .from("projects")
-      .select("id")
-      .eq("id", second)
-      .eq("photographer_id", photographerId)
-      .maybeSingle();
-    return !!data?.id;
-  }
-
-  // backdrops/{photographerId}/...  — authorize purely on path shape; the
-  // frontend always writes uploads under the photographer's own id, and the
-  // previous DB lookup targeted a non-existent `backdrops` table.
-  if (first === "backdrops") {
-    return second === photographerId;
-  }
-
-  const { data } = await service
-    .from("schools")
-    .select("id")
-    .eq("photographer_id", photographerId)
-    .or(`id.eq.${first},local_school_id.eq.${first}`)
-    .limit(1)
-    .maybeSingle();
-  return !!data?.id;
-}
 
 type Size = { width: number; quality: number };
 
@@ -93,12 +51,13 @@ export async function POST(request: NextRequest) {
   // any object in R2, including another studio's originals.
   try {
     const service = createDashboardServiceClient();
-    const { data: photographerRow } = await service
+    const { data: photographerRow, error: photographerError } = await service
       .from("photographers")
       .select("id")
       .eq("user_id", auth.user.id)
       .maybeSingle();
 
+    if (photographerError) throw photographerError;
     if (!photographerRow?.id) {
       return NextResponse.json(
         { error: "Photographer profile not found." },
@@ -106,12 +65,12 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const allowed = await photographerOwnsKey(
+    const ownership = await assertKeyOwnedByPhotographer(
       service,
       photographerRow.id,
       storageKey,
     );
-    if (!allowed) {
+    if (!ownership.ok) {
       console.warn(
         `[generate-thumbnails] rejected key for photographer ${photographerRow.id}: ${storageKey}`,
       );
