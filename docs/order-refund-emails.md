@@ -27,7 +27,16 @@ Apply and record `20260924180000_order_refund_emails.sql` transactionally before
 - `lib/resend.ts`: opt-in delivery timeout.
 - `app/api/cron/order-refund-emails/route.ts`, `vercel.json`: authenticated retry worker.
 - `scripts/verify-payment-release.mjs`, `tests/payment-release-verification.test.mjs`: live release checks.
-- `tests/order-refund-emails.test.mjs`, `tests/order-payment-route.test.mjs`: behavior and regression checks.
+- `tests/order-refund-emails.test.mjs`, `tests/order-refund-webhook.test.mjs`, `tests/order-payment-route.test.mjs`: behavior and regression checks.
 - This release note.
 
 Provider references: https://resend.com/docs/dashboard/emails/idempotency-keys and https://docs.stripe.com/refunds.
+
+## Production release and authorized historical confirmation — September 24, 2026
+
+- Applied and recorded migration `20260924180000` transactionally in production. Verified the real service RPC with an empty claim and confirmed anonymous access is denied.
+- Guarded deployment passed 289 website tests, TypeScript, targeted lint and local/remote production builds. Nine additional executable webhook cases passed before promotion and are preserved in `tests/order-refund-webhook.test.mjs`. Both email versions were visually reviewed. No desktop changes or rebuild were required.
+- The remote verifier confirmed the live outbox, verified sender domain, real email credentials and retry-worker secret. Live Stripe checks confirmed one successful CAD 103.60 refund on the duplicate and no refund on the retained order. Verification performed no financial mutations.
+- Promoted deployment `dpl_HRpNXzuPQ2DfxrpcMwCT9VDqYmD3`, built from `eb1832a`, to https://www.studiooscloud.com. Homepage/sign-in, unauthenticated payment rejection, unsigned webhook rejection and protected cron rejection were checked. The previous deployment `dpl_B4u1ZxCgKEq38kiwSUiGPhHm9bpV` remains available for rollback.
+- Following the user's explicit instruction, queued and sent exactly two confirmations for existing refund `re_3UIyFyLqg5vdCgpU2e0wIy7n`, cloud order `1d7498f7-4e57-4964-89d7-6d34e0093245` (native duplicate #10e5a686). The existing native order #5e51bd3c remains paid.
+- Both provider records reported `delivered`: photographer `01a0d458-8f77-734d-bab3-292b77c4c6bf` and client `01a0d458-953b-7361-978b-4c47057526cd`. The photographer copy used the configured billing notification address, `harout@me.com`; replies use the studio contact. These delivery records prevent future webhook/refresh retries from resending either confirmation.
