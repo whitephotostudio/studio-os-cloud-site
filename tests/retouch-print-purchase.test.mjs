@@ -44,7 +44,15 @@ function loader(stubs) {
 function setup({ storedOrders = [], storedItems = [] } = {}) {
   const writes = [], payments = [];
   const sb = {
-    rpc: async () => ({ data: 'group-test', error: null }),
+    rpc: async (name, args) => {
+      if (name === 'acquire_order_payment_lock') return { data: true, error: null };
+      if (name === 'create_checkout_order_once') {
+        for (const order of args.p_orders) writes.push({ table: 'orders', value: order });
+        writes.push({ table: 'order_items', value: args.p_items });
+        return { data: args.p_response, error: null };
+      }
+      throw new Error(`Unexpected RPC: ${name}`);
+    },
     from(table) {
       let filters = [], inserted, updated, single = false;
       const query = {
@@ -56,7 +64,10 @@ function setup({ storedOrders = [], storedItems = [] } = {}) {
         single() { single = true; return query; },
         insert(value) { inserted = value; writes.push({ table, value }); return query; },
         update(value) { updated = value; writes.push({ table, value }); return query; },
-        delete() { throw new Error('Unexpected rollback'); },
+        delete() {
+          if (table !== 'order_payment_locks') throw new Error('Unexpected rollback');
+          return query;
+        },
         then(resolve, reject) {
           try {
             let rows = table === 'packages' ? packages : table === 'students' ? ['12345','67890'].map(pin => ({ id: 'student-' + pin, pin, school_id: schoolId, class_id: null }))
