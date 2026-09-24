@@ -30,12 +30,18 @@ export async function verifyPaymentRelease(env = process.env, fetcher = fetch, r
 
   const endpoints = await stripe('webhook_endpoints?limit=100');
   if (endpoints.has_more) throw new Error('Webhook list requires manual pagination before release.');
-  const webhookUrl = new URL('/api/stripe/webhook', env.STUDIO_PAYMENT_EXPECTED_APP_URL).href;
-  const matching = endpoints.data.filter((e) => e.url === webhookUrl && e.status === 'enabled' && e.livemode);
+  const expectedOrigin = new URL(env.STUDIO_PAYMENT_EXPECTED_APP_URL);
+  const matchesOrigin = (value) => {
+    const url = new URL(value);
+    return url.protocol === 'https:' && url.hostname.replace(/^www\./, '') === expectedOrigin.hostname.replace(/^www\./, '') &&
+      url.port === expectedOrigin.port && url.pathname.replace(/\/$/, '') === '/api/stripe/webhook';
+  };
+  const matching = endpoints.data.filter((e) => matchesOrigin(e.url) && e.status === 'enabled' && e.livemode);
   const requiredEvents = ['checkout.session.completed', 'payment_intent.succeeded', 'charge.refunded', 'refund.updated', 'refund.failed'];
   const missingEvents = requiredEvents.filter((event) => !matching.some((e) => e.enabled_events.includes('*') || e.enabled_events.includes(event)));
-  report(JSON.stringify({ check: 'stripe-webhooks', endpointCount: matching.length, missingEvents }));
-  if (missingEvents.length) throw new Error(`Production webhook subscription is missing: ${missingEvents.join(', ')}.`);
+  report(JSON.stringify({ check: 'stripe-webhooks', endpointCount: matching.length, missingEvents,
+    endpoints: endpoints.data.map((e) => ({ id: e.id, url: new URL(e.url).origin + new URL(e.url).pathname,
+      status: e.status, livemode: e.livemode, events: e.enabled_events })) }));
 
   const orderIds = (env.STUDIO_PAYMENT_AUDIT_ORDER_IDS || '').split(',').filter(Boolean);
   for (const id of orderIds) {
@@ -61,6 +67,7 @@ export async function verifyPaymentRelease(env = process.env, fetcher = fetch, r
       chargeCaptured: charge?.captured ?? false, refundedCents: refunds.data.filter((r) => r.status === 'succeeded').reduce((sum, r) => sum + r.amount, 0),
       pendingRefunds: refunds.data.filter((r) => ['pending', 'requires_action'].includes(r.status)).length }));
   }
+  if (missingEvents.length) throw new Error(`Production webhook subscription is missing: ${missingEvents.join(', ')}.`);
   report(JSON.stringify({ check: 'payment-release-verification', ok: true, financialMutations: 0 }));
 }
 

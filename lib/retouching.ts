@@ -11,6 +11,40 @@ type RetouchPackage = {
   is_retouch_addon?: boolean | null;
 };
 
+export type RetouchPrintPackage = RetouchPackage & {
+  category?: string | null;
+  items?: Array<string | { qty?: number | string | null; name?: string | null; type?: string | null; size?: string | null; finish?: string | null }> | null;
+};
+
+export const RETOUCH_PRINT_REQUIRED = "Retouching is an add-on service and does not include a printed photo. Add a print or print package from the same gallery before adding retouching.";
+
+/** A paid editing service, download or gift does not count as a print purchase. */
+export function isRetouchPrintPurchase(pkg: RetouchPrintPackage): boolean {
+  if (isRetouchPackage(pkg)) return false;
+  const category = (pkg.category ?? "").trim().toLowerCase();
+  if (/digital|download|specialty/.test(category)) return false;
+  if (/^(prints?|canvas(?:es)?|metal|individual items)$/.test(category)) return true;
+  const items = (pkg.items ?? []).filter((item) =>
+    typeof item === "string" || item.qty == null || Number(item.qty) > 0,
+  ).map((item) => typeof item === "string" ? item : [item.name, item.type, item.size, item.finish].filter(Boolean).join(" "));
+  const text = [pkg.name, ...items].filter(Boolean).join(" ").toLowerCase();
+  if (/\b(prints?|wallets?|canvas|canvases|metal|lustre|luster|glossy|matte)\b|\d\s*[x×]\s*\d/.test(text)) return true;
+  if (/digital|download|\busb\b|\bfiles?\b|\bjpe?gs?\b/.test(text)) return false;
+  return category === "package" || /\b(packages?|bundles?|collections?|combo)\b/.test(text);
+}
+
+/** Validate independently for each student/gallery, including sibling carts. */
+export function retouchPrintPurchaseIssue(entries: Array<{
+  pkg: RetouchPrintPackage;
+  galleryKey?: string;
+  quantity?: number;
+}>): string {
+  const active = entries.filter((entry) => entry.quantity == null || entry.quantity > 0);
+  return active.some((entry) => isRetouchPackage(entry.pkg) && !active.some((candidate) =>
+    (candidate.galleryKey ?? "") === (entry.galleryKey ?? "") && isRetouchPrintPurchase(candidate.pkg),
+  )) ? RETOUCH_PRINT_REQUIRED : "";
+}
+
 export function isRetouchPackage(pkg: RetouchPackage): boolean {
   return pkg.is_retouch_addon === true || /retouch/i.test(pkg.name ?? "");
 }

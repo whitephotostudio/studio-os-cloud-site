@@ -1,6 +1,7 @@
 import { lockOrderPayment } from "@/lib/order-payment-lock";
 import { NextRequest, NextResponse } from "next/server";
 import { createDashboardServiceClient } from "@/lib/dashboard-auth";
+import { retouchPrintPurchaseIssue, type RetouchPrintPackage } from "@/lib/retouching";
 import {
   createDirectOrderCheckoutSession,
   describeConnectStatus,
@@ -29,6 +30,7 @@ type OrderRow = {
   customer_email: string | null;
   package_id: string | null;
   package_name: string | null;
+  cart_snapshot?: unknown;
   subtotal_cents: number | null;
   tax_cents: number | null;
   total_cents: number | null;
@@ -99,7 +101,7 @@ export async function POST(req: NextRequest) {
     const { data: order, error: orderError } = await sb
       .from("orders")
       .select(
-        "id,order_group_id,school_id,project_id,student_id,photographer_id,parent_email,customer_email,package_id,package_name,subtotal_cents,tax_cents,total_cents,total_amount,currency,status,payment_status,stripe_checkout_session_id",
+        "id,order_group_id,school_id,project_id,student_id,photographer_id,parent_email,customer_email,package_id,package_name,cart_snapshot,subtotal_cents,tax_cents,total_cents,total_amount,currency,status,payment_status,stripe_checkout_session_id",
       )
       .eq("id", body.orderId)
       .maybeSingle<OrderRow>();
@@ -114,7 +116,7 @@ export async function POST(req: NextRequest) {
       const { data: groupOrders, error: groupError } = await sb
         .from("orders")
         .select(
-          "id,order_group_id,school_id,project_id,student_id,photographer_id,parent_email,customer_email,package_id,package_name,subtotal_cents,tax_cents,total_cents,total_amount,currency,status,payment_status,stripe_checkout_session_id",
+          "id,order_group_id,school_id,project_id,student_id,photographer_id,parent_email,customer_email,package_id,package_name,cart_snapshot,subtotal_cents,tax_cents,total_cents,total_amount,currency,status,payment_status,stripe_checkout_session_id",
         )
         .eq("order_group_id", order.order_group_id)
         .order("id", { ascending: true });
@@ -326,7 +328,7 @@ export async function POST(req: NextRequest) {
 
       const { data: itemRows, error: itemError } = await sb
         .from("order_items")
-        .select("line_total_cents,unit_price_cents,quantity")
+        .select("line_total_cents,unit_price_cents,quantity,product_name")
         .eq("order_id", checkoutOrder.id);
       if (itemError) throw itemError;
 
@@ -336,6 +338,35 @@ export async function POST(req: NextRequest) {
           { status: 400 },
         );
       }
+
+      // Recheck persisted drafts too: an older browser/order must not start a
+      // retouching-only payment after the add-on rule has changed.
+      const snapshot = Array.isArray(checkoutOrder.cart_snapshot)
+        ? checkoutOrder.cart_snapshot as Array<{ packageId?: string; packageName?: string; quantity?: number }>
+        : [];
+      const purchaseIds = [...new Set([
+        checkoutOrder.package_id,
+        ...snapshot.map((entry) => entry.packageId),
+      ].filter((id): id is string => typeof id === "string" && !!id))];
+      const purchasePackages = new Map<string, RetouchPrintPackage>();
+      if (purchaseIds.length) {
+        const { data: rows, error } = await sb.from("packages")
+          .select("id,name,category,items,is_retouch_addon")
+          .in("id", purchaseIds);
+        if (error) throw error;
+        for (const row of rows ?? []) purchasePackages.set(row.id, row);
+      }
+      const purchaseEntries = snapshot.length
+        ? snapshot.map((entry) => ({
+            pkg: purchasePackages.get(entry.packageId ?? "") ?? { name: entry.packageName },
+            quantity: entry.quantity,
+          }))
+        : [
+            { pkg: purchasePackages.get(checkoutOrder.package_id ?? "") ?? { name: checkoutOrder.package_name }, quantity: 1 },
+            ...itemRows.map((item) => ({ pkg: { name: item.product_name }, quantity: Number(item.quantity) })),
+          ];
+      const purchaseIssue = retouchPrintPurchaseIssue(purchaseEntries);
+      if (purchaseIssue) return NextResponse.json({ ok: false, message: purchaseIssue }, { status: 400 });
 
       const computedCents = sumStoredOrderItemTotalsCents(itemRows);
 

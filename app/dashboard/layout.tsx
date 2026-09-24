@@ -7,6 +7,7 @@ import { DashboardSidebar } from "@/components/dashboard-sidebar";
 import { Logo } from "@/components/logo";
 import { createClient } from "@/lib/supabase/client";
 import { useIsMobile } from "@/lib/use-is-mobile";
+import { clearDashboardListCache } from "@/lib/dashboard-list-cache";
 
 // Keep these keys in sync with app/sign-in/page.tsx.  When a photographer
 // opts out of "Keep me signed in", we mark the session as transient in
@@ -23,6 +24,13 @@ export default function DashboardLayout({
 }) {
   const isMobile = useIsMobile();
   const [drawerOpen, setDrawerOpen] = useState(false);
+
+  useEffect(() => {
+    const { data: { subscription } } = createClient().auth.onAuthStateChange((event) => {
+      if (event === "SIGNED_OUT") clearDashboardListCache();
+    });
+    return () => subscription.unsubscribe();
+  }, []);
 
   useEffect(() => {
     let cancelled = false;

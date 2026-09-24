@@ -6,6 +6,7 @@
 .codex
 .tooling
 node_modules
+.env*
 mobile
 tmp
 *.zip

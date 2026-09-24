@@ -10,7 +10,7 @@
 // This layout gives every /m/* route:
 //   - a sticky top header with the studio logo + a bell icon (unread orders)
 //   - a sticky bottom tab bar (Home / Orders / Clients / Schools / Events / Calendar)
-//   - a centered max-width 480 column so it degrades sanely on desktop
+//   - a fluid workspace that resizes without remounting the current route
 //
 // Session enforcement mirrors app/dashboard/layout.tsx.  Non-authenticated
 // users get bounced to /sign-in?redirect=/m/…
@@ -23,6 +23,7 @@ import { AgreementGate } from "@/components/agreement-gate";
 import { SpotlightModal, type SpotlightHit } from "@/components/spotlight-search";
 import InstallPrompt from "@/components/install-prompt";
 import PushRegister from "@/components/push-register";
+import styles from "./mobile-layout.module.css";
 import { createClient } from "@/lib/supabase/client";
 import {
   MOBILE_ORDER_SELECT_MONEY,
@@ -444,19 +445,17 @@ export default function MobileLayout({
   return (
     <AgreementGate>
     <div
+      className={styles.surface}
       style={{
-        minHeight: "100vh",
         background: "#f7f5f2",
         display: "flex",
         justifyContent: "center",
       }}
     >
-      {/* Phone-width column, centered on desktop so /m doesn't stretch. */}
+      {/* Use the available window width, including expanded and split views. */}
       <div
+        className={styles.workspace}
         style={{
-          width: "100%",
-          maxWidth: 480,
-          minHeight: "100vh",
           background: "#ffffff",
           display: "flex",
           flexDirection: "column",
@@ -488,20 +487,21 @@ export default function MobileLayout({
               textDecoration: "none",
               color: "#111827",
               minWidth: 0,
+              flex: "1 1 auto",
             }}
           >
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src="/studio_os_logo_official_cropped.png"
               alt=""
-              style={{ width: 34, height: 34, borderRadius: 10, objectFit: "contain" }}
+              style={{ width: 34, height: 34, flexShrink: 0, borderRadius: 10, objectFit: "contain" }}
             />
-            <div style={{ fontWeight: 900, fontSize: 15, whiteSpace: "nowrap" }}>
+            <div style={{ fontWeight: 900, fontSize: 15, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
               Studio OS Mobile
             </div>
           </Link>
 
-          <div style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+          <div className={styles.headerActions} style={{ display: "inline-flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
             <button
               type="button"
               onClick={() => setSearchOpen(true)}
@@ -683,6 +683,7 @@ export default function MobileLayout({
 
         {/* ── Content ────────────────────────────────────────────── */}
         <main
+          className={styles.content}
           style={{
             flex: 1,
             padding: "16px 14px calc(90px + env(safe-area-inset-bottom))",
@@ -709,6 +710,7 @@ export default function MobileLayout({
 
         {/* ── Sticky bottom tab bar ─────────────────────────────── */}
         <nav
+          className={styles.navigation}
           aria-label="Primary"
           style={{
             position: "sticky",

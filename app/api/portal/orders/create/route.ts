@@ -10,7 +10,7 @@ import { getClientIp, rateLimit } from "@/lib/rate-limit";
 import { hasActiveSubscription } from "@/lib/subscription-gate";
 import { resolveShipping } from "@/lib/combine-orders";
 import { durablePrivateMediaReference } from "@/lib/private-media-references";
-import { isRetouchPackage, parseRetouchSelections, retouchSelectionIssue, retouchNotesBlock, customerNotesBlock, retouchSlots, type RetouchSelection } from "@/lib/retouching";
+import { isRetouchPackage, retouchPrintPurchaseIssue, parseRetouchSelections, retouchSelectionIssue, retouchNotesBlock, customerNotesBlock, retouchSlots, type RetouchSelection } from "@/lib/retouching";
 import {
   ensureObjectBody,
   validateEmail,
@@ -811,6 +811,11 @@ export async function POST(request: NextRequest) {
         );
       }
     }
+
+    const purchaseIssue = retouchPrintPurchaseIssue(entries.map((entry) => ({
+      pkg: packageMap.get(entry.packageId)!, quantity: entry.quantity,
+    })));
+    if (purchaseIssue) return NextResponse.json({ ok: false, message: purchaseIssue }, { status: 400 });
 
     const backdropMap = new Map<string, BackdropRow>();
     if (backdropIds.length > 0) {

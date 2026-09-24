@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { readDashboardListCache, writeDashboardListCache, invalidateDashboardListCache, clearDashboardListCache } from "@/lib/dashboard-list-cache";
 import { Logo } from "@/components/logo";
 import { proxiedPhotoUrl } from "@/lib/photo-url";
 import { useIsMobile } from "@/lib/use-is-mobile";
@@ -18,6 +19,7 @@ type SchoolRow = {
   shoot_date: string | null;
   created_at: string | null;
   expiration_date: string | null;
+  students?: { count: number }[];
 };
 
 /// Gallery expiry line for list cards: gray when far out, amber within 14
@@ -47,6 +49,7 @@ type SchoolCard = {
   shoot_date: string | null;
   created_at: string | null;
   expiration_date: string | null;
+  statsLoaded: boolean;
   peopleCount: number;
   classesCount: number;
   imagesCount: number;
@@ -149,6 +152,8 @@ export default function SchoolsPage() {
   const supabase = createClient();
   const router = useRouter();
   const isMobile = useIsMobile();
+  const loadVersion = useRef(0);
+  const cacheUserId = useRef("");
   const [schools, setSchools] = useState<SchoolCard[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -170,7 +175,9 @@ export default function SchoolsPage() {
   const [contextMenuPos, setContextMenuPos] = useState<{ x: number; y: number } | null>(null);
 
   useEffect(() => {
-    load();
+    const lifecycle = loadVersion;
+    void load();
+    return () => { ++lifecycle.current; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -184,51 +191,58 @@ export default function SchoolsPage() {
   }, [contextMenuId]);
 
   async function load() {
-    setLoading(true);
+    const version = ++loadVersion.current;
+    const isCurrent = () => version === loadVersion.current;
     setError("");
 
     try {
-      const {
-        data: { user },
-        error: userErr,
-      } = await supabase.auth.getUser();
-
-      if (userErr) throw userErr;
-      if (!user) {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!isCurrent()) return;
+      if (!session?.user) {
+        clearDashboardListCache();
         window.location.href = "/sign-in";
         return;
       }
+      const userId = session.user.id;
+      cacheUserId.current = userId;
+      const cached = readDashboardListCache<SchoolCard[]>(userId, "schools");
+      if (cached) setSchools(cached);
+      setLoading(!cached);
+      setUserEmail(session.user.email ?? "");
 
-      setUserEmail(user.email ?? "");
-
+      const { data: { user }, error: userErr } = await supabase.auth.getUser();
+      if (!isCurrent()) return;
+      if (userErr) throw userErr;
+      if (!user) {
+        clearDashboardListCache();
+        window.location.href = "/sign-in";
+        return;
+      }
       const { data: photographerRow, error: photographerErr } = await supabase
-        .from("photographers")
-        .select("id")
-        .eq("user_id", user.id)
-        .maybeSingle();
-
+        .from("photographers").select("id").eq("user_id", user.id).maybeSingle();
+      if (!isCurrent()) return;
       if (photographerErr) throw photographerErr;
       if (!photographerRow?.id) {
         setSchools([]);
-        setLoading(false);
+        writeDashboardListCache(userId, "schools", []);
         return;
       }
 
-      const { data: schoolRows, error: schoolErr } = await supabase
-        .from("schools")
-        .select("id,school_name,photographer_id,package_profile_id,local_school_id,shoot_date,created_at,expiration_date")
-        .eq("photographer_id", photographerRow.id)
-        .order("created_at", { ascending: false });
-
-      if (schoolErr) throw schoolErr;
-
-      const rawSchools = (schoolRows ?? []) as SchoolRow[];
-
-      const { data: projectRows } = await supabase
-        .from("projects")
-        .select("id,title,client_name,workflow_type,linked_local_school_id,linked_school_id,cover_photo_url,cover_focal_x,cover_focal_y")
-        .eq("photographer_id", photographerRow.id)
-        .in("workflow_type", ["event", "school"]);
+      const [schoolResult, projectResult] = await Promise.all([
+        supabase.from("schools")
+          .select("id,school_name,photographer_id,package_profile_id,local_school_id,shoot_date,created_at,expiration_date,students(count)")
+          .eq("photographer_id", photographerRow.id)
+          .order("created_at", { ascending: false }),
+        supabase.from("projects")
+          .select("id,title,client_name,workflow_type,linked_local_school_id,linked_school_id,cover_photo_url,cover_focal_x,cover_focal_y")
+          .eq("photographer_id", photographerRow.id)
+          .in("workflow_type", ["event", "school"]),
+      ]);
+      if (!isCurrent()) return;
+      if (schoolResult.error) throw schoolResult.error;
+      if (projectResult.error) throw projectResult.error;
+      const rawSchools = (schoolResult.data ?? []) as SchoolRow[];
+      const projectRows = projectResult.data;
 
       const allProjects = (projectRows ?? []) as ProjectRow[];
       const eventProjects = allProjects.filter((p) => clean(p.workflow_type) === "event");
@@ -268,82 +282,10 @@ export default function SchoolsPage() {
         if (sid) schoolCoverBySchoolId.set(sid, info);
       }
 
-      const uniqueSchools = Array.from(deduped.values());
-      if (uniqueSchools.length === 0) {
-        setSchools([]);
-        setLoading(false);
-        return;
-      }
-
-      const schoolIds = uniqueSchools.map((s) => s.id);
-      const { data: { session } } = await supabase.auth.getSession();
-      const [peopleResult, uploadedCountResult] = await Promise.all([
-        supabase
-          .from("students")
-          .select("school_id,class_name,role,photo_url")
-          .in("school_id", schoolIds),
-        fetch("/api/dashboard/schools/photo-counts", {
-          headers: session?.access_token
-            ? { Authorization: `Bearer ${session.access_token}` }
-            : {},
-          cache: "no-store",
-        })
-          .then(async (response) => {
-            if (!response.ok) {
-              return {
-                counts: {} as Record<string, number | null>,
-                sources: {} as Record<string, string>,
-              };
-            }
-            const payload = (await response.json()) as {
-              counts?: Record<string, number | null>;
-              sources?: Record<string, string>;
-            };
-            return {
-              counts: payload.counts ?? {},
-              sources: payload.sources ?? {},
-            };
-          })
-          .catch((countError) => {
-            console.warn("[schools] uploaded photo counts unavailable:", countError);
-            return {
-              counts: {} as Record<string, number | null>,
-              sources: {} as Record<string, string>,
-            };
-          }),
-      ]);
-
-      const { data: peopleRows, error: peopleErr } = peopleResult;
-      const uploadedPhotoCounts = uploadedCountResult.counts;
-      const uploadedPhotoCountSources = uploadedCountResult.sources;
-
-      if (peopleErr) throw peopleErr;
-
-      const people = (peopleRows ?? []) as StudentRow[];
-      const stats = new Map<string, { peopleCount: number; imagesCount: number; classNames: Set<string>; firstPhotoUrl: string | null }>();
-
-      for (const school of uniqueSchools) {
-        stats.set(school.id, { peopleCount: 0, imagesCount: 0, classNames: new Set<string>(), firstPhotoUrl: null });
-      }
-
-      for (const row of people) {
-        const stat = stats.get(row.school_id);
-        if (!stat) continue;
-        stat.peopleCount += 1;
-        if (clean(row.photo_url)) {
-          stat.imagesCount += 1;
-          if (!stat.firstPhotoUrl) stat.firstPhotoUrl = row.photo_url;
-        }
-
-        const className = clean(row.class_name);
-        const role = normalizeRole(row.role);
-        if (className && isStudentLike(role, className)) {
-          stat.classNames.add(className);
-        }
-      }
-
-      const cards = uniqueSchools.map<SchoolCard>((school) => {
-        const stat = stats.get(school.id);
+      const cachedById = new Map((cached ?? []).map((card) => [card.id, card]));
+      const cards = Array.from(deduped.values()).map<SchoolCard>((school) => {
+        const previous = cachedById.get(school.id);
+        const cover = schoolCoverBySchoolId.get(school.id) || schoolCoverByLocalId.get(clean(school.local_school_id));
         return {
           id: school.id,
           school_name: school.school_name,
@@ -351,37 +293,90 @@ export default function SchoolsPage() {
           shoot_date: school.shoot_date,
           created_at: school.created_at,
           expiration_date: school.expiration_date,
-          peopleCount: stat?.peopleCount ?? 0,
-          classesCount: stat?.classNames.size ?? 0,
-          imagesCount: stat?.imagesCount ?? 0,
-          uploadedPhotoCount: uploadedPhotoCounts[school.id] ?? null,
-          uploadedPhotoCountVerified: uploadedPhotoCountSources[school.id] === "r2",
-          coverUrl: proxiedPhotoUrl(
-            schoolCoverBySchoolId.get(school.id)?.url ||
-              schoolCoverByLocalId.get(clean(school.local_school_id))?.url ||
-              stat?.firstPhotoUrl,
-          ) || null,
-          coverFocalX: schoolCoverBySchoolId.get(school.id)?.fx ?? schoolCoverByLocalId.get(clean(school.local_school_id))?.fx ?? 0.5,
-          coverFocalY: schoolCoverBySchoolId.get(school.id)?.fy ?? schoolCoverByLocalId.get(clean(school.local_school_id))?.fy ?? 0.5,
+          peopleCount: school.students?.[0]?.count ?? 0,
+          statsLoaded: previous?.statsLoaded ?? false,
+          classesCount: previous?.classesCount ?? 0,
+          imagesCount: previous?.imagesCount ?? 0,
+          uploadedPhotoCount: previous?.uploadedPhotoCount ?? null,
+          uploadedPhotoCountVerified: previous?.uploadedPhotoCountVerified ?? false,
+          coverUrl: proxiedPhotoUrl(cover?.url) || previous?.coverUrl || null,
+          coverFocalX: cover?.fx ?? 0.5,
+          coverFocalY: cover?.fy ?? 0.5,
         };
       }).filter((card) => {
-        const isEmptyShell =
-          card.peopleCount === 0 &&
-          card.classesCount === 0 &&
-          card.imagesCount === 0;
-        if (!isEmptyShell) return true;
+        if (card.peopleCount > 0) return true;
         const localId = clean(card.local_school_id);
         if (localId && eventLocalSchoolIds.has(localId)) return false;
         if (eventLinkedSchoolIds.has(clean(card.id))) return false;
         return !eventNameKeys.has(normalizeLookupName(card.school_name));
       });
 
+      // The list is usable now. Roster details and storage scans never gate cards.
       setSchools(cards);
+      writeDashboardListCache(userId, "schools", cards);
+      setLoading(false);
+      if (!cards.length) return;
+      const schoolIds = cards.map((card) => card.id);
+      function updateCards(update: (previous: SchoolCard[]) => SchoolCard[]) {
+        if (!isCurrent()) return;
+        setSchools((previous) => {
+          if (!isCurrent()) return previous;
+          const next = update(previous);
+          writeDashboardListCache(userId, "schools", next);
+          return next;
+        });
+      }
+
+      void (async () => {
+        const people: StudentRow[] = [];
+        for (let from = 0; ; from += 1000) {
+          const { data, error } = await supabase.from("students")
+            .select("school_id,class_name,role,photo_url")
+            .in("school_id", schoolIds).order("id").range(from, from + 999);
+          if (!isCurrent()) return;
+          if (error) throw error;
+          people.push(...((data ?? []) as StudentRow[]));
+          if ((data?.length ?? 0) < 1000) break;
+        }
+        const stats = new Map<string, { imagesCount: number; classNames: Set<string>; firstPhotoUrl: string | null }>();
+        for (const row of people) {
+          const stat = stats.get(row.school_id) ?? { imagesCount: 0, classNames: new Set<string>(), firstPhotoUrl: null };
+          if (clean(row.photo_url)) {
+            stat.imagesCount += 1;
+            stat.firstPhotoUrl ||= row.photo_url;
+          }
+          const className = clean(row.class_name);
+          if (className && isStudentLike(normalizeRole(row.role), className)) stat.classNames.add(className);
+          stats.set(row.school_id, stat);
+        }
+        updateCards((previous) => previous.map((card) => {
+          const stat = stats.get(card.id);
+          const cover = schoolCoverBySchoolId.get(card.id) || schoolCoverByLocalId.get(clean(card.local_school_id));
+          return { ...card, statsLoaded: true, classesCount: stat?.classNames.size ?? 0,
+            imagesCount: stat?.imagesCount ?? 0,
+            coverUrl: proxiedPhotoUrl(cover?.url || stat?.firstPhotoUrl) || null };
+        }));
+      })().catch((err) => {
+        console.warn("[schools] roster statistics unavailable", err);
+      });
+
+      void fetch("/api/dashboard/schools/photo-counts", {
+        headers: { Authorization: `Bearer ${session.access_token}` },
+        cache: "no-store",
+      }).then(async (response) => {
+        if (!response.ok) return;
+        const payload = await response.json() as { counts?: Record<string, number | null>; sources?: Record<string, string> };
+        updateCards((previous) => previous.map((card) => ({ ...card,
+          uploadedPhotoCount: payload.counts?.[card.id] ?? null,
+          uploadedPhotoCountVerified: payload.sources?.[card.id] === "r2",
+        })));
+      }).catch((err) => console.warn("[schools] uploaded photo counts unavailable", err));
     } catch (err) {
+      if (!isCurrent()) return;
       console.error("[schools] load error:", err);
       setError(err instanceof Error ? err.message : "Failed to load schools");
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
   }
 
@@ -418,6 +413,7 @@ export default function SchoolsPage() {
       });
       const data = (await res.json()) as { ok?: boolean; message?: string; school?: { id: string } };
       if (!res.ok || !data.ok) throw new Error(data.message || "Failed to create school.");
+      invalidateDashboardListCache("schools");
       setShowCreateModal(false);
       setNewSchoolShootDate(new Date().toISOString().slice(0, 10));
       if (data.school?.id) {
@@ -463,7 +459,13 @@ export default function SchoolsPage() {
           fetch(`/api/dashboard/schools/${id}`, { method: "DELETE" }).then((r) => r.json())
         )
       );
-      setSchools((prev) => prev.filter((s) => !ids.includes(s.id)));
+      ++loadVersion.current;
+      invalidateDashboardListCache("schools");
+      setSchools((prev) => {
+        const remaining = prev.filter((s) => !ids.includes(s.id));
+        writeDashboardListCache(cacheUserId.current, "schools", remaining);
+        return remaining;
+      });
       setSelectedIds(new Set());
       setShowDeleteConfirm(false);
       setContextMenuId(null);
@@ -768,11 +770,11 @@ export default function SchoolsPage() {
                     ) : null;
                   })()}
                   <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 10, flexWrap: "wrap" }}>
-                    <span style={{ fontSize: 12, color: "#6b7280" }}>{school.classesCount} classes</span>
+                    <span style={{ fontSize: 12, color: "#6b7280" }}>{school.statsLoaded ? school.classesCount : "—"} classes</span>
                     <span style={{ fontSize: 12, color: "#d1d5db" }}>&middot;</span>
                     <span style={{ fontSize: 12, color: "#6b7280" }}>{school.peopleCount} students</span>
                     <span style={{ fontSize: 12, color: "#d1d5db" }}>&middot;</span>
-                    <span style={{ fontSize: 12, color: "#6b7280" }}>{school.imagesCount} with photos</span>
+                    <span style={{ fontSize: 12, color: "#6b7280" }}>{school.statsLoaded ? school.imagesCount : "—"} with photos</span>
                   </div>
                   <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10 }}>
                     <span style={{ display: "inline-block", padding: "3px 10px", borderRadius: 6, fontSize: 11, fontWeight: 700, background: "#dbeafe", color: "#1e40af" }}>

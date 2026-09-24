@@ -66,6 +66,11 @@ export default async function StudioOSDownloadPage() {
               macReady={macReady}
               windowsReady={windowsReady}
             />
+            {macReady && release.version ? (
+              <p className="mt-5 text-center text-sm font-medium text-neutral-600">
+                Mac version {release.version}
+              </p>
+            ) : null}
           </Reveal>
         </div>
         </Reveal>
@@ -195,7 +200,7 @@ export default async function StudioOSDownloadPage() {
               <div>
                 <h3 className="text-base font-semibold text-neutral-950">macOS</h3>
                 <ul className="mt-3 space-y-2 text-sm leading-6 text-neutral-700">
-                  <li>• macOS 12 Monterey or later</li>
+                  <li>• macOS 13.5 Ventura or later</li>
                   <li>• Apple Silicon or Intel processor</li>
                   <li>• 8 GB RAM minimum (16 GB recommended for tethering)</li>
                   <li>• 10 GB free disk space, more for active Projects</li>

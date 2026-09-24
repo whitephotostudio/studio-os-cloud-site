@@ -26,3 +26,8 @@ test('missing refund webhook subscriptions block release', async () => {
 test('Stripe authentication errors never expose the provider response body', async () => {
   await assert.rejects(() => verifyPaymentRelease(env, async () => ({ ok: false, status: 401, json: () => assert.fail('must not read error bodies') }), () => {}), /HTTP 401/);
 });
+test('webhook verification accepts the production www alias and rejects lookalike hosts', async () => {
+  const run = (url) => verifyPaymentRelease(env, async (path) => ({ ok: true, json: async () => path.includes('webhook_endpoints') ? { data: [{ ...endpoint, url }] } : {} }), () => {});
+  await run('https://www.example.com/api/stripe/webhook?source=connect');
+  await assert.rejects(() => run('https://www.example.com.evil.invalid/api/stripe/webhook'), /subscription is missing/);
+});
