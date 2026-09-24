@@ -18,6 +18,7 @@ function fixture(options={}) {
   const tables={orders:rows,photographers:[{id:studio,user_id:options.otherOwner?'other':'owner',stripe_connected_account_id:'acct_test',stripe_account_id:null}]};
   const service={from(table){let predicate=()=>true;let update;const chain={select(){return chain},eq(k,v){const prev=predicate;predicate=r=>prev(r)&&r[k]===v;return chain},in(k,v){const prev=predicate;predicate=r=>prev(r)&&v.includes(r[k]);return chain},is(k,v){return chain.eq(k,v)},order(){return chain},update(v){update=v;return chain},single(){return run(true)},maybeSingle(){return run(true)},then(a,b){return run(false).then(a,b)}};
   async function run(single){const matching=tables[table].filter(predicate);if(update)matching.forEach(r=>Object.assign(r,update));return {data:single?matching.length===1?structuredClone(matching[0]):null:structuredClone(matching),error:single&&matching.length!==1?{message:'not found'}:null};}return chain;}};
+  const notifications=[];
   const actions=[];let refunds=[];let locked=false;let sessionStatus=options.unpaid?'open':'complete';let lost=options.lostReply;
   const intent={id:'pi_test',status:'succeeded',amount:10360*rows.length,amount_received:10360*rows.length,currency:'cad',latest_charge:'ch_test',metadata:{photographer_id:studio,order_id:id}};
   async function stripeRequest(path,params={}) {
@@ -43,12 +44,13 @@ function fixture(options={}) {
     '@/lib/dashboard-auth':{resolveDashboardAuth:async()=>({user:options.signedOut?null:{id:'owner'},mfaSatisfied:!options.missingMfa}),createDashboardServiceClient:()=>service},
     '@/lib/payments':{getConnectedAccountId:p=>p.stripe_connected_account_id,stripeRequest,markOrderOrGroupRefunded:async()=>{rows.forEach(r=>Object.assign(r,{status:'refunded',payment_status:'refunded'}));}},
     '@/lib/order-payment-lock':{lockOrderPayment:async()=>{if(locked)throw Error('busy');locked=true;return async()=>{locked=false;};}},
+    '@/lib/order-refund-notifications':{scheduleOrderRefundEmails:async(_service,input)=>{if(options.emailFailure)throw Error('queue unavailable');notifications.push(input);}},
     '@/lib/order-payment-policy':policy,'@/lib/audit':{recordAudit:async()=>{}},
   };
   const exports={};new Function('require','exports',compiled)(name=>{if(!dependencies[name])throw Error(name);return dependencies[name];},exports);
   const body={orderId:id,action:'refund',reason:'Duplicate payment',paymentId:options.unpaid?null:'pi_test',amountCents:options.unpaid?0:intent.amount,orderIds:rows.map(r=>r.id)};
   const request=(data=body)=>({nextUrl:new URL(`https://example.test/api/dashboard/orders/payment?orderId=${id}`),headers:new Headers(),json:async()=>data});
-  return {exports,rows,actions,body,request};
+  return {exports,rows,actions,body,request,notifications};
 }
 test('refund is owner scoped, confirmed, and one Stripe request across retries',async()=>{
   const f=fixture({combined:true});
@@ -59,6 +61,8 @@ test('refund is owner scoped, confirmed, and one Stripe request across retries',
   assert.equal((await f.exports.POST(f.request())).status,200);
   assert.equal(f.actions.filter(a=>a.path==='refunds').length,1);
   assert.equal(f.actions[0].idempotencyKey,'studio-os-full-refund-pi_test');
+  assert.equal(f.notifications.length,2);
+  assert.ok(f.notifications.every(n=>n.refunds[0].id==='re_test' && n.orderId===id && n.account==='acct_test'));
 });
 test('lost refund reply keeps a hold, and retry reconciles without another refund',async()=>{
   const f=fixture({lostReply:true});
@@ -74,6 +78,7 @@ test('pending refunds remain on hold, never reported as completed',async()=>{
   const result=await (await f.exports.POST(f.request())).json();
   assert.equal(result.status,'refund_pending');
   const preview=await (await f.exports.GET(f.request())).json();
+  assert.equal(f.notifications.length,0);
   assert.equal(preview.refundedCents,0);assert.equal(preview.pending,true);assert.equal(preview.canRefund,false);
   assert.equal((await f.exports.POST(f.request())).status,409);assert.equal(f.actions.length,1);
 });
@@ -93,4 +98,10 @@ test('ownership, MFA, stale amounts, combined scope and ambiguous checkout block
   for(const body of [{...f.body,amountCents:1},{...f.body,orderIds:[id]},{...f.body,action:'cancel'}]){
     assert.equal((await f.exports.POST(f.request(body))).status,409);assert.equal(f.actions.length,0);
   }
+});
+
+test('notification queue outage does not turn a confirmed refund into a failed payment action',async()=>{
+ const f=fixture({emailFailure:true});
+ const result=await (await f.exports.POST(f.request())).json();
+ assert.equal(result.ok,true);assert.equal(result.status,'refunded');assert.equal(f.actions.length,1);
 });

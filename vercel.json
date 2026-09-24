@@ -15,6 +15,10 @@
     {
       "path": "/api/cron/crm-automation",
       "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/cron/order-refund-emails",
+      "schedule": "*/5 * * * *"
     }
   ],
   "ignoreCommand": "echo \"$VERCEL_GIT_COMMIT_MESSAGE\" | grep -qF '[skip build]'"

@@ -57,3 +57,12 @@ test('webhook configuration refuses a different destination or an unknown endpoi
     }, () => {}), /not the existing production/);
   }
 });
+
+test('refund email release verifies durable outbox, provider sender and retry credentials without sending mail', async () => {
+ const emailEnv={...env,STUDIO_REFUND_EMAIL_VERIFY:'1',RESEND_API_KEY:'email-secret',CRON_SECRET:'cron-secret'};
+ const calls=[];
+ const fetcher=async(url,options)=>{calls.push(url);assert.equal(options.method,'GET');return {ok:true,json:async()=>url.includes('/domains')?{data:[{name:'studiooscloud.com',status:'verified'}]}:url.includes('webhook_endpoints')?{data:[endpoint]}:[]};};
+ await verifyPaymentRelease(emailEnv,fetcher,()=>{});assert.ok(calls.some(url=>url.includes('order_refund_emails')));
+ await assert.rejects(()=>verifyPaymentRelease({...emailEnv,CRON_SECRET:''},fetcher,()=>{}),/retry-worker credentials/);
+ await assert.rejects(()=>verifyPaymentRelease({...emailEnv,RESEND_FROM_EMAIL:'refund@unknown.example'},fetcher,()=>{}),/sender domain is not verified/);
+});

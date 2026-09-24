@@ -1,3 +1,4 @@
+import { scheduleOrderRefundEmails, type ConfirmedRefund } from "@/lib/order-refund-notifications";
 import { allocateRefundCents, orderCheckoutIdempotencyKey } from "@/lib/order-payment-policy";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { createDashboardServiceClient } from "@/lib/dashboard-auth";
@@ -2777,11 +2778,13 @@ export async function reconcileOrderRefundFromStripe(service: ServiceClient, acc
   if (!owner || owner.photographer_id !== intent.metadata.photographer_id) throw new Error("Refund order ownership mismatch");
   const { data: photographer, error: pe } = await service.from("photographers").select("stripe_account_id,stripe_connected_account_id").eq("id", owner.photographer_id).single();
   if (pe || !photographer || getConnectedAccountId(photographer) !== account) throw new Error("Refund account mismatch");
+  const verifiedRefunds: ConfirmedRefund[] = [];
   let startingAfter = ""; let confirmedCents = 0; let pending = false;
   do {
     const query = new URLSearchParams({ payment_intent: paymentIntentId, limit: "100" });
     if (startingAfter) query.set("starting_after", startingAfter);
-    const page = await stripeRequest<{ data: { id: string; amount: number; status: string }[]; has_more: boolean }>("refunds", { account, query });
+    const page = await stripeRequest<{ data: ConfirmedRefund[]; has_more: boolean }>("refunds", { account, query });
+    verifiedRefunds.push(...page.data);
     confirmedCents += page.data.filter((r) => r.status === "succeeded").reduce((sum, r) => sum + r.amount, 0);
     pending ||= page.data.some((r) => r.status === "pending" || r.status === "requires_action");
     startingAfter = page.has_more ? page.data.at(-1)?.id || "" : "";
@@ -2794,5 +2797,6 @@ export async function reconcileOrderRefundFromStripe(service: ServiceClient, acc
     const { error } = await service.from("orders").update({ status: "refund_pending" }).in("id", ids).neq("status", "refunded");
     if (error) throw error;
   }
+  await scheduleOrderRefundEmails(service, { account, paymentIntentId, orderId: intent.metadata.order_id, refunds: verifiedRefunds });
   return result;
 }

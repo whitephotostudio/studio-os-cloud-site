@@ -28,6 +28,16 @@ export async function verifyPaymentRelease(env = process.env, fetcher = fetch, r
   await db('checkout_attempts?select=key&limit=0');
   await db('order_payment_locks?select=key&limit=0');
   report(JSON.stringify({ check: 'payment-migration-api', ok: true }));
+  if (env.STUDIO_REFUND_EMAIL_VERIFY === '1') {
+    await db('order_refund_emails?select=id&limit=0');
+    const emailKey = (env.RESEND_API_KEY || '').trim();
+    if (!emailKey || emailKey === '[SENSITIVE]' || !env.CRON_SECRET || env.CRON_SECRET === '[SENSITIVE]') throw new Error('Refund email provider and retry-worker credentials are required.');
+    const domains = await get('https://api.resend.com/domains', { Authorization: `Bearer ${emailKey}` }, 'Refund email provider verification');
+    const domain = (env.RESEND_FROM_EMAIL || 'galleries@studiooscloud.com').split('@')[1]?.toLowerCase();
+    if (!domains.data?.some(d => d.name.toLowerCase() === domain && d.status === 'verified')) throw new Error('Refund email sender domain is not verified.');
+    report(JSON.stringify({ check: 'refund-email-configuration', ok: true, senderDomain: domain }));
+  }
+
 
   const endpoints = await stripe('webhook_endpoints?limit=100');
   if (endpoints.has_more) throw new Error('Webhook list requires manual pagination before release.');
@@ -91,6 +101,7 @@ export async function verifyPaymentRelease(env = process.env, fetcher = fetch, r
     report(JSON.stringify({ check: 'incident-payment', orderId: id, paymentId: intent.id, status: intent.status,
       currency: intent.currency, chargedCents: intent.amount_received, chargePaid: charge?.paid ?? false,
       chargeCaptured: charge?.captured ?? false, refundedCents: refunds.data.filter((r) => r.status === 'succeeded').reduce((sum, r) => sum + r.amount, 0),
+      refunds: refunds.data.map(r => ({ id:r.id, status:r.status, amount:r.amount, currency:r.currency, created:r.created })),
       pendingRefunds: refunds.data.filter((r) => ['pending', 'requires_action'].includes(r.status)).length }));
   }
   if (missingEvents.length) throw new Error(`Production webhook subscription is missing: ${missingEvents.join(', ')}.`);

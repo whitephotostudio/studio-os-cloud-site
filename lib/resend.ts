@@ -20,6 +20,7 @@ export type SendResendEmailInput = {
   tags?: ResendTag[];
   attachments?: ResendAttachmentInput[];
   idempotencyKey?: string | null;
+  timeoutMs?: number;
 };
 
 type ResendSendResponse = {
@@ -88,6 +89,7 @@ export async function sendResendEmail(input: SendResendEmailInput) {
   const replyTo = resolveReplyTo(input.replyTo);
   const response = await fetch("https://api.resend.com/emails", {
     method: "POST",
+    ...(input.timeoutMs ? { signal: AbortSignal.timeout(input.timeoutMs) } : {}),
     headers: {
       Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",

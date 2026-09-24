@@ -5,6 +5,7 @@ import { getConnectedAccountId, stripeRequest, markOrderOrGroupRefunded } from "
 import { lockOrderPayment } from "@/lib/order-payment-lock";
 import { assertPaymentBelongsToOrders, verifyPaymentConfirmation, type PaymentOrder, type PaymentSnapshot } from "@/lib/order-payment-policy";
 import { recordAudit } from "@/lib/audit";
+import { scheduleOrderRefundEmails, type ConfirmedRefund } from "@/lib/order-refund-notifications";
 
 export const dynamic = "force-dynamic";
 const inputSchema = z.object({ orderId: z.string().uuid(), action: z.enum(["refund", "cancel"]),
@@ -13,7 +14,7 @@ const inputSchema = z.object({ orderId: z.string().uuid(), action: z.enum(["refu
 type Session = { id: string; status: string; payment_status: string; payment_intent: string | null; };
 type Intent = { id: string; status: string; amount: number; amount_received: number; currency: string; latest_charge: string | null; metadata: Record<string,string>; };
 type Charge = { amount: number; amount_refunded: number; };
-type Refund = { id: string; status: string; amount: number; };
+type Refund = ConfirmedRefund;
 
 async function context(request: NextRequest, orderId: string) {
   const { user, mfaSatisfied } = await resolveDashboardAuth(request);
@@ -42,6 +43,7 @@ async function paymentState(ctx: Awaited<ReturnType<typeof context>>) {
   let session: Session | null = null;
   if (sessions[0]) session = await stripeRequest<Session>(`checkout/sessions/${encodeURIComponent(sessions[0])}`, { account: account! });
   const paymentId = paymentIds[0] || session?.payment_intent || null;
+  let confirmedRefunds: Refund[] = [];
   let intent: Intent | null = null; let pending = false; let confirmedRefundCents = 0;
   if (paymentId) {
     intent = await stripeRequest<Intent>(`payment_intents/${encodeURIComponent(paymentId)}`, { account: account! });
@@ -50,6 +52,7 @@ async function paymentState(ctx: Awaited<ReturnType<typeof context>>) {
       await stripeRequest<Charge>(`charges/${encodeURIComponent(intent.latest_charge)}`, { account: account! });
       const refunds = await stripeRequest<{ data: Refund[]; has_more: boolean }>("refunds", { account: account!, query: new URLSearchParams({ payment_intent: paymentId, limit: "100" }) });
       if (refunds.has_more) throw new Error("Review this payment’s refund history in Stripe.");
+      confirmedRefunds = refunds.data.filter(r => r.status === "succeeded");
       confirmedRefundCents = refunds.data.filter((r) => r.status === "succeeded").reduce((sum, r) => sum + r.amount, 0);
       pending = refunds.data.some((r) => ["pending", "requires_action"].includes(r.status));
     }
@@ -68,19 +71,26 @@ async function paymentState(ctx: Awaited<ReturnType<typeof context>>) {
     canCancel, orderIds: orders.map((o) => o.id),
     status: pending ? "Refund pending" : refundedCents >= chargedCents && chargedCents > 0 ? "Refunded" : closed ? "Cancelled" : ambiguous ? "Checkout recovery required" : chargedCents > 0 ? "Paid" : "Unpaid",
     customer: orders[0].parent_name || orders[0].customer_name || "Customer" };
-  return { snapshot, session, intent };
+  return { snapshot, session, intent, confirmedRefunds };
+}
+
+async function notifyRefunds(ctx: Awaited<ReturnType<typeof context>>, paymentIntentId: string | null, refunds: Refund[]) {
+  if (!ctx.account || !paymentIntentId || !refunds.length) return;
+  try { await scheduleOrderRefundEmails(ctx.service, { account: ctx.account, paymentIntentId, orderId: ctx.order.id, refunds }); }
+  catch { console.error("[refund-email] Confirmation queue unavailable; Stripe webhook will retry"); }
 }
 
 export async function GET(request: NextRequest) {
   try {
     const id = z.string().uuid().parse(request.nextUrl.searchParams.get("orderId"));
     const ctx = await context(request, id);
-    const { snapshot } = await paymentState(ctx);
+    const { snapshot, confirmedRefunds } = await paymentState(ctx);
     // Refresh also repairs a lost successful refund response or delayed webhook.
     // This only reconciles verified ledger state; it never moves money.
     if (snapshot.chargedCents > 0 && snapshot.remainingCents === 0 && !snapshot.pending && ctx.orders.some((o) => o.status !== "refunded")) {
       await markOrderOrGroupRefunded(ctx.service, { orderId: ctx.order.id, partial: false, refundAmountCents: snapshot.refundedCents, note: "Full Stripe refund verified during payment refresh." });
     }
+    await notifyRefunds(ctx, snapshot.paymentId, confirmedRefunds);
     return NextResponse.json({ ok: true, ...snapshot });
   } catch { return NextResponse.json({ ok: false, message: "Could not verify this order with Stripe. Check your sign-in and connection, then refresh. No payment action was taken." }, { status: 409 }); }
 }
@@ -94,10 +104,11 @@ export async function POST(request: NextRequest) {
     let ctx = await context(request, body.orderId);
     release = await lockOrderPayment(ctx.service, ctx.order.order_group_id || ctx.order.id);
     ctx = await context(request, body.orderId);
-    const { snapshot, session, intent } = await paymentState(ctx);
+    const { snapshot, session, intent, confirmedRefunds } = await paymentState(ctx);
     // Successful repeated clicks are harmless; return the reconciled result.
     if (body.action === "refund" && snapshot.chargedCents > 0 && snapshot.remainingCents === 0 && !snapshot.pending) {
       await markOrderOrGroupRefunded(ctx.service, { orderId: ctx.order.id, partial: false, refundAmountCents: snapshot.refundedCents, note: "Full Stripe refund verified." });
+      await notifyRefunds(ctx, snapshot.paymentId, confirmedRefunds);
       return NextResponse.json({ ok: true, message: "This payment has already been refunded.", status: "refunded", orderIds: snapshot.orderIds });
     }
     if (body.action === "cancel" && snapshot.chargedCents === 0 && ctx.orders.every((o) => ["cancelled", "canceled"].includes(o.status || ""))) return NextResponse.json({ ok: true, message: "This order is already cancelled.", status: "cancelled", orderIds: snapshot.orderIds });
@@ -115,7 +126,10 @@ export async function POST(request: NextRequest) {
       refundId = refund.id;
       status = refund.status === "succeeded" ? "refunded" : "refund_pending";
       if (refund.status === "failed" || refund.status === "canceled") throw new Error("Refund was not completed. Review the payment in Stripe; the order remains on hold.");
-      if (status === "refunded") await markOrderOrGroupRefunded(ctx.service, { orderId: ctx.order.id, partial: false, refundAmountCents: snapshot.chargedCents, note: `Full refund ${refund.id} requested by ${ctx.user.id}. Reason: ${body.reason}` });
+      if (status === "refunded") {
+        await markOrderOrGroupRefunded(ctx.service, { orderId: ctx.order.id, partial: false, refundAmountCents: snapshot.chargedCents, note: `Full refund ${refund.id} requested by ${ctx.user.id}. Reason: ${body.reason}` });
+        await notifyRefunds(ctx, snapshot.paymentId, [refund]);
+      }
     } else {
       // Persist a cancellation hold before the external call. Even if the
       // process/lease expires, checkout must not create a replacement session.
