@@ -1,7 +1,19 @@
 # School class registration review
 
-Status: implemented locally; production migration and deployment are pending.
-No parent email was sent during this review. No live school settings changed.
+Status: deployed and verified in production on 2026-09-25.
+No parent email was sent during this review. Class registration was enabled only
+for ARS -2026-211 Consumers Road; all other schools retain the default-off
+setting.
+
+Production release:
+
+- Vercel deployment `dpl_847rj5bwGVMT5DvCYW9aLazoKdoR` (`READY`, production)
+- Code commit `8fad70cdd60af9da4e675d2a39911ce17978e992`
+- Supabase migration `20260925020000_school_class_registration` applied through
+  controlled SQL to project `bwqhzczxoevouiondjak`
+- ARS remains `pre_release`; 718 students and 35 class labels were verified
+- Parent portal returned `enabled: true` with 35 class choices
+- Missing-class registration request returned HTTP 400 without creating a row
 
 The original draft made class selection mandatory for every prerelease school.
 It also left the old automatic gallery-release email active. Both were corrected:
@@ -76,7 +88,8 @@ dates. These checks do not substitute for a live booking/payment walkthrough.
 2. Deploy the committed clean worktree using `npm run deploy:production`.
 3. Verify old email-only registration with the toggle off, then enabled class
    selection and the recipient review, without sending an unapproved campaign.
-4. Enable the toggle for the intended school explicitly in settings.
+4. Enable the toggle for the intended school explicitly in settings. **Complete
+   for ARS; repeat only when another school is ready.**
 
 ## Changed areas
 
