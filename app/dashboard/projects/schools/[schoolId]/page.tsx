@@ -30,6 +30,7 @@ import { useIsMobile } from "@/lib/use-is-mobile";
 import { uploadToR2 } from "@/lib/upload-to-r2-client";
 import { ensureSchoolCollectionId } from "@/lib/school-sync";
 import { proxiedPhotoUrl } from "@/lib/photo-url";
+import { SchoolEmailClassPicker } from "@/components/school-email-class-picker";
 import {
   extractStoragePathFromSupabaseUrl,
 } from "@/lib/storage-images";
@@ -454,6 +455,8 @@ export default function SchoolsSchoolDetailPage() {
   const sharePreviewRequestRef = useRef(0);
   const [shareIncludeClassRegistrations, setShareIncludeClassRegistrations] = useState(true);
   const [shareClassNames, setShareClassNames] = useState<string[]>([]);
+  // Class choices survive recipient loading, empty audiences and failed previews.
+  const [shareClassOptions, setShareClassOptions] = useState<string[]>([]);
   const [shareOnlyWithPhotos, setShareOnlyWithPhotos] = useState(true);
   const [shareClassAudience, setShareClassAudience] = useState<SchoolClassAudience | null>(null);
   const [shareRecipientInput, setShareRecipientInput] = useState("");
@@ -1081,6 +1084,7 @@ export default function SchoolsSchoolDetailPage() {
           : [],
       );
       setShareTestRecipient(clean(payload.testRecipient));
+      if (payload.classAudience) setShareClassOptions(payload.classAudience.classOptions);
       setShareClassAudience(payload.classAudience ?? null);
     } catch (err: unknown) {
       if (requestVersion !== sharePreviewRequestRef.current) return;
@@ -1110,6 +1114,7 @@ export default function SchoolsSchoolDetailPage() {
     setShareRecipientMode(mode);
     setShareRecipientInput("");
     setShareClassNames([]);
+    setShareClassOptions([]);
     setShareOnlyWithPhotos(true);
     setShareIncludeClassRegistrations(true);
     setShareClassAudience(null);
@@ -3097,17 +3102,18 @@ export default function SchoolsSchoolDetailPage() {
                   ) : null}
                   {shareRecipientMode === "classes" ? (
                     <div style={{ display: "grid", gap: 12 }}>
-                      <label style={{ display: "grid", gap: 8 }}>
-                        <span style={{ color: "#344054", fontSize: 12, fontWeight: 800 }}>Classes / grades to email</span>
-                        <select multiple size={Math.min(8, Math.max(4, shareClassAudience?.classOptions.length ?? 4))} value={shareClassNames} onChange={(event) => { setShareClassAudience(null); setShareClassNames(Array.from(event.target.selectedOptions, (option) => option.value)); }} style={{ width: "100%", boxSizing: "border-box", borderRadius: 8, border: "1px solid #cbd5e1", padding: "8px 10px", background: "#fff", color: "#111827", fontSize: 14 }}>
-                          {(shareClassAudience?.classOptions ?? []).map((className) => <option key={className} value={className}>{className}</option>)}
-                        </select>
-                      </label>
+                      <SchoolEmailClassPicker
+                        classOptions={shareClassOptions}
+                        selectedClasses={shareClassNames}
+                        loading={sharePreviewLoading}
+                        error={sharePreviewError}
+                        onChange={(classes) => { setShareClassAudience(null); setShareClassNames(classes); }}
+                      />
                       <label style={{ display: "flex", alignItems: "center", gap: 9, color: "#344054", fontSize: 13 }}>
                         <input type="checkbox" checked={shareOnlyWithPhotos} onChange={(event) => { setShareClassAudience(null); setShareOnlyWithPhotos(event.target.checked); }} /> Only include linked students with uploaded photos
                       </label>
-                      <div style={{ borderRadius: 12, border: "1px solid #bbf7d0", background: "#f0fdf4", color: "#166534", padding: "12px 14px", fontSize: 12, lineHeight: 1.55 }}>
-                        {!shareClassNames.length ? "Select one or more classes to review the recipient count." : shareClassAudience ? <>{shareClassAudience.totalEmails} email{shareClassAudience.totalEmails === 1 ? "" : "s"} ready for {shareClassAudience.uniqueAddresses} address{shareClassAudience.uniqueAddresses === 1 ? "" : "es"}. {shareClassAudience.summary.withoutPhotos} selected student{shareClassAudience.summary.withoutPhotos === 1 ? "" : "s"} without uploaded photos skipped.</> : "Checking the selected classes…"}
+                      <div role="status" style={{ minHeight: 96, boxSizing: "border-box", borderRadius: 12, border: "1px solid #bbf7d0", background: "#f0fdf4", color: "#166534", padding: "12px 14px", fontSize: 12, lineHeight: 1.55 }}>
+                        {!shareClassNames.length ? "Select one or more classes to review the recipient count." : sharePreviewError ? "Your classes are still selected. Refresh recipients to check who can receive this email." : shareClassAudience ? shareClassAudience.totalEmails === 0 ? "Your classes are selected. No eligible email addresses match these classes and filters yet. Review the skipped recipients below for details." : <>{shareClassAudience.totalEmails} email{shareClassAudience.totalEmails === 1 ? "" : "s"} ready for {shareClassAudience.uniqueAddresses} address{shareClassAudience.uniqueAddresses === 1 ? "" : "es"}. {shareClassAudience.summary.withoutPhotos} selected student{shareClassAudience.summary.withoutPhotos === 1 ? "" : "s"} without uploaded photos skipped.</> : "Checking recipients… Your class selections stay selected."}
                       </div>
                       <label style={{ display: "flex", alignItems: "center", gap: 9, color: "#344054", fontSize: 13 }}>
                         <input type="checkbox" checked={shareIncludeClassRegistrations} onChange={(event) => { setShareClassAudience(null); setShareIncludeClassRegistrations(event.target.checked); }} /> Include parents registered for any selected class
