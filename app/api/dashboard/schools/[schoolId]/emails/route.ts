@@ -25,18 +25,22 @@ import {
   excludeCancelledOnlyRecipientEmails,
 } from "@/lib/school-gallery-email-personalization";
 import { guardAgreement } from "@/lib/require-agreement";
+import { loadSchoolClassEmailAudience } from "@/lib/school-class-email-audience";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-const MAX_CAMPAIGN_DELIVERIES = 500;
+const MAX_CAMPAIGN_DELIVERIES = 1000;
 const SEND_CONCURRENCY = 5;
 
 const SendCampaignBodySchema = z.object({
   action: z.enum(["campaign", "test", "student", "resend"]).optional(),
   bookingId: z.string().uuid().optional(),
   studentId: z.string().uuid().optional(),
-  recipientMode: z.enum(["visitors", "others"]).optional(),
+  recipientMode: z.enum(["visitors", "others", "classes"]).optional(),
+  classNames: z.array(z.string().trim().min(1).max(500)).max(200).optional(),
+  onlyWithPhotos: z.boolean().optional(),
+  audienceFingerprint: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   recipients: z.union([z.array(z.string().max(320)).max(MAX_CAMPAIGN_DELIVERIES), z.string().max(20_000)]).optional(),
   ccRecipients: z.union([z.array(z.string().max(320)).max(MAX_CAMPAIGN_DELIVERIES), z.string().max(20_000)]).optional(),
   subject: z.string().max(500).optional(),
@@ -318,12 +322,25 @@ export async function GET(
       };
     });
 
+    const query = new URL(request.url).searchParams;
+    const classAudience = query.get("recipientMode") === "classes"
+      ? await loadSchoolClassEmailAudience(service, schoolId, query.getAll("className"), query.get("onlyWithPhotos") !== "false")
+      : null;
     return privateJson({
       ok: true,
       previewStudents,
       sendSummary,
       deliveryReport,
       testRecipient: clean(photographerRow.studio_email) || clean(user.email),
+      classAudience: classAudience ? {
+        classOptions: classAudience.classOptions,
+        fingerprint: classAudience.fingerprint,
+        review: classAudience.review,
+        summary: classAudience.summary,
+        totalEmails: classAudience.deliveries.length,
+        uniqueAddresses: new Set(classAudience.deliveries.map((d) => d.recipientEmail)).size,
+        maxEmails: MAX_CAMPAIGN_DELIVERIES,
+      } : null,
     });
   } catch (error) {
     console.error("[dashboard:schools:emails:preview]", error);
@@ -614,7 +631,7 @@ export async function POST(
 
     let bookingRows: SchoolBookingRow[] = [];
     let studentRows: SchoolStudentRow[] = [];
-    if (body.recipientMode !== "others") {
+    if (body.recipientMode !== "others" && body.recipientMode !== "classes") {
       const [bookingsResult, studentsResult] = await Promise.all([
         service
           .from("bookings")
@@ -633,7 +650,7 @@ export async function POST(
     const manualEmailRows = buildIndependentRosterEmailRows(studentRows, bookingRows);
     const activeBookingRows = bookingRows.filter((booking) => !isCancelled(booking.status));
     const personalizedRows = [...activeBookingRows, ...manualEmailRows];
-    const collectedRecipientEmails = body.recipientMode === "others"
+    const collectedRecipientEmails = body.recipientMode === "others" || body.recipientMode === "classes"
       ? []
       : await collectSchoolRecipientEmails(service, schoolId);
     const primaryRecipients = body.recipientMode === "others"
@@ -653,7 +670,7 @@ export async function POST(
     const additionalCcRecipients = ccRecipients.filter(
       (email) => !primaryRecipientSet.has(email),
     );
-    const deliveries = [
+    let deliveries = [
       ...buildSchoolGalleryEmailDeliveries(
         primaryRecipients,
         personalizedRows,
@@ -665,6 +682,21 @@ export async function POST(
         false,
       ),
     ];
+
+    if (body.recipientMode === "classes") {
+      if (!body.classNames?.length || !body.audienceFingerprint) {
+        return privateJson({ ok: false, message: "Choose classes and review the recipients before sending." }, 400);
+      }
+      // Always resolve the selection again on the server. Never accept a
+      // client-supplied student list, recipient address or PIN for this mode.
+      const audience = await loadSchoolClassEmailAudience(service, schoolId, body.classNames, body.onlyWithPhotos !== false);
+      if (audience.unknownClasses.length || audience.fingerprint !== body.audienceFingerprint) {
+        return privateJson({ ok: false, message: "The recipients changed. Refresh the recipient review before sending." }, 409);
+      }
+      deliveries = audience.deliveries;
+      // Class sends deliberately omit custom recipients and CC: these cannot
+      // be matched to the selected students. Use Send Test to Me for a copy.
+    }
 
     if (!deliveries.length) {
       return NextResponse.json(
@@ -743,6 +775,7 @@ export async function POST(
                 schoolId,
                 action: "campaign",
                 recipientMode: body.recipientMode || "visitors",
+                classNames: body.recipientMode === "classes" ? body.classNames : undefined,
                 bookingId: delivery.bookingId,
                 studentId: delivery.studentId ?? null,
                 studentName: delivery.studentName,
@@ -771,6 +804,7 @@ export async function POST(
               schoolId,
               action: "campaign",
               recipientMode: body.recipientMode || "visitors",
+              classNames: body.recipientMode === "classes" ? body.classNames : undefined,
               bookingId: delivery.bookingId,
               studentId: delivery.studentId ?? null,
               studentName: delivery.studentName,

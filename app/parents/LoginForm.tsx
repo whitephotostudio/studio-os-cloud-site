@@ -17,6 +17,7 @@ import {
 } from "react";
 import { useRouter } from "next/navigation";
 import { Check, ChevronDown, Images, KeyRound, Mail, School, Search, X } from "lucide-react";
+import SchoolRegistrationClasses from "./SchoolRegistrationClasses";
 
 type SchoolRow = {
   id: string;
@@ -363,6 +364,7 @@ export default function LoginForm({
   const [selectedSchool, setSelectedSchool] = useState<SchoolRow | null>(null);
   const [schoolEmail, setSchoolEmail] = useState("");
   const [schoolPin, setSchoolPin] = useState("");
+  const [schoolRegistrationClasses, setSchoolRegistrationClasses] = useState<string[]>([]);
 
   const [selectedEventId, setSelectedEventId] = useState("");
   const [selectedEvent, setSelectedEvent] = useState<EventProjectRow | null>(null);
@@ -446,6 +448,7 @@ export default function LoginForm({
     setSelectedSchool(null);
     setSchoolEmail("");
     setSchoolPin("");
+    setSchoolRegistrationClasses([]);
     setSelectedEventId("");
     setSelectedEvent(null);
     setEventEmail("");
@@ -453,6 +456,25 @@ export default function LoginForm({
     resetErrors();
     setSchoolPrereleaseRegistered(false);
     setEventPrereleaseRegistered(false);
+  }
+
+  async function registerSchoolPreRelease(email: string, classNames: string[]) {
+    const response = await fetch("/api/portal/pre-release-register", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        schoolId: selectedSchoolId,
+        email: email.trim().toLowerCase(),
+        classNames,
+      }),
+    });
+    const payload = (await response.json().catch(() => ({}))) as {
+      ok?: boolean;
+      message?: string;
+    };
+    if (!response.ok || payload.ok === false) {
+      throw new Error(payload.message || "Could not save your registration. Please try again.");
+    }
   }
 
   async function handleSchoolLogin(e: FormEvent<HTMLFormElement>) {
@@ -470,15 +492,17 @@ export default function LoginForm({
 
     // Pre-release school: register email directly — no PIN needed
     if (isSchoolPreRelease(selectedSchool)) {
+      if (!schoolRegistrationClasses.length) {
+        setLoginError("Please select your child’s class or grade.");
+        return;
+      }
       setSearching(true);
       try {
-        await fetch("/api/portal/pre-release-register", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ schoolId: selectedSchoolId, email: schoolEmail.trim().toLowerCase() }),
-        });
-      } catch { /* non-fatal */ }
-      setSchoolPrereleaseRegistered(true);
+        await registerSchoolPreRelease(schoolEmail, schoolRegistrationClasses);
+        setSchoolPrereleaseRegistered(true);
+      } catch (error) {
+        setLoginError(error instanceof Error ? error.message : "Could not save your registration. Please try again.");
+      }
       setSearching(false);
       return;
     }
@@ -526,13 +550,11 @@ export default function LoginForm({
       if (payload.step === "school_prerelease") {
         // Auto-register with the email already entered — no second screen
         try {
-          await fetch("/api/portal/pre-release-register", {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ schoolId: selectedSchoolId, email: schoolEmail.trim().toLowerCase() }),
-          });
-        } catch { /* non-fatal */ }
-        setSchoolPrereleaseRegistered(true);
+          await registerSchoolPreRelease(schoolEmail, schoolRegistrationClasses);
+          setSchoolPrereleaseRegistered(true);
+        } catch (error) {
+          setLoginError(error instanceof Error ? error.message : "Could not save your registration. Please try again.");
+        }
         setSearching(false);
         return;
       }
@@ -688,23 +710,14 @@ export default function LoginForm({
     e.preventDefault();
     setRegSubmitting(true);
     setRegError("");
-    try {
-      const response = await fetch("/api/portal/pre-release-register", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          schoolId: selectedSchoolId,
-          email: regEmail.trim().toLowerCase(),
-        }),
-      });
-
-      const payload = (await response.json()) as { ok?: boolean; message?: string };
+    if (!schoolRegistrationClasses.length) {
       setRegSubmitting(false);
-
-      if (!response.ok || payload.ok === false) {
-        setRegError(payload.message || "Something went wrong. Please try again.");
-        return;
-      }
+      setRegError("Please select your child’s class or grade.");
+      return;
+    }
+    try {
+      await registerSchoolPreRelease(regEmail, schoolRegistrationClasses);
+      setRegSubmitting(false);
     } catch (error) {
       setRegSubmitting(false);
       setRegError(error instanceof Error ? error.message : "Something went wrong. Please try again.");
@@ -1111,6 +1124,7 @@ export default function LoginForm({
                   onChange={(id, row) => {
                     setSelectedSchoolId(id);
                     setSelectedSchool(row);
+                    setSchoolRegistrationClasses([]);
                     resetErrors();
                   }}
                   options={schools.map((row) => ({
@@ -1156,6 +1170,14 @@ export default function LoginForm({
                   />
                 </div>
               )}
+
+              {isSchoolPreRelease(selectedSchool) ? (
+                <SchoolRegistrationClasses
+                  schoolId={selectedSchoolId}
+                  value={schoolRegistrationClasses}
+                  onChange={setSchoolRegistrationClasses}
+                />
+              ) : null}
 
               {loginError ? (
                 <div style={{ background: "#fff1f2", border: "1px solid #fecdd3", color: "#be123c", borderRadius: 12, padding: "12px 14px", fontSize: 13 }}>
@@ -1326,6 +1348,11 @@ export default function LoginForm({
               <label style={labelStyle}>Email</label>
               <input type="email" value={regEmail} onChange={(e) => setRegEmail(e.target.value)} required style={inputStyle} placeholder="name@example.com" />
             </div>
+            <SchoolRegistrationClasses
+              schoolId={selectedSchoolId}
+              value={schoolRegistrationClasses}
+              onChange={setSchoolRegistrationClasses}
+            />
             {regError ? (
               <div style={{ background: "#fff1f2", border: "1px solid #fecdd3", color: "#be123c", borderRadius: 12, padding: "12px 14px", fontSize: 13 }}>
                 {regError}

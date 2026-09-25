@@ -3,6 +3,7 @@
 import { type CSSProperties, type FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Check, Mail, School, X } from "lucide-react";
+import SchoolRegistrationClasses from "./SchoolRegistrationClasses";
 
 type SchoolRow = {
   id: string;
@@ -38,16 +39,26 @@ export default function SchoolDirectLoginForm({ school }: { school: SchoolRow })
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [registered, setRegistered] = useState(false);
+  const [classNames, setClassNames] = useState<string[]>([]);
 
   async function registerForRelease() {
-    await fetch("/api/portal/pre-release-register", {
+    const response = await fetch("/api/portal/pre-release-register", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         schoolId: school.id,
         email: email.trim().toLowerCase(),
+        classNames,
       }),
     });
+
+    const payload = (await response.json().catch(() => ({}))) as {
+      ok?: boolean;
+      message?: string;
+    };
+    if (!response.ok || payload.ok === false) {
+      throw new Error(payload.message || "Could not save your registration. Please try again.");
+    }
     setRegistered(true);
   }
 
@@ -61,11 +72,15 @@ export default function SchoolDirectLoginForm({ school }: { school: SchoolRow })
     }
 
     if (preRelease) {
+      if (!classNames.length) {
+        setError("Please select your child’s class or grade.");
+        return;
+      }
       setSubmitting(true);
       try {
         await registerForRelease();
-      } catch {
-        setRegistered(true);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Could not save your registration. Please try again.");
       } finally {
         setSubmitting(false);
       }
@@ -99,7 +114,11 @@ export default function SchoolDirectLoginForm({ school }: { school: SchoolRow })
       }
 
       if (payload.step === "school_prerelease") {
-        await registerForRelease().catch(() => setRegistered(true));
+        try {
+          await registerForRelease();
+        } catch (err) {
+          setError(err instanceof Error ? err.message : "Could not save your registration. Please try again.");
+        }
         return;
       }
 
@@ -219,6 +238,14 @@ export default function SchoolDirectLoginForm({ school }: { school: SchoolRow })
               />
             </div>
           )}
+
+          {preRelease ? (
+            <SchoolRegistrationClasses
+              schoolId={school.id}
+              value={classNames}
+              onChange={setClassNames}
+            />
+          ) : null}
 
           {error ? (
             <div style={{ background: "#fff1f2", border: "1px solid #fecdd3", color: "#be123c", borderRadius: 12, padding: "12px 14px", fontSize: 13 }}>

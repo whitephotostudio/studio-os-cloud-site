@@ -17,6 +17,7 @@ export type SchoolGalleryRosterStudentRow = {
   parent_email?: string | null;
   class_name?: string | null;
   role?: string | null;
+  photo_url?: string | null;
 };
 
 export type SchoolGalleryEmailDelivery = {
@@ -29,6 +30,110 @@ export type SchoolGalleryEmailDelivery = {
 
 function clean(value: string | null | undefined) {
   return (value ?? "").trim();
+}
+
+export type SchoolStudentEmailContact = { student_id: string; email: string };
+export type SchoolPreReleaseRegistration = { email: string; class_names?: string[] | null };
+
+/** Class selection is applied to student identities BEFORE email expansion.
+ * Shared family addresses must never pull a sibling from an unselected class
+ * into the delivery. Email-only school registrations are not identity proof.
+ */
+export function buildSchoolClassEmailAudience(params: {
+  students: SchoolGalleryRosterStudentRow[];
+  bookings: SchoolGalleryBookingEmailRow[];
+  contacts: SchoolStudentEmailContact[];
+  visitorEmails: string[];
+  prereleaseRegistrations?: SchoolPreReleaseRegistration[];
+  classNames: string[];
+  onlyWithPhotos: boolean;
+}) {
+  const roster = params.students.filter((s) => !clean(s.role) || clean(s.role).toLowerCase() === "student");
+  const studentsByPin = new Map<string, SchoolGalleryRosterStudentRow[]>();
+  for (const student of roster) {
+    const pin = clean(student.pin);
+    if (pin) studentsByPin.set(pin, [...(studentsByPin.get(pin) ?? []), student]);
+  }
+  const contactsByStudent = new Map<string, string[]>();
+  for (const contact of params.contacts) {
+    contactsByStudent.set(contact.student_id, [...(contactsByStudent.get(contact.student_id) ?? []), contact.email]);
+  }
+  const rows = [
+    ...params.bookings,
+    ...buildIndependentRosterEmailRows(roster, params.bookings),
+  ].map((row) => {
+    const matches = studentsByPin.get(clean(row.access_pin)) ?? [];
+    const student = matches.length === 1 ? matches[0] : undefined;
+    const activeBookings = params.bookings.filter((b) => clean(b.access_pin) === clean(row.access_pin) && !isCancelled(b.status));
+    return {
+      ...row,
+      student_id: student?.id || row.student_id,
+      class_name: student ? clean(student.class_name) : clean(row.class_name),
+      hasPhoto: Boolean(clean(student?.photo_url)),
+      ambiguous: matches.length > 1 || activeBookings.length > 1,
+      emails: Array.from(new Set([row.parent_email, ...(student ? contactsByStudent.get(student.id) ?? [] : [])]
+        .map(normalizedEmail).filter((email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)))),
+    };
+  });
+  const classOptions = Array.from(new Set(rows.map((r) => clean(r.class_name)).filter(Boolean)))
+    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }));
+  const selected = new Set(params.classNames.map(clean).filter(Boolean));
+  const unknownClasses = [...selected].filter((name) => !classOptions.includes(name));
+  const selectedRows = rows.filter((r) => selected.has(clean(r.class_name)));
+  const knownEmails = new Set(rows.flatMap((r) => r.emails));
+  const unlinkedRegistrations = (params.prereleaseRegistrations ?? []).filter((registration) =>
+    !knownEmails.has(normalizedEmail(registration.email)) &&
+    (registration.class_names ?? []).some((name) => selected.has(clean(name))),
+  ).length;
+  const summary = {
+    selectedStudents: selectedRows.filter((r) => !isCancelled(r.status)).length,
+    missingEmail: 0, missingPin: 0, withoutPhotos: 0, ambiguous: 0,
+    cancelledExcluded: 0,
+    unlinkedRegistrations,
+  };
+  const deliveries: (SchoolGalleryEmailDelivery & { className: string })[] = [];
+  const review: { studentName: string; className: string; emails: string[]; reason: string }[] = [];
+  const seen = new Set<string>();
+  for (const row of selectedRows) {
+    const studentName = [clean(row.student_first_name), clean(row.student_last_name)].filter(Boolean).join(" ") || "Student";
+    let reason = "Included";
+    if (isCancelled(row.status)) { reason = "Cancelled booking"; }
+    else if (row.ambiguous) { reason = "Conflicting student PIN records"; }
+    else if (!clean(row.access_pin)) { reason = "Missing PIN"; }
+    else if (!row.emails.length) { reason = "No linked email"; }
+    else if (params.onlyWithPhotos && !row.hasPhoto) { reason = "No uploaded photo"; }
+    if (reason === "Cancelled booking") summary.cancelledExcluded++;
+    else if (reason === "Conflicting student PIN records") summary.ambiguous++;
+    else if (reason === "Missing PIN") summary.missingPin++;
+    else if (reason === "No linked email") summary.missingEmail++;
+    else if (reason === "No uploaded photo") summary.withoutPhotos++;
+    review.push({ studentName, className: clean(row.class_name), emails: row.emails, reason });
+    if (reason !== "Included") continue;
+    for (const recipientEmail of row.emails) {
+      const key = `${recipientEmail}\u0000${clean(row.access_pin)}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      deliveries.push({
+        recipientEmail, bookingId: clean(row.id) || null,
+        ...(row.student_id ? { studentId: row.student_id } : {}),
+        studentName, studentPin: clean(row.access_pin), className: clean(row.class_name),
+      });
+    }
+  }
+  const readySelectedClasses = new Set(
+    selectedRows.filter((row) => row.hasPhoto && !isCancelled(row.status)).map((row) => clean(row.class_name)),
+  );
+  const linkedEmails = new Set(deliveries.map((delivery) => delivery.recipientEmail));
+  for (const registration of params.prereleaseRegistrations ?? []) {
+    const email = normalizedEmail(registration.email);
+    const matchesSelectedClass = (registration.class_names ?? []).some((name) => selected.has(clean(name)));
+    const hasReadyPhoto = !params.onlyWithPhotos || (registration.class_names ?? []).some((name) => readySelectedClasses.has(clean(name)));
+    if (!email || !matchesSelectedClass || !hasReadyPhoto || linkedEmails.has(email)) continue;
+    linkedEmails.add(email);
+    const matchedClass = (registration.class_names ?? []).find((name) => selected.has(clean(name))) ?? "";
+    deliveries.push({ recipientEmail: email, bookingId: null, studentName: "", studentPin: "", className: clean(matchedClass) });
+  }
+  return { deliveries, classOptions, unknownClasses, review, summary };
 }
 
 function normalizedEmail(value: string | null | undefined) {

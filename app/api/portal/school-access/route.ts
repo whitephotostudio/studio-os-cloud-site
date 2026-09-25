@@ -449,6 +449,19 @@ export async function POST(request: NextRequest) {
 
     const gallerySchoolStatus = gallerySchool.portal_status ?? gallerySchool.status;
 
+    // The PIN query above is scoped to this immutable school. Only a unique
+    // match can establish an email/student association. Never overwrite the
+    // roster's parent_email, which is also used by PIN recovery.
+    if (matches.length === 1) {
+      const { error: contactError } = await service.from("school_student_email_contacts").upsert({
+        school_id: selectedSchoolId,
+        student_id: matches[0].id,
+        email: selectedEmail,
+        last_verified_at: new Date().toISOString(),
+      }, { onConflict: "student_id,email" });
+      if (contactError) throw contactError;
+    }
+
     if (prefetch && gallerySchool.photographer_id) {
       try {
         // Resolve every matching student record inside the selected school.

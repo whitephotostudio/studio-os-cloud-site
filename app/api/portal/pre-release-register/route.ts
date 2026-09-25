@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createDashboardServiceClient } from "@/lib/dashboard-auth";
 import { getClientIp, rateLimit } from "@/lib/rate-limit";
+import { schoolRegistrationClasses } from "@/lib/school-registration-classes";
 
 export const dynamic = "force-dynamic";
 
@@ -36,17 +37,18 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { schoolId, projectId, email } = (await request.json()) as {
+    const { schoolId, projectId, email, classNames } = (await request.json()) as {
       schoolId?: string;
       projectId?: string;
       email?: string;
+      classNames?: string[];
     };
 
     const selectedSchoolId = clean(schoolId);
     const selectedProjectId = clean(projectId);
     const normalizedEmail = clean(email).toLowerCase();
 
-    if ((!selectedSchoolId && !selectedProjectId) || !normalizedEmail) {
+    if ((!selectedSchoolId && !selectedProjectId) || normalizedEmail.length > 320 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
       return NextResponse.json(
         { ok: false, message: "Please enter your email." },
         { status: 400 },
@@ -69,12 +71,31 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: true });
     }
 
-    // School pre-release
+    const selectedClasses = Array.isArray(classNames) ? [...new Set(classNames.filter((name): name is string => typeof name === "string").map((name) => name.trim()).filter(Boolean))] : [];
+    if (!selectedClasses.length) {
+      return NextResponse.json({ ok: false, message: "Please select your child’s class or grade." }, { status: 400 });
+    }
+    if (selectedClasses.length > 20 || selectedClasses.some((name) => name.length > 500)) {
+      return NextResponse.json({ ok: false, message: "Please select up to 20 classes." }, { status: 400 });
+    }
+    if (selectedClasses.length) {
+      const allowed = await schoolRegistrationClasses(service, selectedSchoolId);
+      if (selectedClasses.some((name) => !allowed.includes(name))) {
+        return NextResponse.json({ ok: false, message: "The class list changed. Refresh the page and select the class again." }, { status: 400 });
+      }
+    }
+    // An email-only retry must not erase classes saved in an earlier visit.
     const { error } = await service.from("pre_release_registrations").insert({
       school_id: selectedSchoolId,
       email: normalizedEmail,
+      class_names: selectedClasses,
     });
     if (error && error.code !== "23505") throw error;
+    if (error?.code === "23505" && selectedClasses.length) {
+      const { error: updateError } = await service.from("pre_release_registrations")
+        .update({ class_names: selectedClasses }).eq("school_id", selectedSchoolId).eq("email", normalizedEmail);
+      if (updateError) throw updateError;
+    }
 
     // Also save to general marketing captures (non-fatal)
     try { await service.from("portal_email_captures").insert({ email: normalizedEmail, school_id: selectedSchoolId, source: "pre_release" }); } catch { /* non-fatal */ }
