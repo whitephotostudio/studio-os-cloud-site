@@ -21,7 +21,7 @@ async function schoolRows<T>(service: SupabaseClient, schoolId: string, table: s
   }
 }
 
-export async function loadSchoolClassEmailAudience(service: SupabaseClient, schoolId: string, classNames: string[], onlyWithPhotos: boolean, includeClassRegistrations = false) {
+export async function loadSchoolClassEmailAudience(service: SupabaseClient, schoolId: string, classNames: string[], onlyWithPhotos: boolean, includeClassRegistrations = true) {
   const [students, bookings, contacts, prereleaseRegistrations] = await Promise.all([
     schoolRows<SchoolGalleryRosterStudentRow & { school_id: string; photo_url: string | null }>(service, schoolId, "students", "id,school_id,first_name,last_name,pin,parent_email,class_name,role,photo_url", "id"),
     schoolRows<SchoolGalleryBookingEmailRow>(service, schoolId, "bookings", "id,parent_email,access_pin,student_first_name,student_last_name,class_name,status", "id"),

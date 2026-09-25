@@ -190,7 +190,7 @@ test('class email API rejects stale audiences and foreign schools; explicit cust
   assert.equal((await route.POST(f.req(body), f.context)).status, 200);
   assert.deepEqual(f.sent.map(row => row.to), ['selected@example.com', 'selected@example.com']);
   assert.equal(f.sent[0].idempotencyKey, f.sent[1].idempotencyKey);
-  assert.deepEqual(inputs.at(-1), [schoolId, ['Grade 7'], true, false]);
+  assert.deepEqual(inputs.at(-1), [schoolId, ['Grade 7'], true, true]);
 });
 
 test('all 718 students are considered across pages and audience refresh changes its fingerprint', async () => {

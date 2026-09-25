@@ -23,10 +23,14 @@ PIN login. This lets later groups register after the first group is released.
 
 Share → Selected Classes / Grades allows a photographer to select classes,
 review recipients and skipped students, and send. The uploaded-photo filter
-applies to linked students. Unknown parent/student registrations are excluded
-by default and have a separate explicit inclusion checkbox; they receive a
-general message without a PIN, and individual photo availability is unverified.
-One classmate's uploaded photo never qualifies all parents as photo-ready.
+applies to linked students. Parents registered for any selected class are included by default, regardless
+of another child's photo status. They receive a general class update without a
+PIN when no personalized delivery is available. The photographer can explicitly
+turn off registration inclusion for a send limited to linked students. A parent
+registered for two classes receives the first selected group's update, and can
+receive the later group's update when that group is selected. We do not claim
+that all of their children's photos are ready. A ready personalized delivery
+prevents an extra general registration message to the same address.
 
 School activation and automatic campaign settings do not send all-parent emails
 while the class-registration toggle is enabled. All Visitors, custom addresses,

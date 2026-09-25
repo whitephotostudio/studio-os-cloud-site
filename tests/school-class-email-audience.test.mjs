@@ -50,12 +50,12 @@ test('shared family email cannot pull in a sibling from an unselected class', ()
   const result = audience({ students: [readyStudent('s7', 'Grade 7', 'family@example.com'), readyStudent('s12', 'Grade 12', 'family@example.com')] });
   assert.deepEqual(result.deliveries.map(row => row.studentPin), ['s7']);
 });
-test('one uploaded classmate cannot make unknown parents qualify for the uploaded-photo filter', () => {
-  const result = audience({ students: [readyStudent('s7', 'Grade 7', 'linked@example.com')], prereleaseRegistrations: [{ email: 'unknown@example.com', class_names: ['Grade 7'] }] });
+test('photographer can explicitly limit the audience to linked students with uploaded photos', () => {
+  const result = audience({ includeClassRegistrations: false, students: [readyStudent('s7', 'Grade 7', 'linked@example.com')], prereleaseRegistrations: [{ email: 'unknown@example.com', class_names: ['Grade 7'] }] });
   assert.deepEqual(result.deliveries.map(row => row.recipientEmail), ['linked@example.com']);
   assert.equal(result.summary.classRegistrationsIncluded, 0);
 });
-test('explicit class registrations are PIN-free and cannot bypass a linked child with no photos or a cancelled booking', () => {
+test('class updates include registered parents without ready photos but preserve cancelled-only class exclusions', () => {
   const result = audience({
     students: [{ ...readyStudent('s7', 'Grade 7', 'waiting@example.com'), photo_url: null }, readyStudent('cancelled', 'Grade 7', 'cancelled@example.com')],
     bookings: [{ id: 'b1', access_pin: 'cancelled', class_name: 'Grade 7', parent_email: 'cancelled@example.com', status: 'cancelled' }],
@@ -66,7 +66,7 @@ test('explicit class registrations are PIN-free and cannot bypass a linked child
       { email: 'outside@example.com', class_names: ['Grade 12'] },
     ], includeClassRegistrations: true,
   });
-  assert.deepEqual(result.deliveries.map(row => [row.recipientEmail, row.studentPin]), [['unlinked@example.com', '']]);
+  assert.deepEqual(result.deliveries.map(row => [row.recipientEmail, row.studentPin]), [['waiting@example.com', ''], ['unlinked@example.com', '']]);
   assert.equal(result.summary.withoutPhotos, 1);
   assert.equal(result.summary.cancelledExcluded, 1);
 });
@@ -86,4 +86,45 @@ test('updating the recipient review detects new photos and class changes', () =>
   assert.equal(audience({ students: [row] }).deliveries.length, 1);
   assert.equal(audience({ students: [{ ...row, class_name: 'Grade 12' }] }).deliveries.length, 0);
   assert.equal(audience({ students: [{ ...row, photo_url: null }] }).deliveries.length, 0);
+});
+
+
+test('one or two registered classes receive each selected group update without waiting for a sibling', () => {
+  const students = [readyStudent('s7', 'Grade 7'), { ...readyStudent('s12', 'Grade 12'), photo_url: null }];
+  for (const class_names of [['Grade 7'], ['Grade 7', 'Grade 12']]) {
+    const first = audience({ students, prereleaseRegistrations: [{ email: 'family@example.com', class_names }] });
+    assert.deepEqual(first.deliveries.map(row => [row.recipientEmail, row.studentPin]), [['family@example.com', '']]);
+  }
+  const registrations = [{ email: 'family@example.com', class_names: ['Grade 7', 'Grade 12'] }];
+  const bothSelected = audience({ students, classNames: ['Grade 7', 'Grade 12'], prereleaseRegistrations: registrations });
+  assert.equal(bothSelected.deliveries.length, 1);
+  // The later phase is eligible again; registration is not consumed by phase one.
+  const later = audience({ students, classNames: ['Grade 12'], prereleaseRegistrations: registrations });
+  assert.deepEqual(later.deliveries.map(row => row.recipientEmail), ['family@example.com']);
+});
+test('a linked sibling without photos cannot suppress the registered family update', () => {
+  const result = audience({
+    students: [readyStudent('s7', 'Grade 7'), { ...readyStudent('s12', 'Grade 12'), photo_url: null }],
+    contacts: [{ student_id: 's12', email: 'family@example.com' }],
+    classNames: ['Grade 7', 'Grade 12'],
+    prereleaseRegistrations: [{ email: 'family@example.com', class_names: ['Grade 7', 'Grade 12'] }],
+  });
+  assert.deepEqual(result.deliveries.map(row => [row.recipientEmail, row.studentPin]), [['family@example.com', '']]);
+});
+test('a ready linked child receives their PIN without an extra general registration email', () => {
+  const result = audience({
+    students: [readyStudent('s7', 'Grade 7', 'family@example.com'), { ...readyStudent('s12', 'Grade 12', 'family@example.com'), photo_url: null }],
+    classNames: ['Grade 7', 'Grade 12'],
+    prereleaseRegistrations: [{ email: 'FAMILY@example.com', class_names: ['Grade 7', 'Grade 12'] }],
+  });
+  assert.deepEqual(result.deliveries.map(row => [row.recipientEmail, row.studentPin]), [['family@example.com', 's7']]);
+});
+test('a cancelled sibling from another class cannot suppress a registered class update', () => {
+  const result = audience({
+    students: [readyStudent('s7', 'Grade 7'), { ...readyStudent('s12', 'Grade 12'), photo_url: null }],
+    bookings: [{ id: 'cancelled', access_pin: 's12', parent_email: 'family@example.com', class_name: 'Grade 12', status: 'cancelled' }],
+    classNames: ['Grade 7', 'Grade 12'],
+    prereleaseRegistrations: [{ email: 'family@example.com', class_names: ['Grade 12', 'Grade 7'] }],
+  });
+  assert.equal(result.deliveries.length, 1); assert.equal(result.deliveries[0].className, 'Grade 7');
 });

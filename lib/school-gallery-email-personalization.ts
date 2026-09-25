@@ -122,23 +122,25 @@ export function buildSchoolClassEmailAudience(params: {
       });
     }
   }
-  // Class choice alone is not evidence that this parent's child's photos exist.
-  // These addresses require a separate, explicit choice in the email composer.
-  const eligibleRegistrations = params.includeClassRegistrations ? params.prereleaseRegistrations ?? [] : [];
+  // A match to ANY selected class qualifies a registration for an update.
+  // Another child's missing photos must never delay this family. Photo-based
+  // filtering above only controls personalized student deliveries and PINs.
+  const eligibleRegistrations = params.includeClassRegistrations !== false ? params.prereleaseRegistrations ?? [] : [];
   const linkedEmails = new Set(deliveries.map((delivery) => delivery.recipientEmail));
-  const selectedLinkedEmails = new Set(selectedRows.flatMap((row) => row.emails));
-  const allowedRegistrationEmails = new Set(excludeCancelledOnlyRecipientEmails(
-    eligibleRegistrations.map((registration) => registration.email), params.bookings,
-  ));
   for (const registration of eligibleRegistrations) {
     const email = normalizedEmail(registration.email);
-    const matchesSelectedClass = (registration.class_names ?? []).some((name) => selected.has(clean(name)));
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || !allowedRegistrationEmails.has(email) || !matchesSelectedClass || linkedEmails.has(email) || selectedLinkedEmails.has(email)) continue;
+    const matchedClass = (registration.class_names ?? []).map(clean).find((name) => {
+      if (!selected.has(name)) return false;
+      // A cancelled sibling cannot suppress a different selected class. Keep
+      // the existing exclusion only when this class has cancelled-only rows.
+      const matchingRows = selectedRows.filter((row) => clean(row.class_name) === name && row.emails.includes(email));
+      return !matchingRows.length || matchingRows.some((row) => !isCancelled(row.status));
+    });
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || !matchedClass || linkedEmails.has(email)) continue;
     linkedEmails.add(email);
-    const matchedClass = (registration.class_names ?? []).find((name) => selected.has(clean(name))) ?? "";
     deliveries.push({ recipientEmail: email, bookingId: null, studentName: "", studentPin: "", className: clean(matchedClass) });
     summary.classRegistrationsIncluded++;
-    review.push({ studentName: "Class registration (student unverified)", className: clean(matchedClass), emails: [email], reason: "Included without PIN; individual photo availability unverified" });
+    review.push({ studentName: "Class registration", className: clean(matchedClass), emails: [email], reason: "Included for selected class without a student PIN; does not wait for other children" });
   }
   return { deliveries, classOptions, unknownClasses, review, summary };
 }

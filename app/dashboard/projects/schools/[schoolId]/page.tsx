@@ -452,7 +452,7 @@ export default function SchoolsSchoolDetailPage() {
   const [shareView, setShareView] = useState<"menu" | "compose" | "report">("menu");
   const [shareRecipientMode, setShareRecipientMode] = useState<"visitors" | "classes" | "others">("visitors");
   const sharePreviewRequestRef = useRef(0);
-  const [shareIncludeClassRegistrations, setShareIncludeClassRegistrations] = useState(false);
+  const [shareIncludeClassRegistrations, setShareIncludeClassRegistrations] = useState(true);
   const [shareClassNames, setShareClassNames] = useState<string[]>([]);
   const [shareOnlyWithPhotos, setShareOnlyWithPhotos] = useState(true);
   const [shareClassAudience, setShareClassAudience] = useState<SchoolClassAudience | null>(null);
@@ -1111,7 +1111,7 @@ export default function SchoolsSchoolDetailPage() {
     setShareRecipientInput("");
     setShareClassNames([]);
     setShareOnlyWithPhotos(true);
-    setShareIncludeClassRegistrations(false);
+    setShareIncludeClassRegistrations(true);
     setShareClassAudience(null);
     setShareSubject("Your Gallery is Ready!");
     setShareHeadline(`${schoolName} gallery`);
@@ -3110,9 +3110,9 @@ export default function SchoolsSchoolDetailPage() {
                         {!shareClassNames.length ? "Select one or more classes to review the recipient count." : shareClassAudience ? <>{shareClassAudience.totalEmails} email{shareClassAudience.totalEmails === 1 ? "" : "s"} ready for {shareClassAudience.uniqueAddresses} address{shareClassAudience.uniqueAddresses === 1 ? "" : "es"}. {shareClassAudience.summary.withoutPhotos} selected student{shareClassAudience.summary.withoutPhotos === 1 ? "" : "s"} without uploaded photos skipped.</> : "Checking the selected classes…"}
                       </div>
                       <label style={{ display: "flex", alignItems: "center", gap: 9, color: "#344054", fontSize: 13 }}>
-                        <input type="checkbox" checked={shareIncludeClassRegistrations} onChange={(event) => { setShareClassAudience(null); setShareIncludeClassRegistrations(event.target.checked); }} /> Also include parents registered for these classes whose child is not linked yet
+                        <input type="checkbox" checked={shareIncludeClassRegistrations} onChange={(event) => { setShareClassAudience(null); setShareIncludeClassRegistrations(event.target.checked); }} /> Include parents registered for any selected class
                       </label>
-                      <div style={{ borderRadius: 12, border: "1px solid #fed7aa", background: "#fff7ed", color: "#9a3412", padding: "12px 14px", fontSize: 12, lineHeight: 1.55 }}>Class registrations receive a general update without a PIN. Individual photo availability cannot be checked until the parent is linked to a student. {shareClassAudience?.summary.classRegistrationsIncluded ?? 0} such addresses included. Select this only when you want to notify the whole selected group.</div>
+                      <div style={{ borderRadius: 12, border: "1px solid #fed7aa", background: "#fff7ed", color: "#9a3412", padding: "12px 14px", fontSize: 12, lineHeight: 1.55 }}>Parents receive an update when any of their registered classes is selected, even if another child has not been photographed. {shareClassAudience?.summary.classRegistrationsIncluded ?? 0} addresses will receive a general update with instructions to use their existing private PIN. The uploaded-photo filter above applies to personalized student emails.</div>
                       {sharePreviewError ? <div role="alert">{sharePreviewError}</div> : null}
                       <button type="button" disabled={sharePreviewLoading} onClick={() => void loadSharePreviewStudents()}>Refresh recipients</button>
                       {shareClassAudience && shareClassAudience.totalEmails > shareClassAudience.maxEmails ? <div role="alert">Select fewer classes. Each send supports up to {shareClassAudience.maxEmails} emails.</div> : null}

@@ -325,7 +325,7 @@ export async function GET(
 
     const query = new URL(request.url).searchParams;
     const classAudience = query.get("recipientMode") === "classes"
-      ? await loadSchoolClassEmailAudience(service, schoolId, query.getAll("className"), query.get("onlyWithPhotos") !== "false", query.get("includeClassRegistrations") === "true")
+      ? await loadSchoolClassEmailAudience(service, schoolId, query.getAll("className"), query.get("onlyWithPhotos") !== "false", query.get("includeClassRegistrations") !== "false")
       : null;
     return privateJson({
       ok: true,
@@ -690,7 +690,7 @@ export async function POST(
       }
       // Always resolve the selection again on the server. Never accept a
       // client-supplied student list, recipient address or PIN for this mode.
-      const audience = await loadSchoolClassEmailAudience(service, schoolId, body.classNames, body.onlyWithPhotos !== false, body.includeClassRegistrations === true);
+      const audience = await loadSchoolClassEmailAudience(service, schoolId, body.classNames, body.onlyWithPhotos !== false, body.includeClassRegistrations !== false);
       if (audience.unknownClasses.length || audience.fingerprint !== body.audienceFingerprint) {
         return privateJson({ ok: false, message: "The recipients changed. Refresh the recipient review before sending." }, 409);
       }
