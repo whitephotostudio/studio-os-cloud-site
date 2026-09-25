@@ -103,3 +103,33 @@ school email endpoints under `app/dashboard/projects/schools/[schoolId]` and
 Supporting code: `lib/school-registration-classes.ts`,
 `lib/school-class-email-audience.ts`, `lib/school-gallery-email-personalization.ts`,
 the migration above, and `tests/school-class-{registration,email-audience}.test.mjs`.
+
+## Class picker correction — 2026-09-25
+
+The original composer rendered its class options from the recipient preview.
+Clearing that preview during a request removed every option and reduced the list
+height, causing Safari to jump and hide the selection. This happened regardless
+of whether parents had registered.
+
+The composer now stores class options separately and uses checkboxes, a selection
+count and a list of chosen classes. The list keeps its height and options during
+loading, zero-recipient responses and errors. Zero recipients is explained
+without implying that the selection failed. Recipient refresh and review controls
+also have explicit readable text colours.
+
+Changed implementation files:
+
+- `app/dashboard/projects/schools/[schoolId]/page.tsx`
+- `components/school-email-class-picker.tsx`
+- `tests/school-class-picker.test.mjs`
+
+The regression tests execute the actual page preview loader and picker JSX for
+empty audiences, concurrent selections, stale responses and failed refreshes.
+All 367 tests and the production build passed. Live Safari verification selected
+Dzil A, Dzil B and Grade 7 A; choices stayed checked during requests and after
+zero-recipient responses, and the class list retained its scroll position. Send
+remained disabled with no recipients. No parent email was sent.
+
+The final production deployment is `dpl_DJ277gtwB55n2CK4a25QW44z2fSu` (`READY`),
+code commit `5ecd935`, including selection fix `22afb60`. No database migration or
+school setting change was needed for this correction.
