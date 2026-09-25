@@ -45,6 +45,7 @@ type SchoolRow = {
   access_mode?: string | null;
   access_pin?: string | null;
   email_required?: boolean | null;
+  registration_class_required?: boolean | null;
   gallery_settings?: unknown;
   screenshot_protection_desktop?: boolean | null;
   screenshot_protection_mobile?: boolean | null;
@@ -344,7 +345,7 @@ export async function POST(request: NextRequest) {
     // Step 1: Validate school
     const { data: schoolRow, error: schoolError } = await service
       .from("schools")
-      .select("id,school_name,status,portal_status,expiration_date,photographer_id,package_profile_id,local_school_id,order_due_date,access_mode,access_pin,email_required,gallery_settings,screenshot_protection_desktop,screenshot_protection_mobile,screenshot_protection_watermark,group_label_singular,group_label_plural")
+      .select("id,school_name,status,portal_status,expiration_date,photographer_id,package_profile_id,local_school_id,order_due_date,access_mode,access_pin,email_required,registration_class_required,gallery_settings,screenshot_protection_desktop,screenshot_protection_mobile,screenshot_protection_watermark,group_label_singular,group_label_plural")
       .eq("id", selectedSchoolId)
       .maybeSingle();
 
@@ -367,7 +368,7 @@ export async function POST(request: NextRequest) {
     const selectedSchoolStatus = selectedSchool.portal_status ?? selectedSchool.status;
 
     if (normalizedSchoolStatus(selectedSchoolStatus) === "pre_release") {
-      return NextResponse.json({ ok: false, step: "school_prerelease" }, { status: 409 });
+      return NextResponse.json({ ok: false, step: "school_prerelease", registrationClassRequired: selectedSchool.registration_class_required === true }, { status: 409 });
     }
 
     if (!selectedPin) {
@@ -442,7 +443,7 @@ export async function POST(request: NextRequest) {
       "pre_release"
     ) {
       return NextResponse.json(
-        { ok: false, step: "school_prerelease" },
+        { ok: false, step: "school_prerelease", registrationClassRequired: selectedSchool.registration_class_required === true },
         { status: 409 },
       );
     }
@@ -452,14 +453,18 @@ export async function POST(request: NextRequest) {
     // The PIN query above is scoped to this immutable school. Only a unique
     // match can establish an email/student association. Never overwrite the
     // roster's parent_email, which is also used by PIN recovery.
-    if (matches.length === 1) {
-      const { error: contactError } = await service.from("school_student_email_contacts").upsert({
-        school_id: selectedSchoolId,
-        student_id: matches[0].id,
-        email: selectedEmail,
-        last_verified_at: new Date().toISOString(),
-      }, { onConflict: "student_id,email" });
-      if (contactError) throw contactError;
+    if (matches.length === 1 && selectedSchool.registration_class_required === true) {
+      try {
+        const { error: contactError } = await service.from("school_student_email_contacts").upsert({
+          school_id: selectedSchoolId,
+          student_id: matches[0].id,
+          email: selectedEmail,
+          last_verified_at: new Date().toISOString(),
+        }, { onConflict: "student_id,email" });
+        if (contactError) throw contactError;
+      } catch {
+        console.error("[school-access] Class notification contact was not saved; gallery access continues.");
+      }
     }
 
     if (prefetch && gallerySchool.photographer_id) {

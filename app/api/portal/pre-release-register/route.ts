@@ -5,8 +5,8 @@ import { schoolRegistrationClasses } from "@/lib/school-registration-classes";
 
 export const dynamic = "force-dynamic";
 
-function clean(value: string | null | undefined) {
-  return (value ?? "").trim();
+function clean(value: unknown) {
+  return typeof value === "string" ? value.trim() : "";
 }
 
 export async function POST(request: NextRequest) {
@@ -71,30 +71,32 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: true });
     }
 
-    const selectedClasses = Array.isArray(classNames) ? [...new Set(classNames.filter((name): name is string => typeof name === "string").map((name) => name.trim()).filter(Boolean))] : [];
-    if (!selectedClasses.length) {
-      return NextResponse.json({ ok: false, message: "Please select your child’s class or grade." }, { status: 400 });
-    }
-    if (selectedClasses.length > 20 || selectedClasses.some((name) => name.length > 500)) {
-      return NextResponse.json({ ok: false, message: "Please select up to 20 classes." }, { status: 400 });
-    }
-    if (selectedClasses.length) {
+    const { data: school, error: schoolError } = await service.from("schools")
+      .select("id,registration_class_required").eq("id", selectedSchoolId).maybeSingle();
+    if (schoolError) throw schoolError;
+    if (!school) return NextResponse.json({ ok: false, message: "School not found." }, { status: 404 });
+    if (school.registration_class_required === true) {
+      const selectedClasses = Array.isArray(classNames) ? [...new Set(classNames.filter((name): name is string => typeof name === "string").map((name) => name.trim()).filter(Boolean))] : [];
+      if (!selectedClasses.length) {
+        return NextResponse.json({ ok: false, message: "Please select your child’s class or grade.", classRequired: true }, { status: 400 });
+      }
+      if (selectedClasses.length > 20 || selectedClasses.some((name) => name.length > 500)) {
+        return NextResponse.json({ ok: false, message: "Please select up to 20 classes." }, { status: 400 });
+      }
       const allowed = await schoolRegistrationClasses(service, selectedSchoolId);
       if (selectedClasses.some((name) => !allowed.includes(name))) {
         return NextResponse.json({ ok: false, message: "The class list changed. Refresh the page and select the class again." }, { status: 400 });
       }
-    }
-    // An email-only retry must not erase classes saved in an earlier visit.
-    const { error } = await service.from("pre_release_registrations").insert({
-      school_id: selectedSchoolId,
-      email: normalizedEmail,
-      class_names: selectedClasses,
-    });
-    if (error && error.code !== "23505") throw error;
-    if (error?.code === "23505" && selectedClasses.length) {
-      const { error: updateError } = await service.from("pre_release_registrations")
-        .update({ class_names: selectedClasses }).eq("school_id", selectedSchoolId).eq("email", normalizedEmail);
-      if (updateError) throw updateError;
+      const { error } = await service.rpc("register_school_email_classes", {
+        p_school_id: selectedSchoolId, p_email: normalizedEmail, p_classes: selectedClasses,
+      });
+      if (error) throw error;
+    } else {
+      // Preserve the original email-only flow and any saved class preferences.
+      const { error } = await service.from("pre_release_registrations").insert({
+        school_id: selectedSchoolId, email: normalizedEmail,
+      });
+      if (error && error.code !== "23505") throw error;
     }
 
     // Also save to general marketing captures (non-fatal)

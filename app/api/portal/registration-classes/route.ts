@@ -10,14 +10,15 @@ export async function GET(request: NextRequest) {
   if (!limit.allowed) return NextResponse.json({ ok: false }, { status: 429 });
   try {
     const service = createDashboardServiceClient();
-    const { data: school, error } = await service.from("schools").select("id,status").eq("id", schoolId).maybeSingle();
+    const { data: school, error } = await service.from("schools").select("id,status,registration_class_required").eq("id", schoolId).maybeSingle();
     if (error) throw error;
     if (!school || ["inactive", "closed", "archived"].includes(String(school.status).toLowerCase())) {
       return NextResponse.json({ ok: false }, { status: 404 });
     }
+    if (school.registration_class_required !== true) return NextResponse.json({ ok: true, classes: [], enabled: false });
     // Only class labels are public. Never include student names, counts or PINs.
-    return NextResponse.json({ ok: true, classes: await schoolRegistrationClasses(service, schoolId) });
+    return NextResponse.json({ ok: true, enabled: true, classes: await schoolRegistrationClasses(service, schoolId) });
   } catch {
-    return NextResponse.json({ ok: false, message: "Classes are unavailable. You can still register your email." }, { status: 503 });
+    return NextResponse.json({ ok: false, message: "Classes are temporarily unavailable. Please try again." }, { status: 503 });
   }
 }

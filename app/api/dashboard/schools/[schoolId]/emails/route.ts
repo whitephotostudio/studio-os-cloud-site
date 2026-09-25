@@ -30,7 +30,7 @@ import { loadSchoolClassEmailAudience } from "@/lib/school-class-email-audience"
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-const MAX_CAMPAIGN_DELIVERIES = 1000;
+const MAX_CAMPAIGN_DELIVERIES = 500;
 const SEND_CONCURRENCY = 5;
 
 const SendCampaignBodySchema = z.object({
@@ -40,6 +40,7 @@ const SendCampaignBodySchema = z.object({
   recipientMode: z.enum(["visitors", "others", "classes"]).optional(),
   classNames: z.array(z.string().trim().min(1).max(500)).max(200).optional(),
   onlyWithPhotos: z.boolean().optional(),
+  includeClassRegistrations: z.boolean().optional(),
   audienceFingerprint: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   recipients: z.union([z.array(z.string().max(320)).max(MAX_CAMPAIGN_DELIVERIES), z.string().max(20_000)]).optional(),
   ccRecipients: z.union([z.array(z.string().max(320)).max(MAX_CAMPAIGN_DELIVERIES), z.string().max(20_000)]).optional(),
@@ -324,7 +325,7 @@ export async function GET(
 
     const query = new URL(request.url).searchParams;
     const classAudience = query.get("recipientMode") === "classes"
-      ? await loadSchoolClassEmailAudience(service, schoolId, query.getAll("className"), query.get("onlyWithPhotos") !== "false")
+      ? await loadSchoolClassEmailAudience(service, schoolId, query.getAll("className"), query.get("onlyWithPhotos") !== "false", query.get("includeClassRegistrations") === "true")
       : null;
     return privateJson({
       ok: true,
@@ -689,7 +690,7 @@ export async function POST(
       }
       // Always resolve the selection again on the server. Never accept a
       // client-supplied student list, recipient address or PIN for this mode.
-      const audience = await loadSchoolClassEmailAudience(service, schoolId, body.classNames, body.onlyWithPhotos !== false);
+      const audience = await loadSchoolClassEmailAudience(service, schoolId, body.classNames, body.onlyWithPhotos !== false, body.includeClassRegistrations === true);
       if (audience.unknownClasses.length || audience.fingerprint !== body.audienceFingerprint) {
         return privateJson({ ok: false, message: "The recipients changed. Refresh the recipient review before sending." }, 409);
       }

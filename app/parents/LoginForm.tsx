@@ -25,6 +25,7 @@ type SchoolRow = {
   status: string | null;
   expiration_date: string | null;
   email_required: boolean | null;
+  registration_class_required?: boolean | null;
 };
 
 type EventProjectRow = {
@@ -54,6 +55,7 @@ type SchoolAccessPayload = {
   step?: Step;
   schoolId?: string;
   pin?: string;
+  registrationClassRequired?: boolean;
   // ✅ Prefetched gallery context returned alongside school validation
   // so the gallery page can skip its own API call entirely.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -364,6 +366,7 @@ export default function LoginForm({
   const [selectedSchool, setSelectedSchool] = useState<SchoolRow | null>(null);
   const [schoolEmail, setSchoolEmail] = useState("");
   const [schoolPin, setSchoolPin] = useState("");
+  const [schoolRegistrationView, setSchoolRegistrationView] = useState(false);
   const [schoolRegistrationClasses, setSchoolRegistrationClasses] = useState<string[]>([]);
 
   const [selectedEventId, setSelectedEventId] = useState("");
@@ -436,6 +439,9 @@ export default function LoginForm({
     return school?.status?.toLowerCase().replaceAll("-", "_") === "pre_release";
   }
 
+  const classRegistrationRequired = selectedSchool?.registration_class_required === true;
+  const registeringSchool = isSchoolPreRelease(selectedSchool) || (classRegistrationRequired && schoolRegistrationView);
+
   function resetErrors() {
     setLoginError("");
     setRegError("");
@@ -449,12 +455,13 @@ export default function LoginForm({
     setSchoolEmail("");
     setSchoolPin("");
     setSchoolRegistrationClasses([]);
+    setSchoolRegistrationView(false);
+    setSchoolPrereleaseRegistered(false);
     setSelectedEventId("");
     setSelectedEvent(null);
     setEventEmail("");
     setEventPin("");
     resetErrors();
-    setSchoolPrereleaseRegistered(false);
     setEventPrereleaseRegistered(false);
   }
 
@@ -471,7 +478,9 @@ export default function LoginForm({
     const payload = (await response.json().catch(() => ({}))) as {
       ok?: boolean;
       message?: string;
+      classRequired?: boolean;
     };
+    if (payload.classRequired) setSelectedSchool((current) => current ? { ...current, registration_class_required: true } : current);
     if (!response.ok || payload.ok === false) {
       throw new Error(payload.message || "Could not save your registration. Please try again.");
     }
@@ -491,8 +500,8 @@ export default function LoginForm({
     }
 
     // Pre-release school: register email directly — no PIN needed
-    if (isSchoolPreRelease(selectedSchool)) {
-      if (!schoolRegistrationClasses.length) {
+    if (registeringSchool) {
+      if (classRegistrationRequired && (!schoolRegistrationClasses.length || schoolRegistrationClasses.some((name) => !name))) {
         setLoginError("Please select your child’s class or grade.");
         return;
       }
@@ -548,14 +557,8 @@ export default function LoginForm({
 
       if (payload.step === "school_closed") { setStep("school_closed"); return; }
       if (payload.step === "school_prerelease") {
-        // Auto-register with the email already entered — no second screen
-        try {
-          await registerSchoolPreRelease(schoolEmail, schoolRegistrationClasses);
-          setSchoolPrereleaseRegistered(true);
-        } catch (error) {
-          setLoginError(error instanceof Error ? error.message : "Could not save your registration. Please try again.");
-        }
-        setSearching(false);
+        setSelectedSchool((current) => current ? { ...current, status: "pre_release", registration_class_required: payload.registrationClassRequired === true } : current);
+        setLoginError("The gallery is coming soon. Please complete the registration form below.");
         return;
       }
 
@@ -710,7 +713,7 @@ export default function LoginForm({
     e.preventDefault();
     setRegSubmitting(true);
     setRegError("");
-    if (!schoolRegistrationClasses.length) {
+    if (classRegistrationRequired && (!schoolRegistrationClasses.length || schoolRegistrationClasses.some((name) => !name))) {
       setRegSubmitting(false);
       setRegError("Please select your child’s class or grade.");
       return;
@@ -1125,6 +1128,8 @@ export default function LoginForm({
                     setSelectedSchoolId(id);
                     setSelectedSchool(row);
                     setSchoolRegistrationClasses([]);
+                    setSchoolRegistrationView(false);
+                    setSchoolPrereleaseRegistered(false);
                     resetErrors();
                   }}
                   options={schools.map((row) => ({
@@ -1146,7 +1151,7 @@ export default function LoginForm({
                   <input
                     type="email"
                     value={schoolEmail}
-                    onChange={(e) => setSchoolEmail(e.target.value)}
+                    onChange={(e) => { setSchoolEmail(e.target.value); setSchoolPrereleaseRegistered(false); }}
                     placeholder="Enter your email"
                     required
                     style={{ ...inputStyle, paddingLeft: 42 }}
@@ -1154,9 +1159,15 @@ export default function LoginForm({
                 </div>
               </div>
 
-              {isSchoolPreRelease(selectedSchool) ? (
+              {classRegistrationRequired && !isSchoolPreRelease(selectedSchool) ? (
+                <div role="group" aria-label="School portal options" style={{ display: "flex", gap: 8 }}>
+                  <button type="button" aria-pressed={!schoolRegistrationView} style={{ flex: 1, borderRadius: 10, padding: "12px 10px", fontSize: 13, fontWeight: 700, cursor: "pointer", border: "1px solid #d0d5dd", background: !schoolRegistrationView ? "#111827" : "#fff", color: !schoolRegistrationView ? "#fff" : "#344054" }} onClick={() => { setSchoolRegistrationView(false); setLoginError(""); setSchoolPrereleaseRegistered(false); }}>View photos with PIN</button>
+                  <button type="button" aria-pressed={schoolRegistrationView} style={{ flex: 1, borderRadius: 10, padding: "12px 10px", fontSize: 13, fontWeight: 700, cursor: "pointer", border: "1px solid #d0d5dd", background: schoolRegistrationView ? "#111827" : "#fff", color: schoolRegistrationView ? "#fff" : "#344054" }} onClick={() => { setSchoolRegistrationView(true); setLoginError(""); setSchoolPrereleaseRegistered(false); }}>Register for photo updates</button>
+                </div>
+              ) : null}
+              {registeringSchool ? (
                 <div style={{ background: "#eff6ff", border: "1px solid #bfdbfe", color: "#1e40af", borderRadius: 12, padding: "13px 16px", fontSize: 13, lineHeight: 1.7 }}>
-                  <strong>This gallery isn't available yet.</strong> Enter your email and we'll send you a notification as soon as the photos are ready — no PIN needed right now.
+                  <strong>{isSchoolPreRelease(selectedSchool) ? "This gallery isn't available yet." : "Register for photo updates."}</strong> {classRegistrationRequired ? "Choose your class and enter your email to receive updates from your photographer." : "Enter your email for an update when the photos are ready."} Your private PIN will be needed to view photos.
                 </div>
               ) : (
                 <div>
@@ -1165,17 +1176,17 @@ export default function LoginForm({
                     value={schoolPin}
                     onChange={(e) => setSchoolPin(e.target.value)}
                     placeholder="Enter school PIN"
-                    required={!isSchoolPreRelease(selectedSchool)}
+                    required={!registeringSchool}
                     style={inputStyle}
                   />
                 </div>
               )}
 
-              {isSchoolPreRelease(selectedSchool) ? (
+              {registeringSchool && classRegistrationRequired ? (
                 <SchoolRegistrationClasses
                   schoolId={selectedSchoolId}
                   value={schoolRegistrationClasses}
-                  onChange={setSchoolRegistrationClasses}
+                  onChange={(next) => { setSchoolRegistrationClasses(next); setSchoolPrereleaseRegistered(false); }}
                 />
               ) : null}
 
@@ -1188,7 +1199,7 @@ export default function LoginForm({
               {schoolPrereleaseRegistered ? (
                 <div style={{ background: "#ecfdf3", border: "1px solid #6ee7b7", color: "#065f46", borderRadius: 14, padding: "16px 18px", fontSize: 14, lineHeight: 1.6, textAlign: "center" }}>
                   <div style={{ fontWeight: 800, marginBottom: 4 }}>You're on the list!</div>
-                  We'll notify you at <strong>{schoolEmail.trim().toLowerCase()}</strong> when this gallery goes live.
+                  We'll notify you at <strong>{schoolEmail.trim().toLowerCase()}</strong> when your photographer sends a photo update.
                 </div>
               ) : (
                 <button
@@ -1198,8 +1209,8 @@ export default function LoginForm({
                   style={{ height: 52, borderRadius: 14, border: "none", background: "#111827", color: "#fff", fontWeight: 800, fontSize: 14, cursor: "pointer" }}
                 >
                   {searching
-                    ? (isSchoolPreRelease(selectedSchool) ? "Registering…" : "Checking access…")
-                    : (isSchoolPreRelease(selectedSchool) ? "Notify me when it's ready" : "Open school gallery")}
+                    ? (registeringSchool ? "Registering…" : "Checking access…")
+                    : (registeringSchool ? "Notify me when it's ready" : "Open school gallery")}
                 </button>
               )}
 
@@ -1278,7 +1289,7 @@ export default function LoginForm({
               {eventPrereleaseRegistered ? (
                 <div style={{ background: "#ecfdf3", border: "1px solid #6ee7b7", color: "#065f46", borderRadius: 14, padding: "16px 18px", fontSize: 14, lineHeight: 1.6, textAlign: "center" }}>
                   <div style={{ fontWeight: 800, marginBottom: 4 }}>You're on the list!</div>
-                  We'll notify you at <strong>{eventEmail.trim().toLowerCase()}</strong> when this gallery goes live.
+                  We'll notify you at <strong>{eventEmail.trim().toLowerCase()}</strong> when your photographer sends a photo update.
                 </div>
               ) : (
                 <button
@@ -1348,11 +1359,11 @@ export default function LoginForm({
               <label style={labelStyle}>Email</label>
               <input type="email" value={regEmail} onChange={(e) => setRegEmail(e.target.value)} required style={inputStyle} placeholder="name@example.com" />
             </div>
-            <SchoolRegistrationClasses
+            {classRegistrationRequired ? <SchoolRegistrationClasses
               schoolId={selectedSchoolId}
               value={schoolRegistrationClasses}
-              onChange={setSchoolRegistrationClasses}
-            />
+              onChange={(next) => { setSchoolRegistrationClasses(next); setSchoolPrereleaseRegistered(false); }}
+            /> : null}
             {regError ? (
               <div style={{ background: "#fff1f2", border: "1px solid #fecdd3", color: "#be123c", borderRadius: 12, padding: "12px 14px", fontSize: 13 }}>
                 {regError}

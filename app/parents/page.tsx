@@ -28,6 +28,7 @@ type SchoolRow = {
   portal_status: string | null;
   expiration_date: string | null;
   email_required: boolean | null;
+  registration_class_required?: boolean | null;
 };
 
 type EventProjectRow = {
@@ -93,7 +94,7 @@ async function getPortalChoices(
     const [schoolsResult, studentsResult, eventsResult] = await Promise.all([
       service
         .from("schools")
-        .select("id,school_name,status,portal_status,expiration_date,email_required")
+        .select("id,school_name,status,portal_status,expiration_date,email_required,registration_class_required")
         .order("school_name"),
       // ✅ PERF: Only fetch school_id column (minimal payload)
       service.from("students").select("school_id").not("school_id", "is", null),

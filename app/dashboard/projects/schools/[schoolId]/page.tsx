@@ -94,6 +94,7 @@ type SchoolClassAudience = {
     ambiguous: number;
     cancelledExcluded: number;
     unlinkedRegistrations: number;
+    classRegistrationsIncluded: number;
   };
   review: { studentName: string; className: string; emails: string[]; reason: string }[];
 };
@@ -450,6 +451,8 @@ export default function SchoolsSchoolDetailPage() {
   const [shareModalOpen, setShareModalOpen] = useState(false);
   const [shareView, setShareView] = useState<"menu" | "compose" | "report">("menu");
   const [shareRecipientMode, setShareRecipientMode] = useState<"visitors" | "classes" | "others">("visitors");
+  const sharePreviewRequestRef = useRef(0);
+  const [shareIncludeClassRegistrations, setShareIncludeClassRegistrations] = useState(false);
   const [shareClassNames, setShareClassNames] = useState<string[]>([]);
   const [shareOnlyWithPhotos, setShareOnlyWithPhotos] = useState(true);
   const [shareClassAudience, setShareClassAudience] = useState<SchoolClassAudience | null>(null);
@@ -1034,7 +1037,9 @@ export default function SchoolsSchoolDetailPage() {
   }
 
   async function loadSharePreviewStudents() {
+    const requestVersion = ++sharePreviewRequestRef.current;
     setSharePreviewLoading(true);
+    setShareClassAudience(null);
     setSharePreviewError("");
     try {
       const previewParams = new URLSearchParams();
@@ -1042,6 +1047,7 @@ export default function SchoolsSchoolDetailPage() {
         previewParams.set("recipientMode", "classes");
         for (const className of shareClassNames) previewParams.append("className", className);
         previewParams.set("onlyWithPhotos", String(shareOnlyWithPhotos));
+        previewParams.set("includeClassRegistrations", String(shareIncludeClassRegistrations));
       }
       const query = previewParams.toString();
       const response = await fetch(`/api/dashboard/schools/${schoolId}/emails${query ? `?${query}` : ""}`, {
@@ -1060,6 +1066,7 @@ export default function SchoolsSchoolDetailPage() {
       if (!response.ok || !payload?.ok) {
         throw new Error(clean(payload?.message) || "Could not load students and email details.");
       }
+      if (requestVersion !== sharePreviewRequestRef.current) return;
       const previewStudents = Array.isArray(payload.previewStudents) ? payload.previewStudents : [];
       setSharePreviewStudents(previewStudents);
       setSharePreviewStudentId((current) =>
@@ -1076,6 +1083,7 @@ export default function SchoolsSchoolDetailPage() {
       setShareTestRecipient(clean(payload.testRecipient));
       setShareClassAudience(payload.classAudience ?? null);
     } catch (err: unknown) {
+      if (requestVersion !== sharePreviewRequestRef.current) return;
       setSharePreviewStudents([]);
       setSharePreviewStudentId("");
       setShareSendSummary(null);
@@ -1084,17 +1092,18 @@ export default function SchoolsSchoolDetailPage() {
       setShareClassAudience(null);
       setSharePreviewError(err instanceof Error ? err.message : "Could not load students and email details.");
     } finally {
-      setSharePreviewLoading(false);
+      if (requestVersion === sharePreviewRequestRef.current) setSharePreviewLoading(false);
     }
   }
 
   useEffect(() => {
-    if (!shareModalOpen || shareView !== "compose" || shareRecipientMode !== "classes") return;
+    if (!shareModalOpen || shareView !== "compose") return;
     void loadSharePreviewStudents();
+    return () => { sharePreviewRequestRef.current++; };
     // The selection is intentionally re-resolved after every class/photo
     // filter change so the send fingerprint cannot become stale.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [shareModalOpen, shareView, shareRecipientMode, shareClassNames.join("\u0000"), shareOnlyWithPhotos]);
+  }, [shareModalOpen, shareView, shareRecipientMode, shareClassNames.join("\u0000"), shareOnlyWithPhotos, shareIncludeClassRegistrations]);
 
   function openShareComposer(mode: "visitors" | "classes" | "others") {
     const schoolName = clean(school?.school_name) || "your school gallery";
@@ -1102,6 +1111,7 @@ export default function SchoolsSchoolDetailPage() {
     setShareRecipientInput("");
     setShareClassNames([]);
     setShareOnlyWithPhotos(true);
+    setShareIncludeClassRegistrations(false);
     setShareClassAudience(null);
     setShareSubject("Your Gallery is Ready!");
     setShareHeadline(`${schoolName} gallery`);
@@ -1118,7 +1128,6 @@ export default function SchoolsSchoolDetailPage() {
     setSharePreviewSearch("");
     setSharePreviewClassFilter("");
     setShareView("compose");
-    void loadSharePreviewStudents();
   }
 
   function closeShareModal() {
@@ -1151,14 +1160,17 @@ export default function SchoolsSchoolDetailPage() {
         recipients: shareRecipientMode === "others" ? shareRecipientInput : undefined,
         classNames: shareRecipientMode === "classes" ? shareClassNames : undefined,
         onlyWithPhotos: shareRecipientMode === "classes" ? shareOnlyWithPhotos : undefined,
+        includeClassRegistrations: shareRecipientMode === "classes" ? shareIncludeClassRegistrations : undefined,
         audienceFingerprint: shareRecipientMode === "classes" ? shareClassAudience?.fingerprint : undefined,
-        ccRecipients: shareCcOpen ? shareCcInput : undefined,
+        ccRecipients: shareRecipientMode !== "classes" && shareCcOpen ? shareCcInput : undefined,
         subject: shareSubject,
         headline: shareHeadline,
         buttonLabel: shareButtonLabel,
         message: shareMessage,
       };
-      const fingerprint = JSON.stringify(campaignPayload);
+      // Refreshing the audience after a partial/lost response must not give
+      // already accepted deliveries a new provider key.
+      const fingerprint = JSON.stringify({ ...campaignPayload, audienceFingerprint: undefined });
       const existingAttempt = shareCampaignAttemptRef.current;
       const requestId = existingAttempt?.fingerprint === fingerprint
         ? existingAttempt.requestId
@@ -2912,7 +2924,7 @@ export default function SchoolsSchoolDetailPage() {
                         {shareTestSending ? "Sending test..." : "Send Test to Me"}
                       </button>
                     ) : null}
-                    <button type="button" onClick={sendSchoolShareEmail} disabled={shareSending || !clean(shareSubject) || !clean(shareHeadline) || !clean(shareButtonLabel) || !clean(shareMessage) || (shareRecipientMode === "visitors" && (shareSendSummary?.totalEmails ?? 0) === 0) || (shareRecipientMode === "classes" && (!shareClassNames.length || !shareClassAudience || shareClassAudience.totalEmails === 0 || shareClassAudience.totalEmails > shareClassAudience.maxEmails)) || (shareRecipientMode === "others" && !clean(shareRecipientInput))} style={{ borderRadius: 8, border: 0, background: shareSending ? "#8aa1b5" : "#1f5b88", color: "#fff", padding: "10px 18px", fontWeight: 800, cursor: shareSending ? "wait" : "pointer", opacity: !clean(shareSubject) || !clean(shareHeadline) || !clean(shareButtonLabel) || !clean(shareMessage) || (shareRecipientMode === "visitors" && (shareSendSummary?.totalEmails ?? 0) === 0) || (shareRecipientMode === "classes" && (!shareClassNames.length || !shareClassAudience || shareClassAudience.totalEmails === 0 || shareClassAudience.totalEmails > shareClassAudience.maxEmails)) || (shareRecipientMode === "others" && !clean(shareRecipientInput)) ? 0.55 : 1 }}>
+                    <button type="button" onClick={sendSchoolShareEmail} disabled={shareSending || !clean(shareSubject) || !clean(shareHeadline) || !clean(shareButtonLabel) || !clean(shareMessage) || (shareRecipientMode === "visitors" && (shareSendSummary?.totalEmails ?? 0) === 0) || (shareRecipientMode === "classes" && (sharePreviewLoading || !shareClassNames.length || !shareClassAudience || shareClassAudience.totalEmails === 0 || shareClassAudience.totalEmails > shareClassAudience.maxEmails)) || (shareRecipientMode === "others" && !clean(shareRecipientInput))} style={{ borderRadius: 8, border: 0, background: shareSending ? "#8aa1b5" : "#1f5b88", color: "#fff", padding: "10px 18px", fontWeight: 800, cursor: shareSending ? "wait" : "pointer", opacity: !clean(shareSubject) || !clean(shareHeadline) || !clean(shareButtonLabel) || !clean(shareMessage) || (shareRecipientMode === "visitors" && (shareSendSummary?.totalEmails ?? 0) === 0) || (shareRecipientMode === "classes" && (sharePreviewLoading || !shareClassNames.length || !shareClassAudience || shareClassAudience.totalEmails === 0 || shareClassAudience.totalEmails > shareClassAudience.maxEmails)) || (shareRecipientMode === "others" && !clean(shareRecipientInput)) ? 0.55 : 1 }}>
                       {shareSending ? "Sending..." : "Send"}
                     </button>
                   </>
@@ -3087,17 +3099,25 @@ export default function SchoolsSchoolDetailPage() {
                     <div style={{ display: "grid", gap: 12 }}>
                       <label style={{ display: "grid", gap: 8 }}>
                         <span style={{ color: "#344054", fontSize: 12, fontWeight: 800 }}>Classes / grades to email</span>
-                        <select multiple size={Math.min(8, Math.max(4, shareClassAudience?.classOptions.length ?? 4))} value={shareClassNames} onChange={(event) => setShareClassNames(Array.from(event.target.selectedOptions, (option) => option.value))} style={{ width: "100%", boxSizing: "border-box", borderRadius: 8, border: "1px solid #cbd5e1", padding: "8px 10px", background: "#fff", color: "#111827", fontSize: 14 }}>
+                        <select multiple size={Math.min(8, Math.max(4, shareClassAudience?.classOptions.length ?? 4))} value={shareClassNames} onChange={(event) => { setShareClassAudience(null); setShareClassNames(Array.from(event.target.selectedOptions, (option) => option.value)); }} style={{ width: "100%", boxSizing: "border-box", borderRadius: 8, border: "1px solid #cbd5e1", padding: "8px 10px", background: "#fff", color: "#111827", fontSize: 14 }}>
                           {(shareClassAudience?.classOptions ?? []).map((className) => <option key={className} value={className}>{className}</option>)}
                         </select>
                       </label>
                       <label style={{ display: "flex", alignItems: "center", gap: 9, color: "#344054", fontSize: 13 }}>
-                        <input type="checkbox" checked={shareOnlyWithPhotos} onChange={(event) => setShareOnlyWithPhotos(event.target.checked)} /> Only include students with uploaded photos
+                        <input type="checkbox" checked={shareOnlyWithPhotos} onChange={(event) => { setShareClassAudience(null); setShareOnlyWithPhotos(event.target.checked); }} /> Only include linked students with uploaded photos
                       </label>
                       <div style={{ borderRadius: 12, border: "1px solid #bbf7d0", background: "#f0fdf4", color: "#166534", padding: "12px 14px", fontSize: 12, lineHeight: 1.55 }}>
                         {!shareClassNames.length ? "Select one or more classes to review the recipient count." : shareClassAudience ? <>{shareClassAudience.totalEmails} email{shareClassAudience.totalEmails === 1 ? "" : "s"} ready for {shareClassAudience.uniqueAddresses} address{shareClassAudience.uniqueAddresses === 1 ? "" : "es"}. {shareClassAudience.summary.withoutPhotos} selected student{shareClassAudience.summary.withoutPhotos === 1 ? "" : "s"} without uploaded photos skipped.</> : "Checking the selected classes…"}
                       </div>
-                      {shareClassAudience?.summary.unlinkedRegistrations ? <div style={{ borderRadius: 12, border: "1px solid #fed7aa", background: "#fff7ed", color: "#9a3412", padding: "12px 14px", fontSize: 12, lineHeight: 1.55 }}>{shareClassAudience.summary.unlinkedRegistrations} preregistered email{shareClassAudience.summary.unlinkedRegistrations === 1 ? " is" : "s are"} not linked to a roster student yet and will need a reminder after the parent uses the PIN.</div> : null}
+                      <label style={{ display: "flex", alignItems: "center", gap: 9, color: "#344054", fontSize: 13 }}>
+                        <input type="checkbox" checked={shareIncludeClassRegistrations} onChange={(event) => { setShareClassAudience(null); setShareIncludeClassRegistrations(event.target.checked); }} /> Also include parents registered for these classes whose child is not linked yet
+                      </label>
+                      <div style={{ borderRadius: 12, border: "1px solid #fed7aa", background: "#fff7ed", color: "#9a3412", padding: "12px 14px", fontSize: 12, lineHeight: 1.55 }}>Class registrations receive a general update without a PIN. Individual photo availability cannot be checked until the parent is linked to a student. {shareClassAudience?.summary.classRegistrationsIncluded ?? 0} such addresses included. Select this only when you want to notify the whole selected group.</div>
+                      {sharePreviewError ? <div role="alert">{sharePreviewError}</div> : null}
+                      <button type="button" disabled={sharePreviewLoading} onClick={() => void loadSharePreviewStudents()}>Refresh recipients</button>
+                      {shareClassAudience && shareClassAudience.totalEmails > shareClassAudience.maxEmails ? <div role="alert">Select fewer classes. Each send supports up to {shareClassAudience.maxEmails} emails.</div> : null}
+                      {shareClassAudience ? <details><summary>Review included and skipped recipients</summary><div style={{ maxHeight: 240, overflowY: "auto", fontSize: 12 }}>{shareClassAudience.review.map((row, i) => <p key={i}><strong>{row.studentName}</strong> · {row.className}<br />{row.emails.join(", ") || "No email"}<br />{row.reason}</p>)}</div></details> : null}
+
                     </div>
                   ) : null}
                   {shareRecipientMode === "visitors" ? (
@@ -3248,13 +3268,13 @@ export default function SchoolsSchoolDetailPage() {
                       ) : null}
                     </>
                   ) : null}
-                  <button type="button" onClick={() => setShareCcOpen((value) => !value)} style={{ border: 0, background: "transparent", color: "#344054", fontSize: 13, fontWeight: 800, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 12, justifySelf: "start", padding: 0 }}>
+                  {shareRecipientMode !== "classes" ? <button type="button" onClick={() => setShareCcOpen((value) => !value)} style={{ border: 0, background: "transparent", color: "#344054", fontSize: 13, fontWeight: 800, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 12, justifySelf: "start", padding: 0 }}>
                     <span style={{ width: 30, height: 18, borderRadius: 999, background: shareCcOpen ? "#1f5b88" : "#cbd5e1", display: "inline-flex", alignItems: "center", padding: 2, boxSizing: "border-box" }}>
                       <span style={{ width: 14, height: 14, borderRadius: 999, background: "#fff", transform: shareCcOpen ? "translateX(12px)" : "translateX(0)", transition: "transform 120ms ease" }} />
                     </span>
                     Add separate studio copy
-                  </button>
-                  {shareCcOpen ? (
+                  </button> : null}
+                  {shareRecipientMode !== "classes" && shareCcOpen ? (
                     <label style={{ display: "grid", gap: 8 }}>
                       <span style={{ color: "#344054", fontSize: 12, fontWeight: 800 }}>CC</span>
                       <input value={shareCcInput} onChange={(event) => setShareCcInput(event.target.value)} placeholder="Optional copy email" style={{ width: "100%", boxSizing: "border-box", borderRadius: 6, border: "1px solid #cbd5e1", padding: "12px 14px", fontSize: 14, color: "#111111", outline: "none" }} />

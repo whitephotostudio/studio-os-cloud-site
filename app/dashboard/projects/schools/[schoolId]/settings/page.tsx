@@ -37,6 +37,7 @@ type SchoolRow = {
   archive_date?: string | null;
   package_profile_id?: string | null;
   email_required?: boolean | null;
+  registration_class_required?: boolean | null;
   checkout_contact_required?: boolean | null;
   internal_notes?: string | null;
   access_mode?: string | null;
@@ -80,6 +81,7 @@ const defaultExtras: ExtraSettings = {
 
 const sections = [
   { key: "general", label: "General", icon: Settings2 },
+  { key: "registration", label: "Parent Registration", icon: Settings2 },
   { key: "privacy", label: "Access & Privacy", icon: ShieldCheck },
   { key: "free-digital", label: "Free Digitals", icon: Download },
   { key: "store", label: "Shopping Cart/Store", icon: ShoppingCart },
@@ -182,6 +184,7 @@ export default function SchoolSettingsPage() {
   const [expirationDate, setExpirationDate] = useState("");
   const [galleryLanguage, setGalleryLanguage] = useState("English (US)");
   const [packageProfileId, setPackageProfileId] = useState("");
+  const [registrationClassRequired, setRegistrationClassRequired] = useState(false);
   const [checkoutContactRequired, setCheckoutContactRequired] = useState(false);
   const [internalNotes, setInternalNotes] = useState("");
   const [extras, setExtras] = useState<ExtraSettings>(defaultExtras);
@@ -272,6 +275,7 @@ export default function SchoolSettingsPage() {
           packages: nextPackageProfilePackages,
         }) || "",
       );
+      setRegistrationClassRequired(schoolData.registration_class_required === true);
       setCheckoutContactRequired(Boolean(schoolData.checkout_contact_required));
       setInternalNotes(schoolData.internal_notes || "");
       setProtectDesktop(Boolean(schoolData.screenshot_protection_desktop));
@@ -347,6 +351,7 @@ export default function SchoolSettingsPage() {
       expiration_date: cleanCalendarDateInput(expirationDate),
       package_profile_id: packageProfileId || null,
       email_required: true,
+      registration_class_required: registrationClassRequired,
       checkout_contact_required: checkoutContactRequired,
       internal_notes: internalNotes || null,
       gallery_settings: nextGallerySettings,
@@ -608,6 +613,19 @@ export default function SchoolSettingsPage() {
                     <ToggleRow title="Allow Black & White Filtering" description="Clients may view and order black and white versions of your photos" checked={extras.allowBlackWhiteFiltering} onChange={(next) => setExtra("allowBlackWhiteFiltering", next)} />
                   </Card>
                 </div>
+              )}
+
+              {activeSection === "registration" && (
+                <Card title="Parent Registration">
+                  <ToggleRow
+                    title="Register parents by class / grade"
+                    description="Parents must select at least one class from your synced roster when registering for photo updates. Leave off to keep email-only registration."
+                    checked={registrationClassRequired}
+                    onChange={setRegistrationClassRequired}
+                  />
+                  <p className="text-sm leading-6 text-neutral-600">When enabled, opening the gallery does not send an email to everyone. Use Share → Selected Classes / Grades to review recipients and send each group’s update when you are ready. Parents still need their private PIN to view photos.</p>
+                  <p className="text-sm leading-6 text-neutral-600">Appointment times and calendar bookings continue to use your existing booking setup.</p>
+                </Card>
               )}
 
               {/* Access & Privacy */}
@@ -929,7 +947,10 @@ export default function SchoolSettingsPage() {
                     <ToggleRow title='Hide the "All Photos" Album' description="Show only the albums you've created" checked={extras.hideAllPhotosAlbum} onChange={(next) => setExtra("hideAllPhotosAlbum", next)} />
                     <ToggleRow title="Hide Album Photo Count" description="On the main gallery view, hide the photo count for each album" checked={extras.hideAlbumPhotoCount} onChange={(next) => setExtra("hideAlbumPhotoCount", next)} />
                     <ToggleRow title="Automatically Send Gallery to Archive After Expiration" description="Archiving frees up space after the expiration date." checked={extras.autoArchiveAfterExpiration} onChange={(next) => setExtra("autoArchiveAfterExpiration", next)} />
-                    <ToggleRow title="Send Email Campaign" description="Automatically send emails to your clients and gallery visitors" checked={extras.sendEmailCampaign} onChange={(next) => setExtra("sendEmailCampaign", next)} />
+                    {registrationClassRequired
+                      ? <p className="text-sm text-neutral-600">Class registration is enabled. Send updates from Share → Selected Classes / Grades.</p>
+                      : <ToggleRow title="Send Email Campaign" description="Automatically send emails to your clients and gallery visitors" checked={extras.sendEmailCampaign} onChange={(next) => setExtra("sendEmailCampaign", next)} />}
+
                     <ToggleRow title="Set Album Cover Images automatically" description="During upload, allow the system to select a photo as the album cover" checked={extras.autoChooseAlbumCover} onChange={(next) => setExtra("autoChooseAlbumCover", next)} />
                     <ToggleRow title="Set School Cover automatically" description="During upload, allow the system to select a photo as the school cover" checked={extras.autoChooseProjectCover} onChange={(next) => setExtra("autoChooseProjectCover", next)} />
                     <Field label="Automatic cover source">
