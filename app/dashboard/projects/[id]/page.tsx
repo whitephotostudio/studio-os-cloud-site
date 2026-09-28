@@ -278,6 +278,7 @@ export default function ProjectDetailPage() {
   const [favoriteLibraryNoticeTone, setFavoriteLibraryNoticeTone] = useState<"info" | "error">("error");
   const [shareRecipientMode, setShareRecipientMode] = useState<"visitors" | "others" | "client">("visitors");
   const [shareRecipientInput, setShareRecipientInput] = useState("");
+  const [shareRecipientSearch, setShareRecipientSearch] = useState("");
   const [shareSubject, setShareSubject] = useState(defaultEventGalleryShareSettings.emailSubject);
   const [shareHeadline, setShareHeadline] = useState(defaultEventGalleryShareSettings.emailHeadline);
   const [shareButtonLabel, setShareButtonLabel] = useState(defaultEventGalleryShareSettings.emailButtonLabel);
@@ -481,6 +482,22 @@ export default function ProjectDetailPage() {
     [linkedContacts],
   );
   const clientEmail = clean(clientContact?.email).toLowerCase();
+  const savedProjectRecipients = useMemo(() => {
+    const seen = new Set<string>();
+    return linkedContacts.filter((contact) => {
+      const email = clean(contact.email).toLowerCase();
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || seen.has(email)) return false;
+      seen.add(email);
+      return true;
+    });
+  }, [linkedContacts]);
+  const filteredProjectRecipients = savedProjectRecipients.filter((contact) => {
+    const query = clean(shareRecipientSearch).toLowerCase();
+    return !query || [contact.name, contact.email, contact.role]
+      .some((value) => clean(value).toLowerCase().includes(query));
+  });
+  const customRecipientEmails = shareRecipientInput.split(/[,;\n]/)
+    .map((value) => clean(value).toLowerCase()).filter(Boolean);
   const visitorEmails = useMemo(
     () =>
       Array.from(
@@ -634,6 +651,7 @@ export default function ProjectDetailPage() {
       return;
     }
     setShareRecipientMode(mode);
+    setShareRecipientSearch("");
     setShareRecipientInput(
       mode === "visitors"
         ? visitorEmails.join(", ")
@@ -643,6 +661,15 @@ export default function ProjectDetailPage() {
     );
     setShareView("compose");
     setShareModalOpen(true);
+  }
+
+  function toggleSavedProjectRecipient(email: string) {
+    const normalized = clean(email).toLowerCase();
+    const current = shareRecipientInput.split(/[,;\n]/).map(clean).filter(Boolean);
+    const next = current.some((entry) => entry.toLowerCase() === normalized)
+      ? current.filter((entry) => entry.toLowerCase() !== normalized)
+      : [...current, normalized];
+    setShareRecipientInput(next.join(", "));
   }
 
   function shareEmailBody() {
@@ -691,7 +718,7 @@ export default function ProjectDetailPage() {
               : shareRecipientMode === "client"
                 ? [clientEmail].filter(Boolean)
               : shareRecipientInput
-                  .split(",")
+                  .split(/[,;\n]/)
                   .map((value) => clean(value))
                   .filter(Boolean),
           subject: clean(shareSubject) || defaultEventGalleryShareSettings.emailSubject,
@@ -2197,7 +2224,29 @@ export default function ProjectDetailPage() {
                           {clientEmail || "Please input client email in Client details."}
                         </div>
                       ) : (
-                        <textarea value={shareRecipientInput} onChange={(e) => setShareRecipientInput(e.target.value)} placeholder="client@example.com, parent@example.com" style={{ minHeight: 80, width: "100%", boxSizing: "border-box", borderRadius: 12, border: "1px solid #d0d5dd", padding: "12px 14px", fontSize: 14, color: "#111111", outline: "none" }} />
+                        <div style={{ display: "grid", gap: 10 }}>
+                          {savedProjectRecipients.length ? (
+                            <div style={{ display: "grid", gap: 7 }}>
+                              <span style={{ color: "#344054", fontSize: 12, fontWeight: 800 }}>Saved project contacts</span>
+                              <input aria-label="Search saved project contacts" value={shareRecipientSearch} onChange={(e) => setShareRecipientSearch(e.target.value)} placeholder="Search client name or email..." style={{ width: "100%", boxSizing: "border-box", borderRadius: 10, border: "1px solid #d0d5dd", padding: "9px 11px", fontSize: 13, color: "#111111" }} />
+                              <div style={{ maxHeight: 160, overflowY: "auto", display: "grid", gap: 5 }}>
+                                {filteredProjectRecipients.map((contact) => {
+                                  const email = clean(contact.email).toLowerCase();
+                                  const selected = customRecipientEmails.includes(email);
+                                  return (
+                                    <button key={email} type="button" onClick={() => toggleSavedProjectRecipient(email)} aria-pressed={selected} style={{ borderRadius: 9, border: selected ? "1px solid #86efac" : "1px solid #e5e7eb", background: selected ? "#f0fdf4" : "#fff", padding: "8px 10px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, textAlign: "left", cursor: "pointer", color: "#111827" }}>
+                                      <span style={{ minWidth: 0 }}><strong style={{ display: "block", fontSize: 12 }}>{clean(contact.name) || (email === clientEmail ? clean(project?.client_name) || "Client" : "Project contact")}</strong><span style={{ fontSize: 11, color: "#64748b", overflowWrap: "anywhere" }}>{email}</span></span>
+                                      <span style={{ fontSize: 11, fontWeight: 800, color: selected ? "#15803d" : "#1f5b88", flexShrink: 0 }}>{selected ? "Selected" : "Add"}</span>
+                                    </button>
+                                  );
+                                })}
+                                {!filteredProjectRecipients.length ? <span style={{ fontSize: 12, color: "#64748b" }}>No saved contacts match.</span> : null}
+                              </div>
+                            </div>
+                          ) : <span style={{ color: "#64748b", fontSize: 12 }}>No saved project contacts yet. Add the client email in the desktop project details and sync it to cloud.</span>}
+                          <textarea aria-label="Custom recipient emails" value={shareRecipientInput} onChange={(e) => setShareRecipientInput(e.target.value)} placeholder="client@example.com, parent@example.com" style={{ minHeight: 80, width: "100%", boxSizing: "border-box", borderRadius: 12, border: "1px solid #d0d5dd", padding: "12px 14px", fontSize: 14, color: "#111111", outline: "none" }} />
+                          <span style={{ color: "#64748b", fontSize: 12 }}>Selected contacts appear above. You can also type other email addresses here.</span>
+                        </div>
                       )}
                     </label>
 

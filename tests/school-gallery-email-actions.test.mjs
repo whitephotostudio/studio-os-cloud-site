@@ -62,7 +62,7 @@ test("preview student picker supports name, PIN, and class or grade search", () 
     /\[student\.studentName, student\.studentPin, student\.className\]/,
   );
   assert.match(schoolPage, /filteredSharePreviewStudents/);
-  assert.match(schoolPage, /aria-label="Choose preview student"/);
+  assert.match(schoolPage, /aria-label=\{shareRecipientMode === "student" \? "Choose student to email" : "Choose preview student"\}/);
   assert.match(schoolPage, /event\.key === "Escape"/);
   assert.match(schoolPage, /Retry the student list above/);
 });

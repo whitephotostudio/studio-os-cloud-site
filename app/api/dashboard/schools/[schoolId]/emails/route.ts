@@ -37,7 +37,8 @@ const SendCampaignBodySchema = z.object({
   action: z.enum(["campaign", "test", "student", "resend"]).optional(),
   bookingId: z.string().uuid().optional(),
   studentId: z.string().uuid().optional(),
-  recipientMode: z.enum(["visitors", "others", "classes"]).optional(),
+  expectedRecipientEmail: z.string().email().optional(),
+  recipientMode: z.enum(["visitors", "others", "classes", "student"]).optional(),
   classNames: z.array(z.string().trim().min(1).max(500)).max(200).optional(),
   onlyWithPhotos: z.boolean().optional(),
   includeClassRegistrations: z.boolean().optional(),
@@ -235,6 +236,7 @@ export async function GET(
       .map((booking) => ({
         bookingId: booking.id,
         studentId: null,
+        recipientEmail: clean(booking.parent_email).toLowerCase(),
         studentName: [
           clean(booking.student_first_name),
           clean(booking.student_last_name),
@@ -247,6 +249,7 @@ export async function GET(
         .map((student) => ({
           bookingId: null,
           studentId: clean(student.student_id),
+          recipientEmail: clean(student.parent_email).toLowerCase(),
           studentName: [clean(student.student_first_name), clean(student.student_last_name)]
             .filter(Boolean)
             .join(" ") || "Student",
@@ -417,6 +420,9 @@ export async function POST(
 
     const gallerySettings = normalizeEventGallerySettings(schoolRow.gallery_settings);
     const action = body.action ?? "campaign";
+    if (action === "campaign" && body.recipientMode === "student") {
+      return privateJson({ ok: false, message: "Choose one student before sending an individual email." }, 400);
+    }
     // The dashboard supplies one request ID per deliberate click. If the same
     // HTTP request is retried after a lost response, every delivery keeps the
     // same provider and ledger key. A later deliberate resend gets a new ID.
@@ -427,7 +433,7 @@ export async function POST(
       let student: SchoolStudentRow | null = null;
       const useStudent = Boolean(body.studentId);
 
-      if (action === "student" && !body.studentId) {
+      if (action === "student" && !body.studentId && !body.bookingId) {
         return NextResponse.json(
           { ok: false, message: "Choose a student first." },
           { status: 400 },
@@ -533,6 +539,10 @@ export async function POST(
       const recipientEmail = action === "test"
         ? clean(photographerRow.studio_email) || clean(user.email)
         : clean(booking?.parent_email) || clean(student?.parent_email);
+      if (action === "student" && body.expectedRecipientEmail &&
+          clean(body.expectedRecipientEmail).toLowerCase() !== recipientEmail.toLowerCase()) {
+        return privateJson({ ok: false, message: "This student's saved email changed. Refresh the student list before sending." }, 409);
+      }
       if (!looksLikeEmail(recipientEmail)) {
         return NextResponse.json(
           {
