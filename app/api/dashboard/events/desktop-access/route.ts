@@ -7,10 +7,13 @@ import {
 import { parseJson } from "@/lib/api-validation";
 import { guardAgreement } from "@/lib/require-agreement";
 import {
+  desktopClientEmailFromSettings,
+  desktopClientFieldsFromSettings,
   normalizeEventGallerySettings,
   type EventGalleryLinkedContact,
 } from "@/lib/event-gallery-settings";
 import { selectSyncedSchoolProjectCandidate } from "@/lib/school-project-identity";
+import { loadDesktopEventProjects } from "@/lib/desktop-event-project-pull";
 
 export const dynamic = "force-dynamic";
 
@@ -29,6 +32,9 @@ const DesktopAccessBodySchema = z.object({
   title: z.string().max(500).nullable().optional(),
   clientName: z.string().max(500).nullable().optional(),
   clientEmail: z.string().max(500).nullable().optional(),
+  clientPhone: z.string().max(500).nullable().optional(),
+  clientAddress: z.string().max(2000).nullable().optional(),
+  clientOnly: z.boolean().optional(),
   createdAt: z.string().max(64).nullable().optional(),
   shootDate: z.string().max(64).nullable().optional(),
   eventDate: z.string().max(64).nullable().optional(),
@@ -181,43 +187,71 @@ function withDesktopClientContact(
   gallerySettings: unknown,
   clientName: string,
   clientEmail: string,
+  clientPhone: string,
+  clientAddress: string,
+  hasClientSnapshot: boolean,
 ) {
-  if (!clientEmail) return undefined;
+  if (!clientEmail && !hasClientSnapshot) return undefined;
   const settings = normalizeEventGallerySettings(gallerySettings);
   const email = clientEmail.toLowerCase();
-  const existingIndex = settings.linkedContacts.findIndex(
+  const previousEmail = desktopClientEmailFromSettings(gallerySettings);
+  const linkedContactsBase = previousEmail && previousEmail !== email
+    ? settings.linkedContacts.filter((contact) =>
+        !(contact.id.startsWith("desktop-client-") &&
+          clean(contact.email).toLowerCase() === previousEmail),
+      )
+    : settings.linkedContacts;
+  const desktopClientContact = hasClientSnapshot
+    ? {
+        name: clientName,
+        email,
+        phone: clientPhone,
+        address: clientAddress,
+      }
+    : settings.desktopClientContact;
+  if (!email) {
+    return {
+      ...settings,
+      desktopClientEmail: "",
+      desktopClientContact,
+      linkedContacts: linkedContactsBase,
+    };
+  }
+  const existingIndex = linkedContactsBase.findIndex(
     (contact) => clean(contact.email).toLowerCase() === email,
   );
   const contact: EventGalleryLinkedContact = {
     id:
       existingIndex >= 0
-        ? settings.linkedContacts[existingIndex].id
+        ? linkedContactsBase[existingIndex].id
         : clientContactId(email),
     name:
       clientName ||
-      (existingIndex >= 0 ? settings.linkedContacts[existingIndex].name : ""),
+      (existingIndex >= 0 ? linkedContactsBase[existingIndex].name : ""),
     email,
     role: "Client",
     labelPhotos:
-      existingIndex >= 0 ? settings.linkedContacts[existingIndex].labelPhotos : false,
+      existingIndex >= 0 ? linkedContactsBase[existingIndex].labelPhotos : false,
     hidePhotos:
-      existingIndex >= 0 ? settings.linkedContacts[existingIndex].hidePhotos : false,
-    isVip: existingIndex >= 0 ? settings.linkedContacts[existingIndex].isVip : true,
+      existingIndex >= 0 ? linkedContactsBase[existingIndex].hidePhotos : false,
+    isVip: existingIndex >= 0 ? linkedContactsBase[existingIndex].isVip : true,
     note:
       existingIndex >= 0
-        ? settings.linkedContacts[existingIndex].note
+        ? linkedContactsBase[existingIndex].note
         : "Synced from Studio OS desktop client details.",
   };
 
   const linkedContacts =
     existingIndex >= 0
-      ? settings.linkedContacts.map((item, index) =>
+      ? linkedContactsBase.map((item, index) =>
           index === existingIndex ? contact : item,
         )
-      : [contact, ...settings.linkedContacts];
+      : [contact, ...linkedContactsBase];
 
   return {
     ...settings,
+    desktopClientEmail: email,
+    desktopClientContact,
     linkedContacts,
   };
 }
@@ -264,12 +298,57 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    if (body.clientOnly) {
+      const projectId = clean(body.cloudProjectId);
+      if (!projectId) {
+        return NextResponse.json(
+          { ok: false, message: "Cloud project id is required." },
+          { status: 400 },
+        );
+      }
+      const { data: ownedProject, error: readError } = await service
+        .from("projects")
+        .select("id,workflow_type,gallery_settings")
+        .eq("id", projectId)
+        .eq("photographer_id", photographerId)
+        .or("status.is.null,status.neq.deleted")
+        .maybeSingle();
+      if (readError) throw readError;
+      if (!ownedProject || ownedProject.workflow_type !== "event") {
+        return NextResponse.json(
+          { ok: false, message: "Cloud project not found." },
+          { status: 404 },
+        );
+      }
+      const clientName = clean(body.clientName);
+      const gallerySettings = withDesktopClientContact(
+        ownedProject.gallery_settings,
+        clientName,
+        normalizeEmail(body.clientEmail),
+        clean(body.clientPhone),
+        clean(body.clientAddress),
+        true,
+      );
+      const { error: saveError } = await service
+        .from("projects")
+        .update({
+          client_name: clientName || null,
+          gallery_settings: gallerySettings,
+        })
+        .eq("id", projectId)
+        .eq("photographer_id", photographerId);
+      if (saveError) throw saveError;
+      return NextResponse.json({ ok: true });
+    }
+
     // ── Find or create project ──
     const cloudProjectId = clean(body.cloudProjectId);
     const localProjectId = clean(body.localProjectId);
     const title = clean(body.title) || "Untitled Project";
     const clientName = clean(body.clientName);
     const clientEmail = normalizeEmail(body.clientEmail);
+    const clientPhone = clean(body.clientPhone);
+    const clientAddress = clean(body.clientAddress);
     const accessMode = normalizeAccessMode(body.accessMode);
     const accessPin = accessMode === "pin" ? clean(body.accessPin) : null;
     const galleryStatus = normalizeGalleryStatus(body.galleryStatus);
@@ -515,6 +594,11 @@ export async function POST(request: NextRequest) {
       existingProjectAccess?.gallery_settings,
       clientName,
       clientEmail,
+      clientPhone,
+      clientAddress,
+      effectiveWorkflowType === "event" &&
+        body.clientPhone !== undefined &&
+        body.clientAddress !== undefined,
     );
 
     if (!projectId) {
@@ -615,20 +699,28 @@ export async function POST(request: NextRequest) {
     let seededVisitor: Record<string, unknown> | null = null;
     if (clientEmail) {
       const openedAt = nowIso;
-      const { data: visitorRow, error: visitorError } = await service
+      const { data: existingVisitor, error: lookupError } = await service
         .from("event_gallery_visitors")
-        .upsert(
-          {
-            project_id: projectId,
-            viewer_email: clientEmail,
-            last_opened_at: openedAt,
-          },
-          { onConflict: "project_id,viewer_email" },
-        )
+        .select("viewer_email,created_at,last_opened_at")
+        .eq("project_id", projectId)
+        .eq("viewer_email", clientEmail)
+        .maybeSingle();
+      if (lookupError && lookupError.code !== "42P01") throw lookupError;
+
+      const { data: insertedVisitor, error: visitorError } = existingVisitor || lookupError
+        ? { data: null, error: null }
+        : await service
+        .from("event_gallery_visitors")
+        .insert({
+          project_id: projectId,
+          viewer_email: clientEmail,
+          last_opened_at: openedAt,
+        })
         .select("viewer_email,created_at,last_opened_at")
         .single();
-
-      if (visitorError && visitorError.code !== "42P01") throw visitorError;
+      // A concurrent first save may insert the same visitor after the lookup.
+      if (visitorError && visitorError.code !== "23505") throw visitorError;
+      const visitorRow = existingVisitor ?? insertedVisitor;
       seededVisitor = {
         email: visitorRow?.viewer_email ?? clientEmail,
         createdAt: visitorRow?.created_at ?? openedAt,
@@ -871,38 +963,17 @@ export async function GET(request: NextRequest) {
 
     // ── mode=all: return all projects ──
     if (mode === "all") {
-      const { data: allProjects, error: allError } = await service
-        .from("projects")
-        .select(
-          "id,title,client_name,shoot_date,event_date,order_due_date,expiration_date,portal_status,pre_release,gallery_slug,cover_photo_url,access_mode,access_pin,access_updated_at,access_updated_source,linked_local_school_id,updated_at",
-        )
-        .eq("photographer_id", photographerId)
-        .eq("workflow_type", "event")
-        .or("status.is.null,status.neq.deleted")
-        .order("created_at", { ascending: false });
-
-      if (allError) throw allError;
-
-      const results = [];
-      for (const proj of allProjects ?? []) {
-        const { data: collections } = await service
-          .from("collections")
-          .select(
-            "id,title,slug,local_id,cover_photo_url,access_mode,access_pin,access_updated_at,access_updated_source,sort_order",
-          )
-          .eq("project_id", proj.id)
-          .is("deleted_at", null)
-          .order("sort_order", { ascending: true });
-
-        results.push({
+      const ownedProjects = await loadDesktopEventProjects({ service, photographerId });
+      const results = ownedProjects.map(({ project: proj, collections }) => ({
           project: {
             ...proj,
+            gallery_settings: undefined,
+            ...desktopClientFieldsFromSettings(proj.gallery_settings),
             gallery_status: proj.portal_status,
             gallery_url: buildGalleryUrl(proj.id, proj.gallery_slug),
           },
-          collections: collections ?? [],
-        });
-      }
+          collections,
+        }));
 
       return NextResponse.json({ ok: true, projects: results });
     }
@@ -937,7 +1008,7 @@ export async function GET(request: NextRequest) {
     const { data: projectRow, error: projectError } = await service
       .from("projects")
       .select(
-        "id,title,client_name,shoot_date,event_date,order_due_date,expiration_date,portal_status,pre_release,gallery_slug,cover_photo_url,access_mode,access_pin,access_updated_at,access_updated_source,linked_local_school_id,updated_at",
+        "id,title,client_name,gallery_settings,shoot_date,event_date,order_due_date,expiration_date,portal_status,pre_release,gallery_slug,cover_photo_url,access_mode,access_pin,access_updated_at,access_updated_source,linked_local_school_id,updated_at",
       )
       .eq("id", projectId)
       .eq("photographer_id", photographerId)
@@ -963,6 +1034,8 @@ export async function GET(request: NextRequest) {
       ok: true,
       project: {
         ...projectRow,
+        gallery_settings: undefined,
+        ...desktopClientFieldsFromSettings(projectRow?.gallery_settings),
         gallery_status: projectRow?.portal_status,
         gallery_url: galleryUrl,
       },

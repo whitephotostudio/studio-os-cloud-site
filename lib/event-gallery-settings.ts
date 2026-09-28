@@ -128,6 +128,15 @@ export type EventScheduleDetails = {
 export type EventGallerySettings = {
   version: 1;
   galleryLanguage: string;
+  /** Owner's project client email, used to reconnect the project to CRM. */
+  desktopClientEmail?: string;
+  /** Owner-only project contact snapshot for restoring another desktop. */
+  desktopClientContact?: {
+    name: string;
+    email: string;
+    phone: string;
+    address: string;
+  };
   extras: EventGalleryExtraSettings;
   branding: EventGalleryBrandingSettings;
   linkedContacts: EventGalleryLinkedContact[];
@@ -236,6 +245,7 @@ export const defaultEventScheduleDetails: EventScheduleDetails = {
 export const defaultEventGallerySettings: EventGallerySettings = {
   version: 1,
   galleryLanguage: "English (US)",
+  desktopClientEmail: "",
   extras: defaultEventGalleryExtras,
   branding: defaultEventGalleryBranding,
   linkedContacts: [],
@@ -345,6 +355,7 @@ function normalizeTaxRatesByCountry(value: unknown): Record<string, number> {
 
 export function normalizeEventGallerySettings(value: unknown): EventGallerySettings {
   const source = asObject(value);
+  const desktopClientSource = asObject(source?.desktopClientContact);
   const extrasSource = asObject(source?.extras);
   const brandingSource = asObject(source?.branding);
   const commerceSource = asObject(source?.commerce);
@@ -371,6 +382,15 @@ export function normalizeEventGallerySettings(value: unknown): EventGallerySetti
       source?.galleryLanguage,
       defaultEventGallerySettings.galleryLanguage,
     ),
+    desktopClientEmail: asString(source?.desktopClientEmail, "").trim().toLowerCase(),
+    desktopClientContact: desktopClientSource
+      ? {
+          name: asString(desktopClientSource.name, "").trim(),
+          email: asString(desktopClientSource.email, "").trim().toLowerCase(),
+          phone: asString(desktopClientSource.phone, "").trim(),
+          address: asString(desktopClientSource.address, "").trim(),
+        }
+      : undefined,
     extras: {
       priceSheetProfileId: asString(
         extrasSource?.priceSheetProfileId,
@@ -763,10 +783,50 @@ export function sanitizeEventGallerySettingsForClient(
   const normalized = normalizeEventGallerySettings(value);
   return {
     ...normalized,
+    desktopClientEmail: "",
+    desktopClientContact: undefined,
     extras: {
       ...normalized.extras,
       password: "",
       downloadPin: "",
     },
   };
+}
+
+/** Resolve the owner's project contact without treating other visitors as clients. */
+export function desktopClientEmailFromSettings(value: unknown): string {
+  const settings = normalizeEventGallerySettings(value);
+  if (settings.desktopClientContact) {
+    const email = settings.desktopClientContact.email;
+    return email.includes("@") ? email : "";
+  }
+  const current = settings.desktopClientEmail?.trim().toLowerCase() ?? "";
+  if (current.includes("@")) return current;
+  const legacyContacts = settings.linkedContacts.filter(
+    (contact) =>
+      contact.id.startsWith("desktop-client-") &&
+      contact.role.trim().toLowerCase() === "client" &&
+      contact.email.trim().includes("@"),
+  );
+  return legacyContacts.length === 1
+    ? legacyContacts[0].email.trim().toLowerCase()
+    : "";
+}
+
+/** Owner-only fields for a desktop pull. Legacy rows return email alone. */
+export function desktopClientFieldsFromSettings(value: unknown): {
+  client_email?: string;
+  client_phone?: string;
+  client_address?: string;
+} {
+  const contact = normalizeEventGallerySettings(value).desktopClientContact;
+  if (contact) {
+    return {
+      client_email: contact.email,
+      client_phone: contact.phone,
+      client_address: contact.address,
+    };
+  }
+  const legacyEmail = desktopClientEmailFromSettings(value);
+  return legacyEmail ? { client_email: legacyEmail } : {};
 }
