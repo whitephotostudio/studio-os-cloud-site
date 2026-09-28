@@ -8,6 +8,7 @@ import {
   CRM_RESOURCES,
   CRM_RESOURCE_TABLE,
   crmPublicRow,
+  loadCrmClientIndexPage,
   loadCrmDashboard,
   parseCrmValues,
   requiredCrmCreateFields,
@@ -229,6 +230,8 @@ const RemovalResult = z.object({
 });
 
 const GetQuery = z.object({
+  mode: z.enum(["index", "desktop"]).nullable().optional(),
+  offset: z.coerce.number().int().min(0).optional(),
   clientId: Uuid.nullable().optional(),
   search: z.string().trim().max(200).nullable().optional(),
   kind: z.enum(CRM_CLIENT_KINDS).nullable().optional(),
@@ -318,13 +321,10 @@ export async function GET(request: NextRequest) {
     if (!photographer) {
       return privateJson({ ok: false, message: "Photographer profile not found." }, { status: 404 });
     }
-    await ensureCrmDefaultTemplates({
-      service,
-      photographerId: photographer.id,
-      userId: user.id,
-    });
     const url = new URL(request.url);
     const parsed = GetQuery.safeParse({
+      mode: url.searchParams.get("mode"),
+      offset: url.searchParams.get("offset") ?? undefined,
       clientId: url.searchParams.get("clientId"),
       search: url.searchParams.get("search"),
       kind: url.searchParams.get("kind"),
@@ -335,10 +335,33 @@ export async function GET(request: NextRequest) {
     if (!parsed.success) {
       return privateJson({ ok: false, message: "Invalid CRM filters." }, { status: 400 });
     }
+    if (parsed.data.mode !== "index" || !parsed.data.offset) {
+      await ensureCrmDefaultTemplates({
+        service,
+        photographerId: photographer.id,
+        userId: user.id,
+      });
+    }
+    if (parsed.data.mode === "index") {
+      const result = await loadCrmClientIndexPage({
+        service,
+        photographerId: photographer.id,
+        offset: parsed.data.offset,
+        limit: parsed.data.limit,
+      });
+      return privateJson({ ok: true, ...result });
+    }
     const result = await loadCrmDashboard({
       service,
       photographerId: photographer.id,
-      ...parsed.data,
+      clientId: parsed.data.clientId,
+      search: parsed.data.search,
+      kind: parsed.data.kind,
+      seasonYear: parsed.data.seasonYear,
+      status: parsed.data.status,
+      limit: parsed.data.limit,
+      offset: parsed.data.offset,
+      includeTimeline: parsed.data.mode !== "desktop",
     });
     return privateJson({ ok: true, ...result });
   } catch (error) {

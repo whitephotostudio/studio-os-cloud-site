@@ -124,6 +124,8 @@ type CrmLocationPhoto = {
   filename: string;
 };
 
+type CrmLocationPhotoSearch = Pick<CrmLocationPhoto, "id" | "clientId" | "category" | "caption" | "altText">;
+
 type CrmContact = {
   id: string;
   clientId: string;
@@ -315,6 +317,7 @@ type CrmPayload = {
   clients: CrmClient[];
   locations: CrmLocation[];
   locationPhotos: CrmLocationPhoto[];
+  locationPhotoSearch: CrmLocationPhotoSearch[];
   contacts: CrmContact[];
   agreements: CrmAgreement[];
   bookingCycles: CrmBookingCycle[];
@@ -436,6 +439,7 @@ const EMPTY_PAYLOAD: CrmPayload = {
   clients: [],
   locations: [],
   locationPhotos: [],
+  locationPhotoSearch: [],
   contacts: [],
   agreements: [],
   bookingCycles: [],
@@ -495,6 +499,7 @@ function normalizePayload(value: unknown): CrmPayload {
     clients: arrayOrEmpty<CrmClient>(source.clients),
     locations: arrayOrEmpty<CrmLocation>(source.locations),
     locationPhotos: arrayOrEmpty<CrmLocationPhoto>(source.locationPhotos),
+    locationPhotoSearch: arrayOrEmpty<CrmLocationPhotoSearch>(source.locationPhotoSearch),
     contacts: arrayOrEmpty<CrmContact>(source.contacts),
     agreements: arrayOrEmpty<CrmAgreement>(source.agreements),
     bookingCycles: arrayOrEmpty<CrmBookingCycle>(source.bookingCycles),
@@ -513,6 +518,69 @@ function normalizePayload(value: unknown): CrmPayload {
       openTasks: numberOrZero(summary.openTasks),
       pendingApprovals: numberOrZero(summary.pendingApprovals),
     },
+  };
+}
+
+type CrmIndexPage = Partial<CrmPayload> & {
+  page?: { offset: number; limit: number; total: number; hasMore: boolean };
+};
+
+function mergeRowsById<T extends { id: string }>(base: T[], detail: T[]): T[] {
+  const byId = new Map(base.map((row) => [row.id, row]));
+  for (const row of detail) byId.set(row.id, row);
+  return Array.from(byId.values());
+}
+
+function combineClientIndexPages(pages: CrmIndexPage[]): CrmPayload {
+  const combined = pages.map((page) => normalizePayload(page));
+  const clients = combined.flatMap((page) => page.clients);
+  const bookingCycles = combined.flatMap((page) => page.bookingCycles);
+  const tasks = combined.flatMap((page) => page.tasks);
+  const emails = combined.flatMap((page) => page.emails);
+  const currentYear = new Date().getUTCFullYear();
+  const bookedIds = new Set(bookingCycles
+    .filter((cycle) => cycle.seasonYear === currentYear && isBookedStatus(cycle.status))
+    .map((cycle) => cycle.clientId));
+  const now = Date.now();
+  return {
+    ...EMPTY_PAYLOAD,
+    clients,
+    contacts: combined.flatMap((page) => page.contacts),
+    locations: combined.flatMap((page) => page.locations),
+    locationPhotoSearch: combined.flatMap((page) => page.locationPhotoSearch),
+    bookingCycles,
+    tasks,
+    emails,
+    summary: {
+      totalClients: pages[0]?.page?.total ?? clients.length,
+      bookedThisYear: bookedIds.size,
+      notBookedThisYear: Math.max(0, clients.length - bookedIds.size),
+      followUpsDue: bookingCycles.filter((cycle) =>
+        !!cycle.nextFollowUpAt && dateValue(cycle.nextFollowUpAt) <= now
+        && !["booked", "completed", "lost", "skipped"].includes(clean(cycle.status).toLowerCase()),
+      ).length,
+      openTasks: tasks.filter(isOpenTask).length,
+      pendingApprovals: emails.length,
+    },
+  };
+}
+
+function mergeClientDetail(index: CrmPayload, detail: CrmPayload): CrmPayload {
+  return {
+    ...index,
+    clients: mergeRowsById(index.clients, detail.clients),
+    contacts: mergeRowsById(index.contacts, detail.contacts),
+    locations: mergeRowsById(index.locations, detail.locations),
+    bookingCycles: mergeRowsById(index.bookingCycles, detail.bookingCycles),
+    tasks: mergeRowsById(index.tasks, detail.tasks),
+    emails: mergeRowsById(index.emails, detail.emails),
+    locationPhotos: detail.locationPhotos,
+    agreements: detail.agreements,
+    bookingJobs: detail.bookingJobs,
+    bookingHistory: detail.bookingHistory,
+    activities: detail.activities,
+    templates: detail.templates,
+    automationRules: detail.automationRules,
   };
 }
 
@@ -834,7 +902,9 @@ export function CrmClientsWorkspace({
 }) {
   const viewportCompact = useIsMobile(760);
   const compact = surface === "mobile" || viewportCompact;
-  const [payload, setPayload] = useState<CrmPayload>(EMPTY_PAYLOAD);
+  const [indexPayload, setIndexPayload] = useState<CrmPayload>(EMPTY_PAYLOAD);
+  const [detailState, setDetailState] = useState<{ clientId: string; payload: CrmPayload } | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -884,45 +954,108 @@ export function CrmClientsWorkspace({
   const [bookingRepairError, setBookingRepairError] = useState("");
   const [repairingBookingJob, setRepairingBookingJob] = useState(false);
   const sendKeyRef = useRef("");
+  const loadRequestIdRef = useRef(0);
   const clientBundleKeyRef = useRef("");
   const locationPhotoInputRef = useRef<HTMLInputElement>(null);
   const locationPhotoUploadKeyRef = useRef("");
+  const payload = useMemo(
+    () => detailState?.clientId === selectedId
+      ? mergeClientDetail(indexPayload, detailState.payload)
+      : indexPayload,
+    [detailState, indexPayload, selectedId],
+  );
 
   const load = useCallback(async () => {
+    const requestId = ++loadRequestIdRef.current;
     setLoading(true);
     setError("");
     try {
-      const response = await fetch("/api/dashboard/crm?limit=200", {
-        method: "GET",
-        credentials: "include",
-        cache: "no-store",
-        headers: { Accept: "application/json" },
-      });
-      const body = (await response.json().catch(() => ({}))) as CrmPostResponse & Partial<CrmPayload>;
-      if (response.status === 401) {
-        const redirect = surface === "mobile" ? "/m/clients" : "/dashboard/clients";
-        window.location.href = "/sign-in?redirect=" + encodeURIComponent(redirect);
-        return;
+      const pages: CrmIndexPage[] = [];
+      let offset = 0;
+      for (;;) {
+        const response = await fetch(`/api/dashboard/crm?mode=index&limit=200&offset=${offset}`, {
+          method: "GET",
+          credentials: "include",
+          cache: "no-store",
+          headers: { Accept: "application/json" },
+        });
+        const body = (await response.json().catch(() => ({}))) as CrmPostResponse & CrmIndexPage;
+        if (response.status === 401) {
+          const redirect = surface === "mobile" ? "/m/clients" : "/dashboard/clients";
+          window.location.href = "/sign-in?redirect=" + encodeURIComponent(redirect);
+          return;
+        }
+        if (!response.ok || body.ok === false || !body.page || !Array.isArray(body.clients)) {
+          throw new Error(responseMessage(body, "The Clients database could not be loaded."));
+        }
+        pages.push(body);
+        if (requestId !== loadRequestIdRef.current) return;
+        if (!body.page.hasMore) break;
+        if (!body.clients.length) throw new Error("The Clients list stopped before every record was loaded.");
+        offset += body.clients.length;
       }
-      if (!response.ok || body.ok === false) {
-        throw new Error(responseMessage(body, "The Clients database could not be loaded."));
+      const next = combineClientIndexPages(pages);
+      if (next.clients.length !== pages[0].page?.total
+        || new Set(next.clients.map((client) => client.id)).size !== next.clients.length) {
+        throw new Error("The Clients list changed while loading. Refresh to try again.");
       }
-      const next = normalizePayload(body);
-      setPayload(next);
+      if (requestId !== loadRequestIdRef.current) return;
+      setDetailState(null);
+      setIndexPayload(next);
       setSelectedId((current) => {
         if (current && next.clients.some((client) => client.id === current)) return current;
         return next.clients.find((client) => !client.archivedAt)?.id || "";
       });
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "The Clients database could not be loaded.");
+      if (requestId === loadRequestIdRef.current) {
+        setError(caught instanceof Error ? caught.message : "The Clients database could not be loaded.");
+      }
     } finally {
-      setLoading(false);
+      if (requestId === loadRequestIdRef.current) setLoading(false);
     }
   }, [surface]);
 
   useEffect(() => {
     void load();
+    return () => { loadRequestIdRef.current += 1; };
   }, [load]);
+
+  useEffect(() => {
+    if (!selectedId || !indexPayload.clients.some((client) => client.id === selectedId)) {
+      setDetailState(null);
+      setDetailLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setDetailState(null);
+    setDetailLoading(true);
+    void (async () => {
+      try {
+        const response = await fetch(`/api/dashboard/crm?clientId=${encodeURIComponent(selectedId)}&limit=1`, {
+          method: "GET",
+          credentials: "include",
+          cache: "no-store",
+          headers: { Accept: "application/json" },
+        });
+        const body = (await response.json().catch(() => ({}))) as CrmPostResponse & Partial<CrmPayload>;
+        if (cancelled) return;
+        if (response.status === 401) {
+          const redirect = surface === "mobile" ? "/m/clients" : "/dashboard/clients";
+          window.location.href = "/sign-in?redirect=" + encodeURIComponent(redirect);
+          return;
+        }
+        if (!response.ok || body.ok === false) {
+          throw new Error(responseMessage(body, "This client's details could not be loaded."));
+        }
+        setDetailState({ clientId: selectedId, payload: normalizePayload(body) });
+      } catch (caught) {
+        if (!cancelled) setError(caught instanceof Error ? caught.message : "This client's details could not be loaded.");
+      } finally {
+        if (!cancelled) setDetailLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [indexPayload, selectedId, surface]);
 
   useEffect(() => {
     if (!emailOpen && !recordEditor && !batchOpen && !approvalEmailId && !bookingRepair) return;
@@ -1091,7 +1224,7 @@ export function CrmClientsWorkspace({
           candidate.setupInstructions,
           candidate.internalNotes,
         ]),
-        ...payload.locationPhotos
+        ...payload.locationPhotoSearch
           .filter((photo) => photo.clientId === client.id)
           .flatMap((photo) => [photo.category, photo.caption, photo.altText]),
       ].some((value) => clean(value).toLowerCase().includes(term));
@@ -1102,7 +1235,7 @@ export function CrmClientsWorkspace({
     cycleFor,
     kindFilter,
     payload.contacts,
-    payload.locationPhotos,
+    payload.locationPhotoSearch,
     payload.locations,
     primaryContactFor,
     primaryLocationFor,
@@ -2746,6 +2879,22 @@ export function CrmClientsWorkspace({
                     <span className={styles.emptyIcon}><UserRound size={22} /></span>
                     <div className={styles.panelTitle}>Choose a client</div>
                     <p className={styles.muted}>Contact, booking, agreement, and follow-up details will appear here.</p>
+                  </div>
+                </div>
+              ) : detailLoading || detailState?.clientId !== selectedClient.id ? (
+                <div className={styles.empty}>
+                  <div>
+                    {compact ? (
+                      <button type="button" className={styles.backButton} onClick={() => setMobileDetailOpen(false)}>
+                        <ArrowLeft size={15} aria-hidden="true" /> All clients
+                      </button>
+                    ) : null}
+                    <div className={styles.panelTitle}>{detailLoading ? "Loading " : "Could not load "}{selectedClient.displayName}</div>
+                    <p className={styles.muted}>
+                      {detailLoading
+                        ? "Contacts and history are loading from Studio OS Cloud."
+                        : "Use Refresh to retry this client's details."}
+                    </p>
                   </div>
                 </div>
               ) : (
