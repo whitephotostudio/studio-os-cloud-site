@@ -46,10 +46,10 @@ function harness() {
     schoolId: 'school', sharePreviewRequestRef: { current: 0 }, shareRecipientMode: 'classes',
     shareClassNames: [], shareClassOptions: [], shareClassAudience: null,
     shareOnlyWithPhotos: true, shareIncludeClassRegistrations: true, sharePreviewLoading: false,
-    sharePreviewError: '', sharePreviewStudents: [], sharePreviewStudentId: '',
+    sharePreviewError: '', sharePreviewStudents: [], sharePreviewStudentId: '', shareSelectedStudentId: '',
     fetch(url) { const pending = deferred(); requests.push({ url, ...pending }); return pending.promise; },
   };
-  for (const name of ['sharePreviewLoading', 'shareClassAudience', 'sharePreviewError', 'sharePreviewStudents', 'sharePreviewStudentId', 'shareSendSummary', 'shareDeliveryReport', 'shareTestRecipient', 'shareClassOptions', 'shareClassNames']) {
+  for (const name of ['sharePreviewLoading', 'shareClassAudience', 'sharePreviewError', 'sharePreviewStudents', 'sharePreviewStudentId', 'shareSelectedStudentId', 'shareSendSummary', 'shareDeliveryReport', 'shareTestRecipient', 'shareClassOptions', 'shareClassNames']) {
     context['set' + name[0].toUpperCase() + name.slice(1)] = value => { context[name] = typeof value === 'function' ? value(context[name]) : value; };
   }
   vm.runInNewContext(compile(`${loadPreview}\nexports.load = loadSharePreviewStudents;\nexports.picker = () => (${pickerJsx});\nexports.status = () => (${statusJsx});`), context);
