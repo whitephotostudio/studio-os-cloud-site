@@ -308,7 +308,7 @@ export async function POST(request: NextRequest) {
       }
       const { data: ownedProject, error: readError } = await service
         .from("projects")
-        .select("id,workflow_type,gallery_settings")
+        .select("id,workflow_type,gallery_settings,updated_at")
         .eq("id", projectId)
         .eq("photographer_id", photographerId)
         .or("status.is.null,status.neq.deleted")
@@ -329,7 +329,7 @@ export async function POST(request: NextRequest) {
         clean(body.clientAddress),
         true,
       );
-      const { error: saveError } = await service
+      let saveQuery = service
         .from("projects")
         .update({
           client_name: clientName || null,
@@ -337,7 +337,19 @@ export async function POST(request: NextRequest) {
         })
         .eq("id", projectId)
         .eq("photographer_id", photographerId);
+      saveQuery = ownedProject.updated_at
+        ? saveQuery.eq("updated_at", ownedProject.updated_at)
+        : saveQuery.is("updated_at", null);
+      const { data: savedProject, error: saveError } = await saveQuery
+        .select("id")
+        .maybeSingle();
       if (saveError) throw saveError;
+      if (!savedProject) {
+        return NextResponse.json(
+          { ok: false, message: "Project changed in cloud. Refresh and save again." },
+          { status: 409 },
+        );
+      }
       return NextResponse.json({ ok: true });
     }
 
