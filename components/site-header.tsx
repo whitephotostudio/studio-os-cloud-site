@@ -10,6 +10,7 @@ const navLinks = [
   { href: "/sample-galleries", label: "Sample Galleries" },
   { href: "/online-school-photography-booking", label: "Online Booking" },
   { href: "/studio-os", label: "Studio OS" },
+  { href: "/tutorials", label: "Tutorials" },
   { href: "/mobile-app", label: "Mobile App" },
   { href: "/pricing", label: "Pricing" },
 ];

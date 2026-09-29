@@ -90,7 +90,7 @@ const nextConfig: NextConfig = {
             "media-src 'self' data: blob: https:",
             "worker-src 'self' blob:",
             "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://*.r2.cloudflarestorage.com https://*.r2.dev https://api.stripe.com",
-            "frame-src 'self'",
+            "frame-src 'self' https://www.youtube-nocookie.com https://www.youtube.com",
             "report-uri /api/csp-report",
           ].join("; "),
         },
