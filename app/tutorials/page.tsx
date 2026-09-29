@@ -89,11 +89,11 @@ export default function TutorialsPage() {
               Learn Studio OS in an afternoon.
             </h1>
             <p className="marketing-body mt-6 max-w-3xl text-white/68">
-              {tutorials.length} short videos, one per panel — about {totalMinutes} minutes in
-              all. Every step is shown on a demo studio, from importing the school&apos;s
-              roster and scanning QR labels on picture day to composites, orders and what
-              parents see online. Start with Welcome, then follow the series in order, or jump
-              to the panel you need.
+              {`${tutorials.length} short videos, one per panel — about ${totalMinutes} minutes in all. `}
+              Every step is shown on a demo studio, from importing the school&apos;s roster and
+              scanning QR labels on picture day to composites, orders and what parents see
+              online. Start with Welcome, then follow the series in order, or jump to the panel
+              you need.
             </p>
             <div className="mt-9 flex flex-wrap items-center gap-3">
               <a
