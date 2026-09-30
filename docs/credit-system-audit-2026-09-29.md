@@ -87,8 +87,26 @@ The corrections described below are release-candidate source, not live fixes.
   items, with flexible mixed-interval billing. Paginated reconciliation avoids
   the 200-subscriber and 1,000-summary-row caps. An immutable fee ledger retries
   exact requests after timeouts and stops unsafe old uncertain retries for
-  review. Full order refunds waive the original fee; partial refunds remain
-  paid orders. Historical already-reported fees are never guessed or recharged.
+  review. New full refunds of reported fees queue the original negative invoice item
+  for the next subscription bill; partial refunds remain paid orders. The
+  returned customer, currency, amount, pending invoice state and immutable
+  references are verified before recording queue completion. Uncertain or
+  previously completed meter cancellations require review without another
+  adjustment, because cancellation cannot correct a finalized invoice. Gross
+  usage and credits queued this cycle are displayed separately, and unresolved
+  fee reviews remain visible across billing periods and canceled subscriptions.
+  Historical already-reported fees are never guessed or recharged.
+- **Existing Stripe meters could silently bill the wrong usage.** Catalog
+  preflight now checks active raw sum meters, their customer/value mappings and
+  all list pages before any product/price write. Incompatible, ambiguous,
+  inactive or preaggregated definitions fail rather than being reused.
+- **The rollout pause left other credit-grant paths running.** Status and all
+  platform billing actions pause immediately after authentication, before
+  profile, customer, catalog, subscription or wallet work. Platform invoice and
+  subscription webhooks pause before event claims, and authenticated billing
+  and credit-recovery crons stop before new-schema operations. Paid Connect
+  orders retain their receipts/notifications when fee reporting is paused or
+  unavailable; their uncounted flags remain available for current-period retry.
 
 Details and Stripe references are in
 [the service-fee accounting note](order-usage-billing-2026-09-29.md).
@@ -120,8 +138,10 @@ compatible new database and webhook code are already serving or safely paused.
 
 ## Validation and release requirements
 
-The latest release-preparation website suite passed 552 tests with no skips or failures.
-TypeScript, the production build and changed-file lint passed. The matching
+The latest release-preparation website suite passed 591 tests with no skips or failures.
+TypeScript and the production build passed. Changed-file lint has zero errors
+and six existing settings-page warnings. These are source/build checks; the
+local build disables remote payment/provider diagnostic flags. The matching
 Mac source passed 912 Flutter tests with one platform skip and zero direct
 `lib` analysis diagnostics. The universal 0.1.14+18 archive was rebuilt from
 this source and passes strict deep Developer ID signature verification;
@@ -134,7 +154,12 @@ The [managed cutout change](paid-cutout-enforcement-2026-09-29.md) implements
 account-scoped paid photo access, server-verified revisions and private staging.
 Selected-backdrop delivery now stops for review when the paid result is unavailable;
 it cannot silently fall back to an original marked print-ready. Native Photoshop
-and actual platform credit checkout remain separately unverified.
+and actual platform credit checkout remain separately unverified. A separate
+private fixture-only Photoshop package now passes nine Flutter behavior tests
+and five isolation tests using generated JPEG/PNG bytes, copied service logic,
+an in-memory ledger and network-fallback refusal. It has no native Runner,
+production startup, persistent authentication or Keychain access; this does
+not establish actual Adobe execution or remote SQL/Stripe behavior.
 
 All five exact migrations were tested together against the live database schema in one
 rolled-back transaction. Both existing credit accounts retained their balances
@@ -152,18 +177,20 @@ no update banner, and registrations contain only release/debug, so the six
 active release registrations cannot prove an upgrade. Notarize and publish the
 validated matching Mac build before exposing the new web flow and arrange
 for active users to update. The maintenance-only bridge is clean commit
-`6f69b2b92ed91e812c783cc463b88eea2ec201d5` on
+`537a0412529116f261e1dde603311772b25d3f33` on
 `codex/credit-maintenance-bridge-20260929`, based exactly on restored main
-`011bf81`. It contains only the pause helper, old billing/webhook guards and
-narrow tests, with no new schema/accounting/cloud code. It passed 28 tests,
+`011bf81`. It contains only pause guards on legacy billing/status/webhooks/cron and
+narrow tests, with no new schema/accounting/cloud code. It passed 30 tests,
 TypeScript and a production build; it has not been deployed.
 
 Pause credit checkout and platform checkout/refund fulfillment before changing
 the schema, so the old handler cannot make direct balance writes while the new
 lot-based accounting is installed. The prepared bridge and new code honor
-`STUDIO_CREDIT_MAINTENANCE=1`: credit checkout stops before creating a customer
-or payment, and authenticated Stripe platform fulfillment returns retryable
-503 before claiming an event. Photographer Connect customer orders remain
+`STUDIO_CREDIT_MAINTENANCE=1`: all platform billing actions and billing status stop before creating or
+synchronizing profiles/customers/subscriptions, and authenticated Stripe
+platform checkout/refund/invoice/subscription fulfillment returns retryable
+503 before claiming an event. Billing and credit-recovery crons pause after
+authorization and before database/RPC work. Photographer Connect customer orders remain
 eligible. The new cloud-processing GET/POST handlers also pause after authentication
 and before request parsing, database reservation, storage or provider work;
 paid jobs remain recoverable after the pause without a second debit. This flag
@@ -199,13 +226,20 @@ guidance to `/credits` and `/studio-os/download`, plus a separate
 verifier performs only bounded read-only requests, refuses the Production
 database, live Stripe credentials and production origins, and does not claim
 actual checkout or signing-secret verification. Its configuration template
-contains placeholders only; external test Stripe/Supabase settings still need
-to be configured. The current Preview still targets the Production database
+contains placeholders only. A separate Vercel project and clean sandbox
+checkout now exist, without environment settings or deployments; external
+Stripe test, Supabase, media and provider settings remain unconfigured. The
+read-only checker requires only service-role-exposed RPC metadata, verified
+against actual SQL grants in thirteen tests; it explicitly leaves hosted Auth,
+authenticated credit RPC, RLS, checkout and signing-secret acceptance false.
+The historical migration directory lacks foundational table definitions, so a
+reviewed schema-only baseline is needed before hosted Auth testing. The current Preview still targets the Production database
 with credit checkout paused, so it must not be used for financial tests.
 
 The matching Mac's notarization upload was attempted and stopped with Xcode
-`No Accounts` and invalid existing account credentials. The Mac was locked
-when account repair was attempted. No Apple ticket, final notarized ZIP, app
+`No Accounts` and invalid existing account credentials. The Mac was unlocked for account inspection: Xcode Apple Accounts was empty
+and a Sign In sheet was opened for the owner. Sign-in has not been confirmed,
+and the Mac locked again before native Photoshop testing. No Apple ticket, final notarized ZIP, app
 publication or persistent production migration has been completed for this
 credit release. The current public release metadata was captured for rollback;
 guarded immutable upload/publication scripts passed eight focused tests and

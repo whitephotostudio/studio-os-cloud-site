@@ -57,6 +57,12 @@ export async function POST(request: NextRequest) {
         { status: 401 },
       );
     }
+    if (creditMaintenanceActive()) {
+      return NextResponse.json({
+        ok: false, maintenance: true,
+        message: "Studio OS billing is briefly paused for an upgrade. Please try again in a few minutes.",
+      }, { status: 503, headers: { "Retry-After": "120", "Cache-Control": "no-store" } });
+    }
 
     const body = (await request.json().catch(() => ({}))) as BillingBody;
     const action = body.action;
@@ -66,10 +72,6 @@ export async function POST(request: NextRequest) {
         { ok: false, message: "A valid billing action is required." },
         { status: 400 },
       );
-    }
-
-    if (action === "buy_credits" && creditMaintenanceActive()) {
-      return NextResponse.json({ ok: false, message: "Credit checkout is briefly paused for an upgrade. Please try again in a few minutes." }, { status: 503, headers: { "Retry-After": "120" } });
     }
 
     const service = createDashboardServiceClient();

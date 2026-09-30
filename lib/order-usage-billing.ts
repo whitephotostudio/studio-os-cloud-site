@@ -96,63 +96,75 @@ async function reportFee(service: ServiceClient, candidate: OrderUsageFee, reque
   }
 }
 
-/** Full refunds waive the fee; partial refunds still represent a paid order. */
+/** Full reported refunds queue a next-bill credit; partial refunds retain the fee. */
 export async function reconcileOrderUsageFeeRefunds(
   service: ServiceClient, photographerId: string, request: StripeRequest, now = Date.now(),
 ) {
+  // Older workers treated an accepted cancellation as a completed waiver. A
+  // cancellation never corrects an already-finalized invoice, so those records
+  // need review rather than a second, potentially duplicate financial request.
+  const legacy = await service.from("order_usage_fees").select("order_id")
+    .eq("photographer_id", photographerId).eq("report_status", "reported")
+    .eq("refund_status", "completed").eq("refund_strategy", "cancel_meter_event")
+    .order("created_at", { ascending: true }).limit(100);
+  if (legacy.error) throw legacy.error;
+  for (const fee of (legacy.data ?? []) as Array<{ order_id: string }>) {
+    const reviewed = await service.from("order_usage_fees").update({
+      refund_status: "review_required", updated_at: new Date(now).toISOString(),
+    }).eq("order_id", fee.order_id).eq("photographer_id", photographerId)
+      .eq("report_status", "reported").eq("refund_status", "completed")
+      .eq("refund_strategy", "cancel_meter_event");
+    if (reviewed.error) throw reviewed.error;
+  }
   const { data, error } = await service.from("order_usage_fees").select("*")
     .eq("photographer_id", photographerId).eq("report_status", "reported")
     .in("refund_status", ["pending", "processing"]).order("created_at", { ascending: true }).limit(100);
   if (error) throw error;
   for (const candidate of (data ?? []) as OrderUsageFee[]) {
     const token = randomUUID();
-    const reportedAt = candidate.reported_at ? Date.parse(candidate.reported_at) : NaN;
-    const strategy = Number.isFinite(reportedAt) && now - reportedAt < SAFE_RETRY_MS
-      ? "cancel_meter_event" : "invoice_credit";
     const claim = await service.rpc("claim_order_usage_fee", {
-      p_order_id: candidate.order_id, p_operation: "refund", p_token: token, p_refund_strategy: strategy,
+      p_order_id: candidate.order_id, p_operation: "refund", p_token: token, p_refund_strategy: "invoice_credit",
     });
     if (claim.error) throw claim.error;
     const fee = claim.data as OrderUsageFee | null;
     if (!fee) continue;
     try {
-      // Never switch strategies after an uncertain request: a lost successful
-      // cancellation followed by an invoice credit would waive the fee twice.
-      if (uncertainRequestExpired(fee.refund_first_attempt_at, now) ||
-          (fee.refund_strategy === "cancel_meter_event" && (!fee.reported_at || now - Date.parse(fee.reported_at) >= SAFE_RETRY_MS))) {
+      // Age only controls safe retries, not whether Stripe finalized an invoice.
+      // Never switch an older frozen cancellation to a credit: its provider
+      // result may have succeeded even when our response was lost.
+      if (uncertainRequestExpired(fee.refund_first_attempt_at, now) || fee.refund_strategy !== "invoice_credit") {
         await updateClaim(service, fee.order_id, token, { refund_status: "review_required" });
         continue;
       }
-      let adjustmentReference: string;
-      if (fee.refund_strategy === "cancel_meter_event") {
-        const result = await request<{ event_name: string; type: string; status: string; cancel?: { identifier?: string } }>("billing/meter_event_adjustments", {
-          method: "POST",
-          body: new URLSearchParams({ event_name: fee.event_name, type: "cancel", "cancel[identifier]": fee.event_identifier }),
-          idempotencyKey: `studio-os-usage-refund-cancel-${fee.order_id}`,
-        });
-        // v1 meter adjustments have no id. Verify the returned event reference
-        // instead of expecting the invoice item's unrelated response shape.
-        if (result.event_name !== fee.event_name || result.type !== "cancel" || result.cancel?.identifier !== fee.event_identifier ||
-            !["pending", "complete"].includes(result.status)) throw new Error("Stripe did not accept this service-fee cancellation.");
-        adjustmentReference = `cancel:${fee.event_identifier}`;
-      } else {
-        const result = await request<{ id: string }>("invoiceitems", {
-          method: "POST",
-          body: new URLSearchParams({
-            customer: fee.stripe_customer_id, currency: fee.currency, amount: String(-fee.amount_cents),
-            description: `Studio OS service fee waived for refunded order ${fee.order_id}`,
-            "metadata[billing_flow]": "order_usage_refund",
-            "metadata[order_id]": fee.order_id,
-            "metadata[photographer_id]": fee.photographer_id,
-            "metadata[original_meter_event]": fee.event_identifier,
-          }),
-          idempotencyKey: `studio-os-usage-refund-credit-${fee.order_id}`,
-        });
-        if (!result.id) throw new Error("Stripe returned no service-fee credit reference.");
-        adjustmentReference = result.id;
+      const result = await request<{
+        id: string; object: string; customer: string; currency: string; amount: number;
+        invoice: string | null; metadata: Record<string, string>;
+      }>("invoiceitems", {
+        method: "POST",
+        // Keep every field identical to previously frozen invoice-credit
+        // requests, including the description, for Stripe idempotent retries.
+        body: new URLSearchParams({
+          customer: fee.stripe_customer_id, currency: fee.currency, amount: String(-fee.amount_cents),
+          description: `Studio OS service fee waived for refunded order ${fee.order_id}`,
+          "metadata[billing_flow]": "order_usage_refund",
+          "metadata[order_id]": fee.order_id,
+          "metadata[photographer_id]": fee.photographer_id,
+          "metadata[original_meter_event]": fee.event_identifier,
+        }),
+        idempotencyKey: `studio-os-usage-refund-credit-${fee.order_id}`,
+      });
+      if (!result || typeof result.id !== "string" || !/^ii_[A-Za-z0-9]+$/.test(result.id) ||
+          result.object !== "invoiceitem" || result.customer !== fee.stripe_customer_id ||
+          result.currency !== fee.currency || !Number.isSafeInteger(result.amount) || result.amount !== -fee.amount_cents ||
+          result.invoice !== null || result.metadata?.billing_flow !== "order_usage_refund" ||
+          result.metadata?.order_id !== fee.order_id || result.metadata?.photographer_id !== fee.photographer_id ||
+          result.metadata?.original_meter_event !== fee.event_identifier) {
+        throw new Error("Stripe returned an unverified pending service-fee credit.");
       }
+      // Completed means this exact next-subscription-bill credit was queued,
+      // not that an existing invoice was amended or money was refunded.
       await updateClaim(service, fee.order_id, token, {
-        refund_status: "completed", refund_completed_at: new Date(now).toISOString(), stripe_adjustment_id: adjustmentReference,
+        refund_status: "completed", refund_completed_at: new Date(now).toISOString(), stripe_adjustment_id: result.id,
       });
     } catch (error) {
       await updateClaim(service, fee.order_id, token, {});

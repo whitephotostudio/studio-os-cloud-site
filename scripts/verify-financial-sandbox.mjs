@@ -27,8 +27,9 @@ const TABLE_PROBES = [
   'order_payment_locks?select=key&limit=0',
   'stripe_events?select=id,event_type,livemode&limit=0',
 ];
-const REQUIRED_RPCS = ['apply_credit_adjustment', 'reverse_credit_purchase', 'get_studio_credit_balance',
-  'deduct_studio_credits', 'refund_studio_credits', 'finalize_background_credit_job', 'expire_due_credit_accounts',
+// The OpenAPI request below authenticates as service_role. Client-only RPCs
+// are intentionally absent from that role's schema when grants are enforced.
+const REQUIRED_SERVICE_RPCS = ['apply_credit_adjustment', 'reverse_credit_purchase', 'get_studio_credit_balance', 'expire_due_credit_accounts',
   'stage_order_usage_fee', 'claim_order_usage_fee', 'complete_order_usage_fee_report',
   'reserve_cloud_credit_job', 'finish_cloud_credit_job', 'get_studio_cutout_entitlement',
   'register_studio_cutout_entitlement', 'register_verified_cutout_revision', 'bind_cloud_cutout_original',
@@ -189,11 +190,12 @@ export async function verifyFinancialSandbox(env = process.env, { fetcher = fetc
     if (!Array.isArray(rows) || rows.length !== 0) fail('Sandbox schema probe returned unexpected data.');
   }
   const schema = await db('', 4 * 1024 * 1024);
-  if (REQUIRED_RPCS.some(name => !schema.paths?.[`/rpc/${name}`]?.post)) fail('Required sandbox credit or fee RPCs are missing.');
+  if (REQUIRED_SERVICE_RPCS.some(name => !schema.paths?.[`/rpc/${name}`]?.post)) fail('Required sandbox service credit or fee RPCs are missing.');
   const liveEvents = await db('stripe_events?select=id&livemode=eq.true&limit=1');
   if (!Array.isArray(liveEvents) || liveEvents.length !== 0) fail('The sandbox database contains live Stripe events.');
   const result = { enabled: true, financialMutations: 0, databaseMutations: 0, schemaProbeCount: TABLE_PROBES.length,
-    externalCheckoutVerified: false, webhookSigningSecretVerified: false };
+    externalCheckoutVerified: false, webhookSigningSecretVerified: false, authOnboardingVerified: false,
+    authenticatedCreditRpcVerified: false, rlsPoliciesVerified: false };
   report(JSON.stringify({ check: 'financial-sandbox-schema', ok: true, ...result }));
   return result;
 }

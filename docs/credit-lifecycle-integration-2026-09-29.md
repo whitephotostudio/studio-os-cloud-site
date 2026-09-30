@@ -40,8 +40,11 @@ The combined cases verify:
   fixtures move only isolated lot deadlines into the past rather than waiting
   a real month or changing a production clock.
 - A paid customer order generates one owner service-fee meter request. A
-  partial order refund retains the fee; a full refund cancels the original fee
-  once. This ledger does not alter the photographer's AI credit wallet.
+  partial order refund retains the fee; a reported full refund queues one
+  negative pending invoice item for the original customer, cents/currency and
+  event reference on the next subscription bill. The ledger records verified
+  queueing, not amendment of an existing invoice or actual settlement. It does
+  not alter the photographer's AI credit wallet.
 - Authenticated clients cannot rewrite balances, invoke the server-only cloud
   completion RPC, read the owner fee ledger or read another account's balance.
 

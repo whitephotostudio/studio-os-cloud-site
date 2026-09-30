@@ -14,22 +14,31 @@ invoice. Test, unpaid and zero-price orders are excluded.
 
 ## Refund behavior
 
-Full customer-order refunds waive the order service fee. A partial refund remains
-a paid order. This follows the existing advertised fee per paid order; no fee
-is retroactively charged as part of this audit.
+Full customer-order refunds made before fee reporting waive the unreported fee.
+After reporting, a full refund queues a service fee credit on the photographer's
+next subscription bill. A partial refund remains a paid order. No fee is
+retroactively charged as part of this audit.
 
 Each new fee retains the original Stripe customer, meter event name, paid
 timestamp, billing period, currency and actual Stripe item unit amount in
-`order_usage_fees`. A refund made before any report waives the reservation. A
-recent reported event is canceled; an older event receives a negative invoice
-item for the original cents/currency on the customer's next invoice. Credits
-can offset the next subscription invoice even when the photographer changes
-plans. An account with no future invoice retains that pending invoice credit.
+`order_usage_fees`. Every new reported full refund, including one immediately
+after reporting or monthly invoice finalization, receives a negative pending
+invoice item for the original cents/currency and customer. Credits can offset
+the next subscription invoice even when the photographer changes plans. An
+account with no future invoice retains that pending invoice credit. This does
+not amend a finalized invoice or return money to the photographer's card.
 
-Stripe only accepts meter-event cancellation within 24 hours. The worker uses a
-23-hour safety window and never changes refund strategies after an uncertain
-provider result. v1 meter event adjustments have no `id`; their returned event
-name and cancellation identifier are verified instead.
+Stripe meter cancellation does not correct finalized invoices, so new refunds
+never cancel meter events. Previously selected or completed cancellation
+strategies require billing review without another cancellation or credit.
+The worker verifies the full invoice-item receipt: object and ID, original
+customer, currency, negative amount, pending `invoice=null`, and the original
+flow/order/studio/meter-event metadata. Ledger `refund_status=completed` records
+verified queueing, not financial settlement. The dashboard labels the amount
+as credits queued this cycle, separately from the gross usage estimate before
+credits. Queueing time does not establish the actual invoice where Stripe will
+apply them. Outstanding refund/review counts include earlier billing periods
+and remain visible after renewal or cancellation until resolved.
 
 ## Recovery and limits
 
@@ -37,11 +46,14 @@ Staging, reporting claims and the reported-order flag are transactional. Stripe
 receives an immutable identifier and idempotency key for every order. Requests
 already staged are retried across renewal and plan changes using their original
 payload. The daily billing worker paginates subscriptions and bounds provider
-concurrency. A full refund also attempts its queued waiver immediately without
-turning an already successful customer refund into a failed payment action.
+concurrency. A full refund also attempts to queue its next-bill credit immediately
+without turning an already successful customer refund into a failed payment action.
 
-If a provider response is uncertain beyond the safe idempotency window, the
-ledger marks `review_required` and stops repeating the financial request. This
+The safe idempotent retry window is 23 hours, leaving a margin inside Stripe's
+minimum 24-hour retention. Requests retain the existing frozen description,
+payload and key even after a plan change. If a provider response is uncertain
+beyond that window, the ledger marks `review_required` and stops repeating the
+financial request. This
 prevents duplicate charges or refund credits; an operator must reconcile that
 event in Stripe. Historical `counted_for_monthly_usage=true` orders do not have
 verified fee snapshots and are never guessed, recharged or automatically
@@ -58,9 +70,11 @@ plans or overwrite platform subscription access.
 ## Validation
 
 The database and request tests cover concurrent reports, exact payload retry
-after renewal, lost completion, partial/full refunds, recent event cancellation,
-older original-amount invoice credits, uncertain-response review, platform versus
-connected-account revenue routing, monthly usage on annual plans, period/parent
+after renewal, lost completion, partial/full refunds, recent refunds crossing
+invoice finalization, original-amount next-bill credits, invalid receipt rejection,
+legacy cancellation review without second adjustments, prior-period review
+visibility and pagination, uncertain-response review, platform versus connected-account
+revenue routing, monthly usage on annual plans, period/parent
 API shapes, rate-preserving summaries and more than 200 subscriber accounts.
 
 Release verification reads the ledger columns and verifies all service RPCs in
@@ -111,5 +125,5 @@ it has not changed live webhook subscriptions or moved money.
 
 Sources: [Stripe billing-period change](https://docs.stripe.com/changelog/basil/2025-03-31/deprecate-subscription-current-period-start-and-end),
 [mixed intervals](https://docs.stripe.com/billing/subscriptions/mixed-interval),
-[meter-event cancellation](https://docs.stripe.com/api/billing/meter-event-adjustment/create),
+[finalized-invoice cancellation limitations](https://docs.stripe.com/billing/subscriptions/usage-based/meters/configure),
 [negative invoice items](https://docs.stripe.com/api/invoiceitems/create).

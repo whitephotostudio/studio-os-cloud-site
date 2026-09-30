@@ -21,6 +21,7 @@ async function fixture() {
   await db.query('insert into photographers values ($1)', [photographerId]);
   await db.query("insert into orders(id,photographer_id,paid_at,payment_status,total_cents,is_test) values ($1,$2,$3,'paid',1000,false)", [orderId, photographerId, new Date(now - 60000).toISOString()]);
   const calls = []; const replies = new Map(); let failCompletion = false; let failAfterProvider = false;
+  let creditReceiptOverride; let finalizedInvoice; let queuedInvoiceCreditCents = 0;
   const service = {
     from(table) {
       assert.ok(['orders', 'order_usage_fees'].includes(table));
@@ -60,17 +61,29 @@ async function fixture() {
   const request = async (path, options) => {
     const params = new URLSearchParams(options.body);
     calls.push({ path, params, key: options.idempotencyKey, body: options.body.toString() });
-    if (!replies.has(options.idempotencyKey)) replies.set(options.idempotencyKey, path === 'billing/meter_events'
-      ? { identifier: params.get('identifier'), created: Math.floor(now / 1000) }
-      : path === 'invoiceitems' ? { id: 'ii_credit' }
-      : { object: 'billing.meter_event_adjustment', event_name: params.get('event_name'), type: 'cancel', status: 'pending', cancel: { identifier: params.get('cancel[identifier]') } });
+    assert.ok(['billing/meter_events', 'invoiceitems'].includes(path), 'new refunds must never request meter cancellation');
+    if (!replies.has(options.idempotencyKey)) {
+      const result = path === 'billing/meter_events'
+        ? { identifier: params.get('identifier'), created: Math.floor(now / 1000) }
+        : { id: 'ii_credit', object: 'invoiceitem', customer: params.get('customer'), currency: params.get('currency'),
+          amount: Number(params.get('amount')), invoice: null, metadata: {
+            billing_flow: params.get('metadata[billing_flow]'), order_id: params.get('metadata[order_id]'),
+            photographer_id: params.get('metadata[photographer_id]'), original_meter_event: params.get('metadata[original_meter_event]'),
+          } };
+      replies.set(options.idempotencyKey, result);
+      if (path === 'invoiceitems') queuedInvoiceCreditCents -= result.amount;
+    }
     if (failAfterProvider) { failAfterProvider = false; throw Error('expected lost successful response'); }
-    return replies.get(options.idempotencyKey);
+    const receipt = replies.get(options.idempotencyKey);
+    return path === 'invoiceitems' && creditReceiptOverride ? creditReceiptOverride(structuredClone(receipt)) : receipt;
   };
   const input = { photographerId, customerId: 'cus_original', eventName: 'studio_os_core_order_usage', amountCents: 35, currency: 'cad',
     periodStart: new Date(now - 86400000).toISOString(), periodEnd: new Date(now + 86400000).toISOString(), billingPeriod: 'original-period' };
   return { db, service, request, input, calls, replies, orderId, now,
     failCompletion: () => { failCompletion = true; }, failAfterProvider: () => { failAfterProvider = true; },
+    overrideCreditReceipt: override => { creditReceiptOverride = override; },
+    finalizeInvoice: () => { finalizedInvoice = { status: 'paid', finalizedAt: now + 60000, feeCents: 35, creditCents: 0 }; },
+    invoiceState: () => ({ finalizedInvoice, queuedInvoiceCreditCents }),
     async row() { return (await db.query('select * from order_usage_fees where order_id=$1', [orderId])).rows[0]; },
     async refund(partial = false) { await db.query('update orders set payment_status=$1,refund_status=$1 where id=$2', [partial ? 'partially_refunded' : 'refunded', orderId]); },
     sync: () => billing.syncOrderUsageFees(service, input, request, now),
@@ -103,14 +116,39 @@ test('lost completion recovers across renewal with the exact original event, cus
   } finally { await f.db.close(); }
 });
 
-test('partial refund remains a paid order, full refund cancels recent metering once', async () => {
+test('partial refund remains paid; a recent full refund queues one next-subscription-bill credit', async () => {
   const f = await fixture();
   try {
     await f.sync(); await f.refund(true); await f.reconcile(); assert.equal(f.calls.length, 1);
     await f.refund(); await f.reconcile(); await f.reconcile();
-    assert.equal(f.calls.length, 2); assert.equal(f.calls[1].path, 'billing/meter_event_adjustments');
-    assert.equal(f.calls[1].params.get('cancel[identifier]'), f.calls[0].params.get('identifier'));
-    assert.equal((await f.row()).refund_status, 'completed');
+    assert.equal(f.calls.length, 2); assert.equal(f.calls[1].path, 'invoiceitems');
+    assert.equal(f.calls[1].params.get('metadata[original_meter_event]'), f.calls[0].params.get('identifier'));
+    assert.equal(f.calls[1].params.get('amount'), '-35');
+    assert.equal((await f.row()).refund_status, 'completed'); assert.equal((await f.row()).refund_strategy, 'invoice_credit');
+    assert.equal(f.invoiceState().queuedInvoiceCreditCents, 35);
+  } finally { await f.db.close(); }
+});
+
+test('concurrent full-refund reconciliation queues only one accepted credit', async () => {
+  const f = await fixture();
+  try {
+    await f.sync(); await f.refund(); await Promise.all(Array.from({ length: 5 }, () => f.reconcile()));
+    assert.equal(f.calls.filter(call => call.path === 'invoiceitems').length, 1);
+    assert.equal(f.invoiceState().queuedInvoiceCreditCents, 35); assert.equal((await f.row()).refund_status, 'completed');
+  } finally { await f.db.close(); }
+});
+
+test('a recent full refund after monthly invoice finalization queues a credit without pretending to amend the paid invoice', async () => {
+  const f = await fixture();
+  try {
+    await f.sync(); f.finalizeInvoice(); await f.refund();
+    await billing.reconcileOrderUsageFeeRefunds(f.service, f.input.photographerId, f.request, f.now + 120000);
+    await billing.reconcileOrderUsageFeeRefunds(f.service, f.input.photographerId, f.request, f.now + 180000);
+    assert.deepEqual(f.invoiceState(), { finalizedInvoice: { status: 'paid', finalizedAt: f.now + 60000, feeCents: 35, creditCents: 0 }, queuedInvoiceCreditCents: 35 });
+    assert.equal(f.calls.filter(call => call.path === 'invoiceitems').length, 1);
+    assert.equal((await f.row()).refund_strategy, 'invoice_credit');
+    assert.equal((await f.row()).stripe_adjustment_id, 'ii_credit');
+    assert.equal((await f.row()).refund_status, 'completed', 'completion records validated queueing, not paid-invoice settlement');
   } finally { await f.db.close(); }
 });
 
@@ -120,13 +158,78 @@ test('older full refund credits the original cents/currency once, even after cha
     await f.sync();
     await f.db.query("update order_usage_fees set reported_at=now()-interval '3 days' where order_id=$1", [f.orderId]);
     await f.refund(); f.failAfterProvider(); await assert.rejects(() => f.reconcile(), /lost successful response/);
-    await f.reconcile(); await f.reconcile();
+    assert.equal((await f.row()).refund_status, 'processing');
+    await billing.syncOrderUsageFees(f.service, { ...f.input, customerId: 'cus_new', amountCents: 25, currency: 'usd',
+      eventName: 'studio_os_studio_order_usage', billingPeriod: 'new-period' }, f.request, f.now + 3600000);
+    await f.reconcile();
     const credits = f.calls.filter(call => call.path === 'invoiceitems');
     assert.equal(credits.length, 2); assert.equal(credits[0].body, credits[1].body);
     assert.equal(credits[0].params.get('amount'), '-35'); assert.equal(credits[0].params.get('currency'), 'cad'); assert.equal(credits[0].params.get('customer'), 'cus_original');
+    assert.equal(credits[0].key, credits[1].key); assert.equal(credits[0].params.get('metadata[original_meter_event]'), (await f.row()).event_identifier);
+    assert.equal((await f.row()).billing_period, 'original-period');
     assert.equal(f.replies.size, 2, 'one usage event and one adjustment were accepted');
+    assert.equal(f.invoiceState().queuedInvoiceCreditCents, 35, 'a lost receipt cannot queue a second accepted credit');
   } finally { await f.db.close(); }
 });
+
+test('an uncertain next-bill credit at the 23-hour retry boundary requires review without another money request', async () => {
+  const f = await fixture();
+  try {
+    await f.sync(); await f.refund(); f.failAfterProvider(); await assert.rejects(() => f.reconcile(), /lost successful response/);
+    await f.db.query('update order_usage_fees set refund_first_attempt_at=$1 where order_id=$2', [new Date(f.now).toISOString(), f.orderId]);
+    await billing.reconcileOrderUsageFeeRefunds(f.service, f.input.photographerId, f.request, f.now + 23 * 3600000);
+    assert.equal(f.calls.length, 2); assert.equal(f.invoiceState().queuedInvoiceCreditCents, 35);
+    assert.equal((await f.row()).refund_status, 'review_required'); assert.equal((await f.row()).stripe_adjustment_id, null);
+  } finally { await f.db.close(); }
+});
+
+for (const [name, invalidate] of [
+  ['null receipt', () => null],
+  ['wrong object', receipt => ({ ...receipt, object: 'credit_note' })],
+  ['missing ID', receipt => ({ ...receipt, id: '' })],
+  ['wrong ID kind', receipt => ({ ...receipt, id: 'cn_credit' })],
+  ['wrong customer', receipt => ({ ...receipt, customer: 'cus_somebody_else' })],
+  ['wrong currency', receipt => ({ ...receipt, currency: 'usd' })],
+  ['positive amount', receipt => ({ ...receipt, amount: 35 })],
+  ['wrong original amount', receipt => ({ ...receipt, amount: -25 })],
+  ['string amount', receipt => ({ ...receipt, amount: '-35' })],
+  ['already attached invoice', receipt => ({ ...receipt, invoice: 'in_paid' })],
+  ['missing pending-invoice field', receipt => { delete receipt.invoice; return receipt; }],
+  ['missing metadata', receipt => ({ ...receipt, metadata: undefined })],
+  ['wrong billing flow', receipt => ({ ...receipt, metadata: { ...receipt.metadata, billing_flow: 'credit_pack' } })],
+  ['wrong order', receipt => ({ ...receipt, metadata: { ...receipt.metadata, order_id: randomUUID() } })],
+  ['wrong photographer', receipt => ({ ...receipt, metadata: { ...receipt.metadata, photographer_id: randomUUID() } })],
+  ['wrong original meter event', receipt => ({ ...receipt, metadata: { ...receipt.metadata, original_meter_event: 'different-event' } })],
+]) {
+  test(`an invalid pending invoice-item receipt (${name}) never completes the fee refund`, async () => {
+    const f = await fixture();
+    try {
+      await f.sync(); await f.refund(); f.overrideCreditReceipt(invalidate);
+      await assert.rejects(() => f.reconcile(), /unverified pending service-fee credit/);
+      const row = await f.row();
+      assert.equal(row.refund_status, 'processing'); assert.equal(row.stripe_adjustment_id, null); assert.equal(row.refund_completed_at, null);
+      f.overrideCreditReceipt(undefined); await f.reconcile();
+      assert.equal((await f.row()).refund_status, 'completed'); assert.equal(f.invoiceState().queuedInvoiceCreditCents, 35);
+      assert.equal(f.calls[1].body, f.calls[2].body); assert.equal(f.calls[1].key, f.calls[2].key);
+    } finally { await f.db.close(); }
+  });
+}
+
+for (const status of ['processing', 'completed']) {
+  test(`a legacy ${status} meter cancellation goes to review without a second cancellation or credit`, async () => {
+    const f = await fixture();
+    try {
+      await f.sync(); await f.refund();
+      const reference = `cancel:${(await f.row()).event_identifier}`;
+      await f.db.query("update order_usage_fees set refund_strategy='cancel_meter_event',refund_status=$1,refund_first_attempt_at=$2,stripe_adjustment_id=$3 where order_id=$4",
+        [status, new Date(f.now).toISOString(), reference, f.orderId]);
+      await f.reconcile(); await f.reconcile();
+      const row = await f.row();
+      assert.equal(row.refund_status, 'review_required'); assert.equal(row.refund_strategy, 'cancel_meter_event'); assert.equal(row.stripe_adjustment_id, reference);
+      assert.equal(f.calls.length, 1); assert.equal(f.invoiceState().queuedInvoiceCreditCents, 0);
+    } finally { await f.db.close(); }
+  });
+}
 
 test('uncertain requests older than Stripe idempotency retention require review instead of repeating money', async () => {
   const f = await fixture();

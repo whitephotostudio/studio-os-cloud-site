@@ -3,6 +3,7 @@ import { allocateRefundCents, orderCheckoutIdempotencyKey } from "@/lib/order-pa
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { createDashboardServiceClient } from "@/lib/dashboard-auth";
 import { syncPhotographyKeysByPhotographerId } from "@/lib/studio-os-app";
+import { creditMaintenanceActive } from "@/lib/credit-maintenance";
 import { buildOrderNotificationEmail } from "@/lib/order-notification-email";
 import { buildOrderReceiptEmail } from "@/lib/order-receipt-email";
 import { sendNewOrderPush } from "@/lib/order-push";
@@ -158,6 +159,10 @@ type StripeMeter = {
   display_name: string;
   event_name: string;
   status: "active" | "inactive";
+  default_aggregation: { formula: string };
+  customer_mapping: { type: string; event_payload_key: string };
+  value_settings: { event_payload_key: string };
+  event_time_window: "hour" | "day" | null;
 };
 
 type StripeCustomer = {
@@ -643,15 +648,53 @@ export async function ensureCreditPackageCatalog(service: ServiceClient) {
     }));
 }
 
+async function readBillingMeters() {
+  const meters: StripeMeter[] = [];
+  const cursors = new Set<string>();
+  let cursor: string | undefined;
+  // Include inactive meters: an existing event name with an incompatible
+  // definition must not be silently replaced by creating a second meter.
+  for (let page = 0; page < 10; page += 1) {
+    const query = new URLSearchParams({ limit: "100" });
+    if (cursor) query.set("starting_after", cursor);
+    const result = await stripeRequest<StripeList<StripeMeter>>("billing/meters", { query });
+    if (!Array.isArray(result.data) || typeof result.has_more !== "boolean" || result.data.some((meter) =>
+      !meter || typeof meter.id !== "string" || !meter.id || typeof meter.event_name !== "string" || !meter.event_name)) {
+      throw new Error("Stripe billing meter list could not be verified.");
+    }
+    meters.push(...result.data);
+    if (!result.has_more) return meters;
+    cursor = result.data.at(-1)?.id;
+    if (!cursor || cursors.has(cursor)) {
+      throw new Error("Stripe billing meter pagination could not be verified.");
+    }
+    cursors.add(cursor);
+  }
+  throw new Error("Stripe billing meter list exceeds the safe verification limit.");
+}
+
+function selectBillingMeter(meters: StripeMeter[], eventName: string) {
+  const matches = meters.filter((meter) => meter?.event_name === eventName);
+  if (matches.length > 1) {
+    throw new Error(`Stripe billing meter event name is ambiguous: ${eventName}.`);
+  }
+  const existing = matches[0];
+  if (existing && (
+    typeof existing.id !== "string" || !existing.id || existing.object !== "billing.meter" || existing.status !== "active" ||
+    existing.default_aggregation?.formula !== "sum" || existing.customer_mapping?.type !== "by_id" ||
+    existing.customer_mapping?.event_payload_key !== "stripe_customer_id" || existing.value_settings?.event_payload_key !== "value" ||
+    existing.event_time_window !== null
+  )) {
+    throw new Error(`Stripe billing meter has incompatible order usage settings: ${eventName}.`);
+  }
+  return existing;
+}
+
 async function ensureBillingMeter(input: {
   eventName: string;
   displayName: string;
 }) {
-  const meters = await stripeRequest<StripeList<StripeMeter>>("billing/meters", {
-    query: new URLSearchParams({ limit: "100", status: "active" }),
-  });
-
-  const existing = meters.data.find((meter) => meter.event_name === input.eventName);
+  const existing = selectBillingMeter(await readBillingMeters(), input.eventName);
   if (existing) {
     if (existing.display_name !== input.displayName) {
       await stripeRequest<StripeMeter>(`billing/meters/${existing.id}`, {
@@ -750,6 +793,12 @@ let catalogPromise: Promise<StripeCatalog> | null = null;
 export async function ensureStripeCatalog() {
   if (!catalogPromise) {
     catalogPromise = (async () => {
+      // Verify every existing order meter before any product, price or meter
+      // mutation, including the earlier base-plan catalog entries.
+      const existingMeters = await readBillingMeters();
+      for (const eventName of Object.values(ORDER_USAGE_METER_EVENT_NAMES)) {
+        selectBillingMeter(existingMeters, eventName);
+      }
       const planPrices = {
         starter: {
           month: await ensureCatalogEntry({
@@ -1755,8 +1804,12 @@ export async function finalizePaidOrder(
     .maybeSingle();
 
   if (photographerError) throw photographerError;
-  if (photographer) {
-    await syncOutstandingStudioUsage(service, photographer as PhotographerBillingRow);
+  if (photographer && !creditMaintenanceActive()) {
+    // Payment is already committed. A platform fee outage must not prevent the
+    // customer receipt/photographer notification. The uncounted paid order stays
+    // available to billing reconciliation after maintenance or provider recovery.
+    try { await syncOutstandingStudioUsage(service, photographer as PhotographerBillingRow); }
+    catch (error) { console.error("[order-usage] paid order fee sync will retry", error); }
   }
 
   // --- Send order notification email to photographer ---
@@ -2264,6 +2317,21 @@ export async function getUsageSummaryForCurrentPeriod(
     periodStart,
     periodEnd,
   );
+  const readFeeAttention = async () => {
+    // A prior-period pending credit or uncertain fee must remain visible after
+    // renewal or subscription cancellation, without counting its charge again.
+    const outstanding = await readAllBillingRows((from, to) => service.from("order_usage_fees").select("order_id,report_status,refund_status,refund_strategy")
+      .eq("photographer_id", photographer.id)
+      .or("report_status.eq.review_required,refund_status.in.(pending,processing,review_required),and(refund_status.eq.completed,refund_strategy.eq.cancel_meter_event)")
+      .order("order_id", { ascending: true }).range(from, to)) as Array<{
+        report_status: string; refund_status: string; refund_strategy: string | null;
+      }>;
+    return {
+      pendingFeeWaivers: outstanding.filter((fee) => ["pending", "processing"].includes(fee.refund_status)).length,
+      feeReviewRequired: outstanding.filter((fee) => fee.report_status === "review_required" || fee.refund_status === "review_required" ||
+        (fee.refund_status === "completed" && fee.refund_strategy === "cancel_meter_event")).length,
+    };
+  };
 
   if (
     !planCode ||
@@ -2277,8 +2345,7 @@ export async function getUsageSummaryForCurrentPeriod(
       unreportedOrders: 0,
       estimatedChargeCents: 0,
       refundCreditCents: 0,
-      pendingFeeWaivers: 0,
-      feeReviewRequired: 0,
+      ...await readFeeAttention(),
       billingPeriodKey: null,
     };
   }
@@ -2305,7 +2372,7 @@ export async function getUsageSummaryForCurrentPeriod(
       return refundStatus !== "refunded" && Number(row.total_cents ?? 0) > 0;
     });
 
-  const [feeData, creditData] = await Promise.all([
+  const [feeData, creditData, feeAttention] = await Promise.all([
     readAllBillingRows((from, to) => service.from("order_usage_fees").select("order_id,amount_cents,report_status,refund_status,refund_strategy")
       .eq("photographer_id", photographer.id).gte("usage_timestamp", Math.floor(Date.parse(periodStart) / 1000))
       .lt("usage_timestamp", Math.floor(Date.parse(periodEnd) / 1000))
@@ -2314,15 +2381,17 @@ export async function getUsageSummaryForCurrentPeriod(
       .eq("photographer_id", photographer.id).eq("refund_status", "completed").eq("refund_strategy", "invoice_credit")
       .gte("refund_completed_at", periodStart).lt("refund_completed_at", periodEnd)
       .order("order_id", { ascending: true }).range(from, to)),
+    readFeeAttention(),
   ]);
   const fees = feeData as Array<{
     order_id: string; amount_cents: number; report_status: string; refund_status: string; refund_strategy: string | null;
   }>;
   const feeByOrder = new Map(fees.map((fee) => [fee.order_id, fee]));
   const liveRate = photographer.order_usage_rate_cents ?? PLAN_DEFS[planCode].usageRateCents;
+  // Reported fees remain charges. An older accepted meter cancellation did not
+  // prove that a finalized invoice was corrected; show those records for review.
   const reportedChargeCents = fees.reduce((total, fee) => total + (
-    fee.report_status === "reported" && !(fee.refund_status === "completed" && fee.refund_strategy === "cancel_meter_event")
-      ? fee.amount_cents : 0
+    fee.report_status === "reported" ? fee.amount_cents : 0
   ), 0);
   const unreportedOrLegacyChargeCents = rows.reduce((total, row) => {
     const fee = feeByOrder.get(row.id);
@@ -2338,10 +2407,11 @@ export async function getUsageSummaryForCurrentPeriod(
     countedOrders,
     billableOrders,
     unreportedOrders,
-    estimatedChargeCents: reportedChargeCents + unreportedOrLegacyChargeCents - refundCreditCents,
+    // Queueing time does not establish which invoice receives a pending item.
+    // Show gross usage and separately disclose credits queued this cycle.
+    estimatedChargeCents: reportedChargeCents + unreportedOrLegacyChargeCents,
     refundCreditCents,
-    pendingFeeWaivers: fees.filter((fee) => ["pending", "processing"].includes(fee.refund_status)).length,
-    feeReviewRequired: fees.filter((fee) => fee.report_status === "review_required" || fee.refund_status === "review_required").length,
+    ...feeAttention,
     billingPeriodKey,
   };
 }

@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import test from 'node:test';
+import { PGlite } from '@electric-sql/pglite';
 import { verifyFinancialSandbox, FinancialSandboxVerificationError } from '../scripts/verify-financial-sandbox.mjs';
 
 const ref = 'tttttttttttttttttttt';
@@ -26,8 +27,38 @@ const connect = { ...platform, id: env.STUDIO_SANDBOX_CONNECT_WEBHOOK_ID };
 const migrationNames = ['20260930010000_atomic_credit_accounting.sql', '20260930012000_protect_photographer_billing.sql',
   '20260930013000_cloud_credit_jobs.sql', '20260930100000_order_usage_fee_ledger.sql', '20260930120000_paid_cutout_entitlements.sql'];
 const sql = (await Promise.all(migrationNames.map(name => readFile(new URL(`../supabase/migrations/${name}`, import.meta.url), 'utf8')))).join('\n');
-const schema = { paths: Object.fromEntries([...sql.matchAll(/create (?:or replace )?function public\.(\w+)/gi)]
-  .map(match => [`/rpc/${match[1]}`, { post: {} }])) };
+// Use actual migration ACLs, not a regex that grants every declared function
+// to every mocked API role. PGlite models SQL privileges, not hosted Auth/RLS.
+async function roleSchemas() {
+  const db = new PGlite();
+  try {
+    await db.exec(`create role anon; create role authenticated; create role service_role bypassrls;
+      create schema auth;
+      create function auth.uid() returns uuid language sql as $$select null::uuid$$;
+      create table photographers(id uuid primary key,user_id uuid not null unique,is_platform_admin boolean not null default false,
+        created_at timestamptz default now(),trial_starts_at timestamptz,subscription_current_period_start timestamptz,subscription_current_period_end timestamptz);
+      create table credit_packages(id uuid primary key);
+      create table studio_credits(id uuid primary key default gen_random_uuid(),studio_id uuid not null unique,photographer_id uuid,
+        balance integer not null default 0 check(balance>=0),total_purchased integer not null default 0,total_used integer not null default 0,updated_at timestamptz default now());
+      create table credit_transactions(id uuid primary key default gen_random_uuid(),studio_id uuid not null,photographer_id uuid,
+        type text not null check(type in ('purchase','usage','refund','monthly_included')),amount integer not null,balance_after integer not null,
+        description text,package_id uuid references credit_packages(id),created_at timestamptz default now(),credits_delta integer,
+        credit_transaction_type text,source text,source_reference_id text,stripe_checkout_session_id text,stripe_payment_intent_id text,
+        ai_operation text,processing_method text,photo_path text);
+      create table orders(id uuid primary key,photographer_id uuid,paid_at timestamptz,payment_status text,refund_status text,
+        is_test boolean,total_cents integer,counted_for_monthly_usage boolean default false,monthly_usage_billing_period text);`);
+    await db.exec(sql);
+    const privileges = (await db.query(`select p.proname as name,
+      has_function_privilege('service_role',p.oid,'execute') as service,
+      has_function_privilege('authenticated',p.oid,'execute') as authenticated,
+      has_function_privilege('anon',p.oid,'execute') as anon
+      from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public'`)).rows;
+    const schemaFor = role => ({ paths: Object.fromEntries(privileges.filter(row => row[role]).map(row => [`/rpc/${row.name}`, { post: {} }])) });
+    return { service: schemaFor('service'), authenticated: schemaFor('authenticated'), privileges };
+  } finally { await db.close(); }
+}
+const schemas = await roleSchemas();
+const schema = schemas.service;
 
 function fixture(overrides = {}) {
   const calls = [], logs = [];
@@ -123,6 +154,9 @@ test('complete sandbox verification uses bounded GETs and leaves checkout and si
   assert.equal(result.databaseMutations, 0);
   assert.equal(result.externalCheckoutVerified, false);
   assert.equal(result.webhookSigningSecretVerified, false);
+  assert.equal(result.authOnboardingVerified, false);
+  assert.equal(result.authenticatedCreditRpcVerified, false);
+  assert.equal(result.rlsPoliciesVerified, false);
   assert.equal(f.calls.length, 23);
   assert.equal(f.calls.filter(call => call.url.searchParams.get('limit') === '0').length, 16);
   assert.equal(f.logs.length, 2);
@@ -179,10 +213,29 @@ test('live event envelopes and nested live payment objects cannot be accepted as
 });
 
 test('missing RPCs and copied live Stripe events block sandbox readiness', async () => {
-  const absent = structuredClone(schema); delete absent.paths['/rpc/authorized_credit_cutout_keys'];
-  await assert.rejects(verifyFinancialSandbox(env, fixture({ '/rest/v1/': absent })), /RPCs are missing/);
+  for (const name of ['apply_credit_adjustment', 'authorized_credit_cutout_keys']) {
+    const absent = structuredClone(schema); delete absent.paths[`/rpc/${name}`];
+    await assert.rejects(verifyFinancialSandbox(env, fixture({ '/rest/v1/': absent })), /service credit or fee RPCs are missing/);
+  }
   const live = fixture({ '/rest/v1/stripe_events': (_data, url) => Response.json(url.searchParams.has('livemode') ? [{ id: 'evt_liveWithheld' }] : []) });
   await assert.rejects(verifyFinancialSandbox(env, live), /database contains live Stripe events/);
+});
+
+test('actual SQL grants keep client-only RPCs out of service OpenAPI without blocking read-only verification', async () => {
+  for (const name of ['deduct_studio_credits', 'refund_studio_credits', 'finalize_background_credit_job']) {
+    const permissions = schemas.privileges.find(row => row.name === name);
+    assert.ok(permissions, name);
+    assert.equal(permissions.authenticated, true, name);
+    assert.equal(permissions.service, false, name);
+    assert.equal(permissions.anon, false, name);
+    assert.equal(schema.paths[`/rpc/${name}`], undefined, name);
+    assert.ok(schemas.authenticated.paths[`/rpc/${name}`]?.post, name);
+  }
+  const f = fixture();
+  const result = await verifyFinancialSandbox(env, f);
+  assert.equal(result.authenticatedCreditRpcVerified, false, 'server metadata must not claim real authenticated RPC acceptance');
+  assert.equal(result.rlsPoliciesVerified, false, 'local role grants do not prove hosted ownership policies');
+  assert.ok(f.calls.every(call => call.options.method === 'GET'));
 });
 
 test('provider errors, malformed bodies and transport exceptions never leak private data', async () => {

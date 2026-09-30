@@ -164,12 +164,16 @@ async function fixture(run) {
         if (refundReadFailure) { refundReadFailure = false; throw new Error('simulated lost refund-query response'); }
         return jsonResponse({ data: refunds.get(url.searchParams.get('payment_intent')) ?? [], has_more: false });
       }
-      if (options.method === 'POST' && ['billing/meter_events', 'billing/meter_event_adjustments'].includes(path)) {
+      if (options.method === 'POST' && ['billing/meter_events', 'invoiceitems'].includes(path)) {
         const key = options.headers['Idempotency-Key'];
         assert.ok(key);
         if (!acceptedMeterRequests.has(key)) acceptedMeterRequests.set(key, path === 'billing/meter_events'
           ? { identifier: params.get('identifier'), created: Math.floor(Date.now() / 1000) }
-          : { event_name: params.get('event_name'), type: 'cancel', status: 'pending', cancel: { identifier: params.get('cancel[identifier]') } });
+          : { id: 'ii_lifecycle', object: 'invoiceitem', customer: params.get('customer'), currency: params.get('currency'),
+            amount: Number(params.get('amount')), invoice: null, metadata: {
+              billing_flow: params.get('metadata[billing_flow]'), order_id: params.get('metadata[order_id]'),
+              photographer_id: params.get('metadata[photographer_id]'), original_meter_event: params.get('metadata[original_meter_event]'),
+            } });
         return jsonResponse(acceptedMeterRequests.get(key));
       }
       assert.fail(`Unexpected isolated Stripe fixture request: ${options.method} ${path}`);
@@ -361,7 +365,7 @@ test('isolated refund arriving before Checkout fulfillment grants only the unref
   assert.equal((await f.balance()).creditDebt, 0);
 }));
 
-test('isolated owner service-fee lifecycle is independent of credit spending and waived once on full order refund', () => fixture(async f => {
+test('isolated owner service-fee lifecycle queues one next-bill full-refund credit independently of the AI wallet', () => fixture(async f => {
   const paid = { ...await f.purchase(), payment_status: 'paid' };
   await f.payments.handleCreditPackCheckoutCompleted(f.service, paid);
   const walletBefore = await f.balance();
@@ -377,14 +381,18 @@ test('isolated owner service-fee lifecycle is independent of credit spending and
   assert.equal(fee.stripe_customer_id, 'cus_lifecycle');
   await f.db.query("update orders set payment_status='partially_refunded',refund_status='partially_refunded' where id=$1", [id]);
   await f.billing.reconcileOrderUsageFeeRefunds(f.service, f.photographer, f.payments.stripeRequest);
-  assert.equal(f.stripeCalls.filter(call => call.path === 'billing/meter_event_adjustments').length, 0);
+  assert.equal(f.stripeCalls.filter(call => call.path === 'invoiceitems').length, 0);
   await f.db.query("update orders set payment_status='refunded',refund_status='refunded' where id=$1", [id]);
   await f.billing.reconcileOrderUsageFeeRefunds(f.service, f.photographer, f.payments.stripeRequest);
   await f.billing.reconcileOrderUsageFeeRefunds(f.service, f.photographer, f.payments.stripeRequest);
-  const cancellation = f.stripeCalls.filter(call => call.path === 'billing/meter_event_adjustments');
-  assert.equal(cancellation.length, 1);
-  assert.equal(cancellation[0].params.get('cancel[identifier]'), fee.event_identifier);
+  const credits = f.stripeCalls.filter(call => call.path === 'invoiceitems');
+  assert.equal(credits.length, 1);
+  assert.equal(credits[0].params.get('metadata[original_meter_event]'), fee.event_identifier);
+  assert.equal(credits[0].params.get('customer'), 'cus_lifecycle'); assert.equal(credits[0].params.get('amount'), '-35');
+  assert.equal(credits[0].params.get('currency'), 'cad');
+  assert.equal(f.stripeCalls.filter(call => call.path === 'billing/meter_event_adjustments').length, 0);
   assert.equal((await f.db.query('select refund_status from order_usage_fees')).rows[0].refund_status, 'completed');
+  assert.equal((await f.db.query('select stripe_adjustment_id from order_usage_fees')).rows[0].stripe_adjustment_id, 'ii_lifecycle');
   assert.equal(f.acceptedMeterRequests.size, 2);
   assert.deepEqual(await f.balance(), walletBefore, 'customer-order service fees must not debit or refund the AI credit wallet');
   await assert.rejects(f.client('select * from order_usage_fees'), /permission denied/);

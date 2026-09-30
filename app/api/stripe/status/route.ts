@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { creditMaintenanceActive } from "@/lib/credit-maintenance";
 import { hasR2Config } from "@/lib/r2";
 import {
   createDashboardServiceClient,
@@ -107,6 +108,12 @@ export async function GET(request: NextRequest) {
         },
         { status: 401 },
       );
+    }
+    if (creditMaintenanceActive()) {
+      return NextResponse.json({
+        ...EMPTY_PROFILE, signedIn: true, maintenance: true,
+        message: "Studio OS billing is briefly paused for an upgrade. Please try again in a few minutes.",
+      }, { status: 503, headers: { "Retry-After": "120", "Cache-Control": "no-store" } });
     }
 
     const service = createDashboardServiceClient();

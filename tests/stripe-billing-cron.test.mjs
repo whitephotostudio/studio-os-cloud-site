@@ -2,15 +2,20 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import ts from 'typescript';
+import { creditMaintenanceActive } from '../lib/credit-maintenance.ts';
 
 const source = readFileSync(new URL('../app/api/cron/stripe-billing-sync/route.ts', import.meta.url), 'utf8');
 const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
 
-test('billing cron reaches subscribers beyond the first 200 and isolates a failed account', async () => {
+test('billing cron reaches subscribers beyond the first 200 and isolates a failed account', async context => {
+  const previousPause = process.env.STUDIO_CREDIT_MAINTENANCE;
+  process.env.STUDIO_CREDIT_MAINTENANCE = '0';
+  context.after(() => { if (previousPause === undefined) delete process.env.STUDIO_CREDIT_MAINTENANCE; else process.env.STUDIO_CREDIT_MAINTENANCE = previousPause; });
   const photographers = Array.from({ length: 207 }, (_, index) => ({ id: String(index).padStart(4, '0'), stripe_subscription_id: `sub_${index}` }));
   const ranges = []; const synchronized = [];
   let concurrent = 0; let peakConcurrent = 0;
   const dependencies = {
+    '@/lib/credit-maintenance': { creditMaintenanceActive },
     'next/server': { NextResponse: { json: (body, options) => Response.json(body, options) } },
     '@/lib/dashboard-auth': { createDashboardServiceClient: () => ({ from(table) {
       assert.equal(table, 'photographers');

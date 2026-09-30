@@ -2074,18 +2074,21 @@ export default function SettingsPage() {
               ok={isPlatformAdmin || creditBalance > 0}
             />
 
-            {subscriptionPlanCode ? (
+            {subscriptionPlanCode || studioUsage.pendingFeeWaivers || studioUsage.feeReviewRequired ? (
               <div style={{ marginTop: 14, borderRadius: 18, border: "1px solid #cbd5e1", background: "#fff", padding: "16px 18px" }}>
-                <div style={{ fontWeight: 900, color: "#0f172a" }}>Order usage this cycle</div>
+                <div style={{ fontWeight: 900, color: "#0f172a" }}>{subscriptionPlanCode ? "Order usage this cycle" : "Order fee follow-up"}</div>
                 <div style={{ marginTop: 10, display: "grid", gap: 8, color: "#334155" }}>
-                  <div>Usage rate: <strong>{formatMoney(orderUsageRateCents, platformBillingCurrency)} per paid order</strong></div>
-                  <div>Billable paid orders: <strong>{studioUsage.billableOrders}</strong></div>
-                  <div>Already reported to Stripe: <strong>{studioUsage.countedOrders}</strong></div>
-                  <div>Pending report sync: <strong>{studioUsage.unreportedOrders}</strong></div>
-                  <div>Estimated usage charge: <strong>{formatMoney(studioUsage.estimatedChargeCents, platformBillingCurrency)}</strong></div>
-                  {Boolean(studioUsage.refundCreditCents) && <div>Refunded order fee credits: <strong>{formatMoney(studioUsage.refundCreditCents || 0, platformBillingCurrency)}</strong></div>}
+                  {subscriptionPlanCode && <>
+                    <div>Usage rate: <strong>{formatMoney(orderUsageRateCents, platformBillingCurrency)} per paid order</strong></div>
+                    <div>Billable paid orders: <strong>{studioUsage.billableOrders}</strong></div>
+                    <div>Already reported to Stripe: <strong>{studioUsage.countedOrders}</strong></div>
+                    <div>Pending report sync: <strong>{studioUsage.unreportedOrders}</strong></div>
+                    <div>Estimated usage before next-bill credits: <strong>{formatMoney(studioUsage.estimatedChargeCents, platformBillingCurrency)}</strong></div>
+                  </>}
+                  {Boolean(studioUsage.refundCreditCents) && <div>Next subscription bill: <strong>{formatMoney(studioUsage.refundCreditCents || 0, platformBillingCurrency)}</strong> in refunded order fee credits queued this cycle.</div>}
                   {Boolean(studioUsage.pendingFeeWaivers) && <div>{studioUsage.pendingFeeWaivers} refunded order fee credit(s) pending reconciliation.</div>}
                   {Boolean(studioUsage.feeReviewRequired) && <div>{studioUsage.feeReviewRequired} order fee(s) require billing review.</div>}
+                  <div>Full refunds of reported order fees receive a credit on the next subscription bill. Queued credits do not amend or refund an existing invoice; Stripe determines the invoice where they apply.</div>
                 </div>
               </div>
             ) : null}

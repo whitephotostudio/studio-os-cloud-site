@@ -6,10 +6,15 @@ separate environment; they do not create a remote project, credential, customer,
 payment, refund, database row or webhook. Production application/payment code
 and the production prebuild chain are unchanged.
 
-The inspected candidate `.env.local` targets the production Supabase project and
-has a live Stripe key. No separate test environment is configured in the inspected
-files/process. An owner may already have one elsewhere. Do not copy that local
-file into the sandbox or paste its credentials into chat.
+The separate Vercel project `studio-os-credit-sandbox`
+(`prj_Q8h5vYAhHAfW1ARiqu6ArOgpycFK`) now exists, with no Git link, environment
+or deployments reported by its creator. Its separate clean checkout is
+`/Users/harout/Downloads/Projects/studio-os-credit-financial-sandbox-20260930`,
+currently at commit `0b42c6b` with no environment files and linked only to that
+sandbox project. Update it to the final audited commit before deployment.
+Stripe test, separate Supabase, media and provider settings remain unconfigured.
+The candidate checkout's `.env.local` uses production services; do not copy it
+into the sandbox or paste credentials into chat.
 
 ## Owner setup
 
@@ -17,7 +22,8 @@ file into the sandbox or paste its credentials into chat.
    Use no customer data: a schema-only baseline is sufficient. Record their
    project/account identifiers, then place their secrets directly in the
    separate hosting project's Secret settings or an ignored local env file.
-2. Use a separate Vercel project with a Preview of
+2. Use the existing `studio-os-credit-sandbox` project and its clean checkout
+   with a Preview of
    `codex/credit-system-audit-20260929` and a stable HTTPS origin outside
    `studiooscloud.com`. Do not replace the current candidate Preview's production
    database settings. Configure Supabase Auth site/redirect URLs for this sandbox
@@ -130,17 +136,27 @@ bounded, redirect-disabled GETs. It authenticates Stripe, requires
 ten supplied test event IDs, including any nested payment object's mode.
 
 Database checks use zero-row table/column probes and read-only OpenAPI RPC
-metadata. A limited live-event existence check refuses a database containing
+metadata for the supplied service role. Only service-exposed RPCs are required
+in that response: client-only `deduct_studio_credits`, `refund_studio_credits`
+and `finalize_background_credit_job` are intentionally absent. Local tests apply
+the audited SQL and check actual function privileges for service, authenticated
+and anonymous roles. Do not broaden production-style grants to make a metadata
+check pass. [PostgREST documents role-sensitive OpenAPI metadata](https://docs.postgrest.org/en/stable/references/api/openapi.html).
+
+A limited live-event existence check refuses a database containing
 `stripe_events.livemode=true`. These checks do not invoke any accounting RPC,
-advance expiry, prove every RLS policy or establish that a schema-only database
-contains functioning user fixtures. Logs expose check results only, without
-credentials, URLs, balances, IDs or provider error bodies.
+advance expiry, prove RLS or establish functioning Auth/user fixtures. Real
+signed-in acceptance must exercise client RPCs under the test user's JWT and
+check wrong-owner rejection. Logs expose check results only, without credentials,
+URLs, balances, IDs or provider error bodies.
 
 The verifier is off by default and is deliberately outside production prebuild.
 Run it explicitly before a sandbox test session. Keep
 `STUDIO_CREDIT_MAINTENANCE=1` until the separate environment passes isolation,
-schema, Auth and webhook setup. Disable maintenance only in that sandbox before
-the approved test checkout; production/candidate maintenance is unaffected.
+schema, Auth and webhook setup. This flag pauses credit purchase/events; it does
+not lock subscription or connected-order routes. Disable maintenance only in
+that sandbox before the approved test checkout; production/candidate maintenance
+is unaffected.
 
 ## External acceptance still required
 
@@ -155,11 +171,15 @@ the approved test checkout; production/candidate maintenance is unaffected.
    fixture/time procedure; production clocks and balances are out of scope.
 4. Pay a normal connected-account test order and verify one owner meter event,
    fee ledger result and eventual test invoice line. Repeat payment/refund
-   events, check partial/full refund behavior, and verify actual fee cancellation
-   or invoice adjustment. A locally mocked meter request is not an invoice.
+   events and check partial/full refunds. Fully refund a reported order after
+   monthly invoice finalization: the paid invoice must remain unchanged and one
+   original-amount pending credit must apply to the next subscription bill.
+   Legacy uncertain cancellations must require review without a second credit.
+   A locally mocked meter request or queued credit is not invoice settlement.
 
 Passing PGlite, passing this environment verifier and passing an actual external
 checkout are three distinct results. The verifier reports
-`externalCheckoutVerified=false` and `webhookSigningSecretVerified=false` even
-when all its read-only checks pass. No external checkout has been performed by
-this setup change.
+`externalCheckoutVerified=false`, `webhookSigningSecretVerified=false`,
+`authOnboardingVerified=false`, `authenticatedCreditRpcVerified=false` and
+`rlsPoliciesVerified=false` even when all its read-only checks pass. No external
+checkout or Auth acceptance has been performed by this setup change.

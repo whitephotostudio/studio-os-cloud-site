@@ -47,7 +47,16 @@ function fixture({ annual = false, missingUsage = false } = {}) {
       in(key, values) { const previous = predicate; predicate = row => previous(row) && values.includes(row[key]); return chain; },
       gte(key, value) { const previous = predicate; predicate = row => previous(row) && row[key] >= value; return chain; },
       lt(key, value) { const previous = predicate; predicate = row => previous(row) && row[key] < value; return chain; },
-      or() { const previous = predicate; predicate = row => previous(row) && row.is_test !== true; return chain; },
+      or(expression) {
+        const previous = predicate;
+        if (expression === 'is_test.is.false,is_test.is.null') predicate = row => previous(row) && row.is_test !== true;
+        else {
+          assert.equal(expression, 'report_status.eq.review_required,refund_status.in.(pending,processing,review_required),and(refund_status.eq.completed,refund_strategy.eq.cancel_meter_event)');
+          predicate = row => previous(row) && (row.report_status === 'review_required' || ['pending', 'processing', 'review_required'].includes(row.refund_status) ||
+            (row.refund_status === 'completed' && row.refund_strategy === 'cancel_meter_event'));
+        }
+        return chain;
+      },
       order(key) { sortKey = key; return chain; },
       range(from, to) { bounds = [from, to]; return chain; },
       limit() { return chain; },
@@ -144,7 +153,7 @@ test('annual Checkout is flexible and attaches monthly usage after checkout, pre
   assert.equal(checkout.params.get('line_items[1][price]'), null);
 });
 
-test('billing estimate retains original fee rates and includes older-order refund credits in this cycle', async () => {
+test('gross usage retains original rates and separately discloses older-order credits queued this cycle', async () => {
   const f = fixture();
   await f.exports.syncSubscriptionStateFromStripe(f.service, f.tables.photographers[0], f.subscription);
   f.tables.photographers[0].order_usage_rate_cents = 25;
@@ -153,7 +162,55 @@ test('billing estimate retains original fee rates and includes older-order refun
   f.tables.order_usage_fees.push({ order_id: 'last-month', photographer_id: 'studio', amount_cents: 35,
     usage_timestamp: start - 1, report_status: 'reported', refund_status: 'completed', refund_strategy: 'invoice_credit', refund_completed_at: '2026-09-25T00:00:00Z' });
   summary = await f.exports.getUsageSummaryForCurrentPeriod(f.service, f.tables.photographers[0]);
-  assert.equal(summary.refundCreditCents, 35); assert.equal(summary.estimatedChargeCents, 35);
+  assert.equal(summary.refundCreditCents, 35); assert.equal(summary.estimatedChargeCents, 70, 'a queued future credit does not amend reported gross usage');
+});
+
+test('prior-period pending credits and legacy cancellations remain visible after renewal without adding old charges twice', async () => {
+  const f = fixture();
+  await f.exports.syncSubscriptionStateFromStripe(f.service, f.tables.photographers[0], f.subscription);
+  const oldFee = { photographer_id: 'studio', amount_cents: 35, usage_timestamp: start - 1, report_status: 'reported', refund_strategy: 'cancel_meter_event' };
+  f.tables.order_usage_fees.push(
+    { ...oldFee, order_id: 'old-review', refund_status: 'review_required' },
+    { ...oldFee, order_id: 'old-pending', refund_status: 'processing' },
+    { ...oldFee, order_id: 'old-completed-cancel', refund_status: 'completed' },
+    { ...oldFee, order_id: 'other-owner', photographer_id: 'another-studio', refund_status: 'review_required' },
+  );
+  const summary = await f.exports.getUsageSummaryForCurrentPeriod(f.service, f.tables.photographers[0]);
+  assert.equal(summary.feeReviewRequired, 2); assert.equal(summary.pendingFeeWaivers, 1);
+  assert.equal(summary.estimatedChargeCents, 70); assert.equal(summary.refundCreditCents, 0);
+});
+
+test('outstanding fee review totals paginate across periods past the PostgREST 1000-row limit', async () => {
+  const f = fixture();
+  await f.exports.syncSubscriptionStateFromStripe(f.service, f.tables.photographers[0], f.subscription);
+  f.tables.order_usage_fees.push(...Array.from({ length: 2207 }, (_, index) => ({
+    order_id: `old-${String(index).padStart(5, '0')}`, photographer_id: 'studio', amount_cents: 35,
+    usage_timestamp: start - 1, report_status: 'reported', refund_status: 'review_required', refund_strategy: 'cancel_meter_event',
+  })));
+  const summary = await f.exports.getUsageSummaryForCurrentPeriod(f.service, f.tables.photographers[0]);
+  assert.equal(summary.feeReviewRequired, 2207); assert.equal(summary.pendingFeeWaivers, 0);
+  assert.equal(summary.estimatedChargeCents, 70);
+});
+
+test('fee review remains available when no current subscription billing period exists', async () => {
+  const f = fixture();
+  const photographer = f.tables.photographers[0];
+  photographer.subscription_plan_code = null; photographer.stripe_subscription_id = null;
+  f.tables.order_usage_fees.push({ order_id: 'unresolved-old-fee', photographer_id: 'studio', amount_cents: 35,
+    usage_timestamp: start - 1, report_status: 'reported', refund_status: 'review_required', refund_strategy: 'cancel_meter_event' });
+  const summary = await f.exports.getUsageSummaryForCurrentPeriod(f.service, photographer);
+  assert.equal(summary.feeReviewRequired, 1); assert.equal(summary.pendingFeeWaivers, 0);
+  assert.equal(summary.billingPeriodKey, null); assert.equal(summary.estimatedChargeCents, 0);
+});
+
+test('an unverified legacy completed cancellation remains a reported charge and requires review', async () => {
+  const f = fixture();
+  await f.exports.syncSubscriptionStateFromStripe(f.service, f.tables.photographers[0], f.subscription);
+  f.tables.order_usage_fees[0].refund_strategy = 'cancel_meter_event';
+  f.tables.order_usage_fees[0].refund_status = 'completed';
+  const summary = await f.exports.getUsageSummaryForCurrentPeriod(f.service, f.tables.photographers[0]);
+  assert.equal(summary.estimatedChargeCents, 70);
+  assert.equal(summary.refundCreditCents, 0); assert.equal(summary.feeReviewRequired, 1);
 });
 
 test('usage summaries include every paid record past PostgREST 1000-row pages', async () => {

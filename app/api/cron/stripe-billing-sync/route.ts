@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { creditMaintenanceActive } from "@/lib/credit-maintenance";
 import { createDashboardServiceClient } from "@/lib/dashboard-auth";
 import {
   isStripeBillingActive,
@@ -33,6 +34,10 @@ export async function GET(request: NextRequest) {
   try {
     if (!isAuthorized(request)) {
       return NextResponse.json({ ok: false, message: "Unauthorized." }, { status: 401 });
+    }
+    if (creditMaintenanceActive()) {
+      return NextResponse.json({ ok: false, message: "Studio OS billing sync is briefly paused for an upgrade." },
+        { status: 503, headers: { "Retry-After": "120", "Cache-Control": "no-store" } });
     }
 
     const service = createDashboardServiceClient();

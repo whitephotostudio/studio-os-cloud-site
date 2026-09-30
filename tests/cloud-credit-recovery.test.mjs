@@ -3,6 +3,7 @@ import test from 'node:test';
 import { readFileSync } from 'node:fs';
 import ts from 'typescript';
 import {createHash} from 'node:crypto';
+import { creditMaintenanceActive } from '../lib/credit-maintenance.ts';
 const bytes=Buffer.from([1,2,3]);const hash=createHash('sha256').update(bytes).digest('hex');
 function load(path,modules){const exports={};new Function('require','exports',ts.transpileModule(readFileSync(new URL(`../${path}`,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText)(name=>modules[name],exports);return exports;}
 test('credit recovery restores saved results and refunds missing outputs without repeating provider calls',async()=>{
@@ -25,7 +26,7 @@ test('credit recovery restores saved results and refunds missing outputs without
 test('credit recovery cron fails closed without the exact scheduler credential',async()=>{
   const old=process.env.CRON_SECRET;
   try {
-    const api=load('app/api/cron/credit-processing-recovery/route.ts',{'next/server':{NextResponse:{json:(body,init)=>Response.json(body,init)}},'@/lib/dashboard-auth':{createDashboardServiceClient:()=>{throw new Error('Must not access database');}},'@/lib/cloud-credit-recovery':{}});
+    const api=load('app/api/cron/credit-processing-recovery/route.ts',{'next/server':{NextResponse:{json:(body,init)=>Response.json(body,init)}},'@/lib/credit-maintenance':{creditMaintenanceActive},'@/lib/dashboard-auth':{createDashboardServiceClient:()=>{throw new Error('Must not access database');}},'@/lib/cloud-credit-recovery':{}});
     for(const secret of [undefined,'configured-secret']) {
       if(secret)process.env.CRON_SECRET=secret;else delete process.env.CRON_SECRET;
       assert.equal((await api.GET({headers:new Headers()})).status,401);
