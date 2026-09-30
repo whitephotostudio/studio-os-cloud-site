@@ -45,6 +45,7 @@ export async function verifyPaymentRelease(env = process.env, fetcher = fetch, r
     await db('credit_cutout_claims?select=id,studio_id,receipt_id,original_sha256&limit=0');
     await db('credit_cutout_entitlements?select=claim_id,cutout_sha256&limit=0');
     await db('credit_cutout_objects?select=object_key,studio_id,original_sha256,cutout_sha256&limit=0');
+    await db('credit_legacy_cutout_objects?select=object_key,studio_id,cutout_sha256,review_snapshot_at&limit=0');
     const schema = await db('');
     const requiredRpcs = ['apply_credit_adjustment', 'reverse_credit_purchase', 'get_studio_credit_balance',
       'stage_order_usage_fee', 'claim_order_usage_fee', 'complete_order_usage_fee_report', 'reserve_cloud_credit_job', 'finish_cloud_credit_job',

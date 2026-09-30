@@ -3,7 +3,7 @@ import test from 'node:test';
 import {readFileSync} from 'node:fs';
 import {PGlite} from '@electric-sql/pglite';
 import {randomUUID} from 'node:crypto';
-const names=['20260930010000_atomic_credit_accounting.sql','20260930012000_protect_photographer_billing.sql','20260930013000_cloud_credit_jobs.sql','20260930120000_paid_cutout_entitlements.sql'];
+const names=['20260930010000_atomic_credit_accounting.sql','20260930012000_protect_photographer_billing.sql','20260930013000_cloud_credit_jobs.sql','20260930120000_paid_cutout_entitlements.sql','20260930130000_preserve_verified_legacy_cutouts.sql'];
 const a='a'.repeat(64), b='b'.repeat(64), c='c'.repeat(64), d='d'.repeat(64);
 async function fixture(run) {
   const db=new PGlite();
@@ -124,4 +124,19 @@ test('service-only storage binding requires paid exact bytes and photographer sc
   assert.equal((await f.db.query('select * from authorized_credit_cutout_keys($1,$2)',[f.photographer,[key]])).rows.length,1);
   assert.equal((await f.db.query('select * from authorized_credit_cutout_keys($1,$2)',[f.other,[key]])).rows.length,0);
   await assert.rejects(f.client('select link_credit_cutout_object($1,$2,$3,$4)',[f.studio,key,a,b]));
+}));
+
+
+test('legacy compatibility is exact owner/object read access and never grants new upload or revision proof',()=>fixture(async f=>{
+  const key='nobg-photos/school/photo.png';
+  await f.db.query(`insert into credit_legacy_cutout_objects(object_key,studio_id,original_sha256,cutout_sha256,source_key,scope_kind,scope_id,review_snapshot_at) values($1,$2,$3,$4,'school/photo.jpg','school',$5,now())`,[key,f.studio,a,b,randomUUID()]);
+  const allowed=await f.db.query('select * from authorized_credit_cutout_keys($1,$2)',[f.photographer,[key]]);
+  assert.equal(allowed.rows.length,1);assert.equal(allowed.rows[0].cutout_sha256,b);
+  assert.equal((await f.db.query('select * from authorized_credit_cutout_keys($1,$2)',[f.other,[key]])).rows.length,0);
+  assert.equal((await f.entitled(a,b)).rows[0].ok,false);
+  assert.equal((await f.db.query('select has_studio_cutout_entitlement($1,$2,$3) as ok',[f.studio,a,b])).rows[0].ok,false);
+  assert.equal((await f.db.query('select register_verified_cutout_revision($1,$2,$3,$4) as ok',[f.studio,a,b,c])).rows[0].ok,false);
+  await assert.rejects(f.client('select * from credit_legacy_cutout_objects'));
+  await assert.rejects(f.client(`insert into credit_legacy_cutout_objects(object_key,studio_id,original_sha256,cutout_sha256,source_key,scope_kind,scope_id,review_snapshot_at) values($1,$2,$3,$4,'school/photo.jpg','school',$5,now())`,[key+'2',f.studio,a,b,randomUUID()]));
+  assert.equal((await f.db.query('select count(*) from credit_transactions')).rows[0].count,0);
 }));

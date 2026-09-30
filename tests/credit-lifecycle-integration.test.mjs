@@ -18,7 +18,7 @@ function load(path, overrides = {}) {
   return exports;
 }
 const migrations = ['20260930010000_atomic_credit_accounting.sql', '20260930012000_protect_photographer_billing.sql',
-  '20260930013000_cloud_credit_jobs.sql', '20260930100000_order_usage_fee_ledger.sql', '20260930120000_paid_cutout_entitlements.sql'];
+  '20260930013000_cloud_credit_jobs.sql', '20260930100000_order_usage_fee_ledger.sql', '20260930120000_paid_cutout_entitlements.sql','20260930130000_preserve_verified_legacy_cutouts.sql'];
 const rowFunctions = new Set(['apply_credit_adjustment', 'reverse_credit_purchase', 'get_studio_credit_balance', 'reserve_cloud_credit_job']);
 const identifier = value => {
   assert.match(value, /^[a-z_][a-z_0-9]*$/);
