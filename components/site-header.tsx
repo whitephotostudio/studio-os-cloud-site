@@ -10,6 +10,7 @@ const navLinks = [
   { href: "/sample-galleries", label: "Sample Galleries" },
   { href: "/online-school-photography-booking", label: "Online Booking" },
   { href: "/studio-os", label: "Studio OS" },
+  { href: "/tutorials", label: "Tutorials" },
   { href: "/mobile-app", label: "Mobile App" },
   { href: "/pricing", label: "Pricing" },
 ];
@@ -43,12 +44,12 @@ export function SiteHeader() {
           <Logo small />
         </Link>
 
-        <nav className="relative z-10 hidden items-center gap-7 xl:flex">
+        <nav className="relative z-10 hidden items-center gap-5 xl:flex">
           {navLinks.map((link) => (
             <Link
               key={link.href}
               href={link.href}
-              className="marketing-caption relative font-medium text-neutral-600 transition hover:-translate-y-0.5 hover:text-neutral-950 after:absolute after:-bottom-1 after:left-0 after:h-px after:w-0 after:bg-red-600 after:transition-all hover:after:w-full"
+              className="marketing-caption relative whitespace-nowrap font-medium text-neutral-600 transition hover:-translate-y-0.5 hover:text-neutral-950 after:absolute after:-bottom-1 after:left-0 after:h-px after:w-0 after:bg-red-600 after:transition-all hover:after:w-full"
             >
               {link.label}
             </Link>
@@ -62,7 +63,7 @@ export function SiteHeader() {
             data-marketing-event="cta_parents_portal"
             data-marketing-label="Header parents portal"
             data-marketing-placement="site_header"
-            className="marketing-button premium-button inline-flex items-center gap-2 rounded-full border border-stone-200 bg-stone-50 px-4 py-2.5 text-neutral-950 shadow-[0_12px_35px_rgba(0,0,0,0.06)] transition hover:bg-white"
+            className="marketing-button premium-button inline-flex items-center gap-2 whitespace-nowrap rounded-full border border-stone-200 bg-stone-50 px-4 py-2.5 text-neutral-950 shadow-[0_12px_35px_rgba(0,0,0,0.06)] transition hover:bg-white"
           >
             <UserRound className="h-4 w-4" />
             Parents Portal
@@ -83,7 +84,7 @@ export function SiteHeader() {
             data-marketing-event="cta_download_app"
             data-marketing-label="Header download app"
             data-marketing-placement="site_header"
-            className="marketing-button premium-button inline-flex items-center justify-center rounded-full bg-neutral-950 px-5 py-3 text-white shadow-[0_16px_38px_rgba(0,0,0,0.18)] transition hover:bg-black"
+            className="marketing-button premium-button inline-flex items-center justify-center whitespace-nowrap rounded-full bg-neutral-950 px-5 py-3 text-white shadow-[0_16px_38px_rgba(0,0,0,0.18)] transition hover:bg-black"
           >
             Download App
           </Link>
