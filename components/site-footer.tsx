@@ -31,6 +31,7 @@ const compareLinks = [
 ];
 
 const resourceLinks = [
+  { href: "/tutorials", label: "Tutorials" },
   { href: "/sign-in", label: "Photographer Sign In" },
   { href: "https://www.youtube.com/channel/UC2Ou4lxHAD9BrYq9qa303_Q", label: "YouTube" },
 ];
