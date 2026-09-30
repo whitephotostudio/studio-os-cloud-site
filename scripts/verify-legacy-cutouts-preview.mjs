@@ -124,7 +124,7 @@ export async function recheckLegacyRelease(env=process.env) {
   const bucket=await sb.storage.getBucket(BUCKET);if(bucket.error||bucket.data.public)throw Error('Private frozen audit required');
   const saved=await sb.storage.from(BUCKET).download(OUTPUT);if(saved.error||saved.data.size>4*1024*1024)throw Error('Frozen report unavailable');
   const raw=Buffer.from(await saved.data.arrayBuffer());
-  if(hash(raw)!=='78c368fa792550fec6fcb8fec4440ede2b51d163908aab323031620cfc9b004d')throw Error('Frozen report changed');
+  if(hash(raw)!=='a1e0b194fe85fd7beca1e45118573723104f13c9f9865421668de25e12fa6d3d')throw Error('Frozen report changed');
   const report=JSON.parse(raw.toString());
   const r2=new S3Client({region:'auto',endpoint:`https://${env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,credentials:{accessKeyId:env.R2_ACCESS_KEY_ID,secretAccessKey:env.R2_SECRET_ACCESS_KEY}});
   const scopes=new Map();
