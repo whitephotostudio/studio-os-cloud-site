@@ -67,12 +67,17 @@ type StripeStatus = {
   extraDesktopKeys: number;
   orderUsageRateCents: number;
   creditBalance: number;
+  creditExpiresAt?: string | null;
+  creditDebt?: number;
   studioUsage: {
     countedOrders: number;
     billableOrders: number;
     unreportedOrders: number;
     estimatedChargeCents: number;
     billingPeriodKey: string | null;
+    refundCreditCents?: number;
+    pendingFeeWaivers?: number;
+    feeReviewRequired?: number;
   };
   recentInvoices: Array<{
     id: string;
@@ -85,6 +90,7 @@ type StripeStatus = {
     invoicePdf: string | null;
   }>;
   billingCatalog: {
+    currency?: string;
     plans: Array<{
       code: string;
       label: string;
@@ -405,6 +411,8 @@ export default function SettingsPage() {
   const [subscriptionCurrentPeriodEnd, setSubscriptionCurrentPeriodEnd] = useState<string | null>(null);
   const [extraDesktopKeys, setExtraDesktopKeys] = useState(0);
   const [creditBalance, setCreditBalance] = useState(0);
+  const [creditExpiresAt, setCreditExpiresAt] = useState<string | null>(null);
+  const [creditDebt, setCreditDebt] = useState(0);
   const [orderUsageRateCents, setOrderUsageRateCents] = useState(25);
   const [studioUsage, setStudioUsage] = useState<StripeStatus["studioUsage"]>({
     countedOrders: 0,
@@ -612,6 +620,8 @@ export default function SettingsPage() {
       setSubscriptionCurrentPeriodEnd(json.subscriptionCurrentPeriodEnd || null);
       setExtraDesktopKeys(json.extraDesktopKeys ?? 0);
       setCreditBalance(json.creditBalance ?? 0);
+      setCreditExpiresAt(json.creditExpiresAt ?? null);
+      setCreditDebt(json.creditDebt ?? 0);
       setOrderUsageRateCents(json.orderUsageRateCents ?? 25);
       setStudioUsage(
         json.studioUsage || {
@@ -948,8 +958,8 @@ export default function SettingsPage() {
       setNotice("Device deactivated. Key is now available.");
       const { data: { session } } = await sb.auth.getSession();
       await loadStudioAppStatus(session?.access_token ?? null);
-    } catch (err: any) {
-      setError(err.message || "Failed to deactivate key.");
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Failed to deactivate key.");
     }
   }
 
@@ -1113,6 +1123,7 @@ export default function SettingsPage() {
   const activePlan =
     billingCatalog.plans.find((plan) => plan.code === (subscriptionPlanCode || desiredPlanCode)) ||
     billingCatalog.plans[0];
+  const platformBillingCurrency = billingCatalog.currency || "cad";
   const selectedExtraKeyPrice =
     desiredBillingInterval === "year"
       ? billingCatalog.extraDesktopKeyAnnualCents
@@ -1901,7 +1912,7 @@ export default function SettingsPage() {
                       {current ? <CheckCircle2 size={18} color="#2563eb" /> : null}
                     </div>
                     <div style={{ marginTop: 8, fontSize: 22, fontWeight: 900, color: "#0f172a" }}>
-                      {formatMoney(activePrice, billingCurrency)}
+                      {formatMoney(activePrice, platformBillingCurrency)}
                     </div>
                     <div style={{ marginTop: 4, fontSize: 12, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: "#64748b" }}>
                       {desiredBillingInterval === "year" ? "Annual prepaid" : "Monthly"}
@@ -1911,8 +1922,8 @@ export default function SettingsPage() {
                     </div>
                     <div style={{ marginTop: 10, color: "#334155", lineHeight: 1.7, fontSize: 13 }}>
                       {plan.code === "starter"
-                        ? `${formatMoney(plan.usageRateCents, billingCurrency)} per paid order · web-only plan`
-                        : `${formatMoney(plan.usageRateCents, billingCurrency)} per paid order · background credits sold separately`}
+                        ? `${formatMoney(plan.usageRateCents, platformBillingCurrency)} per paid order · web-only plan`
+                        : `${formatMoney(plan.usageRateCents, platformBillingCurrency)} per paid order · background credits sold separately`}
                     </div>
                     <div style={{ marginTop: 10, color: "#475569", lineHeight: 1.7, fontSize: 13 }}>
                       {plan.code === "starter"
@@ -1961,7 +1972,7 @@ export default function SettingsPage() {
                     ? desiredPlanCode === "core"
                       ? "App Plan includes 1 photography key. Upgrade to Studio for a second key or any extra keys."
                       : "Web Gallery stays web-only. Upgrade to App Plan or Studio to unlock the Studio OS App."
-                    : `${formatMoney(selectedExtraKeyPrice, billingCurrency)} per extra key ${
+                    : `${formatMoney(selectedExtraKeyPrice, platformBillingCurrency)} per extra key ${
                         desiredBillingInterval === "year"
                           ? "per year, billed in advance."
                           : "per month."
@@ -2067,11 +2078,14 @@ export default function SettingsPage() {
               <div style={{ marginTop: 14, borderRadius: 18, border: "1px solid #cbd5e1", background: "#fff", padding: "16px 18px" }}>
                 <div style={{ fontWeight: 900, color: "#0f172a" }}>Order usage this cycle</div>
                 <div style={{ marginTop: 10, display: "grid", gap: 8, color: "#334155" }}>
-                  <div>Usage rate: <strong>{formatMoney(orderUsageRateCents, billingCurrency)} per paid order</strong></div>
+                  <div>Usage rate: <strong>{formatMoney(orderUsageRateCents, platformBillingCurrency)} per paid order</strong></div>
                   <div>Billable paid orders: <strong>{studioUsage.billableOrders}</strong></div>
                   <div>Already reported to Stripe: <strong>{studioUsage.countedOrders}</strong></div>
                   <div>Pending report sync: <strong>{studioUsage.unreportedOrders}</strong></div>
-                  <div>Estimated usage charge: <strong>{formatMoney(studioUsage.estimatedChargeCents, billingCurrency)}</strong></div>
+                  <div>Estimated usage charge: <strong>{formatMoney(studioUsage.estimatedChargeCents, platformBillingCurrency)}</strong></div>
+                  {Boolean(studioUsage.refundCreditCents) && <div>Refunded order fee credits: <strong>{formatMoney(studioUsage.refundCreditCents || 0, platformBillingCurrency)}</strong></div>}
+                  {Boolean(studioUsage.pendingFeeWaivers) && <div>{studioUsage.pendingFeeWaivers} refunded order fee credit(s) pending reconciliation.</div>}
+                  {Boolean(studioUsage.feeReviewRequired) && <div>{studioUsage.feeReviewRequired} order fee(s) require billing review.</div>}
                 </div>
               </div>
             ) : null}
@@ -2124,7 +2138,9 @@ export default function SettingsPage() {
             </div>
 
             <div style={{ marginBottom: 16, fontSize: 13, color: "#64748b", lineHeight: 1.7, padding: "12px 14px", background: "#f8fafc", borderRadius: 14, border: "1px solid #e2e8f0" }}>
-              Credits reset every billing cycle. Unused credits do not carry over to the next month.
+              Purchased credits expire at your next monthly billing date and do not carry over.
+              {creditExpiresAt && !isPlatformAdmin ? ` Current credits expire ${formatDateLabel(creditExpiresAt)}.` : ""}
+              {creditDebt > 0 ? ` Your next purchase first settles ${creditDebt} credits from a refunded purchase that was already used.` : ""}
             </div>
 
             <div style={{ marginBottom: 16, fontSize: 13, color: "#475569", lineHeight: 1.7, padding: "12px 14px", background: "#f1f5f9", borderRadius: 14, border: "1px solid #e2e8f0" }}>
@@ -2155,7 +2171,7 @@ export default function SettingsPage() {
                         {pack.label || pack.name}
                       </div>
                       <div style={{ marginTop: 4, color: "#64748b" }}>
-                        {pack.credits} monthly credits for {formatMoney(pack.priceCents, billingCurrency)}
+                        {pack.credits} monthly credits for {formatMoney(pack.priceCents, platformBillingCurrency)}
                       </div>
                       <div style={{ marginTop: 2, color: "#94a3b8", fontSize: 12 }}>
                         Approx. {Math.floor(pack.credits / 4)} Premium Cloud removals
@@ -3181,8 +3197,8 @@ function ChangePasswordSection({ sessionReady }: { sessionReady: boolean }) {
 
         <p style={{ fontSize: 14, color: "#64748b", margin: "0 0 18px" }}>
           Update the password for{" "}
-          <strong style={{ color: "#0f172a" }}>{accountEmail || "your account"}</strong>. You'll
-          need your current password to confirm it's you.
+          <strong style={{ color: "#0f172a" }}>{accountEmail || "your account"}</strong>. You&apos;ll
+          need your current password to confirm it&apos;s you.
         </p>
 
         {pwMessage ? (

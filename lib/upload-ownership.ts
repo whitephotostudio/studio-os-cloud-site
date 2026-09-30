@@ -1,5 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { isUuid } from "./r2-access-security";
+import { isServerOnlyR2Key, isUuid } from "./r2-access-security";
 
 /** Local school IDs are text, never feed them into a UUID column or raw OR filter. */
 export async function assertKeyOwnedByPhotographer(
@@ -8,6 +8,7 @@ export async function assertKeyOwnedByPhotographer(
   const key = rawKey.trim();
   const denied = { ok: false as const, reason: "key does not map to a resource owned by caller" };
   if (!key || key.includes("..") || key.startsWith("/")) return denied;
+  if (isServerOnlyR2Key(key)) return denied;
   const segments = key.split("/");
   if (segments.length < 2 || segments.some(segment => !segment)) return denied;
   const [first, second, third] = segments;

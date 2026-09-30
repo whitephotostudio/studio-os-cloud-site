@@ -128,7 +128,7 @@ for (const [galleryKind, gallerySource, personName] of [
 }
 
 test("student folder listing accepts legacy and namespaced school roots", () => {
-  assert.match(storageFolderRouteSource, /import \{ isUuid \}/);
+  assert.match(storageFolderRouteSource, /import \{[^}]*\bisUuid\b[^}]*\}/);
   assert.match(storageFolderRouteSource, /async function ownedSchoolId/);
   assert.match(
     storageFolderRouteSource,

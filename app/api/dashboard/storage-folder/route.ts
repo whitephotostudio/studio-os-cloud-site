@@ -5,7 +5,7 @@ import {
 } from "@/lib/dashboard-auth";
 import { listR2FolderImages } from "@/lib/r2";
 import { guardAgreement } from "@/lib/require-agreement";
-import { isUuid } from "@/lib/r2-access-security";
+import { isServerOnlyR2Key, isUuid } from "@/lib/r2-access-security";
 import {
   filterTombstonedSchoolPhotoAssets,
   loadSchoolPhotoTombstones,
@@ -25,6 +25,7 @@ async function photographerOwnsFolder(
   if (!folderPath || folderPath.includes("..") || folderPath.startsWith("/")) {
     return { allowed: false, schoolId: null };
   }
+  if (isServerOnlyR2Key(folderPath)) return { allowed: false, schoolId: null };
   const segments = folderPath.split("/").filter(Boolean);
   if (segments.length === 0) return { allowed: false, schoolId: null };
   const [first, second, third] = segments;

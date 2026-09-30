@@ -66,3 +66,42 @@ test('refund email release verifies durable outbox, provider sender and retry cr
  await assert.rejects(()=>verifyPaymentRelease({...emailEnv,CRON_SECRET:''},fetcher,()=>{}),/retry-worker credentials/);
  await assert.rejects(()=>verifyPaymentRelease({...emailEnv,RESEND_FROM_EMAIL:'refund@unknown.example'},fetcher,()=>{}),/sender domain is not verified/);
 });
+
+const creditRpcs = ['apply_credit_adjustment', 'reverse_credit_purchase', 'get_studio_credit_balance', 'deduct_studio_credits', 'refund_studio_credits',
+  'stage_order_usage_fee', 'claim_order_usage_fee', 'complete_order_usage_fee_report', 'reserve_cloud_credit_job', 'finish_cloud_credit_job',
+  'expire_due_credit_accounts'];
+function creditFetcher({ missingRpc, missingFeeTable = false, events = ['*'], connectOnly = false } = {}) {
+  return async (url, options) => {
+    assert.equal(options.method, 'GET', 'credit release checks must not alter balances, providers or send events');
+    if (missingFeeTable && url.includes('order_usage_fees')) return { ok: false, status: 404 };
+    const body = url.endsWith('/rest/v1/') ? { paths: Object.fromEntries(creditRpcs.filter((name) => name !== missingRpc).map((name) => [`/rpc/${name}`, { post: {} }])) }
+      : url.includes('webhook_endpoints') ? { data: [{ ...endpoint, application: connectOnly ? 'ca_connected' : null, enabled_events: events }] }
+      : [];
+    return { ok: true, json: async () => body };
+  };
+}
+test('credit release verifies atomic credit RPCs and platform delayed-payment webhooks with GETs only', async () => {
+  const logs = [];
+  await verifyPaymentRelease({ ...env, STUDIO_CREDIT_RELEASE_VERIFY: '1' }, creditFetcher(), (line) => logs.push(line));
+  assert.ok(logs.some((line) => line.includes('credit-migration-api')));
+  assert.ok(logs.some((line) => line.includes('stripe-credit-webhooks')));
+});
+test('credit release blocks a missing atomic migration or a missing platform success event', async () => {
+  const creditEnv = { ...env, STUDIO_CREDIT_RELEASE_VERIFY: '1' };
+  await assert.rejects(verifyPaymentRelease(creditEnv, creditFetcher({ missingRpc: 'reverse_credit_purchase' }), () => {}), /RPCs are missing: reverse_credit_purchase/);
+  await assert.rejects(verifyPaymentRelease(creditEnv, creditFetcher({ missingRpc: 'claim_order_usage_fee' }), () => {}), /RPCs are missing: claim_order_usage_fee/);
+  await assert.rejects(verifyPaymentRelease(creditEnv, creditFetcher({ missingFeeTable: true }), () => {}), /Database verification failed \(HTTP 404\)/);
+  await assert.rejects(verifyPaymentRelease(creditEnv, creditFetcher({ events: ['checkout.session.completed', 'charge.refunded', 'refund.updated', 'refund.failed'] }), () => {}), /missing: checkout.session.async_payment_succeeded/);
+  await assert.rejects(verifyPaymentRelease(creditEnv, creditFetcher({ connectOnly: true }), () => {}), /Platform credit webhook subscription is missing/);
+});
+
+test('candidate webhook-only verification reads Stripe without requiring unapplied credit schemas', async () => {
+  const baseFetcher=creditFetcher();const calls=[];
+  await verifyPaymentRelease({...env,STUDIO_CREDIT_RELEASE_VERIFY:'0',STUDIO_CREDIT_WEBHOOK_VERIFY:'1'},async(url,options)=>{
+    calls.push(url);assert.equal(options.method,'GET');
+    assert.ok(!url.includes('studio_credits')&&!url.includes('order_usage_fees')&&!url.includes('credit_cloud_jobs'));
+    assert.ok(!url.endsWith('/rest/v1/'));
+    return baseFetcher(url,options);
+  },()=>{});
+  assert.ok(calls.some(url=>url.includes('webhook_endpoints')));
+});

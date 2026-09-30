@@ -90,7 +90,11 @@ export async function r2Upload(
   body: Buffer | Uint8Array,
   contentType: string,
   cacheControl = "public, max-age=31536000",
+  options?: { allowCloudCreditOutput?: boolean },
 ) {
+  if (key.split("/").filter(Boolean)[0] === "credits" && !options?.allowCloudCreditOutput) {
+    throw new Error("Cloud credit outputs require their owned processing job.");
+  }
   const client = getR2Client();
   await client.send(
     new PutObjectCommand({
@@ -110,6 +114,7 @@ export async function r2Upload(
  * spaces (e.g. class "SK A"), so each path segment is percent-encoded.
  */
 export async function r2Copy(srcKey: string, destKey: string) {
+  if ([srcKey,destKey].some(key=>key.split("/").filter(Boolean)[0]==="credits")) throw new Error("Cloud credit outputs cannot be moved by generic storage operations.");
   const client = getR2Client();
   const encodedSource = `${R2_BUCKET}/${srcKey
     .split("/")
@@ -129,6 +134,7 @@ export async function r2Copy(srcKey: string, destKey: string) {
  * Download a file from R2.  Returns the body as a Buffer.
  */
 export async function r2Download(key: string): Promise<Buffer> {
+  if (key.split("/").filter(Boolean)[0]==="credits") throw new Error("Cloud credit outputs require their owned job result.");
   const client = getR2Client();
   const res = await client.send(
     new GetObjectCommand({
@@ -146,6 +152,7 @@ export async function r2Download(key: string): Promise<Buffer> {
  * Delete a file from R2.
  */
 export async function r2Delete(key: string) {
+  if (key.split("/").filter(Boolean)[0]==="credits") throw new Error("Cloud credit outputs cannot be deleted by generic storage operations.");
   const client = getR2Client();
   await client.send(
     new DeleteObjectCommand({
@@ -160,6 +167,7 @@ export async function r2Delete(key: string) {
  * R2 supports up to 1000 deletes per batch request.
  */
 export async function r2DeletePrefix(prefix: string) {
+  if (prefix.split("/").filter(Boolean)[0]==="credits") throw new Error("Cloud credit outputs cannot be deleted by generic storage operations.");
   const client = getR2Client();
   let continuationToken: string | undefined;
   let totalDeleted = 0;
@@ -220,6 +228,7 @@ export async function r2DeleteWithVariants(keys: string[]) {
   );
 
   if (!normalizedKeys.length) return 0;
+  if (normalizedKeys.some(key=>key.split("/")[0]==="credits")) throw new Error("Cloud credit outputs cannot be deleted by generic storage operations.");
 
   const client = getR2Client();
   let totalDeleted = 0;

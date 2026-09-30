@@ -6,6 +6,7 @@ import {
   isUuid,
   normalizeR2Key,
   scopeForR2Key,
+  isServerOnlyR2Key,
 } from "../../lib/r2-access-security.ts";
 
 const routeSource = readFileSync(
@@ -61,6 +62,15 @@ test("maps every desktop storage namespace to an owned resource", () => {
     kind: "school",
     id: "local-school",
   });
+});
+
+test("server cloud outputs cannot be claimed by a school named credits", () => {
+  for (const key of ["credits/", "credits", "credits/user-id/job.png"]) {
+    assert.equal(isServerOnlyR2Key(key),true);
+    assert.equal(scopeForR2Key(key,{prefix:true}),null);
+    assert.equal(scopeForR2Key(key),null);
+  }
+  assert.equal(isServerOnlyR2Key("schools/credits/photo.png"),false);
 });
 
 test("allows a legacy school root only for an explicit listing prefix", () => {

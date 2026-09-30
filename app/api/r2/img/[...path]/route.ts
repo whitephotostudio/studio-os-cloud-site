@@ -5,7 +5,7 @@ import {
 } from "@/lib/dashboard-auth";
 import { r2PresignedGetUrl } from "@/lib/r2-signed-urls";
 import { r2Download } from "@/lib/r2";
-import { isUuid, normalizeR2Key } from "@/lib/r2-access-security";
+import { isServerOnlyR2Key, isUuid, normalizeR2Key } from "@/lib/r2-access-security";
 import {
   loadSchoolPhotoTombstones,
   safeLocalSchoolStorageId,
@@ -76,6 +76,9 @@ export async function GET(
         { ok: false, message: "Invalid storage path." },
         { status: 400 },
       );
+    }
+    if (isServerOnlyR2Key(storagePath)) {
+      return NextResponse.json({ ok: false, message: "Not authorized for this image." }, { status: 403 });
     }
 
     const { user } = await resolveDashboardAuth(request);

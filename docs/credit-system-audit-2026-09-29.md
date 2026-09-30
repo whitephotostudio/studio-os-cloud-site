@@ -1,0 +1,120 @@
+# Credit system and site audit — September 29, 2026
+
+## Current production and intended revenue
+
+The restored site is serving the restored `main` release, commit
+`9436173cd4ec3775ca949e9e221e989f331e3374`, deployment
+`dpl_2m7R3DmyKnP2MQ5dde1j7AT6aVp7`. Public home, tutorials, pricing, sign-in
+and parents pages answer 200. Refund-email, CRM and billing crons answer protected
+401, rather than missing-route 404. The owner overview route is present.
+These checks establish route presence, not signed-in functionality.
+
+Credit-pack checkout charges the Studio OS platform Stripe account. Gallery
+orders charge the photographer's Stripe Connect account. The owner's service
+fee is billed separately on the photographer's Studio OS subscription. Rates
+are CAD 0.55 Starter, 0.35 Core and 0.25 Studio per paid order record. A combined
+checkout can contain multiple records. A free app trial without a Stripe
+subscription cannot be automatically invoiced. No live subscription records
+were available to confirm an existing service-fee invoice.
+
+Production `/credits` is still 404 at the audit baseline. The installed/public
+Mac app is 0.1.11 (15). Premium Cloud has no configured platform provider key.
+The corrections described below are release-candidate source, not live fixes.
+
+## Verified defects and corrections
+
+- **Purchases inaccessible from desktop.** The app opens `/credits`, which did
+  not exist. The new page preserves the selected catalog package through sign-in,
+  uses the signed-in account instead of trusting URL account/email/amount fields,
+  creates platform Stripe checkout, and explains confirmation and expiry.
+- **Credits could be manufactured.** Permissive ALL policies overrode later
+  write restrictions on credit balances and transactions. Authenticated clients
+  could directly change their own balance or create receipts. The migration
+  removes all write policies/privileges and exposes authenticated, locked RPCs
+  for debit, bounded processing refund and local completion. Stripe purchase and
+  cash-refund mutations are service-only. An invoker-security profile trigger
+  also prevents customers granting themselves owner or billing access.
+- **Purchase grants and cash refunds were unreliable.** Balance and receipt
+  writes were separate, and webhook claims could suppress retries after a crash.
+  Atomic purchase grants use immutable payment references. Only verified paid
+  platform sessions grant credits. Async payment success is supported. Customer,
+  currency and price are validated. Cumulative successful cash refunds remove a
+  proportional number of credits once, including refunds delivered before
+  checkout confirmation. Refunded spent credits create debt; later purchases
+  settle it. Pending/failed refunds do not remove credits.
+- **Advertised monthly expiry was not enforced.** The owner explicitly selected
+  expiry at the next monthly billing date. Purchase lots now retain that date;
+  annual subscribers use monthly anniversaries. Existing balances are preserved
+  at rollout and assigned their next future date. Debit, balance lookup and a
+  scheduled worker expire unused amounts without granting expired processing
+  refunds a new lifetime. Owner complimentary access remains separate.
+- **Premium Cloud was not a usable platform service.** Desktop required the
+  photographer's local provider key; the owner platform was not processing
+  prepaid photos. The new server gateway authenticates the account, charges
+  four credits, calls Photoroom with a private platform key, validates a real
+  transparent PNG at the requested dimensions, stores it privately and returns
+  a short-lived URL. Missing provider configuration charges nothing and is
+  disclosed before purchase. Local Photoshop removal costs one credit.
+- **Retries and interrupted work could lose or double-spend credits.** Durable
+  jobs retain the exact prepared image hash and paid reference. Successful paid
+  results can be recovered at zero balance. Duplicate submissions do not repeat
+  the provider call. Lost upload/completion acknowledgements check saved output;
+  uncertain storage results preserve the reservation for recovery. A five-minute
+  cron recovers saved images or refunds confirmed missing output, even when the
+  user never retries. Local processing refunds remain bounded by the original
+  reservation and cumulative failed count. Automatic order backdrop cutouts
+  also use the credit service.
+- **Cloud photo privacy could be bypassed through legacy school paths.** The
+  private `credits/` namespace is reserved across generic signing, image proxy,
+  folder, upload ownership and storage operations. Only an authenticated owned
+  immutable job can return its output URL.
+- **Service-fee periods and reporting were fragile.** Stripe's current API uses
+  item-level periods. Annual renewal and monthly usage now use their respective
+  items, with flexible mixed-interval billing. Paginated reconciliation avoids
+  the 200-subscriber and 1,000-summary-row caps. An immutable fee ledger retries
+  exact requests after timeouts and stops unsafe old uncertain retries for
+  review. Full order refunds waive the original fee; partial refunds remain
+  paid orders. Historical already-reported fees are never guessed or recharged.
+
+Details and Stripe references are in
+[the service-fee accounting note](order-usage-billing-2026-09-29.md).
+
+## Validation and release requirements
+
+Four migrations were tested together against the live database schema in one
+rolled-back transaction. Both existing credit accounts retained their balances
+and purchase/use totals; authenticated writes were revoked and cloud RPCs were
+service-only within the transaction. A second read verified that all candidate
+tables and the profile guard disappeared after rollback. No production schema
+change or customer payment was made by this dry run.
+
+The release requires the matching desktop update plus the four exact migrations;
+old desktop builds write balances directly and will no longer process credits
+once secure permissions are applied. Publish the validated matching Mac build
+before exposing the new web flow and instruct active users to update. Do not run
+`supabase db push` across divergent migration history. Do not auto-recharge
+historical orders or auto-refund forgeable legacy processing receipts.
+
+Use the repository's guarded `npm run deploy:production` from the clean audited
+commit, initially with `--skip-domain`. Its remote prebuild can verify actual
+production Stripe credentials and platform webhook subscriptions with
+`STUDIO_PAYMENT_RELEASE_VERIFY=1`, `STUDIO_CREDIT_WEBHOOK_VERIFY=1`,
+`STUDIO_CREDIT_RELEASE_VERIFY=0` before schema application. Do not set
+`STUDIO_PAYMENT_REFUND_WEBHOOK_ID` for read-only verification. After migrations,
+require `STUDIO_CREDIT_RELEASE_VERIFY=1` before promotion. The platform endpoint
+must receive completed checkout, async checkout success and refund updates.
+
+Add the private `PHOTOROOM_API_KEY` to Vercel production to enable Premium Cloud.
+The key must never be placed in a client bundle, source control or chat.
+Provider configuration is not proof of provider availability or successful
+paid processing. Validate a real sample in the candidate before promising it.
+
+The Mac was locked during UI inspection. Signed-in purchase, desktop account
+refresh and visual workflow validation therefore remain unverified. Automated
+fixtures are not a real Stripe settlement or provider round trip. No real charge,
+refund, invoice, meter event or customer message was created for testing.
+
+Keep Git `main` synchronized with every promoted release while Vercel's Git
+production branch remains `main`; otherwise a later push can redeploy stale
+code. Do not push this schema-dependent candidate to `main` before coordinated
+release. The dirty original desktop and website workspaces are preserved.

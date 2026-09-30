@@ -138,7 +138,11 @@ function r2PresignedUrl(
 export function r2PresignedGetUrl(
   key: string,
   expiresInSeconds = 60 * 60,
+  options: { allowCloudCreditOutput?: boolean } = {},
 ): string {
+  // Generic galleries and legacy user-controlled metadata cannot grant access
+  // to platform AI outputs. Only the gateway enables this after job ownership.
+  if (key.split("/").filter(Boolean)[0] === "credits" && !options.allowCloudCreditOutput) return "";
   return r2PresignedUrl("GET", key, expiresInSeconds);
 }
 
@@ -151,6 +155,7 @@ export function r2PresignedPutUrl(
   key: string,
   expiresInSeconds = 15 * 60,
 ): string {
+  if (key.split("/").filter(Boolean)[0] === "credits") return "";
   return r2PresignedUrl("PUT", key, expiresInSeconds);
 }
 

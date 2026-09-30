@@ -34,6 +34,7 @@ type BillingBody = {
   billingInterval?: string | null;
   extraDesktopKeys?: number | string | null;
   packCode?: string | null;
+  returnTo?: string | null;
 };
 
 function requestOrigin(request: NextRequest) {
@@ -59,9 +60,9 @@ export async function POST(request: NextRequest) {
     const body = (await request.json().catch(() => ({}))) as BillingBody;
     const action = body.action;
 
-    if (!action) {
+    if (!action || !["subscribe", "update_plan", "update_extra_keys", "buy_credits", "portal"].includes(action)) {
       return NextResponse.json(
-        { ok: false, message: "Billing action is required." },
+        { ok: false, message: "A valid billing action is required." },
         { status: 400 },
       );
     }
@@ -120,8 +121,8 @@ export async function POST(request: NextRequest) {
         userId: user.id,
         packCode,
         creditPackageId: pack.id,
-        successUrl: billingReturnUrl(origin, "credits_success"),
-        cancelUrl: billingReturnUrl(origin, "credits_cancel"),
+        successUrl: body.returnTo === "credits" ? `${origin}/credits?billing=credits_success` : billingReturnUrl(origin, "credits_success"),
+        cancelUrl: body.returnTo === "credits" ? `${origin}/credits?billing=credits_cancel` : billingReturnUrl(origin, "credits_cancel"),
       });
 
       return NextResponse.json({
@@ -150,6 +151,10 @@ export async function POST(request: NextRequest) {
         (photographer.subscription_status ?? "").toLowerCase(),
       )
     ) {
+      // Flush paid orders at their original plan rate before replacing the
+      // subscription's usage meter. A failed refresh must block this mutation.
+      const existing = await retrieveStripeSubscription(photographer.stripe_subscription_id);
+      await syncSubscriptionStateFromStripe(service, photographer, existing);
       const subscription = await updateStripeSubscriptionConfiguration({
         subscriptionId: photographer.stripe_subscription_id,
         photographerId: photographer.id,

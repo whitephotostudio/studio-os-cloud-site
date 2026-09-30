@@ -26,6 +26,8 @@ import {
   type PlanDefinition,
 } from "@/lib/studio-pricing";
 import { FREE_TRIAL_DAYS } from "@/lib/trial-config";
+import { resolveStripeBillingPeriod } from "@/lib/stripe-billing-period";
+import { readAllBillingRows, reconcileOrderUsageFeeRefunds, syncOrderUsageFees } from "@/lib/order-usage-billing";
 import { isStripeBillingActive } from "@/lib/subscription-access";
 export {
   isStripeBillingActive, isTrialStatus, resolveFreeTrialEndsAt,
@@ -180,6 +182,8 @@ type StripeInvoice = {
 type StripeSubscriptionItem = {
   id: string;
   quantity?: number | null;
+  current_period_start?: number | null;
+  current_period_end?: number | null;
   price: StripePrice;
 };
 
@@ -187,12 +191,12 @@ export type StripeSubscription = {
   id: string;
   status: string;
   customer: string;
-  current_period_start: number;
-  current_period_end: number;
+  current_period_start?: number | null;
+  current_period_end?: number | null;
   items: { data: StripeSubscriptionItem[] };
   latest_invoice?: string | StripeInvoice | null;
   metadata?: Record<string, string> | null;
-  billing_mode?: { type?: string | null } | null;
+  billing_mode?: { type?: string | null } | "classic" | "flexible" | null;
 };
 
 export type StripeCheckoutSession = {
@@ -204,6 +208,8 @@ export type StripeCheckoutSession = {
   customer?: string | null;
   subscription?: string | null;
   payment_intent?: string | null;
+  amount_total?: number | null;
+  currency?: string | null;
   client_reference_id?: string | null;
   metadata?: Record<string, string> | null;
   customer_details?: { email?: string | null } | null;
@@ -594,14 +600,14 @@ export async function ensureCreditPackageCatalog(service: ServiceClient) {
   for (const [index, pack] of expected.entries()) {
     const row = existing.get(pack.code);
     if (!row) {
-      const { error: insertError } = await service.from("credit_packages").insert({
+      const { error: insertError } = await service.from("credit_packages").upsert({
         name: pack.label,
         credits: pack.credits,
         price_cents: pack.priceCents,
         active: true,
         sort_order: index + 1,
         package_code: pack.code,
-      });
+      }, { onConflict: "package_code", ignoreDuplicates: true });
       if (insertError) throw insertError;
       continue;
     }
@@ -992,6 +998,17 @@ async function createStripeSubscriptionItem(subscriptionId: string, priceId: str
   });
 }
 
+async function ensureMixedIntervalBilling(subscription: StripeSubscription, interval: BillingInterval) {
+  const mode = typeof subscription.billing_mode === "string"
+    ? subscription.billing_mode : subscription.billing_mode?.type;
+  if (interval !== "year" || mode === "flexible") return subscription;
+  return stripeRequest<StripeSubscription>(`subscriptions/${subscription.id}/migrate`, {
+    method: "POST",
+    body: new URLSearchParams({ "billing_mode[type]": "flexible" }),
+    idempotencyKey: `studio-os-flexible-billing-${subscription.id}`,
+  });
+}
+
 function getLookupKey(price: StripePrice | null | undefined) {
   return (price?.lookup_key ?? "").trim();
 }
@@ -1103,6 +1120,11 @@ export async function createPlanCheckoutSession(input: {
   params.set("subscription_data[metadata][billing_interval]", input.billingInterval);
   params.set("subscription_data[metadata][photographer_id]", input.photographerId);
   params.set("subscription_data[metadata][user_id]", input.userId);
+  // Checkout cannot combine annual and monthly items. The monthly usage item
+  // is attached after payment to this flexible annual subscription.
+  if (input.billingInterval === "year") {
+    params.set("subscription_data[billing_mode][type]", "flexible");
+  }
   params.set("line_items[0][price]", catalog.planPrices[input.planCode][input.billingInterval]);
   params.set("line_items[0][quantity]", "1");
 
@@ -1154,6 +1176,13 @@ export async function createCreditsCheckoutSession(input: {
   params.set("payment_intent_data[metadata][photographer_id]", input.photographerId);
   params.set("payment_intent_data[metadata][user_id]", input.userId);
   params.set("payment_intent_data[metadata][credits]", String(pack.credits));
+  // Keep the exact paid offer on both objects, so a later pricing change
+  // cannot change how many credits an in-flight Checkout purchase receives.
+  for (const prefix of ["metadata", "payment_intent_data[metadata]"]) {
+    params.set(`${prefix}[credits]`, String(pack.credits));
+    params.set(`${prefix}[price_cents]`, String(pack.priceCents));
+    params.set(`${prefix}[currency]`, DEFAULT_BILLING_CURRENCY);
+  }
 
   return stripeRequest<StripeCheckoutSession>("checkout/sessions", {
     method: "POST",
@@ -1184,6 +1213,7 @@ export async function updateStripeSubscriptionConfiguration(input: {
   ]);
 
   const { baseItem, extraDesktopItem, usageItem } = findSubscriptionItems(subscription);
+  await ensureMixedIntervalBilling(subscription, input.billingInterval);
   const targetUsagePriceId = catalog.usagePriceIds[input.planCode];
   const params = new URLSearchParams();
   let itemIndex = 0;
@@ -1322,8 +1352,9 @@ export async function syncSubscriptionStateFromStripe(
   const planCode = resolvePlanCodeFromSubscription(subscription);
   const { usageItem } = findSubscriptionItems(subscription);
 
-  if (planCode && !usageItem) {
+  if (planCode && !usageItem && isStripeBillingActive(subscription.status)) {
     const catalog = await ensureStripeCatalog();
+    subscription = await ensureMixedIntervalBilling(subscription, resolveSubscriptionBillingInterval(subscription));
     await createStripeSubscriptionItem(subscription.id, catalog.usagePriceIds[planCode]);
     subscription = await retrieveStripeSubscription(subscription.id);
   }
@@ -1331,8 +1362,7 @@ export async function syncSubscriptionStateFromStripe(
   const refreshedItems = findSubscriptionItems(subscription);
   const refreshedPlanCode = resolvePlanCodeFromSubscription(subscription);
   const refreshedBillingInterval = resolveSubscriptionBillingInterval(subscription);
-  const currentPeriodStart = asIsoTimestamp(subscription.current_period_start);
-  const currentPeriodEnd = asIsoTimestamp(subscription.current_period_end);
+  const { start: currentPeriodStart, end: currentPeriodEnd } = resolveStripeBillingPeriod(subscription, refreshedItems.baseItem);
   const extraDesktopKeys = refreshedItems.extraDesktopItem?.quantity ?? 0;
   const nextBillingCurrency =
     refreshedItems.baseItem?.price.currency ||
@@ -1365,6 +1395,8 @@ export async function syncSubscriptionStateFromStripe(
     ...updates,
   } as PhotographerBillingRow;
 
+  await reconcileOrderUsageFeeRefunds(service, photographer.id, stripeRequest);
+
   await upsertSubscriptionMirror(service, refreshedPhotographer, {
     planCode: refreshedPlanCode,
     billingInterval: refreshedBillingInterval,
@@ -1380,7 +1412,8 @@ export async function syncSubscriptionStateFromStripe(
 
   if (refreshedPlanCode && isStripeBillingActive(subscription.status)) {
     await grantIncludedPlanCredits(service, refreshedPhotographer);
-    await syncOutstandingStudioUsage(service, refreshedPhotographer);
+    await syncOutstandingStudioUsage(service, refreshedPhotographer,
+      resolveStripeBillingPeriod(subscription, refreshedItems.usageItem), refreshedItems.usageItem);
   }
 
   await syncPhotographyKeysByPhotographerId(service, refreshedPhotographer.id);
@@ -1404,6 +1437,8 @@ async function appendOrderNote(orderNotes: string | null, note: string) {
 async function syncOutstandingStudioUsage(
   service: ServiceClient,
   photographer: PhotographerBillingRow,
+  usagePeriod?: { start: string | null; end: string | null },
+  usageItem?: StripeSubscriptionItem | null,
 ) {
   if (
     !normalizePlanCode(photographer.subscription_plan_code) ||
@@ -1413,73 +1448,27 @@ async function syncOutstandingStudioUsage(
     return;
   }
 
-  const periodStart = photographer.subscription_current_period_start;
-  const periodEnd = photographer.subscription_current_period_end;
+  if (!usagePeriod && photographer.stripe_subscription_id) {
+    const subscription = await retrieveStripeSubscription(photographer.stripe_subscription_id);
+    usageItem = findSubscriptionItems(subscription).usageItem;
+    usagePeriod = resolveStripeBillingPeriod(subscription, usageItem);
+  }
+  const periodStart = usagePeriod?.start ?? photographer.subscription_current_period_start;
+  const periodEnd = usagePeriod?.end ?? photographer.subscription_current_period_end;
   const billingPeriodKey = toBillingPeriodKey(periodStart, periodEnd);
   if (!periodStart || !periodEnd || !billingPeriodKey) return;
 
-  const { data, error } = await service
-    .from("orders")
-    .select("id,paid_at,payment_status,is_test,counted_for_monthly_usage,refund_status")
-    .eq("photographer_id", photographer.id)
-    .in("payment_status", ["paid", "succeeded", "no_payment_required"])
-    .eq("counted_for_monthly_usage", false)
-    .gte("paid_at", periodStart)
-    .lt("paid_at", periodEnd)
-    .or("is_test.is.false,is_test.is.null")
-    .order("paid_at", { ascending: true });
-
-  if (error) throw error;
-
-  for (const row of (data as Array<{
-    id: string;
-    paid_at: string | null;
-    payment_status: string | null;
-    is_test: boolean | null;
-    counted_for_monthly_usage: boolean | null;
-    refund_status: string | null;
-  }> | null) ?? []) {
-    if (
-      (row.refund_status ?? "").toLowerCase() === "refunded" ||
-      (row.refund_status ?? "").toLowerCase() === "partially_refunded"
-    ) {
-      continue;
-    }
-
-    const usageTimestamp = row.paid_at
-      ? Math.max(1, Math.floor(new Date(row.paid_at).getTime() / 1000))
-      : Math.floor(Date.now() / 1000);
-
-    const planCode = normalizePlanCode(photographer.subscription_plan_code);
-    const customerId = photographer.stripe_platform_customer_id;
-    if (!planCode || !customerId) {
-      continue;
-    }
-
-    const params = new URLSearchParams();
-    params.set("event_name", ORDER_USAGE_METER_EVENT_NAMES[planCode]);
-    params.set("payload[stripe_customer_id]", customerId);
-    params.set("payload[value]", "1");
-    params.set("timestamp", String(usageTimestamp));
-    params.set("identifier", `studio-os-usage-order-${row.id}`);
-
-    await stripeRequest<{ id: string }>("billing/meter_events", {
-      method: "POST",
-      body: params,
-      idempotencyKey: `studio-os-usage-order-${row.id}`,
-    });
-
-    const { error: updateError } = await service
-      .from("orders")
-      .update({
-        counted_for_monthly_usage: true,
-        monthly_usage_billing_period: billingPeriodKey,
-      })
-      .eq("id", row.id)
-      .eq("counted_for_monthly_usage", false);
-
-    if (updateError) throw updateError;
-  }
+  const planCode = normalizePlanCode(photographer.subscription_plan_code);
+  const customerId = photographer.stripe_platform_customer_id;
+  if (!planCode || !customerId) return;
+  await syncOrderUsageFees(service, {
+    photographerId: photographer.id,
+    customerId,
+    eventName: ORDER_USAGE_METER_EVENT_NAMES[planCode],
+    amountCents: usageItem?.price.unit_amount ?? photographer.order_usage_rate_cents ?? PLAN_DEFS[planCode].usageRateCents,
+    currency: usageItem?.price.currency ?? photographer.billing_currency ?? DEFAULT_BILLING_CURRENCY,
+    periodStart, periodEnd, billingPeriod: billingPeriodKey,
+  }, stripeRequest);
 }
 
 async function grantIncludedPlanCredits(
@@ -1523,11 +1512,28 @@ async function grantIncludedPlanCredits(
 
 /**
  * Sentinel balance reported for platform admins. Large enough that the
- * desktop app's per-removal deduction can never realistically run it out,
- * and we re-top it up on every dashboard load (see ensureOwnerCreditFloor).
+ * desktop app's per-removal deduction can never realistically run it out.
+ * Local owner processing is exempt in the authenticated database functions.
  */
 export const OWNER_UNLIMITED_CREDIT_BALANCE = 1_000_000_000;
-const OWNER_CREDIT_FLOOR = 100_000_000;
+
+export async function getCreditBalanceDetails(
+  service: ServiceClient,
+  userId: string,
+  photographerId: string,
+  options?: { isPlatformAdmin?: boolean | null },
+) {
+  // Owner use is unlimited without manufacturing a purchase or changing a
+  // balance just because the dashboard was opened.
+  if (options?.isPlatformAdmin) {
+    return { balance: OWNER_UNLIMITED_CREDIT_BALANCE, expiresAt: null, creditDebt: 0 };
+  }
+  const { data, error } = await service.rpc("get_studio_credit_balance", { p_studio_id: userId });
+  if (error) throw error;
+  const row = (data as Array<{ balance: number; expires_at: string | null; credit_debt: number }> | null)?.[0];
+  if (!row) throw new Error("Credit balance returned no result.");
+  return { balance: row.balance, expiresAt: row.expires_at, creditDebt: row.credit_debt };
+}
 
 export async function getCreditBalance(
   service: ServiceClient,
@@ -1535,59 +1541,7 @@ export async function getCreditBalance(
   photographerId: string,
   options?: { isPlatformAdmin?: boolean | null },
 ) {
-  const isOwner = Boolean(options?.isPlatformAdmin);
-
-  const { data, error } = await service
-    .from("studio_credits")
-    .select("id,balance,total_purchased,total_used")
-    .eq("studio_id", userId)
-    .maybeSingle();
-
-  if (error) throw error;
-
-  if (data) {
-    const row = data as {
-      id: string;
-      balance?: number | null;
-      photographer_id?: string | null;
-    };
-
-    if (!row.photographer_id) {
-      await service
-        .from("studio_credits")
-        .update({ photographer_id: photographerId })
-        .eq("id", row.id);
-    }
-
-    // Owners: keep the on-disk balance topped up so the desktop app
-    // (which deducts from this row directly) never runs the owner dry.
-    if (isOwner) {
-      const currentBalance = row.balance ?? 0;
-      if (currentBalance < OWNER_CREDIT_FLOOR) {
-        await service
-          .from("studio_credits")
-          .update({ balance: OWNER_UNLIMITED_CREDIT_BALANCE })
-          .eq("id", row.id);
-      }
-      return OWNER_UNLIMITED_CREDIT_BALANCE;
-    }
-
-    return row.balance ?? 0;
-  }
-
-  // No credit row yet. For owners, materialize one with a huge balance.
-  if (isOwner) {
-    await service.from("studio_credits").insert({
-      studio_id: userId,
-      photographer_id: photographerId,
-      balance: OWNER_UNLIMITED_CREDIT_BALANCE,
-      total_purchased: 0,
-      total_used: 0,
-    });
-    return OWNER_UNLIMITED_CREDIT_BALANCE;
-  }
-
-  return 0;
+  return (await getCreditBalanceDetails(service, userId, photographerId, options)).balance;
 }
 
 async function adjustCreditBalance(
@@ -1605,63 +1559,25 @@ async function adjustCreditBalance(
     paymentIntentId?: string | null;
   },
 ) {
-  const { data: existing, error: fetchError } = await service
-    .from("studio_credits")
-    .select("id,balance,total_purchased,total_used")
-    .eq("studio_id", input.userId)
-    .maybeSingle();
-
-  if (fetchError) throw fetchError;
-
-  const currentBalance = (existing as { balance?: number | null } | null)?.balance ?? 0;
-  const nextBalance = currentBalance + input.delta;
-  const purchaseIncrement = input.source === "purchase" && input.delta > 0 ? input.delta : 0;
-  const usageIncrement = input.source === "usage" && input.delta < 0 ? Math.abs(input.delta) : 0;
-
-  if (existing) {
-    const row = existing as { id: string; total_purchased?: number | null; total_used?: number | null };
-    const { error: updateError } = await service
-      .from("studio_credits")
-      .update({
-        photographer_id: input.photographerId,
-        balance: nextBalance,
-        total_purchased: ((row.total_purchased ?? 0) as number) + purchaseIncrement,
-        total_used: ((row.total_used ?? 0) as number) + usageIncrement,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", row.id);
-
-    if (updateError) throw updateError;
-  } else {
-    const { error: insertError } = await service.from("studio_credits").insert({
-      studio_id: input.userId,
-      photographer_id: input.photographerId,
-      balance: nextBalance,
-      total_purchased: purchaseIncrement,
-      total_used: usageIncrement,
-    });
-    if (insertError) throw insertError;
-  }
-
-  const { error: txnError } = await service.from("credit_transactions").insert({
-    studio_id: input.userId,
-    photographer_id: input.photographerId,
-    type: input.type,
-    amount: input.delta,
-    credits_delta: input.delta,
-    credit_transaction_type: input.type,
-    balance_after: nextBalance,
-    description: input.description,
-    package_id: input.packageId ?? null,
-    source: input.source,
-    source_reference_id: input.sourceReferenceId ?? null,
-    stripe_checkout_session_id: input.checkoutSessionId ?? null,
-    stripe_payment_intent_id: input.paymentIntentId ?? null,
+  // The database locks the studio row, deduplicates the source and writes
+  // balance + ledger together. Never fall back to separate REST mutations:
+  // a failed ledger write or simultaneous checkout would lose/double credits.
+  const { data, error } = await service.rpc("apply_credit_adjustment", {
+    p_studio_id: input.userId,
+    p_photographer_id: input.photographerId,
+    p_delta: input.delta,
+    p_type: input.type,
+    p_source: input.source,
+    p_description: input.description,
+    p_package_id: input.packageId ?? null,
+    p_source_reference_id: input.sourceReferenceId ?? null,
+    p_checkout_session_id: input.checkoutSessionId ?? null,
+    p_payment_intent_id: input.paymentIntentId ?? null,
   });
-
-  if (txnError) throw txnError;
-
-  return nextBalance;
+  if (error) throw error;
+  const result = (data as Array<{ applied: boolean; balance: number; credits_delta: number }> | null)?.[0];
+  if (!result) throw new Error("Credit adjustment returned no result.");
+  return result;
 }
 
 export async function handleCreditPackCheckoutCompleted(
@@ -1675,35 +1591,39 @@ export async function handleCreditPackCheckoutCompleted(
   const packCode = normalizeCreditPackCode(session.metadata?.pack_code ?? null);
   const photographerId = session.metadata?.photographer_id ?? null;
   const creditPackageId = session.metadata?.credit_package_id ?? null;
-  const sourceReferenceId = session.payment_intent || session.id;
+  const sourceReferenceId = session.payment_intent;
 
-  if (!packCode || !photographerId || !sourceReferenceId) return null;
+  if (!packCode || !photographerId || !sourceReferenceId || session.mode !== "payment") {
+    throw new Error("Paid credit checkout is missing its purchase identity.");
+  }
 
-  const { data: existing, error: existingError } = await service
-    .from("credit_transactions")
-    .select("id")
-    .eq("source_reference_id", sourceReferenceId)
-    .eq("source", "purchase")
-    .maybeSingle();
-
-  if (existingError) throw existingError;
-  if (existing) return null;
+  const pack = CREDIT_PACK_DEFS[packCode];
+  const credits = Number(session.metadata?.credits ?? pack.credits);
+  const priceCents = Number(session.metadata?.price_cents ?? pack.priceCents);
+  const currency = session.metadata?.currency ?? DEFAULT_BILLING_CURRENCY;
+  if (!Number.isSafeInteger(credits) || credits <= 0 ||
+      !Number.isSafeInteger(priceCents) || priceCents <= 0 ||
+      session.amount_total !== priceCents || session.currency !== currency ||
+      currency !== DEFAULT_BILLING_CURRENCY) {
+    throw new Error("Paid credit checkout does not match its credit offer.");
+  }
 
   const { data: photographer, error: photographerError } = await service
     .from("photographers")
-    .select("id,user_id")
+    .select("id,user_id,stripe_platform_customer_id")
     .eq("id", photographerId)
     .maybeSingle();
 
   if (photographerError) throw photographerError;
-  if (!photographer?.user_id) return null;
+  if (!photographer?.user_id || session.customer !== photographer.stripe_platform_customer_id ||
+      session.metadata?.user_id !== photographer.user_id) {
+    throw new Error("Paid credit checkout does not match its studio owner.");
+  }
 
-  const pack = CREDIT_PACK_DEFS[packCode];
-
-  await adjustCreditBalance(service, {
+  const result = await adjustCreditBalance(service, {
     photographerId,
     userId: photographer.user_id as string,
-    delta: pack.credits,
+    delta: credits,
     type: "purchase",
     source: "purchase",
     description: `${pack.label} purchased`,
@@ -1713,73 +1633,63 @@ export async function handleCreditPackCheckoutCompleted(
     paymentIntentId: session.payment_intent ?? null,
   });
 
-  return { photographerId, creditsGranted: pack.credits };
+  // Webhooks can arrive out of order, or an already-refunded checkout can be
+  // replayed. Re-read successful refunds even when the grant was a duplicate.
+  await reconcileCreditRefundFromStripe(service, sourceReferenceId);
+  return { photographerId, creditsGranted: result.applied ? credits : 0 };
 }
 
 export async function handleCreditChargeRefunded(
   service: ServiceClient,
   charge: StripeCharge,
 ) {
-  const packCode = normalizeCreditPackCode(charge.metadata?.pack_code ?? null);
-  const photographerId = charge.metadata?.photographer_id ?? null;
   const paymentIntentId = charge.payment_intent ?? null;
-
-  if (!packCode || !photographerId || !paymentIntentId) return null;
-
-  const { data: existingRefund, error: existingRefundError } = await service
-    .from("credit_transactions")
-    .select("id")
-    .eq("source_reference_id", paymentIntentId)
-    .eq("source", "refund")
-    .maybeSingle();
-
-  if (existingRefundError) throw existingRefundError;
-  if (existingRefund) return null;
-
-  const { data: creditRow, error: creditRowError } = await service
-    .from("studio_credits")
-    .select("id,studio_id,balance")
-    .eq("photographer_id", photographerId)
-    .maybeSingle();
-
-  if (creditRowError) throw creditRowError;
-  if (!creditRow?.studio_id) return null;
-
-  const pack = CREDIT_PACK_DEFS[packCode];
-  const availableBalance = (creditRow.balance as number | null) ?? 0;
-
-  if (availableBalance < pack.credits) {
-    const { error: txnError } = await service.from("credit_transactions").insert({
-      studio_id: creditRow.studio_id,
-      photographer_id: photographerId,
-      type: "refund",
-      amount: 0,
-      credits_delta: 0,
-      credit_transaction_type: "refund",
-      balance_after: availableBalance,
-      description:
-        "Credit pack refund received after credits were already consumed. Automatic balance reversal skipped for safety.",
-      source: "refund",
-      source_reference_id: paymentIntentId,
-      stripe_payment_intent_id: paymentIntentId,
-    });
-
-    if (txnError) throw txnError;
-    return { photographerId, creditsReversed: 0 };
+  if (!paymentIntentId || !Number.isSafeInteger(charge.amount) || charge.amount <= 0 ||
+      !Number.isSafeInteger(charge.amount_refunded) || charge.amount_refunded < 0 ||
+      charge.amount_refunded > charge.amount) {
+    throw new Error("Invalid credit purchase refund amount.");
   }
-
-  await adjustCreditBalance(service, {
-    photographerId,
-    userId: creditRow.studio_id as string,
-    delta: -pack.credits,
-    type: "refund",
-    source: "refund",
-    description: `${pack.label} refunded`,
-    sourceReferenceId: paymentIntentId,
-    paymentIntentId,
+  const { data, error } = await service.rpc("reverse_credit_purchase", {
+    p_payment_intent_id: paymentIntentId,
+    p_charge_amount_cents: charge.amount,
+    p_refunded_amount_cents: charge.amount_refunded,
+    p_description: "Credit pack refund confirmed by Stripe",
   });
+  if (error) throw error;
+  const result = (data as Array<{ photographer_id: string; credits_delta: number }> | null)?.[0];
+  if (!result) throw new Error("Credit refund returned no result.");
+  return { photographerId: result.photographer_id, creditsReversed: -result.credits_delta };
+}
 
-  return { photographerId, creditsReversed: pack.credits };
+/** Only call for platform payments; connected customer-order payments are separate. */
+export async function reconcileCreditRefundFromStripe(service: ServiceClient, paymentIntentId: string) {
+  const intent = await stripeRequest<{ id: string; amount: number; metadata?: Record<string, string> }>(
+    `payment_intents/${encodeURIComponent(paymentIntentId)}`,
+  );
+  if (intent.metadata?.billing_flow !== "credit_pack" ||
+      !normalizeCreditPackCode(intent.metadata?.pack_code)) return null;
+
+  let refundedCents = 0;
+  let cursor: string | undefined;
+  for (;;) {
+    const query = new URLSearchParams({ payment_intent: paymentIntentId, limit: "100" });
+    if (cursor) query.set("starting_after", cursor);
+    const page = await stripeRequest<{ data: Array<{ id: string; amount: number; status: string }>; has_more: boolean }>("refunds", { query });
+    refundedCents += page.data.filter((refund) => refund.status === "succeeded")
+      .reduce((sum, refund) => sum + refund.amount, 0);
+    if (!page.has_more) break;
+    const nextCursor = page.data.at(-1)?.id;
+    if (!nextCursor || nextCursor === cursor) throw new Error("Credit refund pagination did not advance.");
+    cursor = nextCursor;
+  }
+  if (!refundedCents) return null;
+  return handleCreditChargeRefunded(service, {
+    id: paymentIntentId,
+    amount: intent.amount,
+    amount_refunded: refundedCents,
+    payment_intent: paymentIntentId,
+    metadata: intent.metadata,
+  });
 }
 
 export async function finalizePaidOrder(
@@ -2228,6 +2138,13 @@ export async function markOrderRefunded(
 
   if (updateError) throw updateError;
 
+  if (fullyRefunded && order.photographer_id) {
+    // The database trigger durably queues this waiver. Customer refunds remain
+    // successful during a platform billing outage; the daily worker retries it.
+    try { await reconcileOrderUsageFeeRefunds(service, order.photographer_id as string, stripeRequest); }
+    catch (error) { console.error("[order-usage] queued service-fee waiver will retry", error); }
+  }
+
   return {
     orderId: order.id as string,
     photographerId: (order.photographer_id as string | null) ?? null,
@@ -2336,15 +2253,23 @@ export async function getUsageSummaryForCurrentPeriod(
   photographer: PhotographerBillingRow,
 ) {
   const planCode = normalizePlanCode(photographer.subscription_plan_code);
+  let periodStart = photographer.subscription_current_period_start;
+  let periodEnd = photographer.subscription_current_period_end;
+  if (photographer.stripe_subscription_id && photographer.stripe_subscription_item_usage_id) {
+    const subscription = await retrieveStripeSubscription(photographer.stripe_subscription_id);
+    const period = resolveStripeBillingPeriod(subscription, findSubscriptionItems(subscription).usageItem);
+    periodStart = period.start;
+    periodEnd = period.end;
+  }
   const billingPeriodKey = toBillingPeriodKey(
-    photographer.subscription_current_period_start,
-    photographer.subscription_current_period_end,
+    periodStart,
+    periodEnd,
   );
 
   if (
     !planCode ||
-    !photographer.subscription_current_period_start ||
-    !photographer.subscription_current_period_end ||
+    !periodStart ||
+    !periodEnd ||
     !billingPeriodKey
   ) {
     return {
@@ -2352,32 +2277,60 @@ export async function getUsageSummaryForCurrentPeriod(
       billableOrders: 0,
       unreportedOrders: 0,
       estimatedChargeCents: 0,
+      refundCreditCents: 0,
+      pendingFeeWaivers: 0,
+      feeReviewRequired: 0,
       billingPeriodKey: null,
     };
   }
 
-  const { data, error } = await service
+  const data = await readAllBillingRows((from, to) => service
     .from("orders")
-    .select("id,counted_for_monthly_usage,is_test,refund_status")
+    .select("id,total_cents,counted_for_monthly_usage,is_test,refund_status")
     .eq("photographer_id", photographer.id)
-    .in("payment_status", ["paid", "succeeded", "no_payment_required"])
-    .gte("paid_at", photographer.subscription_current_period_start)
-    .lt("paid_at", photographer.subscription_current_period_end)
-    .or("is_test.is.false,is_test.is.null");
-
-  if (error) throw error;
+    .in("payment_status", ["paid", "succeeded", "partially_refunded"])
+    .gte("paid_at", periodStart)
+    .lt("paid_at", periodEnd)
+    .or("is_test.is.false,is_test.is.null")
+    .order("id", { ascending: true }).range(from, to));
 
   const rows =
     ((data as Array<{
       id: string;
+      total_cents: number | null;
       counted_for_monthly_usage: boolean | null;
       is_test: boolean | null;
       refund_status: string | null;
     }> | null) ?? []).filter((row) => {
       const refundStatus = (row.refund_status ?? "").toLowerCase();
-      return refundStatus !== "refunded" && refundStatus !== "partially_refunded";
+      return refundStatus !== "refunded" && Number(row.total_cents ?? 0) > 0;
     });
 
+  const [feeData, creditData] = await Promise.all([
+    readAllBillingRows((from, to) => service.from("order_usage_fees").select("order_id,amount_cents,report_status,refund_status,refund_strategy")
+      .eq("photographer_id", photographer.id).gte("usage_timestamp", Math.floor(Date.parse(periodStart) / 1000))
+      .lt("usage_timestamp", Math.floor(Date.parse(periodEnd) / 1000))
+      .order("order_id", { ascending: true }).range(from, to)),
+    readAllBillingRows((from, to) => service.from("order_usage_fees").select("amount_cents")
+      .eq("photographer_id", photographer.id).eq("refund_status", "completed").eq("refund_strategy", "invoice_credit")
+      .gte("refund_completed_at", periodStart).lt("refund_completed_at", periodEnd)
+      .order("order_id", { ascending: true }).range(from, to)),
+  ]);
+  const fees = feeData as Array<{
+    order_id: string; amount_cents: number; report_status: string; refund_status: string; refund_strategy: string | null;
+  }>;
+  const feeByOrder = new Map(fees.map((fee) => [fee.order_id, fee]));
+  const liveRate = photographer.order_usage_rate_cents ?? PLAN_DEFS[planCode].usageRateCents;
+  const reportedChargeCents = fees.reduce((total, fee) => total + (
+    fee.report_status === "reported" && !(fee.refund_status === "completed" && fee.refund_strategy === "cancel_meter_event")
+      ? fee.amount_cents : 0
+  ), 0);
+  const unreportedOrLegacyChargeCents = rows.reduce((total, row) => {
+    const fee = feeByOrder.get(row.id);
+    if (!fee) return total + liveRate;
+    return total + (["pending", "processing", "review_required"].includes(fee.report_status) ? fee.amount_cents : 0);
+  }, 0);
+  const refundCreditCents = (creditData as Array<{ amount_cents: number }>).reduce((total, fee) => total + fee.amount_cents, 0);
   const billableOrders = rows.length;
   const countedOrders = rows.filter((row) => row.counted_for_monthly_usage === true).length;
   const unreportedOrders = Math.max(0, billableOrders - countedOrders);
@@ -2386,8 +2339,10 @@ export async function getUsageSummaryForCurrentPeriod(
     countedOrders,
     billableOrders,
     unreportedOrders,
-    estimatedChargeCents:
-      billableOrders * (photographer.order_usage_rate_cents ?? ORDER_USAGE_RATE_CENTS),
+    estimatedChargeCents: reportedChargeCents + unreportedOrLegacyChargeCents - refundCreditCents,
+    refundCreditCents,
+    pendingFeeWaivers: fees.filter((fee) => ["pending", "processing"].includes(fee.refund_status)).length,
+    feeReviewRequired: fees.filter((fee) => fee.report_status === "review_required" || fee.refund_status === "review_required").length,
     billingPeriodKey,
   };
 }

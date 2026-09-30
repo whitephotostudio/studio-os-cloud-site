@@ -7,14 +7,14 @@ import { ownerUrl } from "@/lib/owner-notifications";
 import { resendConfigured, sendResendEmail } from "@/lib/resend";
 import { r2DeletePrefix } from "@/lib/r2";
 import { recordAudit } from "@/lib/audit";
+import { resolveStripeBillingPeriod, stripeInvoiceSubscriptionId } from "@/lib/stripe-billing-period";
 import {
-  asIsoTimestamp,
   finalizePaidOrderOrGroup,
   getConnectedAccountId,
-  handleCreditChargeRefunded,
   handleCreditPackCheckoutCompleted,
   markOrderOrGroupPaymentFailure,
   reconcileOrderRefundFromStripe,
+  reconcileCreditRefundFromStripe,
   normalizeBillingInterval,
   normalizePlanCode,
   type PhotographerBillingRow,
@@ -78,6 +78,7 @@ type StripeSubscriptionObject = {
   status?: string | null;
   current_period_start?: number | null;
   current_period_end?: number | null;
+  items?: { data?: Array<{ current_period_start?: number | null; current_period_end?: number | null }> } | null;
   metadata?: Record<string, string> | null;
 };
 
@@ -96,6 +97,10 @@ type StripeInvoice = {
   customer_email?: string | null;
   customer_name?: string | null;
   subscription?: string | null;
+  parent?: {
+    type?: string | null;
+    subscription_details?: { subscription?: string | { id: string } | null } | null;
+  } | null;
   status?: string | null;
   amount_paid?: number | null;
   amount_due?: number | null;
@@ -349,8 +354,7 @@ async function syncDeletedSubscriptionState(
     normalizeBillingInterval(subscription.metadata?.billing_interval ?? null) ||
     normalizeBillingInterval(photographer.subscription_billing_interval ?? null) ||
     "month";
-  const currentPeriodStart = asIsoTimestamp(subscription.current_period_start);
-  const currentPeriodEnd = asIsoTimestamp(subscription.current_period_end);
+  const { start: currentPeriodStart, end: currentPeriodEnd } = resolveStripeBillingPeriod(subscription);
 
   const { error: photographerError } = await service
     .from("photographers")
@@ -484,6 +488,15 @@ export async function POST(req: NextRequest) {
   }
 
   const service = createDashboardServiceClient();
+  const object = event.data.object;
+  const billingFlow = (object.metadata as Record<string, string> | undefined)?.billing_flow;
+  // Credit balance/ledger mutations are atomic and idempotent by payment in
+  // the database. Record these events only after success: a process crash
+  // after an insert-first claim must not permanently swallow a paid purchase.
+  const processCreditsFirst = !event.account && (
+    ((event.type === "checkout.session.completed" || event.type === "checkout.session.async_payment_succeeded") && billingFlow === "credit_pack") ||
+    (["charge.refunded", "refund.updated", "refund.failed"].includes(event.type) && typeof object.payment_intent === "string")
+  );
 
   // Insert-first dedup: atomically claim this event.id before doing any work.
   // If another concurrent delivery already inserted it, recordStripeEvent
@@ -491,13 +504,15 @@ export async function POST(req: NextRequest) {
   // circuit. This closes the race window in the previous "select then insert"
   // pattern where two parallel deliveries could both pass the existence check
   // and both run the handler.
-  let dedupResult: { inserted: boolean };
+  let dedupResult = { inserted: false };
   try {
-    dedupResult = await recordStripeEvent(
-      service,
-      event,
-      JSON.parse(rawBody) as Record<string, unknown>,
-    );
+    if (!processCreditsFirst) {
+      dedupResult = await recordStripeEvent(
+        service,
+        event,
+        JSON.parse(rawBody) as Record<string, unknown>,
+      );
+    }
   } catch (error) {
     console.error("[stripe:webhook:recordStripeEvent]", error);
     return NextResponse.json(
@@ -506,11 +521,9 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  if (!dedupResult.inserted) {
+  if (!processCreditsFirst && !dedupResult.inserted) {
     return NextResponse.json({ ok: true, duplicate: true });
   }
-
-  const object = event.data.object;
 
   try {
     switch (event.type) {
@@ -529,6 +542,7 @@ export async function POST(req: NextRequest) {
 
       case "customer.subscription.created":
       case "customer.subscription.updated": {
+        if (event.account) break;
         const subscription = object as unknown as StripeSubscriptionObject;
         const photographer = await findPhotographerForSubscription(service, subscription);
         if (photographer) {
@@ -539,6 +553,7 @@ export async function POST(req: NextRequest) {
       }
 
       case "customer.subscription.deleted": {
+        if (event.account) break;
         const subscription = object as unknown as StripeSubscriptionObject;
         const photographer = await findPhotographerForSubscription(service, subscription);
         if (photographer) {
@@ -559,10 +574,12 @@ export async function POST(req: NextRequest) {
       }
 
       case "invoice.paid": {
+        if (event.account) break;
         const invoice = object as unknown as StripeInvoice;
-        if (invoice.subscription) {
+        const subscriptionId = stripeInvoiceSubscriptionId(invoice);
+        if (subscriptionId) {
           const photographer =
-            (await findPhotographer(service, "stripe_subscription_id", invoice.subscription)) ||
+            (await findPhotographer(service, "stripe_subscription_id", subscriptionId)) ||
             (await findPhotographer(
               service,
               "stripe_platform_customer_id",
@@ -570,7 +587,7 @@ export async function POST(req: NextRequest) {
             ));
 
           if (photographer) {
-            const liveSubscription = await retrieveStripeSubscription(invoice.subscription);
+            const liveSubscription = await retrieveStripeSubscription(subscriptionId);
             await syncSubscriptionStateFromStripe(service, photographer, liveSubscription);
 
             // Send automatic invoice/receipt email to the subscriber.
@@ -581,10 +598,12 @@ export async function POST(req: NextRequest) {
       }
 
       case "invoice.payment_failed": {
+        if (event.account) break;
         const invoice = object as unknown as StripeInvoice;
-        if (invoice.subscription) {
+        const subscriptionId = stripeInvoiceSubscriptionId(invoice);
+        if (subscriptionId) {
           const photographer =
-            (await findPhotographer(service, "stripe_subscription_id", invoice.subscription)) ||
+            (await findPhotographer(service, "stripe_subscription_id", subscriptionId)) ||
             (await findPhotographer(
               service,
               "stripe_platform_customer_id",
@@ -593,7 +612,7 @@ export async function POST(req: NextRequest) {
 
           if (photographer) {
             try {
-              const liveSubscription = await retrieveStripeSubscription(invoice.subscription);
+              const liveSubscription = await retrieveStripeSubscription(subscriptionId);
               await syncSubscriptionStateFromStripe(service, photographer, liveSubscription);
             } catch {
               await markSubscriptionPaymentFailure(service, photographer);
@@ -616,16 +635,19 @@ export async function POST(req: NextRequest) {
         break;
       }
 
-      case "checkout.session.completed": {
+      case "checkout.session.completed":
+      case "checkout.session.async_payment_succeeded": {
         const session = object as unknown as StripeCheckoutSession;
         const billingFlow = session.metadata?.billing_flow ?? null;
 
         if (billingFlow === "credit_pack") {
-          await handleCreditPackCheckoutCompleted(service, session);
+          // A photographer controls metadata on their connected account.
+          // Only money paid to the Studio OS platform can buy Studio credits.
+          if (!event.account) await handleCreditPackCheckoutCompleted(service, session);
           break;
         }
 
-        if (billingFlow === "plan_subscription" && session.subscription) {
+        if (!event.account && billingFlow === "plan_subscription" && session.subscription) {
           const photographer =
             (await findPhotographer(service, "id", session.metadata?.photographer_id ?? null)) ||
             (await findPhotographer(service, "stripe_platform_customer_id", session.customer ?? null));
@@ -695,7 +717,9 @@ export async function POST(req: NextRequest) {
 
       case "refund.updated":
       case "refund.failed": {
-        if (event.account && typeof object.payment_intent === "string") {
+        if (!event.account && typeof object.payment_intent === "string") {
+          await reconcileCreditRefundFromStripe(service, object.payment_intent);
+        } else if (event.account && typeof object.payment_intent === "string") {
           const result = await reconcileOrderRefundFromStripe(service, event.account, object.payment_intent);
           if (result) await scheduleOrderRefundEmails(service, { account: event.account, paymentIntentId: object.payment_intent, orderId: result.orderId, refunds: result.verifiedRefunds });
         }
@@ -704,8 +728,8 @@ export async function POST(req: NextRequest) {
 
       case "charge.refunded": {
         const charge = object as unknown as StripeCharge;
-        if (charge.metadata?.pack_code) {
-          await handleCreditChargeRefunded(service, charge);
+        if (!event.account && charge.payment_intent) {
+          await reconcileCreditRefundFromStripe(service, charge.payment_intent);
         } else if (event.account && (charge.metadata?.order_id || charge.payment_intent)) {
           const refundResult = charge.payment_intent
             ? await reconcileOrderRefundFromStripe(service, event.account, charge.payment_intent)
@@ -744,7 +768,7 @@ export async function POST(req: NextRequest) {
         break;
     }
 
-    // Event already recorded above via insert-first dedup — nothing more to do.
+    if (processCreditsFirst) await recordStripeEvent(service, event, JSON.parse(rawBody) as Record<string, unknown>);
     return NextResponse.json({ ok: true });
   } catch (error) {
     console.error("[stripe-webhook] handler failed", {
@@ -758,7 +782,10 @@ export async function POST(req: NextRequest) {
     // log it and move on — operators can replay manually from the Stripe
     // dashboard if needed.
     try {
-      await service.from("stripe_events").delete().eq("id", event.id);
+      if (dedupResult.inserted) {
+        const { error: rollbackError } = await service.from("stripe_events").delete().eq("id", event.id);
+        if (rollbackError) throw rollbackError;
+      }
     } catch (rollbackError) {
       console.error("[stripe-webhook] failed to roll back dedup row", {
         eventId: event.id,

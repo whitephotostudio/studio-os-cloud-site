@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { hasR2Config } from "@/lib/r2";
 import {
   createDashboardServiceClient,
   resolveDashboardAuth,
@@ -15,7 +16,7 @@ import {
   describeConnectStatus,
   ensureCreditPackageCatalog,
   getConnectedAccountId,
-  getCreditBalance,
+  getCreditBalanceDetails,
   getDefaultPaymentMethod,
   getOrCreatePhotographerByUser,
   getFreeTrialDaysRemaining,
@@ -66,6 +67,9 @@ const EMPTY_PROFILE = {
   extraDesktopKeys: 0,
   orderUsageRateCents: ORDER_USAGE_RATE_CENTS,
   creditBalance: 0,
+  creditExpiresAt: null,
+  creditDebt: 0,
+  premiumCloudAvailable: false,
   studioUsage: {
     countedOrders: 0,
     billableOrders: 0,
@@ -82,6 +86,7 @@ const EMPTY_PROFILE = {
   trialDaysRemaining: 0,
   freeTrialDays: FREE_TRIAL_DAYS,
   billingCatalog: {
+    currency: DEFAULT_BILLING_CURRENCY,
     annualDiscountPercent: ANNUAL_DISCOUNT_PERCENT,
     plans: Object.values(PLAN_DEFS),
     extraDesktopKeyMonthlyCents: EXTRA_DESKTOP_KEY_MONTHLY_CENTS,
@@ -167,7 +172,7 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    const creditBalance = await getCreditBalance(service, user.id, photographer.id, {
+    const credits = await getCreditBalanceDetails(service, user.id, photographer.id, {
       isPlatformAdmin: photographer.is_platform_admin,
     });
     const creditPacks = await ensureCreditPackageCatalog(service);
@@ -237,10 +242,14 @@ export async function GET(request: NextRequest) {
       trialExpired: isFreeTrialExpired(photographer),
       trialDaysRemaining: getFreeTrialDaysRemaining(photographer),
       freeTrialDays: FREE_TRIAL_DAYS,
-      creditBalance,
+      creditBalance: credits.balance,
+      creditExpiresAt: credits.expiresAt,
+      creditDebt: credits.creditDebt,
+      premiumCloudAvailable: Boolean(process.env.PHOTOROOM_API_KEY?.trim()) && hasR2Config(),
       studioUsage: usageSummary,
       recentInvoices,
       billingCatalog: {
+        currency: DEFAULT_BILLING_CURRENCY,
         annualDiscountPercent: ANNUAL_DISCOUNT_PERCENT,
         plans: Object.values(PLAN_DEFS),
         extraDesktopKeyMonthlyCents: EXTRA_DESKTOP_KEY_MONTHLY_CENTS,

@@ -28,6 +28,18 @@ export async function verifyPaymentRelease(env = process.env, fetcher = fetch, r
   await db('checkout_attempts?select=key&limit=0');
   await db('order_payment_locks?select=key&limit=0');
   report(JSON.stringify({ check: 'payment-migration-api', ok: true }));
+  if (env.STUDIO_CREDIT_RELEASE_VERIFY === '1') {
+    await db('studio_credits?select=id,studio_id,balance,credit_debt&limit=0');
+    await db('order_usage_fees?select=order_id,report_status,refund_status,event_identifier,amount_cents,currency&limit=0');
+    await db('credit_cloud_jobs?select=id,studio_id,status,input_sha256,output_key&limit=0');
+    const schema = await db('');
+    const requiredRpcs = ['apply_credit_adjustment', 'reverse_credit_purchase', 'get_studio_credit_balance', 'deduct_studio_credits', 'refund_studio_credits',
+      'stage_order_usage_fee', 'claim_order_usage_fee', 'complete_order_usage_fee_report', 'reserve_cloud_credit_job', 'finish_cloud_credit_job',
+      'expire_due_credit_accounts'];
+    const missingRpcs = requiredRpcs.filter((name) => !schema.paths?.[`/rpc/${name}`]?.post);
+    if (missingRpcs.length) throw new Error(`Credit migration RPCs are missing: ${missingRpcs.join(', ')}.`);
+    report(JSON.stringify({ check: 'credit-migration-api', ok: true, financialMutations: 0 }));
+  }
   if (env.STUDIO_REFUND_EMAIL_VERIFY === '1') {
     await db('order_refund_emails?select=id&limit=0');
     const emailKey = (env.RESEND_API_KEY || '').trim();
@@ -75,6 +87,15 @@ export async function verifyPaymentRelease(env = process.env, fetcher = fetch, r
   const matching = endpoints.data.filter((e) => matchesOrigin(e.url) && e.status === 'enabled' && e.livemode);
   const requiredEvents = ['checkout.session.completed', 'payment_intent.succeeded', 'charge.refunded', 'refund.updated', 'refund.failed'];
   const missingEvents = requiredEvents.filter((event) => !matching.some((e) => e.enabled_events.includes('*') || e.enabled_events.includes(event)));
+  if (env.STUDIO_CREDIT_RELEASE_VERIFY === '1' || env.STUDIO_CREDIT_WEBHOOK_VERIFY === '1') {
+    const creditEvents = ['checkout.session.completed', 'checkout.session.async_payment_succeeded', 'charge.refunded', 'refund.updated', 'refund.failed'];
+    // Connect endpoints receive photographers' customer-order events. Credits
+    // must be fulfilled by an endpoint listening on the platform's account.
+    const platformEndpoints = matching.filter((endpoint) => !endpoint.application);
+    const missingCreditEvents = creditEvents.filter((event) => !platformEndpoints.some((endpoint) => endpoint.enabled_events.includes('*') || endpoint.enabled_events.includes(event)));
+    report(JSON.stringify({ check: 'stripe-credit-webhooks', endpointCount: platformEndpoints.length, missingEvents: missingCreditEvents }));
+    if (missingCreditEvents.length) throw new Error(`Platform credit webhook subscription is missing: ${missingCreditEvents.join(', ')}.`);
+  }
   report(JSON.stringify({ check: 'stripe-webhooks', endpointCount: matching.length, missingEvents,
     endpoints: endpoints.data.map((e) => ({ id: e.id, url: new URL(e.url).origin + new URL(e.url).pathname,
       status: e.status, livemode: e.livemode, events: e.enabled_events })) }));

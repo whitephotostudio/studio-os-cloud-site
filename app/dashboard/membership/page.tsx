@@ -57,6 +57,7 @@ type MembershipData = {
   subscriptionCurrentPeriodEnd: string | null;
   isPlatformAdmin: boolean;
   creditBalance: number;
+  creditExpiresAt: string | null;
   trialActive: boolean;
   trialExpired: boolean;
   trialDaysRemaining: number;
@@ -393,6 +394,7 @@ export default function MembershipPage() {
         subscriptionCurrentPeriodEnd: stripe.subscriptionCurrentPeriodEnd ?? null,
         isPlatformAdmin: Boolean(stripe.isPlatformAdmin),
         creditBalance: Number(stripe.creditBalance ?? 0),
+        creditExpiresAt: stripe.creditExpiresAt ?? null,
         trialActive: Boolean(stripe.trialActive),
         trialExpired: Boolean(stripe.trialExpired),
         trialDaysRemaining: Number(stripe.trialDaysRemaining ?? 0),
@@ -450,8 +452,8 @@ export default function MembershipPage() {
       } else {
         throw new Error(json.message || "Failed to open billing portal");
       }
-    } catch (err: any) {
-      alert(err.message || "Something went wrong. Please try again.");
+    } catch (err: unknown) {
+      alert(err instanceof Error ? err.message : "Something went wrong. Please try again.");
       setCancelLoading(false);
     }
   }, []);
@@ -471,8 +473,8 @@ export default function MembershipPage() {
       }
       // Refresh data
       await loadData();
-    } catch (err: any) {
-      alert(err.message || "Failed to deactivate key.");
+    } catch (err: unknown) {
+      alert(err instanceof Error ? err.message : "Failed to deactivate key.");
     } finally {
       setDeactivatingKeyId(null);
     }
@@ -835,14 +837,15 @@ export default function MembershipPage() {
                   <div>Background Removal (Local) — 1 credit</div>
                   <div>Background Removal (Premium Cloud) — 4 credits</div>
                   <div style={{ marginTop: 6, fontSize: 12, color: textMuted }}>
-                    Purchased credits do not carry over to the next month.
+                    Purchased credits expire at your next monthly billing date and do not carry over.
+                    {data.creditExpiresAt && !data.isPlatformAdmin ? ` Current credits expire ${new Date(data.creditExpiresAt).toLocaleDateString()}.` : ""}
                   </div>
                 </div>
 
                 {!data.isPlatformAdmin ? (
                   <div style={{ marginTop: 16, textAlign: "center" }}>
                     <Link
-                      href="/dashboard/settings"
+                      href="/credits"
                       style={{
                         display: "inline-flex",
                         alignItems: "center",

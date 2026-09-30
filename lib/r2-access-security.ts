@@ -5,6 +5,10 @@ export type R2ResourceScope =
   | { kind: "project"; id: string }
   | { kind: "school"; id: string };
 
+export function isServerOnlyR2Key(key: string) {
+  return key.split("/").filter(Boolean)[0] === "credits";
+}
+
 function clean(value: string | null | undefined) {
   return (value ?? "").trim();
 }
@@ -67,6 +71,8 @@ export function scopeForR2Key(
   key: string,
   options: { prefix?: boolean } = {},
 ): R2ResourceScope | null {
+  // A user-created legacy school id must never claim server-generated outputs.
+  if (isServerOnlyR2Key(key)) return null;
   const segments = key.replace(/\/$/, "").split("/").filter(Boolean);
   if (segments.length === 1) {
     // Legacy school uploads are rooted directly at local_school_id. The
