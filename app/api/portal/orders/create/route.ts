@@ -630,6 +630,7 @@ export async function POST(request: NextRequest) {
     let student: StudentRow | null = null;
     let projectId: string | null = null;
     let projectTitle: string | null = null;
+    let purchasedEventScope: { version: 1; projectId: string; collectionIds: string[] } | null = null;
     let galleryShippingEnabled = false;
     let gallerySettingsForTax: unknown = null;
     let sb = createDashboardServiceClient();
@@ -727,6 +728,7 @@ export async function POST(request: NextRequest) {
 
       sb = access.service;
       projectId = access.projectId;
+      purchasedEventScope = { version: 1, projectId: access.projectId, collectionIds: access.collectionIds };
       projectTitle = clean(access.project.title) || null;
       photographerId = access.project.photographer_id;
       gallerySettingsForTax = access.project.gallery_settings;
@@ -859,6 +861,7 @@ export async function POST(request: NextRequest) {
         .from("media")
         .select("id,storage_path,preview_url,thumbnail_url,filename")
         .eq("project_id", projectId)
+        .in("collection_id", purchasedEventScope?.collectionIds ?? [])
         .in("id", digitalMediaIds);
       if (mediaError) throw mediaError;
       for (const row of (mediaRows ?? []) as EventMediaRow[]) {
@@ -1160,6 +1163,7 @@ export async function POST(request: NextRequest) {
       isComposite: !!entry.isComposite,
       compositeTitle: entry.compositeTitle ?? null,
       orientation: (entry as { orientation?: "portrait" | "landscape" }).orientation ?? "portrait",
+      ...(purchasedEventScope ? { purchasedEventScope } : {}),
     }));
 
     const orderId = randomUUID();

@@ -15,16 +15,16 @@ const print = { packageName: '5x7 Print', backdrop, slots: [{ label: '5x7 Print'
 const all = { packageName: 'All Digital Package', backdrop: null, slots: [], selectedImageUrl: null };
 const single = { packageName: 'Digital Image', backdrop, slots: [{ label: 'Selected portrait', assignedImageUrl: photos[0].storage_path }] };
 
-async function resolve(snapshot, orderName = '5x7 Print + All Digital Package', legacyItems = []) {
+async function resolve(snapshot, orderName = '5x7 Print + All Digital Package', legacyItems = [], event = null) {
   const order = { id: 'order', photographer_id: 'studio', school_id: 'school', student_id: 'student',
-    payment_status: 'succeeded', customer_email: 'owned-fixture@example.test', package_name: orderName, cart_snapshot: snapshot };
-  const rows = { orders: [order], order_items: legacyItems,
+    payment_status: 'succeeded', customer_email: 'owned-fixture@example.test', package_name: orderName, cart_snapshot: snapshot, ...(event ? {school_id:null, student_id:null, project_id:event.projectId} : {}) };
+  const rows = { media:event?.photos ?? [], projects: event ? [{id:event.projectId}] : [], orders: [order], order_items: legacyItems,
     photographers: [{ id: 'studio' }], students: [{ id: 'student', school_id: 'school' }],
     schools: [{ id: 'school', photographer_id: 'studio' }] };
   const service = { from(table) {
-    let singleRow = false;
-    const query = { select() { return query; }, eq() { return query; }, maybeSingle() { singleRow = true; return query; },
-      then(resolveResult, reject) { return Promise.resolve({ data: singleRow ? rows[table]?.[0] ?? null : rows[table] ?? [], error: null }).then(resolveResult, reject); } };
+    let singleRow = false; const filters=[];
+    const query = { select() { return query; }, eq(key,value) { filters.push(row=>row[key]===value);return query; }, in(key,values){filters.push(row=>values.includes(row[key]));return query;}, order(){return query;},range(){return query;}, maybeSingle() { singleRow = true; return query; },
+      then(resolveResult, reject) { return Promise.resolve({ data: singleRow ? rows[table]?.[0] ?? null : (rows[table] ?? []).filter(row=>filters.every(f=>f(row))), error: null }).then(resolveResult, reject); } };
     return query;
   } };
   const forbidden = () => { throw new Error('No network, rendering, email or financial writes in file-selection tests'); };
@@ -102,4 +102,26 @@ test('different purchased blur variants do not collapse into one delivery', asyn
     { ...all, backdrop: { ...backdrop, blurred: true, blurAmount: 20 } }], 'All Digital Package');
   assert.equal(files.length, 4);
   assert.equal(files.filter(file => file.composite?.backdrop.blurAmount === 20).length, 2);
+});
+
+
+const projectId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+const albumA = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+const albumB = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+const event = {projectId, photos:[albumA,albumA,albumB].map((collection_id,i)=>({id:`photo-${i}`,project_id:projectId,collection_id,storage_path:`projects/${projectId}/photo-${i}.jpg`}))};
+const savedScope = {version:1,projectId,collectionIds:[albumA]};
+
+test('event all-digital delivery uses the purchased album and excludes another private album', async()=>{
+  const files=await resolve([{...all,purchasedEventScope:savedScope}],'All Digital Package',[],event);
+  assert.equal(files.length,2);assert.ok(files.every(file=>!file.key.endsWith('photo-2.jpg')));
+});
+
+test('legacy event orders without authoritative scope hold for review instead of delivering the whole project',async()=>{
+  await assert.rejects(()=>resolve([all],'All Digital Package',[],event),/purchased album scope reviewed/);
+  await assert.rejects(()=>resolve(null,'All Digital Package',[{product_name:'All Digital Package'}],event),/purchased album scope reviewed/);
+});
+
+test('an event purchase cannot substitute another project or malformed collection identifiers',async()=>{
+  for(const purchasedEventScope of [{...savedScope,projectId:'other'},{...savedScope,collectionIds:['bad']},{...savedScope,collectionIds:[]}])
+    await assert.rejects(()=>resolve([{...all,purchasedEventScope}],'All Digital Package',[],event),/purchased album scope reviewed/);
 });

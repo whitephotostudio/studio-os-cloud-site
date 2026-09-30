@@ -307,7 +307,7 @@ function isPaidEnough(order: OrderRow) {
   ].includes(status);
 }
 
-async function fetchProjectMediaRows(service: ServiceClient, projectId: string) {
+async function fetchProjectMediaRows(service: ServiceClient, projectId: string, collectionIds: string[]) {
   const rows: MediaRow[] = [];
   const pageSize = 1000;
   for (let offset = 0; offset < 20000; offset += pageSize) {
@@ -315,6 +315,7 @@ async function fetchProjectMediaRows(service: ServiceClient, projectId: string) 
       .from("media")
       .select("id,storage_path,preview_url,thumbnail_url,filename,sort_order,created_at")
       .eq("project_id", projectId)
+      .in("collection_id", collectionIds)
       .order("sort_order", { ascending: true })
       .order("created_at", { ascending: true })
       .range(offset, offset + pageSize - 1);
@@ -463,7 +464,18 @@ async function resolveDeliveryFiles(params: {
       addGalleryFile(key, row.filename || fileNameFromKey(key));
     }
   } else if (wantsAll && params.order.project_id) {
-    const rows = await fetchProjectMediaRows(params.service, params.order.project_id);
+    // Only the server-saved purchase scope authorizes an all-gallery delivery.
+    // A current PIN, project-wide query or caller snapshot cannot recover a
+    // missing historical scope; keep those orders for photographer review.
+    const scopes = allDigitalEntries.map(entry => entry.purchasedEventScope);
+    const uuid = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i;
+    if (!scopes.length || scopes.some(scope => !scope || scope.version !== 1 ||
+      scope.projectId !== params.order.project_id || !Array.isArray(scope.collectionIds) ||
+      !scope.collectionIds.length || scope.collectionIds.some(id => !uuid.test(id)))) {
+      throw new Error("This event order needs its purchased album scope reviewed before digital delivery.");
+    }
+    const collectionIds = [...new Set(scopes.flatMap(scope => scope!.collectionIds))];
+    const rows = await fetchProjectMediaRows(params.service, params.order.project_id, collectionIds);
     for (const row of rows) {
       const key = normalizeKey(row.storage_path || row.preview_url || row.thumbnail_url);
       if (!key) continue;

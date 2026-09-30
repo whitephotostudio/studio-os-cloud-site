@@ -16,6 +16,7 @@ export type EventGalleryProjectAccessRow = {
 
 type EventGalleryCollectionAccessRow = {
   id: string;
+  kind?: string | null;
   slug: string | null;
   access_mode: string | null;
   access_pin: string | null;
@@ -118,7 +119,7 @@ export async function validateEventGalleryAccess(params: {
       .maybeSingle(),
     service
       .from("collections")
-      .select("id,slug,access_mode,access_pin")
+      .select("id,slug,kind,access_mode,access_pin")
       .eq("project_id", selectedProjectId),
   ]);
 
@@ -144,5 +145,9 @@ export async function validateEventGalleryAccess(params: {
     project: projectRow,
     projectId: selectedProjectId,
     email: normalizedEmail,
+    collectionIds: ((collectionAccessResult.data ?? []) as EventGalleryCollectionAccessRow[])
+      .filter(row => !matchingCollection || row.id === matchingCollection.id)
+      .filter(row => !clean(row.kind) || ["album", "gallery"].includes(clean(row.kind).toLowerCase()))
+      .map(row => row.id),
   };
 }

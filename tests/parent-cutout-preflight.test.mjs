@@ -105,7 +105,7 @@ function setup({ originals = [original()], paidKeys = originals.map(fullCutout),
   const load = loader({
     'next/server': { NextResponse: { json: (body, init) => Response.json(body, init) } },
     '@/lib/dashboard-auth': { createDashboardServiceClient: () => sb },
-    '@/lib/event-gallery-access': { validateEventGalleryAccess: async () => ({ ok: true, projectId, service: sb, project: { photographer_id: photographerId } }) },
+    '@/lib/event-gallery-access': { validateEventGalleryAccess: async () => ({ ok: true, projectId, collectionIds: ['collection-a'], service: sb, project: { photographer_id: photographerId } }) },
     '@/lib/event-gallery-settings': { normalizeEventGallerySettings: () => ({ extras: { shippingEnabled: false, pickupEnabled: true } }) },
     '@/lib/rate-limit': { rateLimit: async () => ({ allowed: true }), getClientIp: () => 'fixture' },
     '@/lib/subscription-gate': { hasActiveSubscription: () => true },
@@ -271,7 +271,7 @@ const eventBody = entries => ({ ...common, mode: 'event', projectId, email: comm
 test('event collection PIN cannot select another collection, even with owned paid proof', async () => {
   const a = eventPhoto('photo-a'), b = eventPhoto('photo-b', 'collection-b');
   const h = setup({ media: [a, b], paidKeys: [fullCutout(a.storage_path), fullCutout(b.storage_path)] });
-  assert.equal((await h.post(createPath, eventBody([entry(digital, [], { digitalSelections: [{ mediaId: b.id, url: b.storage_path }] })]))).status, 409);
+  assert.equal((await h.post(createPath, eventBody([entry(digital, [], { digitalSelections: [{ mediaId: b.id, url: b.storage_path }] })]))).status, 400);
   assert.equal(h.writes.length, 0); assert.equal(h.paidReads.length, 0);
   const allowed = setup({ media: [a, b], paidKeys: [fullCutout(a.storage_path)] });
   assert.equal((await allowed.post(createPath, eventBody([entry(print, [a.storage_path])]))).status, 200);

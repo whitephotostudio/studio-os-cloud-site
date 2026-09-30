@@ -52,6 +52,7 @@ export type CartSnapshotDigitalSelectionLike = {
 };
 
 export type CartSnapshotEntryLike = {
+  purchasedEventScope?: { version: number; projectId: string; collectionIds: string[] } | null;
   slots?: CartSnapshotSlotLike[] | null;
   selectedImageUrl?: string | null;
   digitalSelections?: CartSnapshotDigitalSelectionLike[] | null;
