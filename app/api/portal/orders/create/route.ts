@@ -10,6 +10,7 @@ import { getClientIp, rateLimit } from "@/lib/rate-limit";
 import { hasActiveSubscription } from "@/lib/subscription-gate";
 import { resolveShipping } from "@/lib/combine-orders";
 import { durablePrivateMediaReference } from "@/lib/private-media-references";
+import { assertParentBackdropCutouts, ParentCutoutPreflightError } from "@/lib/parent-cutout-preflight";
 import { isRetouchPackage, retouchPrintPurchaseIssue, parseRetouchSelections, retouchSelectionIssue, retouchNotesBlock, customerNotesBlock, retouchSlots, type RetouchSelection } from "@/lib/retouching";
 import {
   ensureObjectBody,
@@ -969,6 +970,12 @@ export async function POST(request: NextRequest) {
       });
     }
 
+    await assertParentBackdropCutouts(sb, mode === "school"
+      ? { mode: "school", photographerId, schoolId: schoolId!, studentId: student!.id }
+      : { mode: "event", photographerId, projectId: projectId!, pin: pinResult.value },
+    resolved.map(entry => ({ hasBackdrop: !!entry.backdropRow, allPhotos: entry.isDigital && isAllDigitalsPackage(entry.pkg),
+      selectedImageUrl: entry.selectedImageUrl, slots: entry.slots, digitalSelections: entry.digitalSelections })));
+
     const productSubtotalCents = resolved.reduce((sum, e) => sum + e.lineTotalCents, 0);
     if (!Number.isFinite(productSubtotalCents) || productSubtotalCents <= 0) {
       return NextResponse.json(
@@ -1322,6 +1329,7 @@ export async function POST(request: NextRequest) {
     if (persistError) throw persistError;
     return NextResponse.json(result);
   } catch (error) {
+    if (error instanceof ParentCutoutPreflightError) return NextResponse.json({ ok: false, message: error.message }, { status: 409 });
     console.error("[portal:orders:create]", error);
     return NextResponse.json(
       { ok: false, message: "Failed to create your order. Please try again." },

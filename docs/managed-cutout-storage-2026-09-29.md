@@ -66,7 +66,59 @@ verified against the actual paid original.
 Release requires the paid-cutout security epoch migration and its service-only
 RPC grants. Older client-writable local usage rows cannot become proof. Legacy
 assets therefore need a review/migration policy; neither a PNG filename nor an
-old local metadata flag is payment evidence.
+old local metadata flag is payment evidence. The new proof tables begin empty,
+so existing active parent galleries and selected-backdrop orders must be
+inventoried and resolved before strict production enforcement. Unknown cutouts
+being omitted is a real compatibility change, not successful migration.
+
+The legacy parent client listed/probed public Supabase `nobg-photos` URLs when
+the server-approved map was empty. This candidate removes that fallback; only
+server-authorized, actually loadable cutouts can enable background selection.
+Saved cart selections must be checked again before order creation rather than
+silently stripped or sold with a background that cannot render. The legacy
+Supabase bucket was confirmed public in a read-only production check; removing
+the application fallback does not revoke URLs already accessible outside the
+application. No bucket privacy setting has been changed.
+
+Parent checkout refreshes each selected gallery's server context and preserves
+the basket when a chosen background is unavailable. Single and combined order
+creation also perform a server preflight before the first order write or Stripe
+request. Every retained background pose, including a normal digital or all-photo
+package, must resolve to its authoritative gallery photo and usable bound PNG.
+Original-background products and explicit retouch-only lines do not require an
+unrelated cutout. The read-time preflight cannot guarantee that a file stays
+available forever; delivery still rechecks proof and bytes before rendering.
+
+Stored-order Stripe checkout repeats the check before Connect calls, session
+reuse or checkout state writes. It refreshes full saved rows and complete group
+membership under the existing payment lock; caller mode/gallery overrides do
+not replace saved scope. Legacy background markers without exact saved choices
+stay in review. All-gallery fulfillment claims require an owned authoritative
+paid all-digital package, rather than a browser filename or slot label.
+
+Mixed print/digital delivery keeps each item's selected background. A print or
+individual digital backdrop cannot be applied to original-background all-digital
+files. An all-digital backdrop is retained even when its snapshot has no chosen
+single pose; individual digital background choices also survive a mixed cart.
+Multiple purchased all-digital versions retain their separate backgrounds and
+blur settings; only identical choices are deduplicated.
+
+Event fulfillment has a separate scope blocker: the existing all-digital
+delivery loader queries the whole project, while PIN access can authorize one
+collection. Existing saved snapshots do not preserve an authoritative purchased
+collection scope. A background preflight does not repair that delivery mismatch,
+and a caller's current PIN cannot rewrite the scope of an older purchase. Event
+all-gallery fulfillment needs its own reviewed scope preservation/recovery
+before this candidate can be promoted. No new event background feature or
+project-wide legacy authorization is inferred by this change.
+
+A reviewed legacy preservation design must bind exact ownership, authoritative
+gallery/student/source references, storage backend/key and verified full bytes.
+Use private immutable exact-byte copies for approved existing uses and preserve
+originals. Legacy approval must not mint credits, reuse pre-security receipts,
+satisfy new-upload/revision entitlement checks or authorize new photo work.
+Missing sources, ambiguous ownership and changed bytes stay in review. No
+legacy import tool, grant or reprocessing has been applied.
 
 Stop old canonical signed PUT issuance and drain its full 15-minute TTL before
 enabling trusted bindings. Already-issued GET URLs and cached images cannot be

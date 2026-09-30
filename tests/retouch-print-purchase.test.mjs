@@ -77,7 +77,7 @@ function setup({ storedOrders = [], storedItems = [] } = {}) {
             if (inserted) rows = [{ id: 'new-order-' + writes.length }];
             else if (updated) rows = [];
             else rows = rows.filter(row => filters.every(filter => filter(row)));
-            return Promise.resolve({ data: single ? rows[0] ?? null : rows, error: null }).then(resolve, reject);
+            return Promise.resolve({ data: single ? rows[0] ?? null : rows, count: rows.length, error: null }).then(resolve, reject);
           } catch (error) { return Promise.reject(error).then(resolve,reject); }
         },
       };
@@ -92,6 +92,11 @@ function setup({ storedOrders = [], storedItems = [] } = {}) {
     '@/lib/rate-limit': { rateLimit: async () => ({ allowed: true }), getClientIp: () => 'test' },
     '@/lib/subscription-gate': { hasActiveSubscription: () => true },
     '@/lib/private-media-references': { durablePrivateMediaReference: value => value ?? '' },
+    '@/lib/parent-cutout-preflight': {
+      assertParentBackdropCutouts: async (_service, _context, entries) => { assert.ok(entries.every(entry => !entry.hasBackdrop), 'Old retouch fixtures must not silently bypass selected backgrounds'); },
+      isAllDigitalBackdropPackage: () => false,
+      ParentCutoutPreflightError: class extends Error {},
+    },
     '@/lib/payments': {
       isStripeBillingActive: () => true, getConnectedAccountId: () => 'acct_test',
       retrieveStripeAccount: async () => ({ details_submitted: true, charges_enabled: true, payouts_enabled: true }),
@@ -206,6 +211,7 @@ findHandlers(galleryAst);
 function cartHarness({ cart = [], draft = null } = {}) {
   const state = {
     ...policy, packages, cartItems: cart, currentDraftCartItem: draft,
+    backdropIssueForItem: item => { assert.ok(!item.backdrop, 'Retouch cart fixture only contains original-photo selections'); return ''; },
     checkoutItems: draft ? [...cart,draft] : cart,
     currentLane: { laneKey: 'child-a', schoolId, studentId: 'child-a', pin: '12345' },
     retouchPhotoOptions: [{ imageUrl: selection.imageUrl }],
@@ -265,7 +271,7 @@ test('retouching UI states that a print is required and checkout rejects stale s
   assert.match(gallerySource, /Print purchase required\./);
   assert.match(gallerySource, /It does not include a printed photo or a digital download\./);
   assert.match(gallerySource, /if \(retouchCheckoutIssue\)\s*\{\s*setOrderError\(retouchCheckoutIssue\);\s*return;/);
-  assert.match(gallerySource, /disabled=\{[\s\S]*?\(!!digitalFavoritesPackIssue \|\| !!retouchCheckoutIssue\)/);
+  assert.match(gallerySource, /disabled=\{[\s\S]*?\(!!digitalFavoritesPackIssue \|\| !!retouchCheckoutIssue \|\| !!checkoutBackdropIssue\)/);
 });
 
 test('ordinary print-only and digital-only checkout remain available', async () => {

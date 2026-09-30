@@ -68,6 +68,7 @@ import OrdersHistoryPanel from "@/components/parents/orders-history-panel";
 import { RetouchPhotoFields, type RetouchPhotoOption } from "@/components/parents/retouch-photo-fields";
 import { isRetouchPackage, isRetouchPrintPurchase, retouchPrintPurchaseIssue, RETOUCH_PRINT_REQUIRED, retouchPhotoLimit, retouchSelectionIssue, retouchSlots, type RetouchSelection } from "@/lib/retouching";
 import { calendarDateInputValue, hasCalendarBoundaryPassed } from "@/lib/calendar-dates";
+import { canOfferParentBackdrops, parentBackdropSelectionIssue, usableParentCutouts, PARENT_BACKDROP_UNAVAILABLE, type ParentBackdropPortrait } from "@/lib/parent-backdrop-access";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 type StudentRow = {
@@ -636,9 +637,6 @@ function defaultGalleryDownloadAccess(
 }
 
 // ── Constants ──────────────────────────────────────────────────────────────
-const SUPABASE_URL = "https://bwqhzczxoevouiondjak.supabase.co";
-const NOBG_BUCKET = "nobg-photos";
-
 const BACKDROP_CATEGORIES = [
   { key: "all", label: "All" },
   { key: "solid", label: "Solids" },
@@ -1155,29 +1153,6 @@ function printFinishLabel(name: string): string {
     .trim();
 }
 
-function folderFromPhotoUrl(photoUrl: string): string | null {
-  try {
-    const storagePath = extractStoragePathFromSupabaseUrl(photoUrl);
-    return folderFromStoragePath(storagePath);
-  } catch {
-    return null;
-  }
-}
-
-function encodeStoragePath(path: string): string {
-  return normalizeStorageFolder(path)
-    .split("/")
-    .map((part) => encodeURIComponent(part))
-    .join("/");
-}
-
-function folderFromStoragePath(storagePath: string | null | undefined): string | null {
-  const normalized = normalizeStorageFolder(storagePath ?? "");
-  const parts = normalized.split("/").filter(Boolean);
-  if (parts.length < 2) return null;
-  return parts.slice(0, parts.length - 1).join("/");
-}
-
 function photoBaseNameFromFileName(name: string | null | undefined): string {
   let base = clean(name).split(/[?#]/)[0].split("/").pop() ?? "";
   for (let index = 0; index < 3; index += 1) {
@@ -1185,14 +1160,6 @@ function photoBaseNameFromFileName(name: string | null | undefined): string {
     base = base.replace(/_(preview|thumbnail|cutout|nobg)$/i, "");
   }
   return base;
-}
-
-function photoBaseNameFromImage(image: GalleryImage): string {
-  return (
-    photoBaseNameFromFileName(image.storagePath) ||
-    photoBaseNameFromFileName(image.filename) ||
-    photoBaseNameFromFileName(image.url)
-  );
 }
 
 function photoDedupeKey(storagePath: string | null | undefined, url: string): string {
@@ -1205,23 +1172,6 @@ function photoDedupeKey(storagePath: string | null | undefined, url: string): st
   return `photo:${[...folderParts, fileBase].join("/").toLowerCase()}`;
 }
 
-function nobgPathsForImage(image: GalleryImage): string[] {
-  const storagePath = image.storagePath ?? extractStoragePathFromSupabaseUrl(image.url);
-  const normalizedStoragePath = normalizeStorageFolder(storagePath ?? "");
-  const folder = folderFromStoragePath(storagePath);
-  const baseName = photoBaseNameFromImage(image);
-  if (!folder || !baseName) return [];
-
-  return uniq([
-    normalizedStoragePath ? `${normalizedStoragePath}.png` : null,
-    normalizedStoragePath ? `${normalizedStoragePath}_cutout.png` : null,
-    normalizedStoragePath ? `${normalizedStoragePath}_nobg.png` : null,
-    `${folder}/${baseName}_cutout.png`,
-    `${folder}/${baseName}_nobg.png`,
-    `${folder}/${baseName}.png`,
-  ]);
-}
-
 function imageUrlExists(url: string): Promise<boolean> {
   return new Promise((resolve) => {
     const img = new Image();
@@ -1232,7 +1182,7 @@ function imageUrlExists(url: string): Promise<boolean> {
       resolve(exists);
     };
 
-    img.onload = () => done(true);
+    img.onload = () => done(img.naturalWidth > 0 && img.naturalHeight > 0);
     img.onerror = () => done(false);
     const timeout = window.setTimeout(() => done(false), 8000);
     img.src = url;
@@ -1886,22 +1836,6 @@ function normalizeStorageFolder(path: string): string {
     .map((part) => part.trim())
     .filter(Boolean)
     .join("/");
-}
-
-function uniqueFolders(values: Array<string | null | undefined>): string[] {
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const value of values) {
-    const folder = normalizeStorageFolder(value ?? "");
-    if (!folder || seen.has(folder)) continue;
-    seen.add(folder);
-    out.push(folder);
-  }
-  return out;
-}
-
-function isImageFileName(name: string): boolean {
-  return /\.(png|jpe?g|webp|gif)$/i.test(name);
 }
 
 function getCategory(pkg: PackageRow): string {
@@ -2863,10 +2797,6 @@ function renderPremiumMockup(
 // Wall / Desk / Close-up scene switcher removed (clients found it confusing).
 
 // ── Nobg helpers ──────────────────────────────────────────────────────────
-function nobgPublicUrl(path: string): string {
-  return `${SUPABASE_URL}/storage/v1/object/public/${NOBG_BUCKET}/${encodeStoragePath(path)}`;
-}
-
 /** Client-side canvas composite: backdrop image + nobg (transparent foreground) */
 /** Repeating watermark overlay — prevents screenshots from being usable */
 function WatermarkOverlay({
@@ -4743,25 +4673,9 @@ export default function ParentGalleryPage() {
           return;
         }
 
-        // ✅ PERF: Check sessionStorage for a prefetched gallery context written
-        // by LoginForm after school-access succeeded. If the cache is fresh
-        // (< 5 minutes) skip the round-trip to /api/portal/gallery-context.
+        // Refresh proof on every gallery visit. A pre-upgrade session cache is
+        // not evidence that a legacy cutout has paid access under this release.
         let contextPayload: GalleryContextPayload | null = null;
-        const cacheKey = `gallery_ctx:${pin}:${schoolId}`;
-        try {
-          const cached = sessionStorage.getItem(cacheKey);
-          if (cached) {
-            const parsed = JSON.parse(cached) as GalleryContextPayload & { ts?: number };
-            const ageMs = Date.now() - (parsed.ts ?? 0);
-            if (ageMs < 5 * 60 * 1000) {
-              contextPayload = parsed;
-              sessionStorage.removeItem(cacheKey); // consume once — avoid stale reads
-            }
-          }
-        } catch {
-          // sessionStorage unavailable (e.g. private browsing strict mode) — fall through
-        }
-
         if (!contextPayload) {
           const contextResponse = await fetch("/api/portal/gallery-context", {
             method: "POST",
@@ -4783,7 +4697,6 @@ export default function ParentGalleryPage() {
         }
 
         const currentSchool = contextPayload.currentSchool ?? null;
-        const schoolRowsForMatch = contextPayload.schoolRowsForMatch ?? [];
         const studentCandidates = contextPayload.studentCandidates ?? [];
         const primaryStudent = contextPayload.primaryStudent ?? null;
         const activeSchool = contextPayload.activeSchool ?? null;
@@ -4798,21 +4711,6 @@ export default function ParentGalleryPage() {
         const combinedImages: GalleryImage[] = [];
         const seenUrls = new Set<string>();
         const seenPhotoKeys = new Set<string>();
-
-        const candidateFolders = uniqueFolders([
-          ...studentCandidates.map((s) => folderFromPhotoUrl(s.photo_url ?? "")),
-          ...studentCandidates.map((s) => {
-            const school =
-              schoolRowsForMatch.find((row) => row.id === s.school_id) ??
-              (activeSchool?.id === s.school_id ? activeSchool : null);
-            return school?.local_school_id && s.class_name && s.folder_name
-              ? `${school.local_school_id}/${s.class_name}/${s.folder_name}`
-              : null;
-          }),
-          activeSchool?.local_school_id && primaryStudent.class_name && primaryStudent.folder_name
-            ? `${activeSchool.local_school_id}/${primaryStudent.class_name}/${primaryStudent.folder_name}`
-            : null,
-        ]);
 
         for (const row of schoolMediaRows) {
           const downloadUrl = clean(row.download_url) || clean(row.preview_url) || clean(row.thumbnail_url);
@@ -4998,106 +4896,18 @@ export default function ParentGalleryPage() {
 
         setLoading(false);
 
-        const prefetchedNobgUrls = contextPayload.nobgUrls ?? {};
-        if (Object.keys(prefetchedNobgUrls).length > 0) {
-          setNobgUrls(prefetchedNobgUrls);
-        }
-
-        if (!resolvedPhotographerId || !combinedImages.length) {
-          setNobgStatus("ready");
-          return;
-        }
-
         setNobgStatus("loading");
-
-        void (async () => {
-          const nobgUrlMap: Record<string, string> = { ...prefetchedNobgUrls };
-          const photoImages = combinedImages.filter((image) => image.source !== "composite");
-          const priorityImageId = photoImages[0]?.id ?? null;
-          let priorityResolved = false;
-
-          const markNobgReady = (image: GalleryImage, resolvedUrl: string) => {
-            if (nobgUrlMap[image.id]) return;
-            nobgUrlMap[image.id] = resolvedUrl;
-            if (!priorityResolved && priorityImageId && image.id === priorityImageId && mounted) {
-              priorityResolved = true;
-              setNobgUrls({ ...prefetchedNobgUrls, [image.id]: resolvedUrl });
-              setNobgStatus("ready");
-            }
-          };
-
-          const nobgListings = candidateFolders.length
-            ? await Promise.all(
-                candidateFolders.map(async (folder) => {
-                  try {
-                    const { data: nobgFiles, error: nobgErr } = await supabase.storage
-                      .from(NOBG_BUCKET)
-                      .list(folder, { limit: 200, sortBy: { column: "name", order: "asc" } });
-
-                    if (nobgErr) {
-                      console.warn(`[Gallery] nobg bucket list error for ${folder}:`, nobgErr.message);
-                      return { folder, files: [] as { name?: string | null }[] };
-                    }
-
-                    return { folder, files: nobgFiles ?? [] };
-                  } catch (nobgCatchErr) {
-                    console.warn(`[Gallery] nobg bucket error for folder ${folder}:`, nobgCatchErr);
-                    return { folder, files: [] as { name?: string | null }[] };
-                  }
-                })
-              )
-            : [];
-
-          const expectedPathToImage = new Map<string, GalleryImage>();
-          for (const image of photoImages) {
-            for (const path of nobgPathsForImage(image)) {
-              expectedPathToImage.set(normalizeStorageFolder(path).toLowerCase(), image);
-            }
-          }
-
-          for (const { folder, files } of nobgListings) {
-            for (const f of files) {
-              if (!f.name || !isImageFileName(f.name)) continue;
-              const nobgPath = normalizeStorageFolder(`${folder}/${f.name}`);
-              const exactMatch = expectedPathToImage.get(nobgPath.toLowerCase());
-              if (exactMatch) {
-                markNobgReady(exactMatch, nobgPublicUrl(nobgPath));
-                continue;
-              }
-
-              const nobgBaseName = photoBaseNameFromFileName(f.name).toLowerCase();
-              for (const origImg of photoImages) {
-                if (nobgUrlMap[origImg.id]) continue;
-                const origName = photoBaseNameFromImage(origImg).toLowerCase();
-                if (
-                  origName &&
-                  nobgBaseName &&
-                  origName === nobgBaseName
-                ) {
-                  markNobgReady(origImg, nobgPublicUrl(nobgPath));
-                  break;
-                }
-              }
-            }
-          }
-
-          const unresolvedImages = photoImages.filter((image) => !nobgUrlMap[image.id]);
-          await Promise.all(
-            unresolvedImages.map(async (image) => {
-              for (const path of nobgPathsForImage(image)) {
-                const candidateUrl = nobgPublicUrl(path);
-                if (await imageUrlExists(candidateUrl)) {
-                  markNobgReady(image, candidateUrl);
-                  return;
-                }
-              }
-            })
-          );
-
+        // Only the server-authorized map can enable backgrounds. Public bucket
+        // filenames and old client metadata are not payment evidence.
+        void usableParentCutouts(
+          contextPayload.nobgUrls ?? {},
+          combinedImages.filter((image) => image.source !== "composite").map((image) => image.id),
+          imageUrlExists,
+        ).then((usable) => {
           if (!mounted) return;
-          setNobgUrls(nobgUrlMap);
+          setNobgUrls(usable);
           setNobgStatus("ready");
-        })();
+        });
       } catch (err) {
         if (!mounted) return;
         setError(err instanceof Error ? err.message : "Failed to load gallery.");
@@ -6762,8 +6572,13 @@ export default function ParentGalleryPage() {
   }
 
   function openBackdropPickerForImage(image: GalleryImage) {
+    if (!canOfferParentBackdrops({ schoolMode: isSchoolMode,
+      composite: isCompositeGalleryImage(image), catalogCount: backdrops.length,
+      cutoutUrl: nobgUrls[image.id] })) return;
     focusImageForActions(image);
-    openBackdropPicker();
+    // Focus updates React state asynchronously; authorize the clicked photo,
+    // rather than reading the previously selected photo's readiness.
+    showBackdropPickerForReadyPhoto();
   }
 
   function openEventPhotoGrid(collectionId: string | null) {
@@ -7864,8 +7679,23 @@ export default function ParentGalleryPage() {
   );
 
   // ── Backdrop helpers (school mode only) ─────────────────────────────────
-  const hasBackdrops = isSchoolMode && !isCompositeSelection && backdrops.length > 0;
   const currentNobgUrl = selectedImage ? (nobgUrls[selectedImage.id] ?? null) : null;
+  const hasBackdrops = canOfferParentBackdrops({
+    schoolMode: isSchoolMode, composite: isCompositeSelection,
+    catalogCount: backdrops.length, cutoutUrl: currentNobgUrl,
+  });
+  const backdropPortraits = useMemo<ParentBackdropPortrait[]>(() => images
+    .filter((image) => image.source !== "composite")
+    .map((image) => ({ id: image.id, references: [image.url, image.previewUrl, image.downloadUrl, image.thumbnailUrl, image.storagePath] })), [images]);
+  useEffect(() => {
+    if (hasBackdrops) return;
+    const timer = window.setTimeout(() => {
+      setBackdropPickerOpen(false);
+      setShowPremiumModal(false);
+      setPremiumTarget(null);
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [hasBackdrops]);
   // Keep the portrait as a separate image in every store mockup. Exporting a
   // flattened canvas can lose a signed-storage cutout or fail CORS checks.
   const productBackdrop: ProductBackdrop | null =
@@ -7967,6 +7797,20 @@ export default function ParentGalleryPage() {
     () => (currentDraftCartItem ? [...cartItems, currentDraftCartItem] : cartItems),
     [cartItems, currentDraftCartItem],
   );
+  function backdropIssueForItem(item: CartLineItem, portraits = backdropPortraits, cutoutUrls = nobgUrls, configuredPackages = packages) {
+    const configured = configuredPackages.find((pkg) => pkg.id === item.packageId);
+    if (configured && isRetouchPackage(configured)) return "";
+    return parentBackdropSelectionIssue({
+      hasBackdrop: !!item.backdrop, composite: item.isCompositeOrder,
+      category: item.category, selectedImageUrl: item.selectedImageUrl,
+      slots: item.slots, digitalSelections: item.digitalSelections,
+      allDigitals: item.category === "digital" && isAllDigitalsPackage(configured ?? { name: item.packageName } as PackageRow),
+      portraits, cutoutUrls,
+    });
+  }
+  const checkoutBackdropIssue = checkoutItems
+    .filter((item) => !item.laneKey || item.laneKey === currentLane?.laneKey)
+    .map((item) => backdropIssueForItem(item)).find(Boolean) ?? "";
   function retouchPolicyEntry(item: CartLineItem) {
     const configured = packages.find((pkg) => pkg.id === item.packageId);
     return {
@@ -8060,6 +7904,8 @@ export default function ParentGalleryPage() {
 
   function addCurrentSelectionToCart() {
     if (!currentDraftCartItem) return;
+    const backdropIssue = backdropIssueForItem(currentDraftCartItem);
+    if (backdropIssue) { setOrderError(backdropIssue); return; }
     if (isRetouchPackage(retouchPolicyEntry(currentDraftCartItem).pkg)) {
       setOrderError(RETOUCH_PRINT_REQUIRED);
       showGalleryActionNotice(RETOUCH_PRINT_REQUIRED);
@@ -8160,6 +8006,10 @@ export default function ParentGalleryPage() {
 
   // Each retouching service carries the exact poses and customer instructions.
   function addRetouchAddonToCart(pkg: PackageRow, selections: RetouchSelection[]) {
+    if (currentDraftCartItem) {
+      const backdropIssue = backdropIssueForItem(currentDraftCartItem);
+      if (backdropIssue) { setOrderError(backdropIssue); return; }
+    }
     const purchaseIssue = retouchPrintPurchaseIssue([
       ...checkoutItems.map(retouchPolicyEntry),
       { pkg, galleryKey: currentLane?.laneKey || "", quantity: 1 },
@@ -8317,6 +8167,7 @@ export default function ParentGalleryPage() {
   }, [backdropPickerOpen, filteredBackdrops]);
 
   function handleBackdropClick(backdrop: BackdropRow) {
+    if (!hasBackdrops) return;
     if (backdrop.tier === "premium") {
       setPremiumTarget(backdrop);
       setShowPremiumModal(true);
@@ -8337,7 +8188,7 @@ export default function ParentGalleryPage() {
   }
 
   function handleConfirmBackdrop() {
-    if (!selectedBackdrop) return;
+    if (!hasBackdrops || !selectedBackdrop) return;
     setConfirmedBackdrop(selectedBackdrop);
     setConfirmedBlurBackground(selectedBlurBackground);
     setConfirmedBlurAmount(selectedBlurAmount);
@@ -8382,6 +8233,7 @@ export default function ParentGalleryPage() {
   }
 
   function handleUnlockPremium() {
+    if (!hasBackdrops) return;
     if (premiumTarget) {
       setSelectedBackdrop(premiumTarget);
       setConfirmedBackdrop(premiumTarget);
@@ -8393,6 +8245,11 @@ export default function ParentGalleryPage() {
   }
 
   function openBackdropPicker() {
+    if (!hasBackdrops) return;
+    showBackdropPickerForReadyPhoto();
+  }
+
+  function showBackdropPickerForReadyPhoto() {
     if (drawerOpen) setDrawerOpen(false);
     setBackdropPickerOpen(true);
     if (confirmedBackdrop) {
@@ -8409,6 +8266,43 @@ export default function ParentGalleryPage() {
   }
 
   const checkoutSubmitBusy = useRef(false);
+  async function verifyBackdropCheckout() {
+    const freshContexts = new Map<string, {
+      context: GalleryContextPayload; portraits: ParentBackdropPortrait[]; cutouts: Record<string, string>;
+    }>();
+    for (const item of checkoutItems) {
+      const configured = packages.find((pkg) => pkg.id === item.packageId);
+      if (!item.backdrop || (configured && isRetouchPackage(configured))) continue;
+      const lane = item.laneKey
+        ? combineLanes.find((candidate) => candidate.laneKey === item.laneKey) ??
+          (currentLane?.laneKey === item.laneKey ? currentLane : null)
+        : currentLane;
+      if (!isSchoolMode || !lane) return PARENT_BACKDROP_UNAVAILABLE;
+      let fresh = freshContexts.get(lane.laneKey);
+      if (!fresh) {
+        const response = await fetch("/api/portal/gallery-context", {
+          method: "POST", headers: { "content-type": "application/json" }, cache: "no-store",
+          body: JSON.stringify({ pin: lane.pin, schoolId: lane.schoolId, email: lane.email || parentEmail.trim() }),
+        });
+        const context = await response.json() as GalleryContextPayload;
+        const studentMatches = context.primaryStudent?.id === lane.studentId ||
+          context.studentCandidates?.some((candidate) => candidate.id === lane.studentId);
+        if (!response.ok || context.ok === false || context.photographerId !== photographerId ||
+            context.activeSchool?.id !== lane.schoolId || !studentMatches) return PARENT_BACKDROP_UNAVAILABLE;
+        const portraits = (context.media ?? []).map((photo) => ({ id: photo.id,
+          references: [photo.storage_path, photo.preview_url, photo.thumbnail_url, photo.download_url] }));
+        const cutouts = await usableParentCutouts(context.nobgUrls ?? {}, portraits.map((photo) => photo.id), imageUrlExists);
+        fresh = { context, portraits, cutouts };
+        freshContexts.set(lane.laneKey, fresh);
+      }
+      const freshPackage = fresh.context.packages?.find((pkg) => pkg.id === item.packageId);
+      if (freshPackage && isRetouchPackage(freshPackage)) continue;
+      if (!fresh.context.backdrops?.some((backdrop) => backdrop.id === item.backdrop?.id)) return PARENT_BACKDROP_UNAVAILABLE;
+      const issue = backdropIssueForItem(item, fresh.portraits, fresh.cutouts, fresh.context.packages ?? []);
+      if (issue) return issue;
+    }
+    return "";
+  }
   async function handlePlaceOrder(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     if (checkoutSubmitBusy.current) return;
@@ -8428,6 +8322,10 @@ export default function ParentGalleryPage() {
     if (isSchoolMode && !student) return;
     if (checkoutItems.length === 0) {
       setOrderError("Add at least one product before checkout.");
+      return;
+    }
+    if (checkoutBackdropIssue) {
+      setOrderError(checkoutBackdropIssue);
       return;
     }
     if (retouchCheckoutIssue) {
@@ -8491,6 +8389,18 @@ export default function ParentGalleryPage() {
 
     setPlacing(true);
     setOrderError("");
+    try {
+      const backdropIssue = await verifyBackdropCheckout();
+      if (backdropIssue) {
+        setOrderError(backdropIssue);
+        setPlacing(false);
+        return;
+      }
+    } catch {
+      setOrderError("Background availability could not be checked. Your basket was kept. Please retry before paying.");
+      setPlacing(false);
+      return;
+    }
 
     const resolvedProjectId = !isSchoolMode ? project?.id || projectId || null : null;
     const totalCents = checkoutTaxableCents;
@@ -10831,7 +10741,9 @@ export default function ParentGalleryPage() {
                   {favoriteImages.map((img, index) => {
                     const favoriteCardUrl =
                       buildGalleryImageCandidates(img, "wall")[0] || img.downloadUrl || img.url;
-                    const canChangeBackdrop = isSchoolMode && hasBackdrops;
+                    const canChangeBackdrop = canOfferParentBackdrops({ schoolMode: isSchoolMode,
+                      composite: isCompositeGalleryImage(img), catalogCount: backdrops.length,
+                      cutoutUrl: nobgUrls[img.id] });
                     return (
                       <div
                         key={img.id}
@@ -11796,6 +11708,12 @@ export default function ParentGalleryPage() {
                       }}
                     >
                       {favoriteMessage}
+                    </div>
+                  ) : null}
+                  {confirmedBackdrop && !hasBackdrops ? (
+                    <div role="status" style={{ color: "#f59e0b", fontSize: 12, textAlign: "center", lineHeight: 1.5 }}>
+                      This photo isn&apos;t ready for your selected background. Choose another photo, or ask your photographer for help.
+                      <button type="button" onClick={handleClearBackdrop} style={{ display: "block", margin: "8px auto 0", cursor: "pointer", background: "none", color: "inherit", border: "1px solid currentColor", borderRadius: 6, padding: "5px 10px" }}>Use the original photo instead</button>
                     </div>
                   ) : null}
                   <div
@@ -13889,7 +13807,7 @@ export default function ParentGalleryPage() {
                       </div>
                     ) : null}
 
-                    {(digitalFavoritesPackIssue || orderError) && (
+                    {(digitalFavoritesPackIssue || checkoutBackdropIssue || orderError) && (
                       <div
                         style={{
                           background: "#1e0a0a",
@@ -13900,7 +13818,7 @@ export default function ParentGalleryPage() {
                           fontSize: 12,
                         }}
                       >
-                        {orderError || digitalFavoritesPackIssue}
+                        {orderError || checkoutBackdropIssue || digitalFavoritesPackIssue}
                       </div>
                     )}
 
@@ -14023,7 +13941,7 @@ export default function ParentGalleryPage() {
                         placing ||
                         orderingDisabled ||
                         checkoutItems.length === 0 ||
-                        (!!digitalFavoritesPackIssue || !!retouchCheckoutIssue)
+                        (!!digitalFavoritesPackIssue || !!retouchCheckoutIssue || !!checkoutBackdropIssue)
                       }
                       style={{
                         width: "100%",
@@ -14031,14 +13949,14 @@ export default function ParentGalleryPage() {
                           placing ||
                           orderingDisabled ||
                           checkoutItems.length === 0 ||
-                          (!!digitalFavoritesPackIssue || !!retouchCheckoutIssue)
+                          (!!digitalFavoritesPackIssue || !!retouchCheckoutIssue || !!checkoutBackdropIssue)
                             ? "#222"
                             : "#fff",
                         color:
                           placing ||
                           orderingDisabled ||
                           checkoutItems.length === 0 ||
-                          (!!digitalFavoritesPackIssue || !!retouchCheckoutIssue)
+                          (!!digitalFavoritesPackIssue || !!retouchCheckoutIssue || !!checkoutBackdropIssue)
                             ? "#555"
                             : "#000",
                         border: "none",
@@ -14050,7 +13968,7 @@ export default function ParentGalleryPage() {
                           placing ||
                           orderingDisabled ||
                           checkoutItems.length === 0 ||
-                          (!!digitalFavoritesPackIssue || !!retouchCheckoutIssue)
+                          (!!digitalFavoritesPackIssue || !!retouchCheckoutIssue || !!checkoutBackdropIssue)
                             ? "not-allowed"
                             : "pointer",
                       }}

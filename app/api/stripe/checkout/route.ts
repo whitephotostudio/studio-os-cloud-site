@@ -1,6 +1,8 @@
 import { lockOrderPayment } from "@/lib/order-payment-lock";
 import { NextRequest, NextResponse } from "next/server";
 import { createDashboardServiceClient } from "@/lib/dashboard-auth";
+import { assertStoredOrderBackdropCutouts } from "@/lib/stored-order-backdrop-preflight";
+import { ParentCutoutPreflightError } from "@/lib/parent-cutout-preflight";
 import { retouchPrintPurchaseIssue, type RetouchPrintPackage } from "@/lib/retouching";
 import {
   createDirectOrderCheckoutSession,
@@ -31,6 +33,8 @@ type OrderRow = {
   package_id: string | null;
   package_name: string | null;
   cart_snapshot?: unknown;
+  special_notes?: string | null;
+  notes?: string | null;
   subtotal_cents: number | null;
   tax_cents: number | null;
   total_cents: number | null;
@@ -39,6 +43,15 @@ type OrderRow = {
   status: string | null;
   payment_status: string | null;
   stripe_checkout_session_id: string | null;
+};
+
+const ORDER_SELECT = "id,order_group_id,school_id,project_id,student_id,photographer_id,parent_email,customer_email,package_id,package_name,cart_snapshot,special_notes,notes,subtotal_cents,tax_cents,total_cents,total_amount,currency,status,payment_status,stripe_checkout_session_id";
+type CheckoutItemRow = {
+  line_total_cents: number | null;
+  unit_price_cents: number | null;
+  quantity: number | null;
+  product_name: string | null;
+  sku?: string | null;
 };
 
 type SchoolRow = {
@@ -98,26 +111,23 @@ export async function POST(req: NextRequest) {
     }
 
     const sb = service();
-    const { data: order, error: orderError } = await sb
+    const { data: initialOrder, error: orderError } = await sb
       .from("orders")
-      .select(
-        "id,order_group_id,school_id,project_id,student_id,photographer_id,parent_email,customer_email,package_id,package_name,cart_snapshot,subtotal_cents,tax_cents,total_cents,total_amount,currency,status,payment_status,stripe_checkout_session_id",
-      )
+      .select(ORDER_SELECT)
       .eq("id", body.orderId)
       .maybeSingle<OrderRow>();
 
     if (orderError) throw orderError;
-    if (!order) {
+    if (!initialOrder) {
       return NextResponse.json({ ok: false, message: "Order draft not found." }, { status: 404 });
     }
+    let order = initialOrder;
 
     let checkoutOrders: OrderRow[] = [order];
     if (order.order_group_id) {
-      const { data: groupOrders, error: groupError } = await sb
+      const { data: groupOrders, error: groupError, count: groupCount } = await sb
         .from("orders")
-        .select(
-          "id,order_group_id,school_id,project_id,student_id,photographer_id,parent_email,customer_email,package_id,package_name,cart_snapshot,subtotal_cents,tax_cents,total_cents,total_amount,currency,status,payment_status,stripe_checkout_session_id",
-        )
+        .select(ORDER_SELECT, { count: "exact" })
         .eq("order_group_id", order.order_group_id)
         .order("id", { ascending: true });
 
@@ -125,6 +135,7 @@ export async function POST(req: NextRequest) {
       checkoutOrders = (groupOrders ?? []) as OrderRow[];
       if (
         checkoutOrders.length === 0 ||
+        groupCount == null || checkoutOrders.length !== groupCount ||
         !checkoutOrders.some((member) => member.id === order.id)
       ) {
         return NextResponse.json(
@@ -135,10 +146,23 @@ export async function POST(req: NextRequest) {
     }
 
     release = await lockOrderPayment(sb, order.order_group_id || order.id);
-    // Re-read under the same lock cancellation uses; the initial query may be stale.
-    const { data: currentOrders, error: currentError } = await sb.from("orders").select("id,status,payment_status,stripe_checkout_session_id").in("id", checkoutOrders.map((o) => o.id));
+    // Re-read full scope, selections, totals and every group member under the
+    // same payment lock cancellation uses. This does not freeze R2 assets.
+    const currentQuery = sb.from("orders").select(ORDER_SELECT, { count: "exact" });
+    const { data: currentOrders, error: currentError, count: currentCount } = order.order_group_id
+      ? await currentQuery.eq("order_group_id", order.order_group_id).order("id", { ascending: true })
+      : await currentQuery.in("id", [order.id]);
     if (currentError) throw currentError;
-    checkoutOrders = checkoutOrders.map((member) => ({ ...member, ...currentOrders?.find((row) => row.id === member.id) }));
+    const refreshed = (currentOrders ?? []) as OrderRow[];
+    const refreshedOrder = refreshed.find(member => member.id === order.id);
+    if (!refreshedOrder || (order.order_group_id && (currentCount == null || refreshed.length !== currentCount)) ||
+        refreshed.some(member => member.order_group_id !== order.order_group_id) ||
+        new Set(refreshed.map(member => member.id)).size !== refreshed.length ||
+        checkoutOrders.some(member => !refreshed.some(row => row.id === member.id))) {
+      return NextResponse.json({ ok: false, message: "This order changed. Please return to your gallery before paying." }, { status: 409 });
+    }
+    checkoutOrders = refreshed;
+    order = refreshedOrder;
     if (checkoutOrders.some((member) => ["cancelled", "canceled", "cancel_pending", "refunded", "refund_pending"].includes(member.status || "") || ["refunded", "partially_refunded"].includes(member.payment_status || ""))) {
       return NextResponse.json({ ok: false, message: "This order is closed and cannot be charged again." }, { status: 409 });
     }
@@ -156,6 +180,18 @@ export async function POST(req: NextRequest) {
         { status: 400 },
       );
     }
+
+    // Read each saved line once. This also detects legacy premium-background
+    // drafts whose exact selections were never saved. All members must pass
+    // before Connect/provider calls, session reuse or checkout state writes.
+    const itemsByOrder = new Map<string, CheckoutItemRow[]>();
+    for (const checkoutOrder of checkoutOrders) {
+      const { data: itemRows, error: itemError } = await sb.from("order_items")
+        .select("line_total_cents,unit_price_cents,quantity,product_name,sku").eq("order_id", checkoutOrder.id);
+      if (itemError) throw itemError;
+      itemsByOrder.set(checkoutOrder.id, (itemRows ?? []) as CheckoutItemRow[]);
+    }
+    await assertStoredOrderBackdropCutouts(sb, checkoutOrders, itemsByOrder, body.pin);
     // A caller normally submits create-combined's primaryOrderId, but make the
     // Stripe/idempotency anchor deterministic for every member of the group.
     // This prevents a second Checkout Session if a retry names a sibling row.
@@ -163,9 +199,11 @@ export async function POST(req: NextRequest) {
       ? checkoutOrders[0] ?? order
       : order;
 
-    const effectiveSchoolId = order.school_id || body.schoolId || null;
-    const effectiveProjectId = order.project_id || body.projectId || null;
-    const isEventOrder = (!effectiveSchoolId && !!effectiveProjectId) || body.mode === "event";
+    const hasSavedScope = !!(order.school_id || order.project_id);
+    const effectiveSchoolId = hasSavedScope ? order.school_id : body.schoolId || null;
+    const effectiveProjectId = hasSavedScope ? order.project_id : body.projectId || null;
+    const isEventOrder = order.school_id ? false : order.project_id ? true :
+      (!effectiveSchoolId && !!effectiveProjectId) || body.mode === "event";
 
     let school: SchoolRow | null = null;
     let project: ProjectRow | null = null;
@@ -326,11 +364,7 @@ export async function POST(req: NextRequest) {
         );
       }
 
-      const { data: itemRows, error: itemError } = await sb
-        .from("order_items")
-        .select("line_total_cents,unit_price_cents,quantity,product_name")
-        .eq("order_id", checkoutOrder.id);
-      if (itemError) throw itemError;
+      const itemRows = itemsByOrder.get(checkoutOrder.id) ?? [];
 
       if (!itemRows || itemRows.length === 0) {
         return NextResponse.json(
@@ -542,6 +576,9 @@ export async function POST(req: NextRequest) {
       planCode: photographer.subscription_plan_code,
     });
   } catch (error) {
+    if (error instanceof ParentCutoutPreflightError) {
+      return NextResponse.json({ ok: false, message: error.message }, { status: 409 });
+    }
     console.error("[stripe:checkout]", error);
     return NextResponse.json(
       { ok: false, message: "Failed to create Stripe checkout." },

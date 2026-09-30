@@ -12,7 +12,7 @@ import {
   r2PresignedGetUrl,
 } from "@/lib/r2-signed-urls";
 import { resendConfigured, resolveReplyTo, sendResendEmail } from "@/lib/resend";
-import { cartSnapshotToOrderItems } from "@/lib/order-display";
+import { cartSnapshotToOrderItems, type CartSnapshotEntryLike } from "@/lib/order-display";
 import { createZipStream, type ZipStreamEntry } from "@/lib/zip";
 import {
   backdropCompositeFileName,
@@ -51,6 +51,7 @@ type OrderItemRow = {
 type DeliveryOrderItemRow = OrderItemRow & {
   backdrop?: BackdropCompositeSelection | null;
   orientation?: "portrait" | "landscape";
+  snapshotPackageName?: string | null;
 };
 
 type PhotographerRow = {
@@ -180,7 +181,7 @@ function uniqueFiles(files: DigitalDeliveryFile[]) {
     const key = normalizeKey(file.key || file.composite?.originalUrlOrKey);
     if (!key || !isImageKey(key)) continue;
     const fingerprint = file.composite
-      ? `composite:${key}:${clean(file.composite.backdrop.id)}:${clean(file.composite.backdrop.image_url) || clean(file.composite.backdrop.imageUrl)}:${file.composite.orientation ?? "portrait"}`
+      ? `composite:${key}:${clean(file.composite.backdrop.id)}:${clean(file.composite.backdrop.image_url) || clean(file.composite.backdrop.imageUrl)}:${file.composite.orientation ?? "portrait"}:${JSON.stringify([!!file.composite.backdrop.blurred, file.composite.backdrop.blurred ? file.composite.backdrop.blurAmount ?? null : null])}`
       : `file:${key}`;
     if (seen.has(fingerprint)) continue;
     seen.add(fingerprint);
@@ -395,31 +396,37 @@ async function resolveDeliveryFiles(params: {
   project: ProjectRow | null;
 }) {
   const files: DigitalDeliveryFile[] = [];
-  const snapshotItems: DeliveryOrderItemRow[] = cartSnapshotToOrderItems(params.order.cart_snapshot).map((item) => ({
-    product_name: item.product_name,
-    quantity: item.quantity,
-    sku: item.sku,
-    backdrop: item.backdrop ?? null,
-    orientation: item.orientation ?? "portrait",
-  }));
+  const snapshotEntries = Array.isArray(params.order.cart_snapshot)
+    ? params.order.cart_snapshot as CartSnapshotEntryLike[] : [];
+  const snapshotItems: DeliveryOrderItemRow[] = snapshotEntries.flatMap((entry) =>
+    cartSnapshotToOrderItems([entry]).map((item) => ({
+      product_name: item.product_name,
+      quantity: item.quantity,
+      sku: item.sku,
+      backdrop: item.backdrop ?? null,
+      orientation: item.orientation ?? "portrait",
+      snapshotPackageName: entry?.packageName,
+    })),
+  );
   const sourceItems: DeliveryOrderItemRow[] = snapshotItems.length
     ? snapshotItems
     : params.items;
-  const snapshotBackdrop =
-    snapshotItems.find((item) => item.backdrop)?.backdrop ?? null;
-  const allDigitalBackdrop = await resolveBackdropForDelivery(
-    params.service,
-    params.order.photographer_id,
-    snapshotBackdrop,
-  );
+  // An all-gallery package can have no selected pose. Read its own saved
+  // choice, never a print or individual digital item's background.
+  const allDigitalEntries = snapshotEntries.filter((entry) =>
+    looksAllDigital(entry?.packageName, ...(Array.isArray(entry?.slots) ? entry.slots.map(slot => slot?.label) : [])));
+  const allDigitalVariants = await Promise.all((allDigitalEntries.length ? allDigitalEntries : [null]).map(async (entry) => ({
+    backdrop: await resolveBackdropForDelivery(params.service, params.order.photographer_id, entry?.backdrop ?? null),
+    orientation: entry?.orientation === "landscape" ? "landscape" as const : "portrait" as const,
+  })));
   const orderPackageLooksDigital = looksDigital(params.order.package_name);
   const digitalItems = sourceItems.filter((item) =>
     looksDigital(item.product_name) ||
-    (orderPackageLooksDigital && !!normalizeKey(item.sku)),
+    ((snapshotItems.length ? looksDigital(item.snapshotPackageName) : orderPackageLooksDigital) && !!normalizeKey(item.sku)),
   );
 
   const fallbackDigitalOrder = !digitalItems.length && orderPackageLooksDigital
-    ? [{ product_name: params.order.package_name, sku: null } as OrderItemRow]
+    ? [{ product_name: params.order.package_name, sku: null } as DeliveryOrderItemRow]
     : [];
   const deliveryItems = digitalItems.length ? digitalItems : fallbackDigitalOrder;
   const wantsAll =
@@ -427,6 +434,17 @@ async function resolveDeliveryFiles(params: {
     looksAllDigital(params.order.package_name);
 
   if (!deliveryItems.length) return [];
+
+  const addGalleryFile = (key: string, fileName: string) => {
+    for (const variant of allDigitalVariants) files.push({
+      key,
+      fileName: variant.backdrop ? backdropCompositeFileName(fileName, variant.backdrop) : fileName,
+      composite: variant.backdrop ? {
+        originalUrlOrKey: key, photographerId: params.order.photographer_id,
+        backdrop: variant.backdrop, orientation: variant.orientation,
+      } : undefined,
+    });
+  };
 
   if (wantsAll && params.order.school_id && params.student && params.school) {
     const rows = await loadFolderMediaRows(
@@ -442,45 +460,19 @@ async function resolveDeliveryFiles(params: {
     );
     for (const row of rows) {
       const key = row.storage_path;
-      files.push({
-        key,
-        fileName: allDigitalBackdrop
-          ? backdropCompositeFileName(row.filename || fileNameFromKey(key), allDigitalBackdrop)
-          : row.filename || fileNameFromKey(key),
-        composite: allDigitalBackdrop
-          ? {
-              originalUrlOrKey: key,
-              photographerId: params.order.photographer_id,
-              backdrop: allDigitalBackdrop,
-              orientation: "portrait",
-            }
-          : undefined,
-      });
+      addGalleryFile(key, row.filename || fileNameFromKey(key));
     }
   } else if (wantsAll && params.order.project_id) {
     const rows = await fetchProjectMediaRows(params.service, params.order.project_id);
     for (const row of rows) {
       const key = normalizeKey(row.storage_path || row.preview_url || row.thumbnail_url);
       if (!key) continue;
-      files.push({
-        key,
-        fileName: allDigitalBackdrop
-          ? backdropCompositeFileName(clean(row.filename) || fileNameFromKey(key), allDigitalBackdrop)
-          : clean(row.filename) || fileNameFromKey(key),
-        composite: allDigitalBackdrop
-          ? {
-              originalUrlOrKey: key,
-              photographerId: params.order.photographer_id,
-              backdrop: allDigitalBackdrop,
-              orientation: "portrait",
-            }
-          : undefined,
-      });
+      addGalleryFile(key, clean(row.filename) || fileNameFromKey(key));
     }
   }
 
   for (const item of deliveryItems) {
-    if (looksAllDigital(item.product_name, params.order.package_name)) continue;
+    if (looksAllDigital(item.product_name, item.snapshotPackageName ?? params.order.package_name)) continue;
     const key = normalizeKey(item.sku);
     if (!key) continue;
     const backdrop = await resolveBackdropForDelivery(

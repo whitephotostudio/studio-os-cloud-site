@@ -138,14 +138,19 @@ compatible new database and webhook code are already serving or safely paused.
 
 ## Validation and release requirements
 
-The latest release-preparation website suite passed 591 tests with no skips or failures.
-TypeScript and the production build passed. Changed-file lint has zero errors
-and six existing settings-page warnings. These are source/build checks; the
+The latest release-preparation website suite passed 666 tests with no skips or failures.
+TypeScript and the production build passed. Targeted lint of the new backend,
+helpers and delivery changes passed. The parent page retains its baseline ten
+errors and 43 warnings, with no increased rule counts; the previously reviewed
+settings page retains six warnings. These are source/build checks; the
 local build disables remote payment/provider diagnostic flags. The matching
 Mac source passed 912 Flutter tests with one platform skip and zero direct
 `lib` analysis diagnostics. The universal 0.1.14+18 archive was rebuilt from
-this source and passes strict deep Developer ID signature verification;
-it is not notarized, installed or publicly published. Fifty-five focused tests
+this source and is notarized and stapled. Strict/deep Developer ID signature,
+Gatekeeper, exact version/team, both architectures and the extracted ZIP pass.
+The exact ZIP was uploaded to private distribution storage with a full-byte
+SHA-256 readback; the public release row still points to 0.1.12+16. It is not
+installed or publicly published. Fifty-five focused tests
 passed after 37 authorized source/test files were copied back to the primary
 checkout with baseline SHA checks, preserving its 0.1.11+15 version and all
 unrelated work. The older archive/ZIP is retained as superseded.
@@ -153,13 +158,20 @@ unrelated work. The older archive/ZIP is retained as superseded.
 The [managed cutout change](paid-cutout-enforcement-2026-09-29.md) implements
 account-scoped paid photo access, server-verified revisions and private staging.
 Selected-backdrop delivery now stops for review when the paid result is unavailable;
-it cannot silently fall back to an original marked print-ready. Native Photoshop
-and actual platform credit checkout remain separately unverified. A separate
+it cannot silently fall back to an original marked print-ready. Actual platform
+credit checkout remains unverified. A separate
 private fixture-only Photoshop package now passes nine Flutter behavior tests
 and five isolation tests using generated JPEG/PNG bytes, copied service logic,
 an in-memory ledger and network-fallback refusal. It has no native Runner,
 production startup, persistent authentication or Keychain access; this does
-not establish actual Adobe execution or remote SQL/Stripe behavior.
+not establish actual Adobe execution or remote SQL/Stripe behavior. A later
+controlled Photoshop 2026 run on the generated portrait did produce an actual
+subject-shaped transparent PNG and an opaque JPG. Three actual-output tests
+passed alpha anchors, a rectangular-mask negative control, transparent/disguised
+custom-output rejection and the offline one-debit/idempotent paid path. Existing
+user actions were preserved and fixture documents closed. The accounting in
+that fixture is simulated; full application dispatch and external SQL/Stripe
+acceptance are still unverified.
 
 All five exact migrations were tested together against the live database schema in one
 rolled-back transaction. Both existing credit accounts retained their balances
@@ -171,11 +183,12 @@ change or customer payment was made by this dry run.
 The release now requires the matching desktop update plus five exact migrations
 (the original four and `20260930120000_paid_cutout_entitlements.sql`);
 old desktop builds write balances directly and will no longer process credits
-once secure permissions are applied. The signed universal 0.1.14+18 Mac candidate passed strict deep signature
-verification; it is not notarized or published. The rebuilt candidate and copied source have the current evidence above. Existing apps have
+once secure permissions are applied. The universal 0.1.14+18 Mac candidate is
+notarized, verified and privately uploaded, with no public release publication.
+The rebuilt candidate and copied source have the current evidence above. Existing apps have
 no update banner, and registrations contain only release/debug, so the six
-active release registrations cannot prove an upgrade. Notarize and publish the
-validated matching Mac build before exposing the new web flow and arrange
+active release registrations cannot prove an upgrade. Publish the validated
+matching Mac build before exposing the new web flow and arrange
 for active users to update. The maintenance-only bridge is clean commit
 `537a0412529116f261e1dde603311772b25d3f33` on
 `codex/credit-maintenance-bridge-20260929`, based exactly on restored main
@@ -242,8 +255,22 @@ and a Sign In sheet was opened for the owner. Sign-in has not been confirmed,
 and the Mac locked again before native Photoshop testing. No Apple ticket, final notarized ZIP, app
 publication or persistent production migration has been completed for this
 credit release. The current public release metadata was captured for rollback;
-guarded immutable upload/publication scripts passed eight focused tests and
-require the exact verified notarized artifact before they can run.
+The guarded immutable upload/publication scripts pass nine focused tests and
+require the exact verified notarized artifact and confirmed private bucket
+before upload. The actual upload and full readback passed; publication has not
+run. Final ZIP: 94,969,340 bytes, SHA-256
+`ba748982a45b15f3e155b0319cf9fb9249571c6025762bbaed0ed3bb94d553bc`.
+
+The parent compatibility review is an additional release gate. New proof tables
+begin empty and cannot automatically authorize existing cutouts. The candidate
+removes anonymous Supabase cutout discovery, gates the picker on actual usable
+server-authorized output, and checks saved and multi-pose selections again.
+Both parent order routes check retained selected backgrounds before the first
+order write or payment request. Original-background and explicit retouch-only
+products remain eligible. Existing active cutouts and promised background
+orders require exact ownership/byte review and approved preservation before
+strict enforcement; no legacy grants, reprocessing or bucket-privacy change
+has been applied. See [managed cutout access](managed-cutout-storage-2026-09-29.md).
 
 Add the private `PHOTOROOM_API_KEY` to Vercel production to enable Premium Cloud.
 The key must never be placed in a client bundle, source control or chat.
