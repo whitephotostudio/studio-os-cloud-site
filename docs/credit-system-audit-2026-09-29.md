@@ -187,10 +187,32 @@ The key must never be placed in a client bundle, source control or chat.
 Provider configuration is not proof of provider availability or successful
 paid processing. Validate a real sample in the candidate before promising it.
 
+The owner has now saved the Live key as a Secret restricted to Preview branch
+`codex/credit-system-audit-20260929`. Git Preview deployment
+`dpl_D5Bnmr86zFDEWjCH1Gcou2km3QrX`, source commit `13b3b05`, successfully verified
+Photoroom account authentication (HTTP 200) and processed one committed,
+generated marketing portrait using the same multipart request as the cloud
+gateway. The result decoded as a 1024 by 683 PNG, with alpha ranging from 0 to
+255 and visible foreground. The remote Next.js build also passed. This proves
+the provider connection and sample processing, not a photographer's complete
+paid workflow or visual quality across different portraits.
+
+`scripts/verify-photoroom-preview.mjs` is opt-in, build-only and refuses
+production, other branches and Sandbox credentials. It makes no database,
+Stripe, customer-wallet or R2 requests and never exposes credentials, provider
+response bodies or image URLs. Its one-time verification flags were removed
+after deployment capture, so subsequent pushes cannot repeat the provider
+sample accidentally. Credit checkout remains paused on this Preview branch via
+`STUDIO_CREDIT_MAINTENANCE=1`. All 474 website tests passed, including 13 provider
+diagnostic tests; the existing 18 payment-verifier tests also remain green.
+
 The Mac was locked during UI inspection. Signed-in purchase, desktop account
 refresh and visual workflow validation therefore remain unverified. Automated
-fixtures are not a real Stripe settlement or provider round trip. No real charge,
-refund, invoice, meter event or customer message was created for testing.
+fixtures are not a real Stripe settlement; the generated provider sample above
+does not verify credit reservation, R2 storage, retry recovery or paid output
+delivery. No real customer charge, refund, invoice, meter event or message was
+created for testing. Production remains on restored commit `011bf81`, and the
+Live key has not been added to its Production environment.
 
 Keep Git `main` synchronized with every promoted release while Vercel's Git
 production branch remains `main`; otherwise a later push can redeploy stale
