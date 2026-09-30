@@ -81,6 +81,11 @@ Details and Stripe references are in
 
 ## Validation and release requirements
 
+The complete website suite passed 406 tests. TypeScript and the production
+build passed. Focused lint has zero errors and six existing settings-page
+warnings. The matching desktop snapshot passed 799 tests with one skipped
+platform test, and Flutter analysis was clean.
+
 Four migrations were tested together against the live database schema in one
 rolled-back transaction. Both existing credit accounts retained their balances
 and purchase/use totals; authenticated writes were revoked and cloud RPCs were
@@ -98,7 +103,10 @@ historical orders or auto-refund forgeable legacy processing receipts.
 Use the repository's guarded `npm run deploy:production` from the clean audited
 commit, initially with `--skip-domain`. Its remote prebuild can verify actual
 production Stripe credentials and platform webhook subscriptions with
-`STUDIO_PAYMENT_RELEASE_VERIFY=1`, `STUDIO_CREDIT_WEBHOOK_VERIFY=1`,
+`STUDIO_PAYMENT_RELEASE_VERIFY=1`,
+`STUDIO_PAYMENT_EXPECTED_PROJECT_REF=bwqhzczxoevouiondjak`,
+`STUDIO_PAYMENT_EXPECTED_APP_URL=https://www.studiooscloud.com`,
+`STUDIO_CREDIT_WEBHOOK_VERIFY=1`,
 `STUDIO_CREDIT_RELEASE_VERIFY=0` before schema application. Do not set
 `STUDIO_PAYMENT_REFUND_WEBHOOK_ID` for read-only verification. After migrations,
 require `STUDIO_CREDIT_RELEASE_VERIFY=1` before promotion. The platform endpoint
