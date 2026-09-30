@@ -3,16 +3,22 @@
 The candidate includes `config/financial-sandbox.env.example`,
 `scripts/verify-financial-sandbox.mjs` and guard tests. These files prepare a
 separate environment; they do not create a remote project, credential, customer,
-payment, refund, database row or webhook. Production application/payment code
-and the production prebuild chain are unchanged.
+payment, refund, database row or webhook. This setup checklist does not deploy
+code or change production configuration.
 
 The separate Vercel project `studio-os-credit-sandbox`
-(`prj_Q8h5vYAhHAfW1ARiqu6ArOgpycFK`) now exists, with no Git link, environment
-or deployments reported by its creator. Its separate clean checkout is
+(`prj_Q8h5vYAhHAfW1ARiqu6ArOgpycFK`) exists in team
+`team_i1VhiUxCf3SZPOKdmecBsu3r`. Read-only Vercel CLI/API inspection confirmed
+no Git link, no environment variables and no deployments. The framework is
+unconfigured (the CLI displays `Other`), with Node.js `24.x`; confirm the Next.js
+framework settings before any later sandbox deployment. Its separate clean
+checkout is
 `/Users/harout/Downloads/Projects/studio-os-credit-financial-sandbox-20260930`,
-currently at commit `0b42c6b` with no environment files and linked only to that
-sandbox project. Update it to the final audited commit before deployment.
-Stripe test, separate Supabase, media and provider settings remain unconfigured.
+currently at commit `63bc222` on `codex/credit-system-audit-20260929`, with no
+environment files either at its root or under `.vercel`, and linked only to that
+sandbox project. These checks do not establish financial-test readiness.
+Stripe test, separate Supabase, media and provider settings remain unconfigured
+in this sandbox project; resources elsewhere were not inspected.
 The candidate checkout's `.env.local` uses production services; do not copy it
 into the sandbox or paste credentials into chat.
 
@@ -153,10 +159,15 @@ URLs, balances, IDs or provider error bodies.
 The verifier is off by default and is deliberately outside production prebuild.
 Run it explicitly before a sandbox test session. Keep
 `STUDIO_CREDIT_MAINTENANCE=1` until the separate environment passes isolation,
-schema, Auth and webhook setup. This flag pauses credit purchase/events; it does
-not lock subscription or connected-order routes. Disable maintenance only in
-that sandbox before the approved test checkout; production/candidate maintenance
-is unaffected.
+schema, Auth and webhook setup. This flag pauses all platform billing POST
+actions (including subscription changes and portal access), billing status
+refreshes, platform checkout/refund/invoice/subscription events, cloud credit
+processing and billing/recovery crons before database work. Authentication and
+webhook signature validation still run first. Genuine connected customer-order
+payments/refunds remain eligible. Paid-order platform fee reporting waits for
+maintenance to end; full customer refunds can still queue/reconcile fee waivers
+with retry on a billing failure. Disable maintenance only in that sandbox before
+the approved test checkout; production/candidate maintenance is unaffected.
 
 ## External acceptance still required
 
