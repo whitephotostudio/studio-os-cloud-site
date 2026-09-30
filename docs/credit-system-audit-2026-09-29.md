@@ -94,6 +94,15 @@ Details and Stripe references are in
 
 ## Live Stripe configuration gap
 
+The follow-up custom-action audit found another credit bypass in the desktop
+candidate: arbitrary Photoshop actions could return transparent PNGs without
+credits, and cutout import/use routes trusted matching files without paid
+entitlement. The owner chose to keep ordinary custom actions free with JPG-only
+results. Output restrictions and receipt-bound recovery fixes are prepared;
+they are not a complete no-bypass guarantee. Managed cutout imports require a
+shared, durable paid-photo entitlement check before such a claim or release.
+See [the custom-action policy and remaining work](custom-photoshop-actions-credit-policy-2026-09-29.md).
+
 A strict remote candidate check authenticated the real platform Stripe account
 `acct_1TBlT4PxlnWeytFA` but stopped the build because the platform subscription
 endpoint `we_1TIBPIPxlnWeytFAlrnRKuDI` is missing
@@ -114,6 +123,14 @@ The complete website suite passed 461 tests. TypeScript and the production
 build passed. Focused lint has zero errors and six existing settings-page
 warnings. The matching desktop snapshot passed 799 tests with one skipped
 platform test, and Flutter analysis was clean.
+
+After the custom-action follow-up, desktop source passed 824 full-suite tests
+with one platform skip and zero direct `lib` analysis diagnostics. The five
+changed/new files were copied into the release snapshot with a separate review
+patch. The old signed archive/ZIP is now explicitly marked for rebuild and
+must not be published as matching this updated source. Native Photoshop action
+execution and complete imported-cutout entitlement enforcement remain unverified
+or unfinished respectively.
 
 Four migrations were tested together against the live database schema in one
 rolled-back transaction. Both existing credit accounts retained their balances
