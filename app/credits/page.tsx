@@ -109,6 +109,9 @@ export default function CreditsPage() {
           </div>
           {status?.signedIn && <Link href="/dashboard/membership" className="rounded-xl border border-neutral-300 px-4 py-3 text-sm font-semibold">Membership &amp; billing</Link>}
         </div>
+        <p className="mt-6 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-900">
+          Before using background credits, <Link href="/studio-os/download" className="font-semibold underline underline-offset-4">install Studio OS for Mac 0.1.14 (18) or later</Link> and sign in with the same account. Older cutouts without a verified paid record remain saved for review.
+        </p>
         {notice && <p role="status" className="mt-6 rounded-xl border border-blue-200 bg-blue-50 p-4 text-blue-900">{notice}</p>}
         {error && <div role="alert" className="mt-6 rounded-xl border border-red-200 bg-red-50 p-4 text-red-900">{error} <button onClick={() => void refresh()} className="ml-2 underline">Try again</button></div>}
         {loading ? <p role="status" className="mt-8 text-neutral-600">Loading credits…</p> : status?.signedIn ? (

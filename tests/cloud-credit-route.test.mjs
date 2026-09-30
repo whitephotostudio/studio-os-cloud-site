@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import ts from 'typescript';
+import { creditMaintenanceActive } from '../lib/credit-maintenance.ts';
 const source = readFileSync(new URL('../app/api/credits/background-removal/route.ts', import.meta.url), 'utf8');
 const id='11111111-1111-4111-8111-111111111111';
 function harness(options={}) {
@@ -9,8 +10,16 @@ function harness(options={}) {
   const rpc=[];
   let providerCalls=0;
   let metadataCalls=0;
+  let formReads=0;
+  let databaseCreates=0;
+  let configurationChecks=0;
+  let storageReads=0;
+  let signedUrls=0;
   const originalFetch=globalThis.fetch;
   const originalKey=process.env.PHOTOROOM_API_KEY;
+  const originalMaintenance=process.env.STUDIO_CREDIT_MAINTENANCE;
+  if(options.maintenance)process.env.STUDIO_CREDIT_MAINTENANCE='1';
+  else delete process.env.STUDIO_CREDIT_MAINTENANCE;
   if(options.configured===false)delete process.env.PHOTOROOM_API_KEY;
   else process.env.PHOTOROOM_API_KEY=options.sandbox?'sandbox_private_fixture':'private-fixture-key';
   const service={
@@ -37,9 +46,10 @@ function harness(options={}) {
     'sharp':{default:()=>({metadata:async()=>({width:metadataCalls&&options.wrongDimensions?641:640,height:480,format:metadataCalls++?'png':'jpeg',hasAlpha:true}),
       stats:async()=>({channels:[{min:0},{min:0},{min:0},{min:options.opaqueOutput?255:0,max:options.emptyOutput?0:255}]})})},
     '@aws-sdk/client-s3':{GetObjectCommand:class {constructor(args){this.args=args;}}},
-    '@/lib/dashboard-auth':{createDashboardServiceClient:()=>service,resolveDashboardAuth:async()=>({user:options.anonymous?null:{id:'studio'},mfaSatisfied:options.mfa!==false})},
-    '@/lib/r2':{hasR2Config:()=>true,R2_BUCKET:'fixture',r2Upload:async(...args)=>{calls.push({upload:args[0]});if(options.uploadFails)throw new Error('Upload failed');},getR2Client:()=>({send:async()=>{if(options.headFails)throw {$metadata:{httpStatusCode:503}};if(options.savedOutput===false)throw {$metadata:{httpStatusCode:404}};return {ContentType:'image/png',ContentLength:3,Body:{transformToByteArray:async()=>new Uint8Array([1,2,3])}};}})},
-    '@/lib/r2-signed-urls':{r2PresignedGetUrl:(key,ttl,permissions)=>{assert.equal(permissions.allowCloudCreditOutput,true);return `https://storage.example.invalid/${key}?signature=fixture`; }},
+    '@/lib/credit-maintenance':{creditMaintenanceActive},
+    '@/lib/dashboard-auth':{createDashboardServiceClient:()=>{databaseCreates++;return service;},resolveDashboardAuth:async()=>({user:options.anonymous?null:{id:'studio'},mfaSatisfied:options.mfa!==false})},
+    '@/lib/r2':{hasR2Config:()=>{configurationChecks++;return true;},R2_BUCKET:'fixture',r2Upload:async(...args)=>{calls.push({upload:args[0]});if(options.uploadFails)throw new Error('Upload failed');},getR2Client:()=>({send:async()=>{storageReads++;if(options.headFails)throw {$metadata:{httpStatusCode:503}};if(options.savedOutput===false)throw {$metadata:{httpStatusCode:404}};return {ContentType:'image/png',ContentLength:3,Body:{transformToByteArray:async()=>new Uint8Array([1,2,3])}};}})},
+    '@/lib/r2-signed-urls':{r2PresignedGetUrl:(key,ttl,permissions)=>{signedUrls++;assert.equal(permissions.allowCloudCreditOutput,true);return `https://storage.example.invalid/${key}?signature=fixture`; }},
   };
   const compiled=ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,esModuleInterop:false}}).outputText;
   new Function('require','exports',compiled)(name=>modules[name]||(name==='node:crypto'?{createHash:()=>({update:()=>({digest:()=> 'a'.repeat(64)})}),randomUUID:()=>id}:undefined),exports);
@@ -48,10 +58,45 @@ function harness(options={}) {
     assert.equal(init.headers['x-api-key'],'private-fixture-key');
     return {ok:!options.providerFails,status:options.providerFails?402:200,arrayBuffer:async()=>new Uint8Array([1,2,3]).buffer};
   };
-  const request=(extra={})=>({headers:new Headers(),formData:async()=>{const form=new FormData();form.set('job_id',extra.jobId||id);form.set('original_sha256',extra.originalHash??'b'.repeat(64));form.set('image_file',new File([new Uint8Array([1,2,3])],'private-name.jpg',{type:'image/jpeg'}));form.set('studio_id','another-account');return form;},...extra});
-  return {api:exports,rpc,calls,request,get providerCalls(){return providerCalls;},cleanup(){globalThis.fetch=originalFetch;if(originalKey===undefined)delete process.env.PHOTOROOM_API_KEY;else process.env.PHOTOROOM_API_KEY=originalKey;}};
+  const request=(extra={})=>({headers:new Headers(),formData:async()=>{formReads++;const form=new FormData();form.set('job_id',extra.jobId||id);form.set('original_sha256',extra.originalHash??'b'.repeat(64));form.set('image_file',new File([new Uint8Array([1,2,3])],'private-name.jpg',{type:'image/jpeg'}));form.set('studio_id','another-account');return form;},...extra});
+  return {api:exports,rpc,calls,request,get providerCalls(){return providerCalls;},get effects(){return {formReads,databaseCreates,configurationChecks,storageReads,signedUrls,metadataCalls};},cleanup(){globalThis.fetch=originalFetch;if(originalKey===undefined)delete process.env.PHOTOROOM_API_KEY;else process.env.PHOTOROOM_API_KEY=originalKey;if(originalMaintenance===undefined)delete process.env.STUDIO_CREDIT_MAINTENANCE;else process.env.STUDIO_CREDIT_MAINTENANCE=originalMaintenance;}};
 }
 async function check(options,run){const h=harness(options);try{await run(h);}finally{h.cleanup();}}
+test('authenticated maintenance holds availability and processing before form, database, storage or provider work',async()=>{
+  for(const options of [{},{configured:false},{existingJob:{}}])await check({...options,maintenance:true},async h=>{
+    for(const handler of [h.api.GET,h.api.POST]) {
+      const response=await handler(h.request());
+      assert.equal(response.status,503);
+      assert.equal(response.headers.get('retry-after'),'120');
+      assert.equal(response.headers.get('cache-control'),'no-store');
+      const body=await response.json();
+      assert.equal(body.ok,false);assert.equal(body.configured,false);assert.equal(body.processing,false);
+      assert.match(body.message,/paused.*No credits were charged/);
+    }
+    assert.deepEqual(h.effects,{formReads:0,databaseCreates:0,configurationChecks:0,storageReads:0,signedUrls:0,metadataCalls:0});
+    assert.equal(h.rpc.length,0);assert.equal(h.providerCalls,0);assert.deepEqual(h.calls,[]);
+  });
+});
+test('maintenance never masks authentication or MFA failures',async()=>{
+  for(const [options,status] of [[{anonymous:true},401],[{mfa:false},403]])await check({...options,maintenance:true},async h=>{
+    for(const handler of [h.api.GET,h.api.POST])assert.equal((await handler(h.request())).status,status);
+    assert.equal(h.effects.formReads,0);assert.equal(h.effects.databaseCreates,0);assert.equal(h.rpc.length,0);assert.equal(h.providerCalls,0);
+  });
+});
+test('clearing maintenance resumes availability and the existing insufficient-credit guard',async()=>check({maintenance:true,reserveError:'Insufficient credits'},async h=>{
+  assert.equal((await h.api.POST(h.request())).status,503);
+  process.env.STUDIO_CREDIT_MAINTENANCE='0';
+  const available=await h.api.GET(h.request());assert.equal(available.status,200);
+  assert.deepEqual(await available.json(),{ok:true,configured:true,costPerPhoto:4});
+  assert.equal((await h.api.POST(h.request())).status,402);
+  assert.equal(h.rpc.length,1);assert.equal(h.rpc[0].name,'reserve_cloud_credit_job');assert.equal(h.providerCalls,0);
+}));
+test('maintenance keeps a paid replay untouched and clearing it recovers without a second debit',async()=>check({maintenance:true,configured:false,existingJob:{}},async h=>{
+  assert.equal((await h.api.POST(h.request())).status,503);assert.equal(h.rpc.length,0);assert.equal(h.effects.formReads,0);
+  process.env.STUDIO_CREDIT_MAINTENANCE='0';
+  assert.equal((await h.api.POST(h.request())).status,200);
+  assert.ok(h.rpc.every(call=>call.name!=='reserve_cloud_credit_job'));assert.equal(h.providerCalls,0);assert.equal(h.effects.signedUrls,1);
+}));
 test('cloud rejects anonymous, missing MFA and missing provider before spending credits',async()=>{
   for(const [options,status] of [[{anonymous:true},401],[{mfa:false},403],[{configured:false},503],[{sandbox:true},503]])await check(options,async h=>{
     assert.equal((await h.api.POST(h.request())).status,status);assert.equal(h.rpc.length,0);assert.equal(h.providerCalls,0);

@@ -28,11 +28,12 @@ const identifier = value => {
 async function fixture(run) {
   const db = new PGlite();
   const savedFetch = globalThis.fetch;
-  const changedEnv = ['STRIPE_SECRET_KEY', 'STRIPE_BILLING_CURRENCY', 'PHOTOROOM_API_KEY'];
+  const changedEnv = ['STRIPE_SECRET_KEY', 'STRIPE_BILLING_CURRENCY', 'PHOTOROOM_API_KEY', 'STUDIO_CREDIT_MAINTENANCE'];
   const savedEnv = Object.fromEntries(changedEnv.map(key => [key, process.env[key]]));
   process.env.STRIPE_SECRET_KEY = 'sk_test_lifecycle_fixture';
   process.env.STRIPE_BILLING_CURRENCY = 'cad';
   process.env.PHOTOROOM_API_KEY = 'prod_lifecycle_fixture';
+  process.env.STUDIO_CREDIT_MAINTENANCE = '0';
   try {
     await db.exec(`set timezone='UTC'; create role anon; create role authenticated; create role service_role bypassrls;
       create schema auth;
@@ -180,6 +181,7 @@ async function fixture(run) {
       'next/server': { NextResponse: { json: (body, init) => Response.json(body, init) } },
       sharp: { default: sharp },
       '@aws-sdk/client-s3': { GetObjectCommand: class { constructor(args) { this.args = args; } } },
+      '@/lib/credit-maintenance': load('lib/credit-maintenance.ts'),
       '@/lib/dashboard-auth': { createDashboardServiceClient: () => service, resolveDashboardAuth: async () => ({ user: { id: studio }, mfaSatisfied: true }) },
       '@/lib/r2': { hasR2Config: () => true, R2_BUCKET: 'isolated',
         r2Upload: async (key, bytes, mime) => { assert.equal(mime, 'image/png'); storage.set(key, Buffer.from(bytes)); },

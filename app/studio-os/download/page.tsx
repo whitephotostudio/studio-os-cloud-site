@@ -58,6 +58,11 @@ export default async function StudioOSDownloadPage() {
               the app will guide you to subscribe first.
             </p>
             </Reveal>
+            <p className="mx-auto mt-6 max-w-2xl rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-900">
+              Background credits require Studio OS for Mac 0.1.14 (18) or later.
+              Sign in with the same account you use to buy credits. Older cutouts
+              without a verified paid record remain saved for review.
+            </p>
           </div>
 
           <Reveal repeat delay={520} className="download-reveal-strong">

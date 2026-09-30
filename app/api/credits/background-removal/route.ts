@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import sharp from "sharp";
 import { GetObjectCommand } from "@aws-sdk/client-s3";
 import { createDashboardServiceClient, resolveDashboardAuth } from "@/lib/dashboard-auth";
+import { creditMaintenanceActive } from "@/lib/credit-maintenance";
 import { getR2Client, hasR2Config, R2_BUCKET, r2Upload } from "@/lib/r2";
 import { r2PresignedGetUrl } from "@/lib/r2-signed-urls";
 
@@ -21,6 +22,9 @@ function configured() {
 }
 function unavailable() {
   return NextResponse.json({ ok: false, configured: false, processing: false, message: "Premium Cloud is not available yet. No credits were charged. Use local removal or try again later." }, { status: 503 });
+}
+function maintenance() {
+  return NextResponse.json({ ok: false, configured: false, processing: false, message: "Premium Cloud processing is briefly paused for an upgrade. No credits were charged. Please try again in a few minutes." }, { status: 503, headers: { "Retry-After": "120", "Cache-Control": "no-store" } });
 }
 async function authenticate(request: NextRequest) {
   const auth = await resolveDashboardAuth(request);
@@ -59,6 +63,7 @@ async function savedOutputHash(key: string, expectedHash?: string | null) {
 export async function GET(request: NextRequest) {
   const auth = await authenticate(request);
   if (auth.response) return auth.response;
+  if (creditMaintenanceActive()) return maintenance();
   if (!configured()) return unavailable();
   return NextResponse.json({ ok: true, configured: true, costPerPhoto: 4 }, { headers: { "Cache-Control": "no-store" } });
 }
@@ -72,6 +77,7 @@ export async function POST(request: NextRequest) {
   try {
     const auth = await authenticate(request);
     if (auth.response) return auth.response;
+    if (creditMaintenanceActive()) return maintenance();
     // Configuration and input validation precede the reservation. A missing
     // provider, corrupt image or oversized request must never spend credits.
     if (Number(request.headers.get("content-length") || 0) > MAX_UPLOAD + 16 * 1024) {
