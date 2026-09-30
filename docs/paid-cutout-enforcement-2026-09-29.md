@@ -98,4 +98,11 @@ ESLint with zero errors/warnings. `verify-r2-staging-preview.mjs` is disabled by
 default, requires an explicit Preview-only flag and the exact audited Git branch,
 and uses three fresh private objects to test signed type/size rejection, bounded
 full-byte readback and cleanup. It uses no database, customer account, provider
-image or Stripe API. Its actual result is recorded after the opt-in Preview build.
+image or Stripe API. Actual Preview `dpl_EETTox2YEtvPEsAjCsdfNQPrddzA` (commit `b565c2e`) is READY:
+the 100-byte real alpha PNG PUT returned 200 and full SHA256 readback matched;
+wrong Content-Type and Content-Length returned 403 with no objects created.
+All three test objects were deleted and confirmed absent. The opt-in flag was
+removed after this check; future builds make no diagnostic storage requests.
+Unauthenticated `/credits` returns 200, and background-removal, staging and
+revision POSTs return 401. Production remains on restored `011bf81`; its credit
+page/gateway are still 404 until the coordinated rollout.

@@ -231,3 +231,14 @@ desktop proof RPCs were available. A separate read after rollback confirmed two
 existing credit accounts and absence of every candidate schema table. No persistent
 production schema change or real customer charge occurred. The five-file harness
 also matches the isolated PGlite lifecycle/security tests.
+
+The matching managed-cutout Preview `dpl_EETTox2YEtvPEsAjCsdfNQPrddzA` is READY
+at commit `b565c2e`. The opt-in build-only R2 staging test uploaded a real 100-byte
+alpha PNG (200), read the identical full SHA256, rejected changed size/type
+headers (403), and deleted/confirmed absence of all three private test objects.
+The scoped diagnostic flag was removed afterward. This verifies the actual
+signed staging storage protocol, not an authenticated credit purchase/processing
+session. Preview `/credits` is 200 and all three cutout POSTs are protected (401).
+The latest live check confirms restored public pages at 200, both refund/CRM
+crons at 401 and the Stripe webhook at 405-on-GET. Production credit page/gateway
+remain 404 and production is still restored commit `011bf81`.
