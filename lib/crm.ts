@@ -539,6 +539,7 @@ async function loadOwnedRowsIn(input: {
   select: string;
   column: string;
   ids: string[];
+  statuses?: string[];
 }) {
   const ids = Array.from(new Set(input.ids.filter(Boolean)));
   const rows: Record<string, unknown>[] = [];
@@ -547,11 +548,13 @@ async function loadOwnedRowsIn(input: {
     let rowOffset = 0;
     const pageSize = 500;
     for (;;) {
-      const { data, error, count } = await input.service
+      let query = input.service
         .from(input.table)
         .select(input.select, { count: "exact" })
         .eq("photographer_id", input.photographerId)
-        .in(input.column, batch)
+        .in(input.column, batch);
+      if (input.statuses?.length) query = query.in("status", input.statuses);
+      const { data, error, count } = await query
         .order("id", { ascending: true })
         .range(rowOffset, rowOffset + pageSize - 1);
       if (error) throw error;
@@ -651,6 +654,128 @@ export function countCrmActiveCashPaidBookings(
   return paidBookingIds.size;
 }
 
+/** A complete page of the searchable Clients index, without booking and photo history. */
+export async function loadCrmClientIndexPage(input: {
+  service: SupabaseClient;
+  photographerId: string;
+  offset?: number;
+  limit?: number;
+}) {
+  const offset = Math.max(0, input.offset ?? 0);
+  const limit = Math.max(1, Math.min(input.limit ?? 200, 500));
+  const { data, error, count } = await input.service
+    .from("crm_clients")
+    .select("*", { count: "exact" })
+    .eq("photographer_id", input.photographerId)
+    .is("archived_at", null)
+    .order("display_name", { ascending: true })
+    .order("id", { ascending: true })
+    .range(offset, offset + limit - 1);
+  if (error) throw error;
+  const clientRows = (data ?? []) as Record<string, unknown>[];
+  const clientIds = clientRows.map((row) => String(row.id));
+  const [contactRows, locationRows, cycleRows, taskRows, rollupRows, pendingEmailRows, photoSearchRows] = await Promise.all([
+    loadOwnedRowsIn({
+      service: input.service,
+      photographerId: input.photographerId,
+      table: "crm_contacts",
+      select: "*",
+      column: "client_id",
+      ids: clientIds,
+    }),
+    loadOwnedRowsIn({
+      service: input.service,
+      photographerId: input.photographerId,
+      table: "crm_locations",
+      select: "*",
+      column: "client_id",
+      ids: clientIds,
+    }),
+    loadOwnedRowsIn({
+      service: input.service,
+      photographerId: input.photographerId,
+      table: "crm_booking_cycles",
+      select: "*",
+      column: "client_id",
+      ids: clientIds,
+    }),
+    loadOwnedRowsIn({
+      service: input.service,
+      photographerId: input.photographerId,
+      table: "crm_tasks",
+      select: "*",
+      column: "client_id",
+      ids: clientIds,
+      statuses: ["open", "snoozed"],
+    }),
+    loadOwnedRowsIn({
+      service: input.service,
+      photographerId: input.photographerId,
+      table: "crm_client_rollup",
+      select: "*",
+      column: "id",
+      ids: clientIds,
+    }),
+    loadOwnedRowsIn({
+      service: input.service,
+      photographerId: input.photographerId,
+      table: "crm_email_outbox",
+      select: "*",
+      column: "client_id",
+      ids: clientIds,
+      statuses: ["pending_approval"],
+    }),
+    loadOwnedRowsIn({
+      service: input.service,
+      photographerId: input.photographerId,
+      table: "crm_location_photos",
+      select: "id,client_id,category,caption,alt_text",
+      column: "client_id",
+      ids: clientIds,
+    }),
+  ]);
+  const activeContacts = contactRows.filter((row) => row.archived_at == null);
+  const activeLocations = locationRows.filter((row) => row.archived_at == null);
+  const rollupByClient = new Map(rollupRows.map((row) => [String(row.id), row]));
+  const currentYear = new Date().getUTCFullYear();
+  const clients = clientRows.map((row) => {
+    const id = String(row.id);
+    const currentCycle = currentCycleForClient(
+      cycleRows.filter((cycle) => cycle.client_id === id),
+      currentYear,
+    );
+    const primaryContact = activeContacts.find(
+      (contact) => contact.client_id === id && contact.is_primary === true,
+    );
+    const rollup = rollupByClient.get(id);
+    return {
+      ...crmPublicRow(row),
+      yearsBooked: Number(rollup?.years_booked ?? 0),
+      lastBookedYear: rollup?.last_booked_year ?? null,
+      currentCycleStatus:
+        typeof currentCycle?.status === "string"
+          ? DB_TO_CAMEL_VALUE[currentCycle.status] ?? currentCycle.status
+          : null,
+      primaryContactId: primaryContact?.id ?? null,
+    };
+  });
+  return {
+    clients,
+    contacts: activeContacts.map((row) => crmPublicRow(row)),
+    locations: activeLocations.map((row) => crmPublicRow(row)),
+    bookingCycles: cycleRows.map((row) => crmPublicRow(row)),
+    tasks: taskRows.map((row) => crmPublicRow(row)),
+    emails: pendingEmailRows.map((row) => crmOutboxPublicRow(row)),
+    locationPhotoSearch: photoSearchRows.map((row) => crmPublicRow(row)),
+    page: {
+      offset,
+      limit,
+      total: count ?? offset + clients.length,
+      hasMore: count == null ? clients.length === limit : offset + clients.length < count,
+    },
+  };
+}
+
 export async function loadCrmDashboard(input: {
   service: SupabaseClient;
   photographerId: string;
@@ -660,15 +785,19 @@ export async function loadCrmDashboard(input: {
   seasonYear?: number | null;
   status?: string | null;
   limit?: number;
+  offset?: number;
+  includeTimeline?: boolean;
 }) {
   const limit = Math.max(1, Math.min(input.limit ?? 200, 500));
+  const offset = Math.max(0, input.offset ?? 0);
   let clientsQuery = input.service
     .from("crm_clients")
-    .select("*")
+    .select("*", { count: "exact" })
     .eq("photographer_id", input.photographerId)
     .is("archived_at", null)
     .order("display_name", { ascending: true })
-    .limit(limit);
+    .order("id", { ascending: true })
+    .range(offset, offset + limit - 1);
   if (input.clientId) clientsQuery = clientsQuery.eq("id", input.clientId);
   if (input.search) clientsQuery = clientsQuery.ilike("display_name", `%${input.search}%`);
   if (input.kind) clientsQuery = clientsQuery.eq("kind", input.kind);
@@ -692,9 +821,18 @@ export async function loadCrmDashboard(input: {
   if (rulesResult.error) throw rulesResult.error;
 
   const clientRows = (clientsResult.data ?? []) as Record<string, unknown>[];
+  const page = {
+    offset,
+    limit,
+    total: clientsResult.count ?? offset + clientRows.length,
+    hasMore: clientsResult.count == null
+      ? clientRows.length === limit
+      : offset + clientRows.length < clientsResult.count,
+  };
   const clientIds = clientRows.map((row) => String(row.id));
   if (!clientIds.length) {
     return {
+      page,
       clients: [],
       locations: [],
       locationPhotos: [],
@@ -721,13 +859,13 @@ export async function loadCrmDashboard(input: {
 
   const [
     loadedLocationRows,
-    contactsResult,
-    agreementsResult,
+    loadedContactRows,
+    loadedAgreementRows,
     loadedCycleRows,
-    tasksResult,
+    loadedTaskRows,
     emailsResult,
     activitiesResult,
-    rollupResult,
+    loadedRollupRows,
   ] =
     await Promise.all([
       loadOwnedRowsIn({
@@ -738,8 +876,22 @@ export async function loadCrmDashboard(input: {
         column: "client_id",
         ids: clientIds,
       }),
-      input.service.from("crm_contacts").select("*").eq("photographer_id", input.photographerId).in("client_id", clientIds).is("archived_at", null),
-      input.service.from("crm_agreements").select("*").eq("photographer_id", input.photographerId).in("client_id", clientIds),
+      loadOwnedRowsIn({
+        service: input.service,
+        photographerId: input.photographerId,
+        table: "crm_contacts",
+        select: "*",
+        column: "client_id",
+        ids: clientIds,
+      }),
+      loadOwnedRowsIn({
+        service: input.service,
+        photographerId: input.photographerId,
+        table: "crm_agreements",
+        select: "*",
+        column: "client_id",
+        ids: clientIds,
+      }),
       loadOwnedRowsIn({
         service: input.service,
         photographerId: input.photographerId,
@@ -748,19 +900,30 @@ export async function loadCrmDashboard(input: {
         column: "client_id",
         ids: clientIds,
       }),
-      input.service.from("crm_tasks").select("*").eq("photographer_id", input.photographerId).in("client_id", clientIds).order("due_at", { ascending: true, nullsFirst: false }),
-      input.service.from("crm_email_outbox").select("*").eq("photographer_id", input.photographerId).in("client_id", clientIds).order("created_at", { ascending: false }).limit(1000),
-      input.service.from("crm_activities").select("*").eq("photographer_id", input.photographerId).in("client_id", clientIds).order("occurred_at", { ascending: false }).limit(2000),
-      input.service.from("crm_client_rollup").select("*").eq("photographer_id", input.photographerId).in("id", clientIds),
+      loadOwnedRowsIn({
+        service: input.service,
+        photographerId: input.photographerId,
+        table: "crm_tasks",
+        select: "*",
+        column: "client_id",
+        ids: clientIds,
+      }),
+      input.includeTimeline === false
+        ? Promise.resolve({ data: [], error: null })
+        : input.service.from("crm_email_outbox").select("*").eq("photographer_id", input.photographerId).in("client_id", clientIds).order("created_at", { ascending: false }).limit(1000),
+      input.includeTimeline === false
+        ? Promise.resolve({ data: [], error: null })
+        : input.service.from("crm_activities").select("*").eq("photographer_id", input.photographerId).in("client_id", clientIds).order("occurred_at", { ascending: false }).limit(2000),
+      loadOwnedRowsIn({
+        service: input.service,
+        photographerId: input.photographerId,
+        table: "crm_client_rollup",
+        select: "*",
+        column: "id",
+        ids: clientIds,
+      }),
     ]);
-  for (const result of [
-    contactsResult,
-    agreementsResult,
-    tasksResult,
-    emailsResult,
-    activitiesResult,
-    rollupResult,
-  ]) {
+  for (const result of [emailsResult, activitiesResult]) {
     if (result.error) throw result.error;
   }
 
@@ -837,7 +1000,7 @@ export async function loadCrmDashboard(input: {
     cycleRows = cycleRows.filter((row) => row.status === databaseStatus);
   }
 
-  const contactRows = (contactsResult.data ?? []) as Record<string, unknown>[];
+  const contactRows = loadedContactRows.filter((row) => row.archived_at == null);
   const locationRows = loadedLocationRows.filter((row) => row.archived_at == null);
   const locationPhotoRows = await loadOwnedRowsIn({
     service: input.service,
@@ -848,7 +1011,7 @@ export async function loadCrmDashboard(input: {
     ids: locationRows.map((row) => cleanBookingValue(row.id)).filter(Boolean),
   });
   const rollupByClient = new Map(
-    ((rollupResult.data ?? []) as Record<string, unknown>[]).map((row) => [String(row.id), row]),
+    loadedRollupRows.map((row) => [String(row.id), row]),
   );
   const currentYear = input.seasonYear ?? new Date().getUTCFullYear();
   const clients = clientRows.map((row) => {
@@ -887,7 +1050,7 @@ export async function loadCrmDashboard(input: {
     const value = typeof row.next_follow_up_at === "string" ? Date.parse(row.next_follow_up_at) : Number.NaN;
     return Number.isFinite(value) && value <= now && !["booked", "completed", "lost", "skipped"].includes(String(row.status));
   }).length;
-  const taskRows = (tasksResult.data ?? []) as Record<string, unknown>[];
+  const taskRows = loadedTaskRows;
   const emailRows = (emailsResult.data ?? []) as Record<string, unknown>[];
 
   const schoolsById = new Map(
@@ -982,6 +1145,7 @@ export async function loadCrmDashboard(input: {
   });
 
   return {
+    page,
     clients,
     locations: locationRows.map((row) => crmPublicRow(row)),
     locationPhotos: locationPhotoRows
@@ -992,7 +1156,7 @@ export async function loadCrmDashboard(input: {
       )
       .map((row) => crmLocationPhotoPublicRow(row)),
     contacts: contactRows.map((row) => crmPublicRow(row)),
-    agreements: (agreementsResult.data ?? []).map((row) => crmPublicRow(row)),
+    agreements: loadedAgreementRows.map((row) => crmPublicRow(row)),
     bookingCycles: cycleRows.map((row) => crmPublicRow(row)),
     bookingJobs: bookingJobRows.map((row) => crmPublicRow(row)),
     bookingHistory,

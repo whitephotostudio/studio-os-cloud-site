@@ -25,6 +25,7 @@ import {
   excludeCancelledOnlyRecipientEmails,
 } from "@/lib/school-gallery-email-personalization";
 import { guardAgreement } from "@/lib/require-agreement";
+import { loadSchoolClassEmailAudience } from "@/lib/school-class-email-audience";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -36,7 +37,12 @@ const SendCampaignBodySchema = z.object({
   action: z.enum(["campaign", "test", "student", "resend"]).optional(),
   bookingId: z.string().uuid().optional(),
   studentId: z.string().uuid().optional(),
-  recipientMode: z.enum(["visitors", "others"]).optional(),
+  expectedRecipientEmail: z.string().email().optional(),
+  recipientMode: z.enum(["visitors", "others", "classes", "student"]).optional(),
+  classNames: z.array(z.string().trim().min(1).max(500)).max(200).optional(),
+  onlyWithPhotos: z.boolean().optional(),
+  includeClassRegistrations: z.boolean().optional(),
+  audienceFingerprint: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   recipients: z.union([z.array(z.string().max(320)).max(MAX_CAMPAIGN_DELIVERIES), z.string().max(20_000)]).optional(),
   ccRecipients: z.union([z.array(z.string().max(320)).max(MAX_CAMPAIGN_DELIVERIES), z.string().max(20_000)]).optional(),
   subject: z.string().max(500).optional(),
@@ -230,6 +236,7 @@ export async function GET(
       .map((booking) => ({
         bookingId: booking.id,
         studentId: null,
+        recipientEmail: clean(booking.parent_email).toLowerCase(),
         studentName: [
           clean(booking.student_first_name),
           clean(booking.student_last_name),
@@ -242,6 +249,7 @@ export async function GET(
         .map((student) => ({
           bookingId: null,
           studentId: clean(student.student_id),
+          recipientEmail: clean(student.parent_email).toLowerCase(),
           studentName: [clean(student.student_first_name), clean(student.student_last_name)]
             .filter(Boolean)
             .join(" ") || "Student",
@@ -318,12 +326,25 @@ export async function GET(
       };
     });
 
+    const query = new URL(request.url).searchParams;
+    const classAudience = query.get("recipientMode") === "classes"
+      ? await loadSchoolClassEmailAudience(service, schoolId, query.getAll("className"), query.get("onlyWithPhotos") !== "false", query.get("includeClassRegistrations") !== "false")
+      : null;
     return privateJson({
       ok: true,
       previewStudents,
       sendSummary,
       deliveryReport,
       testRecipient: clean(photographerRow.studio_email) || clean(user.email),
+      classAudience: classAudience ? {
+        classOptions: classAudience.classOptions,
+        fingerprint: classAudience.fingerprint,
+        review: classAudience.review,
+        summary: classAudience.summary,
+        totalEmails: classAudience.deliveries.length,
+        uniqueAddresses: new Set(classAudience.deliveries.map((d) => d.recipientEmail)).size,
+        maxEmails: MAX_CAMPAIGN_DELIVERIES,
+      } : null,
     });
   } catch (error) {
     console.error("[dashboard:schools:emails:preview]", error);
@@ -399,6 +420,9 @@ export async function POST(
 
     const gallerySettings = normalizeEventGallerySettings(schoolRow.gallery_settings);
     const action = body.action ?? "campaign";
+    if (action === "campaign" && body.recipientMode === "student") {
+      return privateJson({ ok: false, message: "Choose one student before sending an individual email." }, 400);
+    }
     // The dashboard supplies one request ID per deliberate click. If the same
     // HTTP request is retried after a lost response, every delivery keeps the
     // same provider and ledger key. A later deliberate resend gets a new ID.
@@ -409,7 +433,7 @@ export async function POST(
       let student: SchoolStudentRow | null = null;
       const useStudent = Boolean(body.studentId);
 
-      if (action === "student" && !body.studentId) {
+      if (action === "student" && !body.studentId && !body.bookingId) {
         return NextResponse.json(
           { ok: false, message: "Choose a student first." },
           { status: 400 },
@@ -515,6 +539,10 @@ export async function POST(
       const recipientEmail = action === "test"
         ? clean(photographerRow.studio_email) || clean(user.email)
         : clean(booking?.parent_email) || clean(student?.parent_email);
+      if (action === "student" && body.expectedRecipientEmail &&
+          clean(body.expectedRecipientEmail).toLowerCase() !== recipientEmail.toLowerCase()) {
+        return privateJson({ ok: false, message: "This student's saved email changed. Refresh the student list before sending." }, 409);
+      }
       if (!looksLikeEmail(recipientEmail)) {
         return NextResponse.json(
           {
@@ -614,7 +642,7 @@ export async function POST(
 
     let bookingRows: SchoolBookingRow[] = [];
     let studentRows: SchoolStudentRow[] = [];
-    if (body.recipientMode !== "others") {
+    if (body.recipientMode !== "others" && body.recipientMode !== "classes") {
       const [bookingsResult, studentsResult] = await Promise.all([
         service
           .from("bookings")
@@ -633,7 +661,7 @@ export async function POST(
     const manualEmailRows = buildIndependentRosterEmailRows(studentRows, bookingRows);
     const activeBookingRows = bookingRows.filter((booking) => !isCancelled(booking.status));
     const personalizedRows = [...activeBookingRows, ...manualEmailRows];
-    const collectedRecipientEmails = body.recipientMode === "others"
+    const collectedRecipientEmails = body.recipientMode === "others" || body.recipientMode === "classes"
       ? []
       : await collectSchoolRecipientEmails(service, schoolId);
     const primaryRecipients = body.recipientMode === "others"
@@ -653,7 +681,7 @@ export async function POST(
     const additionalCcRecipients = ccRecipients.filter(
       (email) => !primaryRecipientSet.has(email),
     );
-    const deliveries = [
+    let deliveries = [
       ...buildSchoolGalleryEmailDeliveries(
         primaryRecipients,
         personalizedRows,
@@ -665,6 +693,21 @@ export async function POST(
         false,
       ),
     ];
+
+    if (body.recipientMode === "classes") {
+      if (!body.classNames?.length || !body.audienceFingerprint) {
+        return privateJson({ ok: false, message: "Choose classes and review the recipients before sending." }, 400);
+      }
+      // Always resolve the selection again on the server. Never accept a
+      // client-supplied student list, recipient address or PIN for this mode.
+      const audience = await loadSchoolClassEmailAudience(service, schoolId, body.classNames, body.onlyWithPhotos !== false, body.includeClassRegistrations !== false);
+      if (audience.unknownClasses.length || audience.fingerprint !== body.audienceFingerprint) {
+        return privateJson({ ok: false, message: "The recipients changed. Refresh the recipient review before sending." }, 409);
+      }
+      deliveries = audience.deliveries;
+      // Class sends deliberately omit custom recipients and CC: these cannot
+      // be matched to the selected students. Use Send Test to Me for a copy.
+    }
 
     if (!deliveries.length) {
       return NextResponse.json(
@@ -743,6 +786,7 @@ export async function POST(
                 schoolId,
                 action: "campaign",
                 recipientMode: body.recipientMode || "visitors",
+                classNames: body.recipientMode === "classes" ? body.classNames : undefined,
                 bookingId: delivery.bookingId,
                 studentId: delivery.studentId ?? null,
                 studentName: delivery.studentName,
@@ -771,6 +815,7 @@ export async function POST(
               schoolId,
               action: "campaign",
               recipientMode: body.recipientMode || "visitors",
+              classNames: body.recipientMode === "classes" ? body.classNames : undefined,
               bookingId: delivery.bookingId,
               studentId: delivery.studentId ?? null,
               studentName: delivery.studentName,

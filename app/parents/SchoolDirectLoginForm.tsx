@@ -3,6 +3,7 @@
 import { type CSSProperties, type FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Check, Mail, School, X } from "lucide-react";
+import SchoolRegistrationClasses from "./SchoolRegistrationClasses";
 
 type SchoolRow = {
   id: string;
@@ -11,6 +12,7 @@ type SchoolRow = {
   portal_status: string | null;
   expiration_date: string | null;
   email_required: boolean | null;
+  registration_class_required?: boolean | null;
 };
 
 type SchoolAccessPayload = {
@@ -20,6 +22,7 @@ type SchoolAccessPayload = {
   schoolId?: string;
   pin?: string;
   galleryContext?: Record<string, unknown>;
+  registrationClassRequired?: boolean;
 };
 
 function normalizedStatus(school: SchoolRow) {
@@ -32,22 +35,38 @@ function isSchoolPreRelease(school: SchoolRow) {
 
 export default function SchoolDirectLoginForm({ school }: { school: SchoolRow }) {
   const router = useRouter();
-  const preRelease = isSchoolPreRelease(school);
+  const [forcedPreRelease, setForcedPreRelease] = useState(false);
+  const preRelease = forcedPreRelease || isSchoolPreRelease(school);
+  const [classRequired, setClassRequired] = useState(school.registration_class_required === true);
+  const [registrationView, setRegistrationView] = useState(false);
+  const registering = preRelease || (classRequired && registrationView);
   const [email, setEmail] = useState("");
   const [pin, setPin] = useState("");
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [registered, setRegistered] = useState(false);
+  const [classNames, setClassNames] = useState<string[]>([]);
 
   async function registerForRelease() {
-    await fetch("/api/portal/pre-release-register", {
+    const response = await fetch("/api/portal/pre-release-register", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         schoolId: school.id,
         email: email.trim().toLowerCase(),
+        classNames,
       }),
     });
+
+    const payload = (await response.json().catch(() => ({}))) as {
+      ok?: boolean;
+      message?: string;
+      classRequired?: boolean;
+    };
+    if (payload.classRequired) setClassRequired(true);
+    if (!response.ok || payload.ok === false) {
+      throw new Error(payload.message || "Could not save your registration. Please try again.");
+    }
     setRegistered(true);
   }
 
@@ -60,12 +79,16 @@ export default function SchoolDirectLoginForm({ school }: { school: SchoolRow })
       return;
     }
 
-    if (preRelease) {
+    if (registering) {
+      if (classRequired && (!classNames.length || classNames.some((name) => !name))) {
+        setError("Please select your child’s class or grade.");
+        return;
+      }
       setSubmitting(true);
       try {
         await registerForRelease();
-      } catch {
-        setRegistered(true);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Could not save your registration. Please try again.");
       } finally {
         setSubmitting(false);
       }
@@ -99,7 +122,9 @@ export default function SchoolDirectLoginForm({ school }: { school: SchoolRow })
       }
 
       if (payload.step === "school_prerelease") {
-        await registerForRelease().catch(() => setRegistered(true));
+        setForcedPreRelease(true);
+        setClassRequired(payload.registrationClassRequired === true);
+        setError("The gallery is coming soon. Please complete the registration form below.");
         return;
       }
 
@@ -171,12 +196,18 @@ export default function SchoolDirectLoginForm({ school }: { school: SchoolRow })
           Client Panel
         </h1>
         <p style={{ fontSize: 14, color: "#667085", margin: "0 0 28px", lineHeight: 1.7, textAlign: "center" }}>
-          {preRelease
+          {registering
             ? "Enter your email and we'll send you a notification as soon as the photos are ready."
             : "Enter your email and the PIN from your child's photo envelope."}
         </p>
 
         <form onSubmit={submit} style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          {classRequired && !preRelease ? (
+            <div role="group" aria-label="School portal options" style={{ display: "flex", gap: 8 }}>
+              <button type="button" aria-pressed={!registrationView} style={{ flex: 1, borderRadius: 10, padding: "12px 10px", fontSize: 13, fontWeight: 700, cursor: "pointer", border: "1px solid #d0d5dd", background: !registrationView ? "#111827" : "#fff", color: !registrationView ? "#fff" : "#344054" }} onClick={() => { setRegistrationView(false); setError(""); setRegistered(false); }}>View photos with PIN</button>
+              <button type="button" aria-pressed={registrationView} style={{ flex: 1, borderRadius: 10, padding: "12px 10px", fontSize: 13, fontWeight: 700, cursor: "pointer", border: "1px solid #d0d5dd", background: registrationView ? "#111827" : "#fff", color: registrationView ? "#fff" : "#344054" }} onClick={() => { setRegistrationView(true); setError(""); setRegistered(false); }}>Register for photo updates</button>
+            </div>
+          ) : null}
           <div>
             <label style={labelStyle}>School</label>
             <div style={{ ...inputStyle, display: "flex", alignItems: "center", gap: 12, paddingLeft: 16 }}>
@@ -195,7 +226,7 @@ export default function SchoolDirectLoginForm({ school }: { school: SchoolRow })
               <input
                 type="email"
                 value={email}
-                onChange={(event) => setEmail(event.target.value)}
+                onChange={(event) => { setEmail(event.target.value); setRegistered(false); }}
                 placeholder="Enter your email"
                 required
                 style={{ ...inputStyle, paddingLeft: 42, width: "100%" }}
@@ -203,9 +234,9 @@ export default function SchoolDirectLoginForm({ school }: { school: SchoolRow })
             </div>
           </div>
 
-          {preRelease ? (
+          {registering ? (
             <div style={{ background: "#eff6ff", border: "1px solid #bfdbfe", color: "#1e40af", borderRadius: 12, padding: "13px 16px", fontSize: 13, lineHeight: 1.7 }}>
-              <strong>This gallery isn't available yet.</strong> Enter your email and we'll send you a notification as soon as the photos are ready - no PIN needed right now.
+              <strong>{preRelease ? "This gallery isn't available yet." : "Register for photo updates."}</strong> {classRequired ? "Choose your class and enter your email to receive updates from your photographer." : "Enter your email for an update when the photos are ready."} Your private PIN will be needed to view photos.
             </div>
           ) : (
             <div>
@@ -220,6 +251,14 @@ export default function SchoolDirectLoginForm({ school }: { school: SchoolRow })
             </div>
           )}
 
+          {registering && classRequired ? (
+            <SchoolRegistrationClasses
+              schoolId={school.id}
+              value={classNames}
+              onChange={(next) => { setClassNames(next); setRegistered(false); }}
+            />
+          ) : null}
+
           {error ? (
             <div style={{ background: "#fff1f2", border: "1px solid #fecdd3", color: "#be123c", borderRadius: 12, padding: "12px 14px", fontSize: 13 }}>
               {error}
@@ -232,7 +271,7 @@ export default function SchoolDirectLoginForm({ school }: { school: SchoolRow })
                 <Check size={17} />
                 You're on the list!
               </div>
-              We'll notify you at <strong>{email.trim().toLowerCase()}</strong> when this gallery goes live.
+              We'll notify you at <strong>{email.trim().toLowerCase()}</strong> when your photographer sends a photo update.
             </div>
           ) : (
             <button
@@ -249,7 +288,7 @@ export default function SchoolDirectLoginForm({ school }: { school: SchoolRow })
                 cursor: submitting ? "wait" : "pointer",
               }}
             >
-              {submitting ? (preRelease ? "Registering..." : "Checking access...") : preRelease ? "Notify me when it's ready" : "Open school gallery"}
+              {submitting ? (registering ? "Registering..." : "Checking access...") : registering ? "Notify me when it's ready" : "Open school gallery"}
             </button>
           )}
         </form>

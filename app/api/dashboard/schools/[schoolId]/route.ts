@@ -19,6 +19,7 @@ import {
 import { resendConfigured, sendResendEmail } from "@/lib/resend";
 import { collectSchoolRecipientEmails } from "@/lib/school-email-recipients";
 import { ensurePackageProfile } from "@/lib/ensure-package-profile";
+import { schoolRegistrationClasses } from "@/lib/school-registration-classes";
 import { guardAgreement } from "@/lib/require-agreement";
 
 export const dynamic = "force-dynamic";
@@ -34,6 +35,7 @@ const SchoolUpdateBodySchema = z.object({
   archive_date: z.string().max(64).nullable().optional(),
   package_profile_id: z.string().max(128).nullable().optional(),
   email_required: z.boolean().optional(),
+  registration_class_required: z.boolean().optional(),
   checkout_contact_required: z.boolean().optional(),
   internal_notes: z.string().max(10_000).nullable().optional(),
   access_mode: z.string().max(64).nullable().optional(),
@@ -64,6 +66,7 @@ type SchoolRow = {
   expiration_date?: string | null;
   package_profile_id?: string | null;
   email_required?: boolean | null;
+  registration_class_required?: boolean | null;
   checkout_contact_required?: boolean | null;
   internal_notes?: string | null;
   access_mode?: string | null;
@@ -257,7 +260,7 @@ export async function PATCH(
 
     const { data: schoolRow, error: schoolError } = await service
       .from("schools")
-      .select("id,school_name,photographer_id,local_school_id,status,shoot_date,order_due_date,expiration_date,package_profile_id,email_required,checkout_contact_required,internal_notes,access_mode,access_pin,cover_photo_url,gallery_settings,gallery_slug,screenshot_protection_desktop,screenshot_protection_mobile,screenshot_protection_watermark,group_label_singular,group_label_plural")
+      .select("id,school_name,photographer_id,local_school_id,status,shoot_date,order_due_date,expiration_date,package_profile_id,email_required,registration_class_required,checkout_contact_required,internal_notes,access_mode,access_pin,cover_photo_url,gallery_settings,gallery_slug,screenshot_protection_desktop,screenshot_protection_mobile,screenshot_protection_watermark,group_label_singular,group_label_plural")
       .eq("id", schoolId)
       .eq("photographer_id", photographerRow.id)
       .maybeSingle<SchoolRow>();
@@ -294,6 +297,13 @@ export async function PATCH(
         photographerId: photographerRow.id,
         packageProfileId: body.package_profile_id,
       });
+    }
+    if (hasOwn(body, "registration_class_required")) {
+      if (body.registration_class_required === true) {
+        const classes = await schoolRegistrationClasses(service, schoolId);
+        if (!classes.length) return NextResponse.json({ ok: false, message: "Sync a roster with classes before enabling class registration." }, { status: 400 });
+      }
+      updates.registration_class_required = body.registration_class_required === true;
     }
     updates.email_required = true;
     if (hasOwn(body, "checkout_contact_required")) updates.checkout_contact_required = body.checkout_contact_required === true;
@@ -364,7 +374,7 @@ export async function PATCH(
       .update(updates)
       .eq("id", schoolId)
       .eq("photographer_id", photographerRow.id)
-      .select("id,school_name,photographer_id,local_school_id,status,shoot_date,order_due_date,expiration_date,package_profile_id,email_required,checkout_contact_required,internal_notes,access_mode,access_pin,cover_photo_url,gallery_settings,gallery_slug,screenshot_protection_desktop,screenshot_protection_mobile,screenshot_protection_watermark,group_label_singular,group_label_plural")
+      .select("id,school_name,photographer_id,local_school_id,status,shoot_date,order_due_date,expiration_date,package_profile_id,email_required,registration_class_required,checkout_contact_required,internal_notes,access_mode,access_pin,cover_photo_url,gallery_settings,gallery_slug,screenshot_protection_desktop,screenshot_protection_mobile,screenshot_protection_watermark,group_label_singular,group_label_plural")
       .maybeSingle<SchoolRow>();
 
     if (updateError) throw updateError;
@@ -393,7 +403,9 @@ export async function PATCH(
         }
       | null = null;
 
-    if (becameLive || campaignTurnedOn) {
+    // Class-based schools release groups separately; the photographer chooses
+    // recipients in Share. Preserve automatic release for existing schools.
+    if (!updatedSchoolRow.registration_class_required && (becameLive || campaignTurnedOn)) {
       const emailType: "campaign" | "gallery_release" = becameLive ? "gallery_release" : "campaign";
       const summary = await sendSchoolCampaignEmails({
         service,
@@ -419,6 +431,7 @@ export async function PATCH(
         "expiration_date",
         "package_profile_id",
         "email_required",
+        "registration_class_required",
         "checkout_contact_required",
         "internal_notes",
         "gallery_slug",

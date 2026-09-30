@@ -1,0 +1,47 @@
+.heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin: 2px 0 18px; }
+.eyebrow { margin: 0 0 5px; color: #9f1239; font-size: 11px; font-weight: 900; letter-spacing: .1em; text-transform: uppercase; }
+.title { margin: 0; color: #111827; font-size: clamp(25px, 5vw, 32px); line-height: 1.12; letter-spacing: -.035em; }
+.subtitle { margin: 7px 0 0; color: #667085; font-size: 13px; line-height: 1.5; }
+.refresh { min-width: 40px; height: 40px; border: 1px solid #e4e7ec; border-radius: 12px; background: #fff; color: #344054; display: grid; place-items: center; cursor: pointer; }
+.searchWrap { display: flex; align-items: center; gap: 9px; padding: 0 13px; border: 1px solid #d0d5dd; border-radius: 13px; background: #fff; color: #667085; }
+.search { flex: 1; min-width: 0; height: 46px; border: 0; outline: none; background: transparent; color: #111827; font: inherit; font-size: 14px; }
+.filters { display: flex; gap: 7px; overflow-x: auto; margin: 14px -14px 17px; padding: 0 14px 4px; scrollbar-width: none; }
+.filters::-webkit-scrollbar { display: none; }
+.filter { flex: 0 0 auto; padding: 8px 12px; border: 1px solid #e4e7ec; border-radius: 999px; background: #fff; color: #475467; font-size: 12px; font-weight: 800; cursor: pointer; }
+.filterActive { border-color: #b42318; background: #fff3f2; color: #b42318; }
+.summary { color: #667085; font-size: 12px; font-weight: 700; margin: 0 0 9px; }
+.list { display: grid; gap: 10px; }
+.card { display: block; border: 1px solid #e4e7ec; border-radius: 16px; padding: 15px; background: #fff; color: #101828; text-decoration: none; box-shadow: 0 2px 8px rgba(16, 24, 40, .03); }
+.cardTop { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
+.invoiceNumber { font-weight: 900; font-size: 15px; }
+.client { margin: 9px 0 2px; font-weight: 800; font-size: 14px; overflow-wrap: anywhere; }
+.meta { margin: 0; color: #667085; font-size: 12px; line-height: 1.55; overflow-wrap: anywhere; }
+.cardBottom { display: flex; justify-content: space-between; align-items: flex-end; gap: 10px; padding-top: 12px; margin-top: 12px; border-top: 1px solid #f2f4f7; }
+.amount { font-size: 17px; font-weight: 900; letter-spacing: -.02em; }
+.pill { flex: 0 0 auto; border-radius: 999px; padding: 5px 8px; font-size: 11px; font-weight: 900; text-transform: capitalize; }
+.draft { color: #475467; background: #f2f4f7; }
+.issued { color: #175cd3; background: #eff8ff; }
+.sent { color: #6941c6; background: #f4f3ff; }
+.paid { color: #027a48; background: #ecfdf3; }
+.void { color: #b42318; background: #fef3f2; }
+.empty { border: 1px dashed #d0d5dd; border-radius: 16px; padding: 34px 18px; background: #fcfcfd; text-align: center; color: #667085; font-size: 14px; line-height: 1.5; }
+.empty strong { display: block; margin: 9px 0 4px; color: #344054; }
+.message { margin: 12px 0; border: 1px solid #fecdca; border-radius: 12px; padding: 12px; color: #b42318; background: #fffbfa; font-size: 13px; }
+.loadMore { display: block; width: 100%; margin-top: 15px; border: 1px solid #d0d5dd; border-radius: 12px; padding: 11px; background: #fff; color: #344054; font: inherit; font-size: 13px; font-weight: 800; cursor: pointer; }
+.back { display: inline-flex; align-items: center; gap: 5px; margin: 0 0 16px; color: #475467; text-decoration: none; font-size: 13px; font-weight: 800; }
+.detailCard { border: 1px solid #e4e7ec; border-radius: 18px; padding: 18px; margin-bottom: 12px; background: #fff; }
+.detailLabel { color: #667085; font-size: 11px; font-weight: 900; letter-spacing: .08em; text-transform: uppercase; }
+.detailName { margin: 5px 0; color: #101828; font-size: 18px; font-weight: 900; overflow-wrap: anywhere; }
+.detailText { margin: 4px 0; color: #475467; font-size: 13px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+.facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 15px; margin-top: 17px; }
+.factValue { margin: 5px 0 0; color: #101828; font-size: 13px; font-weight: 800; overflow-wrap: anywhere; }
+.line { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; padding: 11px 0; border-bottom: 1px solid #f2f4f7; }
+.line:last-child { border-bottom: 0; }
+.lineDesc { font-size: 13px; font-weight: 800; color: #344054; overflow-wrap: anywhere; }
+.lineQty { margin-top: 3px; color: #667085; font-size: 12px; }
+.lineTotal { flex: 0 0 auto; font-size: 13px; font-weight: 800; color: #101828; }
+.totalRow { display: flex; justify-content: space-between; gap: 12px; padding: 7px 0; color: #475467; font-size: 13px; }
+.grandTotal { margin-top: 7px; padding-top: 14px; border-top: 1px solid #e4e7ec; color: #101828; font-size: 17px; font-weight: 900; }
+.pdf { display: flex; justify-content: center; align-items: center; gap: 8px; width: 100%; border-radius: 12px; padding: 13px; background: #111827; color: #fff; text-decoration: none; font-size: 13px; font-weight: 900; }
+.pdfPending { margin: 0; color: #667085; font-size: 12px; line-height: 1.5; }
+@media (min-width: 700px) { .list { grid-template-columns: repeat(2, minmax(0, 1fr)); } .detailGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: 12px; } }

@@ -23,7 +23,9 @@ test("Clients is reachable from desktop and road navigation", () => {
 });
 
 test("Clients workspace follows the owner-scoped CRM API contract", () => {
-  assert.match(workspace, /fetch\("\/api\/dashboard\/crm\?limit=200"/);
+  assert.match(workspace, /fetch\(`\/api\/dashboard\/crm\?mode=index&limit=200&offset=\$\{offset\}`/);
+  assert.match(workspace, /if \(!body\.page\.hasMore\) break;/);
+  assert.match(workspace, /clientId=\$\{encodeURIComponent\(selectedId\)\}&limit=1/);
   assert.match(workspace, /credentials: "include"/);
   assert.match(workspace, /fetch\("\/api\/dashboard\/crm", \{/);
   assert.match(workspace, /action: "save"/);
@@ -116,6 +118,7 @@ test("client search includes every campus and assigned contact, not only the pri
   assert.match(filterSection, /const clientLocations = payload\.locations\.filter/);
   assert.match(filterSection, /\.\.\.clientContacts\.flatMap/);
   assert.match(filterSection, /\.\.\.clientLocations\.flatMap/);
+  assert.match(filterSection, /payload\.locationPhotoSearch/);
   for (const field of [
     "label",
     "addressLine1",

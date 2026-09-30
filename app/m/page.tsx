@@ -14,6 +14,7 @@ import {
   ArrowRight,
   CalendarCheck,
   Camera,
+  FileText,
   GraduationCap,
   LayoutGrid,
   PartyPopper,
@@ -227,6 +228,13 @@ export default function MobileHomePage() {
         icon: <ShoppingBag size={22} />,
         accent: "#cc0000",
         note: unreadOrders > 0 ? `${unreadOrders} new` : "All caught up",
+      },
+      {
+        href: "/m/invoices",
+        label: "Invoices",
+        icon: <FileText size={22} />,
+        accent: "#344054",
+        note: "Customer invoices",
       },
       {
         href: "/m/schools",
@@ -468,5 +476,4 @@ function MiniStat({
     </div>
   );
 }
-
 

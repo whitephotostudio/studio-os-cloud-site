@@ -18,7 +18,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Bell, CalendarDays, GraduationCap, Home, PlusCircle, Search, ShoppingBag, UsersRound } from "lucide-react";
+import { Bell, CalendarDays, FileText, GraduationCap, Home, PlusCircle, Search, ShoppingBag, UsersRound } from "lucide-react";
 import { AgreementGate } from "@/components/agreement-gate";
 import { SpotlightModal, type SpotlightHit } from "@/components/spotlight-search";
 import InstallPrompt from "@/components/install-prompt";
@@ -95,6 +95,12 @@ const TABS: TabDef[] = [
     label: "Orders",
     icon: ShoppingBag,
     match: (p) => p.startsWith("/m/orders"),
+  },
+  {
+    href: "/m/invoices",
+    label: "Invoices",
+    icon: FileText,
+    match: (p) => p.startsWith("/m/invoices"),
   },
   {
     href: "/m/clients",
@@ -719,7 +725,7 @@ export default function MobileLayout({
             background: "#ffffff",
             borderTop: "1px solid #eef2f7",
             display: "grid",
-            gridTemplateColumns: `repeat(${TABS.length}, 1fr)`,
+            gridTemplateColumns: `repeat(${TABS.length}, minmax(0, 1fr))`,
             boxShadow: "0 -2px 12px rgba(15,23,42,0.04)",
             paddingBottom: "env(safe-area-inset-bottom)",
           }}
@@ -742,8 +748,8 @@ export default function MobileLayout({
                   textDecoration: "none",
                   color: active ? "#cc0000" : "#6b7280",
                   fontWeight: 800,
-                  fontSize: 11,
-                  letterSpacing: "0.02em",
+                  fontSize: 10,
+                  minWidth: 0,
                 }}
               >
                 <Icon size={21} />
