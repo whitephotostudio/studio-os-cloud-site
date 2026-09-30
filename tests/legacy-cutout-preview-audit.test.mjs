@@ -1,7 +1,22 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import sharp from 'sharp';
-import { matchesOriginal, verifyLegacyCutoutsPreview } from '../scripts/verify-legacy-cutouts-preview.mjs';
+import { createHash } from 'node:crypto';
+import { matchesOriginal, verifyLegacyCutoutsPreview, verifyFrozenLegacyRows, recheckLegacyRelease } from '../scripts/verify-legacy-cutouts-preview.mjs';
+
+test('frozen release readback rejects changed output, bindings and ownership without any writes',async()=>{
+  const bytes=Buffer.from('verified image bytes');const sha=createHash('sha256').update(bytes).digest('hex');
+  const rows=Array.from({length:251},(_,n)=>({object_key:`nobg-photos/scope/${n}.png`,studio_id:'owner',original_sha256:sha,cutout_sha256:sha,scope_kind:'school',scope_id:'scope',source_key:`photos/${n}.jpg`}));
+  const report={projectRef:'bwqhzczxoevouiondjak',rows,financialMutations:0};
+  const dependencies={bindings:async()=>rows,owner:async()=> 'owner',bytes:async()=>bytes};
+  await verifyFrozenLegacyRows(report,dependencies);
+  await assert.rejects(()=>verifyFrozenLegacyRows(report,{...dependencies,bytes:async()=>Buffer.from('overwritten')}),/output changed/);
+  await assert.rejects(()=>verifyFrozenLegacyRows(report,{...dependencies,owner:async()=> 'different owner'}),/owner changed/);
+  await assert.rejects(()=>verifyFrozenLegacyRows(report,{...dependencies,bindings:async()=>rows.map((r,n)=>n? r:{...r,cutout_sha256:'a'.repeat(64)})}),/binding changed/);
+  await assert.rejects(()=>verifyFrozenLegacyRows({...report,rows:[...rows.slice(1),rows[1]]},dependencies),/authority mismatch/);
+  await recheckLegacyRelease({});
+  await assert.rejects(()=>recheckLegacyRelease({STUDIO_LEGACY_CUTOUT_RECHECK:'1',VERCEL_ENV:'production',NEXT_PUBLIC_SUPABASE_URL:'https://other.supabase.co'}),/authorized release database/);
+});
 
 test('legacy content audit requires the exact production-backed Preview and is disabled normally',async()=>{
   await verifyLegacyCutoutsPreview({});

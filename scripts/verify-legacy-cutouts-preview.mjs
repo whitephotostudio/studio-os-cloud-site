@@ -103,4 +103,50 @@ export async function verifyLegacyCutoutsPreview(env = process.env) {
   const saved=await sb.storage.from(BUCKET).upload(OUTPUT,Buffer.from(JSON.stringify(report)),{contentType:'application/json',upsert:false});if(saved.error)throw Error('Private verified audit save failed');
   console.log(JSON.stringify({check:'legacy-cutout-content-audit',...report.summary,privateReportSaved:true,financialMutations:0,grants:0}));
 }
-if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href)verifyLegacyCutoutsPreview().catch(()=>{console.error('Legacy cutout audit did not complete; private service details withheld.');process.exitCode=1;});
+// One-time release readback. It never writes photos, receipts or wallet state.
+export async function verifyFrozenLegacyRows(report, dependencies) {
+  if (report.projectRef !== PROJECT || report.rows.length !== 251 || report.financialMutations !== 0 || new Set(report.rows.map(r=>r.object_key)).size !== report.rows.length) throw Error('Frozen review authority mismatch');
+  const bindings = await dependencies.bindings();
+  if(bindings.length !== report.rows.length)throw Error('Frozen bindings changed');
+  const byKey = new Map(bindings.map(r=>[r.object_key,r]));
+  for(let start=0;start<report.rows.length;start+=4)await Promise.all(report.rows.slice(start,start+4).map(async(row)=>{
+    const current=byKey.get(row.object_key);
+    for(const field of ['studio_id','original_sha256','cutout_sha256','scope_kind','scope_id','source_key'])if(current?.[field]!==row[field])throw Error('Frozen binding changed');
+    if(await dependencies.owner(row)!==row.studio_id)throw Error('Frozen owner changed');
+    if(hash(await dependencies.bytes(row.object_key))!==row.cutout_sha256)throw Error('Frozen output changed');
+  }));
+}
+
+export async function recheckLegacyRelease(env=process.env) {
+  if(env.STUDIO_LEGACY_CUTOUT_RECHECK!=='1')return;
+  if(!['production','preview'].includes(env.VERCEL_ENV)||new URL(env.NEXT_PUBLIC_SUPABASE_URL).hostname!==`${PROJECT}.supabase.co`)throw Error('Frozen recheck requires the authorized release database');
+  const sb=createClient(env.NEXT_PUBLIC_SUPABASE_URL,env.SUPABASE_SERVICE_ROLE_KEY,{auth:{persistSession:false}});
+  const bucket=await sb.storage.getBucket(BUCKET);if(bucket.error||bucket.data.public)throw Error('Private frozen audit required');
+  const saved=await sb.storage.from(BUCKET).download(OUTPUT);if(saved.error||saved.data.size>4*1024*1024)throw Error('Frozen report unavailable');
+  const raw=Buffer.from(await saved.data.arrayBuffer());
+  if(hash(raw)!=='78c368fa792550fec6fcb8fec4440ede2b51d163908aab323031620cfc9b004d')throw Error('Frozen report changed');
+  const report=JSON.parse(raw.toString());
+  const r2=new S3Client({region:'auto',endpoint:`https://${env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,credentials:{accessKeyId:env.R2_ACCESS_KEY_ID,secretAccessKey:env.R2_SECRET_ACCESS_KEY}});
+  const scopes=new Map();
+  try {
+    await verifyFrozenLegacyRows(report,{
+      bindings:async()=>{const r=await sb.from('credit_legacy_cutout_objects').select('*');if(r.error)throw Error('Frozen bindings unavailable');return r.data;},
+      owner:async row=>{
+        const key=`${row.scope_kind}:${row.scope_id}`;
+        if(!scopes.has(key))scopes.set(key,(async()=>{
+          const s=await sb.from(row.scope_kind==='school'?'schools':'projects').select('photographer_id').eq('id',row.scope_id).single();if(s.error)throw Error('Frozen scope unavailable');
+          const p=await sb.from('photographers').select('user_id').eq('id',s.data.photographer_id).single();if(p.error)throw Error('Frozen owner unavailable');return p.data.user_id;
+        })());
+        return scopes.get(key);
+      },
+      bytes:async key=>{
+        if(!safeKey(key)||!key.startsWith('nobg-photos/'))throw Error('Invalid frozen key');
+        const r=await r2.send(new GetObjectCommand({Bucket:env.R2_BUCKET_NAME||'whitephoto-media',Key:key}),{abortSignal:AbortSignal.timeout(20000)});
+        if(!r.Body||!r.ContentLength||r.ContentLength>maxBytes){r.Body?.destroy?.();throw Error('Frozen read budget');}
+        const b=Buffer.from(await r.Body.transformToByteArray());if(b.length!==r.ContentLength)throw Error('Frozen read incomplete');return b;
+      },
+    });
+    console.log(JSON.stringify({check:'legacy-cutout-release-readback',verified:251,financialMutations:0,writes:0}));
+  }finally{r2.destroy();}
+}
+if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href)Promise.resolve().then(()=>verifyLegacyCutoutsPreview()).then(()=>recheckLegacyRelease()).catch(()=>{console.error('Legacy cutout verification did not complete; private service details withheld.');process.exitCode=1;});
