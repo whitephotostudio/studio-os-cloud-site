@@ -8,10 +8,11 @@ function harness(options={}) {
   const calls=[];
   const rpc=[];
   let providerCalls=0;
+  let metadataCalls=0;
   const originalFetch=globalThis.fetch;
   const originalKey=process.env.PHOTOROOM_API_KEY;
   if(options.configured===false)delete process.env.PHOTOROOM_API_KEY;
-  else process.env.PHOTOROOM_API_KEY='private-fixture-key';
+  else process.env.PHOTOROOM_API_KEY=options.sandbox?'sandbox_private_fixture':'private-fixture-key';
   const service={
     from:table=>{
       const filters={};
@@ -19,24 +20,25 @@ function harness(options={}) {
         if(table==='photographers')return {data:{id:'profile'},error:null};
         assert.equal(table,'credit_cloud_jobs');assert.equal(filters.studio_id,'studio');
         const data=options.existingJob?{studio_id:'studio',photographer_id:'profile',input_sha256:'a'.repeat(64),output_key:`credits/studio/${id}.png`,
-          status:'succeeded',lease_token:'claim',lease_expires_at:new Date(Date.now()-60000).toISOString(),...options.existingJob}:null;
+          original_sha256:'b'.repeat(64),output_sha256:'a'.repeat(64),status:'succeeded',lease_token:'claim',lease_expires_at:new Date(Date.now()-60000).toISOString(),...options.existingJob}:null;
         return {data:data&&data.studio_id===filters.studio_id?data:null,error:null};
       }};return chain;
     },
     async rpc(name,args) {
       rpc.push({name,args});
       if(name==='reserve_cloud_credit_job')return options.reserveError?{error:{message:options.reserveError}}:{data:[{claimed:true,state:'processing',token:'claim',output_key:`credits/studio/${id}.png`,lease_expired:false,...options.job}],error:null};
+      if(options.bindingFails&&name==='bind_cloud_cutout_original')return {data:false,error:null};
       return options.finishFails&&args.p_succeeded?{error:{message:'Lost completion'}}:{data:true,error:null};
     },
   };
   const exports={};
   const modules={
     'next/server':{NextResponse:{json:(body,init)=>Response.json(body,init)}},
-    'sharp':{default:()=>({metadata:async()=>({width:calls.length&&options.wrongDimensions?641:640,height:480,format:calls.length?'png':'jpeg',hasAlpha:true}),
-      stats:async()=>({channels:[{min:0},{min:0},{min:0},{min:options.opaqueOutput?255:0}]})})},
-    '@aws-sdk/client-s3':{HeadObjectCommand:class {constructor(args){this.args=args;}}},
+    'sharp':{default:()=>({metadata:async()=>({width:metadataCalls&&options.wrongDimensions?641:640,height:480,format:metadataCalls++?'png':'jpeg',hasAlpha:true}),
+      stats:async()=>({channels:[{min:0},{min:0},{min:0},{min:options.opaqueOutput?255:0,max:options.emptyOutput?0:255}]})})},
+    '@aws-sdk/client-s3':{GetObjectCommand:class {constructor(args){this.args=args;}}},
     '@/lib/dashboard-auth':{createDashboardServiceClient:()=>service,resolveDashboardAuth:async()=>({user:options.anonymous?null:{id:'studio'},mfaSatisfied:options.mfa!==false})},
-    '@/lib/r2':{hasR2Config:()=>true,R2_BUCKET:'fixture',r2Upload:async(...args)=>{calls.push({upload:args[0]});if(options.uploadFails)throw new Error('Upload failed');},getR2Client:()=>({send:async()=>{if(options.headFails)throw {$metadata:{httpStatusCode:503}};if(options.savedOutput===false)throw {$metadata:{httpStatusCode:404}};return {ContentType:'image/png',ContentLength:100};}})},
+    '@/lib/r2':{hasR2Config:()=>true,R2_BUCKET:'fixture',r2Upload:async(...args)=>{calls.push({upload:args[0]});if(options.uploadFails)throw new Error('Upload failed');},getR2Client:()=>({send:async()=>{if(options.headFails)throw {$metadata:{httpStatusCode:503}};if(options.savedOutput===false)throw {$metadata:{httpStatusCode:404}};return {ContentType:'image/png',ContentLength:3,Body:{transformToByteArray:async()=>new Uint8Array([1,2,3])}};}})},
     '@/lib/r2-signed-urls':{r2PresignedGetUrl:(key,ttl,permissions)=>{assert.equal(permissions.allowCloudCreditOutput,true);return `https://storage.example.invalid/${key}?signature=fixture`; }},
   };
   const compiled=ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,esModuleInterop:false}}).outputText;
@@ -46,12 +48,12 @@ function harness(options={}) {
     assert.equal(init.headers['x-api-key'],'private-fixture-key');
     return {ok:!options.providerFails,status:options.providerFails?402:200,arrayBuffer:async()=>new Uint8Array([1,2,3]).buffer};
   };
-  const request=(extra={})=>({headers:new Headers(),formData:async()=>{const form=new FormData();form.set('job_id',extra.jobId||id);form.set('image_file',new File([new Uint8Array([1,2,3])],'private-name.jpg',{type:'image/jpeg'}));form.set('studio_id','another-account');return form;},...extra});
+  const request=(extra={})=>({headers:new Headers(),formData:async()=>{const form=new FormData();form.set('job_id',extra.jobId||id);form.set('original_sha256',extra.originalHash??'b'.repeat(64));form.set('image_file',new File([new Uint8Array([1,2,3])],'private-name.jpg',{type:'image/jpeg'}));form.set('studio_id','another-account');return form;},...extra});
   return {api:exports,rpc,calls,request,get providerCalls(){return providerCalls;},cleanup(){globalThis.fetch=originalFetch;if(originalKey===undefined)delete process.env.PHOTOROOM_API_KEY;else process.env.PHOTOROOM_API_KEY=originalKey;}};
 }
 async function check(options,run){const h=harness(options);try{await run(h);}finally{h.cleanup();}}
 test('cloud rejects anonymous, missing MFA and missing provider before spending credits',async()=>{
-  for(const [options,status] of [[{anonymous:true},401],[{mfa:false},403],[{configured:false},503]])await check(options,async h=>{
+  for(const [options,status] of [[{anonymous:true},401],[{mfa:false},403],[{configured:false},503],[{sandbox:true},503]])await check(options,async h=>{
     assert.equal((await h.api.POST(h.request())).status,status);assert.equal(h.rpc.length,0);assert.equal(h.providerCalls,0);
   });
 });
@@ -62,7 +64,7 @@ test('cloud validates input and insufficient balance without processing',async()
 test('cloud binds the reservation to authenticated identity and persists successful output',async()=>check({},async h=>{
   const response=await h.api.POST(h.request());assert.equal(response.status,200);
   assert.equal(h.rpc[0].args.p_studio_id,'studio');assert.equal(h.rpc[0].args.p_input_sha256.length,64);
-  assert.equal(h.rpc[1].args.p_succeeded,true);assert.equal(h.providerCalls,1);
+  assert.equal(h.rpc.at(-1).args.p_succeeded,true);assert.equal(h.rpc.find(x=>x.name==='bind_cloud_cutout_original').args.p_original_sha256,'b'.repeat(64));assert.equal(h.rpc.find(x=>x.name==='set_cloud_cutout_output').args.p_output_sha256,'a'.repeat(64));assert.equal(h.providerCalls,1);
   const result=await response.json();assert.equal(result.creditsUsed,4);assert.ok(result.outputUrl.startsWith('https://storage.example.invalid/'));
 }));
 test('cloud replay and concurrent retries never run the provider a second time',async()=>{
@@ -86,7 +88,7 @@ test('provider or storage failure refunds the reserved operation; saved result s
 
 test('saved cloud outputs survive provider-key removal without reserving credits or exposing another user',async()=>{
   await check({configured:false,existingJob:{}},async h=>{
-    assert.equal((await h.api.POST(h.request())).status,200);assert.equal(h.rpc.length,0);assert.equal(h.providerCalls,0);
+    assert.equal((await h.api.POST(h.request())).status,200);assert.ok(h.rpc.every(x=>x.name!=='reserve_cloud_credit_job'));assert.equal(h.providerCalls,0);
   });
   await check({configured:false,existingJob:{studio_id:'another-account'}},async h=>{
     const response=await h.api.POST(h.request());assert.equal(response.status,503);assert.equal(h.rpc.length,0);
@@ -110,8 +112,32 @@ test('lost successful upload acknowledgement recovers saved output; uncertain HE
 });
 
 test('opaque provider output or changed dimensions refunds instead of selling an unusable result',async()=>{
-  for(const options of [{opaqueOutput:true},{wrongDimensions:true}])await check(options,async h=>{
+  for(const options of [{opaqueOutput:true},{emptyOutput:true},{wrongDimensions:true}])await check(options,async h=>{
     assert.equal((await h.api.POST(h.request())).status,422);assert.equal(h.rpc.at(-1).args.p_succeeded,false);
     assert.equal(h.calls.filter(call=>call.upload).length,0);
   });
 });
+
+
+test('missing original proof is rejected before credit spending, and paid IDs cannot change original',async()=>{
+  for(const originalHash of ['', 'invalid', 'C'.repeat(64)])await check({},async h=>{
+    assert.equal((await h.api.POST(h.request({originalHash}))).status,400);assert.equal(h.rpc.length,0);assert.equal(h.providerCalls,0);
+  });
+  await check({existingJob:{}},async h=>{
+    assert.equal((await h.api.POST(h.request({originalHash:'c'.repeat(64)}))).status,409);assert.equal(h.rpc.length,0);
+  });
+});
+test('legacy saved output is hashed before entitlement and mutated saved output stays reserved for review',async()=>{
+  await check({existingJob:{original_sha256:null,output_sha256:null}},async h=>{
+    assert.equal((await h.api.POST(h.request())).status,200);
+    assert.equal(h.rpc.find(x=>x.name==='set_cloud_cutout_output').args.p_output_sha256,'a'.repeat(64));assert.equal(h.providerCalls,0);
+  });
+  await check({existingJob:{status:'processing',output_sha256:'c'.repeat(64)}},async h=>{
+    assert.equal((await h.api.POST(h.request())).status,503);
+    assert.equal(h.rpc.filter(x=>x.name==='finish_cloud_credit_job').length,0);assert.equal(h.providerCalls,0);
+  });
+});
+test('source binding failure never calls the provider and returns the unused reservation',async()=>check({bindingFails:true},async h=>{
+  assert.equal((await h.api.POST(h.request())).status,422);assert.equal(h.providerCalls,0);
+  assert.equal(h.rpc.at(-1).args.p_succeeded,false);
+}));

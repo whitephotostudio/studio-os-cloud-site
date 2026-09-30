@@ -6,6 +6,7 @@ import {
 import { r2PresignedGetUrl } from "@/lib/r2-signed-urls";
 import { r2Download } from "@/lib/r2";
 import { isServerOnlyR2Key, isUuid, normalizeR2Key } from "@/lib/r2-access-security";
+import { CreditCutoutAccessError, isManagedCutoutKey, readPaidCutout, signVerifiedCutout } from "@/lib/credit-cutout-access";
 import {
   loadSchoolPhotoTombstones,
   safeLocalSchoolStorageId,
@@ -81,13 +82,15 @@ export async function GET(
       return NextResponse.json({ ok: false, message: "Not authorized for this image." }, { status: 403 });
     }
 
-    const { user } = await resolveDashboardAuth(request);
+    const auth = await resolveDashboardAuth(request);
+    const { user } = auth;
     if (!user) {
       return NextResponse.json(
         { ok: false, message: "Please sign in again." },
         { status: 401 },
       );
     }
+    if (auth.mfaSatisfied === false) return NextResponse.json({ ok: false, message: "Complete two-step verification before viewing photos." }, { status: 403 });
 
     const service = createDashboardServiceClient();
 
@@ -236,6 +239,15 @@ export async function GET(
       }
     }
 
+    let verifiedCutout: Buffer | null = null;
+    if (isManagedCutoutKey(storagePath)) {
+      try { verifiedCutout = await readPaidCutout(service, photographerId, storagePath); }
+      catch (error) {
+        if (error instanceof CreditCutoutAccessError) return NextResponse.json({ ok: false, message: error.message }, { status: 403 });
+        throw error;
+      }
+    }
+
     // ── On-demand thumbnail: ?w=<px> downloads the object, resizes it with
     //    sharp, and returns the bytes (cached a day). Lets the mobile grids
     //    show a 25-student page without pulling 25 full-size originals.
@@ -250,7 +262,7 @@ export async function GET(
         // native runtime is unavailable, normal previews must still redirect
         // to the existing R2 object instead of failing while this route loads.
         const { default: sharp } = await import("sharp");
-        const original = await r2Download(storagePath);
+        const original = verifiedCutout ?? await r2Download(storagePath);
         const resized = await sharp(original)
           .rotate()
           .resize({ width: thumbWidth, withoutEnlargement: true })
@@ -260,7 +272,7 @@ export async function GET(
           status: 200,
           headers: {
             "Content-Type": "image/jpeg",
-            "Cache-Control": "private, max-age=86400",
+            "Cache-Control": verifiedCutout ? "private, no-store" : "private, max-age=86400",
           },
         });
       } catch (resizeError) {
@@ -271,7 +283,7 @@ export async function GET(
 
     // ── Generate a short-lived signed URL (5 min — browser cache will
     //    hide the redirect on subsequent requests) and 302 to it. ──
-    const signedUrl = r2PresignedGetUrl(storagePath, 60 * 5);
+    const signedUrl = verifiedCutout ? signVerifiedCutout(storagePath) : r2PresignedGetUrl(storagePath, 60 * 5);
     if (!signedUrl) {
       return NextResponse.json(
         { ok: false, message: "R2 not configured." },
@@ -283,7 +295,7 @@ export async function GET(
     // Tell the browser it can reuse the redirect for ~5 minutes.
     // Setting `private` ensures shared caches (e.g., Vercel edge) do
     // not cache the redirect, since the signed URL is per-request.
-    response.headers.set("Cache-Control", "private, max-age=300");
+    response.headers.set("Cache-Control", verifiedCutout ? "private, no-store" : "private, max-age=300");
     return response;
   } catch (error) {
     console.error("[r2/img]", error);

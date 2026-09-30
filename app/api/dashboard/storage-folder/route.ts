@@ -6,6 +6,7 @@ import {
 import { listR2FolderImages } from "@/lib/r2";
 import { guardAgreement } from "@/lib/require-agreement";
 import { isServerOnlyR2Key, isUuid } from "@/lib/r2-access-security";
+import { filterPaidCutoutFiles } from "@/lib/credit-cutout-access";
 import {
   filterTombstonedSchoolPhotoAssets,
   loadSchoolPhotoTombstones,
@@ -158,7 +159,9 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const files = await listR2FolderImages(folderPath);
+    const files = await filterPaidCutoutFiles(await listR2FolderImages(folderPath), {
+      service, photographerId: photographerRow.id,
+    });
     if (!ownership.schoolId) {
       return NextResponse.json({ ok: true, files });
     }

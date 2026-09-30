@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { createDashboardServiceClient } from "@/lib/dashboard-auth";
 import {
   contentDispositionAttachment,
+  assertDigitalDeliveryReady,
+  DigitalDeliveryReviewError,
   createDigitalDeliveryZipStream,
   digitalDeliveryFileName,
   resolveDigitalDeliveryContext,
@@ -42,6 +44,7 @@ export async function GET(request: NextRequest) {
     }
 
     const fileName = digitalDeliveryFileName(context);
+    await assertDigitalDeliveryReady(context.files);
     if (wantsJson) {
       return NextResponse.json(
         {
@@ -63,6 +66,7 @@ export async function GET(request: NextRequest) {
       },
     });
   } catch (error) {
+    if (error instanceof DigitalDeliveryReviewError) return NextResponse.json({ ok: false, message: error.message }, { status: 409, headers: { "cache-control": "private, no-store" } });
     console.error("[digital-delivery]", error);
     return NextResponse.json(
       { ok: false, message: "Failed to prepare your digital photo ZIP." },

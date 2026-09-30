@@ -452,7 +452,7 @@ function itemQuantity(value: number | null | undefined) {
  * so the HTML references local files that work when extracted.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function buildOrderSummaryHtml(order: any, branding: StudioBranding, photoFileMap: Map<string, string>): string {
+function buildOrderSummaryHtml(order: any, branding: StudioBranding, photoFileMap: Map<string, string>, appliedBackdrops: ReadonlySet<string>): string {
   const studentName = `${clean(order.student?.first_name)} ${clean(order.student?.last_name)}`.trim() || "Student";
   const schoolName = order.school?.school_name ?? "—";
   const className = order.class?.class_name || order.student?.class_name || "";
@@ -490,7 +490,7 @@ function buildOrderSummaryHtml(order: any, branding: StudioBranding, photoFileMa
         ${imgSrc ? `<img src="${esc(imgSrc)}" style="width:190px;height:230px;object-fit:cover;border-radius:4px;border:1px solid #ddd;background:#f5f5f5;" />` : `<div style="width:190px;height:230px;background:#f5f5f5;border-radius:4px;border:1px solid #ddd;display:flex;align-items:center;justify-content:center;color:#999;font-size:13px;">No photo</div>`}
         <div style="margin-top:8px;font-size:14px;font-weight:700;color:#111;">Pose ${i + 1}</div>
         <div style="font-size:13px;font-weight:600;color:#333;line-height:1.35;">${esc(productName)}</div>
-        ${item.backdrop ? `<div style="font-size:12px;color:#111;font-weight:800;">Backdrop applied · print-ready</div>` : ""}
+        ${item.backdrop ? `<div style="font-size:12px;color:#111;font-weight:800;">${appliedBackdrops.has(item.photoUrl) ? "Backdrop applied · print-ready" : "Backdrop needs review"}</div>` : ""}
         ${slotLabel ? `<div style="font-size:12px;color:#0f766e;font-weight:700;">${esc(slotLabel)}</div>` : ""}
         ${poseFile ? `<div style="font-size:11px;color:#777;word-break:break-word;">${esc(poseFile)}</div>` : ""}
         <div style="font-size:13px;color:#555;">Qty ${itemQuantity(item.quantity)}</div>
@@ -511,7 +511,7 @@ function buildOrderSummaryHtml(order: any, branding: StudioBranding, photoFileMa
       <td>${itemQuantity(item.quantity)}</td>
       <td>${esc(slotLabel)}</td>
       <td>Pose ${index + 1}</td>
-      <td>${esc(poseFile)}${item.backdrop ? " · backdrop applied" : ""}</td>
+      <td>${esc(poseFile)}${item.backdrop ? appliedBackdrops.has(item.photoUrl) ? " · backdrop applied" : " · backdrop needs review" : ""}</td>
     </tr>`;
   }).join("");
 
@@ -725,9 +725,11 @@ export async function GET(request: NextRequest) {
 
       // Download photos FIRST, track URL → local filename mapping
       const photoFileMap = new Map<string, string>();
+      const appliedBackdrops = new Set<string>();
       let photoIndex = 0;
       for (const item of displayItems) {
         const url = item.photoUrl;
+        if (item.backdrop && !url) return NextResponse.json({ ok: false, message: "The selected backdrop needs its original photo and a verified paid cutout. Review the photo in Studio OS, then retry this download." }, { status: 409 });
         if (!url) continue;
         photoIndex++;
         try {
@@ -737,8 +739,10 @@ export async function GET(request: NextRequest) {
                 originalUrlOrKey: url,
                 backdrop,
                 orientation: item.orientation,
+                service, photographerId: pgRow.id,
               })
             : null;
+          if (backdrop && !composite) return NextResponse.json({ ok: false, message: "The selected backdrop needs a verified paid cutout. Review or process the original photo in Studio OS, then retry this download." }, { status: 409 });
           const fileName = composite
             ? backdropCompositeFileName(fileNameFromUrl(url, `photo-${photoIndex}.jpg`), backdrop)
             : fileNameFromUrl(url, `photo-${photoIndex}.jpg`);
@@ -759,13 +763,15 @@ export async function GET(request: NextRequest) {
           });
           // Map original URL → local filename (relative to HTML in same folder)
           photoFileMap.set(url, multiOrder ? fileName : fileName);
+          if (composite) appliedBackdrops.add(url);
         } catch (err) {
+          if (item.backdrop) return NextResponse.json({ ok: false, message: "The selected backdrop could not be verified. Keep this order for review and retry after its paid cutout is ready." }, { status: 409 });
           console.error(`Error downloading photo ${url}:`, err);
         }
       }
 
       // Now build HTML with local file references
-      const summaryHtml = buildOrderSummaryHtml(order, branding, photoFileMap);
+      const summaryHtml = buildOrderSummaryHtml(order, branding, photoFileMap, appliedBackdrops);
       const enc = new TextEncoder();
       zipEntries.push({
         name: `${prefix}order-summary.html`,

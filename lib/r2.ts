@@ -90,11 +90,13 @@ export async function r2Upload(
   body: Buffer | Uint8Array,
   contentType: string,
   cacheControl = "public, max-age=31536000",
-  options?: { allowCloudCreditOutput?: boolean },
+  options?: { allowCloudCreditOutput?: boolean; allowVerifiedCutout?: boolean },
 ) {
   if (key.split("/").filter(Boolean)[0] === "credits" && !options?.allowCloudCreditOutput) {
     throw new Error("Cloud credit outputs require their owned processing job.");
   }
+  if (key.split("/").filter(Boolean)[0] === "nobg-photos" && !options?.allowVerifiedCutout) throw new Error("Managed cutout uploads require verified paid access.");
+  if (key.split("/").filter(Boolean)[0] === "credit-staging") throw new Error("Cutout staging requires its private upload ticket.");
   const client = getR2Client();
   await client.send(
     new PutObjectCommand({
@@ -115,6 +117,8 @@ export async function r2Upload(
  */
 export async function r2Copy(srcKey: string, destKey: string) {
   if ([srcKey,destKey].some(key=>key.split("/").filter(Boolean)[0]==="credits")) throw new Error("Cloud credit outputs cannot be moved by generic storage operations.");
+  if ([srcKey,destKey].some(key=>key.split("/").filter(Boolean)[0]==="credit-staging")) throw new Error("Cutout staging cannot be copied by generic storage operations.");
+  if ([srcKey,destKey].some(key=>key.split("/").filter(Boolean)[0]==="nobg-photos")) throw new Error("Managed cutouts must be uploaded with their paid photo proof when moving to a new folder.");
   const client = getR2Client();
   const encodedSource = `${R2_BUCKET}/${srcKey
     .split("/")
@@ -133,26 +137,31 @@ export async function r2Copy(srcKey: string, destKey: string) {
 /**
  * Download a file from R2.  Returns the body as a Buffer.
  */
-export async function r2Download(key: string): Promise<Buffer> {
+export async function r2Download(key: string, options: { allowVerifiedCutout?: boolean; allowCutoutStaging?: boolean; maxBytes?: number } = {}): Promise<Buffer> {
   if (key.split("/").filter(Boolean)[0]==="credits") throw new Error("Cloud credit outputs require their owned job result.");
+  if (key.split("/").filter(Boolean)[0]==="nobg-photos" && !options.allowVerifiedCutout) throw new Error("Managed cutouts require verified paid access.");
+  if (key.split("/").filter(Boolean)[0]==="credit-staging" && !options.allowCutoutStaging) throw new Error("Cutout staging is private and cannot be used as a photo.");
   const client = getR2Client();
   const res = await client.send(
     new GetObjectCommand({
       Bucket: R2_BUCKET,
       Key: key,
-    }),
+    }), { abortSignal: AbortSignal.timeout(30000) },
   );
   const stream = res.Body;
+  if (options.maxBytes && Number(res.ContentLength) > options.maxBytes) throw new Error("Managed cutout exceeds the image size limit.");
   if (!stream) throw new Error("Empty response body from R2");
   const bytes = await stream.transformToByteArray();
+  if (options.maxBytes && bytes.byteLength > options.maxBytes) throw new Error("Managed cutout exceeds the image size limit.");
   return Buffer.from(bytes);
 }
 
 /**
  * Delete a file from R2.
  */
-export async function r2Delete(key: string) {
+export async function r2Delete(key: string, options: { allowCutoutStaging?: boolean } = {}) {
   if (key.split("/").filter(Boolean)[0]==="credits") throw new Error("Cloud credit outputs cannot be deleted by generic storage operations.");
+  if (key.split("/").filter(Boolean)[0]==="credit-staging" && !options.allowCutoutStaging) throw new Error("Cutout staging cleanup requires its owner.");
   const client = getR2Client();
   await client.send(
     new DeleteObjectCommand({
@@ -168,6 +177,7 @@ export async function r2Delete(key: string) {
  */
 export async function r2DeletePrefix(prefix: string) {
   if (prefix.split("/").filter(Boolean)[0]==="credits") throw new Error("Cloud credit outputs cannot be deleted by generic storage operations.");
+  if (prefix.split("/").filter(Boolean)[0]==="credit-staging") throw new Error("Cutout staging cleanup requires its owner.");
   const client = getR2Client();
   let continuationToken: string | undefined;
   let totalDeleted = 0;
@@ -229,6 +239,7 @@ export async function r2DeleteWithVariants(keys: string[]) {
 
   if (!normalizedKeys.length) return 0;
   if (normalizedKeys.some(key=>key.split("/")[0]==="credits")) throw new Error("Cloud credit outputs cannot be deleted by generic storage operations.");
+  if (normalizedKeys.some(key=>key.split("/")[0]==="credit-staging")) throw new Error("Cutout staging cleanup requires its owner.");
 
   const client = getR2Client();
   let totalDeleted = 0;

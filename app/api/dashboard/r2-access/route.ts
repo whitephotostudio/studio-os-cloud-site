@@ -18,6 +18,7 @@ import {
   r2PresignedPutUrl,
 } from "@/lib/r2-signed-urls";
 import { rateLimit } from "@/lib/rate-limit";
+import { authorizedCutoutBindings, CreditCutoutAccessError, isManagedCutoutKey, readPaidCutout, signVerifiedCutout } from "@/lib/credit-cutout-access";
 
 export const runtime = "nodejs";
 
@@ -113,6 +114,7 @@ function isMissingObjectError(error: unknown) {
 export async function POST(request: NextRequest) {
   const auth = await resolveDashboardAuth(request);
   if (!auth.user) return jsonError("Unauthorized", 401);
+  if (auth.mfaSatisfied === false) return jsonError("Complete two-step verification before accessing photos.", 403);
 
   const service = createDashboardServiceClient();
   const { data: photographer, error: photographerError } = await service
@@ -153,6 +155,7 @@ export async function POST(request: NextRequest) {
     if (action === "sign-upload") {
       const key = await authorizeKey(service, photographer.id, body.key);
       if (!key) return jsonError("You cannot upload to that path.", 403);
+      if (isManagedCutoutKey(key)) return jsonError("Cutouts require a verified paid photo and a direct Studio OS upload.", 403);
 
       const contentType =
         typeof body.contentType === "string"
@@ -188,19 +191,24 @@ export async function POST(request: NextRequest) {
     if (action === "sign-download") {
       const key = await authorizeKey(service, photographer.id, body.key);
       if (!key) return jsonError("You cannot download that path.", 403);
-      const url = r2PresignedGetUrl(key, 60 * 60);
+      if (isManagedCutoutKey(key)) await readPaidCutout(service, photographer.id, key);
+      const url = isManagedCutoutKey(key) ? signVerifiedCutout(key) : r2PresignedGetUrl(key, 60 * 60);
       if (!url) throw new Error("R2 signing is unavailable");
       return NextResponse.json({
         ok: true,
         key,
         url,
-        expiresIn: 60 * 60,
+        expiresIn: isManagedCutoutKey(key) ? 300 : 60 * 60,
       });
     }
 
     if (action === "exists") {
       const key = await authorizeKey(service, photographer.id, body.key);
       if (!key) return jsonError("You cannot inspect that path.", 403);
+      if (isManagedCutoutKey(key)) {
+        await readPaidCutout(service, photographer.id, key);
+        return NextResponse.json({ ok: true, key, exists: true });
+      }
       try {
         await getR2Client().send(
           new HeadObjectCommand({ Bucket: R2_BUCKET, Key: key }),
@@ -232,12 +240,12 @@ export async function POST(request: NextRequest) {
           ContinuationToken: continuationToken,
         }),
       );
+      const keys = (page.Contents ?? []).map(item => item.Key ?? "").filter(key => key.startsWith(prefix));
+      const paidKeys = await authorizedCutoutBindings(service, photographer.id, keys);
       return NextResponse.json({
         ok: true,
         prefix,
-        keys: (page.Contents ?? [])
-          .map((item) => item.Key ?? "")
-          .filter((key) => key.startsWith(prefix)),
+        keys: keys.filter(key => !isManagedCutoutKey(key) || paidKeys.has(key)),
         nextContinuationToken: page.IsTruncated
           ? page.NextContinuationToken ?? null
           : null,
@@ -246,6 +254,7 @@ export async function POST(request: NextRequest) {
 
     return jsonError("Unsupported storage action.", 400);
   } catch (error) {
+    if (error instanceof CreditCutoutAccessError) return jsonError(error.message, 403);
     console.error("[r2-access] storage request failed", {
       action,
       photographerId: photographer.id,

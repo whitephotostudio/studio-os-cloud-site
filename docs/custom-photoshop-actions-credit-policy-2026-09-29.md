@@ -24,10 +24,12 @@ PNG elsewhere, or remove/replace a background and flatten its result into JPG.
 Therefore a JPG-only policy is a useful output restriction, not proof that an
 arbitrary action performed only skin retouching.
 
-Managed cutout discovery currently accepts matching local files without proving
-payment in backdrop composition, AI preview/application/refinement, Orders
-cutout indexing and cloud upload. These import/use routes remain a separate
-release blocker for a strict no-cutout-bypass claim.
+Matching local filenames previously authorized cutouts in backdrop composition,
+AI preview/application/refinement, Orders and cloud upload without proving
+payment. The prepared shared entitlement gate now checks exact source/output
+content hashes against an immutable owned debit before managed use.
+See [managed paid-cutout enforcement](paid-cutout-enforcement-2026-09-29.md)
+for the new protections and remaining release requirements.
 
 ## Prepared protections
 
@@ -62,14 +64,14 @@ production result validation and file promotion/cleanup; actual Adobe execution
 and signed-in UI have not been verified for this change. No real Photoshop
 action, charge, refund, schema migration or production release was performed.
 
-## Remaining design requirement
+## Durable entitlement and remaining limits
 
-Use one account-scoped paid-photo entitlement check for every managed cutout
-entry point, with corresponding authorization at cloud upload. A local filename,
-mutable metadata or a local manifest alone must not authorize a new cutout.
-Bind entitlement to durable photo content/origin and the original credit receipt,
-so moving a photo or syncing it to another computer does not lose paid access.
-Manual mask refinement should retain the original entitlement.
+The candidate uses one account-scoped paid-photo check for managed cutouts,
+including server upload, signing, web delivery and composite consumption. A
+filename, metadata or manifest cannot grant access. Whole-file hashes retain
+identity through a move or rename with identical bytes. Mask refinements preserve
+paid access only after the server validates actual previous/new images; clients
+cannot register arbitrary replacement hashes as revisions.
 
 Existing local job fingerprints include path and modification time. Using those
 alone as a global import gate would incorrectly block legitimate cross-device

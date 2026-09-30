@@ -41,11 +41,16 @@ export async function verifyPaymentRelease(env = process.env, fetcher = fetch, r
   if (env.STUDIO_CREDIT_RELEASE_VERIFY === '1') {
     await db('studio_credits?select=id,studio_id,balance,credit_debt&limit=0');
     await db('order_usage_fees?select=order_id,report_status,refund_status,event_identifier,amount_cents,currency&limit=0');
-    await db('credit_cloud_jobs?select=id,studio_id,status,input_sha256,output_key&limit=0');
+    await db('credit_cloud_jobs?select=id,studio_id,status,input_sha256,original_sha256,output_sha256,output_key&limit=0');
+    await db('credit_cutout_claims?select=id,studio_id,receipt_id,original_sha256&limit=0');
+    await db('credit_cutout_entitlements?select=claim_id,cutout_sha256&limit=0');
+    await db('credit_cutout_objects?select=object_key,studio_id,original_sha256,cutout_sha256&limit=0');
     const schema = await db('');
     const requiredRpcs = ['apply_credit_adjustment', 'reverse_credit_purchase', 'get_studio_credit_balance',
       'stage_order_usage_fee', 'claim_order_usage_fee', 'complete_order_usage_fee_report', 'reserve_cloud_credit_job', 'finish_cloud_credit_job',
-      'expire_due_credit_accounts'];
+      'expire_due_credit_accounts', 'get_studio_cutout_entitlement', 'register_studio_cutout_entitlement',
+      'register_verified_cutout_revision', 'bind_cloud_cutout_original', 'set_cloud_cutout_output',
+      'link_credit_cutout_object', 'authorized_credit_cutout_keys', 'has_studio_cutout_entitlement'];
     const missingRpcs = requiredRpcs.filter((name) => !schema.paths?.[`/rpc/${name}`]?.post);
     if (missingRpcs.length) throw new Error(`Credit migration RPCs are missing: ${missingRpcs.join(', ')}.`);
     report(JSON.stringify({ check: 'credit-migration-api', ok: true, financialMutations: 0 }));

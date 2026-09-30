@@ -629,6 +629,7 @@ export async function POST(request: NextRequest) {
     );
     nobgUrls = await loadNoBgUrlMapForMediaRows(loadedMediaRows, {
       ttlSeconds: SIGNED_URL_TTL_PARENTS_PORTAL_SECONDS,
+      service, photographerId: activeSchool.photographer_id,
     });
     mediaRows = loadedMediaRows.map((row) => ({
       ...row,

@@ -1,11 +1,12 @@
-import { HeadObjectCommand } from "@aws-sdk/client-s3";
+import { GetObjectCommand } from "@aws-sdk/client-s3";
+import { createHash } from "node:crypto";
 import type { createDashboardServiceClient } from "@/lib/dashboard-auth";
 import { getR2Client, R2_BUCKET } from "@/lib/r2";
 
 /** A crashed worker must return credits even when its photographer never retries. */
 export async function recoverInterruptedCloudCredits(service: ReturnType<typeof createDashboardServiceClient>) {
   const { data, error } = await service.from("credit_cloud_jobs")
-    .select("id,lease_token,output_key").eq("status", "processing")
+    .select("id,lease_token,original_sha256,output_sha256,output_key").eq("status", "processing")
     .lte("lease_expires_at", new Date().toISOString()).order("lease_expires_at", { ascending: true }).limit(25);
   if (error) throw error;
   const jobs = data ?? [];
@@ -17,8 +18,14 @@ export async function recoverInterruptedCloudCredits(service: ReturnType<typeof 
       try {
         let exists;
         try {
-          const object = await getR2Client().send(new HeadObjectCommand({ Bucket: R2_BUCKET, Key: job.output_key }), { abortSignal: AbortSignal.timeout(10000) });
-          exists = object.ContentType === "image/png" && Number(object.ContentLength) > 0;
+          const object = await getR2Client().send(new GetObjectCommand({ Bucket: R2_BUCKET, Key: job.output_key }), { abortSignal: AbortSignal.timeout(15000) });
+          if (object.ContentType !== "image/png" || !object.ContentLength || object.ContentLength > 20 * 1024 * 1024 || !object.Body) throw new Error("Cannot verify saved output.");
+          // An unknown legacy saved file stays paid for review. It must not be
+          // refunded merely because the new source proof is not yet attached.
+          if (!job.original_sha256 || !job.output_sha256) throw new Error("Saved output needs source proof.");
+          const bytes = Buffer.from(await object.Body.transformToByteArray());
+          if (bytes.length !== object.ContentLength || createHash("sha256").update(bytes).digest("hex") !== job.output_sha256) throw new Error("Saved output changed.");
+          exists = true;
         } catch (issue) {
           if ((issue as { $metadata?: { httpStatusCode?: number } }).$metadata?.httpStatusCode !== 404) throw issue;
           exists = false;

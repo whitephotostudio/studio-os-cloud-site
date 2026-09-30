@@ -1,5 +1,5 @@
 import { listR2FolderImages } from "@/lib/r2";
-import { r2PresignedGetUrl } from "@/lib/r2-signed-urls";
+import { filterPaidCutoutFiles, type CreditCutoutService } from "@/lib/credit-cutout-access";
 import {
   buildStudentPhotoFolderPrefixes,
   filterTombstonedSchoolPhotoAssets,
@@ -122,6 +122,7 @@ export async function loadFolderMediaRows(
   options?: {
     ttlSeconds?: number;
     service?: SchoolPhotoServiceClient;
+    photographerId?: string | null;
     schoolId?: string | null;
     tombstonedFamilies?: ReadonlySet<string>;
   },
@@ -140,7 +141,9 @@ export async function loadFolderMediaRows(
 
   for (const folderPath of uniqueFolders(folderPaths)) {
     const files = filterTombstonedSchoolPhotoAssets(
-      await listR2FolderImages(folderPath, { ttlSeconds: options?.ttlSeconds }),
+      await filterPaidCutoutFiles(await listR2FolderImages(folderPath, { ttlSeconds: options?.ttlSeconds }), {
+        service: options?.service as CreditCutoutService | undefined, photographerId: options?.photographerId, ttlSeconds: options?.ttlSeconds,
+      }),
       deletedFamilies,
     );
     for (const file of files) {
@@ -163,7 +166,7 @@ export async function loadFolderMediaRows(
 
 export async function loadNoBgUrlMapForMediaRows(
   mediaRows: FolderMediaRow[],
-  options?: { ttlSeconds?: number },
+  options?: { ttlSeconds?: number; service?: CreditCutoutService; photographerId?: string | null },
 ) {
   const noBgUrls: Record<string, string> = {};
   const expectedPathToMediaId = new Map<string, string>();
@@ -184,15 +187,12 @@ export async function loadNoBgUrlMapForMediaRows(
   );
 
   for (const folder of folders) {
-    const files = await listR2FolderImages(folder);
+    const files = await filterPaidCutoutFiles(await listR2FolderImages(folder), options);
     for (const file of files) {
       const withoutPrefix = file.key.replace(/^nobg-photos\//i, "");
       const mediaId = expectedPathToMediaId.get(withoutPrefix.toLowerCase());
       if (!mediaId || noBgUrls[mediaId]) continue;
-      noBgUrls[mediaId] = r2PresignedGetUrl(
-        file.key,
-        options?.ttlSeconds,
-      );
+      noBgUrls[mediaId] = file.url;
     }
   }
 

@@ -15,7 +15,7 @@ function clean(value: string | null | undefined) {
 }
 
 async function resolveBackdrop(
-  service: { from: (table: string) => any },
+  service: ReturnType<typeof createDashboardServiceClient>,
   photographerId: string,
   backdrop: BackdropCompositeSelection | null | undefined,
 ) {
@@ -86,6 +86,7 @@ export async function GET(request: NextRequest) {
       originalUrlOrKey: item.sku,
       backdrop,
       orientation: item.orientation,
+      service, photographerId,
     });
     if (!composite) {
       return NextResponse.json({ ok: false, message: "Composite unavailable." }, { status: 404 });

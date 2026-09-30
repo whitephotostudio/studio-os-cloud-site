@@ -1,3 +1,5 @@
+import { firstPaidCutoutBytes, type CreditCutoutService } from "@/lib/credit-cutout-access";
+
 const DEFAULT_BLUR_PX = 4;
 const MIN_BLUR_PX = 4;
 const MAX_BLUR_PX = 24;
@@ -27,7 +29,7 @@ function clean(value: string | null | undefined) {
 async function loadSharp() {
   const dynamicImport = new Function("specifier", "return import(specifier)") as (
     specifier: string,
-  ) => Promise<any>;
+  ) => Promise<typeof import("sharp") & { default?: typeof import("sharp") }>;
   const mod = await dynamicImport("sharp");
   return mod.default ?? mod;
 }
@@ -128,17 +130,6 @@ async function loadHttpsImageBytes(value: string | null | undefined) {
   return Buffer.from(await response.arrayBuffer());
 }
 
-async function firstReadableImageObject(keys: string[]) {
-  for (const key of keys) {
-    try {
-      return await downloadR2(key);
-    } catch {
-      // Try the next known background-removal naming convention.
-    }
-  }
-  return null;
-}
-
 async function loadTrustedImageBytes(value: string | null | undefined) {
   const raw = clean(value);
   if (!raw) return null;
@@ -188,13 +179,15 @@ export async function composeBackdropImage(options: {
   originalUrlOrKey: string | null | undefined;
   backdrop: BackdropCompositeSelection | null | undefined;
   orientation?: "portrait" | "landscape" | null;
+  service?: CreditCutoutService;
+  photographerId?: string | null;
 }): Promise<BackdropCompositeResult | null> {
   const originalKey = normalizeOriginalKey(options.originalUrlOrKey);
   const backdropUrl = backdropImageUrl(options.backdrop);
   if (!originalKey || !backdropUrl) return null;
 
   const [foregroundBuffer, backdropBuffer] = await Promise.all([
-    firstReadableImageObject(nobgCandidateKeysForOriginalKey(originalKey)),
+    firstPaidCutoutBytes(nobgCandidateKeysForOriginalKey(originalKey), { service: options.service, photographerId: options.photographerId }),
     loadTrustedImageBytes(backdropUrl),
   ]);
   if (!foregroundBuffer || !backdropBuffer) return null;

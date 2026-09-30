@@ -6,7 +6,7 @@ import {
 } from "@/lib/dashboard-auth";
 import { parseJson } from "@/lib/api-validation";
 import { guardAgreement } from "@/lib/require-agreement";
-import { sendDigitalDeliveryEmailForOrder } from "@/lib/digital-delivery";
+import { DigitalDeliveryReviewError, sendDigitalDeliveryEmailForOrder } from "@/lib/digital-delivery";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -94,6 +94,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json(result);
   } catch (error) {
+    if (error instanceof DigitalDeliveryReviewError) return NextResponse.json({ ok: false, message: error.message }, { status: 409 });
     console.error("[dashboard/digital-delivery/send]", error);
     const message = error instanceof Error && error.message
       ? error.message

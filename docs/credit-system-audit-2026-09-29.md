@@ -119,18 +119,21 @@ compatible new database and webhook code are already serving or safely paused.
 
 ## Validation and release requirements
 
-The complete website suite passed 461 tests. TypeScript and the production
-build passed. Focused lint has zero errors and six existing settings-page
-warnings. The matching desktop snapshot passed 799 tests with one skipped
-platform test, and Flutter analysis was clean.
+The latest managed-cutout website suite passed 536 tests with no skips or failures.
+TypeScript, the production build and changed-file lint passed. The matching
+Mac source passed 912 Flutter tests with one platform skip and zero direct
+`lib` analysis diagnostics. The universal 0.1.14+18 archive was rebuilt from
+this source and passes strict deep Developer ID signature verification;
+it is not notarized, installed or publicly published. Fifty-five focused tests
+passed after 37 authorized source/test files were copied back to the primary
+checkout with baseline SHA checks, preserving its 0.1.11+15 version and all
+unrelated work. The older archive/ZIP is retained as superseded.
 
-After the custom-action follow-up, desktop source passed 824 full-suite tests
-with one platform skip and zero direct `lib` analysis diagnostics. The five
-changed/new files were copied into the release snapshot with a separate review
-patch. The old signed archive/ZIP is now explicitly marked for rebuild and
-must not be published as matching this updated source. Native Photoshop action
-execution and complete imported-cutout entitlement enforcement remain unverified
-or unfinished respectively.
+The [managed cutout change](paid-cutout-enforcement-2026-09-29.md) implements
+account-scoped paid photo access, server-verified revisions and private staging.
+Selected-backdrop delivery now stops for review when the paid result is unavailable;
+it cannot silently fall back to an original marked print-ready. Native Photoshop
+and actual platform credit checkout remain separately unverified.
 
 Four migrations were tested together against the live database schema in one
 rolled-back transaction. Both existing credit accounts retained their balances
@@ -139,12 +142,11 @@ service-only within the transaction. A second read verified that all candidate
 tables and the profile guard disappeared after rollback. No production schema
 change or customer payment was made by this dry run.
 
-The release requires the matching desktop update plus the four exact migrations;
+The release now requires the matching desktop update plus five exact migrations
+(the original four and `20260930120000_paid_cutout_entitlements.sql`);
 old desktop builds write balances directly and will no longer process credits
 once secure permissions are applied. The signed universal 0.1.14+18 Mac candidate passed strict deep signature
-verification; it is not notarized or published. Nine reviewed credit source
-files were applied to the primary desktop checkout with baseline SHA checks,
-preserving unrelated changes; 21 focused tests passed there. Existing apps have
+verification; it is not notarized or published. The rebuilt candidate and copied source have the current evidence above. Existing apps have
 no update banner, and registrations contain only release/debug, so the six
 active release registrations cannot prove an upgrade. Notarize and publish the
 validated matching Mac build before exposing the new web flow and arrange
@@ -161,7 +163,7 @@ lot-based accounting is installed. The prepared bridge and new code honor
 `STUDIO_CREDIT_MAINTENANCE=1`: credit checkout stops before creating a customer
 or payment, and authenticated Stripe platform fulfillment returns retryable
 503 before claiming an event. Photographer Connect customer orders remain
-eligible. Deploy the compatible new code while paused, apply the four migrations
+eligible. Deploy the compatible new code while paused, apply all five exact migrations
 in one transaction, verify them, then build the final candidate with the strict
 schema checks, exact webhook repair and maintenance disabled. Promote only
 after its checks pass and retain the updated line in main.
@@ -218,3 +220,14 @@ Keep Git `main` synchronized with every promoted release while Vercel's Git
 production branch remains `main`; otherwise a later push can redeploy stale
 code. Do not push this schema-dependent candidate to `main` before coordinated
 release. The dirty original desktop and website workspaces are preserved.
+
+
+All five exact migrations were additionally verified together against the live
+production schema in a BEGIN/ROLLBACK harness through the authenticated Supabase
+SQL editor. Within the transaction, assertions confirmed that existing balances
+and purchase/use totals stayed unchanged, authenticated wallet/private proof
+writes were revoked, service-only completion/revision RPCs remained private and
+desktop proof RPCs were available. A separate read after rollback confirmed two
+existing credit accounts and absence of every candidate schema table. No persistent
+production schema change or real customer charge occurred. The five-file harness
+also matches the isolated PGlite lifecycle/security tests.

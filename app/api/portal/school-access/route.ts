@@ -537,6 +537,7 @@ export async function POST(request: NextRequest) {
         );
         const noBgUrls = await loadNoBgUrlMapForMediaRows(mediaRowsResult, {
           ttlSeconds: SIGNED_URL_TTL_PARENTS_PORTAL_SECONDS,
+          service, photographerId: gallerySchool.photographer_id,
         });
         const mediaRows = mediaRowsResult.map((row) => ({
           ...row,

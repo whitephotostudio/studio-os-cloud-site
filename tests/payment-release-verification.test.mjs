@@ -69,7 +69,9 @@ test('refund email release verifies durable outbox, provider sender and retry cr
 
 const creditRpcs = ['apply_credit_adjustment', 'reverse_credit_purchase', 'get_studio_credit_balance',
   'stage_order_usage_fee', 'claim_order_usage_fee', 'complete_order_usage_fee_report', 'reserve_cloud_credit_job', 'finish_cloud_credit_job',
-  'expire_due_credit_accounts'];
+  'expire_due_credit_accounts', 'get_studio_cutout_entitlement', 'register_studio_cutout_entitlement',
+  'register_verified_cutout_revision', 'bind_cloud_cutout_original', 'set_cloud_cutout_output',
+  'link_credit_cutout_object', 'authorized_credit_cutout_keys', 'has_studio_cutout_entitlement'];
 function creditFetcher({ missingRpc, missingFeeTable = false, events = ['*'], connectOnly = false } = {}) {
   return async (url, options) => {
     assert.equal(options.method, 'GET', 'credit release checks must not alter balances, providers or send events');
@@ -90,6 +92,7 @@ test('credit release blocks a missing atomic migration or a missing platform suc
   const creditEnv = { ...env, STUDIO_CREDIT_RELEASE_VERIFY: '1' };
   await assert.rejects(verifyPaymentRelease(creditEnv, creditFetcher({ missingRpc: 'reverse_credit_purchase' }), () => {}), /RPCs are missing: reverse_credit_purchase/);
   await assert.rejects(verifyPaymentRelease(creditEnv, creditFetcher({ missingRpc: 'claim_order_usage_fee' }), () => {}), /RPCs are missing: claim_order_usage_fee/);
+  await assert.rejects(verifyPaymentRelease(creditEnv, creditFetcher({ missingRpc: 'register_verified_cutout_revision' }), () => {}), /RPCs are missing: register_verified_cutout_revision/);
   await assert.rejects(verifyPaymentRelease(creditEnv, creditFetcher({ missingFeeTable: true }), () => {}), /Database verification failed \(HTTP 404\)/);
   await assert.rejects(verifyPaymentRelease(creditEnv, creditFetcher({ events: ['checkout.session.completed', 'charge.refunded', 'refund.updated', 'refund.failed'] }), () => {}), /missing: checkout.session.async_payment_succeeded/);
   await assert.rejects(verifyPaymentRelease(creditEnv, creditFetcher({ connectOnly: true }), () => {}), /Platform credit webhook subscription is missing/);

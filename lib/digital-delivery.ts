@@ -97,6 +97,7 @@ export type DigitalDeliveryFile = {
   fileName: string;
   composite?: {
     originalUrlOrKey: string;
+    photographerId?: string | null;
     backdrop: BackdropCompositeSelection;
     orientation?: "portrait" | "landscape";
   };
@@ -449,6 +450,7 @@ async function resolveDeliveryFiles(params: {
         composite: allDigitalBackdrop
           ? {
               originalUrlOrKey: key,
+              photographerId: params.order.photographer_id,
               backdrop: allDigitalBackdrop,
               orientation: "portrait",
             }
@@ -468,6 +470,7 @@ async function resolveDeliveryFiles(params: {
         composite: allDigitalBackdrop
           ? {
               originalUrlOrKey: key,
+              photographerId: params.order.photographer_id,
               backdrop: allDigitalBackdrop,
               orientation: "portrait",
             }
@@ -493,6 +496,7 @@ async function resolveDeliveryFiles(params: {
       composite: backdrop
         ? {
             originalUrlOrKey: key,
+            photographerId: params.order.photographer_id,
             backdrop,
             orientation: (item as { orientation?: "portrait" | "landscape" }).orientation ?? "portrait",
           }
@@ -631,14 +635,18 @@ export async function* buildDigitalDeliveryZipEntries(
   const skipped: string[] = [];
 
   for (const file of files) {
-    try {
-      const composite = file.composite
+    // A selected backdrop is part of the purchased delivery. Refuse the whole
+    // archive rather than substitute an original or call it a skipped file.
+    const composite = file.composite
         ? await composeBackdropImage({
             originalUrlOrKey: file.composite.originalUrlOrKey,
+            photographerId: file.composite.photographerId,
             backdrop: file.composite.backdrop,
             orientation: file.composite.orientation,
           })
         : null;
+    if (file.composite && !composite) throw new DigitalDeliveryReviewError();
+    try {
       const stream = composite
         ? uint8ArrayToReadableStream(composite.buffer)
         : await fetchR2Stream(file.key ?? "");
@@ -662,6 +670,19 @@ export async function* buildDigitalDeliveryZipEntries(
         ...skipped.map((name) => `- ${name}`),
       ].join("\n")),
     };
+  }
+}
+
+export class DigitalDeliveryReviewError extends Error {
+  constructor() { super("This order's selected backdrop needs a verified paid cutout. Review or process the original photo in Studio OS, then retry delivery."); }
+}
+
+export async function assertDigitalDeliveryReady(files: DigitalDeliveryFile[]) {
+  for (const file of files) {
+    if (!file.composite) continue;
+    const composite = await composeBackdropImage({ originalUrlOrKey: file.composite.originalUrlOrKey,
+      photographerId: file.composite.photographerId, backdrop: file.composite.backdrop, orientation: file.composite.orientation });
+    if (!composite) throw new DigitalDeliveryReviewError();
   }
 }
 
@@ -701,6 +722,7 @@ export async function sendDigitalDeliveryEmailForOrder(
       fileCount: context.files.length,
     };
   }
+  await assertDigitalDeliveryReady(context.files);
 
   const tokenPayload: DigitalDeliveryTokenPayload = {
     v: 1,

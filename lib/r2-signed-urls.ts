@@ -73,6 +73,7 @@ function r2PresignedUrl(
   method: "GET" | "PUT",
   key: string,
   expiresInSeconds: number,
+  uploadHeaders?: { contentLength: number; contentType: string },
 ): string {
   if (!key) return "";
   if (!hasR2Secrets()) {
@@ -91,6 +92,10 @@ function r2PresignedUrl(
 
   const host = `${R2_ACCOUNT_ID}.r2.cloudflarestorage.com`;
   const canonicalUri = `/${R2_BUCKET}/${encodePath(key)}`;
+  const headerEntries: Array<[string, string]> = uploadHeaders
+    ? [["content-length", String(uploadHeaders.contentLength)], ["content-type", uploadHeaders.contentType], ["host", host]]
+    : [["host", host]];
+  const signedHeaders = headerEntries.map(([name]) => name).join(";");
 
   // Query parameters, alphabetically sorted by key per SigV4 rules.
   const queryParams: Array<[string, string]> = [
@@ -98,14 +103,13 @@ function r2PresignedUrl(
     ["X-Amz-Credential", credential],
     ["X-Amz-Date", stamp],
     ["X-Amz-Expires", String(expiresInSeconds)],
-    ["X-Amz-SignedHeaders", "host"],
+    ["X-Amz-SignedHeaders", signedHeaders],
   ];
   const canonicalQuery = queryParams
     .map(([k, v]) => `${uriEncodeSegment(k)}=${uriEncodeSegment(v)}`)
     .join("&");
 
-  const canonicalHeaders = `host:${host}\n`;
-  const signedHeaders = "host";
+  const canonicalHeaders = headerEntries.map(([name, value]) => `${name}:${value}\n`).join("");
   const payloadHash = "UNSIGNED-PAYLOAD";
 
   const canonicalRequest = [
@@ -138,24 +142,32 @@ function r2PresignedUrl(
 export function r2PresignedGetUrl(
   key: string,
   expiresInSeconds = 60 * 60,
-  options: { allowCloudCreditOutput?: boolean } = {},
+  options: { allowCloudCreditOutput?: boolean; allowVerifiedCutout?: boolean } = {},
 ): string {
   // Generic galleries and legacy user-controlled metadata cannot grant access
   // to platform AI outputs. Only the gateway enables this after job ownership.
   if (key.split("/").filter(Boolean)[0] === "credits" && !options.allowCloudCreditOutput) return "";
+  if (key.split("/").filter(Boolean)[0] === "nobg-photos" && !options.allowVerifiedCutout) return "";
+  if (key.split("/").filter(Boolean)[0] === "credit-staging") return "";
   return r2PresignedUrl("GET", key, expiresInSeconds);
 }
 
 /**
- * Generate a short-lived direct-upload URL. Only `host` is signed, so callers
- * may set Content-Type for R2 metadata without having to reproduce the signing
- * algorithm. The server route must authorize the exact key before issuing it.
+ * Generate a short-lived direct-upload URL. Generic grants sign only `host`.
+ * Private cutout staging additionally signs Content-Length and Content-Type;
+ * a client cannot upload a larger body than its server-validated ticket.
  */
 export function r2PresignedPutUrl(
   key: string,
   expiresInSeconds = 15 * 60,
+  options: { allowCutoutStaging?: boolean; contentLength?: number; contentType?: string } = {},
 ): string {
-  if (key.split("/").filter(Boolean)[0] === "credits") return "";
+  if (["credits", "nobg-photos"].includes(key.split("/").filter(Boolean)[0])) return "";
+  if (key.split("/").filter(Boolean)[0] === "credit-staging") {
+    if (!options.allowCutoutStaging || !Number.isSafeInteger(options.contentLength) || !options.contentLength ||
+      options.contentLength < 1 || options.contentLength > 25 * 1024 * 1024 || !options.contentType || !/^[a-z0-9-]+\/[a-z0-9.+-]+$/.test(options.contentType)) return "";
+    return r2PresignedUrl("PUT", key, Math.min(expiresInSeconds, 120), { contentLength: options.contentLength, contentType: options.contentType });
+  }
   return r2PresignedUrl("PUT", key, expiresInSeconds);
 }
 

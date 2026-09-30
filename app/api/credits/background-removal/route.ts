@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import sharp from "sharp";
-import { HeadObjectCommand } from "@aws-sdk/client-s3";
+import { GetObjectCommand } from "@aws-sdk/client-s3";
 import { createDashboardServiceClient, resolveDashboardAuth } from "@/lib/dashboard-auth";
 import { getR2Client, hasR2Config, R2_BUCKET, r2Upload } from "@/lib/r2";
 import { r2PresignedGetUrl } from "@/lib/r2-signed-urls";
@@ -11,9 +11,14 @@ export const runtime = "nodejs";
 export const maxDuration = 120;
 const MAX_UPLOAD = 3 * 1024 * 1024;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const SHA256 = /^[a-f0-9]{64}$/;
 type Job = { claimed: boolean; state: string; token: string; output_key: string; lease_expired: boolean };
 
-function configured() { return Boolean(process.env.PHOTOROOM_API_KEY?.trim()) && hasR2Config(); }
+function configured() {
+  const key = process.env.PHOTOROOM_API_KEY?.trim();
+  // Sandbox output is watermarked and must never be sold for paid credits.
+  return Boolean(key && !/sandbox/i.test(key)) && hasR2Config();
+}
 function unavailable() {
   return NextResponse.json({ ok: false, configured: false, processing: false, message: "Premium Cloud is not available yet. No credits were charged. Use local removal or try again later." }, { status: 503 });
 }
@@ -31,13 +36,22 @@ function completed(jobId: string, key: string) {
 function failed() {
   return NextResponse.json({ ok: false, failed: true, message: "Premium Cloud could not finish this photo. Its reserved credits were returned where still valid. You can start a new attempt." }, { status: 422 });
 }
-async function outputExists(key: string) {
+async function savedOutputHash(key: string, expectedHash?: string | null) {
   try {
-    const result = await getR2Client().send(new HeadObjectCommand({ Bucket: R2_BUCKET, Key: key }));
-    return result.ContentType === "image/png" && Number(result.ContentLength) > 0;
+    const result = await getR2Client().send(new GetObjectCommand({ Bucket: R2_BUCKET, Key: key }), { abortSignal: AbortSignal.timeout(15000) });
+    if (result.ContentType !== "image/png" || !result.Body || !result.ContentLength || result.ContentLength > 20 * 1024 * 1024) throw new Error("Invalid saved output.");
+    const bytes = Buffer.from(await result.Body.transformToByteArray());
+    if (bytes.length !== result.ContentLength || bytes.length > 20 * 1024 * 1024) throw new Error("Invalid saved output length.");
+    const hash = createHash("sha256").update(bytes).digest("hex");
+    if (expectedHash && expectedHash !== hash) throw new Error("Saved output changed.");
+    const decoded = sharp(bytes, { limitInputPixels: 2048 * 2048 });
+    const metadata = await decoded.metadata();
+    const alpha = (await decoded.stats()).channels.at(-1);
+    if (metadata.format !== "png" || !metadata.hasAlpha || !alpha || alpha.min >= 255 || alpha.max <= 0) throw new Error("Saved output is not usable.");
+    return hash;
   } catch (error) {
     const status = (error as { $metadata?: { httpStatusCode?: number } }).$metadata?.httpStatusCode;
-    if (status === 404) return false;
+    if (status === 404) return null;
     throw new Error("Cannot verify saved cloud output.");
   }
 }
@@ -66,8 +80,9 @@ export async function POST(request: NextRequest) {
     const form = await request.formData();
     const image = form.get("image_file");
     const requestedId = form.get("job_id");
+    const originalHash = form.get("original_sha256");
     if (!(image instanceof File) || !image.size || image.size > MAX_UPLOAD ||
-        typeof requestedId !== "string" || !UUID.test(requestedId)) {
+        typeof requestedId !== "string" || !UUID.test(requestedId) || typeof originalHash !== "string" || !SHA256.test(originalHash)) {
       return NextResponse.json({ ok: false, message: "A photo smaller than 3 MB and a valid processing reference are required." }, { status: 400 });
     }
     const input = Buffer.from(await image.arrayBuffer());
@@ -85,11 +100,12 @@ export async function POST(request: NextRequest) {
     const outputKey = `credits/${auth.user!.id}/${jobId}.png`;
     const inputHash = createHash("sha256").update(input).digest("hex");
     const existing = await service.from("credit_cloud_jobs")
-      .select("studio_id,photographer_id,input_sha256,output_key,status,lease_token,lease_expires_at")
+      .select("studio_id,photographer_id,input_sha256,original_sha256,output_sha256,output_key,status,lease_token,lease_expires_at")
       .eq("id", jobId).eq("studio_id", auth.user!.id).maybeSingle();
     if (existing.error) throw new Error("Cannot verify previous processing.");
     if (existing.data) {
-      if (existing.data.photographer_id !== photographer.id || existing.data.input_sha256 !== inputHash || existing.data.output_key !== outputKey) {
+      if (existing.data.photographer_id !== photographer.id || existing.data.input_sha256 !== inputHash || existing.data.output_key !== outputKey ||
+          (existing.data.original_sha256 && existing.data.original_sha256 !== originalHash)) {
         return NextResponse.json({ ok: false, message: "This processing reference belongs to another photo. Start a new attempt." }, { status: 409 });
       }
       // A provider-key rotation must not strand a photo already paid for.
@@ -110,13 +126,30 @@ export async function POST(request: NextRequest) {
       job = data?.[0] as Job | undefined;
     }
     if (!job) throw new Error("Missing processing reservation.");
-    if (job.state === "succeeded") return completed(jobId, job.output_key);
     if (job.state === "failed") return failed();
+    const bound = await service.rpc("bind_cloud_cutout_original", { p_job_id: jobId, p_token: job.token, p_original_sha256: originalHash });
+    if (bound.error || bound.data !== true) throw new Error("Cannot bind paid source photo.");
+    if (job.state === "succeeded") {
+      if (!existing.data?.output_sha256) {
+        const hash = await savedOutputHash(job.output_key);
+        if (!hash) throw new Error("Paid output is missing.");
+        const stored = await service.rpc("set_cloud_cutout_output", { p_job_id: jobId, p_token: job.token, p_output_sha256: hash });
+        if (stored.error || stored.data !== true) throw new Error("Cannot bind paid output.");
+      }
+      const finish = await service.rpc("finish_cloud_credit_job", { p_job_id: jobId, p_token: job.token, p_succeeded: true });
+      if (finish.error || finish.data !== true) throw new Error("Cannot verify paid output proof.");
+      return completed(jobId, job.output_key);
+    }
     if (!job.claimed) {
       if (!job.lease_expired) return NextResponse.json({ ok: false, processing: true, message: "This photo is still processing. Retry with the same reference." }, { status: 409, headers: { "Retry-After": "3" } });
       // Recover a successful upload after an interrupted completion. Never
       // repeat a provider call for a reservation with an uncertain outcome.
-      const exists = await outputExists(job.output_key);
+      const hash = await savedOutputHash(job.output_key, existing.data?.output_sha256);
+      const exists = hash !== null;
+      if (hash) {
+        const stored = await service.rpc("set_cloud_cutout_output", { p_job_id: jobId, p_token: job.token, p_output_sha256: hash });
+        if (stored.error || stored.data !== true) throw new Error("Cannot bind interrupted output.");
+      }
       const finish = await service.rpc("finish_cloud_credit_job", { p_job_id: jobId, p_token: job.token, p_succeeded: exists, p_error: exists ? null : "Interrupted processing" });
       if (finish.error || finish.data !== true) throw new Error("Cannot reconcile interrupted processing.");
       return exists ? completed(jobId, job.output_key) : failed();
@@ -143,14 +176,17 @@ export async function POST(request: NextRequest) {
       throw new Error("Cloud output did not contain the expected transparent photo.");
     }
     const alpha = (await outputImage.stats()).channels.at(-1);
-    if (!alpha || !Number.isFinite(alpha.min) || alpha.min >= 255) throw new Error("Cloud output was fully opaque.");
+    if (!alpha || !Number.isFinite(alpha.min) || alpha.min >= 255 || alpha.max <= 0) throw new Error("Cloud output was unusable.");
+    const outputHash = createHash("sha256").update(output).digest("hex");
+    const stored = await service.rpc("set_cloud_cutout_output", { p_job_id: jobId, p_token: job.token, p_output_sha256: outputHash });
+    if (stored.error || stored.data !== true) throw new Error("Cannot bind output bytes.");
     outputUncertain = true;
     try {
       await r2Upload(job.output_key, output, "image/png", "private, no-store", { allowCloudCreditOutput: true });
     } catch (uploadError) {
       // PUT can succeed remotely while its acknowledgement is lost. Verify the
       // immutable output before deciding whether this job should be refunded.
-      if (!(await outputExists(job.output_key))) { outputUncertain = false; throw uploadError; }
+      if (!(await savedOutputHash(job.output_key, outputHash))) { outputUncertain = false; throw uploadError; }
     }
     saved = true;
     outputUncertain = false;
