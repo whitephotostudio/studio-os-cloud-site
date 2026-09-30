@@ -73,10 +73,41 @@ keys are never needed for these read-only schema checks. Neither this flag nor
 the verification script processes a photo, debits credits or posts a meter event.
 Set `STUDIO_CREDIT_WEBHOOK_VERIFY=1` on that preview candidate to verify platform
 Stripe event subscriptions independently of the unapplied schema checks. With
-no explicit `STUDIO_PAYMENT_REFUND_WEBHOOK_ID`, verification issues only GET
-requests and never changes webhook configuration. The legacy desktop-only
-`finalize_background_credit_job` is authenticated-only and is not required in
-the service-role OpenAPI schema.
+no explicit `STUDIO_PAYMENT_REFUND_WEBHOOK_ID` and without
+`STUDIO_CREDIT_WEBHOOK_CONFIGURE=1`, verification issues only GET requests and
+never changes webhook configuration. Authenticated desktop RPCs, including
+`deduct_studio_credits`, `refund_studio_credits` and
+`finalize_background_credit_job`, are verified by database privilege tests;
+they are not required in the service-role OpenAPI schema.
+
+## Optional platform webhook repair
+
+The platform credit webhook requires `checkout.session.completed`,
+`checkout.session.async_payment_succeeded`, `charge.refunded`, `refund.updated`
+and `refund.failed`. Read-only verification logs the selected platform endpoint
+IDs and subscribed events before rejecting missing events. A Connect endpoint
+cannot satisfy the platform-credit check.
+
+After the compatible credit migrations and webhook code are already live, an
+operator may explicitly set `STUDIO_CREDIT_WEBHOOK_CONFIGURE=1` together with
+`STUDIO_CREDIT_EXPECTED_ACCOUNT_ID` containing the exact platform `acct_…` ID.
+The existing `STUDIO_PAYMENT_RELEASE_VERIFY=1` switch remains required to run
+the verifier. The configuration path checks the account returned by Stripe,
+requires exactly one live enabled platform checkout endpoint at the production
+webhook destination, preserves every existing subscription, and adds only
+missing credit events. Its only POST body field is `enabled_events[]`; returned
+endpoint ID, URL, live status, platform scope and event preservation are checked.
+An ambiguous account or endpoint selection is refused before any update.
+The legacy order-refund configuration ID must be unset for this step, so it
+cannot also modify a second endpoint during the platform repair.
+
+Do not set this configuration flag on the first preview or deployment build:
+webhook configuration takes effect immediately, while that build's code is not
+yet live. The old production credit refund handler is incompatible with the
+new refund events. Deploy the compatible database and code first, then run the
+separate guarded configuration step and remove the configuration opt-in. This
+audit has prepared and tested the repair against mock Stripe responses only;
+it has not changed live webhook subscriptions or moved money.
 
 Sources: [Stripe billing-period change](https://docs.stripe.com/changelog/basil/2025-03-31/deprecate-subscription-current-period-start-and-end),
 [mixed intervals](https://docs.stripe.com/billing/subscriptions/mixed-interval),

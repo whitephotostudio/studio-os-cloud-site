@@ -1,5 +1,6 @@
 import { scheduleOrderRefundEmails } from "@/lib/order-refund-notifications";
 import { NextRequest, NextResponse } from "next/server";
+import { pausePlatformCreditEvent } from "@/lib/credit-maintenance";
 import { createDashboardServiceClient } from "@/lib/dashboard-auth";
 import { syncPhotographyKeysByPhotographerId } from "@/lib/studio-os-app";
 import { notifyOwnerForSetting } from "@/lib/admin-notification-center";
@@ -485,6 +486,10 @@ export async function POST(req: NextRequest) {
     event = JSON.parse(rawBody) as StripeEventEnvelope;
   } catch {
     return NextResponse.json({ ok: false, message: "Invalid JSON body." }, { status: 400 });
+  }
+
+  if (pausePlatformCreditEvent(event)) {
+    return NextResponse.json({ ok: false, message: "Credit fulfillment is briefly paused for an upgrade." }, { status: 503, headers: { "Retry-After": "120" } });
   }
 
   const service = createDashboardServiceClient();

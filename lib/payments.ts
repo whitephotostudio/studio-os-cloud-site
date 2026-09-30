@@ -1511,9 +1511,8 @@ async function grantIncludedPlanCredits(
 }
 
 /**
- * Sentinel balance reported for platform admins. Large enough that the
- * desktop app's per-removal deduction can never realistically run it out.
- * Local owner processing is exempt in the authenticated database functions.
+ * Dashboard sentinel for the owner's free local processing. Paid cloud
+ * provider jobs use the actual balance and reserve credits on the server.
  */
 export const OWNER_UNLIMITED_CREDIT_BALANCE = 1_000_000_000;
 
@@ -1523,8 +1522,8 @@ export async function getCreditBalanceDetails(
   photographerId: string,
   options?: { isPlatformAdmin?: boolean | null },
 ) {
-  // Owner use is unlimited without manufacturing a purchase or changing a
-  // balance just because the dashboard was opened.
+  // Report the local owner benefit without creating a purchase or changing
+  // the credit balance just because the dashboard was opened.
   if (options?.isPlatformAdmin) {
     return { balance: OWNER_UNLIMITED_CREDIT_BALANCE, expiresAt: null, creditDebt: 0 };
   }

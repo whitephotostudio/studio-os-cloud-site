@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { creditMaintenanceActive } from "@/lib/credit-maintenance";
 import {
   createDashboardServiceClient,
   resolveDashboardAuth,
@@ -65,6 +66,10 @@ export async function POST(request: NextRequest) {
         { ok: false, message: "A valid billing action is required." },
         { status: 400 },
       );
+    }
+
+    if (action === "buy_credits" && creditMaintenanceActive()) {
+      return NextResponse.json({ ok: false, message: "Credit checkout is briefly paused for an upgrade. Please try again in a few minutes." }, { status: 503, headers: { "Retry-After": "120" } });
     }
 
     const service = createDashboardServiceClient();

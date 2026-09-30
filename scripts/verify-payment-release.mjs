@@ -2,7 +2,7 @@ import { pathToFileURL } from 'node:url';
 
 // Run inside the remote build: Vercel deliberately exports Secret values as
 // [SENSITIVE]. Never export secrets, log provider error bodies, or move money.
-// An explicitly selected existing payment webhook may add two refund events.
+// Explicit webhook configuration flags may update event subscriptions only.
 export async function verifyPaymentRelease(env = process.env, fetcher = fetch, report = console.log) {
   if (env.STUDIO_PAYMENT_RELEASE_VERIFY !== '1') return;
   const key = (env.STRIPE_SECRET_KEY || '').trim();
@@ -25,6 +25,16 @@ export async function verifyPaymentRelease(env = process.env, fetcher = fetch, r
 
   const account = await stripe('account');
   report(JSON.stringify({ check: 'stripe-authentication', ok: true, accountId: account.id }));
+  const configureCreditWebhook = env.STUDIO_CREDIT_WEBHOOK_CONFIGURE === '1';
+  if (configureCreditWebhook) {
+    const expectedAccountId = (env.STUDIO_CREDIT_EXPECTED_ACCOUNT_ID || '').trim();
+    if (!/^acct_[A-Za-z0-9_]+$/.test(expectedAccountId) || account.id !== expectedAccountId) {
+      throw new Error('Platform credit webhook configuration requires the exact expected Stripe account ID.');
+    }
+    if (env.STUDIO_PAYMENT_REFUND_WEBHOOK_ID) {
+      throw new Error('Platform credit and order refund webhook configuration must run separately.');
+    }
+  }
   await db('checkout_attempts?select=key&limit=0');
   await db('order_payment_locks?select=key&limit=0');
   report(JSON.stringify({ check: 'payment-migration-api', ok: true }));
@@ -33,7 +43,7 @@ export async function verifyPaymentRelease(env = process.env, fetcher = fetch, r
     await db('order_usage_fees?select=order_id,report_status,refund_status,event_identifier,amount_cents,currency&limit=0');
     await db('credit_cloud_jobs?select=id,studio_id,status,input_sha256,output_key&limit=0');
     const schema = await db('');
-    const requiredRpcs = ['apply_credit_adjustment', 'reverse_credit_purchase', 'get_studio_credit_balance', 'deduct_studio_credits', 'refund_studio_credits',
+    const requiredRpcs = ['apply_credit_adjustment', 'reverse_credit_purchase', 'get_studio_credit_balance',
       'stage_order_usage_fee', 'claim_order_usage_fee', 'complete_order_usage_fee_report', 'reserve_cloud_credit_job', 'finish_cloud_credit_job',
       'expire_due_credit_accounts'];
     const missingRpcs = requiredRpcs.filter((name) => !schema.paths?.[`/rpc/${name}`]?.post);
@@ -86,16 +96,51 @@ export async function verifyPaymentRelease(env = process.env, fetcher = fetch, r
   }
   const matching = endpoints.data.filter((e) => matchesOrigin(e.url) && e.status === 'enabled' && e.livemode);
   const requiredEvents = ['checkout.session.completed', 'payment_intent.succeeded', 'charge.refunded', 'refund.updated', 'refund.failed'];
-  const missingEvents = requiredEvents.filter((event) => !matching.some((e) => e.enabled_events.includes('*') || e.enabled_events.includes(event)));
-  if (env.STUDIO_CREDIT_RELEASE_VERIFY === '1' || env.STUDIO_CREDIT_WEBHOOK_VERIFY === '1') {
+  if (env.STUDIO_CREDIT_RELEASE_VERIFY === '1' || env.STUDIO_CREDIT_WEBHOOK_VERIFY === '1' || env.STUDIO_CREDIT_WEBHOOK_CONFIGURE === '1') {
     const creditEvents = ['checkout.session.completed', 'checkout.session.async_payment_succeeded', 'charge.refunded', 'refund.updated', 'refund.failed'];
     // Connect endpoints receive photographers' customer-order events. Credits
     // must be fulfilled by an endpoint listening on the platform's account.
-    const platformEndpoints = matching.filter((endpoint) => !endpoint.application);
+    const platformEndpoints = matching.filter((endpoint) => endpoint.application === null && endpoint.livemode === true);
+    report(JSON.stringify({ check: 'stripe-credit-webhook-selection', endpoints: platformEndpoints.map((endpoint) => ({
+      id: endpoint.id, url: new URL(endpoint.url).origin + new URL(endpoint.url).pathname,
+      status: endpoint.status, livemode: endpoint.livemode, application: endpoint.application, events: endpoint.enabled_events,
+    })) }));
+    // This is deliberately an additional exact opt-in. Missing event checks are
+    // read-only by default, even when they block the candidate build.
+    if (configureCreditWebhook) {
+      const candidates = platformEndpoints.filter((endpoint) => Array.isArray(endpoint.enabled_events) &&
+        endpoint.enabled_events.some((event) => event === '*' || event === 'checkout.session.completed'));
+      if (candidates.length !== 1 || !/^we_[A-Za-z0-9_]+$/.test(candidates[0].id || '') ||
+          !candidates[0].enabled_events.every((event) => typeof event === 'string')) {
+        throw new Error('Platform credit webhook configuration requires exactly one existing production platform checkout endpoint.');
+      }
+      const selected = candidates[0];
+      const addedEvents = creditEvents.filter((event) => !selected.enabled_events.includes('*') && !selected.enabled_events.includes(event));
+      if (addedEvents.length) {
+        const body = new URLSearchParams();
+        for (const event of [...selected.enabled_events, ...addedEvents]) body.append('enabled_events[]', event);
+        const response = await fetcher(`https://api.stripe.com/v1/webhook_endpoints/${encodeURIComponent(selected.id)}`, {
+          method: 'POST', headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/x-www-form-urlencoded' },
+          body, signal: AbortSignal.timeout(20000),
+        });
+        if (!response.ok) throw new Error(`Platform credit webhook configuration failed (HTTP ${response.status}); provider details withheld.`);
+        const updated = await response.json();
+        if (updated.id !== selected.id || updated.url !== selected.url || updated.livemode !== true || updated.status !== 'enabled' ||
+            updated.application !== null || !Array.isArray(updated.enabled_events) ||
+            ![...selected.enabled_events, ...addedEvents].every((event) => updated.enabled_events.includes(event))) {
+          throw new Error('Updated platform credit webhook subscription could not be verified.');
+        }
+        endpoints.data[endpoints.data.indexOf(selected)] = updated;
+        matching[matching.indexOf(selected)] = updated;
+        platformEndpoints[platformEndpoints.indexOf(selected)] = updated;
+        report(JSON.stringify({ check: 'stripe-credit-webhook-update', endpointId: selected.id, addedEvents }));
+      }
+    }
     const missingCreditEvents = creditEvents.filter((event) => !platformEndpoints.some((endpoint) => endpoint.enabled_events.includes('*') || endpoint.enabled_events.includes(event)));
     report(JSON.stringify({ check: 'stripe-credit-webhooks', endpointCount: platformEndpoints.length, missingEvents: missingCreditEvents }));
     if (missingCreditEvents.length) throw new Error(`Platform credit webhook subscription is missing: ${missingCreditEvents.join(', ')}.`);
   }
+  const missingEvents = requiredEvents.filter((event) => !matching.some((e) => e.enabled_events.includes('*') || e.enabled_events.includes(event)));
   report(JSON.stringify({ check: 'stripe-webhooks', endpointCount: matching.length, missingEvents,
     endpoints: endpoints.data.map((e) => ({ id: e.id, url: new URL(e.url).origin + new URL(e.url).pathname,
       status: e.status, livemode: e.livemode, events: e.enabled_events })) }));

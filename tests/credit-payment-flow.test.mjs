@@ -9,7 +9,7 @@ const source = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'u
 function load(path, overrides = {}) {
   const exports = {};
   const compiled = ts.transpileModule(source(path), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
-  new Function('require', 'exports', compiled)((name) => name in overrides ? overrides[name] : name.startsWith('@/') ? {} : require(name), exports);
+  new Function('require', 'exports', compiled)((name) => name in overrides ? overrides[name] : name === '@/lib/credit-maintenance' ? load('lib/credit-maintenance.ts') : name.startsWith('@/') ? {} : require(name), exports);
   return exports;
 }
 function payments() {

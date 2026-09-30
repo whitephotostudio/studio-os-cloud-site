@@ -17,7 +17,20 @@ checkout can contain multiple records. A free app trial without a Stripe
 subscription cannot be automatically invoiced. No live subscription records
 were available to confirm an existing service-fee invoice.
 
-Production `/credits` is still 404 at the audit baseline. The installed/public
+The independent restore-only release was subsequently promoted from clean
+commit `011bf81cb0e75c2aef0fe88763ba3e4ef88cd2ab`, deployment
+`dpl_9Yqg3XvKEbFatjDQ2Q7CDN7JB3EZ`, and pushed to Git `main`. The Git hook then deployed the exact same commit as
+`dpl_83cmYU5aS9mgVkx5TKm4RKfFwDMv`, verified on the primary domain through the
+Vercel API. It restores fourteen
+previously published September 25–28 commits that Claude had omitted: class
+registration, mobile invoices, CRM/contact pagination and private sales assets.
+The restore passed 386 tests and production builds, actual production Stripe
+authentication and order-webhook verification, and thirteen candidate smoke
+checks. Live route checks confirm these routes are present and protected;
+Tutorials remains 200. The existing database and private bucket were already
+correct, so this restoration required no database changes.
+
+Production `/credits` is still 404 at the audit baseline and after that restore. The installed/public
 Mac app is 0.1.11 (15). Premium Cloud has no configured platform provider key.
 The corrections described below are release-candidate source, not live fixes.
 
@@ -79,9 +92,25 @@ The corrections described below are release-candidate source, not live fixes.
 Details and Stripe references are in
 [the service-fee accounting note](order-usage-billing-2026-09-29.md).
 
+## Live Stripe configuration gap
+
+A strict remote candidate check authenticated the real platform Stripe account
+`acct_1TBlT4PxlnWeytFA` but stopped the build because the platform subscription
+endpoint `we_1TIBPIPxlnWeytFAlrnRKuDI` is missing
+`checkout.session.async_payment_succeeded`, `charge.refunded`, `refund.updated`
+and `refund.failed`. The separate Connect order endpoint has the refund events;
+it cannot fulfill platform credit refunds. No endpoint was modified.
+
+An exact opt-in repair is prepared: `STUDIO_CREDIT_WEBHOOK_CONFIGURE=1` plus
+`STUDIO_CREDIT_EXPECTED_ACCOUNT_ID=acct_1TBlT4PxlnWeytFA`. It selects only the
+single existing live platform checkout destination, preserves existing invoice
+and subscription events, changes only event subscriptions and verifies the
+returned endpoint. Default checks remain read-only. Apply this only while the
+compatible new database and webhook code are already serving or safely paused.
+
 ## Validation and release requirements
 
-The complete website suite passed 406 tests. TypeScript and the production
+The complete website suite passed 461 tests. TypeScript and the production
 build passed. Focused lint has zero errors and six existing settings-page
 warnings. The matching desktop snapshot passed 799 tests with one skipped
 platform test, and Flutter analysis was clean.
@@ -95,8 +124,32 @@ change or customer payment was made by this dry run.
 
 The release requires the matching desktop update plus the four exact migrations;
 old desktop builds write balances directly and will no longer process credits
-once secure permissions are applied. Publish the validated matching Mac build
-before exposing the new web flow and instruct active users to update. Do not run
+once secure permissions are applied. The signed universal 0.1.14+18 Mac candidate passed strict deep signature
+verification; it is not notarized or published. Nine reviewed credit source
+files were applied to the primary desktop checkout with baseline SHA checks,
+preserving unrelated changes; 21 focused tests passed there. Existing apps have
+no update banner, and registrations contain only release/debug, so the six
+active release registrations cannot prove an upgrade. Notarize and publish the
+validated matching Mac build before exposing the new web flow and arrange
+for active users to update. The maintenance-only bridge is clean commit
+`6f69b2b92ed91e812c783cc463b88eea2ec201d5` on
+`codex/credit-maintenance-bridge-20260929`, based exactly on restored main
+`011bf81`. It contains only the pause helper, old billing/webhook guards and
+narrow tests, with no new schema/accounting/cloud code. It passed 28 tests,
+TypeScript and a production build; it has not been deployed.
+
+Pause credit checkout and platform checkout/refund fulfillment before changing
+the schema, so the old handler cannot make direct balance writes while the new
+lot-based accounting is installed. The prepared bridge and new code honor
+`STUDIO_CREDIT_MAINTENANCE=1`: credit checkout stops before creating a customer
+or payment, and authenticated Stripe platform fulfillment returns retryable
+503 before claiming an event. Photographer Connect customer orders remain
+eligible. Deploy the compatible new code while paused, apply the four migrations
+in one transaction, verify them, then build the final candidate with the strict
+schema checks, exact webhook repair and maintenance disabled. Promote only
+after its checks pass and retain the updated line in main.
+
+Do not run
 `supabase db push` across divergent migration history. Do not auto-recharge
 historical orders or auto-refund forgeable legacy processing receipts.
 
