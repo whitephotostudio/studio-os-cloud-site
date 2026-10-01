@@ -207,5 +207,5 @@ test('provider account and output responses have declared and streaming size lim
 
 test('build wiring runs the opt-in Photoroom verifier after the existing payment guard', () => {
   const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
-  assert.equal(pkg.scripts.prebuild, 'node scripts/verify-payment-release.mjs && node scripts/verify-photoroom-preview.mjs && node scripts/verify-r2-staging-preview.mjs && node scripts/verify-legacy-cutouts-preview.mjs');
+  assert.equal(pkg.scripts.prebuild, 'node scripts/verify-payment-release.mjs && node scripts/verify-photoroom-preview.mjs && node scripts/verify-r2-staging-preview.mjs && node scripts/verify-legacy-cutouts-preview.mjs && node scripts/verify-order-production-release.mjs');
 });

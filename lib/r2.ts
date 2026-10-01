@@ -97,6 +97,7 @@ export async function r2Upload(
   }
   if (key.split("/").filter(Boolean)[0] === "nobg-photos" && !options?.allowVerifiedCutout) throw new Error("Managed cutout uploads require verified paid access.");
   if (key.split("/").filter(Boolean)[0] === "credit-staging") throw new Error("Cutout staging requires its private upload ticket.");
+  if (key.split("/")[0] === "order-automation") throw new Error("Order production storage requires its private adapter.");
   const client = getR2Client();
   await client.send(
     new PutObjectCommand({
@@ -116,6 +117,7 @@ export async function r2Upload(
  * spaces (e.g. class "SK A"), so each path segment is percent-encoded.
  */
 export async function r2Copy(srcKey: string, destKey: string) {
+  if ([srcKey,destKey].some(key=>key.split("/")[0]==="order-automation")) throw new Error("Private production objects cannot be copied by generic storage.");
   if ([srcKey,destKey].some(key=>key.split("/").filter(Boolean)[0]==="credits")) throw new Error("Cloud credit outputs cannot be moved by generic storage operations.");
   if ([srcKey,destKey].some(key=>key.split("/").filter(Boolean)[0]==="credit-staging")) throw new Error("Cutout staging cannot be copied by generic storage operations.");
   if ([srcKey,destKey].some(key=>key.split("/").filter(Boolean)[0]==="nobg-photos")) throw new Error("Managed cutouts must be uploaded with their paid photo proof when moving to a new folder.");
@@ -138,6 +140,7 @@ export async function r2Copy(srcKey: string, destKey: string) {
  * Download a file from R2.  Returns the body as a Buffer.
  */
 export async function r2Download(key: string, options: { allowVerifiedCutout?: boolean; allowCutoutStaging?: boolean; maxBytes?: number } = {}): Promise<Buffer> {
+  if (key.split("/")[0] === "order-automation") throw new Error("Private production storage requires its adapter.");
   if (key.split("/").filter(Boolean)[0]==="credits") throw new Error("Cloud credit outputs require their owned job result.");
   if (key.split("/").filter(Boolean)[0]==="nobg-photos" && !options.allowVerifiedCutout) throw new Error("Managed cutouts require verified paid access.");
   if (key.split("/").filter(Boolean)[0]==="credit-staging" && !options.allowCutoutStaging) throw new Error("Cutout staging is private and cannot be used as a photo.");
@@ -160,6 +163,7 @@ export async function r2Download(key: string, options: { allowVerifiedCutout?: b
  * Delete a file from R2.
  */
 export async function r2Delete(key: string, options: { allowCutoutStaging?: boolean } = {}) {
+  if (key.split("/")[0] === "order-automation") throw new Error("Private production storage requires its adapter.");
   if (key.split("/").filter(Boolean)[0]==="credits") throw new Error("Cloud credit outputs cannot be deleted by generic storage operations.");
   if (key.split("/").filter(Boolean)[0]==="credit-staging" && !options.allowCutoutStaging) throw new Error("Cutout staging cleanup requires its owner.");
   const client = getR2Client();
@@ -176,6 +180,7 @@ export async function r2Delete(key: string, options: { allowCutoutStaging?: bool
  * R2 supports up to 1000 deletes per batch request.
  */
 export async function r2DeletePrefix(prefix: string) {
+  if (prefix.split("/")[0] === "order-automation") throw new Error("Private production storage cannot be deleted generically.");
   if (prefix.split("/").filter(Boolean)[0]==="credits") throw new Error("Cloud credit outputs cannot be deleted by generic storage operations.");
   if (prefix.split("/").filter(Boolean)[0]==="credit-staging") throw new Error("Cutout staging cleanup requires its owner.");
   const client = getR2Client();

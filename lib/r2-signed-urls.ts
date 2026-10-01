@@ -142,10 +142,11 @@ function r2PresignedUrl(
 export function r2PresignedGetUrl(
   key: string,
   expiresInSeconds = 60 * 60,
-  options: { allowCloudCreditOutput?: boolean; allowVerifiedCutout?: boolean } = {},
+  options: { allowCloudCreditOutput?: boolean; allowVerifiedCutout?: boolean; allowOrderAutomation?: boolean } = {},
 ): string {
   // Generic galleries and legacy user-controlled metadata cannot grant access
   // to platform AI outputs. Only the gateway enables this after job ownership.
+  if (key.split("/").filter(Boolean)[0] === "order-automation" && !options.allowOrderAutomation) return "";
   if (key.split("/").filter(Boolean)[0] === "credits" && !options.allowCloudCreditOutput) return "";
   if (key.split("/").filter(Boolean)[0] === "nobg-photos" && !options.allowVerifiedCutout) return "";
   if (key.split("/").filter(Boolean)[0] === "credit-staging") return "";
@@ -160,9 +161,13 @@ export function r2PresignedGetUrl(
 export function r2PresignedPutUrl(
   key: string,
   expiresInSeconds = 15 * 60,
-  options: { allowCutoutStaging?: boolean; contentLength?: number; contentType?: string } = {},
+  options: { allowCutoutStaging?: boolean; allowOrderAutomation?: boolean; contentLength?: number; contentType?: string } = {},
 ): string {
   if (["credits", "nobg-photos"].includes(key.split("/").filter(Boolean)[0])) return "";
+  if (key.split("/").filter(Boolean)[0] === "order-automation") {
+    if (!options.allowOrderAutomation || !Number.isSafeInteger(options.contentLength) || !options.contentLength || options.contentLength < 1 || options.contentLength > 256*1024*1024 || !["image/jpeg", "application/zip"].includes(options.contentType || "")) return "";
+    return r2PresignedUrl("PUT", key, Math.min(expiresInSeconds, 120), { contentLength: options.contentLength, contentType: options.contentType! });
+  }
   if (key.split("/").filter(Boolean)[0] === "credit-staging") {
     if (!options.allowCutoutStaging || !Number.isSafeInteger(options.contentLength) || !options.contentLength ||
       options.contentLength < 1 || options.contentLength > 25 * 1024 * 1024 || !options.contentType || !/^[a-z0-9-]+\/[a-z0-9.+-]+$/.test(options.contentType)) return "";
