@@ -103,35 +103,14 @@ export async function verifyOrderProductionRelease(
       emailsSent: 0,
     }),
   );
-  if (env.OPENAI_API_KEY) {
-    const model = env.ORDER_QA_MODEL || "gpt-4o";
-    const response = await fetcher(
-      `https://api.openai.com/v1/models/${encodeURIComponent(model)}`,
-      {
-        headers: { Authorization: `Bearer ${env.OPENAI_API_KEY}` },
-        signal: AbortSignal.timeout(15000),
-      },
-    );
-    if (!response.ok)
-      throw Error("Order quality model access failed; details withheld.");
-    await response.body?.cancel();
-    report(
-      JSON.stringify({
-        check: "order-ai-provider",
-        configured: true,
-        model,
-        paidRequests: 0,
-      }),
-    );
-  } else
-    report(
-      JSON.stringify({
-        check: "order-ai-provider",
-        configured: false,
-        automaticApprovals: "held-until-OPENAI_API_KEY",
-        paidRequests: 0,
-      }),
-    );
+  report(
+    JSON.stringify({
+      check: "order-ai-provider",
+      provider: "local-only",
+      cloudFallback: false,
+      paidRequests: 0,
+    }),
+  );
 }
 if (import.meta.url === new URL(process.argv[1], "file:").href)
   await verifyOrderProductionRelease();
