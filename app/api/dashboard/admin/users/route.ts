@@ -7,7 +7,7 @@ import {
 import { parseJson } from "@/lib/api-validation";
 import { getOrCreatePhotographerByUser } from "@/lib/payments";
 
-import { resolveSubscriptionAccess } from "@/lib/subscription-access";
+import { resolveAdminSignupStatus } from "@/lib/admin-signup-status";
 import { buildAdminTrialChange } from "@/lib/admin-trial-change";
 import { recordAudit } from "@/lib/audit";
 
@@ -210,14 +210,9 @@ export async function GET(request: NextRequest) {
 
     const now = new Date();
     const enriched = (users ?? []).map((u) => {
-      const access = resolveSubscriptionAccess(u, now.getTime());
+      const signupStatus = resolveAdminSignupStatus(u, now.getTime());
       const hasStripeSubscription = Boolean(u.stripe_subscription_id);
-      const isOwner = access.isOwner;
-      const trialStatus = isOwner ? "owner"
-        : hasStripeSubscription && access.billingActive ? "converted"
-        : access.trialActive ? "active"
-        : access.trialExpired ? "expired" : "none";
-      const trialDaysRemaining = access.trialDaysRemaining;
+      const isOwner = Boolean(u.is_platform_admin);
 
       const authMeta = authMetaMap.get(u.user_id as string);
       const keysEntry = keysByPhotographer.get(u.id as string) ?? { active: 0, total: 0 };
@@ -251,7 +246,8 @@ export async function GET(request: NextRequest) {
         email: u.billing_email || u.studio_email || authMeta?.email || "—",
         phone: u.studio_phone || authMeta?.phone || null,
         address: u.studio_address || null,
-        subscriptionPlanCode: access.planCode,
+        subscriptionPlanCode: signupStatus.subscriptionPlanCode,
+        signupIncomplete: signupStatus.signupIncomplete,
         subscriptionBillingInterval: u.subscription_billing_interval || null,
         subscriptionStatus: u.subscription_status || "inactive",
         subscriptionCurrentPeriodEnd: u.subscription_current_period_end,
@@ -264,9 +260,9 @@ export async function GET(request: NextRequest) {
         creditTotalUsed: creditsEntry.totalUsed,
         totalSpentCents,
         trialStartsAt: u.trial_starts_at,
-        trialEndsAt: access.trialEndsAt,
-        trialStatus,
-        trialDaysRemaining,
+        trialEndsAt: signupStatus.trialEndsAt,
+        trialStatus: signupStatus.trialStatus,
+        trialDaysRemaining: signupStatus.trialDaysRemaining,
         isPlatformAdmin: Boolean(u.is_platform_admin),
         lastSignIn: authMeta?.lastSignIn || null,
         createdAt: u.created_at,

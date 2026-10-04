@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
   ArrowRight,
@@ -65,10 +65,20 @@ export function StudioOSDownloadAccess({
 }: StudioOSDownloadAccessProps) {
   const supabase = useMemo(() => createClient(), []);
   const formRef = useRef<HTMLDivElement | null>(null);
+  const statusRequestRef = useRef<{
+    id: number;
+    controller: AbortController | null;
+    timeout: number | null;
+  }>({
+    id: 0,
+    controller: null,
+    timeout: null,
+  });
   const redirectPath = "/studio-os/download";
 
-  const [authResolved, setAuthResolved] = useState(false);
-  const [signedIn, setSignedIn] = useState(false);
+  const [accessState, setAccessState] = useState<
+    "loading" | "signed-in" | "signed-out" | "unavailable"
+  >("loading");
   const [email, setEmail] = useState("");
   const [status, setStatus] = useState<StudioAppStatusPayload | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -82,46 +92,72 @@ export function StudioOSDownloadAccess({
     if (emailParam) setEmail(emailParam);
   }, []);
 
-  useEffect(() => {
-    let cancelled = false;
+  const loadStatus = useCallback(async () => {
+    const requests = statusRequestRef.current;
+    const requestId = ++requests.id;
+    requests.controller?.abort();
+    if (requests.timeout !== null) window.clearTimeout(requests.timeout);
+    const controller = new AbortController();
+    requests.controller = controller;
+    const timeout = window.setTimeout(() => controller.abort(), 15000);
+    requests.timeout = timeout;
+    setAccessState("loading");
+    setStatus(null);
 
-    async function loadStatus() {
-      try {
-        const response = await fetch("/api/studio-os-app/status", {
-          method: "GET",
-          cache: "no-store",
-          credentials: "include",
-        });
+    try {
+      const response = await fetch("/api/studio-os-app/status", {
+        method: "GET",
+        cache: "no-store",
+        credentials: "include",
+        signal: controller.signal,
+      });
+      const json = (await response.json()) as StudioAppStatusPayload | null;
+      if (requestId !== requests.id) return;
+      if (controller.signal.aborted) throw new Error("App access check timed out.");
 
-        const json = (await response.json().catch(() => null)) as StudioAppStatusPayload | null;
-        if (cancelled) return;
+      if (response.status === 401 && json?.ok === false && json.signedIn === false) {
+        // A missing web session can offer sign-in without revoking other sessions.
+        setAccessState("signed-out");
+        return;
+      }
+      if (
+        !response.ok ||
+        json?.ok !== true ||
+        json.signedIn !== true ||
+        typeof json.entitlement?.canDownload !== "boolean"
+      ) {
+        throw new Error("App access check is unavailable.");
+      }
 
-        if (response.ok && json?.signedIn) {
-          setSignedIn(true);
-          setStatus(json);
-          if (json.userEmail) setEmail(json.userEmail);
-        } else {
-          setSignedIn(false);
-          setStatus(null);
-          // Clear any stale browser-only auth so this page doesn't look signed in
-          // when the server session is already gone.
-          await supabase.auth.signOut().catch(() => undefined);
-        }
-      } finally {
-        if (!cancelled) setAuthResolved(true);
+      setStatus(json);
+      if (json.userEmail) setEmail(json.userEmail);
+      setAccessState("signed-in");
+    } catch {
+      if (requestId === requests.id) setAccessState("unavailable");
+    } finally {
+      window.clearTimeout(timeout);
+      if (requests.controller === controller) {
+        requests.controller = null;
+        requests.timeout = null;
       }
     }
+  }, []);
 
+  useEffect(() => {
+    const requests = statusRequestRef.current;
     void loadStatus();
 
     return () => {
-      cancelled = true;
+      ++requests.id;
+      requests.controller?.abort();
+      if (requests.timeout !== null) window.clearTimeout(requests.timeout);
+      requests.timeout = null;
     };
-  }, [supabase]);
+  }, [loadStatus]);
 
   async function handleSignOut() {
     await supabase.auth.signOut().catch(() => undefined);
-    setSignedIn(false);
+    setAccessState("signed-out");
     setStatus(null);
     window.location.href = redirectPath;
   }
@@ -215,9 +251,9 @@ export function StudioOSDownloadAccess({
     formRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
   }
 
-  const releaseReady =
-    publicRelease &&
-    Boolean(status?.entitlement?.canDownload ?? (macReady || windowsReady));
+  const signedIn = accessState === "signed-in";
+  const signedOut = accessState === "signed-out";
+  const releaseReady = signedIn && publicRelease && status?.entitlement?.canDownload === true;
   const trialEndsLabel =
     status?.trialEndsAt
       ? new Date(status.trialEndsAt).toLocaleDateString("en-US", {
@@ -229,7 +265,7 @@ export function StudioOSDownloadAccess({
 
   return (
     <>
-      {!authResolved ? (
+      {accessState === "loading" ? (
         <Reveal
           repeat
           className="download-card-motion download-reveal-strong mx-auto mt-12 max-w-4xl rounded-[28px] border border-neutral-200 bg-white p-6 shadow-[0_18px_40px_rgba(15,23,42,0.05)] sm:p-8"
@@ -241,7 +277,26 @@ export function StudioOSDownloadAccess({
         </Reveal>
       ) : null}
 
-      {authResolved && !signedIn ? (
+      {accessState === "unavailable" ? (
+        <div
+          role="alert"
+          className="mx-auto mt-12 max-w-4xl rounded-[28px] border border-amber-200 bg-amber-50 p-6 sm:p-8"
+        >
+          <h2 className="text-xl font-bold text-neutral-950">We couldn’t check your app access.</h2>
+          <p className="mt-3 text-sm leading-7 text-neutral-700">
+            Please try again to check your trial and download access.
+          </p>
+          <button
+            type="button"
+            onClick={() => void loadStatus()}
+            className="mt-4 rounded-2xl bg-neutral-950 px-5 py-3 font-semibold text-white transition hover:bg-neutral-800"
+          >
+            Retry access check
+          </button>
+        </div>
+      ) : null}
+
+      {signedOut ? (
         <Reveal repeat delay={80} className="download-reveal-side-left">
         <div
           ref={formRef}
@@ -319,6 +374,13 @@ export function StudioOSDownloadAccess({
               >
                 Already have an account? Sign in
               </Link>
+              <button
+                type="button"
+                onClick={() => void loadStatus()}
+                className="text-center text-sm font-semibold text-neutral-600 underline underline-offset-4"
+              >
+                Retry access check
+              </button>
             </div>
           </div>
 
@@ -337,7 +399,7 @@ export function StudioOSDownloadAccess({
         </Reveal>
       ) : null}
 
-      {authResolved && signedIn ? (
+      {signedIn ? (
         <Reveal
           repeat
           delay={80}
@@ -407,7 +469,7 @@ export function StudioOSDownloadAccess({
                 Mac download coming soon
               </div>
             )
-          ) : (
+          ) : signedOut ? (
             <button
               type="button"
               onClick={() => requestTrialFor("mac")}
@@ -415,6 +477,10 @@ export function StudioOSDownloadAccess({
             >
               Activate Trial to Download
             </button>
+          ) : (
+            <div className="mt-6 inline-flex items-center justify-center rounded-2xl border border-neutral-200 bg-neutral-100 px-5 py-3 font-semibold text-neutral-500">
+              Check access to download
+            </div>
           )}
         </div>
         </Reveal>
@@ -450,7 +516,7 @@ export function StudioOSDownloadAccess({
                 </span>
               </button>
             )
-          ) : (
+          ) : signedOut ? (
             <button
               type="button"
               onClick={() => {
@@ -461,12 +527,16 @@ export function StudioOSDownloadAccess({
             >
               Register for Windows Release
             </button>
+          ) : (
+            <div className="mt-6 rounded-2xl border border-neutral-200 bg-neutral-100 px-5 py-3 font-semibold text-neutral-500">
+              Windows coming soon
+            </div>
           )}
         </div>
         </Reveal>
       </div>
 
-      {!signedIn ? (
+      {signedOut ? (
         <Reveal
           repeat
           delay={220}

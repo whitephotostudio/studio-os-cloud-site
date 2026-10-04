@@ -1,32 +1,35 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { SiteHeader } from "@/components/site-header";
 import { SiteFooter } from "@/components/site-footer";
 import { createClient } from "@/lib/supabase/client";
-import { FREE_TRIAL_DAYS } from "@/lib/trial-config";
+import { completeConfirmedAccountSetup } from "@/lib/confirmation-setup";
 
 type CallbackState =
-  | { kind: "loading" }
-  | { kind: "success"; email: string | null }
+  | { kind: "loading"; confirmed?: boolean }
+  | { kind: "success"; email: string | null; trialActive: boolean; trialDaysRemaining: number }
+  | { kind: "setup-error"; message: string }
   | { kind: "error"; message: string };
 
 /**
  * Email-verification landing page.
  *
  * Supabase email confirmation links redirect the user back here after they
- * click the link in their welcome email. We finish the auth exchange, show
- * a friendly "you're verified" screen, and then bounce them into the
- * dashboard so their trial starts immediately.
+ * click the link in their welcome email. Finish authentication and verified
+ * trial initialization before showing success and opening the dashboard.
  *
  * Supports two link formats:
  *   1. PKCE (?code=...)        — exchangeCodeForSession
  *   2. Implicit (#access_token) — Supabase auto-detects from the URL hash
  */
 export default function AuthCallbackPage() {
-  const supabase = createClient();
+  const supabase = useMemo(() => createClient(), []);
+  const confirmationExchange = useRef<ReturnType<typeof supabase.auth.exchangeCodeForSession> | null>(null);
   const [state, setState] = useState<CallbackState>({ kind: "loading" });
+  const [confirmedSession, setConfirmedSession] = useState<{ accessToken: string; email: string | null } | null>(null);
+  const [setupAttempt, setSetupAttempt] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -49,7 +52,9 @@ export default function AuthCallbackPage() {
         }
 
         if (code) {
-          const { error } = await supabase.auth.exchangeCodeForSession(code);
+          // Development effect replay and repeat renders must share this one-use exchange.
+          confirmationExchange.current ??= supabase.auth.exchangeCodeForSession(code);
+          const { error } = await confirmationExchange.current;
           if (error) {
             if (!cancelled) setState({ kind: "error", message: error.message });
             return;
@@ -73,15 +78,7 @@ export default function AuthCallbackPage() {
           return;
         }
 
-        if (!cancelled) {
-          setState({ kind: "success", email: session.user.email ?? null });
-        }
-
-        // Auto-redirect to the dashboard after a short pause so the user
-        // sees the success state rather than getting bounced instantly.
-        setTimeout(() => {
-          window.location.href = "/dashboard";
-        }, 1800);
+        if (!cancelled) setConfirmedSession({ accessToken: session.access_token, email: session.user.email ?? null });
       } catch (err) {
         if (!cancelled) {
           setState({
@@ -100,6 +97,43 @@ export default function AuthCallbackPage() {
       cancelled = true;
     };
   }, [supabase]);
+
+  useEffect(() => {
+    if (!confirmedSession) return;
+    const account = confirmedSession;
+    let cancelled = false;
+    let redirectTimer: ReturnType<typeof setTimeout> | undefined;
+    const controller = new AbortController();
+    const timeoutTimer = setTimeout(() => controller.abort(), 15000);
+    setState({ kind: "loading", confirmed: true });
+
+    async function finishSetup() {
+      try {
+        const setup = await completeConfirmedAccountSetup(account.accessToken, controller.signal);
+        if (cancelled) return;
+        setState({ kind: "success", email: account.email, ...setup });
+        redirectTimer = setTimeout(() => {
+          if (!cancelled) window.location.href = "/dashboard";
+        }, 1800);
+      } catch (error) {
+        if (!cancelled) setState({
+          kind: "setup-error",
+          message: error instanceof Error && error.name !== "AbortError" ? error.message
+            : "Your email is confirmed, but account setup took too long. Please try again.",
+        });
+      } finally {
+        clearTimeout(timeoutTimer);
+      }
+    }
+
+    void finishSetup();
+    return () => {
+      cancelled = true;
+      controller.abort();
+      clearTimeout(timeoutTimer);
+      if (redirectTimer !== undefined) clearTimeout(redirectTimer);
+    };
+  }, [confirmedSession, setupAttempt]);
 
   return (
     <div className="min-h-screen bg-white text-neutral-950">
@@ -131,7 +165,7 @@ export default function AuthCallbackPage() {
                 </svg>
               </div>
               <h1 className="mt-4 text-2xl font-semibold tracking-tight">
-                Confirming your email...
+                {state.confirmed ? "Email confirmed. Setting up your account..." : "Confirming your email..."}
               </h1>
               <p className="mt-2 text-sm text-neutral-500">
                 Hang tight — this only takes a moment.
@@ -164,8 +198,7 @@ export default function AuthCallbackPage() {
                     , <span className="font-semibold">{state.email}</span>
                   </>
                 ) : null}
-                . Your {FREE_TRIAL_DAYS}-day free trial will be ready in your
-                dashboard...
+                . {state.trialActive ? `Your free trial is ready with ${state.trialDaysRemaining} days remaining.` : "Your account setup is complete."} Taking you to your dashboard...
               </p>
               <div className="mt-8 flex flex-wrap gap-3">
                 <Link
@@ -182,6 +215,25 @@ export default function AuthCallbackPage() {
                 </Link>
               </div>
             </>
+          ) : null}
+
+          {state.kind === "setup-error" ? (
+            <div role="alert">
+              <h1 className="mt-4 text-2xl font-semibold tracking-tight">Email confirmed</h1>
+              <p className="mt-3 text-base leading-7 text-neutral-600">{state.message}</p>
+              <div className="mt-6 flex flex-wrap gap-3">
+                <button
+                  type="button"
+                  onClick={() => setSetupAttempt((attempt) => attempt + 1)}
+                  className="inline-flex items-center justify-center rounded-2xl bg-black px-5 py-3 text-sm font-semibold text-white transition hover:opacity-90"
+                >
+                  Try account setup again
+                </button>
+                <Link href="/sign-in?redirect=%2Fdashboard" className="inline-flex items-center justify-center rounded-2xl border border-neutral-200 px-5 py-3 text-sm font-semibold text-neutral-950 transition hover:bg-neutral-50">
+                  Sign in to finish setup
+                </Link>
+              </div>
+            </div>
           ) : null}
 
           {state.kind === "error" ? (

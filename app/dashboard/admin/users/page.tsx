@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { useIsMobile } from "@/lib/use-is-mobile";
+import type { AdminTrialStatus } from "@/lib/admin-signup-status";
 import {
   ArrowLeft,
   CheckCircle2,
@@ -38,7 +39,8 @@ type UserRow = {
   hasStripeSubscription: boolean;
   trialStartsAt: string | null;
   trialEndsAt: string | null;
-  trialStatus: "active" | "expired" | "none" | "converted" | "owner";
+  trialStatus: AdminTrialStatus;
+  signupIncomplete: boolean;
   trialDaysRemaining: number;
   isPlatformAdmin: boolean;
   lastSignIn: string | null;
@@ -119,6 +121,7 @@ function TrialBadge({ status, days }: { status: UserRow["trialStatus"]; days: nu
     converted: { color: "#1e40af", bg: "#dbeafe", label: "Subscribed" },
     owner: { color: "#92400e", bg: "#fef3c7", label: "Owner" },
     none: { color: textMuted, bg: "#f3f4f6", label: "No trial" },
+    incomplete: { color: "#92400e", bg: "#fef3c7", label: "Setup incomplete" },
   };
   const s = styles[status] || styles.none;
   const icons: Record<string, React.ReactNode> = {
@@ -126,6 +129,7 @@ function TrialBadge({ status, days }: { status: UserRow["trialStatus"]; days: nu
     expired: <AlertCircle size={11} />,
     converted: <CheckCircle2 size={11} />,
     owner: <CheckCircle2 size={11} />,
+    incomplete: <AlertCircle size={11} />,
   };
   return (
     <span
@@ -1052,7 +1056,7 @@ export default function AdminUsersPage() {
                           <div style={{ fontWeight: 700, marginBottom: 12, fontSize: 13 }}>Subscription &amp; Trial</div>
                           <div style={detailRow}>
                             <span style={detailLabel}>Status</span>
-                            <span style={{ textTransform: "capitalize" }}>{u.subscriptionStatus}</span>
+                            <span style={{ textTransform: "capitalize" }}>{u.signupIncomplete ? "Setup incomplete" : u.subscriptionStatus}</span>
                           </div>
                           <div style={detailRow}>
                             <span style={detailLabel}>Plan</span>
@@ -1076,6 +1080,11 @@ export default function AdminUsersPage() {
                             <span style={detailLabel}>Trial ends</span>
                             <span>{formatDate(u.trialEndsAt)}</span>
                           </div>
+                          {u.signupIncomplete ? (
+                            <p style={{ marginTop: 12, fontSize: 12, color: "#92400e", lineHeight: 1.5 }}>
+                              Trial setup has not finished. The photographer can complete setup by signing in and opening the dashboard.
+                            </p>
+                          ) : null}
 
                           {/* Trial actions */}
                           {!u.isPlatformAdmin ? (

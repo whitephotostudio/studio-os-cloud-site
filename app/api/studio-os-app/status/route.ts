@@ -10,12 +10,15 @@ import {
   resolveFreeTrialEndsAt,
 } from "@/lib/payments";
 import { buildStudioAppDashboardState } from "@/lib/studio-os-app";
+import { recordAudit } from "@/lib/audit";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(request: NextRequest) {
+  let user: { id: string; email?: string | null } | null = null;
+  let photographerId: string | null = null;
   try {
-    const { user } = await resolveDashboardAuth(request);
+    ({ user } = await resolveDashboardAuth(request));
     if (!user) {
       return NextResponse.json(
         {
@@ -29,6 +32,7 @@ export async function GET(request: NextRequest) {
 
     const service = createDashboardServiceClient();
     const photographer = await getOrCreatePhotographerByUser(service, user);
+    photographerId = photographer.id;
     const studioApp = await buildStudioAppDashboardState(service, photographer.id);
     const trialEndsAt = resolveFreeTrialEndsAt(photographer);
     const trialActive = isFreeTrialActive(photographer);
@@ -46,14 +50,24 @@ export async function GET(request: NextRequest) {
       ...studioApp,
     });
   } catch (error) {
+    if (user) {
+      await recordAudit({
+        request,
+        actorUserId: user.id,
+        actorPhotographerId: photographerId,
+        targetPhotographerId: photographerId,
+        action: "onboarding.access_check",
+        entityType: "photographer",
+        entityId: photographerId,
+        result: "error",
+        errorMessage: error instanceof Error ? error.message : "App access check failed.",
+      });
+    }
     return NextResponse.json(
       {
         ok: false,
-        signedIn: true,
-        message:
-          error instanceof Error
-            ? error.message
-            : "Unable to load Studio OS App beta access.",
+        ...(user ? { signedIn: true } : {}),
+        message: "We could not check your app access right now. Please try again.",
       },
       { status: 500 },
     );
