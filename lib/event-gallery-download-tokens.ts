@@ -1,5 +1,6 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { EventGalleryDownloadResolution } from "@/lib/event-gallery-downloads";
+import { eventCollectionAccessMode, type EventDownloadCollection } from "@/lib/event-download-scope";
 
 export type EventGalleryBatchTokenPayload = {
   v: 1;
@@ -17,11 +18,14 @@ export type EventGalleryBatchTokenPayload = {
   studioEmail: string;
   fileName: string;
   mediaIds: string[];
-  // Newer download sessions record each batch only after its ZIP stream has
-  // completed. These fields stay optional so already-issued v1 tokens remain
-  // valid; legacy sessions were recorded by the ready endpoint instead.
+  // Optional in the decoded v1 shape for legacy token detection. The batch
+  // route asks sessions without an album scope/grant to prepare fresh links.
   downloadLogId?: string;
   collectionId?: string | null;
+  collectionIds?: string[];
+  collectionGrants?: Record<string, string>;
+  photographerId?: string | null;
+  projectAccessGrant?: string;
   exp: number;
 };
 
@@ -55,6 +59,23 @@ function signEncodedPayload(encodedPayload: string) {
   return createHmac("sha256", resolveSigningSecret())
     .update(encodedPayload)
     .digest("hex");
+}
+
+// Bind the bearer grant to the album's current access configuration without
+// placing its private PIN in a client-readable token. Changes revoke the grant.
+export function createEventCollectionDownloadGrant(projectId: string, row: EventDownloadCollection) {
+  return signEncodedPayload(JSON.stringify([
+    "event-album-access", projectId, row.id, clean(row.kind).toLowerCase(),
+    eventCollectionAccessMode(row.access_mode), clean(row.access_pin), clean(row.slug),
+  ]));
+}
+
+export function createEventProjectDownloadGrant(row: {
+  id: string; access_mode: string | null; access_pin: string | null;
+}) {
+  return signEncodedPayload(JSON.stringify([
+    "event-project-access", row.id, eventCollectionAccessMode(row.access_mode), clean(row.access_pin),
+  ]));
 }
 
 export function createEventGalleryBatchToken(payload: EventGalleryBatchTokenPayload) {

@@ -11,6 +11,8 @@ export type EventGalleryDownloadBatch = {
 export type EventGalleryDownloadManifest = {
   id: string;
   galleryName: string;
+  collectionId?: string | null;
+  collectionName?: string | null;
   archiveBaseName: string;
   requestedPhotoCount: number;
   photoCount: number;

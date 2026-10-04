@@ -41,9 +41,10 @@ export async function readProductionJson<T>(key: string) {
       etag: result.etag,
     };
   } catch (e) {
+    const missing = e as { name?: string; Code?: string; $metadata?: { httpStatusCode?: number } };
     if (
-      (e as { $metadata?: { httpStatusCode?: number } }).$metadata
-        ?.httpStatusCode === 404
+      missing.$metadata?.httpStatusCode === 404 &&
+      (missing.name === "NoSuchKey" || missing.Code === "NoSuchKey")
     )
       return null;
     throw e;

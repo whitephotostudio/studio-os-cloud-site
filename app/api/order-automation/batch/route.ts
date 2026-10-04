@@ -63,6 +63,25 @@ type Batch = {
   date: string;
   sentAt?: string;
 };
+const receiptRecordSchema = z.object({
+  owner: z.string().uuid(),
+  fingerprint: hash,
+  zipKey: z.string().min(1),
+  zipSha256: hash,
+  token: hash,
+  expiresAt: z.number().int().positive(),
+  orders: schema.shape.orders,
+  financialRevision: hash,
+  state: z.enum(["prepared", "sending", "sent"]),
+  firstAttempt: z.number().int().positive().optional(),
+  receiptId: id.optional(),
+  sentAt: z.iso.datetime().optional(),
+  text: z.string().min(1),
+  labEmail: z.email(),
+  labName: z.string().min(1),
+  replyTo: z.string().nullable(),
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+}).passthrough();
 export async function POST(request: NextRequest) {
   try {
     const user = await productionAuth(request),
@@ -316,21 +335,56 @@ export async function GET(request: NextRequest) {
     const record = await readProductionJson<Batch>(
       productionKey(user.id, `batches/${id}.json`),
     );
-    if (!record) throw Error("No delivery record yet.");
+    if (!record) {
+      return NextResponse.json(
+        { ok: false, reason: "delivery_record_not_found", batchId: id,
+          message: "No delivery record yet." },
+        { status: 404, headers: { "Cache-Control": "no-store" } },
+      );
+    }
+    const parsed = receiptRecordSchema.safeParse(record.value);
+    if (!parsed.success || !record.etag) {
+      throw Error("Invalid delivery record.");
+    }
+    const batch = parsed.data;
+    if (batch.owner !== user.id ||
+        batch.zipKey !== productionKey(user.id, `zips/${id}-${batch.zipSha256}.zip`) ||
+        new Set(batch.orders.map((order) => order.localId)).size !== batch.orders.length ||
+        new Set(batch.orders.map((order) => order.cloudId)).size !== batch.orders.length ||
+        (batch.state === "prepared" &&
+          (batch.firstAttempt !== undefined || batch.receiptId !== undefined || batch.sentAt !== undefined)) ||
+        (batch.state !== "prepared" && batch.firstAttempt === undefined) ||
+        (batch.state === "sending" && (batch.receiptId !== undefined || batch.sentAt !== undefined)) ||
+        (batch.state === "sent" && (!batch.receiptId || !batch.sentAt))) {
+      throw Error("Delivery record needs reconciliation.");
+    }
     return NextResponse.json(
       {
         ok: true,
-        state: record.value.state,
-        receiptId: record.value.receiptId,
+        state: batch.state,
+        receiptId: batch.receiptId,
         batchId: id,
-        sentAt: record.value.sentAt,
+        sentAt: batch.sentAt,
       },
       { headers: { "Cache-Control": "no-store" } },
     );
-  } catch {
+  } catch (error) {
+    if (error instanceof ProductionAuthError) {
+      return NextResponse.json(
+        { ok: false, message: error.message },
+        { status: error.status, headers: { "Cache-Control": "no-store" } },
+      );
+    }
+    if (error instanceof z.ZodError) {
+      return NextResponse.json(
+        { ok: false, message: "Invalid lab batch reference." },
+        { status: 400, headers: { "Cache-Control": "no-store" } },
+      );
+    }
     return NextResponse.json(
-      { ok: false, message: "Delivery receipt unavailable." },
-      { status: 404 },
+      { ok: false, reason: "delivery_receipt_unavailable",
+        message: "Delivery receipt could not be verified. Reconcile this batch before retrying." },
+      { status: 503, headers: { "Cache-Control": "no-store" } },
     );
   }
 }

@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
-import type { SupabaseClient } from "@supabase/supabase-js";
 import { validateEventGalleryAccess } from "@/lib/event-gallery-access";
 import {
   buildArchiveBaseName,
@@ -8,7 +7,8 @@ import {
   splitIntoBatches,
   type EventGalleryDownloadManifest,
 } from "@/lib/event-gallery-downloads";
-import { createEventGalleryBatchToken } from "@/lib/event-gallery-download-tokens";
+import { createEventGalleryBatchToken, createEventCollectionDownloadGrant, createEventProjectDownloadGrant } from "@/lib/event-gallery-download-tokens";
+import { authorizedEventMediaIds, eventGalleryDownloadsUsed, resolveEventDownloadScope } from "@/lib/event-download-scope";
 import { normalizeEventGallerySettings } from "@/lib/event-gallery-settings";
 import { validateUuid, validateUuidArray } from "@/lib/request-validation";
 import { signedPrivateMediaReference } from "@/lib/private-media-references";
@@ -18,17 +18,6 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 const DOWNLOAD_TOKEN_TTL_MS = 45 * 60 * 1000;
-const MEDIA_LOOKUP_CHUNK_SIZE = 100;
-
-type DownloadLogRow = {
-  download_count: number | null;
-};
-
-type MediaAccessRow = {
-  id: string;
-  collection_id: string | null;
-};
-
 type PhotographerRow = {
   id: string;
   business_name: string | null;
@@ -39,15 +28,6 @@ type PhotographerRow = {
 
 function clean(value: string | null | undefined) {
   return (value ?? "").trim();
-}
-
-function isMissingDownloadsTable(error: unknown) {
-  return (
-    !!error &&
-    typeof error === "object" &&
-    "code" in error &&
-    (error as { code?: string }).code === "42P01"
-  );
 }
 
 function looksLikeImageAssetUrl(value: string | null | undefined) {
@@ -73,34 +53,6 @@ function uniqueMediaIds(values: Array<string | null | undefined>) {
     out.push(nextValue);
   }
   return out;
-}
-
-function chunkValues<T>(values: T[], size: number) {
-  const safeSize = Math.max(1, Math.floor(size) || 1);
-  const chunks: T[][] = [];
-  for (let index = 0; index < values.length; index += safeSize) {
-    chunks.push(values.slice(index, index + safeSize));
-  }
-  return chunks;
-}
-
-async function fetchMediaAccessRows(
-  service: SupabaseClient,
-  projectId: string,
-  mediaIds: string[],
-) {
-  const rows: MediaAccessRow[] = [];
-  for (const chunk of chunkValues(mediaIds, MEDIA_LOOKUP_CHUNK_SIZE)) {
-    const { data, error } = await service
-      .from("media")
-      .select("id,collection_id")
-      .eq("project_id", projectId)
-      .in("id", chunk);
-
-    if (error) throw error;
-    rows.push(...((data ?? []) as MediaAccessRow[]));
-  }
-  return rows;
 }
 
 export async function POST(request: NextRequest) {
@@ -209,7 +161,14 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const collectionId = clean(body.collectionId);
+    const scope = await resolveEventDownloadScope({
+      service: access.service, projectId: access.projectId,
+      collectionIds: access.collectionIds, pin: body.pin ?? "", collectionId: body.collectionId,
+    });
+    if (!scope.ok) {
+      return NextResponse.json({ ok: false, message: scope.message }, { status: scope.status });
+    }
+    const collectionId = scope.collectionId;
     if (settings.extras.freeDigitalAudience === "album" && !collectionId) {
       return NextResponse.json(
         { ok: false, message: "Open the album you want to download first." },
@@ -217,21 +176,16 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { data: downloadRows, error: downloadError } = await access.service
-      .from("event_gallery_downloads")
-      .select("download_count")
-      .eq("project_id", access.projectId)
-      .eq("viewer_email", access.email)
-      .eq("download_type", "gallery");
-
-    if (downloadError && !isMissingDownloadsTable(downloadError)) {
-      throw downloadError;
-    }
-
-    const downloadsUsed = ((downloadRows ?? []) as DownloadLogRow[]).reduce(
-      (sum, row) => sum + Math.max(0, Number(row.download_count ?? 0)),
-      0,
+    const eligibleMediaIds = await authorizedEventMediaIds(
+      access.service, access.projectId, requestedMediaIds, scope.collectionIds,
     );
+    if (!eligibleMediaIds.length) {
+      return NextResponse.json(
+        { ok: false, message: "No gallery photos are available for that download." },
+        { status: 403 },
+      );
+    }
+    const downloadsUsed = await eventGalleryDownloadsUsed(access.service, access.projectId, access.email);
     const numericLimit =
       settings.extras.freeDigitalDownloadLimit === "unlimited"
         ? null
@@ -253,8 +207,8 @@ export async function POST(request: NextRequest) {
 
     const allowedMediaIds =
       downloadsRemaining === null
-        ? requestedMediaIds
-        : requestedMediaIds.slice(0, downloadsRemaining);
+        ? eligibleMediaIds
+        : eligibleMediaIds.slice(0, downloadsRemaining);
 
     if (!allowedMediaIds.length) {
       return NextResponse.json(
@@ -268,27 +222,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const mediaRows = await fetchMediaAccessRows(
-      access.service,
-      access.projectId,
-      allowedMediaIds,
-    );
-
-    const mediaMap = new Map<string, MediaAccessRow>();
-    for (const row of mediaRows) {
-      if (settings.extras.freeDigitalAudience === "album" && row.collection_id !== collectionId) {
-        continue;
-      }
-      mediaMap.set(row.id, row);
-    }
-
-    const confirmedMediaIds = allowedMediaIds.filter((mediaId) => mediaMap.has(mediaId));
-    if (!confirmedMediaIds.length) {
-      return NextResponse.json(
-        { ok: false, message: "No gallery photos are available for that download." },
-        { status: 403 },
-      );
-    }
+    const confirmedMediaIds = allowedMediaIds;
 
     let studioName = "";
     let studioEmail = "";
@@ -322,7 +256,12 @@ export async function POST(request: NextRequest) {
     }
 
     const galleryName = clean(access.project.title) || "Event Gallery";
-    const archiveBaseName = buildArchiveBaseName(galleryName, "event-gallery");
+    const archiveBaseName = buildArchiveBaseName(
+      scope.collectionName ? `${galleryName} - ${scope.collectionName}` : galleryName, "event-gallery",
+    );
+    const collectionGrants = Object.fromEntries(scope.collections.map(row => [
+      row.id, createEventCollectionDownloadGrant(access.projectId, row),
+    ]));
     const applyWatermark = settings.extras.watermarkDownloads;
     const batchSize = galleryZipBatchSize(
       settings.extras.freeDigitalResolution,
@@ -357,6 +296,10 @@ export async function POST(request: NextRequest) {
         mediaIds,
         downloadLogId,
         collectionId: collectionId || null,
+        collectionIds: scope.collectionIds,
+        collectionGrants,
+        photographerId: access.project.photographer_id,
+        projectAccessGrant: createEventProjectDownloadGrant(access.project),
         exp: Date.parse(expiresAt),
       });
 
@@ -373,7 +316,9 @@ export async function POST(request: NextRequest) {
       id: randomUUID(),
       galleryName,
       archiveBaseName,
-      requestedPhotoCount: requestedMediaIds.length,
+      collectionId,
+      collectionName: scope.collectionName,
+      requestedPhotoCount: eligibleMediaIds.length,
       photoCount: confirmedMediaIds.length,
       batchCount: batches.length,
       createdAt: new Date().toISOString(),

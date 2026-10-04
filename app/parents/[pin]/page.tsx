@@ -69,6 +69,8 @@ import { RetouchPhotoFields, type RetouchPhotoOption } from "@/components/parent
 import { isRetouchPackage, isRetouchPrintPurchase, retouchPrintPurchaseIssue, RETOUCH_PRINT_REQUIRED, retouchPhotoLimit, retouchSelectionIssue, retouchSlots, type RetouchSelection } from "@/lib/retouching";
 import { calendarDateInputValue, hasCalendarBoundaryPassed } from "@/lib/calendar-dates";
 import { canOfferParentBackdrops, parentBackdropSelectionIssue, usableParentCutouts, PARENT_BACKDROP_UNAVAILABLE, type ParentBackdropPortrait } from "@/lib/parent-backdrop-access";
+import { EventAlbumOverview, EventAlbumSwitcher } from "@/components/parents/event-album-navigation";
+import { accessibleEventGalleryImages, buildEventAlbumChoices, eventAlbumChoiceForValue, imagesInEventAlbum, initialEventAlbumSelection } from "@/lib/event-album-navigation";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 type StudentRow = {
@@ -385,13 +387,16 @@ const galleryTranslations: Record<
     allPhotosSummary: "photos in the full event",
     browseGallery: "Browse Gallery",
     browseGalleryHint: "Switch between albums without using a full row of tabs. The wall will update right under this header.",
-    chooseAlbumPrompt: "Choose an album from the menu to open its full photo wall.",
+    chooseAlbumPrompt: "Choose an album below to view its photos.",
+    chooseAlbumOrAllPrompt: "Choose an album, or view all photos.",
     privateGalleryMessage: "A private Studio OS gallery designed for your event.",
     share: "Share",
     bw: "B&W",
     bwOn: "B&W On",
     buyAll: "Buy All",
     downloadAll: "Download All",
+    downloadAlbum: "Download Album",
+    downloadAllPhotos: "Download All Photos",
     openStore: "Open Store",
     viewBasket: "View Basket",
     buyPhoto: "Buy Photo",
@@ -440,13 +445,16 @@ const galleryTranslations: Record<
     allPhotosSummary: "photos in the full event",
     browseGallery: "Browse Gallery",
     browseGalleryHint: "Switch between albums without using a full row of tabs. The wall will update right under this header.",
-    chooseAlbumPrompt: "Choose an album from the menu to open its full photo wall.",
+    chooseAlbumPrompt: "Choose an album below to view its photos.",
+    chooseAlbumOrAllPrompt: "Choose an album, or view all photos.",
     privateGalleryMessage: "A private Studio OS gallery designed for your event.",
     share: "Share",
     bw: "B&W",
     bwOn: "B&W On",
     buyAll: "Buy All",
     downloadAll: "Download All",
+    downloadAlbum: "Download Album",
+    downloadAllPhotos: "Download All Photos",
     openStore: "Open Store",
     viewBasket: "View Basket",
     buyPhoto: "Buy Photo",
@@ -495,13 +503,16 @@ const galleryTranslations: Record<
     allPhotosSummary: "photos dans tout l'evenement",
     browseGallery: "Parcourir la galerie",
     browseGalleryHint: "Passez d'un album a l'autre sans utiliser une longue rangee d'onglets. La grille se mettra a jour juste sous cet en-tete.",
-    chooseAlbumPrompt: "Choisissez un album dans le menu pour ouvrir sa galerie complete.",
+    chooseAlbumPrompt: "Choisissez un album ci-dessous pour voir ses photos.",
+    chooseAlbumOrAllPrompt: "Choisissez un album ou toutes les photos.",
     privateGalleryMessage: "Une galerie Studio OS privee creee pour votre evenement.",
     share: "Partager",
     bw: "N&B",
     bwOn: "N&B actif",
     buyAll: "Tout acheter",
     downloadAll: "Tout telecharger",
+    downloadAlbum: "Telecharger l'album",
+    downloadAllPhotos: "Telecharger toutes les photos",
     openStore: "Ouvrir la boutique",
     viewBasket: "Voir le panier",
     buyPhoto: "Acheter la photo",
@@ -4518,7 +4529,7 @@ export default function ParentGalleryPage() {
           const activeCollection = contextPayload.activeCollection ?? null;
           const collections = contextPayload.collections ?? [];
           const mediaRows = contextPayload.media ?? [];
-          const eventImages = mediaRows
+          const eventImages = accessibleEventGalleryImages(mediaRows
             .map((row) => {
               const thumbnailUrl = clean(row.thumbnail_url) || null;
               const previewUrl = clean(row.preview_url) || null;
@@ -4535,7 +4546,7 @@ export default function ParentGalleryPage() {
                 previewUrl,
               } as GalleryImage;
             })
-            .filter((row): row is GalleryImage => !!row);
+            .filter((row): row is GalleryImage => !!row), collections);
           const packageRows = deduplicatePackages(contextPayload.packages ?? []);
           const eventLabel =
             clean(activeCollection?.title) ||
@@ -4559,6 +4570,14 @@ export default function ParentGalleryPage() {
           const nextGallerySettings = normalizeEventGallerySettings(
             contextPayload.gallerySettings,
           );
+          const nextGalleryCopy = galleryTranslations[localeFromGalleryLanguage(nextGallerySettings.galleryLanguage)];
+          const initialAlbumSelection = initialEventAlbumSelection(buildEventAlbumChoices({
+            collections,
+            images: eventImages,
+            hideAllPhotosAlbum: nextGallerySettings.extras.hideAllPhotosAlbum,
+            allPhotosTitle: nextGalleryCopy.allPhotos,
+            albumTitle: nextGalleryCopy.album,
+          }), activeCollection?.id);
           const nextGalleryDownloadAccess = {
             ...defaultGalleryDownloadAccess(nextGallerySettings),
             ...(contextPayload.downloadAccess ?? {}),
@@ -4624,14 +4643,8 @@ export default function ParentGalleryPage() {
           setImages(eventImages);
           setSelectedImageIndex(0);
           setEventCollections(collections);
-          setActiveEventCollectionId(clean(activeCollection?.id) || null);
-          setEventPhotoStage(
-            clean(activeCollection?.id)
-              ? "grid"
-              : collections.length > 0
-                ? "albums"
-                : "viewer",
-          );
+          setActiveEventCollectionId(initialAlbumSelection.collectionId);
+          setEventPhotoStage(initialAlbumSelection.stage);
           setActiveView("photos");
           setEnteredEventIntro(true);
           setBlackWhitePreviewEnabled(false);
@@ -4991,7 +5004,7 @@ export default function ParentGalleryPage() {
   })();
   const visibleImages =
     !isSchoolMode && activeEventCollectionId
-      ? images.filter((img) => clean(img.collectionId) === activeEventCollectionId)
+      ? imagesInEventAlbum(images, activeEventCollectionId)
       : schoolModeVisibleImages;
   const compositeGalleryImages = useMemo(
     () => images.filter((img) => isCompositeGalleryImage(img)),
@@ -5042,6 +5055,11 @@ export default function ParentGalleryPage() {
   const currentGalleryBranding = gallerySettings.branding;
   const galleryLocale = localeFromGalleryLanguage(gallerySettings.galleryLanguage);
   const galleryCopy = galleryTranslations[galleryLocale];
+  const galleryDownloadButtonLabel = isSchoolMode
+    ? galleryCopy.downloadAll
+    : activeEventCollectionId
+      ? galleryCopy.downloadAlbum
+      : galleryCopy.downloadAllPhotos;
   const blackWhiteFilteringAllowed = currentGalleryExtras.allowBlackWhiteFiltering;
   const blackWhitePreviewActive =
     blackWhiteFilteringAllowed && blackWhitePreviewEnabled;
@@ -5058,19 +5076,16 @@ export default function ParentGalleryPage() {
   const photoGridMinWidth = getPhotoGridMinWidth(gallerySettings, isMobileViewport);
   const photoWallColumnWidth = getPhotoWallColumnWidth(gallerySettings);
   const photoWallStyle = currentGalleryBranding.photoLayout;
-  const eventCollectionPhotoCounts = useMemo(() => {
-    const counts: Record<string, number> = {};
-    for (const image of images) {
-      const collectionId = clean(image.collectionId);
-      if (!collectionId) continue;
-      counts[collectionId] = (counts[collectionId] ?? 0) + 1;
-    }
-    return counts;
-  }, [images]);
-  const eventCollectionsWithImages = eventCollections.filter((collection) =>
-    images.some((img) => clean(img.collectionId) === clean(collection.id)),
-  );
-  const eventHasAlbums = !isSchoolMode && eventCollectionsWithImages.length > 0;
+  const eventAlbumChoices = useMemo(() => buildEventAlbumChoices({
+    collections: eventCollections,
+    images,
+    hideAllPhotosAlbum: currentGalleryExtras.hideAllPhotosAlbum,
+    allPhotosTitle: galleryCopy.allPhotos,
+    albumTitle: galleryCopy.album,
+    galleryCoverUrl: project?.cover_photo_url,
+  }), [eventCollections, images, currentGalleryExtras.hideAllPhotosAlbum, galleryCopy.allPhotos, galleryCopy.album, project?.cover_photo_url]);
+  const eventAlbumCount = eventAlbumChoices.filter(choice => choice.collectionId !== null).length;
+  const eventHasAlbums = !isSchoolMode && eventAlbumCount > 0;
   const selectedEventCollection = !isSchoolMode && activeEventCollectionId
     ? eventCollections.find((collection) => clean(collection.id) === activeEventCollectionId) ?? null
     : null;
@@ -5181,6 +5196,13 @@ export default function ParentGalleryPage() {
   const galleryHeaderDescription = showAlbumOverview
     ? galleryCopy.chooseAlbumPrompt
     : clean(currentGalleryBranding.introMessage) || galleryCopy.privateGalleryMessage;
+  const customGalleryDescription = clean(currentGalleryBranding.introMessage);
+  const galleryOverviewDescription = [
+    customGalleryDescription !== clean(defaultEventGallerySettings.branding.introMessage) &&
+    customGalleryDescription !== galleryCopy.privateGalleryMessage
+      ? customGalleryDescription : "",
+    currentGalleryExtras.hideAllPhotosAlbum ? galleryCopy.chooseAlbumPrompt : galleryCopy.chooseAlbumOrAllPrompt,
+  ].filter(Boolean).join(" ");
   const galleryEventDate = formatEventDateLabel(
     project?.event_date || project?.shoot_date || null,
   );
@@ -5217,47 +5239,19 @@ export default function ParentGalleryPage() {
         : "",
   ].filter(Boolean);
   const heroPreviewImages = images.slice(0, Math.min(images.length, 8));
-  const featuredAlbums = eventCollectionsWithImages.slice(0, Math.min(eventCollectionsWithImages.length, 3));
-  const landingAlbumCards = [
-    ...(!currentGalleryExtras.hideAllPhotosAlbum
-      ? [
-          {
-            id: "__all__",
-            title: galleryCopy.allPhotos,
-            label: "Complete gallery",
-            photoCount: images.length,
-            coverUrl: project?.cover_photo_url || images[0]?.url || heroImageUrl,
-            collectionId: null as string | null,
-          },
-        ]
-      : []),
-    ...featuredAlbums.map((collection) => {
-      const collectionId = clean(collection.id);
-      const firstAlbumImage = images.find(
-        (image) => clean(image.collectionId) === collectionId,
-      );
-      return {
-        id: collectionId,
-        title: clean(collection.title) || galleryCopy.album,
-        label: galleryCopy.album,
-        photoCount: eventCollectionPhotoCounts[collectionId] ?? 0,
-        coverUrl: clean(collection.cover_photo_url) || firstAlbumImage?.url || heroImageUrl,
-        collectionId,
-      };
-    }),
-  ].slice(0, isMobileViewport ? 3 : 4);
   const activeScenePhotoCount = activeEventCollectionId ? visibleImages.length : images.length;
   const activeSceneCoverUrl =
     selectedEventCollection?.cover_photo_url || visibleImages[0]?.url || heroImageUrl;
   const galleryMetaItems = [
     galleryEventDate,
-    showAlbumOverview ? compactCountLabel(eventCollectionsWithImages.length, galleryCopy.album.toLowerCase()) : "",
+    showAlbumOverview ? compactCountLabel(eventAlbumCount, galleryCopy.album.toLowerCase()) : "",
     !currentGalleryExtras.hideAlbumPhotoCount ? compactCountLabel(images.length, "photo") : "",
     galleryAccessLabel,
   ].filter(Boolean);
   const favoriteImages = useMemo(
-    () => images.filter((img) => favorites.has(img.id)),
-    [favorites, images],
+    () => (isSchoolMode ? images : imagesInEventAlbum(images, activeEventCollectionId))
+      .filter((img) => favorites.has(img.id)),
+    [favorites, images, isSchoolMode, activeEventCollectionId],
   );
   const favoriteDigitalSelections = useMemo<DigitalSelection[]>(
     () =>
@@ -5275,7 +5269,7 @@ export default function ParentGalleryPage() {
   const visibleDownloadImages = useMemo(() => {
     if (showAlbumOverview) return [];
     if (activeEventCollectionId) {
-      return images.filter((img) => clean(img.collectionId) === activeEventCollectionId);
+      return imagesInEventAlbum(images, activeEventCollectionId);
     }
     return visibleImages;
   }, [activeEventCollectionId, images, showAlbumOverview, visibleImages]);
@@ -5483,7 +5477,7 @@ export default function ParentGalleryPage() {
       setEventPhotoStage("grid");
       return;
     }
-    if ((showEventPhotoGrid || showPhotoViewer) && !visibleImages.length) {
+    if (showPhotoViewer && !visibleImages.length) {
       setEventPhotoStage(eventHasAlbums ? "albums" : "grid");
       setSelectedImageIndex(0);
     }
@@ -5787,6 +5781,7 @@ export default function ParentGalleryPage() {
             projectId,
             email: eventEmail,
             pin,
+            collectionId: activeEventCollectionId || null,
             mediaIds: favoriteImages.map((image) => image.id),
             downloadType: "favorites",
           }),
@@ -6164,10 +6159,7 @@ export default function ParentGalleryPage() {
       return;
     }
 
-    const candidateImages =
-      galleryDownloadAccess.audience === "album" && activeEventCollectionId
-        ? images.filter((img) => clean(img.collectionId) === activeEventCollectionId)
-        : visibleDownloadImages;
+    const candidateImages = visibleDownloadImages;
     if (!candidateImages.length) {
       showGalleryActionNotice(galleryCopy.noPhotosAvailableDownload);
       return;
@@ -6362,10 +6354,7 @@ export default function ParentGalleryPage() {
               email: eventEmail,
               pin,
               downloadPin,
-              collectionId:
-                galleryDownloadAccess.audience === "album"
-                  ? activeEventCollectionId
-                  : null,
+              collectionId: activeEventCollectionId || null,
               mediaIds: candidateImages.map((image) => image.id),
               downloadType: "gallery",
             }),
@@ -6455,8 +6444,7 @@ export default function ParentGalleryPage() {
             email: eventEmail,
             pin,
             downloadPin,
-            collectionId:
-              galleryDownloadAccess.audience === "album" ? activeEventCollectionId : null,
+            collectionId: activeEventCollectionId || null,
             mediaIds: candidateImages.map((image) => image.id),
           }),
         });
@@ -6519,55 +6507,30 @@ export default function ParentGalleryPage() {
   }
 
   function openImageInGallery(image: GalleryImage) {
-    if (!isSchoolMode && clean(image.collectionId)) {
-      const nextCollectionId = clean(image.collectionId);
-      const nextVisibleImages =
-        nextCollectionId.length > 0
-          ? images.filter((item) => clean(item.collectionId) === nextCollectionId)
-          : images;
-      const nextIndex = Math.max(
-        0,
-        nextVisibleImages.findIndex((item) => item.id === image.id),
-      );
-      setActiveEventCollectionId(nextCollectionId);
-      setSelectedImageIndex(nextIndex >= 0 ? nextIndex : 0);
-    } else {
-      const nextIndex = Math.max(
-        0,
-        visibleImages.findIndex((item) => item.id === image.id),
-      );
-      setSelectedImageIndex(nextIndex >= 0 ? nextIndex : 0);
-    }
+    const nextVisibleImages = isSchoolMode
+      ? visibleImages
+      : imagesInEventAlbum(images, activeEventCollectionId);
+    const nextIndex = nextVisibleImages.findIndex(item => item.id === image.id);
+    if (nextIndex < 0) return;
+    setSelectedImageIndex(nextIndex);
     setEventPhotoStage("viewer");
     setActiveView("photos");
   }
 
   function focusImageForActions(image: GalleryImage) {
-    if (!isSchoolMode && clean(image.collectionId)) {
-      const nextCollectionId = clean(image.collectionId);
-      const nextVisibleImages =
-        nextCollectionId.length > 0
-          ? images.filter((item) => clean(item.collectionId) === nextCollectionId)
-          : images;
-      const nextIndex = Math.max(
-        0,
-        nextVisibleImages.findIndex((item) => item.id === image.id),
-      );
-      setActiveEventCollectionId(nextCollectionId);
-      setSelectedImageIndex(nextIndex >= 0 ? nextIndex : 0);
-    } else {
-      const nextIndex = Math.max(
-        0,
-        images.findIndex((item) => item.id === image.id),
-      );
-      setSelectedImageIndex(nextIndex >= 0 ? nextIndex : 0);
-    }
+    const nextVisibleImages = isSchoolMode
+      ? images
+      : imagesInEventAlbum(images, activeEventCollectionId);
+    const nextIndex = nextVisibleImages.findIndex(item => item.id === image.id);
+    if (nextIndex < 0) return false;
+    setSelectedImageIndex(nextIndex);
     setEventPhotoStage("viewer");
     setActiveView("photos");
+    return true;
   }
 
   function openBuyDrawerForImage(image: GalleryImage) {
-    focusImageForActions(image);
+    if (!focusImageForActions(image)) return;
     openBuyDrawer();
   }
 
@@ -6575,13 +6538,15 @@ export default function ParentGalleryPage() {
     if (!canOfferParentBackdrops({ schoolMode: isSchoolMode,
       composite: isCompositeGalleryImage(image), catalogCount: backdrops.length,
       cutoutUrl: nobgUrls[image.id] })) return;
-    focusImageForActions(image);
+    if (!focusImageForActions(image)) return;
     // Focus updates React state asynchronously; authorize the clicked photo,
     // rather than reading the previously selected photo's readiness.
     showBackdropPickerForReadyPhoto();
   }
 
   function openEventPhotoGrid(collectionId: string | null) {
+    if (collectionId && !eventAlbumChoices.some(choice => choice.collectionId === collectionId)) return;
+    if (!collectionId && currentGalleryExtras.hideAllPhotosAlbum && eventHasAlbums) return;
     setActiveEventCollectionId(collectionId);
     setSelectedImageIndex(0);
     setEventPhotoGridLimit(eventPhotoGridInitialLimit);
@@ -6590,6 +6555,7 @@ export default function ParentGalleryPage() {
   }
 
   function openAlbumsOverview() {
+    setActiveEventCollectionId(null);
     setSelectedImageIndex(0);
     setEventPhotoStage("albums");
     setActiveView("photos");
@@ -6601,14 +6567,8 @@ export default function ParentGalleryPage() {
       return;
     }
 
-    if (value === "__all__") {
-      openEventPhotoGrid(null);
-      return;
-    }
-
-    if (value.startsWith("album:")) {
-      openEventPhotoGrid(value.slice(6));
-    }
+    const choice = eventAlbumChoiceForValue(eventAlbumChoices, value);
+    if (choice) openEventPhotoGrid(choice.collectionId);
   }
 
   function getPhotoReference(index: number, image: GalleryImage) {
@@ -6714,8 +6674,7 @@ export default function ParentGalleryPage() {
           email: eventEmail,
           pin,
           downloadPin,
-          collectionId:
-            galleryDownloadAccess.audience === "album" ? activeEventCollectionId : null,
+          collectionId: activeEventCollectionId || null,
           mediaIds: [image.id],
           downloadType: "gallery",
         }),
@@ -9575,7 +9534,7 @@ export default function ParentGalleryPage() {
                 gap: isMobileViewport ? 10 : 24,
                 minWidth: 0,
                 flex: isMobileViewport ? "1 1 100%" : "1 1 540px",
-                flexWrap: isMobileViewport ? "nowrap" : "wrap",
+                flexWrap: "wrap",
                 width: isMobileViewport ? "100%" : undefined,
               }}
             >
@@ -9608,58 +9567,16 @@ export default function ParentGalleryPage() {
                 </span>
               </button>
 
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: isMobileViewport ? 14 : 18,
-                  flexWrap: isMobileViewport ? "nowrap" : "wrap",
-                  minWidth: 0,
-                  overflowX: isMobileViewport ? "auto" : undefined,
-                  paddingBottom: isMobileViewport ? 2 : undefined,
-                }}
-              >
-                {!currentGalleryExtras.hideAllPhotosAlbum ? (
-                  <button
-                    type="button"
-                    onClick={() => openEventPhotoGrid(null)}
-                    style={{
-                      background: "transparent",
-                      border: "none",
-                      padding: 0,
-                      cursor: "pointer",
-                      color: !activeEventCollectionId ? "#18181b" : "#71717a",
-                      fontSize: 13,
-                      fontWeight: !activeEventCollectionId ? 600 : 500,
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    {galleryCopy.allPhotos}
-                  </button>
-                ) : null}
-                {eventCollectionsWithImages.slice(0, 5).map((collection) => {
-                  const collectionId = clean(collection.id);
-                  const isCurrent = activeEventCollectionId === collectionId;
-                  return (
-                    <button
-                      key={collectionId}
-                      type="button"
-                      onClick={() => openEventPhotoGrid(collectionId)}
-                      style={{
-                        background: "transparent",
-                        border: "none",
-                        padding: 0,
-                        cursor: "pointer",
-                        color: isCurrent ? "#18181b" : "#71717a",
-                        fontSize: 13,
-                        fontWeight: isCurrent ? 600 : 500,
-                        whiteSpace: "nowrap",
-                      }}
-                    >
-                      {clean(collection.title) || galleryCopy.album}
-                    </button>
-                  );
-                })}
+              <div style={{ flex: "1 1 240px", width: isMobileViewport ? "100%" : undefined, maxWidth: 360, minWidth: 0 }}>
+                <EventAlbumSwitcher
+                  choices={eventAlbumChoices}
+                  value={galleryPickerValue}
+                  onSelect={handleGalleryPickerChange}
+                  label={galleryCopy.browseGallery}
+                  hidePhotoCount={currentGalleryExtras.hideAlbumPhotoCount}
+                  photoLabel="photo"
+                  photosLabel="photos"
+                />
               </div>
             </div>
           ) : (
@@ -9849,6 +9766,7 @@ export default function ParentGalleryPage() {
               <button
                 type="button"
                 onClick={downloadGalleryImages}
+                aria-label={`${galleryDownloadButtonLabel}: ${clean(selectedEventCollection?.title) || galleryCopy.allPhotos}`}
                 disabled={
                   downloadingGallery ||
                   !galleryDownloadAccess.canDownload ||
@@ -9883,7 +9801,7 @@ export default function ParentGalleryPage() {
                 <Download size={14} />
                 {downloadingGallery
                   ? `Preparing${typeof galleryDownloadProgress === "number" ? ` ${galleryDownloadProgress}%` : "..."}`
-                  : galleryCopy.downloadAll}
+                  : galleryDownloadButtonLabel}
               </button>
             ) : null}
 
@@ -10053,331 +9971,21 @@ export default function ParentGalleryPage() {
         )}
 
         {!isSchoolMode && activeView === "photos" && showAlbumOverview && (
-          <div
-            style={{
-              flexShrink: 0,
-              background: isMobileViewport ? "#ffffff" : "#f7f3ee",
-            }}
-          >
-              <div
-                style={{
-                  position: "relative",
-                  overflow: "hidden",
-                  minHeight: "100svh",
-                  background: isMobileViewport ? "#f4f4f5" : "#e9e2da",
-                }}
-              >
-              {heroImageUrl ? (
-                <img
-                  src={heroImageUrl}
-                  alt=""
-                  loading="eager"
-                  style={{
-                    position: "absolute",
-                    inset: 0,
-                    width: "100%",
-                    height: "100%",
-                    objectFit: "cover",
-                    filter: blackWhitePreviewActive
-                      ? "grayscale(1) saturate(0.7)"
-                      : "saturate(0.95)",
-                  }}
-                />
-              ) : null}
-              <div
-                style={{
-                  position: "absolute",
-                  inset: 0,
-                  background: "linear-gradient(180deg, rgba(0,0,0,0.12) 0%, rgba(0,0,0,0.2) 26%, rgba(0,0,0,0.4) 72%, rgba(0,0,0,0.5) 100%)",
-                }}
-              />
-
-              <div
-                style={{
-                  position: "relative",
-                  zIndex: 1,
-                  minHeight: "100svh",
-                  display: "grid",
-                  gridTemplateRows: "auto 1fr auto",
-                  padding: isMobileViewport ? "24px 18px 28px" : "32px 42px 42px",
-                }}
-              >
-                <div style={{ display: "flex", justifyContent: "center" }}>
-                  {displayStudioLogoUrl ? (
-                    <img src={displayStudioLogoUrl} alt="" style={{ height: 22, objectFit: "contain", opacity: 0.98 }} />
-                  ) : (
-                    <div
-                      style={{
-                        color: "#ffffff",
-                        fontSize: 12,
-                        fontWeight: 800,
-                        letterSpacing: "0.2em",
-                        textTransform: "uppercase",
-                      }}
-                    >
-                      {eventBrandLabel}
-                    </div>
-                  )}
-                </div>
-
-                <div
-                  style={{
-                    display: "grid",
-                    alignContent: "center",
-                    justifyItems: "center",
-                    textAlign: "center",
-                    gap: 14,
-                  }}
-                >
-                  {galleryEventDate ? (
-                    <div
-                      style={{
-                        color: "rgba(255,255,255,0.84)",
-                        fontSize: 11,
-                        fontWeight: 700,
-                        letterSpacing: "0.2em",
-                        textTransform: "uppercase",
-                      }}
-                    >
-                      {galleryEventDate}
-                    </div>
-                  ) : null}
-
-                  <div
-                    style={{
-                      maxWidth: 820,
-                      color: "#ffffff",
-                      fontSize: isMobileViewport
-                        ? usesSerifHero(currentGalleryBranding.fontPreset)
-                          ? 42
-                          : 38
-                        : usesSerifHero(currentGalleryBranding.fontPreset)
-                          ? 68
-                          : 60,
-                      fontWeight: 600,
-                      lineHeight: 1,
-                      letterSpacing: 0,
-                      textShadow: "0 18px 48px rgba(0,0,0,0.3)",
-                    }}
-                  >
-                    {galleryHeaderTitle}
-                  </div>
-
-                  {galleryClientLabel ? (
-                    <div
-                      style={{
-                        color: "rgba(255,255,255,0.74)",
-                        fontSize: 13,
-                        letterSpacing: "0.14em",
-                        textTransform: "uppercase",
-                      }}
-                    >
-                      {galleryClientLabel}
-                    </div>
-                  ) : null}
-
-                  <div
-                    style={{
-                      display: "flex",
-                      flexWrap: "wrap",
-                      gap: 16,
-                      justifyContent: "center",
-                      color: "rgba(255,255,255,0.82)",
-                      fontSize: 11,
-                      fontWeight: 700,
-                      letterSpacing: "0.12em",
-                      textTransform: "uppercase",
-                    }}
-                  >
-                    {!currentGalleryExtras.hideAlbumPhotoCount ? <span>{compactCountLabel(images.length, "photo")}</span> : null}
-                    {eventHasAlbums ? <span>{compactCountLabel(eventCollectionsWithImages.length, "album")}</span> : null}
-                    <span>{galleryLocked ? "Private Gallery" : "Event Gallery"}</span>
-                  </div>
-
-                  <button
-                    type="button"
-                    className="event-chip"
-                    onClick={() => {
-                      if (!currentGalleryExtras.hideAllPhotosAlbum) {
-                        openEventPhotoGrid(null);
-                        return;
-                      }
-                      const firstCollectionId = clean(featuredAlbums[0]?.id);
-                      openEventPhotoGrid(firstCollectionId || null);
-                    }}
-                    style={{
-                      borderRadius: 999,
-                      border: "1px solid rgba(255,255,255,0.88)",
-                      background: "transparent",
-                      color: "#ffffff",
-                      padding: "12px 22px",
-                      fontSize: 12,
-                      fontWeight: 600,
-                      letterSpacing: "0.04em",
-                      cursor: "pointer",
-                    }}
-                  >
-                    {currentGalleryExtras.hideAllPhotosAlbum ? "Open First Album" : "View Gallery"}
-                  </button>
-                </div>
-
-                <div
-                  style={{
-                    width: "100%",
-                    display: "grid",
-                    gap: 14,
-                    alignSelf: "end",
-                  }}
-                >
-                  <div
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      alignItems: "center",
-                      gap: 16,
-                      color: "rgba(255,255,255,0.78)",
-                    }}
-                  >
-                    <div
-                      style={{
-                        fontSize: 10,
-                        fontWeight: 700,
-                        letterSpacing: "0.18em",
-                        textTransform: "uppercase",
-                      }}
-                    >
-                      {galleryCopy.albums}
-                    </div>
-                    {eventCollectionsWithImages.length > featuredAlbums.length ? (
-                      <button
-                        type="button"
-                        onClick={openAlbumsOverview}
-                        style={{
-                          background: "transparent",
-                          border: "none",
-                          color: "rgba(255,255,255,0.82)",
-                          fontSize: 10,
-                          fontWeight: 700,
-                          letterSpacing: "0.12em",
-                          textTransform: "uppercase",
-                          cursor: "pointer",
-                          padding: 0,
-                        }}
-                      >
-                        {compactCountLabel(eventCollectionsWithImages.length, galleryCopy.album.toLowerCase())}
-                      </button>
-                    ) : null}
-                  </div>
-
-                  {landingAlbumCards.length ? (
-                    <div
-                      style={{
-                        display: "grid",
-                        gridTemplateColumns: isMobileViewport
-                          ? "minmax(0, 1fr)"
-                          : `repeat(${landingAlbumCards.length}, minmax(0, 1fr))`,
-                        gap: 12,
-                        maxWidth: 1180,
-                        width: "100%",
-                      }}
-                    >
-                      {landingAlbumCards.map((card) => (
-                        <button
-                          key={card.id}
-                          type="button"
-                          className="event-hover-card"
-                          onClick={() => openEventPhotoGrid(card.collectionId)}
-                          style={{
-                            minHeight: isMobileViewport ? 92 : 132,
-                            border: "1px solid rgba(255,255,255,0.34)",
-                            borderRadius: 0,
-                            background: "rgba(10,10,10,0.22)",
-                            color: "#ffffff",
-                            padding: 0,
-                            overflow: "hidden",
-                            position: "relative",
-                            textAlign: "left",
-                            cursor: "pointer",
-                            boxShadow: "0 18px 44px rgba(0,0,0,0.2)",
-                          }}
-                        >
-                          {card.coverUrl ? (
-                            <img
-                              src={card.coverUrl}
-                              alt=""
-                              loading="lazy"
-                              style={{
-                                position: "absolute",
-                                inset: 0,
-                                width: "100%",
-                                height: "100%",
-                                objectFit: "cover",
-                                filter: blackWhitePreviewActive
-                                  ? "grayscale(1) saturate(0.7)"
-                                  : "saturate(0.95)",
-                              }}
-                            />
-                          ) : null}
-                          <div
-                            style={{
-                              position: "absolute",
-                              inset: 0,
-                              background:
-                                "linear-gradient(180deg, rgba(0,0,0,0.06) 0%, rgba(0,0,0,0.58) 100%)",
-                            }}
-                          />
-                          <div
-                            style={{
-                              position: "relative",
-                              minHeight: "inherit",
-                              display: "grid",
-                              alignContent: "end",
-                              gap: 6,
-                              padding: isMobileViewport ? "16px 16px" : "18px 18px",
-                            }}
-                          >
-                            <div
-                              style={{
-                                fontSize: 10,
-                                fontWeight: 700,
-                                letterSpacing: "0.14em",
-                                textTransform: "uppercase",
-                                color: "rgba(255,255,255,0.72)",
-                              }}
-                            >
-                              {card.label}
-                            </div>
-                            <div
-                              style={{
-                                fontSize: isMobileViewport ? 18 : 21,
-                                fontWeight: 600,
-                                lineHeight: 1.08,
-                              }}
-                            >
-                              {card.title}
-                            </div>
-                            {!currentGalleryExtras.hideAlbumPhotoCount ? (
-                              <div
-                                style={{
-                                  fontSize: 11,
-                                  fontWeight: 700,
-                                  letterSpacing: "0.1em",
-                                  textTransform: "uppercase",
-                                  color: "rgba(255,255,255,0.76)",
-                                }}
-                              >
-                                {compactCountLabel(card.photoCount, "photo")}
-                              </div>
-                            ) : null}
-                          </div>
-                        </button>
-                      ))}
-                    </div>
-                  ) : null}
-                </div>
-              </div>
-            </div>
-          </div>
+          <EventAlbumOverview
+            choices={eventAlbumChoices}
+            onSelect={handleGalleryPickerChange}
+            title={galleryHeaderTitle}
+            description={galleryOverviewDescription}
+            albumsLabel={galleryCopy.albums}
+            brandName={eventBrandLabel}
+            brandLogoUrl={displayStudioLogoUrl}
+            metadata={galleryMetaItems}
+            hidePhotoCount={currentGalleryExtras.hideAlbumPhotoCount}
+            photoLabel="photo"
+            photosLabel="photos"
+            isMobile={isMobileViewport}
+            tone={galleryTone}
+          />
         )}
 
         {/* Body */}
@@ -10666,6 +10274,7 @@ export default function ParentGalleryPage() {
                 <div style={{ display: "grid", gap: 6 }}>
                   <div style={{ fontSize: 12, letterSpacing: "0.16em", textTransform: "uppercase", color: galleryTone.mutedText }}>
                     {galleryCopy.favorites}
+                    {!isSchoolMode ? ` · ${clean(selectedEventCollection?.title) || galleryCopy.allPhotos}` : ""}
                   </div>
                     <div style={{ fontSize: 26, fontWeight: 700, color: galleryTone.text }}>
                       {favoriteImages.length} {galleryCopy.selectedPhotos}
@@ -10929,7 +10538,7 @@ export default function ParentGalleryPage() {
           </div>
         )}
 
-        <div style={{ flex: 1, display: activeView === "photos" ? "flex" : "none", overflow: "hidden", minHeight: 0 }}>
+        <div style={{ flex: 1, display: activeView === "photos" && !showAlbumOverview ? "flex" : "none", overflow: "hidden", minHeight: 0 }}>
           <div
             style={{
               flex: 1,

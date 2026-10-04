@@ -1,4 +1,5 @@
 import { createDashboardServiceClient } from "@/lib/dashboard-auth";
+import { accessibleEventCollections, fetchEventProjectCollections, matchesEventCollectionPin } from "@/lib/event-download-scope";
 
 export type EventGalleryProjectAccessRow = {
   id: string;
@@ -49,13 +50,6 @@ function matchesProjectPin(
   pin: string,
 ) {
   return normalizedAccessMode(row.access_mode) === "pin" && clean(row.access_pin) === pin;
-}
-
-function matchesCollectionPin(row: EventGalleryCollectionAccessRow, pin: string) {
-  return (
-    clean(row.slug) === pin ||
-    (normalizedAccessMode(row.access_mode) === "pin" && clean(row.access_pin) === pin)
-  );
 }
 
 export async function validateEventGalleryAccess(params: {
@@ -117,18 +111,11 @@ export async function validateEventGalleryAccess(params: {
       .eq("external_ref", pinValue)
       .limit(1)
       .maybeSingle(),
-    service
-      .from("collections")
-      .select("id,slug,kind,access_mode,access_pin")
-      .eq("project_id", selectedProjectId),
+    fetchEventProjectCollections<EventGalleryCollectionAccessRow>(service, selectedProjectId, "id,slug,kind,access_mode,access_pin"),
   ]);
 
   if (matchingSubjectResult.error) throw matchingSubjectResult.error;
-  if (collectionAccessResult.error) throw collectionAccessResult.error;
-
-  const matchingCollection = (
-    (collectionAccessResult.data ?? []) as EventGalleryCollectionAccessRow[]
-  ).find((row) => matchesCollectionPin(row, pinValue));
+  const matchingCollection = collectionAccessResult.find((row) => matchesEventCollectionPin(row, pinValue));
   const projectPinMatch = matchesProjectPin(projectRow, pinValue);
 
   if (!projectPinMatch && !matchingSubjectResult.data && !matchingCollection) {
@@ -145,9 +132,7 @@ export async function validateEventGalleryAccess(params: {
     project: projectRow,
     projectId: selectedProjectId,
     email: normalizedEmail,
-    collectionIds: ((collectionAccessResult.data ?? []) as EventGalleryCollectionAccessRow[])
-      .filter(row => !matchingCollection || row.id === matchingCollection.id)
-      .filter(row => !clean(row.kind) || ["album", "gallery"].includes(clean(row.kind).toLowerCase()))
+    collectionIds: accessibleEventCollections(collectionAccessResult, pinValue, matchingCollection?.id)
       .map(row => row.id),
   };
 }

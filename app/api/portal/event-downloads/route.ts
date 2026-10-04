@@ -1,27 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createDashboardServiceClient } from "@/lib/dashboard-auth";
+import { validateEventGalleryAccess } from "@/lib/event-gallery-access";
+import { authorizedEventMediaIds, eventGalleryDownloadsUsed, resolveEventDownloadScope } from "@/lib/event-download-scope";
 import { normalizeEventGallerySettings } from "@/lib/event-gallery-settings";
 import { getClientIp, rateLimit } from "@/lib/rate-limit";
-import { validateUuidArray } from "@/lib/request-validation";
+import { validateUuid, validateUuidArray } from "@/lib/request-validation";
 
 export const dynamic = "force-dynamic";
-
-type ProjectRow = {
-  id: string;
-  workflow_type: string | null;
-  status: string | null;
-  email_required: boolean | null;
-  access_mode: string | null;
-  access_pin: string | null;
-  gallery_settings: unknown;
-};
-
-type CollectionAccessRow = {
-  id: string;
-  slug: string | null;
-  access_mode: string | null;
-  access_pin: string | null;
-};
 
 type OrderRow = {
   package_id: string | null;
@@ -38,44 +22,8 @@ type PurchasedPackageRow = {
   category: string | null;
 };
 
-type DownloadLogRow = {
-  download_count: number | null;
-};
-
 function clean(value: string | null | undefined) {
   return (value ?? "").trim();
-}
-
-function normalizedAccessMode(value: string | null | undefined) {
-  const raw = clean(value).toLowerCase();
-  if (!raw) return "public";
-  if (raw === "pin" || raw === "protected" || raw === "private") return "pin";
-  if (raw === "inherit" || raw === "inherit_project" || raw === "project") {
-    return "inherit_project";
-  }
-  return raw;
-}
-
-function isInactive(value: string | null | undefined) {
-  return clean(value).toLowerCase() === "inactive";
-}
-
-function isEventProject(row: Pick<ProjectRow, "workflow_type">) {
-  return clean(row.workflow_type).toLowerCase() === "event";
-}
-
-function matchesProjectPin(
-  row: Pick<ProjectRow, "access_mode" | "access_pin">,
-  pin: string,
-) {
-  return normalizedAccessMode(row.access_mode) === "pin" && clean(row.access_pin) === pin;
-}
-
-function matchesCollectionPin(row: CollectionAccessRow, pin: string) {
-  return (
-    clean(row.slug) === pin ||
-    (normalizedAccessMode(row.access_mode) === "pin" && clean(row.access_pin) === pin)
-  );
 }
 
 function isPaidOrderStatus(status: string | null | undefined) {
@@ -102,94 +50,6 @@ function isMissingDownloadsTable(error: unknown) {
     "code" in error &&
     (error as { code?: string }).code === "42P01"
   );
-}
-
-async function validateEventAccess(params: {
-  projectId: string;
-  email: string;
-  pin: string;
-}) {
-  const service = createDashboardServiceClient();
-  const selectedProjectId = clean(params.projectId);
-  const normalizedEmail = clean(params.email).toLowerCase();
-  const pinValue = clean(params.pin);
-
-  const { data: projectRow, error: projectError } = await service
-    .from("projects")
-    .select("id,workflow_type,status,email_required,access_mode,access_pin,gallery_settings")
-    .eq("id", selectedProjectId)
-    .maybeSingle<ProjectRow>();
-
-  if (projectError) throw projectError;
-  if (!projectRow || !isEventProject(projectRow) || isInactive(projectRow.status)) {
-    return { ok: false as const, status: 404, message: "Event gallery not found." };
-  }
-
-  const { data: whitelistRows, error: whitelistError } = await service
-    .from("pre_release_emails")
-    .select("id")
-    .eq("project_id", selectedProjectId)
-    .eq("email", normalizedEmail)
-    .limit(1);
-
-  if (whitelistError) throw whitelistError;
-
-  const emailRequired = projectRow.email_required !== false;
-  if (emailRequired && (whitelistRows?.length ?? 0) === 0) {
-    const { data: anyWhitelist, error: anyWhitelistError } = await service
-      .from("pre_release_emails")
-      .select("id")
-      .eq("project_id", selectedProjectId)
-      .limit(1);
-
-    if (anyWhitelistError) throw anyWhitelistError;
-
-    if ((anyWhitelist?.length ?? 0) > 0) {
-      return {
-        ok: false as const,
-        status: 403,
-        message: "That email is not approved for this event gallery.",
-      };
-    }
-  }
-
-  const [matchingSubjectResult, collectionAccessResult] = await Promise.all([
-    service
-      .from("subjects")
-      .select("id")
-      .eq("project_id", selectedProjectId)
-      .eq("external_ref", pinValue)
-      .limit(1)
-      .maybeSingle(),
-    service
-      .from("collections")
-      .select("id,slug,access_mode,access_pin")
-      .eq("project_id", selectedProjectId),
-  ]);
-
-  if (matchingSubjectResult.error) throw matchingSubjectResult.error;
-  if (collectionAccessResult.error) throw collectionAccessResult.error;
-
-  const matchingCollection = ((collectionAccessResult.data ?? []) as CollectionAccessRow[]).find(
-    (row) => matchesCollectionPin(row, pinValue),
-  );
-  const projectPinMatch = matchesProjectPin(projectRow, pinValue);
-
-  if (!projectPinMatch && !matchingSubjectResult.data && !matchingCollection) {
-    return {
-      ok: false as const,
-      status: 404,
-      message: "No event gallery was found for that email and PIN.",
-    };
-  }
-
-  return {
-    ok: true as const,
-    service,
-    project: projectRow,
-    projectId: selectedProjectId,
-    email: normalizedEmail,
-  };
 }
 
 export async function POST(request: NextRequest) {
@@ -222,13 +82,17 @@ export async function POST(request: NextRequest) {
       email?: string;
       pin?: string;
       downloadPin?: string;
-      collectionId?: string;
+      collectionId?: string | null;
       mediaIds?: string[];
       downloadType?: "gallery" | "favorites";
     };
 
-    const access = await validateEventAccess({
-      projectId: body.projectId ?? "",
+    const validatedProjectId = validateUuid(body.projectId, "projectId");
+    if (!validatedProjectId.ok) {
+      return NextResponse.json({ ok: false, message: validatedProjectId.message }, { status: 400 });
+    }
+    const access = await validateEventGalleryAccess({
+      projectId: validatedProjectId.value,
       email: body.email ?? "",
       pin: body.pin ?? "",
     });
@@ -252,7 +116,20 @@ export async function POST(request: NextRequest) {
         { status: 400 },
       );
     }
-    const mediaIds = mediaIdsResult.value;
+    const scope = await resolveEventDownloadScope({
+      service: access.service, projectId: access.projectId,
+      collectionIds: access.collectionIds, pin: body.pin ?? "", collectionId: body.collectionId,
+    });
+    if (!scope.ok) {
+      return NextResponse.json({ ok: false, message: scope.message }, { status: scope.status });
+    }
+    const collectionId = scope.collectionId;
+    const mediaIds = await authorizedEventMediaIds(
+      access.service, access.projectId, mediaIdsResult.value, scope.collectionIds,
+    );
+    if (!mediaIds.length) {
+      return NextResponse.json({ ok: false, message: "No gallery photos are available for that download." }, { status: 403 });
+    }
 
     const settings = normalizeEventGallerySettings(access.project.gallery_settings);
     const downloadType = body.downloadType === "favorites" ? "favorites" : "gallery";
@@ -331,7 +208,7 @@ export async function POST(request: NextRequest) {
         .from("event_gallery_downloads")
         .insert({
           project_id: access.projectId,
-          collection_id: clean(body.collectionId) || null,
+          collection_id: collectionId || null,
           viewer_email: access.email,
           download_type: "favorites",
           download_count: mediaIds.length,
@@ -394,7 +271,6 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const collectionId = clean(body.collectionId);
     if (settings.extras.freeDigitalAudience === "album" && !collectionId) {
       return NextResponse.json(
         { ok: false, message: "Open the album you want to download first." },
@@ -402,21 +278,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { data: downloadRows, error: downloadError } = await access.service
-      .from("event_gallery_downloads")
-      .select("download_count")
-      .eq("project_id", access.projectId)
-      .eq("viewer_email", access.email)
-      .eq("download_type", "gallery");
-
-    if (downloadError && !isMissingDownloadsTable(downloadError)) {
-      throw downloadError;
-    }
-
-    const downloadsUsed = ((downloadRows ?? []) as DownloadLogRow[]).reduce(
-      (sum, row) => sum + Math.max(0, Number(row.download_count ?? 0)),
-      0,
-    );
+    const downloadsUsed = await eventGalleryDownloadsUsed(access.service, access.projectId, access.email);
     const numericLimit =
       settings.extras.freeDigitalDownloadLimit === "unlimited"
         ? null

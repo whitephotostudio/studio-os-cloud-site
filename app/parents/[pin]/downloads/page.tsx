@@ -267,6 +267,7 @@ export default function ParentGalleryDownloadsPage() {
                   }}
                 >
                   {manifest?.galleryName || "Event Gallery"}
+                  {manifest?.collectionName ? ` · ${manifest.collectionName}` : ""}
                 </div>
                 <h1
                   style={{
@@ -292,8 +293,10 @@ export default function ParentGalleryDownloadsPage() {
                     color: "#4f4740",
                   }}
                 >
-                  Your gallery is split into smaller ZIP files so the downloads stay faster and
-                  more reliable on large collections.
+                  {manifest.collectionName
+                    ? `Only photos from ${manifest.collectionName} are included in these ZIP files.`
+                    : "These ZIP files contain the permitted photos selected from All Photos."}
+                  {" "}Large downloads are split into smaller ZIP files.
                 </p>
 
                 <div

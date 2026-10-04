@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createDashboardServiceClient } from "@/lib/dashboard-auth";
+import { accessibleEventCollections, eventGalleryDownloadsUsed, EventGallerySizeLimitError, fetchEventGalleryMediaRows, fetchEventProjectCollections, matchesEventCollectionPin } from "@/lib/event-download-scope";
 import {
   normalizeEventGallerySettings,
   sanitizeEventGallerySettingsForClient,
@@ -206,9 +207,7 @@ type DownloadAccess = {
   message: string | null;
 };
 
-type DownloadLogRow = {
-  download_count: number | null;
-};
+
 
 function normalizedAccessMode(value: string | null | undefined) {
   const raw = clean(value).toLowerCase();
@@ -230,9 +229,6 @@ function matchesProjectPin(row: Pick<ProjectRow, "access_mode" | "access_pin">, 
   return normalizedAccessMode(row.access_mode) === "pin" && clean(row.access_pin) === pin;
 }
 
-function matchesCollectionPin(row: Pick<CollectionRow, "slug" | "access_mode" | "access_pin">, pin: string) {
-  return clean(row.slug) === pin || (normalizedAccessMode(row.access_mode) === "pin" && clean(row.access_pin) === pin);
-}
 
 function isMissingVisitorsTable(error: unknown) {
   return (
@@ -243,14 +239,7 @@ function isMissingVisitorsTable(error: unknown) {
   );
 }
 
-function isMissingDownloadsTable(error: unknown) {
-  return (
-    !!error &&
-    typeof error === "object" &&
-    "code" in error &&
-    (error as { code?: string }).code === "42P01"
-  );
-}
+
 
 function isPaidOrderStatus(value: string | null | undefined) {
   const normalized = clean(value).toLowerCase();
@@ -365,22 +354,16 @@ export async function POST(request: NextRequest) {
         .eq("external_ref", pinValue)
         .limit(1)
         .maybeSingle(),
-      service
-        .from("collections")
-        .select(
-          "id,title,slug,kind,access_mode,access_pin,cover_photo_url,sort_order,created_at",
-        )
-        .eq("project_id", selectedProjectId)
-        .order("sort_order", { ascending: true })
-        .order("created_at", { ascending: true }),
+      fetchEventProjectCollections<CollectionRow>(
+        service, selectedProjectId,
+        "id,title,slug,kind,access_mode,access_pin,cover_photo_url,sort_order,created_at",
+      ),
     ]);
 
     if (matchingSubjectResult.error) throw matchingSubjectResult.error;
-    if (collectionRowsResult.error) throw collectionRowsResult.error;
-
-    const allCollections = (collectionRowsResult.data ?? []) as CollectionRow[];
+    const allCollections = collectionRowsResult;
     const matchingCollection = allCollections.find((row) =>
-      matchesCollectionPin(row, pinValue),
+      matchesEventCollectionPin(row, pinValue),
     ) ?? null;
     const projectPinMatch = matchesProjectPin(projectRow, pinValue);
 
@@ -408,14 +391,7 @@ export async function POST(request: NextRequest) {
       throw visitorError;
     }
 
-    const scopedCollections = matchingCollection?.id
-      ? allCollections.filter((row) => row.id === matchingCollection.id)
-      : allCollections;
-
-    const collections = scopedCollections.filter((row) => {
-      const kind = clean(row.kind).toLowerCase();
-      return kind === "album" || kind === "gallery" || !kind;
-    });
+    const collections = accessibleEventCollections(allCollections, pinValue, matchingCollection?.id);
 
     const collectionIds = collections
       .map((row) => clean(row.id))
@@ -423,20 +399,11 @@ export async function POST(request: NextRequest) {
 
     let mediaRows: MediaRow[] = [];
     if (collectionIds.length > 0) {
-      // Safety limit: cap at 5000 media items to prevent unbounded queries.
-      // Galleries with more than 5000 photos should use paginated loading.
-      const { data: mediaData, error: mediaError } = await service
-        .from("media")
-        .select(
-          "id,collection_id,storage_path,preview_url,thumbnail_url,filename,created_at,sort_order",
-        )
-        .eq("project_id", selectedProjectId)
-        .in("collection_id", collectionIds)
-        .order("sort_order", { ascending: true })
-        .order("created_at", { ascending: true })
-        .limit(5000);
+      const mediaData = await fetchEventGalleryMediaRows<MediaRow>(
+        service, selectedProjectId, collectionIds,
+        "id,collection_id,storage_path,preview_url,thumbnail_url,filename,created_at,sort_order",
+      );
 
-      if (mediaError) throw mediaError;
       // 2026-04-30 — Parents portal sessions stay open for hours
       // during shopping/checkout, so we sign with a 6-hour TTL.
       mediaRows = ((mediaData ?? []) as MediaRow[]).map((row) => {
@@ -704,21 +671,7 @@ export async function POST(request: NextRequest) {
       }
 
       if (downloadAccess.canDownload) {
-        const { data: downloadRows, error: downloadError } = await service
-          .from("event_gallery_downloads")
-          .select("download_count")
-          .eq("project_id", selectedProjectId)
-          .eq("viewer_email", normalizedEmail)
-          .eq("download_type", "gallery");
-
-        if (downloadError && !isMissingDownloadsTable(downloadError)) {
-          throw downloadError;
-        }
-
-        const downloadsUsed = ((downloadRows ?? []) as DownloadLogRow[]).reduce(
-          (sum, row) => sum + Math.max(0, Number(row.download_count ?? 0)),
-          0,
-        );
+        const downloadsUsed = await eventGalleryDownloadsUsed(service, selectedProjectId, normalizedEmail);
         const numericLimit =
           downloadAccess.downloadLimit === "unlimited"
             ? null
@@ -752,16 +705,19 @@ export async function POST(request: NextRequest) {
 
     const projectForClient = {
       ...projectRow,
+      access_pin: undefined,
       cover_photo_url: resolvePortalCoverUrl(projectRow.cover_photo_url) || projectRow.cover_photo_url,
     };
     const collectionsForClient = collections.map((collection) => ({
       ...collection,
+      access_pin: undefined,
       cover_photo_url:
         resolvePortalCoverUrl(collection.cover_photo_url) || collection.cover_photo_url,
     }));
     const activeCollectionForClient = matchingCollection
       ? {
           ...matchingCollection,
+          access_pin: undefined,
           cover_photo_url:
             resolvePortalCoverUrl(matchingCollection.cover_photo_url) ||
             matchingCollection.cover_photo_url,
@@ -786,6 +742,9 @@ export async function POST(request: NextRequest) {
       screenshotProtection,
     });
   } catch (error) {
+    if (error instanceof EventGallerySizeLimitError) {
+      return NextResponse.json({ ok: false, message: error.message }, { status: 413 });
+    }
     console.error("[event-gallery-context]", error);
     return NextResponse.json(
       { ok: false, message: "Failed to load event gallery." },

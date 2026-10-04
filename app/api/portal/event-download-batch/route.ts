@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createDashboardServiceClient } from "@/lib/dashboard-auth";
 import {
+  createEventCollectionDownloadGrant,
+  createEventProjectDownloadGrant,
   verifyEventGalleryBatchToken,
   type EventGalleryBatchTokenPayload,
 } from "@/lib/event-gallery-download-tokens";
@@ -9,6 +11,8 @@ import {
   buildSignedMediaUrls,
   SIGNED_URL_TTL_PARENTS_PORTAL_SECONDS,
 } from "@/lib/storage-images";
+import { fetchEventProjectCollections } from "@/lib/event-download-scope";
+import { validateUuid, validateUuidArray } from "@/lib/request-validation";
 import { galleryZipBatchSize } from "@/lib/event-gallery-downloads";
 import { createZipStream, type ZipStreamEntry } from "@/lib/zip";
 
@@ -24,6 +28,7 @@ const MEDIA_LOOKUP_CHUNK_SIZE = 100;
 
 type MediaRow = {
   id: string;
+  collection_id: string | null;
   storage_path: string | null;
   preview_url: string | null;
   thumbnail_url: string | null;
@@ -121,7 +126,7 @@ async function fetchMediaRows(
   for (const chunk of chunkValues(mediaIds, MEDIA_LOOKUP_CHUNK_SIZE)) {
     const { data, error } = await service
       .from("media")
-      .select("id,storage_path,preview_url,thumbnail_url,filename")
+      .select("id,collection_id,storage_path,preview_url,thumbnail_url,filename")
       .eq("project_id", projectId)
       .in("id", chunk);
 
@@ -687,6 +692,19 @@ export async function GET(request: NextRequest) {
       );
     }
 
+    const scopedCollections = validateUuidArray(payload.collectionIds, "collectionIds", { min: 1, max: 5000 });
+    const scopedMedia = validateUuidArray(payload.mediaIds, "mediaIds", { min: 1, max: MAX_MEDIA_PER_BATCH });
+    const projectId = validateUuid(payload.projectId, "projectId");
+    if (!scopedCollections.ok || !scopedMedia.ok || !projectId.ok ||
+      !payload.collectionGrants || typeof payload.collectionGrants !== "object" || typeof payload.projectAccessGrant !== "string" ||
+      scopedCollections.value.some(id => typeof payload.collectionGrants?.[id] !== "string") ||
+      (payload.collectionId && !scopedCollections.value.includes(payload.collectionId))) {
+      return NextResponse.json(
+        { ok: false, message: "This prepared download needs to be refreshed. Go back to the gallery and prepare the download again." },
+        { status: 409 },
+      );
+    }
+
     if (wantsJson) {
       return NextResponse.json(
         {
@@ -704,11 +722,45 @@ export async function GET(request: NextRequest) {
     }
 
     const service = createDashboardServiceClient();
-    const mediaRows = await fetchMediaRows(service, payload.projectId, payload.mediaIds);
+    const { data: project, error: projectError } = await service.from("projects")
+      .select("id,workflow_type,status,photographer_id,access_mode,access_pin,email_required").eq("id", payload.projectId).maybeSingle();
+    if (projectError) throw projectError;
+    if (!project || clean(project.workflow_type).toLowerCase() !== "event" ||
+      clean(project.status).toLowerCase() === "inactive" ||
+      (project.photographer_id ?? null) !== (payload.photographerId ?? null) ||
+      createEventProjectDownloadGrant(project) !== payload.projectAccessGrant) {
+      return NextResponse.json({ ok: false, message: "This gallery is no longer available for download." }, { status: 403 });
+    }
+    // Match current gallery access policy: invitation removal revokes prepared
+    // ZIPs too. An empty invitation list keeps the existing open-email policy.
+    if (project.email_required !== false) {
+      const { data: invitation, error: invitationError } = await service.from("pre_release_emails")
+        .select("id").eq("project_id", payload.projectId)
+        .eq("email", clean(payload.viewerEmail).toLowerCase()).limit(1);
+      if (invitationError) throw invitationError;
+      if (!invitation?.length) {
+        const { data: anyInvitation, error: whitelistError } = await service.from("pre_release_emails")
+          .select("id").eq("project_id", payload.projectId).limit(1);
+        if (whitelistError) throw whitelistError;
+        if (anyInvitation?.length) {
+          return NextResponse.json({ ok: false, message: "That email is no longer approved for this event gallery." }, { status: 403 });
+        }
+      }
+    }
+    const currentCollections = await fetchEventProjectCollections(service, payload.projectId, "id,kind,slug,access_mode,access_pin");
+    const allowedCollections = new Set(currentCollections.filter(row =>
+      scopedCollections.value.includes(row.id) &&
+      (!payload.collectionId || row.id === payload.collectionId) &&
+      createEventCollectionDownloadGrant(payload.projectId, row) === payload.collectionGrants?.[row.id],
+    ).map(row => row.id));
+    const mediaRows = await fetchMediaRows(service, payload.projectId, [...new Set(payload.mediaIds)]);
 
     const mediaMap = new Map<string, MediaRow>();
     for (const row of mediaRows) {
-      mediaMap.set(row.id, row);
+      if (row.collection_id && allowedCollections.has(row.collection_id)) mediaMap.set(row.id, row);
+    }
+    if (mediaRows.some(row => !row.collection_id || !allowedCollections.has(row.collection_id)) || !mediaMap.size) {
+      return NextResponse.json({ ok: false, message: "Album access changed. Return to the gallery and prepare the download again." }, { status: 403 });
     }
 
     let logoBuffer: Buffer | null = null;
