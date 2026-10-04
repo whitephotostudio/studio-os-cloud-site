@@ -131,6 +131,45 @@ function mediaItemWasRemovedFromSchoolGallery(
   );
 }
 
+// Keyset pages keep the inventory complete even when the database caps a
+// response below our requested limit. The project has already passed the
+// owner check before this helper is called; every page retains that scope.
+async function loadProjectInventoryRows<Row extends { id: string }>(
+  service: ReturnType<typeof createDashboardServiceClient>,
+  table: "collections" | "media",
+  columns: string,
+  projectId: string,
+): Promise<Row[]> {
+  const rows: Row[] = [];
+  let cursor = "";
+  while (true) {
+    let query = service
+      .from(table)
+      .select(columns)
+      .eq("project_id", projectId)
+      .order("id", { ascending: true })
+      .limit(500);
+    if (cursor) query = query.gt("id", cursor);
+    const { data, error } = await query;
+    if (error) throw error;
+    if (!Array.isArray(data)) {
+      throw new Error("Failed to load the complete desktop media inventory.");
+    }
+    const page = data as unknown as Row[];
+    if (page.length === 0) break;
+    let nextCursor = cursor;
+    for (const row of page) {
+      if (typeof row?.id !== "string" || row.id <= nextCursor) {
+        throw new Error("Failed to advance the desktop media inventory page.");
+      }
+      nextCursor = row.id;
+    }
+    rows.push(...page);
+    cursor = nextCursor;
+  }
+  return rows;
+}
+
 export async function GET(request: NextRequest) {
   try {
     const { user } = await resolveDashboardAuth(request);
@@ -205,98 +244,61 @@ export async function GET(request: NextRequest) {
     const tombstonedFamilies = linkedSchoolId
       ? tombstoneFamilySet(await loadSchoolPhotoTombstones(service, linkedSchoolId))
       : new Set<string>();
-    const { data: projectCollections, error: projectCollectionsError } = await service
-      .from("collections")
-      .select("id,title")
-      .eq("project_id", cloudProjectId);
-    if (projectCollectionsError) throw projectCollectionsError;
+    const projectCollections = await loadProjectInventoryRows<{
+      id: string;
+      title: string | null;
+    }>(service, "collections", "id,title", cloudProjectId);
     const collectionTitles = new Map(
-      (projectCollections ?? []).map((row) => [clean(row.id), clean(row.title)]),
+      projectCollections.map((row) => [clean(row.id), clean(row.title)]),
     );
 
-    let mediaQuery = service
-      .from("media")
-      .select("collection_id,storage_path,preview_url,thumbnail_url")
-      .eq("project_id", cloudProjectId);
-
-    if (collectionIds.length > 0) {
-      mediaQuery = mediaQuery.in("collection_id", collectionIds);
-    }
-
-    const { data: mediaRows, error: mediaError } = await mediaQuery;
-    if (mediaError) throw mediaError;
-
-    // 2026-04-29 — Diagnostic: ALSO query the project's full media set
-    // (no collection filter) and report the breakdown.  If the desktop
-    // sent collection_ids and got 0 rows back, but the project has 489
-    // total media rows, we can immediately tell the photographer
-    // "your photos uploaded to a collection your desktop doesn't know
-    // about — re-sync the project shell."  The previous behaviour
-    // ("cloud has 0 of 489") gave no actionable signal.
-    let totalProjectMediaCount = 0;
-    let collectionsWithMedia: Array<{ collection_id: string; count: number }> =
-      [];
-    try {
-      const { data: allMediaRows, error: allMediaError } = await service
-        .from("media")
-        .select("collection_id,storage_path,preview_url,thumbnail_url")
-        .eq("project_id", cloudProjectId);
-      if (!allMediaError && allMediaRows) {
-        const tally = new Map<string, number>();
-        for (const row of allMediaRows as Array<{
-          collection_id?: string | null;
-          storage_path?: string | null;
-          preview_url?: string | null;
-          thumbnail_url?: string | null;
-        }>) {
-          if (
-            mediaItemWasRemovedFromSchoolGallery(
-              {
-                storage_path: clean(row.storage_path),
-                preview_url: clean(row.preview_url),
-                thumbnail_url: clean(row.thumbnail_url),
-              },
-              tombstonedFamilies,
-              cloudProjectId,
-              clean(row.collection_id),
-              collectionTitles.get(clean(row.collection_id)),
-            )
-          ) {
-            continue;
-          }
-
-          totalProjectMediaCount += 1;
-          const cid = clean(row.collection_id);
-          if (!cid) continue;
-          tally.set(cid, (tally.get(cid) ?? 0) + 1);
-        }
-        collectionsWithMedia = Array.from(tally.entries()).map(
-          ([collection_id, count]) => ({ collection_id, count }),
-        );
-      }
-    } catch (diagErr) {
-      console.warn("[desktop-media GET] diagnostic query failed:", diagErr);
-    }
-
-    const visibleMediaRows = (mediaRows ?? [])
-      .filter(
-        (row) =>
-          !mediaItemWasRemovedFromSchoolGallery(
-            {
-              storage_path: clean(row.storage_path),
-              preview_url: clean(row.preview_url),
-              thumbnail_url: clean(row.thumbnail_url),
-            },
-            tombstonedFamilies,
-            cloudProjectId,
-            clean(row.collection_id),
-            collectionTitles.get(clean(row.collection_id)),
-          ),
+    // Derive scoped items and full-project diagnostics from the same complete
+    // read. A failed page must not look like missing photos or a zero count.
+    const mediaRows = await loadProjectInventoryRows<{
+      id: string;
+      collection_id: string | null;
+      storage_path: string | null;
+      preview_url: string | null;
+      thumbnail_url: string | null;
+    }>(
+      service,
+      "media",
+      "id,collection_id,storage_path,preview_url,thumbnail_url",
+      cloudProjectId,
+    );
+    const visibleProjectMediaRows = mediaRows.filter(
+      (row) =>
+        !mediaItemWasRemovedFromSchoolGallery(
+          {
+            storage_path: clean(row.storage_path),
+            preview_url: clean(row.preview_url),
+            thumbnail_url: clean(row.thumbnail_url),
+          },
+          tombstonedFamilies,
+          cloudProjectId,
+          clean(row.collection_id),
+          collectionTitles.get(clean(row.collection_id)),
+        ),
+    );
+    // PostgreSQL UUID comparisons accept uppercase input too.
+    const scopedCollectionIds = new Set(collectionIds.map((id) => id.toLowerCase()));
+    const visibleMediaRows = visibleProjectMediaRows
+      .filter((row) =>
+        scopedCollectionIds.size === 0 ||
+        scopedCollectionIds.has(clean(row.collection_id).toLowerCase()),
       )
       .map((row) => ({
         collection_id: row.collection_id,
         storage_path: row.storage_path,
       }));
+    const tally = new Map<string, number>();
+    for (const row of visibleProjectMediaRows) {
+      const collectionId = clean(row.collection_id);
+      if (collectionId) tally.set(collectionId, (tally.get(collectionId) ?? 0) + 1);
+    }
+    const collectionsWithMedia = Array.from(tally.entries())
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([collection_id, count]) => ({ collection_id, count }));
 
     return NextResponse.json({
       ok: true,
@@ -304,7 +306,7 @@ export async function GET(request: NextRequest) {
       diagnostic: {
         scoped_count: visibleMediaRows.length,
         scoped_collection_ids: collectionIds,
-        project_total_count: totalProjectMediaCount,
+        project_total_count: visibleProjectMediaRows.length,
         collections_with_media: collectionsWithMedia,
       },
     });
