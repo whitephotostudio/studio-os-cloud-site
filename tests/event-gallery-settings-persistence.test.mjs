@@ -48,8 +48,8 @@ function textOf(node) {
 }
 const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r; }); return { resolve, promise }; };
 
-function harness({ projects = {}, cache = new Map(), getProject, saveStatus = 200 } = {}) {
-  const requests = [], alerts = [];
+function harness({ projects = {}, cache = new Map(), getProject, getPreview, previewResponses = {}, saveStatus = 200 } = {}) {
+  const requests = [], previewRequests = [], alerts = [];
   const context = {
     exports: {}, ...settings, ...dates, loadRequestRef: { current: 0 },
     projectId: "event-a", storageKey: "studioos_project_settings_event-a", persistedGallerySettings: settings.normalizeEventGallerySettings(null),
@@ -57,7 +57,7 @@ function harness({ projects = {}, cache = new Map(), getProject, saveStatus = 20
     createClient: () => ({ auth: { getSession: async () => ({ data: { session: { access_token: "fixture" } } }) } }),
     window: { localStorage: { getItem: key => cache.get(key) ?? null, setItem: (key, value) => cache.set(key, value) }, location: {} },
     setTimeout: () => 1, alert: message => alerts.push(message),
-    supabase: { from(table) {
+    supabase: { auth: { getSession: async () => ({ data: { session: { access_token: "fixture" } } }) }, from(table) {
       let id;
       return {
         select() { return this; }, eq(_, value) { id = value; return this; },
@@ -70,6 +70,12 @@ function harness({ projects = {}, cache = new Map(), getProject, saveStatus = 20
       };
     } },
     async fetch(url, options) {
+      if (options.method === "GET") {
+        previewRequests.push({ url, options });
+        const id = decodeURIComponent(url.split("/").at(-1).split("?")[0]);
+        const result = await (getPreview ? getPreview(id) : previewResponses[id] ?? { ok: true, media: [] });
+        return { status: result.status ?? 200, ok: (result.status ?? 200) === 200, json: async () => result };
+      }
       const body = JSON.parse(options.body);
       requests.push({ url, body });
       return { status: saveStatus, ok: saveStatus === 200, json: async () => saveStatus === 200
@@ -77,13 +83,13 @@ function harness({ projects = {}, cache = new Map(), getProject, saveStatus = 20
         : { ok: false, message: "Project changed elsewhere. Reload settings before saving again." } };
     },
   };
-  for (const name of ["Loading", "Project", "ProjectName", "PortalStatus", "ShootDate", "OrderDueDate", "ExpirationDate", "PackageProfileId", "EmailRequired", "CheckoutContactRequired", "InternalNotes", "ProjectAccessMode", "ProjectPin", "ProtectDesktop", "ProtectMobile", "ProtectWatermark", "GalleryLanguage", "Extras", "Branding", "LinkedContacts", "Share", "PackageProfiles", "PersistedGallerySettings", "StudioBrand", "Saving", "SaveNotice"]) {
+  for (const name of ["Loading", "Project", "ProjectName", "PortalStatus", "ShootDate", "OrderDueDate", "ExpirationDate", "PackageProfileId", "EmailRequired", "CheckoutContactRequired", "InternalNotes", "ProjectAccessMode", "ProjectPin", "ProtectDesktop", "ProtectMobile", "ProtectWatermark", "GalleryLanguage", "Extras", "Branding", "LinkedContacts", "Share", "PackageProfiles", "PersistedGallerySettings", "StudioBrand", "PreviewImageUrl", "Saving", "SaveNotice"]) {
     const key = name[0].toLowerCase() + name.slice(1);
     context[`set${name}`] = value => { context[key] = typeof value === "function" ? value(context[key]) : value; };
   }
-  const source = ["loadAll", "saveAll", "setExtra", "setBrandingField"].map(name => functions.get(name)).join("\n");
+  const source = ["loadProjectPreviewImage", "loadAll", "saveAll", "setExtra", "setBrandingField"].map(name => functions.get(name)).join("\n");
   vm.runInNewContext(compile(`${source}\nexports.handlers = { loadAll, saveAll, setExtra, setBrandingField };`), context);
-  return { context, requests, alerts, cache, ...context.exports.handlers,
+  return { context, requests, previewRequests, alerts, cache, ...context.exports.handlers,
     selectProject(id) { context.projectId = id; context.storageKey = `studioos_project_settings_${id}`; },
   };
 }
@@ -194,11 +200,11 @@ test("a stale save conflict reports failure and preserves edits without updating
   assert.equal(ui.context.saving, false);
 });
 
-function preview(branding) {
+function preview(branding, coverImageUrl = "/cover.jpg") {
   const context = execute(`${functions.get("galleryFontFamily")}\n${functions.get("BrandPreview")}\nexports.render = BrandPreview;`, {
-    ...presentation, EventGalleryCover: props => ({ type: "EventGalleryCover", props }),
+    ...presentation, ...settings, EventGalleryCover: props => ({ type: "EventGalleryCover", props }),
   });
-  return context.exports.render({ branding, projectName: "Fixture gallery", project: { cover_photo_url: "/cover.jpg", client_name: "Fixture Client" }, studioBrand: { businessName: "Fixture Studio", logoUrl: "/studio.svg" } });
+  return context.exports.render({ branding, projectName: "Fixture gallery", project: { cover_photo_url: "/cover.jpg", client_name: "Fixture Client" }, studioBrand: { businessName: "Fixture Studio", logoUrl: "/studio.svg" }, coverImageUrl });
 }
 
 test("owner preview passes saved presentation choices to the shared client welcome renderer", () => {
@@ -221,6 +227,70 @@ test("owner preview passes saved presentation choices to the shared client welco
   const disabled = preview({ ...branding, introEnabled: false });
   assert.equal(nodes(disabled, "EventGalleryCover").length, 0);
   assert.match(textOf(disabled), /welcome screen is off/);
+});
+
+test("a project without a cover previews the first owner-authorized photo without writing a cover", async () => {
+  const ui = harness({
+    projects: { "event-a": { id: "event-a", title: "A", cover_photo_url: null } },
+    previewResponses: { "event-a": { ok: true, media: [{ preview_url: "https://signed.example.test/first-preview.jpg", thumbnail_url: "https://signed.example.test/first-thumb.jpg" }] } },
+  });
+  await ui.loadAll();
+  assert.equal(ui.previewRequests.length, 1);
+  assert.equal(ui.previewRequests[0].url, "/api/dashboard/events/event-a?mediaLimit=1");
+  assert.equal(ui.previewRequests[0].options.cache, "no-store");
+  assert.equal(ui.previewRequests[0].options.headers.Authorization, "Bearer fixture");
+  assert.equal(ui.context.previewImageUrl, "https://signed.example.test/first-preview.jpg");
+  assert.equal(nodes(preview(ui.context.branding, ui.context.previewImageUrl), "EventGalleryCover")[0].props.imageUrl, ui.context.previewImageUrl);
+  assert.equal(ui.context.project.cover_photo_url, null);
+  assert.equal(ui.requests.length, 0);
+
+  const thumbnail = harness({ projects: { "event-a": { id: "event-a" } }, previewResponses: { "event-a": { ok: true, media: [{ preview_url: "", thumbnail_url: "/signed-thumb.jpg" }] } } });
+  await thumbnail.loadAll();
+  assert.equal(thumbnail.context.previewImageUrl, "/signed-thumb.jpg");
+});
+
+test("stored cover keys use the owner resolver while an existing HTTPS cover takes precedence without another media read", async () => {
+  const ui = harness({
+    projects: {
+      "event-a": { id: "event-a", cover_photo_url: "event-a/cover.jpg" },
+      "event-b": { id: "event-b", cover_photo_url: "https://signed.example.test/saved-cover.jpg" },
+    },
+    previewResponses: { "event-a": { ok: true, project: { cover_photo_url: "https://signed.example.test/resolved-cover.jpg" }, media: [{ preview_url: "/first.jpg" }] } },
+  });
+  await ui.loadAll();
+  assert.equal(ui.context.previewImageUrl, "https://signed.example.test/resolved-cover.jpg");
+  ui.selectProject("event-b"); await ui.loadAll();
+  assert.equal(ui.context.previewImageUrl, "https://signed.example.test/saved-cover.jpg");
+  assert.equal(ui.previewRequests.length, 1);
+});
+
+test("late photo responses cannot replace another project's preview and denied previews fail closed", async () => {
+  const oldPhoto = deferred(), started = deferred();
+  const ui = harness({
+    projects: { "event-a": { id: "event-a" }, "event-b": { id: "event-b" }, "event-c": { id: "event-c" } },
+    getPreview(id) {
+      if (id === "event-a") { started.resolve(); return oldPhoto.promise; }
+      if (id === "event-c") return { status: 403, ok: false, media: [{ preview_url: "/denied.jpg" }] };
+      return { ok: true, media: [{ preview_url: "/current.jpg" }] };
+    },
+  });
+  const pending = ui.loadAll(); await started.promise;
+  ui.selectProject("event-b"); await ui.loadAll();
+  oldPhoto.resolve({ ok: true, media: [{ preview_url: "/old.jpg" }] }); await pending;
+  assert.equal(ui.context.project.id, "event-b");
+  assert.equal(ui.context.previewImageUrl, "/current.jpg");
+  ui.selectProject("event-c"); await ui.loadAll();
+  assert.equal(ui.context.previewImageUrl, null);
+  assert.equal(ui.context.loading, false);
+  assert.equal(ui.requests.length, 0);
+});
+
+test("welcome preview hides the stock message and keeps a custom message exactly as the client renderer does", () => {
+  const branding = { ...settings.defaultEventGalleryBranding, introMessage: `  ${settings.defaultEventGalleryBranding.introMessage}  ` };
+  const defaultCover = nodes(preview(branding), "EventGalleryCover")[0];
+  assert.equal(defaultCover.props.message, "");
+  assert.deepEqual(plain(defaultCover.props.metadata), []);
+  assert.equal(nodes(preview({ ...branding, introMessage: "  Welcome to your event  " }), "EventGalleryCover")[0].props.message, "Welcome to your event");
 });
 
 test("unavailable toggles remain disabled and never change persisted preferences", () => {
