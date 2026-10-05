@@ -25,24 +25,98 @@ function textOf(node) {
   return [node.props?.children].flat(Infinity).map(textOf).join(" ");
 }
 
-function coverHarness() {
+function coverHarness({ reducedMotion = false, cachedImageUrls = [], brokenCachedImageUrls = [] } = {}) {
   const hooks = [];
-  let cursor = 0;
+  const timers = new Map(), domNodes = new Map();
+  let cursor = 0, now = 0, nextTimer = 0, changed = false, effects = [], mountedRefs = new Set();
+  let currentProps, tree, focused = 0;
   const jsx = (type, props) => typeof type === "function" ? type(props) : ({ type, props });
   const { EventGalleryCover } = load("../components/parents/event-gallery-cover.tsx", {
+    window: {
+      matchMedia: query => ({ matches: query === "(prefers-reduced-motion: reduce)" && reducedMotion }),
+      setTimeout(callback, delay = 0) { const id = ++nextTimer; timers.set(id, { callback, at: now + delay }); return id; },
+      clearTimeout(id) { timers.delete(id); },
+      requestAnimationFrame(callback) { const id = ++nextTimer; timers.set(id, { callback, at: now + 16 }); return id; },
+      cancelAnimationFrame(id) { timers.delete(id); },
+    },
     require: name => {
       if (name === "react") return {
         useState(initial) {
           const index = cursor++;
-          if (!(index in hooks)) hooks[index] = initial;
-          return [hooks[index], next => { hooks[index] = typeof next === "function" ? next(hooks[index]) : next; }];
+          if (!(index in hooks)) hooks[index] = { kind: "state", value: typeof initial === "function" ? initial() : initial };
+          return [hooks[index].value, next => {
+            const value = typeof next === "function" ? next(hooks[index].value) : next;
+            if (!Object.is(value, hooks[index].value)) { hooks[index].value = value; changed = true; }
+          }];
+        },
+        useRef(initial) {
+          const index = cursor++;
+          if (!(index in hooks)) hooks[index] = { kind: "ref", value: { current: initial } };
+          return hooks[index].value;
+        },
+        useEffect(callback, dependencies) {
+          const index = cursor++;
+          const previous = hooks[index];
+          if (!previous || !dependencies || dependencies.some((value, i) => !Object.is(value, previous.dependencies?.[i]))) {
+            effects.push({ index, callback, dependencies });
+          }
         },
       };
       if (name === "react/jsx-runtime") return { jsx, jsxs: jsx };
       throw new Error(`Unexpected module ${name}`);
     },
   });
-  return { render(props) { cursor = 0; return EventGalleryCover(props); } };
+
+  function commitRefs() {
+    const nextRefs = new Set();
+    for (const type of ["img", "button"]) for (const node of findAll(tree, type)) {
+      const ref = node.props.ref;
+      if (!ref) continue;
+      nextRefs.add(ref);
+      const key = type === "img" ? `img:${node.props.src}` : "button";
+      if (!domNodes.has(key)) domNodes.set(key, {
+        complete: type === "img" && [...cachedImageUrls, ...brokenCachedImageUrls].includes(node.props.src),
+        naturalWidth: type === "img" && cachedImageUrls.includes(node.props.src) ? 1600 : 0,
+        focus() { focused++; },
+      });
+      if (typeof ref === "function") ref(domNodes.get(key));
+      else ref.current = domNodes.get(key);
+    }
+    for (const ref of mountedRefs) if (!nextRefs.has(ref)) {
+      if (typeof ref === "function") ref(null); else ref.current = null;
+    }
+    mountedRefs = nextRefs;
+  }
+  function render(props = currentProps) {
+    currentProps = props;
+    for (let pass = 0; pass < 10; pass++) {
+      changed = false; cursor = 0; effects = [];
+      tree = EventGalleryCover(props);
+      commitRefs();
+      for (const effect of effects) {
+        hooks[effect.index]?.cleanup?.();
+        hooks[effect.index] = { kind: "effect", dependencies: effect.dependencies, cleanup: effect.callback() };
+      }
+      if (!changed) return tree;
+    }
+    throw new Error("Cover effects did not settle");
+  }
+  return {
+    render,
+    advance(milliseconds) {
+      const target = now + milliseconds;
+      for (let pass = 0; pass < 100; pass++) {
+        const next = [...timers].filter(([, timer]) => timer.at <= target).sort((a, b) => a[1].at - b[1].at)[0];
+        if (!next) { now = target; return tree; }
+        now = next[1].at; timers.delete(next[0]); next[1].callback();
+        if (changed) render();
+      }
+      throw new Error("Cover timers did not settle");
+    },
+    unmount() { for (const hook of hooks) if (hook.kind === "effect") hook.cleanup?.(); },
+    get focused() { return focused; },
+    get pendingTimers() { return timers.size; },
+  };
 }
 
 const coverProps = (overrides = {}) => ({
@@ -64,7 +138,10 @@ const coverProps = (overrides = {}) => ({
 
 test("welcome presents the full cover, client name, and one accessible way to albums", () => {
   let entered = 0;
-  const tree = coverHarness().render(coverProps({ onEnter: () => entered++ }));
+  const ui = coverHarness(), props = coverProps({ onEnter: () => entered++ });
+  const first = ui.render(props);
+  findAll(first, "img")[0].props.onLoad();
+  const tree = ui.render(props);
   assert.equal(tree.type, "section");
   assert.equal(tree.props["aria-label"], "The Giles School");
   assert.equal(tree.props.style.overflowY, "auto");
@@ -80,7 +157,7 @@ test("welcome presents the full cover, client name, and one accessible way to al
   const buttons = findAll(tree, "button");
   assert.equal(buttons.length, 1);
   assert.equal(buttons[0].props.type, "button");
-  assert.equal(buttons[0].props.autoFocus, true);
+  assert.equal(buttons[0].props.autoFocus, undefined);
   assert.equal(textOf(buttons[0]), "View albums");
   assert.ok(buttons[0].props.style.minHeight >= 44);
   buttons[0].props.onClick();
@@ -97,8 +174,10 @@ test("broken cover falls back to a readable welcome and a changed image may load
   assert.equal(fallback.props.style.background, "#151719");
   assert.match(textOf(fallback), /The Giles School/);
   assert.equal(findAll(fallback, "button").length, 1);
+  assert.equal(fallback.props["data-reveal-ready"], true);
   const next = ui.render({ ...props, imageUrl: "/authorized/new-cover.jpg" });
   assert.equal(findAll(next, "img")[0].props.src, "/authorized/new-cover.jpg");
+  assert.equal(next.props["data-reveal-ready"], false);
 });
 
 test("welcome remains usable without a cover and owner-hidden studio mark stays absent", () => {
@@ -108,6 +187,101 @@ test("welcome remains usable without a cover and owner-hidden studio mark stays 
   assert.match(textOf(tree), /Caroline Bernaba/);
   assert.doesNotMatch(textOf(tree), /White Photo/);
   assert.equal(findAll(tree, "button").length, 1);
+  assert.equal(tree.props["data-reveal-ready"], true);
+});
+
+test("the photo appears first, then loaded media releases the staged welcome and delayed focus", () => {
+  const ui = coverHarness(), props = coverProps();
+  const first = ui.render(props);
+  assert.equal(first.props["data-reveal-ready"], false);
+  assert.equal(ui.focused, 0);
+  const photo = findAll(first, "img")[0];
+  assert.doesNotMatch(photo.props.className ?? "", /event-cover-reveal/);
+  assert.match(findAll(first, "h1")[0].props.className, /event-cover-reveal event-cover-title/);
+  assert.match(findAll(first, "p").find(node => textOf(node) === props.clientName).props.className, /event-cover-client/);
+  assert.match(findAll(first, "button")[0].props.className, /event-cover-action/);
+  const css = textOf(findAll(first, "style")[0]);
+  assert.match(css, /\.event-cover-reveal\s*\{[^}]*opacity:\s*0;[^}]*visibility:\s*hidden;/);
+  assert.match(css, /\[data-reveal-ready="true"\]\s+\.event-cover-reveal\s*\{[^}]*opacity:\s*1;[^}]*visibility:\s*visible;/);
+  const delays = ["title", "client", "details", "action"].map(name => {
+    const match = css.match(new RegExp(`\\.event-cover-${name}\\s*\\{\\s*--event-cover-delay:\\s*(\\d+)ms;`));
+    assert.ok(match, `Missing ${name} animation delay`);
+    return Number(match[1]);
+  });
+  for (let index = 1; index < delays.length; index++) assert.ok(delays[index] > delays[index - 1]);
+  photo.props.onLoad();
+  assert.equal(ui.render(props).props["data-reveal-ready"], true);
+  ui.advance(999);
+  assert.equal(ui.focused, 0);
+  ui.advance(1);
+  assert.equal(ui.focused, 1);
+});
+
+test("cached complete images release the welcome without waiting for a load event", () => {
+  const props = coverProps(), ui = coverHarness({ cachedImageUrls: [props.imageUrl] });
+  assert.equal(ui.render(props).props["data-reveal-ready"], false);
+  const revealed = ui.advance(16);
+  assert.equal(revealed.props["data-reveal-ready"], true);
+  ui.advance(1000);
+  assert.equal(ui.focused, 1);
+});
+
+test("slow and broken cached media never prevent access after the fallback deadline", () => {
+  const props = coverProps();
+  for (const options of [{}, { brokenCachedImageUrls: [props.imageUrl] }]) {
+    const ui = coverHarness(options);
+    assert.equal(ui.render(props).props["data-reveal-ready"], false);
+    assert.equal(ui.advance(2499).props["data-reveal-ready"], false);
+    assert.equal(ui.advance(1).props["data-reveal-ready"], true);
+    assert.equal(findAll(ui.render(props), "button").length, 1);
+    ui.advance(1000);
+    assert.equal(ui.focused, 1);
+  }
+});
+
+test("failed media and galleries without a cover reveal the welcome and keep keyboard entry usable", () => {
+  const props = coverProps(), ui = coverHarness();
+  findAll(ui.render(props), "img")[0].props.onError();
+  assert.equal(ui.render(props).props["data-reveal-ready"], true);
+  ui.advance(1000);
+  assert.equal(ui.focused, 1);
+  const noPhoto = coverHarness();
+  const tree = noPhoto.render(coverProps({ imageUrl: null }));
+  assert.equal(tree.props["data-reveal-ready"], true);
+  noPhoto.advance(1000);
+  assert.equal(noPhoto.focused, 1);
+});
+
+test("reduced motion makes welcome copy immediately visible and focuses without an animation delay", () => {
+  const ui = coverHarness({ reducedMotion: true }), props = coverProps();
+  const first = ui.render(props);
+  const css = textOf(findAll(first, "style")[0]);
+  const reducedRule = css.match(/@media\s*\(prefers-reduced-motion:\s*reduce\)\s*\{([\s\S]*)\}/)?.[1];
+  assert.ok(reducedRule);
+  assert.match(reducedRule, /\.event-gallery-cover\s+\.event-cover-reveal,/);
+  assert.match(reducedRule, /opacity:\s*1;\s*visibility:\s*visible;\s*transform:\s*none;\s*transition:\s*none;/);
+  assert.equal(first.props["data-reveal-ready"], false);
+  findAll(first, "img")[0].props.onLoad();
+  assert.equal(ui.render(props).props["data-reveal-ready"], true);
+  ui.advance(0);
+  assert.equal(ui.focused, 1);
+});
+
+test("changing photos restarts readiness and unmount cancels fallback and focus work", () => {
+  const ui = coverHarness(), props = coverProps();
+  const photo = findAll(ui.render(props), "img")[0];
+  photo.props.onLoad();
+  ui.render(props);
+  ui.advance(400);
+  const nextProps = { ...props, imageUrl: "/authorized/another-cover.jpg" };
+  assert.equal(ui.render(nextProps).props["data-reveal-ready"], false);
+  ui.advance(600);
+  assert.equal(ui.focused, 0);
+  assert.ok(ui.pendingTimers > 0);
+  ui.unmount();
+  assert.equal(ui.pendingTimers, 0);
+  ui.advance(5000);
+  assert.equal(ui.focused, 0);
 });
 
 const pageSource = readFileSync(new URL("../app/parents/[pin]/page.tsx", import.meta.url), "utf8");
