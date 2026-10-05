@@ -214,3 +214,31 @@ test("checkout inputs and shipping columns can shrink inside a narrow phone pane
   const gridStyle = evaluate(gridAttribute.expression.getText(ast));
   assert.equal(gridStyle.gridTemplateColumns, "repeat(2, minmax(0, 1fr))");
 });
+
+test("checkout contact fields offer native autofill and accessible labels on phones", () => {
+  const inputs = [], labels = [];
+  function collectContactFields(node) {
+    if (ts.isJsxSelfClosingElement(node) && node.tagName.getText(ast) === "input") inputs.push(node);
+    if (ts.isJsxElement(node) && node.openingElement.tagName.getText(ast) === "label") labels.push(node);
+    ts.forEachChild(node, collectContactFields);
+  }
+  collectContactFields(ast);
+  for (const [id, autoComplete, type, visibleLabel, setter] of [
+    ["checkout-name", "name", undefined, "Name", "setParentName"],
+    ["checkout-email", "email", "email", "Email *", "setParentEmail"],
+    ["checkout-phone", "tel", "tel", "Phone", "setParentPhone"],
+  ]) {
+    const matches = inputs.filter(node => attribute(node, "id")?.text === id);
+    assert.equal(matches.length, 1, `${id} must be unique`);
+    const input = matches[0];
+    assert.equal(attribute(input, "autoComplete")?.text, autoComplete);
+    assert.equal(attribute(input, "type")?.text, type);
+    const label = labels.filter(node => attribute(node.openingElement, "htmlFor")?.text === id);
+    assert.equal(label.length, 1, `${id} needs its visible label`);
+    assert.equal(label[0].children.filter(ts.isJsxText).map(node => node.text.trim()).join(""), visibleLabel);
+    const onChange = attribute(input, "onChange");
+    let changed;
+    evaluate(onChange.expression.getText(ast), { [setter]: next => { changed = next; } })({ target: { value: "fixture contact" } });
+    assert.equal(changed, "fixture contact", "Native entry hints preserve contact updates");
+  }
+});

@@ -12603,11 +12603,15 @@ export default function ParentGalleryPage() {
                             {([
                               {
                                 key: "all" as PackagePhotoFilter,
-                                label: `All Photos (${packageAllAssignableImages.length})`,
+                                label: currentGalleryExtras.hideAlbumPhotoCount
+                                  ? "All Photos"
+                                  : `All Photos (${packageAllAssignableImages.length})`,
                               },
                               {
                                 key: "favorites" as PackagePhotoFilter,
-                                label: `Favorites (${packageFavoriteAssignableImages.length})`,
+                                label: currentGalleryExtras.hideAlbumPhotoCount
+                                  ? "Favorites"
+                                  : `Favorites (${packageFavoriteAssignableImages.length})`,
                               },
                             ]).map((option) => {
                               const isActive = packagePhotoFilter === option.key;
@@ -13162,7 +13166,7 @@ export default function ParentGalleryPage() {
                     )}
 
                     <div>
-                      <label style={labelStyle}>Name</label>
+                      <label htmlFor="checkout-name" style={labelStyle}>Name</label>
                       <div style={{ position: "relative" }}>
                         <User
                           size={13}
@@ -13170,6 +13174,9 @@ export default function ParentGalleryPage() {
                           style={{ position: "absolute", left: 12, top: 12 }}
                         />
                         <input
+                          id="checkout-name"
+                          name="name"
+                          autoComplete="name"
                           value={parentName}
                           onChange={(e) => setParentName(e.target.value)}
                           placeholder="Jane Smith"
@@ -13179,7 +13186,7 @@ export default function ParentGalleryPage() {
                     </div>
 
                     <div>
-                      <label style={labelStyle}>Email *</label>
+                      <label htmlFor="checkout-email" style={labelStyle}>Email *</label>
                       <div style={{ position: "relative" }}>
                         <Mail
                           size={13}
@@ -13187,7 +13194,10 @@ export default function ParentGalleryPage() {
                           style={{ position: "absolute", left: 12, top: 12 }}
                         />
                         <input
+                          id="checkout-email"
+                          name="email"
                           type="email"
+                          autoComplete="email"
                           value={parentEmail}
                           onChange={(e) => setParentEmail(e.target.value)}
                           placeholder="jane@email.com"
@@ -13198,7 +13208,7 @@ export default function ParentGalleryPage() {
                     </div>
 
                     <div>
-                      <label style={labelStyle}>Phone</label>
+                      <label htmlFor="checkout-phone" style={labelStyle}>Phone</label>
                       <div style={{ position: "relative" }}>
                         <Phone
                           size={13}
@@ -13206,6 +13216,10 @@ export default function ParentGalleryPage() {
                           style={{ position: "absolute", left: 12, top: 12 }}
                         />
                         <input
+                          id="checkout-phone"
+                          name="tel"
+                          type="tel"
+                          autoComplete="tel"
                           value={parentPhone}
                           onChange={(e) => setParentPhone(e.target.value)}
                           placeholder="(555) 000-0000"
