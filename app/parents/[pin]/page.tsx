@@ -3754,6 +3754,7 @@ function BackdropThumbCanvas({
 // ── Styles ─────────────────────────────────────────────────────────────────
 const darkInput: React.CSSProperties = {
   width: "100%",
+  minWidth: 0,
   border: "1px solid #2e2e2e",
   borderRadius: 8,
   padding: "11px 14px",
@@ -5001,6 +5002,9 @@ export default function ParentGalleryPage() {
   const viewerPadding = getViewerPadding(gallerySettings);
   const thumbnailSize = getThumbnailSize(gallerySettings);
   const isMobileViewport = useIsMobile();
+  // Keep the photo wall's phone density separate from panels that need room
+  // for both a 620px ordering drawer and a useful photo preview.
+  const isCompactPanelViewport = useIsMobile(1100);
   const slotGridColumns = getSlotGridColumns(gallerySettings, isMobileViewport);
   const photoGridMinWidth = getPhotoGridMinWidth(gallerySettings, isMobileViewport);
   const photoWallColumnWidth = getPhotoWallColumnWidth(gallerySettings);
@@ -7192,6 +7196,8 @@ export default function ParentGalleryPage() {
 
   function openBuyDrawer() {
     if (orderingDisabled) return;
+    setActiveView("photos");
+    if (!isSchoolMode && eventPhotoStage === "albums") setEventPhotoStage("grid");
     setBackdropPickerOpen(false);
     setDrawerView("product-select");
     setDrawerOpen(true);
@@ -7756,6 +7762,8 @@ export default function ParentGalleryPage() {
   }
 
   function openCartCheckout() {
+    setActiveView("photos");
+    if (!isSchoolMode && eventPhotoStage === "albums") setEventPhotoStage("grid");
     setBackdropPickerOpen(false);
     setDrawerOpen(true);
     setDrawerView("checkout");
@@ -9267,6 +9275,9 @@ export default function ParentGalleryPage() {
             display:none;
           }
         }
+        @media (max-width:1099px){
+          .parent-gallery-topbar button { min-width:44px; min-height:44px; }
+        }
       `}</style>
 
       {/* Screenshot protection — per-school / per-event toggles applied
@@ -9408,16 +9419,17 @@ export default function ParentGalleryPage() {
       >
         {/* Top bar */}
         <div
+          className="parent-gallery-topbar"
           style={{
             minHeight: isEventImageStage ? 72 : 52,
             flexShrink: 0,
-            display: isEventLanding ? "none" : isMobileViewport && isEventImageStage ? "grid" : "flex",
-            gridTemplateColumns: isMobileViewport && isEventImageStage ? "minmax(0, 1fr)" : undefined,
-            alignItems: isMobileViewport && isEventImageStage ? "stretch" : "center",
+            display: isEventLanding ? "none" : isCompactPanelViewport && isEventImageStage ? "grid" : "flex",
+            gridTemplateColumns: isCompactPanelViewport && isEventImageStage ? "minmax(0, 1fr)" : undefined,
+            alignItems: isCompactPanelViewport && isEventImageStage ? "stretch" : "center",
             justifyContent: "space-between",
-            gap: isMobileViewport ? 8 : 18,
-            flexWrap: isMobileViewport && isEventImageStage ? undefined : "wrap",
-            padding: isMobileViewport
+            gap: isCompactPanelViewport ? 8 : 18,
+            flexWrap: isCompactPanelViewport && isEventImageStage ? undefined : "wrap",
+            padding: isCompactPanelViewport
               ? isEventImageStage
                 ? "8px 12px 10px"
                 : "0 12px"
@@ -9440,11 +9452,11 @@ export default function ParentGalleryPage() {
               style={{
                 display: "flex",
                 alignItems: "center",
-                gap: isMobileViewport ? 10 : 24,
+                gap: isCompactPanelViewport ? 10 : 24,
                 minWidth: 0,
-                flex: isMobileViewport ? "1 1 100%" : "1 1 540px",
+                flex: isCompactPanelViewport ? "1 1 100%" : "1 1 540px",
                 flexWrap: "wrap",
-                width: isMobileViewport ? "100%" : undefined,
+                width: isCompactPanelViewport ? "100%" : undefined,
               }}
             >
               <button
@@ -9460,12 +9472,12 @@ export default function ParentGalleryPage() {
                   gap: 2,
                 }}
               >
-                <span style={{ fontSize: isMobileViewport ? 21 : 28, lineHeight: 1.05, fontWeight: 500, color: galleryTone.text }}>
+                <span style={{ fontSize: isCompactPanelViewport ? 21 : 28, lineHeight: 1.05, fontWeight: 500, color: galleryTone.text }}>
                   {galleryHeadline}
                 </span>
                 <span
                   style={{
-                    fontSize: isMobileViewport ? 9 : 10,
+                    fontSize: isCompactPanelViewport ? 9 : 10,
                     letterSpacing: "0.18em",
                     textTransform: "uppercase",
                     color: galleryTone.mutedText,
@@ -9476,7 +9488,7 @@ export default function ParentGalleryPage() {
                 </span>
               </button>
 
-              <div style={{ flex: "1 1 240px", width: isMobileViewport ? "100%" : undefined, maxWidth: 360, minWidth: 0 }}>
+              <div style={{ flex: "1 1 240px", width: isCompactPanelViewport ? "100%" : undefined, maxWidth: 360, minWidth: 0 }}>
                 <EventAlbumSwitcher
                   choices={eventAlbumChoices}
                   value={galleryPickerValue}
@@ -9505,16 +9517,16 @@ export default function ParentGalleryPage() {
                 style={{
                   display: "flex",
                   gap: 4,
-                  position: isMobileViewport ? "static" : "absolute",
-                  left: isMobileViewport ? undefined : "50%",
-                  transform: isMobileViewport ? undefined : "translateX(-50%)",
+                  position: isCompactPanelViewport ? "static" : "absolute",
+                  left: isCompactPanelViewport ? undefined : "50%",
+                  transform: isCompactPanelViewport ? undefined : "translateX(-50%)",
                   zIndex: 5,
                   pointerEvents: "auto",
-                  order: isMobileViewport ? 99 : undefined,
-                  width: isMobileViewport ? "100%" : undefined,
-                  justifyContent: isMobileViewport ? "center" : undefined,
-                  borderTop: isMobileViewport ? `1px solid ${galleryTone.border}` : undefined,
-                  marginTop: isMobileViewport ? 6 : undefined,
+                  order: isCompactPanelViewport ? 99 : undefined,
+                  width: isCompactPanelViewport ? "100%" : undefined,
+                  justifyContent: isCompactPanelViewport ? "center" : undefined,
+                  borderTop: isCompactPanelViewport ? `1px solid ${galleryTone.border}` : undefined,
+                  marginTop: isCompactPanelViewport ? 6 : undefined,
                 }}
               >
                 {galleryNavTabs.map((tab) => {
@@ -9539,7 +9551,7 @@ export default function ParentGalleryPage() {
                         color: isActive ? galleryTone.text : galleryTone.mutedText,
                         fontSize: 13,
                         fontWeight: 600,
-                        padding: isMobileViewport ? "10px 12px" : "14px 16px",
+                        padding: isCompactPanelViewport ? "10px 12px" : "14px 16px",
                         cursor: "pointer",
                         transition: "color 0.15s",
                         letterSpacing: "0.01em",
@@ -9558,12 +9570,12 @@ export default function ParentGalleryPage() {
             style={{
               display: "flex",
               alignItems: "center",
-              gap: isMobileViewport && isEventImageStage ? 14 : isEventImageStage ? 16 : 10,
+              gap: isCompactPanelViewport && isEventImageStage ? 14 : isEventImageStage ? 16 : 10,
               flexWrap: "wrap",
-              justifyContent: isMobileViewport && isEventImageStage ? "flex-start" : "flex-end",
-              width: isMobileViewport && isEventImageStage ? "100%" : undefined,
-              paddingTop: isMobileViewport && isEventImageStage ? 8 : undefined,
-              borderTop: isMobileViewport && isEventImageStage ? `1px solid ${galleryTone.border}` : undefined,
+              justifyContent: isCompactPanelViewport && isEventImageStage ? "flex-start" : "flex-end",
+              width: isCompactPanelViewport && isEventImageStage ? "100%" : undefined,
+              paddingTop: isCompactPanelViewport && isEventImageStage ? 8 : undefined,
+              borderTop: isCompactPanelViewport && isEventImageStage ? `1px solid ${galleryTone.border}` : undefined,
             }}
           >
             {/* Save-with-Combine pill — always visible in the gallery top
@@ -9578,7 +9590,7 @@ export default function ParentGalleryPage() {
                 color: "#ffffff",
                 border: "none",
                 borderRadius: 999,
-                padding: isMobileViewport ? "8px 13px" : "8px 16px",
+                padding: isCompactPanelViewport ? "8px 13px" : "8px 16px",
                 fontSize: 12,
                 fontWeight: 800,
                 cursor: "pointer",
@@ -9590,7 +9602,7 @@ export default function ParentGalleryPage() {
               }}
             >
               <span aria-hidden style={{ fontSize: 13 }}>✨</span>
-              <span>{isMobileViewport ? "Combine" : "Save with combine"}</span>
+              <span>{isCompactPanelViewport ? "Combine" : "Save with combine"}</span>
             </button>
             {currentGalleryExtras.allowSocialSharing ? (
               <button
@@ -9602,7 +9614,7 @@ export default function ParentGalleryPage() {
                   color: galleryTone.text,
                   border: isEventImageStage ? "none" : `1px solid ${galleryTone.border}`,
                   borderRadius: 999,
-                  padding: isMobileViewport ? "8px 10px" : isEventImageStage ? 0 : "8px 16px",
+                  padding: isCompactPanelViewport ? "8px 10px" : isEventImageStage ? 0 : "8px 16px",
                   fontSize: 12,
                   fontWeight: isEventImageStage ? 500 : 700,
                   cursor: "pointer",
@@ -9612,7 +9624,7 @@ export default function ParentGalleryPage() {
                 }}
               >
                 <Share2 size={14} />
-                {isMobileViewport ? null : galleryCopy.share}
+                {isCompactPanelViewport ? null : galleryCopy.share}
               </button>
             ) : null}
 
@@ -9732,7 +9744,7 @@ export default function ParentGalleryPage() {
                       favorites.size > 0 ? "rgba(220,38,38,0.24)" : galleryTone.border
                     }`,
                 borderRadius: 999,
-                padding: isMobileViewport ? "8px 10px" : isEventImageStage ? 0 : "8px 16px",
+                padding: isCompactPanelViewport ? "8px 10px" : isEventImageStage ? 0 : "8px 16px",
                 fontSize: 12,
                 fontWeight: isEventImageStage ? 500 : 700,
                 cursor: "pointer",
@@ -9743,7 +9755,7 @@ export default function ParentGalleryPage() {
               aria-label={galleryCopy.favorites}
             >
               <Heart size={14} fill={favorites.size > 0 ? "currentColor" : "none"} />
-              {isMobileViewport
+              {isCompactPanelViewport
                 ? favorites.size > 0
                   ? ` (${favorites.size})`
                   : null
@@ -10448,14 +10460,10 @@ export default function ParentGalleryPage() {
           <div
             style={{
               flex: 1,
-              // On mobile, when the backdrop picker OR the order drawer is open,
-              // hide the photo area entirely so the panel can take the full
-              // viewport instead of fighting for space next to a shrunken photo.
-              // (The order drawer is a fixed-width 620px panel on desktop; on a
-              // phone that overflowed the screen — this is the fix for "half the
-              // website they can't see".)
+              // Phones and tablets use the whole available width for an open
+              // panel. Closing it restores the same photo selection and stage.
               display:
-                isMobileViewport && (drawerOpen || backdropPickerOpen)
+                isCompactPanelViewport && (drawerOpen || backdropPickerOpen)
                   ? "none"
                   : "flex",
               flexDirection: "column",
@@ -11457,16 +11465,15 @@ export default function ParentGalleryPage() {
           {/* Right drawer */}
           {drawerOpen && (
             <div
+              role="region"
+              aria-label="Order photos"
               style={{
-                // Desktop: fixed 620px side panel. Mobile/iPad: take the full
-                // screen so clients can actually see and use the whole ordering
-                // flow (mirrors the backdrop picker panel's responsive width).
-                width: isMobileViewport ? "100%" : 620,
+                width: isCompactPanelViewport ? "100%" : 620,
                 maxWidth: "100vw",
                 display: "flex",
                 flexDirection: "column",
                 background: "#1a1a1a",
-                borderLeft: isMobileViewport ? "none" : "1px solid #222",
+                borderLeft: isCompactPanelViewport ? "none" : "1px solid #222",
                 flexShrink: 0,
                 overflow: "hidden",
               }}
@@ -11507,6 +11514,8 @@ export default function ParentGalleryPage() {
                       color: "#aaa",
                       cursor: "pointer",
                       padding: 4,
+                      minWidth: 44,
+                      minHeight: 44,
                       borderRadius: 6,
                       display: "flex",
                       alignItems: "center",
@@ -11544,14 +11553,19 @@ export default function ParentGalleryPage() {
                 <button
                   type="button"
                   onClick={() => setDrawerOpen(false)}
+                  aria-label="Close order panel"
                   style={{
                     background: "transparent",
                     border: "none",
-                    color: "#666",
+                    color: "#aaa",
                     cursor: "pointer",
                     padding: 4,
+                    minWidth: 44,
+                    minHeight: 44,
                     borderRadius: 6,
                     display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
                   }}
                 >
                   <X size={18} />
@@ -13295,7 +13309,7 @@ export default function ParentGalleryPage() {
                           <div
                             style={{
                               display: "grid",
-                              gridTemplateColumns: "1fr 1fr",
+                              gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
                               gap: 8,
                             }}
                           >
@@ -13519,13 +13533,15 @@ export default function ParentGalleryPage() {
           {/* ── Backdrop Picker Panel (school mode only) ─────────────── */}
           {backdropPickerOpen && hasBackdrops && !drawerOpen && (
             <div
+              role="region"
+              aria-label="Choose a backdrop"
               style={{
-                width: isMobileViewport ? "100%" : 520,
+                width: isCompactPanelViewport ? "100%" : 520,
                 maxWidth: "100vw",
                 display: "flex",
                 flexDirection: "column",
                 background: "#111",
-                borderLeft: "1px solid #1e1e1e",
+                borderLeft: isCompactPanelViewport ? "none" : "1px solid #1e1e1e",
                 flexShrink: 0,
                 overflow: "hidden",
               }}
@@ -13555,15 +13571,20 @@ export default function ParentGalleryPage() {
                   <button
                     type="button"
                     onClick={() => setBackdropPickerOpen(false)}
+                    aria-label="Close backdrop picker"
                     style={{
                       background: "transparent",
                       border: "none",
-                      color: "#666",
+                      color: "#aaa",
                       cursor: "pointer",
                       fontSize: 18,
                       padding: 4,
+                      minWidth: 44,
+                      minHeight: 44,
                       lineHeight: 1,
                       display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
                     }}
                   >
                     <X size={18} />

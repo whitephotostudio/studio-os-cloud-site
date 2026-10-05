@@ -283,7 +283,7 @@ test("gallery toolbar actions remain readable in the saved light and dark tones"
   for (const backgroundMode of ["light", "dark"]) {
     const galleryTone = presentation.galleryPresentationTone(branding({ backgroundMode, tone: "graphite" }));
     const globals = {
-      galleryTone, isEventImageStage: true, isLightGallery: backgroundMode === "light", isMobileViewport: false,
+      galleryTone, isEventImageStage: true, isLightGallery: backgroundMode === "light", isMobileViewport: false, isCompactPanelViewport: false,
       blackWhitePreviewActive: false, orderingDisabled: false, downloadingGallery: false,
       galleryDownloadAccess: { canDownload: true, audience: "gallery" }, activeEventCollectionId: "album-id", favorites: new Set(),
     };
