@@ -1,46 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
+import { reserveGalleryDownload } from "@/lib/gallery-download-quota";
 import { validateEventGalleryAccess } from "@/lib/event-gallery-access";
 import { authorizedEventMediaIds, eventGalleryDownloadsUsed, resolveEventDownloadScope } from "@/lib/event-download-scope";
+import { buildEventFileDeliveries, hasEventAllDigitalsPurchase, eventRequestedCollectionIds } from "@/lib/event-media-delivery";
 import { normalizeEventGallerySettings } from "@/lib/event-gallery-settings";
 import { getClientIp, rateLimit } from "@/lib/rate-limit";
 import { validateUuid, validateUuidArray } from "@/lib/request-validation";
 
 export const dynamic = "force-dynamic";
 
-type OrderRow = {
-  package_id: string | null;
-  package_name: string | null;
-  status: string | null;
-  parent_email: string | null;
-  customer_email: string | null;
-};
-
-type PurchasedPackageRow = {
-  id: string;
-  name: string | null;
-  description: string | null;
-  category: string | null;
-};
-
 function clean(value: string | null | undefined) {
   return (value ?? "").trim();
-}
-
-function isPaidOrderStatus(status: string | null | undefined) {
-  const value = clean(status).toLowerCase();
-  return value === "paid" || value === "completed" || value === "fulfilled";
-}
-
-function isAllDigitalsText(...values: Array<string | null | undefined>) {
-  return values.some((value) => {
-    const text = clean(value).toLowerCase();
-    return (
-      text.includes("all digitals") ||
-      text.includes("all digital") ||
-      text.includes("full gallery") ||
-      text.includes("full digital")
-    );
-  });
 }
 
 function isMissingDownloadsTable(error: unknown) {
@@ -145,52 +115,7 @@ export async function POST(request: NextRequest) {
       }
 
       if (settings.extras.favoriteDownloadsRequireAllDigitalsPurchase) {
-        const { data: orderRows, error: orderError } = await access.service
-          .from("orders")
-          .select("package_id,package_name,status,parent_email,customer_email")
-          .eq("project_id", access.projectId);
-
-        if (orderError) throw orderError;
-
-        const matchingOrders = ((orderRows ?? []) as OrderRow[]).filter((row) => {
-          if (!isPaidOrderStatus(row.status)) return false;
-          const orderEmails = [
-            clean(row.parent_email).toLowerCase(),
-            clean(row.customer_email).toLowerCase(),
-          ].filter(Boolean);
-          return orderEmails.includes(access.email);
-        });
-
-        const packageIds = Array.from(
-          new Set(
-            matchingOrders
-              .map((row) => clean(row.package_id))
-              .filter((value) => value.length > 0),
-          ),
-        );
-
-        const packageMap = new Map<string, PurchasedPackageRow>();
-        if (packageIds.length > 0) {
-          const { data: packageRows, error: packageError } = await access.service
-            .from("packages")
-            .select("id,name,description,category")
-            .in("id", packageIds);
-
-          if (packageError) throw packageError;
-
-          for (const row of (packageRows ?? []) as PurchasedPackageRow[]) {
-            packageMap.set(row.id, row);
-          }
-        }
-
-        const paidAllDigitalsOrder = matchingOrders.find((row) => {
-          const linkedPackage = packageMap.get(clean(row.package_id));
-          return isAllDigitalsText(
-            row.package_name,
-            linkedPackage?.name,
-            linkedPackage?.description,
-          );
-        });
+        const paidAllDigitalsOrder = await hasEventAllDigitalsPurchase(access.service, access.projectId, access.email, access.project.photographer_id, await eventRequestedCollectionIds(access.service, access.projectId, mediaIds));
 
         if (!paidAllDigitalsOrder) {
           return NextResponse.json(
@@ -204,6 +129,7 @@ export async function POST(request: NextRequest) {
         }
       }
 
+      const deliveries = await buildEventFileDeliveries({ service: access.service, project: access.project, email: access.email, mediaIds, collections: scope.collections, deliveryType: "favorites" });
       const { error: insertError } = await access.service
         .from("event_gallery_downloads")
         .insert({
@@ -219,7 +145,7 @@ export async function POST(request: NextRequest) {
         throw insertError;
       }
 
-      return NextResponse.json({ ok: true, allowedMediaIds: mediaIds });
+      return NextResponse.json({ ok: true, allowedMediaIds: mediaIds, deliveries });
     }
 
     if (!settings.extras.freeDigitalRuleEnabled || !settings.extras.showDownloadAllButton) {
@@ -298,10 +224,10 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const allowedMediaIds =
+    const requestedAllowedMediaIds =
       downloadsRemaining === null ? mediaIds : mediaIds.slice(0, downloadsRemaining);
 
-    if (!allowedMediaIds.length) {
+    if (!requestedAllowedMediaIds.length) {
       return NextResponse.json(
         {
           ok: false,
@@ -313,29 +239,20 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { error: insertError } = await access.service
-      .from("event_gallery_downloads")
-      .insert({
-        project_id: access.projectId,
-        collection_id: collectionId || null,
-        viewer_email: access.email,
-        download_type: "gallery",
-        download_count: allowedMediaIds.length,
-        media_ids: allowedMediaIds,
-      });
-
-    if (insertError && !isMissingDownloadsTable(insertError)) {
-      throw insertError;
-    }
+    const reservation = await reserveGalleryDownload({ service: access.service, galleryKind: "event", galleryId: access.projectId,
+      photographerId: access.project.photographer_id, viewerEmail: access.email, collectionId,
+      mediaIds: requestedAllowedMediaIds, gallerySettings: access.project.gallery_settings });
+    const allowedMediaIds = reservation.allowedMediaIds;
+    if (!allowedMediaIds.length) return NextResponse.json({ ok: false, message: "This gallery's free download limit has been reached.",
+      downloadsUsed: reservation.downloadsUsed, downloadsRemaining: reservation.downloadsRemaining }, { status: 403 });
+    const deliveries = await buildEventFileDeliveries({ service: access.service, project: access.project, email: access.email, mediaIds: allowedMediaIds, collections: scope.collections, deliveryType: "gallery" });
 
     return NextResponse.json({
       ok: true,
       allowedMediaIds,
-      downloadsUsed: downloadsUsed + allowedMediaIds.length,
-      downloadsRemaining:
-        downloadsRemaining === null
-          ? null
-          : Math.max(0, downloadsRemaining - allowedMediaIds.length),
+      deliveries,
+      downloadsUsed: reservation.downloadsUsed,
+      downloadsRemaining: reservation.downloadsRemaining,
     });
   } catch (error) {
     console.error("[event-downloads]", error);

@@ -13,6 +13,7 @@ const load = (path, globals = {}) => {
   return exports;
 };
 const helpers = load("../lib/event-album-navigation.ts");
+const mediaHelpers = load("../lib/event-gallery-media-client.ts", { URL, atob, TextDecoder, Uint8Array });
 const plain = value => JSON.parse(JSON.stringify(value));
 const collections = [
   { id: "terry", title: "Terry" },
@@ -74,7 +75,8 @@ function textOf(node) {
   return [node.props?.children].flat(Infinity).map(textOf).join(" ");
 }
 function componentHarness() {
-  const hooks = [], listeners = new Map();
+  const hooks = [], listeners = new Map(), previewTimers = [];
+  const previews = load("../lib/portal-preview-retry.ts", { URL, setTimeout: (run, delay) => previewTimers.push({run,delay}) });
   let cursor = 0;
   const jsx = (type, props) => typeof type === "function" ? type(props) : ({ type, props });
   const react = {
@@ -93,10 +95,11 @@ function componentHarness() {
       if (name === "react") return react;
       if (name === "react/jsx-runtime") return { jsx, jsxs: jsx };
       if (name === "lucide-react") return new Proxy({}, { get: (_, key) => `icon-${String(key)}` });
+      if (name === "@/lib/portal-preview-retry") return previews;
       throw new Error(`Unexpected module ${name}`);
     },
   });
-  return { components, hooks, listeners, render(name, props) { cursor = 0; return components[name](props); } };
+  return { components, hooks, listeners, previewTimers, render(name, props) { cursor = 0; return components[name](props); } };
 }
 const componentProps = onSelect => ({ choices: choicesFor(), onSelect, hidePhotoCount: false, photoLabel: "photo", photosLabel: "photos" });
 const overviewProps = (overrides = {}) => ({
@@ -105,6 +108,22 @@ const overviewProps = (overrides = {}) => ({
   brandName: "White Photo", brandLogoUrl: "/logo.svg", metadata: ["4 albums", "8 photos"],
   tone: { background: "#fafafa", surface: "#fff", text: "#111", mutedText: "#555", border: "#ddd" },
   ...overrides,
+});
+
+test("elegant album overview and thumbnail switcher retain bounded authorized-preview retries", () => {
+  for(const name of ["EventAlbumOverview","EventAlbumSwitcher"]){
+    const ui=componentHarness(),url="https://fixture.test/api/portal/event-preview/authorized.jpg?token=signed";
+    const choice={...choicesFor()[1],thumbnailUrl:url};
+    const tree=ui.render(name,overviewProps({choices:[choice],brandLogoUrl:null,value:choice.value,label:"Album"}));
+    const photos=findAll(tree,"img");assert.ok(photos.length>0);
+    for(const photo of photos){
+      const image={src:url,isConnected:true,alt:"",dataset:{},style:{opacity:"1"}},start=ui.previewTimers.length;
+      photo.props.onError({currentTarget:image});assert.equal(ui.previewTimers[start].delay,1500);ui.previewTimers[start].run();assert.match(image.src,/previewRetry=1/);
+      photo.props.onError({currentTarget:image});assert.equal(ui.previewTimers[start+1].delay,60000);ui.previewTimers[start+1].run();assert.match(image.src,/previewRetry=2/);
+      photo.props.onError({currentTarget:image});assert.equal(ui.previewTimers.length,start+2);
+      const original={...image,src:"https://fixture.test/original.jpg",dataset:{}};photo.props.onError({currentTarget:original});assert.equal(ui.previewTimers.length,start+2);
+    }
+  }
 });
 
 test("mobile and desktop overview renders every thumbnail choice before any photo grid", () => {
@@ -230,7 +249,7 @@ collect(pageAst);
 function pageHarness(overrides = {}) {
   const requests = [], state = [], notices = [], deliveries = [], routes = [];
   const sandbox = {
-    exports: {}, ...helpers,
+    exports: {}, ...helpers, ...mediaHelpers,
     clean: value => (value ?? "").trim(),
     images, visibleImages: images, visibleDownloadImages: images,
     eventAlbumChoices: choicesFor(), eventHasAlbums: true, eventPhotoGridInitialLimit: 60,
@@ -253,7 +272,7 @@ function pageHarness(overrides = {}) {
     fetch: async (url, options) => {
       const body = JSON.parse(options.body);
       requests.push({ url, body });
-      return { ok: true, json: async () => ({ ok: true, allowedMediaIds: body.mediaIds, downloadsRemaining: null, manifest: { id: "fixture", photoCount: body.mediaIds.length, downloadsRemaining: null } }) };
+      return { ok: true, json: async () => ({ ok: true, allowedMediaIds: body.mediaIds, deliveries: body.mediaIds.map(mediaId => ({mediaId,url:"/api/portal/event-download-file?token=fixture",watermarked:false,resolution:"original"})), downloadsRemaining: null, manifest: { id: "fixture", photoCount: body.mediaIds.length, downloadsRemaining: null } }) };
     },
     ...overrides,
   };

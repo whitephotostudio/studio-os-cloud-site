@@ -1,3 +1,4 @@
+import { resolveSchoolOrderMediaReferences } from "@/lib/school-order-media";
 import { randomUUID } from "node:crypto";
 import { checkoutAttemptIdentity } from "@/lib/checkout-attempt";
 // POST /api/portal/orders/create-combined
@@ -573,6 +574,10 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    for (const group of resolvedGroups) {
+      try { await resolveSchoolOrderMediaReferences(sb, group.schoolId, group.studentId, group.photographerId, resolvedEntries.filter(entry => entry.groupIndex === group.groupIndex && !entry.backdrop)); }
+      catch (error) { return NextResponse.json({ ok: false, message: error instanceof Error ? error.message : "Could not verify sibling photo selections." }, { status: 403 }); }
+    }
     // Validate every student before the first order write; a later sibling
     // failure must not leave a partially created combined checkout.
     for (const group of resolvedGroups) {

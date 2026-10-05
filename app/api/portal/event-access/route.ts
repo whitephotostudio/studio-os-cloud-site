@@ -1,3 +1,5 @@
+import { matchesEventCollectionPin } from "@/lib/event-download-scope";
+import { hasCalendarBoundaryPassed } from "@/lib/calendar-dates";
 import { NextRequest, NextResponse } from "next/server";
 import { createDashboardServiceClient } from "@/lib/dashboard-auth";
 import { getClientIp, rateLimit } from "@/lib/rate-limit";
@@ -9,6 +11,7 @@ type EventProjectRow = {
   status: string | null;
   workflow_type: string | null;
   portal_status: string | null;
+  expiration_date: string | null;
   email_required: boolean | null;
   access_mode: string | null;
   access_pin: string | null;
@@ -46,7 +49,7 @@ function matchesProjectPin(row: Pick<EventProjectRow, "access_mode" | "access_pi
 }
 
 function matchesCollectionPin(row: EventCollectionAccessRow, pin: string) {
-  return clean(row.slug) === pin || (normalizedAccessMode(row.access_mode) === "pin" && clean(row.access_pin) === pin);
+  return matchesEventCollectionPin(row, pin);
 }
 
 function isMissingVisitorsTable(error: unknown) {
@@ -104,7 +107,7 @@ export async function POST(request: NextRequest) {
     const service = createDashboardServiceClient();
     const { data: eventRow, error: eventError } = await service
       .from("projects")
-      .select("id,status,workflow_type,portal_status,email_required,access_mode,access_pin")
+      .select("id,status,workflow_type,portal_status,expiration_date,email_required,access_mode,access_pin")
       .eq("id", selectedEventId)
       .maybeSingle();
 
@@ -115,6 +118,8 @@ export async function POST(request: NextRequest) {
 
     const selectedEvent = eventRow as EventProjectRow;
     const portalStatus = clean(selectedEvent.portal_status).toLowerCase();
+    if (hasCalendarBoundaryPassed(selectedEvent.expiration_date)) return NextResponse.json({ ok: false, message: "This event gallery has expired." }, { status: 410 });
+    if (["closed", "inactive"].includes(portalStatus)) return NextResponse.json({ ok: false, message: "This event gallery is not currently available." }, { status: 403 });
 
     if (portalStatus === "pre_release") {
       // Capture email for pre-release list — non-fatal, ignore duplicates

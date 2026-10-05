@@ -91,6 +91,7 @@ function setup({ storedOrders = [], storedItems = [] } = {}) {
     '@/lib/event-gallery-settings': { normalizeEventGallerySettings: () => ({ extras: { shippingEnabled: false, pickupEnabled: true } }) },
     '@/lib/rate-limit': { rateLimit: async () => ({ allowed: true }), getClientIp: () => 'test' },
     '@/lib/subscription-gate': { hasActiveSubscription: () => true },
+    '@/lib/school-order-media': { resolveSchoolOrderMediaReferences: async () => {} },
     '@/lib/private-media-references': { durablePrivateMediaReference: value => value ?? '' },
     '@/lib/parent-cutout-preflight': {
       assertParentBackdropCutouts: async (_service, _context, entries) => { assert.ok(entries.every(entry => !entry.hasBackdrop), 'Old retouch fixtures must not silently bypass selected backgrounds'); },

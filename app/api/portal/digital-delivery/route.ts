@@ -4,6 +4,7 @@ import {
   contentDispositionAttachment,
   assertDigitalDeliveryReady,
   DigitalDeliveryReviewError,
+  DigitalDeliveryAccessError,
   createDigitalDeliveryZipStream,
   digitalDeliveryFileName,
   resolveDigitalDeliveryContext,
@@ -34,6 +35,8 @@ export async function GET(request: NextRequest) {
     const context = await resolveDigitalDeliveryContext(service, payload.orderId, {
       recipientEmail: payload.recipientEmail,
       requirePaid: true,
+      orderAccessGrant: payload.orderAccessGrant,
+      requireRecipientMatch: true,
     });
 
     if (context.recipientEmail.toLowerCase() !== payload.recipientEmail.toLowerCase()) {
@@ -66,6 +69,7 @@ export async function GET(request: NextRequest) {
       },
     });
   } catch (error) {
+    if (error instanceof DigitalDeliveryAccessError) return NextResponse.json({ ok: false, message: error.message }, { status: 403, headers: { "cache-control": "private, no-store" } });
     if (error instanceof DigitalDeliveryReviewError) return NextResponse.json({ ok: false, message: error.message }, { status: 409, headers: { "cache-control": "private, no-store" } });
     console.error("[digital-delivery]", error);
     return NextResponse.json(

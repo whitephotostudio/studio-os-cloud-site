@@ -1,3 +1,5 @@
+import { resolveSchoolOrderMediaReferences } from "@/lib/school-order-media";
+import { resolveEventOrderMediaReferences } from "@/lib/event-order-media";
 import { randomUUID } from "node:crypto";
 import { checkoutAttemptIdentity } from "@/lib/checkout-attempt";
 import { NextRequest, NextResponse } from "next/server";
@@ -819,6 +821,15 @@ export async function POST(request: NextRequest) {
       pkg: packageMap.get(entry.packageId)!, quantity: entry.quantity,
     })));
     if (purchaseIssue) return NextResponse.json({ ok: false, message: purchaseIssue }, { status: 400 });
+    if (mode === "event" && purchasedEventScope) {
+      try { await resolveEventOrderMediaReferences(sb, purchasedEventScope.projectId, purchasedEventScope.collectionIds, entries.filter(entry => !entry.backdrop)); }
+      catch (error) { return NextResponse.json({ ok: false, message: error instanceof Error ? error.message : "Could not verify event photo selections." }, { status: 403 }); }
+    }
+
+    if (mode === "school" && schoolId && student) {
+      try { await resolveSchoolOrderMediaReferences(sb, schoolId, student.id, photographerId, entries.filter(entry => !entry.backdrop)); }
+      catch (error) { return NextResponse.json({ ok: false, message: error instanceof Error ? error.message : "Could not verify student photo selections." }, { status: 403 }); }
+    }
 
     const backdropMap = new Map<string, BackdropRow>();
     if (backdropIds.length > 0) {

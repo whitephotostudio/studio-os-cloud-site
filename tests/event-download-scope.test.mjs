@@ -1,90 +1,6 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { createRequire } from 'node:module';
-import path from 'node:path';
-import vm from 'node:vm';
 import test from 'node:test';
-import ts from 'typescript';
-
-const require = createRequire(import.meta.url);
-const root = new URL('../', import.meta.url);
-const id = n => `10000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
-const projectId = id(1), otherProjectId = id(2), albumA = id(3), albumB = id(4), lockedAlbum = id(5);
-const a = id(10), b = id(11), locked = id(12), foreign = id(13);
-const readyRoute = 'app/api/portal/event-download-ready/route.ts';
-const legacyRoute = 'app/api/portal/event-downloads/route.ts';
-
-function harness({ extras = {}, media, logs = [], collections, repeatPage = false, failMediaPage = null } = {}) {
-  const writes = [], queries = [], fetched = [];
-  const tables = {
-    projects: [{ id: projectId, title: 'Fixture Event', workflow_type: 'event', status: 'active', email_required: false, access_mode: 'pin', access_pin: 'project-pin', photographer_id: null, gallery_settings: { extras: { freeDigitalRuleEnabled: true, showDownloadAllButton: true, freeDigitalAudience: 'gallery', freeDigitalDownloadLimit: 'unlimited', freeDigitalResolution: 'original', watermarkDownloads: false, includePrintRelease: false, allowClientFavoriteDownloads: true, favoriteDownloadsRequireAllDigitalsPurchase: false, ...extras } } }],
-    collections: collections ?? [
-      { id: albumA, project_id: projectId, title: 'Album A', kind: 'album', slug: 'album-a', access_mode: 'inherit_project', access_pin: null },
-      { id: albumB, project_id: projectId, title: 'Album B', kind: 'album', slug: 'album-b', access_mode: 'public', access_pin: null },
-      { id: lockedAlbum, project_id: projectId, title: 'Locked', kind: 'album', slug: 'guessable-slug', access_mode: 'private', access_pin: 'secret-pin' },
-    ],
-    media: media ?? [
-      { id: a, project_id: projectId, collection_id: albumA, filename: 'a.jpg', storage_path: 'fixture/a.jpg' },
-      { id: b, project_id: projectId, collection_id: albumB, filename: 'b.jpg', storage_path: 'fixture/b.jpg' },
-      { id: locked, project_id: projectId, collection_id: lockedAlbum, filename: 'locked.jpg', storage_path: 'fixture/locked.jpg' },
-      { id: foreign, project_id: otherProjectId, collection_id: albumA, filename: 'foreign.jpg', storage_path: 'fixture/foreign.jpg' },
-    ],
-    event_gallery_downloads: logs.map((row, index) => ({ id: id(20000 + index), project_id: projectId, viewer_email: 'viewer@example.test', download_type: 'gallery', ...row })),
-    pre_release_emails: [], subjects: [], orders: [], packages: [],
-  };
-  const service = { from(table) {
-    const filters = []; let range, cap, single = false, mutation = false;
-    const record = { table, filters: [], range: null }; queries.push(record);
-    const q = {
-      select() { return q; },
-      eq(key, value) { filters.push(row => row[key] === value); record.filters.push([key, value]); return q; },
-      in(key, values) { filters.push(row => values.includes(row[key])); record.filters.push([key, values]); return q; },
-      order() { return q; },
-      range(from, to) { range = [from, to]; record.range = range; return q; },
-      limit(value) { cap = value; return q; },
-      maybeSingle() { single = true; return q; },
-      insert(value) { mutation = true; writes.push({ table, value }); return q; },
-      upsert(value) { mutation = true; writes.push({ table, value }); return q; },
-      then(resolve, reject) {
-        if (table === 'media' && range?.[0] === failMediaPage) return Promise.resolve({ data: null, error: { message: 'fixture read failed' } }).then(resolve, reject);
-        let rows = (tables[table] ?? []).filter(row => filters.every(filter => filter(row)));
-        const count = rows.length;
-        if (range) rows = rows.slice(repeatPage && table === 'media' ? 0 : range[0], repeatPage && table === 'media' ? range[1] - range[0] + 1 : range[1] + 1);
-        rows = rows.slice(0, Math.min(cap ?? 1000, 1000));
-        return Promise.resolve({ data: mutation ? null : single ? rows[0] ?? null : rows, error: null, count }).then(resolve, reject);
-      },
-    }; return q;
-  } };
-  class NextResponse extends Response { static json(body, init) { return Response.json(body, init); } }
-  const cache = new Map();
-  const stubs = {
-    'next/server': { NextResponse },
-    '@/lib/dashboard-auth': { createDashboardServiceClient: () => service },
-    '@/lib/rate-limit': { rateLimit: async () => ({ allowed: true }), getClientIp: () => 'fixture' },
-    '@/lib/storage-images': { SIGNED_URL_TTL_PARENTS_PORTAL_SECONDS: 21600, buildSignedMediaUrls: ({ storagePath }) => ({ originalUrl: `https://fixture.test/${storagePath}`, previewUrl: null, thumbnailUrl: null }), extractStoragePathFromSupabaseUrl: () => null },
-    '@/lib/private-media-references': { signedPrivateMediaReference: value => value },
-    '@/lib/package-profile-selection': { filterPackagesForProfile: value => value },
-    '@/lib/subscription-gate': { hasActiveSubscription: () => false },
-    '@/lib/checkout-tax': { applyCheckoutTaxFallbackToSettings: value => value },
-  };
-  function load(file) {
-    if (cache.has(file)) return cache.get(file);
-    const exports = {}; cache.set(file, exports);
-    const js = ts.transpileModule(readFileSync(new URL(file, root), 'utf8'), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, esModuleInterop: true } }).outputText;
-    vm.runInNewContext(js, { exports, Response, Request, URL, Buffer, TextEncoder, ReadableStream, AbortController, setTimeout, clearTimeout, console, process: { env: { EVENT_DOWNLOAD_TOKEN_SECRET: 'synthetic-test-secret' } },
-      fetch: async url => { fetched.push(url); return new Response(new Uint8Array([1, 2, 3]), { headers: { 'content-type': 'image/jpeg' } }); },
-      require(name) { if (name in stubs) return stubs[name]; if (name.startsWith('@/')) return load(`${name.slice(2)}.ts`); if (name.startsWith('.')) return load(path.posix.normalize(path.posix.join(path.posix.dirname(file), name)) + '.ts'); return require(name); },
-    }, { filename: file }); return exports;
-  }
-  const body = overrides => ({ projectId, email: 'viewer@example.test', pin: 'project-pin', collectionId: albumA, mediaIds: [a, b, locked, foreign], ...overrides });
-  return { tables, queries, writes, fetched, load, body, async post(route, payload = body()) {
-    const response = await load(route).POST(new Request('https://fixture.test/api', { method: 'POST', body: JSON.stringify(payload), headers: { 'content-type': 'application/json' } }));
-    return { status: response.status, body: await response.json() };
-  }, async batch(token, json = false) {
-    const response = await load('app/api/portal/event-download-batch/route.ts').GET({ nextUrl: new URL(`https://fixture.test/api?token=${encodeURIComponent(token)}${json ? '&format=json' : ''}`) });
-    return { status: response.status, body: response.headers.get('content-type')?.includes('json') ? await response.json() : new Uint8Array(await response.arrayBuffer()) };
-  } };
-}
+import { harness, projectId, otherProjectId, albumA, albumB, lockedAlbum, a, b, locked, foreign, id, readyRoute, legacyRoute } from './helpers/event-gallery-harness.mjs';
 
 test('selected album is enforced for gallery-wide free rules before creating ZIP tokens', async () => {
   const h = harness(); const result = await h.post(readyRoute);
@@ -228,7 +144,7 @@ test('a project PIN change revokes prepared downloads without exposing PINs in t
 
 test('valid paid favorite access and configured resolution/watermark/print release keep the selected scope', async () => {
   const paid = harness({ extras: { favoriteDownloadsRequireAllDigitalsPurchase: true } });
-  paid.tables.orders.push({ project_id: projectId, package_id: null, package_name: 'All Digitals', status: 'paid', parent_email: 'viewer@example.test', customer_email: null });
+  paid.tables.orders.push({ project_id: projectId, package_id: null, package_name: 'All Digitals', status: 'paid', parent_email: 'viewer@example.test', customer_email: null, cart_snapshot: [{packageName:'All Digitals',purchasedEventScope:{version:1,projectId,collectionIds:[albumA]}}] });
   const favorite = await paid.post(legacyRoute, paid.body({ downloadType: 'favorites' }));
   assert.equal(favorite.status, 200); assert.deepEqual(favorite.body.allowedMediaIds, [a]);
   const h = harness({ extras: { freeDigitalAudience: 'person', freeDigitalTargetEmail: 'viewer@example.test', downloadPinEnabled: true, downloadPin: 'download-pin', freeDigitalResolution: 'web', watermarkDownloads: true, includePrintRelease: true } });
@@ -280,4 +196,44 @@ test('current invited, empty-list, and email-not-required policies keep valid pr
     assert.equal((await h.batch(ready.body.manifest.batches[0].token)).status, 200, policy);
     assert.equal(h.fetched.length, 1, policy);
   }
+});
+
+
+test('event viewing never exposes an original URL when downloads are disabled or gated', async () => {
+  for (const extras of [{freeDigitalRuleEnabled:false}, {downloadPinEnabled:true,downloadPin:'secret'}, {favoriteDownloadsRequireAllDigitalsPurchase:true}]) {
+    const h=harness({extras});
+    const context=await h.post('app/api/portal/event-gallery-context/route.ts',h.body());
+    assert.equal(context.status,200);
+    for(const row of context.body.media) {
+      assert.equal(row.download_url ?? null,null);
+      assert.match(row.preview_url,/event-preview/);
+      assert.equal(row.preview_url.includes('https://fixture.test/fixture/'),false);
+    }
+    assert.equal(h.fetched.length,0);
+  }
+});
+
+test('authorized single/favorite delivery returns server-gated file URLs instead of only authorizing IDs',async()=>{
+  for(const downloadType of ['gallery','favorites']) {
+    const h=harness(); const result=await h.post(legacyRoute,h.body({downloadType}));
+    assert.equal(result.status,200);
+    assert.equal(result.body.deliveries.length,1);
+    assert.equal(result.body.deliveries[0].mediaId,a);
+    assert.match(result.body.deliveries[0].url,/event-download-file/);
+    assert.equal(result.body.deliveries[0].url.includes('fixture\/a.jpg'),false);
+  }
+});
+
+test('turning downloads off revokes previously prepared original ZIPs before any object fetch',async()=>{
+  const h=harness(); const prepared=await h.post(readyRoute);
+  h.tables.projects[0].gallery_settings.extras.freeDigitalRuleEnabled=false;
+  assert.equal((await h.batch(prepared.body.manifest.batches[0].token)).status,403);
+  assert.equal(h.fetched.length,0);
+});
+
+
+test('paid all-digital favorites stay within the purchased album scope',async()=>{
+  const h=harness({extras:{favoriteDownloadsRequireAllDigitalsPurchase:true}});
+  h.tables.orders.push({id:id(200),project_id:projectId,package_name:'All Digitals',status:'paid',parent_email:'viewer@example.test',cart_snapshot:[{packageName:'All Digitals',purchasedEventScope:{version:1,projectId,collectionIds:[albumA]}}]});
+  assert.equal((await h.post(legacyRoute,h.body({collectionId:albumB,mediaIds:[b],downloadType:'favorites'}))).status,403);
 });

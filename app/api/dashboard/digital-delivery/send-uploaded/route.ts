@@ -67,7 +67,7 @@ export async function POST(request: NextRequest) {
 
     const { data: order, error: orderError } = await service
       .from("orders")
-      .select("id,photographer_id,school_id,student_id,status,payment_status,paid_at,parent_email,customer_email,parent_name,customer_name,notes")
+      .select("id,photographer_id,school_id,student_id,status,payment_status,paid_at,refund_status,refund_amount_cents,parent_email,customer_email,parent_name,customer_name,notes")
       .eq("id", parsed.data.orderId)
       .maybeSingle();
     if (orderError || !order?.id) return jsonError("Order not found.", 404);

@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import type { EventGalleryBrandingSettings } from "@/lib/event-gallery-settings";
+import { retryPortalPreviewImage } from "@/lib/portal-preview-retry";
 
 /** Optional cover header inside the selected album's photo browser. */
 export function EventAlbumHero(props: {
@@ -20,7 +21,10 @@ export function EventAlbumHero(props: {
   return <header className="event-album-hero" style={{ position: "relative", overflow: "hidden", background: props.tone.background, color: showImage ? "#ffffff" : props.tone.text, border: `1px solid ${props.tone.border}`, borderRadius: props.branding.themePreset === "editorial" ? 0 : 8 }}>
     <style>{`.event-album-hero .event-album-hero-content { min-height: 260px; padding: 40px 32px; } @media(max-width:560px) { .event-album-hero .event-album-hero-content { min-height: 180px; padding: 28px 22px; } }`}</style>
     {showImage ? <>
-      <img src={props.imageUrl!} alt="" loading="lazy" onError={() => setFailedImageUrl(props.imageUrl)} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", filter: props.imageFilter }} />
+      <img src={props.imageUrl!} alt="" loading="lazy" onError={event => {
+        if (retryPortalPreviewImage(event.currentTarget)) return;
+        setFailedImageUrl(props.imageUrl);
+      }} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", filter: props.imageFilter }} />
       <span aria-hidden="true" style={{ position: "absolute", inset: 0, background: `rgba(0,0,0,${props.overlayOpacity})` }} />
     </> : null}
     <div className="event-album-hero-content" style={{ position: "relative", boxSizing: "border-box", display: "flex", flexDirection: "column", justifyContent: "center", alignItems: centered ? "center" : "flex-start", textAlign: centered ? "center" : "left", gap: 16 }}>

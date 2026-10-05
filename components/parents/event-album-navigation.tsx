@@ -3,6 +3,7 @@
 import { useEffect, useRef } from "react";
 import { ChevronDown, ChevronRight, Images } from "lucide-react";
 import type { EventAlbumChoice } from "@/lib/event-album-navigation";
+import { retryPortalPreviewImage } from "@/lib/portal-preview-retry";
 
 type AlbumNavigationProps = {
   choices: EventAlbumChoice[];
@@ -19,7 +20,7 @@ function photoCount(choice: EventAlbumChoice, props: AlbumNavigationProps) {
 function AlbumThumbnail({ choice, size = 48 }: { choice: EventAlbumChoice; size?: number }) {
   return <span style={{ width: size, height: size, flex: "0 0 auto", background: "#e4e4e7", borderRadius: 6, overflow: "hidden", display: "grid", placeItems: "center" }}>
     {choice.thumbnailUrl
-      ? <img src={choice.thumbnailUrl} alt="" loading="lazy" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+      ? <img src={choice.thumbnailUrl} alt="" loading="lazy" onError={event => { retryPortalPreviewImage(event.currentTarget); }} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
       : <Images size={22} color="#71717a" aria-hidden="true" />}
   </span>;
 }
@@ -73,7 +74,7 @@ export function EventAlbumOverview(props: AlbumNavigationProps & {
       <div className="event-album-cards">
         {props.choices.map(choice => <button className="event-album-card" key={choice.value} type="button" onClick={() => props.onSelect(choice.value)}>
           <span className="event-album-cover" style={{ background: props.tone.surface, border: `1px solid ${props.tone.border}`, boxSizing: "border-box" }}>
-            {choice.thumbnailUrl ? <img src={choice.thumbnailUrl} alt="" loading="lazy" />
+            {choice.thumbnailUrl ? <img src={choice.thumbnailUrl} alt="" loading="lazy" onError={event => { retryPortalPreviewImage(event.currentTarget); }} />
               : <Images size={36} color={props.tone.mutedText} aria-hidden="true" />}
           </span>
           <span style={{ display: "flex", alignItems: "center", gap: 16, padding: "16px 3px 6px" }}>
