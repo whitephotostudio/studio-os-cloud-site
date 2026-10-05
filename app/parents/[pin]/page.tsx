@@ -9599,7 +9599,7 @@ export default function ParentGalleryPage() {
                 aria-label={galleryCopy.share}
                 style={{
                   background: "transparent",
-                  color: isEventImageStage ? "#52525b" : galleryTone.text,
+                  color: galleryTone.text,
                   border: isEventImageStage ? "none" : `1px solid ${galleryTone.border}`,
                   borderRadius: 999,
                   padding: isMobileViewport ? "8px 10px" : isEventImageStage ? 0 : "8px 16px",
@@ -9626,7 +9626,7 @@ export default function ParentGalleryPage() {
                       ? "rgba(17,17,17,0.08)"
                       : "rgba(255,255,255,0.08)"
                     : "transparent",
-                  color: isEventImageStage ? "#52525b" : galleryTone.text,
+                  color: galleryTone.text,
                   border: isEventImageStage
                     ? "none"
                     : `1px solid ${blackWhitePreviewActive ? galleryTone.text : galleryTone.border}`,
@@ -9652,7 +9652,7 @@ export default function ParentGalleryPage() {
                 disabled={orderingDisabled}
                 style={{
                   background: "transparent",
-                  color: orderingDisabled ? "#777" : isEventImageStage ? "#52525b" : galleryTone.text,
+                  color: orderingDisabled ? galleryTone.mutedText : galleryTone.text,
                   border: isEventImageStage ? "none" : `1px solid ${galleryTone.border}`,
                   borderRadius: 999,
                   padding: isEventImageStage ? 0 : "8px 16px",
@@ -9687,10 +9687,8 @@ export default function ParentGalleryPage() {
                     downloadingGallery ||
                     !galleryDownloadAccess.canDownload ||
                     (galleryDownloadAccess.audience === "album" && !activeEventCollectionId)
-                      ? "#777"
-                      : isEventImageStage
-                        ? "#52525b"
-                        : galleryTone.text,
+                      ? galleryTone.mutedText
+                      : galleryTone.text,
                   border: isEventImageStage ? "none" : `1px solid ${galleryTone.border}`,
                   borderRadius: 999,
                   padding: isEventImageStage ? 0 : "8px 16px",
@@ -9726,12 +9724,8 @@ export default function ParentGalleryPage() {
                     : "transparent",
                 color:
                   favorites.size > 0
-                    ? isEventImageStage
-                      ? "#dc2626"
-                      : "#dc2626"
-                    : isEventImageStage
-                      ? "#52525b"
-                      : galleryTone.text,
+                    ? "#dc2626"
+                    : galleryTone.text,
                 border: isEventImageStage
                   ? "none"
                   : `1px solid ${
@@ -9772,7 +9766,7 @@ export default function ParentGalleryPage() {
                     : isLightGallery
                       ? "#111111"
                       : "#fff",
-                color: orderingDisabled ? "#777" : isEventImageStage ? "#111111" : isLightGallery ? "#fff" : "#000",
+                color: orderingDisabled ? galleryTone.mutedText : isEventImageStage ? galleryTone.text : isLightGallery ? "#fff" : "#000",
                 border: isEventImageStage ? "none" : isLightGallery ? "1px solid #111111" : "none",
                 borderRadius: 999,
                 padding: isEventImageStage ? 0 : "8px 18px",
