@@ -227,8 +227,38 @@ test("legacy/default intro labels resolve to the current destination while custo
 const pageSource = readFileSync(new URL("../app/parents/[pin]/page.tsx", import.meta.url), "utf8");
 const pageAst = ts.createSourceFile("page.tsx", pageSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 const elements = new Map();
+const toolbarStyles = new Map();
+const toolbarHandlers = new Map([
+  ["handleShareGallery", "share"],
+  ["() => setBlackWhitePreviewEnabled((prev) => !prev)", "blackWhite"],
+  ["selectBuyAllPackage", "buyAll"],
+  ["downloadGalleryImages", "download"],
+  ["() => setActiveView(\"favorites\")", "favorites"],
+  ["basketItemCount > 0 ? openCartCheckout : openBuyDrawer", "store"],
+]);
+function isInsideGalleryToolbar(node) {
+  for (let ancestor = node.parent; ancestor; ancestor = ancestor.parent) {
+    if (!ts.isJsxElement(ancestor)) continue;
+    if (ancestor.children.some(child => ts.isJsxElement(child) && child.openingElement.tagName.getText(pageAst) === "button"
+      && child.openingElement.attributes.properties.some(attribute => ts.isJsxAttribute(attribute)
+        && attribute.name.getText(pageAst) === "onClick" && attribute.initializer && ts.isJsxExpression(attribute.initializer)
+        && attribute.initializer.expression?.getText(pageAst) === "openCombineDrawer"))) return true;
+  }
+  return false;
+}
 function collect(node) {
   if (ts.isJsxSelfClosingElement(node) && ["EventGalleryCover", "EventAlbumHero"].includes(node.tagName.getText(pageAst))) elements.set(node.tagName.getText(pageAst), node);
+  if (ts.isJsxOpeningElement(node) && node.tagName.getText(pageAst) === "button" && isInsideGalleryToolbar(node)) {
+    const attributes = node.attributes.properties.filter(ts.isJsxAttribute);
+    const handler = attributes.find(attribute => attribute.name.getText(pageAst) === "onClick")?.initializer;
+    const action = handler && ts.isJsxExpression(handler) ? toolbarHandlers.get(handler.expression?.getText(pageAst)) : null;
+    if (action) {
+      const style = attributes.find(attribute => attribute.name.getText(pageAst) === "style")?.initializer;
+      assert.ok(style && ts.isJsxExpression(style), `${action} toolbar button must have an evaluable style`);
+      assert.ok(!toolbarStyles.has(action), `${action} toolbar handler must identify one button`);
+      toolbarStyles.set(action, style.expression.getText(pageAst));
+    }
+  }
   ts.forEachChild(node, collect);
 }
 collect(pageAst);
@@ -247,6 +277,36 @@ function boundProps(name, globals) {
     return [attribute.name.getText(pageAst), value];
   }));
 }
+
+test("gallery toolbar actions remain readable in the saved light and dark tones", () => {
+  assert.equal(toolbarStyles.size, toolbarHandlers.size);
+  for (const backgroundMode of ["light", "dark"]) {
+    const galleryTone = presentation.galleryPresentationTone(branding({ backgroundMode, tone: "graphite" }));
+    const globals = {
+      galleryTone, isEventImageStage: true, isLightGallery: backgroundMode === "light", isMobileViewport: false,
+      blackWhitePreviewActive: false, orderingDisabled: false, downloadingGallery: false,
+      galleryDownloadAccess: { canDownload: true, audience: "gallery" }, activeEventCollectionId: "album-id", favorites: new Set(),
+    };
+    for (const [action, expression] of toolbarStyles) {
+      const style = evaluate(expression, globals);
+      assert.equal(style.background, "transparent", `${action} remains a transparent image-stage action`);
+      assert.equal(style.color, galleryTone.text, `${action} must follow the saved ${backgroundMode} tone`);
+    }
+    for (const action of ["buyAll", "store"]) {
+      assert.equal(evaluate(toolbarStyles.get(action), { ...globals, orderingDisabled: true }).color, galleryTone.mutedText);
+    }
+    for (const disabledState of [
+      { downloadingGallery: true },
+      { galleryDownloadAccess: { canDownload: false, audience: "gallery" } },
+      { galleryDownloadAccess: { canDownload: true, audience: "album" }, activeEventCollectionId: null },
+    ]) {
+      assert.equal(evaluate(toolbarStyles.get("download"), { ...globals, ...disabledState }).color, galleryTone.mutedText);
+    }
+    const filledStore = evaluate(toolbarStyles.get("store"), { ...globals, isEventImageStage: false });
+    assert.equal(filledStore.color, backgroundMode === "light" ? "#fff" : "#000");
+    assert.equal(filledStore.background, backgroundMode === "light" ? "#111111" : "#fff");
+  }
+});
 
 test("client welcome bindings pass the saved layout/theme/tone/accent and custom entry label", () => {
   const saved = branding({ introLayout: "minimal", themePreset: "cinema", fontPreset: "oswald", introCtaLabel: "Explore", showStudioMark: false });
