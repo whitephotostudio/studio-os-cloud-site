@@ -71,6 +71,8 @@ import { calendarDateInputValue, hasCalendarBoundaryPassed } from "@/lib/calenda
 import { canOfferParentBackdrops, parentBackdropSelectionIssue, usableParentCutouts, PARENT_BACKDROP_UNAVAILABLE, type ParentBackdropPortrait } from "@/lib/parent-backdrop-access";
 import { EventAlbumOverview, EventAlbumSwitcher } from "@/components/parents/event-album-navigation";
 import { EventGalleryCover } from "@/components/parents/event-gallery-cover";
+import { EventAlbumHero } from "@/components/parents/event-album-hero";
+import { galleryPresentationTone, galleryPresentationAccent, galleryIntroButtonLabel } from "@/lib/event-gallery-presentation";
 import { accessibleEventGalleryImages, buildEventAlbumChoices, eventAlbumChoiceForValue, imagesInEventAlbum, initialEventAlbumSelection } from "@/lib/event-album-navigation";
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -701,101 +703,11 @@ function getGalleryFontFamily(settings: EventGallerySettings) {
 }
 
 function getGalleryTone(settings: EventGallerySettings) {
-  if (settings.branding.backgroundMode === "light") {
-    switch (settings.branding.tone) {
-      case "graphite":
-        return {
-          background: "#f4f6f8",
-          surface: "#ffffff",
-          surfaceMuted: "rgba(15,23,42,0.05)",
-          border: "#d7dde5",
-          text: "#27313b",
-          mutedText: "#6b7280",
-          heroOverlay: "rgba(247,249,251,0.64)",
-        };
-      case "smoke":
-        return {
-          background: "#f7f7f7",
-          surface: "#ffffff",
-          surfaceMuted: "rgba(17,24,39,0.04)",
-          border: "#e1e4e8",
-          text: "#2f2f2f",
-          mutedText: "#777777",
-          heroOverlay: "rgba(250,250,250,0.62)",
-        };
-      default:
-        return {
-          background: "#f8f8f8",
-          surface: "#ffffff",
-          surfaceMuted: "rgba(17,24,39,0.04)",
-          border: "#e5e7eb",
-          text: "#262626",
-          mutedText: "#7b7b7b",
-          heroOverlay: "rgba(248,248,248,0.68)",
-        };
-    }
-  }
-  switch (settings.branding.tone) {
-    case "graphite":
-      return {
-        background: "#0f1012",
-        surface: "#17191d",
-        surfaceMuted: "rgba(255,255,255,0.05)",
-        border: "#23262b",
-        text: "#c8ccd2",
-        mutedText: "#8f97a3",
-        heroOverlay: "rgba(8,9,11,0.58)",
-      };
-    case "smoke":
-      return {
-        background: "#141414",
-        surface: "#1d1d1d",
-        surfaceMuted: "rgba(255,255,255,0.06)",
-        border: "#2d2d2d",
-        text: "#cdcdcd",
-        mutedText: "#9b9b9b",
-        heroOverlay: "rgba(16,16,16,0.5)",
-      };
-    default:
-      return {
-        background: "#080808",
-        surface: "#111111",
-        surfaceMuted: "rgba(255,255,255,0.04)",
-        border: "#1a1a1a",
-        text: "#cfcfcf",
-        mutedText: "#8f8f8f",
-        heroOverlay: "rgba(6,6,6,0.62)",
-      };
-  }
+  return galleryPresentationTone(settings.branding);
 }
 
 function getGalleryAccent(settings: EventGallerySettings) {
-  switch (settings.branding.accentColor) {
-    case "champagne":
-      return {
-        solid: "#c4a574",
-        strong: "#a78758",
-        muted: "rgba(196,165,116,0.18)",
-        border: "rgba(196,165,116,0.34)",
-        text: "#f3e7d2",
-      };
-    case "ivory":
-      return {
-        solid: "#f2ede5",
-        strong: "#d9d0c1",
-        muted: "rgba(242,237,229,0.16)",
-        border: "rgba(242,237,229,0.28)",
-        text: "#fffaf2",
-      };
-    default:
-      return {
-        solid: "#991b1b",
-        strong: "#b91c1c",
-        muted: "rgba(153,27,27,0.18)",
-        border: "rgba(153,27,27,0.34)",
-        text: "#fee2e2",
-      };
-  }
+  return galleryPresentationAccent(settings.branding);
 }
 
 function getHeroOverlayOpacity(settings: EventGallerySettings) {
@@ -1372,7 +1284,7 @@ function buildEventPhotoRows(
   targetRowHeight: number,
 ) {
   const safeContainerWidth = Math.max(320, Math.floor(containerWidth));
-  const safeGap = Math.max(10, Math.round(gap));
+  const safeGap = Math.max(0, Math.round(gap));
   const minRowHeight = Math.max(170, Math.round(targetRowHeight * 0.76));
   const maxRowHeight = Math.max(minRowHeight + 24, Math.round(targetRowHeight * 1.18));
   const rows: EventWallRow[] = [];
@@ -5177,13 +5089,7 @@ export default function ParentGalleryPage() {
       images: visibleImages.slice(start, start + viewerThumbnailWindowSize),
     };
   }, [selectedImageIndex, showPhotoViewer, viewerThumbnailWindowSize, visibleImages]);
-  const eventCanvasBackground = isEventImageStage
-    ? "#ffffff"
-    : isEventGallery
-      ? isMobileViewport
-        ? "#ffffff"
-        : "#f7f3ee"
-      : galleryTone.background;
+  const eventCanvasBackground = galleryTone.background;
   const galleryPickerValue = showAlbumOverview
     ? "__albums__"
     : activeEventCollectionId
@@ -6758,6 +6664,9 @@ export default function ParentGalleryPage() {
     const isFavorited = favorites.has(img.id);
     const isEventPhotoWall = !isSchoolMode && activeView === "photos";
     const isMobileEventPhotoWall = isEventPhotoWall && isMobileViewport;
+    const eventActionSize = isMobileEventPhotoWall
+      ? currentGalleryBranding.gridDensity === "tight" ? 28 : 36
+      : 42;
     const imagePadding = isEventPhotoWall ? 0 : options?.featured ? 14 : layout === "subway" ? 8 : 6;
     const wallImageCandidates = buildGalleryImageCandidates(img, "wall");
     const cardImageUrl = wallImageCandidates[0] || img.downloadUrl || img.url;
@@ -6905,7 +6814,7 @@ export default function ParentGalleryPage() {
                   bottom: 14,
                   display: "flex",
                   alignItems: "center",
-                  gap: 12,
+                  gap: isMobileEventPhotoWall ? eventActionSize === 28 ? 4 : 8 : 12,
                   zIndex: 3,
                 }}
               >
@@ -6916,8 +6825,8 @@ export default function ParentGalleryPage() {
                     toggleFavorite(img.id);
                   }}
                   style={{
-                    width: 42,
-                    height: 42,
+                    width: eventActionSize,
+                    height: eventActionSize,
                     borderRadius: 999,
                     border: "1px solid rgba(255,255,255,0.22)",
                     background: "rgba(17,17,17,0.38)",
@@ -6941,8 +6850,8 @@ export default function ParentGalleryPage() {
                       void downloadSingleImage(img, index);
                     }}
                     style={{
-                      width: 42,
-                      height: 42,
+                      width: eventActionSize,
+                      height: eventActionSize,
                       borderRadius: 999,
                       border: "1px solid rgba(255,255,255,0.22)",
                       background: "rgba(17,17,17,0.38)",
@@ -6967,8 +6876,8 @@ export default function ParentGalleryPage() {
                       void handleShareImage(img, index);
                     }}
                     style={{
-                      width: 42,
-                      height: 42,
+                      width: eventActionSize,
+                      height: eventActionSize,
                       borderRadius: 999,
                       border: "1px solid rgba(255,255,255,0.22)",
                       background: "rgba(17,17,17,0.38)",
@@ -7074,6 +6983,9 @@ export default function ParentGalleryPage() {
 
   function renderPhotoWall(imagesToRender: GalleryImage[]) {
     const isEventPhotoWall = !isSchoolMode && activeView === "photos";
+    const mobileColumnCount = currentGalleryBranding.gridDensity === "airy"
+      ? 1
+      : currentGalleryBranding.gridDensity === "tight" ? 3 : 2;
     const columnItemStyle = {
       breakInside: "avoid-column",
       pageBreakInside: "avoid",
@@ -7082,22 +6994,22 @@ export default function ParentGalleryPage() {
       WebkitColumnBreakInside: "avoid",
     } as React.CSSProperties & Record<string, string>;
 
-    if (isEventPhotoWall) {
-      const eventGap = isMobileViewport ? 8 : Math.max(12, Math.min(galleryGap, 16));
+    if (isEventPhotoWall && photoWallStyle === "subway") {
+      const eventGap = galleryGap;
       if (isMobileViewport) {
         return (
           <div
             ref={eventPhotoWallRef}
             style={{
               display: "grid",
-              gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+              gridTemplateColumns: `repeat(${mobileColumnCount}, minmax(0, 1fr))`,
               gap: `${eventGap}px`,
               alignContent: "start",
             }}
           >
             {imagesToRender.map((img, index) =>
               renderPhotoWallCard(img, index, {
-                layout: "cascade",
+                layout: "subway",
                 imageAspectRatio: galleryImageRatios[img.id] ?? 1.34,
               }),
             )}
@@ -7105,10 +7017,10 @@ export default function ParentGalleryPage() {
         );
       }
 
-      const eventColumnWidth = Math.max(220, photoWallColumnWidth - 30);
+      const eventColumnWidth = Math.max(160, photoWallColumnWidth - 30);
       const eventTargetRowHeight = Math.max(
-        210,
-        Math.min(250, Math.round(eventColumnWidth * 0.98)),
+        160,
+        Math.min(300, Math.round(eventColumnWidth * 0.98)),
       );
       const eventRows =
         eventPhotoWallWidth > 0
@@ -7149,7 +7061,7 @@ export default function ParentGalleryPage() {
                   }}
                 >
                   {renderPhotoWallCard(item.image, item.index, {
-                    layout: "cascade",
+                    layout: "subway",
                     imageAspectRatio: item.aspectRatio,
                   })}
                 </div>
@@ -7163,8 +7075,10 @@ export default function ParentGalleryPage() {
     if (photoWallStyle === "cascade") {
       return (
         <div
+          ref={isEventPhotoWall ? eventPhotoWallRef : undefined}
           style={{
-            columnWidth: `${photoWallColumnWidth}px`,
+            columnWidth: isEventPhotoWall && isMobileViewport ? undefined : `${photoWallColumnWidth}px`,
+            columnCount: isEventPhotoWall && isMobileViewport ? mobileColumnCount : undefined,
             columnGap: `${galleryGap}px`,
           }}
         >
@@ -7188,7 +7102,7 @@ export default function ParentGalleryPage() {
       const trailingImages = imagesToRender.slice(Math.min(5, imagesToRender.length));
 
       return (
-        <div style={{ display: "grid", gap: galleryGap + 6 }}>
+        <div ref={isEventPhotoWall ? eventPhotoWallRef : undefined} style={{ display: "grid", gap: galleryGap + 6 }}>
           {leadImages.length ? (
             <div
               style={{
@@ -7208,7 +7122,9 @@ export default function ParentGalleryPage() {
                 <div
                   style={{
                     display: "grid",
-                    gridTemplateColumns: leadImages.length > 3 ? "repeat(2, minmax(0, 1fr))" : "minmax(0, 1fr)",
+                    gridTemplateColumns: isEventPhotoWall && isMobileViewport
+                      ? `repeat(${mobileColumnCount}, minmax(0, 1fr))`
+                      : leadImages.length > 3 ? "repeat(2, minmax(0, 1fr))" : "minmax(0, 1fr)",
                     gap: galleryGap,
                   }}
                 >
@@ -7221,7 +7137,8 @@ export default function ParentGalleryPage() {
           {trailingImages.length ? (
             <div
               style={{
-                columnWidth: `${isMobileViewport ? 140 : Math.max(220, photoWallColumnWidth - 20)}px`,
+                columnWidth: isEventPhotoWall && isMobileViewport ? undefined : `${isMobileViewport ? 140 : Math.max(isEventPhotoWall ? 160 : 220, photoWallColumnWidth - 20)}px`,
+                columnCount: isEventPhotoWall && isMobileViewport ? mobileColumnCount : undefined,
                 columnGap: `${galleryGap}px`,
               }}
             >
@@ -7244,6 +7161,7 @@ export default function ParentGalleryPage() {
 
     return (
       <div
+        ref={isEventPhotoWall ? eventPhotoWallRef : undefined}
         style={{
           display: "grid",
           gridTemplateColumns: `repeat(auto-fill, minmax(${photoGridMinWidth}px, 1fr))`,
@@ -9511,11 +9429,11 @@ export default function ParentGalleryPage() {
               : isEventImageStage
                 ? "12px 22px"
                 : "0 20px",
-            borderBottom: isEventImageStage ? "1px solid rgba(17,17,17,0.08)" : `1px solid ${galleryTone.border}`,
+            borderBottom: `1px solid ${galleryTone.border}`,
             position: "relative",
             zIndex: 20,
             background: isEventImageStage
-              ? "rgba(255,255,255,0.96)"
+              ? galleryTone.background
               : isLightGallery
                 ? "rgba(255,255,255,0.92)"
                 : galleryTone.background,
@@ -9547,7 +9465,7 @@ export default function ParentGalleryPage() {
                   gap: 2,
                 }}
               >
-                <span style={{ fontSize: isMobileViewport ? 21 : 28, lineHeight: 1.05, fontWeight: 500, color: "#222222" }}>
+                <span style={{ fontSize: isMobileViewport ? 21 : 28, lineHeight: 1.05, fontWeight: 500, color: galleryTone.text }}>
                   {galleryHeadline}
                 </span>
                 <span
@@ -9555,7 +9473,7 @@ export default function ParentGalleryPage() {
                     fontSize: isMobileViewport ? 9 : 10,
                     letterSpacing: "0.18em",
                     textTransform: "uppercase",
-                    color: "#71717a",
+                    color: galleryTone.mutedText,
                     fontWeight: 700,
                   }}
                 >
@@ -9650,7 +9568,7 @@ export default function ParentGalleryPage() {
               justifyContent: isMobileViewport && isEventImageStage ? "flex-start" : "flex-end",
               width: isMobileViewport && isEventImageStage ? "100%" : undefined,
               paddingTop: isMobileViewport && isEventImageStage ? 8 : undefined,
-              borderTop: isMobileViewport && isEventImageStage ? "1px solid rgba(17,17,17,0.08)" : undefined,
+              borderTop: isMobileViewport && isEventImageStage ? `1px solid ${galleryTone.border}` : undefined,
             }}
           >
             {/* Save-with-Combine pill — always visible in the gallery top
@@ -9981,6 +9899,8 @@ export default function ParentGalleryPage() {
             photosLabel="photos"
             isMobile={isMobileViewport}
             tone={galleryTone}
+            themePreset={currentGalleryBranding.themePreset}
+            accentColor={galleryAccent.solid}
           />
         )}
 
@@ -10561,14 +10481,24 @@ export default function ParentGalleryPage() {
                   flex: 1,
                   overflow: "auto",
                   padding: isMobileViewport ? "8px 10px 30px" : "12px 12px 32px",
-                  background: isMobileViewport ? "#ffffff" : undefined,
+                  background: galleryTone.background,
                 }}
               >
                 <div style={{ width: "100%", display: "grid", gap: isMobileViewport ? 8 : 12 }}>
+                  {currentGalleryBranding.showHeroHeader ? <EventAlbumHero
+                    title={galleryHeaderTitle}
+                    imageUrl={activeSceneCoverUrl}
+                    imageFilter={galleryImageFilter}
+                    metadata={[!currentGalleryExtras.hideAlbumPhotoCount ? compactCountLabel(activeScenePhotoCount, "photo") : "", galleryEventDate, galleryAccessLabel].filter(Boolean)}
+                    branding={currentGalleryBranding}
+                    tone={galleryTone}
+                    overlayOpacity={heroOverlayTint}
+                    accentColor={galleryAccent.solid}
+                  /> : null}
                   <div
                     style={{
                       display: isMobileViewport ? "none" : "grid",
-                      gridTemplateColumns: isMobileViewport ? "minmax(0, 1fr)" : "minmax(0, 1fr) auto",
+                      gridTemplateColumns: currentGalleryBranding.showHeroHeader || isMobileViewport ? "minmax(0, 1fr)" : "minmax(0, 1fr) auto",
                       gap: isMobileViewport ? 16 : 28,
                       alignItems: "end",
                       padding: isMobileViewport ? "18px 2px 10px" : "28px 12px 16px",
@@ -10576,7 +10506,7 @@ export default function ParentGalleryPage() {
                   >
                     <div
                       style={{
-                        display: "flex",
+                        display: currentGalleryBranding.showHeroHeader ? "none" : "flex",
                         alignItems: "flex-end",
                         gap: 16,
                         minWidth: 0,
@@ -10610,7 +10540,7 @@ export default function ParentGalleryPage() {
                       <div style={{ minWidth: 0, display: "grid", gap: 7 }}>
                         <div
                           style={{
-                            color: "#71717a",
+                            color: galleryTone.mutedText,
                             fontSize: 10,
                             fontWeight: 700,
                             letterSpacing: "0.16em",
@@ -10621,7 +10551,7 @@ export default function ParentGalleryPage() {
                         </div>
                         <div
                           style={{
-                            color: "#18181b",
+                            color: galleryTone.text,
                             fontSize: isMobileViewport ? 30 : 42,
                             fontWeight: 500,
                             lineHeight: 1,
@@ -10632,7 +10562,7 @@ export default function ParentGalleryPage() {
                         </div>
                         <div
                           style={{
-                            color: "#52525b",
+                            color: galleryTone.mutedText,
                             fontSize: 13,
                             lineHeight: 1.5,
                           }}
@@ -10659,9 +10589,9 @@ export default function ParentGalleryPage() {
                           type="button"
                           onClick={openAlbumsOverview}
                           style={{
-                            border: "1px solid rgba(24,24,27,0.13)",
-                            background: "#ffffff",
-                            color: "#18181b",
+                            border: `1px solid ${galleryTone.border}`,
+                            background: galleryTone.surface,
+                            color: galleryTone.text,
                             height: 38,
                             padding: "0 14px",
                             fontSize: 12,
@@ -10681,9 +10611,9 @@ export default function ParentGalleryPage() {
                           type="button"
                           onClick={() => setActiveView("store")}
                           style={{
-                            border: "1px solid rgba(24,24,27,0.13)",
-                            background: "#18181b",
-                            color: "#ffffff",
+                            border: `1px solid ${galleryTone.border}`,
+                            background: galleryAccent.solid,
+                            color: galleryAccent.solid === "#991b1b" ? "#ffffff" : "#18181b",
                             height: 38,
                             padding: "0 14px",
                             fontSize: 12,
@@ -14301,11 +14231,15 @@ export default function ParentGalleryPage() {
           showStudioMark={currentGalleryBranding.showStudioMark}
           metadata={galleryMetaItems}
           message={customGalleryDescription !== clean(defaultEventGallerySettings.branding.introMessage) ? customGalleryDescription : ""}
-          buttonLabel={eventHasAlbums ? galleryCopy.viewAlbums : galleryCopy.viewPhotos}
+          buttonLabel={galleryIntroButtonLabel(currentGalleryBranding.introCtaLabel, eventHasAlbums ? galleryCopy.viewAlbums : galleryCopy.viewPhotos)}
           onEnter={enterEventGallery}
           fontFamily={galleryFontFamily}
           serifTitle={usesSerifHero(currentGalleryBranding.fontPreset)}
           overlayOpacity={heroOverlayTint}
+          layout={currentGalleryBranding.introLayout}
+          themePreset={currentGalleryBranding.themePreset}
+          tone={galleryTone}
+          accentColor={galleryAccent.solid}
         />
       ) : null}
     </>

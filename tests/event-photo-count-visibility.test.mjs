@@ -125,7 +125,7 @@ test("welcome and album metadata omit photo totals while keeping album count and
 });
 
 test("photo grid total obeys the setting without hiding the date or leaving a separator", () => {
-  const globals = { activeScenePhotoCount: 427, galleryEventDate: "October 4, 2026" };
+  const globals = { activeScenePhotoCount: 427, galleryEventDate: "October 4, 2026", galleryTone: { mutedText: "#888888" } };
   const hidden = render(gridMetadata, { ...globals, currentGalleryExtras: { hideAlbumPhotoCount: true } }, compactCountLabel);
   assert.equal(textOf(hidden), "October 4, 2026");
   const visible = render(gridMetadata, { ...globals, currentGalleryExtras: { hideAlbumPhotoCount: false } }, compactCountLabel);
