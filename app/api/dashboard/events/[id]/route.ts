@@ -48,6 +48,8 @@ const ProjectUpdateBodySchema = z.object({
   title: z.string().max(500).nullable().optional(),
   portal_status: z.string().max(64).nullable().optional(),
   shoot_date: z.string().max(64).nullable().optional(),
+  event_date: z.string().max(64).nullable().optional(),
+  expected_updated_at: z.string().max(64).nullable().optional(),
   order_due_date: z.string().max(64).nullable().optional(),
   expiration_date: z.string().max(64).nullable().optional(),
   archive_date: z.string().max(64).nullable().optional(),
@@ -815,6 +817,15 @@ export async function PATCH(
       );
     }
 
+    const checkVersion = hasOwn(body, "expected_updated_at");
+    const expectedUpdatedAt = clean(body.expected_updated_at) || null;
+    if (checkVersion && (clean(currentProject.updated_at) || null) !== expectedUpdatedAt) {
+      return NextResponse.json(
+        { ok: false, message: "Project changed in cloud. Refresh and save again." },
+        { status: 409 },
+      );
+    }
+
     const linkedSchoolResolution = await resolveOwnedProjectLinkedSchool({
       service,
       project: currentProject,
@@ -909,6 +920,9 @@ export async function PATCH(
     if (hasOwn(body, "shoot_date")) {
       updatePayload.shoot_date = clean(body.shoot_date) || null;
     }
+    if (hasOwn(body, "event_date")) {
+      updatePayload.event_date = clean(body.event_date) || null;
+    }
     if (hasOwn(body, "order_due_date")) {
       updatePayload.order_due_date = clean(body.order_due_date) || null;
     }
@@ -977,13 +991,17 @@ export async function PATCH(
     }
 
     console.log("[PATCH /api/dashboard/events/[id]] updatePayload keys:", Object.keys(updatePayload));
-    console.log("[PATCH /api/dashboard/events/[id]] updatePayload:", JSON.stringify(updatePayload, null, 2));
-
-    const { data: projectData, error: projectError } = await service
+    let updateQuery = service
       .from("projects")
       .update(updatePayload)
       .eq("id", projectId)
-      .eq("photographer_id", photographerRow.id)
+      .eq("photographer_id", photographerRow.id);
+    if (checkVersion) {
+      updateQuery = expectedUpdatedAt
+        ? updateQuery.eq("updated_at", expectedUpdatedAt)
+        : updateQuery.is("updated_at", null);
+    }
+    const { data: projectData, error: projectError } = await updateQuery
       .select("*")
       .maybeSingle();
 
@@ -993,8 +1011,8 @@ export async function PATCH(
     }
     if (!projectData) {
       return NextResponse.json(
-        { ok: false, message: "Project not found." },
-        { status: 404 },
+        { ok: false, message: checkVersion ? "Project changed in cloud. Refresh and save again." : "Project not found." },
+        { status: checkVersion ? 409 : 404 },
       );
     }
 
@@ -1054,6 +1072,7 @@ export async function PATCH(
         "portal_status",
         "status",
         "shoot_date",
+        "event_date",
         "order_due_date",
         "expiration_date",
         "package_profile_id",
