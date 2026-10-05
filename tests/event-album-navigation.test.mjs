@@ -99,25 +99,77 @@ function componentHarness() {
   return { components, hooks, listeners, render(name, props) { cursor = 0; return components[name](props); } };
 }
 const componentProps = onSelect => ({ choices: choicesFor(), onSelect, hidePhotoCount: false, photoLabel: "photo", photosLabel: "photos" });
+const overviewProps = (overrides = {}) => ({
+  ...componentProps(() => {}), isMobile: false,
+  title: "A branded gallery", description: "Choose an album, or view all photos.", albumsLabel: "Albums",
+  brandName: "White Photo", brandLogoUrl: "/logo.svg", metadata: ["4 albums", "8 photos"],
+  tone: { background: "#fafafa", surface: "#fff", text: "#111", mutedText: "#555", border: "#ddd" },
+  ...overrides,
+});
 
 test("mobile and desktop overview renders every thumbnail choice before any photo grid", () => {
   for (const isMobile of [true, false]) {
     const ui = componentHarness(), selected = [];
-    const tree = ui.render("EventAlbumOverview", {
-      ...componentProps(value => selected.push(value)), isMobile,
-      title: "A branded gallery", description: "Choose an album, or view all photos.", albumsLabel: "Albums",
-      brandName: "White Photo", brandLogoUrl: "/logo.svg", metadata: ["4 albums", "8 photos"],
-      tone: { background: "#fafafa", surface: "#fff", text: "#111", mutedText: "#555", border: "#ddd" },
-    });
+    const props = overviewProps({ onSelect: value => selected.push(value), isMobile });
+    const tree = ui.render("EventAlbumOverview", props);
     const buttons = findAll(tree, "button");
     assert.equal(buttons.length, 5);
     assert.equal(findAll(tree, "img").length, 6);
+    assert.equal(tree.props["aria-label"], "Albums");
     assert.equal(tree.props.style.overflow, "auto");
     assert.equal(tree.props.style.minHeight, 0);
-    assert.match(textOf(tree), /White Photo/);
+    const header = findAll(tree, "header")[0];
+    const logo = findAll(header, "img")[0];
+    assert.equal(logo.props.src, "/logo.svg");
+    assert.equal(logo.props.alt, "White Photo");
+    assert.equal(logo.props.style.objectFit, "contain");
+    assert.doesNotMatch(textOf(header), /White Photo/);
+    assert.deepEqual(buttons.map(button => findAll(button, "img")[0].props.src), plain(props.choices.map(choice => choice.thumbnailUrl)));
+    assert.deepEqual(buttons.map(button => findAll(button, "img")[0].props.alt), Array(5).fill(""));
+    assert.ok(buttons.every(button => button.props.type === "button"));
     assert.match(textOf(tree), /Kite web-size/);
-    buttons[4].props.onClick();
-    assert.deepEqual(selected, ["album:kite-web"]);
+    buttons.forEach((button, index) => {
+      assert.ok(textOf(button).includes(props.choices[index].title));
+      button.props.onClick();
+    });
+    assert.deepEqual(selected, plain(props.choices.map(choice => choice.value)));
+  }
+});
+
+test("overview shows the studio name as a readable fallback when no logo exists", () => {
+  const tree = componentHarness().render("EventAlbumOverview", overviewProps({ brandLogoUrl: null }));
+  const header = findAll(tree, "header")[0];
+  assert.equal(findAll(header, "img").length, 0);
+  assert.match(textOf(header), /White Photo/);
+  assert.match(textOf(header), /A branded gallery/);
+  assert.equal(findAll(tree, "button").length, 5);
+});
+
+test("overview photo counts respect the owner choice without removing album cards", () => {
+  const ui = componentHarness();
+  for (const hidePhotoCount of [true, false]) {
+    const tree = ui.render("EventAlbumOverview", overviewProps({ hidePhotoCount, metadata: ["4 albums", "Private access"] }));
+    const buttons = findAll(tree, "button");
+    assert.equal(buttons.length, 5);
+    assert.equal(textOf(buttons[0]).includes("8 photos"), !hidePhotoCount);
+    for (const button of buttons.slice(1)) assert.equal(textOf(button).includes("2 photos"), !hidePhotoCount);
+    assert.match(textOf(findAll(tree, "header")[0]), /4 albums · Private access/);
+  }
+});
+
+test("an album without a cover keeps its title, accessible placeholder, and selection", () => {
+  for (const isMobile of [true, false]) {
+    const selected = [];
+    const choices = choicesFor({ collections: [{ id: "empty", title: "Coming soon" }], images: [], hideAllPhotosAlbum: true });
+    const tree = componentHarness().render("EventAlbumOverview", overviewProps({ choices, isMobile, onSelect: value => selected.push(value) }));
+    const button = findAll(tree, "button")[0];
+    assert.match(textOf(button), /Coming soon/);
+    assert.equal(findAll(button, "img").length, 0);
+    const placeholder = findAll(button, "icon-Images")[0];
+    assert.ok(placeholder);
+    assert.equal(placeholder.props["aria-hidden"], "true");
+    button.props.onClick();
+    assert.deepEqual(selected, ["album:empty"]);
   }
 });
 
