@@ -12,7 +12,7 @@ import {
   r2KeyFromAnyUrl,
   r2PresignedGetUrl,
 } from "@/lib/r2-signed-urls";
-import { resendConfigured, resolveReplyTo, sendResendEmail } from "@/lib/resend";
+import { resendConfigured, resolveReplyTo, sendResendEmail, type SendResendEmailInput } from "@/lib/resend";
 import { cartSnapshotToOrderItems, type CartSnapshotEntryLike } from "@/lib/order-display";
 import { createZipStream, type ZipStreamEntry } from "@/lib/zip";
 import {
@@ -700,20 +700,11 @@ function escHtml(value: string) {
     .replace(/"/g, "&quot;");
 }
 
-export async function sendDigitalDeliveryEmailForOrder(
+export async function buildDigitalDeliveryEmailForOrder(
   service: ServiceClient,
   orderId: string,
   options?: { recipientEmail?: string | null; force?: boolean },
 ) {
-  if (!resendConfigured()) {
-    return {
-      ok: false as const,
-      skipped: true as const,
-      reason: "email_not_configured",
-      message: "Email delivery is not configured on the server.",
-    };
-  }
-
   const context = await resolveDigitalDeliveryContext(service, orderId, {
     recipientEmail: options?.recipientEmail,
     requirePaid: true,
@@ -785,7 +776,7 @@ export async function sendDigitalDeliveryEmailForOrder(
     "This secure link expires in 30 days. If you need help, reply to this email.",
   ].join("\n");
 
-  await sendResendEmail({
+  const payload: SendResendEmailInput = {
     to: context.recipientEmail,
     subject: "Your digital photos are ready",
     html,
@@ -797,21 +788,38 @@ export async function sendDigitalDeliveryEmailForOrder(
       { name: "order_id", value: orderId },
     ],
     idempotencyKey: `digital-delivery-${orderId}-${context.recipientEmail.toLowerCase()}`,
-  });
+  };
 
-  const noteLine = `Digital delivery link emailed ${new Date().toISOString()} (${context.files.length} ${plural}) to ${context.recipientEmail}.`;
+  return { ok: true as const, skipped: false as const, payload,
+    fileCount: context.files.length, recipientEmail: context.recipientEmail, notes, plural };
+}
+
+export async function sendDigitalDeliveryEmailForOrder(
+  service: ServiceClient,
+  orderId: string,
+  options?: { recipientEmail?: string | null; force?: boolean },
+) {
+  if (!resendConfigured()) {
+    return { ok: false as const, skipped: true as const, reason: "email_not_configured",
+      message: "Email delivery is not configured on the server." };
+  }
+  const prepared = await buildDigitalDeliveryEmailForOrder(service, orderId, options);
+  if (prepared.skipped) return prepared;
+  await sendResendEmail(prepared.payload);
+
+  const noteLine = `Digital delivery link emailed ${new Date().toISOString()} (${prepared.fileCount} ${prepared.plural}) to ${prepared.recipientEmail}.`;
   await service
     .from("orders")
     .update({
-      notes: notes ? `${notes}\n\n${noteLine}` : noteLine,
+      notes: prepared.notes ? `${prepared.notes}\n\n${noteLine}` : noteLine,
     })
     .eq("id", orderId);
 
   return {
     ok: true as const,
     skipped: false as const,
-    fileCount: context.files.length,
-    recipientEmail: context.recipientEmail,
+    fileCount: prepared.fileCount,
+    recipientEmail: prepared.recipientEmail,
   };
 }
 

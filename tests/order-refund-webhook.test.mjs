@@ -12,6 +12,7 @@ async function run(type,{pending=false,queueFailure=false}={}){
  const service={from:table=>({delete:()=>({eq:async(_key,id)=>{recorded.delete(id);return {error:null};}})})};
  const deps={'next/server':{NextResponse:{json:(value,options)=>Response.json(value,options)}},'@/lib/dashboard-auth':{createDashboardServiceClient:()=>service},'@/lib/payments':{verifyStripeSignature:async()=>true,recordStripeEvent:async(_s,event)=>{if(recorded.has(event.id))return {inserted:false};recorded.add(event.id);return {inserted:true};},reconcileOrderRefundFromStripe:async(_s,account,payment)=>{assert.equal(account,'acct_test');assert.equal(payment,'pi_test');reconciled++;return pending?null:{orderId:'order',photographerId:'studio',verifiedRefunds:[{id:'re_test',status:'succeeded',amount:10360,currency:'cad',created:1790267400}]};}},'@/lib/order-refund-notifications':{scheduleOrderRefundEmails:async(_s,input)=>{if(fail){fail=false;throw Error('expected queue outage');}queued.push(input);}},'@/lib/audit':{recordAudit:async()=>{}}};
  deps['@/lib/credit-maintenance']={pausePlatformCreditEvent};
+ deps['@/lib/customer-order-webhook']={isCustomerOrderStripeEvent:()=>false};
  const exports={};new Function('require','exports',compiled)(name=>deps[name]||{},exports);
  const event={id:'evt_test',type,account:'acct_test',data:{object:{id:'ch_test',payment_intent:'pi_test'}}};const req={headers:new Headers({'stripe-signature':'valid'}),text:async()=>JSON.stringify(event)};
  const first=await exports.POST(req);assert.equal(first.status,queueFailure?500:200);

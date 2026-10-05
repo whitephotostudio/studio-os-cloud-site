@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "prebuild": "node scripts/verify-payment-release.mjs && node scripts/verify-photoroom-preview.mjs && node scripts/verify-r2-staging-preview.mjs && node scripts/verify-legacy-cutouts-preview.mjs && node scripts/verify-order-production-release.mjs",
+    "prebuild": "node scripts/verify-payment-release.mjs && node scripts/verify-photoroom-preview.mjs && node scripts/verify-r2-staging-preview.mjs && node scripts/verify-legacy-cutouts-preview.mjs && node scripts/verify-order-production-release.mjs && node scripts/verify-order-volume-release.mjs",
     "build": "next build",
     "start": "next start",
     "test": "node --test tests/*.test.mjs tests/security/*.test.mjs",

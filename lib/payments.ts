@@ -4,12 +4,11 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { createDashboardServiceClient } from "@/lib/dashboard-auth";
 import { syncPhotographyKeysByPhotographerId } from "@/lib/studio-os-app";
 import { creditMaintenanceActive } from "@/lib/credit-maintenance";
-import { buildOrderNotificationEmail } from "@/lib/order-notification-email";
-import { buildOrderReceiptEmail } from "@/lib/order-receipt-email";
+import { schedulePaidOrderEmails } from "@/lib/paid-order-emails";
 import { sendNewOrderPush } from "@/lib/order-push";
 import { notifyOwnerForSetting } from "@/lib/admin-notification-center";
 import { ownerUrl } from "@/lib/owner-notifications";
-import { resendConfigured, sendResendEmail, resolveReplyTo } from "@/lib/resend";
+import { resendConfigured } from "@/lib/resend";
 import {
   ANNUAL_DISCOUNT_PERCENT,
   CREDIT_PACK_DEFS,
@@ -1772,6 +1771,8 @@ export async function finalizePaidOrder(
       const { error } = await service.from("orders").update(references).eq("id", order.id);
       if (error) throw error;
     }
+    try { await schedulePaidOrderEmails(service, order.id); }
+    catch { console.error("[paid-order-email] Existing delivery work deferred to retry worker"); }
     return order;
   }
 
@@ -1803,7 +1804,7 @@ export async function finalizePaidOrder(
     .eq("id", order.photographer_id)
     .maybeSingle();
 
-  if (photographerError) throw photographerError;
+  if (photographerError) console.error("[order-usage] Paid order studio lookup will retry during billing reconciliation");
   if (photographer && !creditMaintenanceActive()) {
     // Payment is already committed. A platform fee outage must not prevent the
     // customer receipt/photographer notification. The uncounted paid order stays
@@ -1812,256 +1813,31 @@ export async function finalizePaidOrder(
     catch (error) { console.error("[order-usage] paid order fee sync will retry", error); }
   }
 
-  // --- Send order notification email to photographer ---
+  // Paid email jobs were staged atomically by the orders trigger. Provider
+  // delivery happens after the response, and the cron worker recovers hard
+  // process death even before this hook runs. Email failure cannot undo payment.
+  try { await schedulePaidOrderEmails(service, input.orderId); }
+  catch { console.error("[paid-order-email] Delivery deferred to retry worker"); }
+
+  // Preserve the existing best-effort new-order push independently of receipt
+  // provider latency. Replays of already-paid orders return above without it.
   try {
     if (photographer && resendConfigured()) {
-      const recipientEmail = clean(
-        (photographer as Record<string, unknown>).billing_email as string
-      ) || clean(
-        (photographer as Record<string, unknown>).studio_email as string
-      );
-
-      // Fetch order items
-      const { data: itemRows } = await service
-        .from("order_items")
-        .select("product_name,quantity,unit_price_cents,line_total_cents,sku")
-        .eq("order_id", input.orderId);
-
-      // Fetch context (project title, school name, student name)
-      const fullOrder = await service
-        .from("orders")
-        .select(`
-            id,package_name,total_cents,total_amount,subtotal_cents,tax_cents,currency,
-            parent_name,parent_email,customer_email,special_notes,created_at,paid_at,status,
-            school_id,project_id,student_id,
-            project:projects(title,access_pin),
-            school:schools(school_name),
-            student:students(first_name,last_name,pin)
-          `)
-        .eq("id", input.orderId)
-        .maybeSingle();
-
-      const project = Array.isArray(fullOrder.data?.project)
-        ? fullOrder.data.project[0]
-        : fullOrder.data?.project;
-      const school = Array.isArray(fullOrder.data?.school)
-        ? fullOrder.data.school[0]
-        : fullOrder.data?.school;
-      const student = Array.isArray(fullOrder.data?.student)
-        ? fullOrder.data.student[0]
-        : fullOrder.data?.student;
-
-      const studentName = [
-        clean((student as Record<string, unknown>)?.first_name as string),
-        clean((student as Record<string, unknown>)?.last_name as string),
-      ].filter(Boolean).join(" ") || null;
-
-      if (recipientEmail) {
-        const email = buildOrderNotificationEmail({
-          order: fullOrder.data ?? {
-            ...order,
-            paid_at: paidAt,
-            status: nextStatus,
-          },
-          items: (itemRows ?? []) as Array<{
-            product_name?: string | null;
-            quantity?: number | null;
-            unit_price_cents?: number | null;
-            line_total_cents?: number | null;
-            sku?: string | null;
-          }>,
-          photographer: {
-            business_name: (photographer as Record<string, unknown>).business_name as string,
-            studio_email: (photographer as Record<string, unknown>).studio_email as string,
-            billing_email: (photographer as Record<string, unknown>).billing_email as string,
-            logo_url: (photographer as Record<string, unknown>).logo_url as string,
-          },
-          context: {
-            project_title: (project as Record<string, unknown>)?.title as string ?? null,
-            school_name: (school as Record<string, unknown>)?.school_name as string ?? null,
-            student_name: studentName,
-          },
-          dashboardUrl: `https://www.studiooscloud.com/dashboard/orders`,
-        });
-
-        try {
-          await sendResendEmail({
-            to: recipientEmail,
-            subject: email.subject,
-            html: email.html,
-            text: email.text,
-            fromName: "Studio OS Cloud",
-            replyTo: resolveReplyTo(recipientEmail),
-            tags: [{ name: "type", value: "order-notification" }],
-            idempotencyKey: `order-notify-${input.orderId}`,
-          });
-        } catch (notificationEmailError) {
-          console.error(
-            "[order-notification] Photographer email failed:",
-            notificationEmailError,
-          );
-        }
+      const { data: pushOrder } = await service.from("orders")
+        .select("parent_name,customer_name,customer_email,parent_email,total_cents,total_amount,currency,student:students(first_name,last_name)")
+        .eq("id", input.orderId).eq("photographer_id", order.photographer_id).maybeSingle();
+      if (pushOrder && (clean(pushOrder.customer_email) || clean(pushOrder.parent_email))) {
+        const student = Array.isArray(pushOrder.student) ? pushOrder.student[0] : pushOrder.student;
+        const customerName = clean(pushOrder.parent_name) || clean(pushOrder.customer_name) ||
+          [clean(student?.first_name), clean(student?.last_name)].filter(Boolean).join(" ") || null;
+        const totalCents = Number(pushOrder.total_cents) || Math.round(Number(pushOrder.total_amount ?? 0) * 100) || 0;
+        const currency = (clean(pushOrder.currency) || "cad").toUpperCase();
+        const amountLabel = totalCents > 0
+          ? new Intl.NumberFormat("en-US", { style: "currency", currency }).format(totalCents / 100) : "";
+        await sendNewOrderPush(service, photographer.id, { customerName, amountLabel });
       }
-
-      // 2026-04-25: Parent-facing receipt email.  Sent to the buyer's
-      // email address (parent_email / customer_email) with order number,
-      // line items + thumbnails, sizes, totals — acts as proof of purchase.
-      const buyerEmailAddress = clean(
-        (fullOrder.data as Record<string, unknown> | null)?.customer_email as string,
-      ) ||
-        clean(
-          (fullOrder.data as Record<string, unknown> | null)?.parent_email as string,
-        );
-      if (buyerEmailAddress) {
-        const studentFullName = [
-          clean((student as Record<string, unknown> | null)?.first_name as string),
-          clean((student as Record<string, unknown> | null)?.last_name as string),
-        ].filter(Boolean).join(" ") || null;
-
-          // Build a deep-link to the parent's Orders tab in the portal.
-          // School mode: PIN comes from students.pin (per-student gate).
-          // Event mode: PIN comes from projects.access_pin (project gate).
-          let ordersHistoryUrl: string | null = null;
-          const studentPin = clean(
-            (student as Record<string, unknown> | null)?.pin as string,
-          );
-          const projectPin = clean(
-            (project as Record<string, unknown> | null)?.access_pin as string,
-          );
-          const projectId = clean(
-            (fullOrder.data as Record<string, unknown> | null)?.project_id as string,
-          );
-          if (studentPin) {
-            const params = new URLSearchParams({
-              email: buyerEmailAddress,
-              tab: "orders",
-            });
-            ordersHistoryUrl = `https://www.studiooscloud.com/parents/${encodeURIComponent(studentPin)}?${params.toString()}`;
-          } else if (projectPin && projectId) {
-            const params = new URLSearchParams({
-              mode: "event",
-              project: projectId,
-              email: buyerEmailAddress,
-              tab: "orders",
-            });
-            ordersHistoryUrl = `https://www.studiooscloud.com/parents/${encodeURIComponent(projectPin)}?${params.toString()}`;
-          }
-
-          const receiptEmail = buildOrderReceiptEmail({
-            order: fullOrder.data ?? {
-              ...order,
-              paid_at: paidAt,
-              status: nextStatus,
-            },
-            items: (itemRows ?? []) as Array<{
-              product_name?: string | null;
-              quantity?: number | null;
-              unit_price_cents?: number | null;
-              line_total_cents?: number | null;
-              sku?: string | null;
-            }>,
-            photographer: {
-              business_name: (photographer as Record<string, unknown>).business_name as string,
-              studio_email: (photographer as Record<string, unknown>).studio_email as string,
-              studio_phone: (photographer as Record<string, unknown>).studio_phone as string,
-              studio_address: (photographer as Record<string, unknown>).studio_address as string,
-              logo_url: (photographer as Record<string, unknown>).logo_url as string,
-            },
-            context: {
-              project_title: (project as Record<string, unknown>)?.title as string ?? null,
-              school_name: (school as Record<string, unknown>)?.school_name as string ?? null,
-              student_name: studentFullName,
-            },
-            ordersHistoryUrl,
-          });
-
-          try {
-            await sendResendEmail({
-              to: buyerEmailAddress,
-              subject: receiptEmail.subject,
-              html: receiptEmail.html,
-              text: receiptEmail.text,
-              fromName: clean(
-                (photographer as Record<string, unknown>).business_name as string,
-              ) || "Studio OS Cloud",
-              replyTo: clean(
-                (photographer as Record<string, unknown>).studio_email as string,
-              ) || resolveReplyTo(buyerEmailAddress),
-              tags: [{ name: "type", value: "order-receipt" }],
-              idempotencyKey: `order-receipt-${input.orderId}`,
-            });
-          } catch (receiptEmailError) {
-            console.error("[order-notification] Buyer receipt failed:", receiptEmailError);
-          }
-
-          // Alert the photographer's iPhone(s) that a new order came in. Generic
-          // "New order received" banner unless they opted into showing details.
-          try {
-            const orderForPush = (fullOrder.data ?? order) as Record<string, unknown>;
-            const photographerId = clean(
-              (photographer as Record<string, unknown>).id as string,
-            );
-            const customerName =
-              clean(orderForPush.parent_name as string) ||
-              clean(orderForPush.customer_name as string) ||
-              studentFullName;
-            const totalCents =
-              Number(orderForPush.total_cents) ||
-              Math.round(Number(orderForPush.total_amount ?? 0) * 100) ||
-              0;
-            const currency =
-              (clean(orderForPush.currency as string) || "cad").toUpperCase();
-            const amountLabel =
-              totalCents > 0
-                ? new Intl.NumberFormat("en-US", {
-                    style: "currency",
-                    currency,
-                  }).format(totalCents / 100)
-                : "";
-            await sendNewOrderPush(service, photographerId, {
-              customerName,
-              amountLabel,
-            });
-          } catch (pushError) {
-            console.error("[order-notification] push failed:", pushError);
-          }
-
-          const hasDigitalDeliveryItem =
-            nextStatus === "digital_paid" ||
-            ((itemRows ?? []) as Array<{ product_name?: string | null }>).some((item) => {
-              const name = (item.product_name ?? "").toLowerCase();
-              if (name.includes("retouch")) return false;
-              return (
-                name.includes("digital") ||
-                name.includes("download") ||
-                name.includes("file") ||
-                name.includes("jpg") ||
-                name.includes("jpeg") ||
-                name.includes("png") ||
-                name.includes("usb")
-              );
-            });
-
-          if (hasDigitalDeliveryItem) {
-            try {
-              const { sendDigitalDeliveryEmailForOrder } = await import("@/lib/digital-delivery");
-              await sendDigitalDeliveryEmailForOrder(service, input.orderId, {
-                recipientEmail: buyerEmailAddress,
-                force: false,
-              });
-            } catch (digitalDeliveryError) {
-              console.error(
-                "[digital-delivery] Failed to send buyer ZIP link:",
-                digitalDeliveryError,
-              );
-            }
-          }
-        }
     }
-  } catch (emailError) {
-    // Never let email failure break the payment flow
-    console.error("[order-notification] Failed to send email:", emailError);
-  }
+  } catch { console.error("[order-notification] Push delivery could not be confirmed"); }
 
   return {
     ...order,

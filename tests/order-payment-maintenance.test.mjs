@@ -18,9 +18,9 @@ function load(path, dependencies = {}) {
   return exports;
 }
 
-function fixture() {
+function fixture(options = {}) {
   const now = Date.now(); const orderId = crypto.randomUUID(); const photographerId = crypto.randomUUID();
-  const sequence = []; const emails = []; const pushes = []; const rpcs = [];
+  const sequence = []; const scheduled = []; const pushes = []; const rpcs = [];
   const order = { id: orderId, photographer_id: photographerId, package_name: 'Print package', status: 'pending',
     payment_status: 'pending', paid_at: null, notes: '', counted_for_monthly_usage: false, total_cents: 2900,
     customer_email: 'buyer@example.invalid', parent_name: 'Fixture buyer', currency: 'cad', is_test: false };
@@ -43,7 +43,10 @@ function fixture() {
         or(expression) { assert.equal(expression, 'is_test.is.false,is_test.is.null'); return chain; },
         order() { return chain; },
         update(value) { changes = value; return chain; },
-        async maybeSingle() { return { data: structuredClone(tables[table].find(predicate) || null), error: null }; },
+        async maybeSingle() {
+          if (table === 'photographers' && options.studioUnavailable) return { data: null, error: { message: 'database lookup unavailable' } };
+          return { data: structuredClone(tables[table].find(predicate) || null), error: null };
+        },
         then(resolve, reject) {
           const matching = tables[table].filter(predicate);
           if (changes) {
@@ -70,19 +73,20 @@ function fixture() {
     '@/lib/order-usage-billing': ledger,
     '@/lib/credit-maintenance': { creditMaintenanceActive },
     '@/lib/subscription-access': { isStripeBillingActive: value => ['active', 'trialing'].includes(value) },
-    '@/lib/resend': { resendConfigured: () => true, resolveReplyTo: value => value,
-      sendResendEmail: async message => { emails.push(message); sequence.push(message.tags[0].value); } },
-    '@/lib/order-notification-email': { buildOrderNotificationEmail: () => ({ subject: 'Order confirmed', html: 'Fixture', text: 'Fixture' }) },
-    '@/lib/order-receipt-email': { buildOrderReceiptEmail: () => ({ subject: 'Payment receipt', html: 'Fixture', text: 'Fixture' }) },
+    '@/lib/resend': { resendConfigured: () => true },
+    '@/lib/paid-order-emails': { schedulePaidOrderEmails: async (_service, id) => {
+      scheduled.push(id); sequence.push('durable-email-recovery');
+      if (options.queueUnavailable) throw new Error('retry discovery unavailable');
+    } },
     '@/lib/order-push': { sendNewOrderPush: async (_service, id, content) => pushes.push({ id, content }) },
   });
   const finalize = () => payments.finalizePaidOrder(service, { orderId, paymentStatus: 'paid', checkoutSessionId: 'cs_fixture',
     paymentIntentId: 'pi_fixture', note: 'Connected-account payment confirmed', paidAt: new Date(now).toISOString() });
-  return { order, photographer, sequence, emails, pushes, rpcs, finalize };
+  return { order, photographer, sequence, scheduled, pushes, rpcs, finalize };
 }
 
 for (const maintenance of [true, false]) {
-  test(`a paid Connect order completes notifications ${maintenance ? 'while fee sync is paused before migration' : 'when the fee ledger is unavailable'}`, async () => {
+  test(`a paid Connect order schedules durable notification recovery ${maintenance ? 'while fee sync is paused before migration' : 'when the fee ledger is unavailable'}`, async () => {
     const previousPause = process.env.STUDIO_CREDIT_MAINTENANCE;
     const previousError = console.error;
     const failures = [];
@@ -94,17 +98,34 @@ for (const maintenance of [true, false]) {
       assert.equal(result.status, 'paid'); assert.equal(f.order.payment_status, 'paid'); assert.ok(f.order.paid_at);
       assert.equal(f.order.counted_for_monthly_usage, false, 'the durable order remains eligible for current-period fee reconciliation');
       assert.equal(f.rpcs.length, maintenance ? 0 : 1);
-      assert.deepEqual(f.emails.map(message => [message.to, message.idempotencyKey]), [
-        ['photographer@example.invalid', `order-notify-${f.order.id}`], ['buyer@example.invalid', `order-receipt-${f.order.id}`],
-      ]);
+      assert.deepEqual(f.scheduled, [f.order.id]);
       assert.equal(f.pushes.length, 1); assert.equal(f.pushes[0].id, f.photographer.id);
       assert.deepEqual(f.sequence, maintenance
-        ? ['paid-commit', 'order-notification', 'order-receipt']
-        : ['paid-commit', 'fee-schema-unavailable', 'order-notification', 'order-receipt']);
+        ? ['paid-commit', 'durable-email-recovery']
+        : ['paid-commit', 'fee-schema-unavailable', 'durable-email-recovery']);
       assert.equal(failures.length, maintenance ? 0 : 1);
       assert.equal((await f.finalize()).payment_status, 'paid');
-      assert.equal(f.emails.length, 2, 'retrying an already committed payment does not duplicate notifications');
+      assert.deepEqual(f.scheduled, [f.order.id, f.order.id], 'already-paid replay discovers durable work instead of skipping undelivered receipts');
+      assert.equal(f.pushes.length, 1, 'already-paid replay does not duplicate the best-effort push');
       assert.equal(f.rpcs.length, maintenance ? 0 : 1);
+    } finally {
+      console.error = previousError;
+      if (previousPause === undefined) delete process.env.STUDIO_CREDIT_MAINTENANCE; else process.env.STUDIO_CREDIT_MAINTENANCE = previousPause;
+    }
+  });
+}
+
+for (const options of [{ studioUnavailable: true }, { queueUnavailable: true }]) {
+  test(`paid success survives ${options.studioUnavailable ? 'a studio lookup outage' : 'retry discovery failure'}`, async () => {
+    const previousPause = process.env.STUDIO_CREDIT_MAINTENANCE;
+    const previousError = console.error;
+    try {
+      process.env.STUDIO_CREDIT_MAINTENANCE = '1'; console.error = () => {};
+      const f = fixture(options); const result = await f.finalize();
+      assert.equal(result.payment_status, 'paid'); assert.ok(f.order.paid_at);
+      assert.deepEqual(f.scheduled, [f.order.id], 'the atomic database trigger remains the durable recovery authority');
+      assert.equal((await f.finalize()).payment_status, 'paid');
+      assert.deepEqual(f.scheduled, [f.order.id, f.order.id]);
     } finally {
       console.error = previousError;
       if (previousPause === undefined) delete process.env.STUDIO_CREDIT_MAINTENANCE; else process.env.STUDIO_CREDIT_MAINTENANCE = previousPause;

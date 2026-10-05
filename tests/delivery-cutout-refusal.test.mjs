@@ -119,3 +119,28 @@ test('ordinary digital photo delivery preserves the original path when no backdr
     assert.equal(f.calls.some(call => call.signed), true);
   } finally { globalThis.fetch = previousFetch; }
 });
+
+test('digital payload preparation keeps the current paid authorization and token without sending or writing notes', async () => {
+  const f = fixture({ selected: false });
+  const prepared = await f.digital.buildDigitalDeliveryEmailForOrder(f.service, f.orderId);
+  assert.equal(prepared.skipped, false); assert.equal(prepared.fileCount, 1);
+  assert.equal(prepared.payload.to, 'fixture@example.invalid');
+  assert.equal(prepared.payload.idempotencyKey, `digital-delivery-${f.orderId}-fixture@example.invalid`);
+  const link = prepared.payload.text.match(/^Download: (.+)$/m)[1];
+  const token = new URL(link).searchParams.get('token');
+  const decoded = f.digital.verifyDigitalDeliveryToken(token);
+  assert.equal(decoded.orderId, f.orderId); assert.equal(decoded.recipientEmail, 'fixture@example.invalid');
+  assert.equal(f.calls.some(call => call.email || call.update), false);
+  f.order.payment_status = 'refunded';
+  await assert.rejects(f.digital.buildDigitalDeliveryEmailForOrder(f.service, f.orderId), /not paid/);
+  assert.equal(f.calls.some(call => call.email || call.update), false);
+});
+
+test('digital preparation respects the existing sent marker and does not mint a replacement provider payload', async () => {
+  const f = fixture({ selected: false }); f.order.notes = 'Digital delivery link emailed by prior worker.';
+  const prepared = await f.digital.buildDigitalDeliveryEmailForOrder(f.service, f.orderId);
+  assert.equal(prepared.skipped, true); assert.equal(prepared.reason, 'already_sent');
+  assert.equal('payload' in prepared, false);
+  const manual = await f.digital.sendDigitalDeliveryEmailForOrder(f.service, f.orderId);
+  assert.equal(manual.skipped, true); assert.equal(f.calls.some(call => call.email || call.update), false);
+});

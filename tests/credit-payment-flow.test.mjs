@@ -135,6 +135,7 @@ function webhookHarness({ failGrant = false, failRecord = false } = {}) {
   const api = load('app/api/stripe/webhook/route.ts', {
     'next/server': { NextResponse: { json: (body, options) => Response.json(body, options) } },
     '@/lib/dashboard-auth': { createDashboardServiceClient: () => ({}) },
+    '@/lib/customer-order-webhook': { isCustomerOrderStripeEvent: () => false },
     '@/lib/payments': {
       verifyStripeSignature: async () => true,
       recordStripeEvent: async (_db, event) => {

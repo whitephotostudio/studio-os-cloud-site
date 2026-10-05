@@ -1,4 +1,5 @@
 import { scheduleOrderRefundEmails } from "@/lib/order-refund-notifications";
+import { isCustomerOrderStripeEvent, processCustomerOrderStripeEvent } from "@/lib/customer-order-webhook";
 import { NextRequest, NextResponse } from "next/server";
 import { pausePlatformCreditEvent } from "@/lib/credit-maintenance";
 import { createDashboardServiceClient } from "@/lib/dashboard-auth";
@@ -493,6 +494,16 @@ export async function POST(req: NextRequest) {
   }
 
   const service = createDashboardServiceClient();
+  // Customer payment claims expire if this worker is terminated. Platform
+  // credits/refunds retain their existing independent fulfillment ledgers.
+  if (isCustomerOrderStripeEvent(event)) {
+    try {
+      const result = await processCustomerOrderStripeEvent(service, event);
+      return NextResponse.json(result, { status: result.status, ...(result.status === 503 ? { headers: { "Retry-After": "60" } } : {}) });
+    } catch {
+      return NextResponse.json({ ok: false, message: "Customer payment processing needs retry." }, { status: 503, headers: { "Retry-After": "60" } });
+    }
+  }
   const object = event.data.object;
   const billingFlow = (object.metadata as Record<string, string> | undefined)?.billing_flow;
   // Credit balance/ledger mutations are atomic and idempotent by payment in
