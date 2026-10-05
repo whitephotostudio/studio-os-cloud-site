@@ -186,7 +186,7 @@ export const defaultEventGalleryExtras: EventGalleryExtraSettings = {
   allowClientToPayLater: false,
   allowClientComments: false,
   hideAllPhotosAlbum: false,
-  hideAlbumPhotoCount: false,
+  hideAlbumPhotoCount: true,
   autoArchiveAfterExpiration: false,
   sendEmailCampaign: false,
   autoChooseAlbumCover: true,

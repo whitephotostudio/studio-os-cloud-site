@@ -73,6 +73,7 @@ import { isRetouchPackage, isRetouchPrintPurchase, retouchPrintPurchaseIssue, RE
 import { calendarDateInputValue, hasCalendarBoundaryPassed } from "@/lib/calendar-dates";
 import { canOfferParentBackdrops, parentBackdropSelectionIssue, usableParentCutouts, PARENT_BACKDROP_UNAVAILABLE, type ParentBackdropPortrait } from "@/lib/parent-backdrop-access";
 import { EventAlbumOverview, EventAlbumSwitcher } from "@/components/parents/event-album-navigation";
+import { EventGalleryCover } from "@/components/parents/event-gallery-cover";
 import { accessibleEventGalleryImages, buildEventAlbumChoices, eventAlbumChoiceForValue, imagesInEventAlbum, initialEventAlbumSelection } from "@/lib/event-album-navigation";
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -388,6 +389,8 @@ const galleryTranslations: Record<
     favorites: "Favorites",
     about: "About",
     albums: "Albums",
+    viewAlbums: "View albums",
+    viewPhotos: "View photos",
     album: "Album",
     allPhotos: "All Photos",
     allPhotosFull: "All Photos",
@@ -446,6 +449,8 @@ const galleryTranslations: Record<
     favorites: "Favorites",
     about: "About",
     albums: "Albums",
+    viewAlbums: "View albums",
+    viewPhotos: "View photos",
     album: "Album",
     allPhotos: "All Photos",
     allPhotosFull: "All Photos",
@@ -504,6 +509,8 @@ const galleryTranslations: Record<
     favorites: "Favoris",
     about: "Infos",
     albums: "Albums",
+    viewAlbums: "Voir les albums",
+    viewPhotos: "Voir les photos",
     album: "Album",
     allPhotos: "Toutes les photos",
     allPhotosFull: "Toutes les photos",
@@ -801,17 +808,11 @@ function getGalleryAccent(settings: EventGallerySettings) {
 function getHeroOverlayOpacity(settings: EventGallerySettings) {
   switch (settings.branding.heroOverlayStrength) {
     case "soft":
-      return settings.branding.backgroundMode === "light"
-        ? "rgba(255,255,255,0.18)"
-        : "rgba(0,0,0,0.18)";
+      return 0.3;
     case "dramatic":
-      return settings.branding.backgroundMode === "light"
-        ? "rgba(255,255,255,0.42)"
-        : "rgba(0,0,0,0.5)";
+      return 0.5;
     default:
-      return settings.branding.backgroundMode === "light"
-        ? "rgba(255,255,255,0.3)"
-        : "rgba(0,0,0,0.34)";
+      return 0.34;
   }
 }
 
@@ -4663,7 +4664,8 @@ export default function ParentGalleryPage() {
           setActiveEventCollectionId(initialAlbumSelection.collectionId);
           setEventPhotoStage(initialAlbumSelection.stage);
           setActiveView("photos");
-          setEnteredEventIntro(true);
+          // Album-specific access keeps its direct, scoped photo entry.
+          setEnteredEventIntro(!!clean(activeCollection?.id));
           setBlackWhitePreviewEnabled(false);
           setPackages(packageRows);
           setBackdrops([]);
@@ -5153,6 +5155,8 @@ export default function ParentGalleryPage() {
     [galleryTabs],
   );
   const showAlbumOverview = eventHasAlbums && activeView === "photos" && eventPhotoStage === "albums";
+  const showEventCover = !isSchoolMode && currentGalleryBranding.introEnabled && !enteredEventIntro
+    && activeView === "photos" && initialTabHint !== "orders" && !checkoutStatus;
   const showEventPhotoGrid = !isSchoolMode && activeView === "photos" && eventPhotoStage === "grid";
   const showPhotoViewer = isSchoolMode || (activeView === "photos" && eventPhotoStage === "viewer");
   const isEventGallery = !isSchoolMode && activeView === "photos";
@@ -5238,22 +5242,6 @@ export default function ParentGalleryPage() {
       ? "Protected with gallery access controls."
       : "Shared only with approved guests or PIN holders."
     : "Anyone with the link can enter unless an album has its own lock.";
-  const galleryFutureBadges = [
-    currentGalleryExtras.liveGalleryMode ? "Live event ready" : "",
-    currentGalleryExtras.guestIdentificationMode === "qr"
-      ? "QR guest mode ready"
-      : currentGalleryExtras.guestIdentificationMode === "barcode"
-        ? "Barcode guest mode ready"
-        : "",
-    currentGalleryExtras.instantPhotoDelivery ? "Instant upload feed ready" : "",
-    currentGalleryExtras.orderNotificationHooks ? "Order alerts ready" : "",
-    currentGalleryExtras.emailCaptureMode === "required"
-      ? "Email capture planned"
-      : currentGalleryExtras.emailCaptureMode === "optional"
-        ? "Optional email capture"
-        : "",
-  ].filter(Boolean);
-  const heroPreviewImages = images.slice(0, Math.min(images.length, 8));
   const activeScenePhotoCount = activeEventCollectionId ? visibleImages.length : images.length;
   const activeSceneCoverUrl =
     selectedEventCollection?.cover_photo_url || visibleImages[0]?.url || heroImageUrl;
@@ -6552,6 +6540,12 @@ export default function ParentGalleryPage() {
     setSelectedImageIndex(0);
     setEventPhotoStage("albums");
     setActiveView("photos");
+  }
+
+  function enterEventGallery() {
+    setEnteredEventIntro(true);
+    if (eventHasAlbums) openAlbumsOverview();
+    else openEventPhotoGrid(activeEventCollectionId);
   }
 
   function handleGalleryPickerChange(value: string) {
@@ -9481,6 +9475,8 @@ export default function ParentGalleryPage() {
       />
 
       <div
+        inert={showEventCover || undefined}
+        aria-hidden={showEventCover || undefined}
         style={{
           position: "fixed",
           inset: 0,
@@ -10637,8 +10633,10 @@ export default function ParentGalleryPage() {
                             lineHeight: 1.5,
                           }}
                         >
-                          {compactCountLabel(activeScenePhotoCount, "photo")}
-                          {galleryEventDate ? ` · ${galleryEventDate}` : ""}
+                          {[
+                            !currentGalleryExtras.hideAlbumPhotoCount ? compactCountLabel(activeScenePhotoCount, "photo") : "",
+                            galleryEventDate,
+                          ].filter(Boolean).join(" · ")}
                         </div>
                       </div>
                     </div>
@@ -10736,7 +10734,7 @@ export default function ParentGalleryPage() {
                             }}
                           >
                             Load more photos
-                            <span
+                            {!currentGalleryExtras.hideAlbumPhotoCount ? <span
                               style={{
                                 color: "rgba(255,255,255,0.72)",
                                 fontSize: 12,
@@ -10744,7 +10742,7 @@ export default function ParentGalleryPage() {
                               }}
                             >
                               {eventPhotoGridRemainingCount} left
-                            </span>
+                            </span> : null}
                           </button>
                         </div>
                       ) : null}
@@ -10833,7 +10831,7 @@ export default function ParentGalleryPage() {
                           <X size={14} />
                           Close Viewer
                         </button>
-                        <div
+                        {!currentGalleryExtras.hideAlbumPhotoCount ? <div
                           style={{
                             color: "#8b8176",
                             padding: 0,
@@ -10845,7 +10843,7 @@ export default function ParentGalleryPage() {
                           }}
                         >
                           {selectedImageIndex + 1} / {visibleImages.length}
-                        </div>
+                        </div> : null}
                       </div>
                       {selectedImage ? (
                         <div
@@ -14287,329 +14285,25 @@ export default function ParentGalleryPage() {
           </div>
         )}
 
-        {!isSchoolMode && currentGalleryBranding.introEnabled && !enteredEventIntro && !loading && !error && (
-          <div
-            style={{
-              position: "fixed",
-              inset: 0,
-              zIndex: 80,
-              background: galleryTone.background,
-              display: "flex",
-              alignItems: "stretch",
-              justifyContent: "center",
-            }}
-          >
-            {introImageUrl ? (
-              <>
-                <img
-                  src={introImageUrl}
-                  alt=""
-                  style={{
-                    position: "absolute",
-                    inset: 0,
-                    width: "100%",
-                    height: "100%",
-                    objectFit: "cover",
-                    filter: blackWhitePreviewActive
-                      ? "grayscale(1) blur(20px) saturate(0.7)"
-                      : isLightGallery
-                        ? "blur(20px) saturate(0.85)"
-                        : "grayscale(8%) blur(18px)",
-                    transform: "scale(1.04)",
-                    opacity: isLightGallery ? 0.2 : 0.28,
-                  }}
-                />
-                <img
-                  src={introImageUrl}
-                  alt=""
-                  style={{
-                    position: "absolute",
-                    inset: 0,
-                    width: "100%",
-                    height: "100%",
-                    objectFit: "contain",
-                    padding: "36px",
-                    boxSizing: "border-box",
-                    opacity: isLightGallery ? 0.96 : 0.92,
-                    filter: galleryImageFilter,
-                  }}
-                />
-              </>
-            ) : null}
-            <div
-              style={{
-                position: "absolute",
-                inset: 0,
-                background:
-                  currentGalleryBranding.introLayout === "minimal"
-                    ? isLightGallery
-                      ? "rgba(250,250,250,0.72)"
-                      : "rgba(8,8,8,0.78)"
-                    : isLightGallery
-                      ? "linear-gradient(135deg, rgba(252,252,252,0.82) 0%, rgba(252,252,252,0.52) 52%, rgba(252,252,252,0.2) 100%)"
-                      : `linear-gradient(135deg, ${galleryTone.heroOverlay} 0%, rgba(0,0,0,0.42) 100%)`,
-              }}
-            />
-            <div
-              style={{
-                position: "relative",
-                zIndex: 1,
-                width: "100%",
-                display: "flex",
-                alignItems: currentGalleryBranding.introLayout === "centered" ? "center" : "stretch",
-                justifyContent: "center",
-                padding: isMobileViewport ? "24px 16px" : "40px 24px",
-              }}
-            >
-              <div
-                style={{
-                  width: "100%",
-                  maxWidth: currentGalleryBranding.introLayout === "split" ? 1240 : 760,
-                  display: "grid",
-                  gridTemplateColumns:
-                    isMobileViewport
-                      ? "minmax(0, 1fr)"
-                      : currentGalleryBranding.introLayout === "split"
-                        ? "minmax(0, 1.2fr) minmax(320px, 460px)"
-                        : "minmax(0, 1fr)",
-                  gap: 28,
-                  alignItems: "center",
-                }}
-              >
-                {currentGalleryBranding.introLayout === "split" ? (
-                  <div />
-                ) : null}
-                <div
-                  style={{
-                    justifySelf: currentGalleryBranding.introLayout === "split" ? "end" : "center",
-                  width: "100%",
-                  maxWidth: 460,
-                  background:
-                    currentGalleryBranding.introLayout === "minimal"
-                        ? isLightGallery
-                          ? "rgba(255,255,255,0.68)"
-                          : "rgba(12,12,12,0.48)"
-                        : isLightGallery
-                          ? "rgba(255,255,255,0.82)"
-                          : "rgba(11,11,11,0.78)",
-                    border: isLightGallery ? "1px solid rgba(39,49,59,0.08)" : "1px solid rgba(255,255,255,0.12)",
-                    backdropFilter: "blur(18px)",
-                    borderRadius: 28,
-                    padding: "34px 30px",
-                    textAlign: currentGalleryBranding.introLayout === "centered" ? "center" : "left",
-                    boxShadow: isLightGallery ? "0 28px 80px rgba(15,23,42,0.12)" : "0 28px 80px rgba(0,0,0,0.28)",
-                  }}
-                >
-                  {currentGalleryBranding.showStudioMark ? (
-                    displayStudioLogoUrl ? (
-                      <img
-                        src={displayStudioLogoUrl}
-                        alt=""
-                        style={{
-                          height: 34,
-                          objectFit: "contain",
-                          margin: currentGalleryBranding.introLayout === "centered" ? "0 auto 24px" : "0 0 24px",
-                        }}
-                      />
-                    ) : studioInfo.businessName ? (
-                      <div
-                        style={{
-                          fontSize: 12,
-                          fontWeight: 800,
-                          letterSpacing: "0.18em",
-                          textTransform: "uppercase",
-                          color: galleryTone.mutedText,
-                          marginBottom: 24,
-                        }}
-                      >
-                        {studioInfo.businessName}
-                      </div>
-                    ) : null
-                  ) : null}
-
-                  <div
-                    style={{
-                      display: "flex",
-                      flexWrap: "wrap",
-                      gap: 8,
-                      justifyContent: currentGalleryBranding.introLayout === "centered" ? "center" : "flex-start",
-                      marginBottom: 18,
-                    }}
-                  >
-                    {[galleryAccessLabel, galleryEventDate, compactCountLabel(images.length, "photo")]
-                      .filter(Boolean)
-                      .map((item) => (
-                        <div
-                          key={item}
-                          style={{
-                            borderRadius: 999,
-                            border: isLightGallery
-                              ? "1px solid rgba(39,49,59,0.08)"
-                              : "1px solid rgba(255,255,255,0.12)",
-                            background: isLightGallery
-                              ? "rgba(255,255,255,0.72)"
-                              : "rgba(255,255,255,0.06)",
-                            color: galleryTone.text,
-                            padding: "8px 12px",
-                            fontSize: 11,
-                            fontWeight: 800,
-                            letterSpacing: "0.12em",
-                            textTransform: "uppercase",
-                          }}
-                        >
-                          {item}
-                        </div>
-                      ))}
-                  </div>
-
-                  <div
-                    style={{
-                      fontSize: usesSerifHero(currentGalleryBranding.fontPreset) ? 42 : 36,
-                      lineHeight: 1.04,
-                      fontWeight: 700,
-                      color: galleryTone.text,
-                      letterSpacing: currentGalleryBranding.themePreset === "cinema" ? "0.06em" : "-0.03em",
-                      textTransform: currentGalleryBranding.themePreset === "cinema" ? "uppercase" : "none",
-                    }}
-                  >
-                    {galleryHeadline}
-                  </div>
-                  {clean(currentGalleryBranding.introMessage) ? (
-                    <div
-                      style={{
-                        marginTop: 18,
-                        color: galleryTone.text,
-                        fontSize: 15,
-                        lineHeight: 1.8,
-                      }}
-                    >
-                      {currentGalleryBranding.introMessage}
-                    </div>
-                  ) : null}
-                  {galleryFutureBadges.length > 0 ? (
-                    <div
-                      style={{
-                        marginTop: 18,
-                        display: "flex",
-                        flexWrap: "wrap",
-                        gap: 8,
-                        justifyContent: currentGalleryBranding.introLayout === "centered" ? "center" : "flex-start",
-                      }}
-                    >
-                      {galleryFutureBadges.slice(0, 3).map((badge) => (
-                        <div
-                          key={badge}
-                          style={{
-                            borderRadius: 999,
-                            background: galleryAccent.muted,
-                            border: `1px solid ${galleryAccent.border}`,
-                            color: galleryAccent.text,
-                            padding: "8px 12px",
-                            fontSize: 11,
-                            fontWeight: 700,
-                          }}
-                        >
-                          {badge}
-                        </div>
-                      ))}
-                    </div>
-                  ) : null}
-                  <div
-                    style={{
-                      marginTop: 28,
-                      display: "flex",
-                      flexWrap: "wrap",
-                      gap: 12,
-                      justifyContent: currentGalleryBranding.introLayout === "centered" ? "center" : "flex-start",
-                    }}
-                  >
-                    <button
-                      type="button"
-                      onClick={() => setEnteredEventIntro(true)}
-                      style={{
-                        borderRadius: 999,
-                        background: galleryAccent.solid,
-                        color: currentGalleryBranding.accentColor === "ivory" ? "#111111" : "#ffffff",
-                        border: "none",
-                        padding: "13px 22px",
-                        fontSize: 13,
-                        fontWeight: 800,
-                        cursor: "pointer",
-                      }}
-                    >
-                      {currentGalleryBranding.introCtaLabel || galleryCopy.enterGallery}
-                    </button>
-                    {eventHasAlbums ? (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setEnteredEventIntro(true);
-                          openAlbumsOverview();
-                        }}
-                        style={{
-                          borderRadius: 999,
-                          background: isLightGallery ? "rgba(255,255,255,0.7)" : "rgba(255,255,255,0.08)",
-                          color: galleryTone.text,
-                          border: isLightGallery ? "1px solid rgba(39,49,59,0.08)" : "1px solid rgba(255,255,255,0.12)",
-                          padding: "13px 22px",
-                          fontSize: 13,
-                          fontWeight: 700,
-                          cursor: "pointer",
-                        }}
-                      >
-                        View Albums
-                      </button>
-                    ) : null}
-                  </div>
-                  {heroPreviewImages.length > 0 ? (
-                    <div
-                      style={{
-                        marginTop: 24,
-                        display: "grid",
-                        gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
-                        gap: 10,
-                      }}
-                    >
-                      {heroPreviewImages.slice(0, 3).map((image) => (
-                        <button
-                          key={image.id}
-                          type="button"
-                          onClick={() => {
-                            setEnteredEventIntro(true);
-                            openImageInGallery(image);
-                          }}
-                          style={{
-                            borderRadius: 18,
-                            overflow: "hidden",
-                            border: isLightGallery ? "1px solid rgba(39,49,59,0.08)" : "1px solid rgba(255,255,255,0.08)",
-                            background: isLightGallery ? "rgba(255,255,255,0.62)" : "rgba(255,255,255,0.05)",
-                            cursor: "pointer",
-                            padding: 0,
-                            aspectRatio: "1 / 1",
-                          }}
-                        >
-                          <img
-                            src={image.thumbnailUrl || image.previewUrl || image.url}
-                            alt=""
-                            loading="lazy"
-                            style={{
-                              width: "100%",
-                              height: "100%",
-                              objectFit: "cover",
-                              display: "block",
-                              filter: galleryImageFilter,
-                            }}
-                          />
-                        </button>
-                      ))}
-                    </div>
-                  ) : null}
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
       </div>
+      {showEventCover ? (
+        <EventGalleryCover
+          title={galleryHeadline}
+          clientName={galleryClientLabel}
+          imageUrl={introImageUrl}
+          imageFilter={galleryImageFilter}
+          brandName={eventBrandLabel}
+          brandLogoUrl={displayStudioLogoUrl}
+          showStudioMark={currentGalleryBranding.showStudioMark}
+          metadata={galleryMetaItems}
+          message={customGalleryDescription !== clean(defaultEventGallerySettings.branding.introMessage) ? customGalleryDescription : ""}
+          buttonLabel={eventHasAlbums ? galleryCopy.viewAlbums : galleryCopy.viewPhotos}
+          onEnter={enterEventGallery}
+          fontFamily={galleryFontFamily}
+          serifTitle={usesSerifHero(currentGalleryBranding.fontPreset)}
+          overlayOpacity={heroOverlayTint}
+        />
+      ) : null}
     </>
   );
 }

@@ -3,6 +3,7 @@
 import { useEffect, useRef } from "react";
 import { ChevronDown, ChevronRight, Images } from "lucide-react";
 import type { EventAlbumChoice } from "@/lib/event-album-navigation";
+import { retryPortalPreviewImage } from "@/lib/portal-preview-retry";
 
 type AlbumNavigationProps = {
   choices: EventAlbumChoice[];
@@ -19,7 +20,7 @@ function photoCount(choice: EventAlbumChoice, props: AlbumNavigationProps) {
 function AlbumThumbnail({ choice, size = 48 }: { choice: EventAlbumChoice; size?: number }) {
   return <span style={{ width: size, height: size, flex: "0 0 auto", background: "#e4e4e7", borderRadius: 6, overflow: "hidden", display: "grid", placeItems: "center" }}>
     {choice.thumbnailUrl
-      ? <img src={choice.thumbnailUrl} alt="" loading="lazy" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+      ? <img src={choice.thumbnailUrl} alt="" loading="lazy" onError={event => { retryPortalPreviewImage(event.currentTarget); }} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
       : <Images size={22} color="#71717a" aria-hidden="true" />}
   </span>;
 }
@@ -34,26 +35,53 @@ export function EventAlbumOverview(props: AlbumNavigationProps & {
   isMobile: boolean;
   tone: { background: string; surface: string; text: string; mutedText: string; border: string };
 }) {
-  return <section aria-label={props.albumsLabel} style={{ flex: 1, minHeight: 0, overflow: "auto", background: props.tone.background, color: props.tone.text, padding: props.isMobile ? "22px 16px 30px" : "32px 36px 40px" }}>
-    <div style={{ maxWidth: 1180, margin: "0 auto", display: "grid", gap: 22 }}>
-      <header style={{ display: "grid", gap: 10 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, color: props.tone.mutedText, fontSize: 12, fontWeight: 700 }}>
-          {props.brandLogoUrl ? <img src={props.brandLogoUrl} alt="" style={{ maxWidth: 150, height: 28, objectFit: "contain" }} /> : null}
-          <span>{props.brandName}</span>
+  const secondaryText = `color-mix(in srgb, ${props.tone.mutedText} 80%, ${props.tone.text})`;
+  return <section className="event-album-overview" aria-label={props.albumsLabel} style={{ flex: 1, minHeight: 0, overflow: "auto", background: props.tone.background, color: props.tone.text, padding: props.isMobile ? "30px 22px 44px" : "48px 36px 64px" }}>
+    <style>{`
+      .event-album-overview .event-album-cards { display: flex; flex-wrap: wrap; justify-content: center; gap: 32px 24px; }
+      .event-album-overview .event-album-card { width: calc((100% - 48px) / 3); min-width: 0; padding: 0; border: 0; border-radius: 8px; background: transparent; color: inherit; text-align: left; cursor: pointer; font-family: inherit; }
+      .event-album-overview .event-album-card:focus-visible { outline: 2px solid currentColor; outline-offset: 6px; }
+      .event-album-overview .event-album-cover { display: grid; place-items: center; width: 100%; aspect-ratio: 3 / 2; overflow: hidden; border-radius: 8px; }
+      .event-album-overview .event-album-cover img { width: 100%; height: 100%; object-fit: cover; transition: transform 450ms cubic-bezier(.22,1,.36,1); }
+      .event-album-overview .event-album-arrow { flex-shrink: 0; transition: transform 250ms ease; }
+      @media (hover: hover) {
+        .event-album-overview .event-album-card:hover .event-album-cover img { transform: scale(1.035); }
+        .event-album-overview .event-album-card:hover .event-album-arrow { transform: translateX(3px); }
+      }
+      @media (max-width: 960px) { .event-album-overview .event-album-card { width: calc((100% - 24px) / 2); } }
+      @media (max-width: 560px) {
+        .event-album-overview .event-album-card { width: 100%; }
+        .event-album-overview .event-album-cards { gap: 26px; }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .event-album-overview .event-album-cover img, .event-album-overview .event-album-arrow { transition: none; }
+        .event-album-overview .event-album-card:hover .event-album-cover img, .event-album-overview .event-album-card:hover .event-album-arrow { transform: none; }
+      }
+    `}</style>
+    <div style={{ maxWidth: 1120, margin: "0 auto", display: "grid", gap: props.isMobile ? 32 : 42 }}>
+      <header style={{ display: "grid", justifyItems: "center", textAlign: "center", gap: 14, paddingBottom: 4 }}>
+        <div style={{ minHeight: 40, display: "grid", placeItems: "center", marginBottom: props.isMobile ? 8 : 16 }}>
+          {props.brandLogoUrl ? <img src={props.brandLogoUrl} alt={props.brandName} style={{ maxWidth: "min(200px, 70vw)", maxHeight: 44, objectFit: "contain" }} />
+            : <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.16em", textTransform: "uppercase", overflowWrap: "anywhere" }}>{props.brandName}</span>}
         </div>
-        <h1 style={{ margin: 0, fontSize: props.isMobile ? 28 : 38, fontWeight: 600, lineHeight: 1.15 }}>{props.title}</h1>
-        {props.metadata.length ? <div style={{ color: props.tone.mutedText, fontSize: 12 }}>{props.metadata.join(" · ")}</div> : null}
-        <p style={{ margin: 0, color: props.tone.mutedText, fontSize: 14, lineHeight: 1.5 }}>{props.description}</p>
+        <h1 style={{ margin: 0, maxWidth: "100%", fontSize: "clamp(30px, 3.4vw, 46px)", fontWeight: 500, letterSpacing: "-0.025em", lineHeight: 1.15, overflowWrap: "anywhere" }}>{props.title}</h1>
+        {props.metadata.length ? <div style={{ color: secondaryText, fontSize: 12, lineHeight: 1.7, letterSpacing: "0.04em" }}>{props.metadata.join(" · ")}</div> : null}
+        <span aria-hidden="true" style={{ width: 40, height: 1, background: props.tone.border, margin: "4px 0" }} />
+        <p style={{ margin: 0, maxWidth: 560, color: secondaryText, fontSize: 14, lineHeight: 1.7 }}>{props.description}</p>
       </header>
-      <div style={{ display: "grid", gridTemplateColumns: props.isMobile ? "minmax(0, 1fr)" : "repeat(auto-fit, minmax(240px, 1fr))", gap: 14 }}>
-        {props.choices.map(choice => <button key={choice.value} type="button" onClick={() => props.onSelect(choice.value)}
-          style={{ display: "flex", alignItems: "center", gap: 14, minWidth: 0, width: "100%", padding: 12, textAlign: "left", border: `1px solid ${props.tone.border}`, borderRadius: 12, background: props.tone.surface, color: props.tone.text, cursor: "pointer", fontFamily: "inherit" }}>
-          <AlbumThumbnail choice={choice} size={props.isMobile ? 76 : 90} />
-          <span style={{ minWidth: 0, flex: 1, display: "grid", gap: 6 }}>
-            <span style={{ fontSize: 16, fontWeight: 700, overflowWrap: "anywhere" }}>{choice.title}</span>
-            {!props.hidePhotoCount ? <span style={{ fontSize: 12, color: props.tone.mutedText }}>{photoCount(choice, props)}</span> : null}
+      <div className="event-album-cards">
+        {props.choices.map(choice => <button className="event-album-card" key={choice.value} type="button" onClick={() => props.onSelect(choice.value)}>
+          <span className="event-album-cover" style={{ background: props.tone.surface, border: `1px solid ${props.tone.border}`, boxSizing: "border-box" }}>
+            {choice.thumbnailUrl ? <img src={choice.thumbnailUrl} alt="" loading="lazy" onError={event => { retryPortalPreviewImage(event.currentTarget); }} />
+              : <Images size={36} color={props.tone.mutedText} aria-hidden="true" />}
           </span>
-          <ChevronRight size={18} aria-hidden="true" />
+          <span style={{ display: "flex", alignItems: "center", gap: 16, padding: "16px 3px 6px" }}>
+            <span style={{ minWidth: 0, flex: 1, display: "grid", gap: 6 }}>
+              <span style={{ fontSize: 16, fontWeight: 600, lineHeight: 1.4, overflowWrap: "anywhere" }}>{choice.title}</span>
+              {!props.hidePhotoCount ? <span style={{ fontSize: 12, color: secondaryText, lineHeight: 1.5 }}>{photoCount(choice, props)}</span> : null}
+            </span>
+            <ChevronRight className="event-album-arrow" size={18} color={props.tone.mutedText} aria-hidden="true" />
+          </span>
         </button>)}
       </div>
     </div>

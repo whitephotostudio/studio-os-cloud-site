@@ -75,7 +75,8 @@ function textOf(node) {
   return [node.props?.children].flat(Infinity).map(textOf).join(" ");
 }
 function componentHarness() {
-  const hooks = [], listeners = new Map();
+  const hooks = [], listeners = new Map(), previewTimers = [];
+  const previews = load("../lib/portal-preview-retry.ts", { URL, setTimeout: (run, delay) => previewTimers.push({run,delay}) });
   let cursor = 0;
   const jsx = (type, props) => typeof type === "function" ? type(props) : ({ type, props });
   const react = {
@@ -94,31 +95,100 @@ function componentHarness() {
       if (name === "react") return react;
       if (name === "react/jsx-runtime") return { jsx, jsxs: jsx };
       if (name === "lucide-react") return new Proxy({}, { get: (_, key) => `icon-${String(key)}` });
+      if (name === "@/lib/portal-preview-retry") return previews;
       throw new Error(`Unexpected module ${name}`);
     },
   });
-  return { components, hooks, listeners, render(name, props) { cursor = 0; return components[name](props); } };
+  return { components, hooks, listeners, previewTimers, render(name, props) { cursor = 0; return components[name](props); } };
 }
 const componentProps = onSelect => ({ choices: choicesFor(), onSelect, hidePhotoCount: false, photoLabel: "photo", photosLabel: "photos" });
+const overviewProps = (overrides = {}) => ({
+  ...componentProps(() => {}), isMobile: false,
+  title: "A branded gallery", description: "Choose an album, or view all photos.", albumsLabel: "Albums",
+  brandName: "White Photo", brandLogoUrl: "/logo.svg", metadata: ["4 albums", "8 photos"],
+  tone: { background: "#fafafa", surface: "#fff", text: "#111", mutedText: "#555", border: "#ddd" },
+  ...overrides,
+});
+
+test("elegant album overview and thumbnail switcher retain bounded authorized-preview retries", () => {
+  for(const name of ["EventAlbumOverview","EventAlbumSwitcher"]){
+    const ui=componentHarness(),url="https://fixture.test/api/portal/event-preview/authorized.jpg?token=signed";
+    const choice={...choicesFor()[1],thumbnailUrl:url};
+    const tree=ui.render(name,overviewProps({choices:[choice],brandLogoUrl:null,value:choice.value,label:"Album"}));
+    const photos=findAll(tree,"img");assert.ok(photos.length>0);
+    for(const photo of photos){
+      const image={src:url,isConnected:true,alt:"",dataset:{},style:{opacity:"1"}},start=ui.previewTimers.length;
+      photo.props.onError({currentTarget:image});assert.equal(ui.previewTimers[start].delay,1500);ui.previewTimers[start].run();assert.match(image.src,/previewRetry=1/);
+      photo.props.onError({currentTarget:image});assert.equal(ui.previewTimers[start+1].delay,60000);ui.previewTimers[start+1].run();assert.match(image.src,/previewRetry=2/);
+      photo.props.onError({currentTarget:image});assert.equal(ui.previewTimers.length,start+2);
+      const original={...image,src:"https://fixture.test/original.jpg",dataset:{}};photo.props.onError({currentTarget:original});assert.equal(ui.previewTimers.length,start+2);
+    }
+  }
+});
 
 test("mobile and desktop overview renders every thumbnail choice before any photo grid", () => {
   for (const isMobile of [true, false]) {
     const ui = componentHarness(), selected = [];
-    const tree = ui.render("EventAlbumOverview", {
-      ...componentProps(value => selected.push(value)), isMobile,
-      title: "A branded gallery", description: "Choose an album, or view all photos.", albumsLabel: "Albums",
-      brandName: "White Photo", brandLogoUrl: "/logo.svg", metadata: ["4 albums", "8 photos"],
-      tone: { background: "#fafafa", surface: "#fff", text: "#111", mutedText: "#555", border: "#ddd" },
-    });
+    const props = overviewProps({ onSelect: value => selected.push(value), isMobile });
+    const tree = ui.render("EventAlbumOverview", props);
     const buttons = findAll(tree, "button");
     assert.equal(buttons.length, 5);
     assert.equal(findAll(tree, "img").length, 6);
+    assert.equal(tree.props["aria-label"], "Albums");
     assert.equal(tree.props.style.overflow, "auto");
     assert.equal(tree.props.style.minHeight, 0);
-    assert.match(textOf(tree), /White Photo/);
+    const header = findAll(tree, "header")[0];
+    const logo = findAll(header, "img")[0];
+    assert.equal(logo.props.src, "/logo.svg");
+    assert.equal(logo.props.alt, "White Photo");
+    assert.equal(logo.props.style.objectFit, "contain");
+    assert.doesNotMatch(textOf(header), /White Photo/);
+    assert.deepEqual(buttons.map(button => findAll(button, "img")[0].props.src), plain(props.choices.map(choice => choice.thumbnailUrl)));
+    assert.deepEqual(buttons.map(button => findAll(button, "img")[0].props.alt), Array(5).fill(""));
+    assert.ok(buttons.every(button => button.props.type === "button"));
     assert.match(textOf(tree), /Kite web-size/);
-    buttons[4].props.onClick();
-    assert.deepEqual(selected, ["album:kite-web"]);
+    buttons.forEach((button, index) => {
+      assert.ok(textOf(button).includes(props.choices[index].title));
+      button.props.onClick();
+    });
+    assert.deepEqual(selected, plain(props.choices.map(choice => choice.value)));
+  }
+});
+
+test("overview shows the studio name as a readable fallback when no logo exists", () => {
+  const tree = componentHarness().render("EventAlbumOverview", overviewProps({ brandLogoUrl: null }));
+  const header = findAll(tree, "header")[0];
+  assert.equal(findAll(header, "img").length, 0);
+  assert.match(textOf(header), /White Photo/);
+  assert.match(textOf(header), /A branded gallery/);
+  assert.equal(findAll(tree, "button").length, 5);
+});
+
+test("overview photo counts respect the owner choice without removing album cards", () => {
+  const ui = componentHarness();
+  for (const hidePhotoCount of [true, false]) {
+    const tree = ui.render("EventAlbumOverview", overviewProps({ hidePhotoCount, metadata: ["4 albums", "Private access"] }));
+    const buttons = findAll(tree, "button");
+    assert.equal(buttons.length, 5);
+    assert.equal(textOf(buttons[0]).includes("8 photos"), !hidePhotoCount);
+    for (const button of buttons.slice(1)) assert.equal(textOf(button).includes("2 photos"), !hidePhotoCount);
+    assert.match(textOf(findAll(tree, "header")[0]), /4 albums · Private access/);
+  }
+});
+
+test("an album without a cover keeps its title, accessible placeholder, and selection", () => {
+  for (const isMobile of [true, false]) {
+    const selected = [];
+    const choices = choicesFor({ collections: [{ id: "empty", title: "Coming soon" }], images: [], hideAllPhotosAlbum: true });
+    const tree = componentHarness().render("EventAlbumOverview", overviewProps({ choices, isMobile, onSelect: value => selected.push(value) }));
+    const button = findAll(tree, "button")[0];
+    assert.match(textOf(button), /Coming soon/);
+    assert.equal(findAll(button, "img").length, 0);
+    const placeholder = findAll(button, "icon-Images")[0];
+    assert.ok(placeholder);
+    assert.equal(placeholder.props["aria-hidden"], "true");
+    button.props.onClick();
+    assert.deepEqual(selected, ["album:empty"]);
   }
 });
 
