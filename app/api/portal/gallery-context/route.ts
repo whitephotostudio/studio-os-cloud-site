@@ -1,3 +1,5 @@
+import { loadScopedSchoolCompositeMedia } from "@/lib/school-order-media";
+import { schoolPreviewPresentation, buildSchoolFavoriteDownloadAccess } from "@/lib/school-portal-media";
 import { NextRequest, NextResponse } from "next/server";
 import { createDashboardServiceClient } from "@/lib/dashboard-auth";
 import { getClientIp, rateLimit } from "@/lib/rate-limit";
@@ -14,17 +16,14 @@ import {
 import { hasActiveSubscription } from "@/lib/subscription-gate";
 import { applyCheckoutTaxFallbackToSettings } from "@/lib/checkout-tax";
 import {
-  buildSignedMediaUrls,
   SIGNED_URL_TTL_PARENTS_PORTAL_SECONDS,
 } from "@/lib/storage-images";
 import { signBackdropRows } from "@/lib/backdrop-media-references";
 import {
   signedPrivateMediaReference,
-  signPhotoUrlRows,
 } from "@/lib/private-media-references";
 import { hasCalendarBoundaryPassed } from "@/lib/calendar-dates";
 import { isUuid } from "@/lib/r2-access-security";
-import { findSyncedSchoolProjectId } from "@/lib/school-sync";
 import {
   clearOutOfScopeSchoolPhotoReferences,
   clearTombstonedSchoolPhotoReferences,
@@ -151,189 +150,8 @@ function looksLikeImageAssetUrl(value: string | null | undefined) {
   );
 }
 
-function slugify(value: string, fallback = "collection") {
-  return clean(value)
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "") || fallback;
-}
-
-function compactCompositeKey(value: string | null | undefined) {
-  return clean(value).toLowerCase().replace(/[^a-z0-9]+/g, "");
-}
-
-function compositeClassCandidates(
-  value: string | null | undefined | Array<string | null | undefined>,
-) {
-  const rawValues = Array.isArray(value) ? value : [value];
-  const seen = new Set<string>();
-  const result: string[] = [];
-  const add = (raw: string | null | undefined) => {
-    const candidate = clean(raw);
-    if (!candidate) return;
-    const key = candidate.toLowerCase();
-    if (seen.has(key)) return;
-    seen.add(key);
-    result.push(candidate);
-  };
-
-  for (const raw of rawValues) {
-    add(raw);
-    const candidate = clean(raw);
-    const kindergartenMatch = candidate.match(/^(s|j)k\s*[- ]?([a-z0-9]+)$/i);
-    if (kindergartenMatch) {
-      const level =
-        kindergartenMatch[1].toLowerCase() === "s"
-          ? "Senior Kindergarten"
-          : "Junior Kindergarten";
-      const section = kindergartenMatch[2].toUpperCase();
-      add(`${level} ${section}`);
-      add(`${level} Class ${section}`);
-      add(`${level} Class ${section} 2026`);
-    }
-  }
-  return result;
-}
-
-function matchesCompositeClassCandidate(
-  value: string | null | undefined,
-  candidates: string[],
-) {
-  const normalized = clean(value);
-  if (!normalized || candidates.length === 0) return false;
-
-  const valueLower = normalized.toLowerCase();
-  const valueSlug = slugify(normalized, "composite");
-  const valueCompact = compactCompositeKey(normalized);
-
-  return candidates.some((candidate) => {
-    const candidateLower = candidate.toLowerCase();
-    const candidateSlug = slugify(candidate, "composite");
-    const candidateCompact = compactCompositeKey(candidate);
-    return (
-      valueLower === candidateLower ||
-      valueSlug === candidateSlug ||
-      valueCompact === candidateCompact ||
-      (valueSlug.length > 3 &&
-        candidateSlug.length > 3 &&
-        (valueSlug.includes(candidateSlug) ||
-          candidateSlug.includes(valueSlug))) ||
-      (valueCompact.length > 3 &&
-        candidateCompact.length > 3 &&
-        (valueCompact.includes(candidateCompact) ||
-          candidateCompact.includes(valueCompact)))
-    );
-  });
-}
-
-function compositeCollectionMatchesClass(
-  row: { title?: string | null; slug?: string | null },
-  classCandidates: string[],
-) {
-  return (
-    matchesCompositeClassCandidate(row.title, classCandidates) ||
-    matchesCompositeClassCandidate(row.slug, classCandidates)
-  );
-}
-
-async function loadSchoolCompositeMedia(
-  service: ReturnType<typeof createDashboardServiceClient>,
-  school: SchoolRow | null,
-  className: string | null | undefined | Array<string | null | undefined>,
-) {
-  const classCandidates = compositeClassCandidates(className);
-  if (!school?.id || !clean(school.photographer_id)) {
-    return [] as CompositeMediaRow[];
-  }
-
-  const projectId = await findSyncedSchoolProjectId(service, school.id, {
-    localSchoolId: school.local_school_id,
-    photographerId: school.photographer_id,
-  });
-
-  if (!projectId) return [] as CompositeMediaRow[];
-
-  const { data: collectionRows, error: collectionError } = await service
-    .from("collections")
-    .select("id,title,slug")
-    .eq("project_id", projectId)
-    .eq("kind", "composite")
-    .order("sort_order", { ascending: true })
-    .order("created_at", { ascending: true });
-
-  if (collectionError) throw collectionError;
-
-  let matchingCollections = (collectionRows ?? []).filter((row) =>
-    compositeCollectionMatchesClass(row, classCandidates),
-  );
-  let filterMediaByCandidate = false;
-  if (!matchingCollections.length && classCandidates.length === 0) {
-    matchingCollections = collectionRows ?? [];
-  }
-  if (!matchingCollections.length && (collectionRows ?? []).length === 1) {
-    matchingCollections = collectionRows ?? [];
-  }
-  if (!matchingCollections.length && classCandidates.length > 0) {
-    matchingCollections = collectionRows ?? [];
-    filterMediaByCandidate = true;
-  }
-  if (!matchingCollections.length) return [] as CompositeMediaRow[];
-
-  const collectionIds = matchingCollections.map((row) => clean(row.id)).filter(Boolean);
-  const candidateLabels = classCandidates.length ? classCandidates : ["Class Composite"];
-  const collectionTitleById = new Map(
-    matchingCollections.map((row) => [clean(row.id), clean(row.title) || candidateLabels[0]]),
-  );
-
-  const { data: mediaRows, error: mediaError } = await service
-    .from("media")
-    .select("id,collection_id,storage_path,preview_url,thumbnail_url,filename,created_at,sort_order")
-    .eq("project_id", projectId)
-    .in("collection_id", collectionIds)
-    .order("sort_order", { ascending: true })
-    .order("created_at", { ascending: true })
-    .limit(5000);
-
-  if (mediaError) throw mediaError;
-
-  const uniqueRows = new Map<string, CompositeMediaRow>();
-  for (const row of (mediaRows ?? []) as CompositeMediaRow[]) {
-    const collectionId = clean(row.collection_id);
-    const storagePath = clean(row.storage_path);
-    if (!collectionId) continue;
-    if (
-      filterMediaByCandidate &&
-      !matchesCompositeClassCandidate(storagePath, classCandidates) &&
-      !matchesCompositeClassCandidate(row.filename, classCandidates) &&
-      !matchesCompositeClassCandidate(collectionTitleById.get(collectionId), classCandidates)
-    ) {
-      continue;
-    }
-    const filename = clean(row.filename).toLowerCase();
-    const key = filename
-      ? `${collectionId}::filename::${filename}`
-      : `${collectionId}::${storagePath || clean(row.id)}`;
-    uniqueRows.set(key, row);
-  }
-
-  // 2026-04-30 — Sign URLs server-side; the raw values in DB point at
-  // a dead R2 public host.  6h TTL since parents shop for a long time.
-  return Array.from(uniqueRows.values()).map((row) => {
-    const mediaUrls = buildSignedMediaUrls({
-      storagePath: row.storage_path,
-      previewUrl: row.preview_url,
-      thumbnailUrl: row.thumbnail_url,
-    }, {
-      ttlSeconds: SIGNED_URL_TTL_PARENTS_PORTAL_SECONDS,
-      deriveDerivatives: false,
-    });
-    return {
-      ...row,
-      preview_url: mediaUrls.previewUrl || null,
-      thumbnail_url: mediaUrls.thumbnailUrl || null,
-      collection_title: collectionTitleById.get(clean(row.collection_id)) || candidateLabels[0],
-    };
-  });
+async function loadSchoolCompositeMedia(service: ReturnType<typeof createDashboardServiceClient>, school: SchoolRow | null, className: string | null | undefined | Array<string | null | undefined>) {
+  return loadScopedSchoolCompositeMedia(service, school, className);
 }
 
 export async function POST(request: NextRequest) {
@@ -662,34 +480,27 @@ export async function POST(request: NextRequest) {
         "Classes",
     };
 
-    const signedStudentCandidates = signPhotoUrlRows(
-      scopedVisibleStudentCandidates,
-      SIGNED_URL_TTL_PARENTS_PORTAL_SECONDS,
-    );
-    const signedPrimaryStudent = {
-      ...visiblePrimaryStudent,
-      photo_url:
-        signedPrivateMediaReference(
-          visiblePrimaryStudent.photo_url,
-          SIGNED_URL_TTL_PARENTS_PORTAL_SECONDS,
-        ) || null,
-    };
+    const presentation = schoolPreviewPresentation({ school: activeSchool, students: activeStudentCandidates, visibleStudents: scopedVisibleStudentCandidates, email: selectedEmail, media: mediaRows, composites: compositeRows, nobgUrls });
+    const signedStudentCandidates = presentation.students;
+    const signedPrimaryStudent = signedStudentCandidates.find(row => row.id === visiblePrimaryStudent.id) ?? null;
+    const favoriteDownloadAccess = await buildSchoolFavoriteDownloadAccess(service, activeSchool, activeStudentCandidates, selectedEmail);
 
     return NextResponse.json({
       ok: true,
-      currentSchool,
-      schoolRowsForMatch,
+      currentSchool: { ...currentSchool, gallery_settings: publicGallerySettings },
+      schoolRowsForMatch: schoolRowsForMatch.map(row => ({ ...row, gallery_settings: publicGallerySettings })),
       studentCandidates: signedStudentCandidates,
       primaryStudent: signedPrimaryStudent,
-      activeSchool,
+      activeSchool: { ...activeSchool, gallery_settings: publicGallerySettings },
       activeProject,
       gallerySettings: publicGallerySettings,
       downloadAccess,
-      media: mediaRows,
-      composites: compositeRows,
+      media: presentation.media,
+      composites: presentation.composites,
       packages: packageRows,
       backdrops: backdropRows,
-      nobgUrls,
+      nobgUrls: presentation.nobgUrls,
+      favoriteDownloadAccess,
       photographerId,
       watermarkEnabled,
       watermarkLogoUrl,
@@ -697,7 +508,7 @@ export async function POST(request: NextRequest) {
       lateOrderPolicy,
       screenshotProtection,
       groupLabel,
-    });
+    }, { headers: { "cache-control": "private, no-store" } });
   } catch (error) {
     console.error("[gallery-context]", error);
     return NextResponse.json(

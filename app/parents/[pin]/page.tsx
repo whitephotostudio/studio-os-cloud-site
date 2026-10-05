@@ -1,5 +1,8 @@
 "use client";
 
+import { retryPortalPreviewImage } from "@/lib/portal-preview-retry";
+import { authorizedEventDownloadImages, canonicalEventOrderEntry, type EventFileDelivery } from "@/lib/event-gallery-media-client";
+
 import { checkoutAttemptForPayload } from "@/lib/checkout-attempt-client";
 
 import { FormEvent, SyntheticEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -81,6 +84,7 @@ type StudentRow = {
   first_name: string;
   last_name: string | null;
   photo_url: string | null;
+  photo_storage_path?: string | null;
   class_id: string | null;
   school_id: string;
   class_name?: string | null;
@@ -188,6 +192,7 @@ type CompositeMediaRow = {
 };
 
 type GalleryContextPayload = {
+  favoriteDownloadAccess?: EventFavoriteDownloadAccess;
   ok?: boolean;
   message?: string;
   currentSchool?: SchoolRow | null;
@@ -285,6 +290,8 @@ type GalleryImage = {
   collectionId?: string | null;
   filename?: string | null;
   downloadUrl?: string | null;
+  deliveryUrl?: string | null;
+  deliveryWatermarked?: boolean;
   thumbnailUrl?: string | null;
   previewUrl?: string | null;
   title?: string | null;
@@ -991,6 +998,7 @@ function buildBackdropImageCandidates(backdrop: Pick<BackdropRow, "id" | "thumbn
 
 function handleGalleryImageError(event: SyntheticEvent<HTMLImageElement>) {
   const target = event.currentTarget;
+  if (retryPortalPreviewImage(target)) return;
   const candidates = (target.dataset.candidates || "")
     .split("|")
     .map((value) => value.trim())
@@ -1004,7 +1012,12 @@ function handleGalleryImageError(event: SyntheticEvent<HTMLImageElement>) {
     return;
   }
 
-  target.style.opacity = "0";
+  target.alt = "Preview unavailable. Please retry or contact the photographer.";
+  target.style.opacity = "1";
+  if (target.dataset.previewUnavailable !== "true") {
+    target.dataset.previewUnavailable = "true";
+    target.src = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="600" height="400"><rect width="100%" height="100%" fill="#f3f4f6"/><text x="50%" y="50%" text-anchor="middle" fill="#6b7280" font-family="sans-serif" font-size="24">Preview unavailable</text></svg>');
+  }
 }
 
 function handleBackdropImageError(event: SyntheticEvent<HTMLImageElement>) {
@@ -1234,9 +1247,10 @@ function buildGalleryDownloadFetchUrl(url: string) {
 }
 
 function preferredDownloadUrl(
-  image: Pick<GalleryImage, "downloadUrl" | "previewUrl" | "thumbnailUrl" | "url">,
+  image: Pick<GalleryImage, "downloadUrl" | "previewUrl" | "thumbnailUrl" | "url" | "deliveryUrl">,
   resolution: EventGallerySettings["extras"]["freeDigitalResolution"],
 ) {
+  if (image.deliveryUrl) return image.deliveryUrl;
   const candidates =
     resolution === "web"
       ? [image.thumbnailUrl, image.previewUrl, image.downloadUrl, image.url]
@@ -4053,7 +4067,7 @@ export default function ParentGalleryPage() {
   // the sessionStorage flag and try again on the next render.
   const reorderHydratedRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!photographerId) return;
+    if (!photographerId || loading) return;
     if (typeof window === "undefined") return;
     let pendingId: string | null = null;
     try {
@@ -4064,9 +4078,7 @@ export default function ParentGalleryPage() {
     if (!pendingId) return;
     if (reorderHydratedRef.current === pendingId) return;
     if (packages.length === 0) return;
-    // Backdrops only matter for school mode; skip the wait in event mode
-    // where there are no backdrops loaded by design.
-    if (isSchoolMode && backdrops.length === 0) return;
+    // Loading completion distinguishes an empty catalog from a pending fetch.
 
     let snapshotRaw: string | null = null;
     try {
@@ -4117,6 +4129,11 @@ export default function ParentGalleryPage() {
       orientation?: "portrait" | "landscape";
     };
 
+    const restoredDisplayUrl = (reference: string | null | undefined) => {
+      if (!reference) return null;
+      const image = images.find(row => row.storagePath === reference || row.url === reference || row.previewUrl === reference || row.downloadUrl === reference);
+      return image?.previewUrl || image?.url || null;
+    };
     const restored: CartLineItem[] = [];
     for (const raw of parsed as SnapshotEntry[]) {
       const pkg = packages.find((p) => p.id === raw.packageId);
@@ -4163,11 +4180,11 @@ export default function ParentGalleryPage() {
         lineTotalCents: packageSubtotalCents + backdropAddOnCents,
         slots: (raw.slots ?? []).map((s) => ({
           label: s.label ?? "Item",
-          assignedImageUrl: s.assignedImageUrl ?? null,
+          assignedImageUrl: restoredDisplayUrl(s.assignedImageUrl),
         })) as ItemSlot[],
-        selectedImageUrl: raw.selectedImageUrl ?? null,
-        retouchSelections: raw.retouchSelections ?? [],
-        digitalSelections: raw.digitalSelections ?? [],
+        selectedImageUrl: restoredDisplayUrl(raw.selectedImageUrl),
+        retouchSelections: (raw.retouchSelections ?? []).map(selection => ({ ...selection, imageUrl: restoredDisplayUrl(selection.imageUrl) || "" })),
+        digitalSelections: (raw.digitalSelections ?? []).map(selection => ({ ...selection, url: restoredDisplayUrl(selection.url) || "" })),
         digitalLimit: raw.digitalLimit ?? null,
         isCompositeOrder: !!raw.isComposite,
         compositeTitle: raw.compositeTitle ?? null,
@@ -4202,7 +4219,7 @@ export default function ParentGalleryPage() {
       // ignore
     }
     reorderHydratedRef.current = pendingId;
-  }, [photographerId, packages, backdrops, isSchoolMode, currentLane]);
+  }, [photographerId, packages, backdrops, isSchoolMode, currentLane, images, loading]);
 
   // Auto-register the CURRENT gallery as a lane.
   useEffect(() => {
@@ -4446,15 +4463,15 @@ export default function ParentGalleryPage() {
             .map((row) => {
               const thumbnailUrl = clean(row.thumbnail_url) || null;
               const previewUrl = clean(row.preview_url) || null;
-              const downloadUrl = clean(row.download_url) || previewUrl || thumbnailUrl;
-              const url = previewUrl || thumbnailUrl || downloadUrl;
+              const url = previewUrl || thumbnailUrl;
               if (!url) return null;
               return {
                 id: row.id,
                 url,
                 collectionId: clean(row.collection_id) || null,
                 filename: clean(row.filename) || null,
-                downloadUrl: downloadUrl || url,
+                storagePath: normalizeStorageFolder(row.storage_path ?? ""),
+                downloadUrl: null,
                 thumbnailUrl,
                 previewUrl,
               } as GalleryImage;
@@ -4640,7 +4657,7 @@ export default function ParentGalleryPage() {
         const seenPhotoKeys = new Set<string>();
 
         for (const row of schoolMediaRows) {
-          const downloadUrl = clean(row.download_url) || clean(row.preview_url) || clean(row.thumbnail_url);
+          const downloadUrl = clean(row.download_url);
           const displayUrl = clean(row.preview_url) || clean(row.thumbnail_url) || downloadUrl;
           const storagePath = normalizeStorageFolder(row.storage_path ?? "");
           const dedupeKey = photoDedupeKey(storagePath, displayUrl);
@@ -4652,7 +4669,7 @@ export default function ParentGalleryPage() {
             url: displayUrl,
             filename: clean(row.filename) || null,
             storagePath,
-            downloadUrl: downloadUrl || displayUrl,
+            downloadUrl: downloadUrl || null,
             previewUrl: clean(row.preview_url) || null,
             thumbnailUrl: clean(row.thumbnail_url) || null,
             source: "photo",
@@ -4662,7 +4679,7 @@ export default function ParentGalleryPage() {
         if (!combinedImages.length) {
           for (const s of studentCandidates) {
             if (s.photo_url) {
-              const storagePath = extractStoragePathFromSupabaseUrl(s.photo_url);
+              const storagePath = s.photo_storage_path || extractStoragePathFromSupabaseUrl(s.photo_url);
               const dedupeKey = photoDedupeKey(storagePath, s.photo_url);
               if (seenPhotoKeys.has(dedupeKey) || seenUrls.has(s.photo_url)) continue;
               seenPhotoKeys.add(dedupeKey);
@@ -4688,7 +4705,8 @@ export default function ParentGalleryPage() {
             url: compositeUrl,
             collectionId: composite.collection_id,
             filename: composite.filename ?? null,
-            downloadUrl: composite.preview_url ?? composite.thumbnail_url ?? null,
+            storagePath: composite.storage_path,
+            downloadUrl: null,
             previewUrl: composite.preview_url ?? composite.thumbnail_url ?? null,
             thumbnailUrl: composite.thumbnail_url ?? composite.preview_url ?? null,
             title: compositeImageTitle(
@@ -4765,10 +4783,7 @@ export default function ParentGalleryPage() {
           ...(contextPayload.downloadAccess ?? {}),
         });
         setFavoriteDownloadAccess(
-          schoolFavoriteDownloadAccess(
-            nextGallerySettings,
-            activeSchool?.gallery_settings ?? null,
-          ),
+          { ...schoolFavoriteDownloadAccess(nextGallerySettings, activeSchool?.gallery_settings ?? null), ...(contextPayload.favoriteDownloadAccess ?? {}) },
         );
         setImages(combinedImages);
         setSelectedImageIndex(0);
@@ -5684,21 +5699,18 @@ export default function ParentGalleryPage() {
           ok?: boolean;
           message?: string;
           allowedMediaIds?: string[];
+          deliveries?: EventFileDelivery[];
         };
 
         if (!response.ok || payload.ok === false) {
           throw new Error(payload.message || "Could not prepare favorite downloads.");
         }
 
-        const allowedIds = new Set(
-          (payload.allowedMediaIds ?? []).map((value) => clean(value)).filter(Boolean),
-        );
-        allowedImages = favoriteImages.filter((image) => allowedIds.has(image.id));
-        if (!allowedImages.length) {
-          throw new Error("There are no favorite downloads available right now.");
-        }
+        allowedImages = authorizedEventDownloadImages(favoriteImages, payload);
       }
       if (isSchoolMode && (student?.school_id || schoolId) && schoolViewerEmail) {
+        const downloadPin = galleryDownloadAccess.requiresPin ? clean(window.prompt('Enter the school download PIN.', "")) : "";
+        if (galleryDownloadAccess.requiresPin && !downloadPin) throw new Error("The school download PIN is required.");
         const response = await fetch("/api/portal/school-downloads", {
           method: "POST",
           headers: { "content-type": "application/json" },
@@ -5706,6 +5718,7 @@ export default function ParentGalleryPage() {
             schoolId: student?.school_id ?? schoolId,
             email: schoolViewerEmail,
             pin,
+            downloadPin,
             mediaIds: favoriteImages.map((image) => image.id),
             downloadType: "favorites",
           }),
@@ -5714,19 +5727,14 @@ export default function ParentGalleryPage() {
           ok?: boolean;
           message?: string;
           allowedMediaIds?: string[];
+          deliveries?: EventFileDelivery[];
         };
 
         if (!response.ok || payload.ok === false) {
           throw new Error(payload.message || "Could not prepare favorite downloads.");
         }
 
-        const allowedIds = new Set(
-          (payload.allowedMediaIds ?? []).map((value) => clean(value)).filter(Boolean),
-        );
-        allowedImages = favoriteImages.filter((image) => allowedIds.has(image.id));
-        if (!allowedImages.length) {
-          throw new Error("There are no favorite downloads available right now.");
-        }
+        allowedImages = authorizedEventDownloadImages(favoriteImages, payload);
       }
 
       const result = await downloadImagesBatch(allowedImages, {
@@ -5823,7 +5831,7 @@ export default function ParentGalleryPage() {
             );
           }
           let blob = await response.blob();
-          if (options.applyWatermark) {
+          if (options.applyWatermark && !image.deliveryWatermarked) {
             blob = await addWatermarkToBlob(blob, {
               watermarkText,
               logoImage,
@@ -6109,6 +6117,7 @@ export default function ParentGalleryPage() {
           ok?: boolean;
           message?: string;
           allowedMediaIds?: string[];
+          deliveries?: EventFileDelivery[];
           downloadsUsed?: number;
           downloadsRemaining?: number | null;
         };
@@ -6119,14 +6128,7 @@ export default function ParentGalleryPage() {
 
         setGalleryDownloadProgress(8);
 
-        const allowedIds = new Set(
-          (payload.allowedMediaIds ?? []).map((value) => clean(value)).filter(Boolean),
-        );
-        const allowedImages = candidateImages.filter((image) => allowedIds.has(image.id));
-
-        if (!allowedImages.length) {
-          throw new Error(galleryCopy.freeLimitReached);
-        }
+        const allowedImages = authorizedEventDownloadImages(candidateImages, payload);
 
         if (usePhotoShare) {
           const shared = await shareGalleryImagesToPhotos(allowedImages, {
@@ -6258,6 +6260,7 @@ export default function ParentGalleryPage() {
             ok?: boolean;
             message?: string;
             allowedMediaIds?: string[];
+            deliveries?: EventFileDelivery[];
             downloadsUsed?: number;
             downloadsRemaining?: number | null;
           };
@@ -6268,17 +6271,7 @@ export default function ParentGalleryPage() {
             );
           }
 
-          const allowedIds = new Set(
-            (sharePayload.allowedMediaIds ?? [])
-              .map((value) => clean(value))
-              .filter(Boolean),
-          );
-          const allowedImages = candidateImages.filter((image) =>
-            allowedIds.has(image.id),
-          );
-          if (!allowedImages.length) {
-            throw new Error(galleryCopy.freeLimitReached);
-          }
+          const allowedImages = authorizedEventDownloadImages(candidateImages, sharePayload);
 
           setGalleryDownloadAccess((prev) => ({
             ...prev,
@@ -6584,6 +6577,7 @@ export default function ParentGalleryPage() {
         ok?: boolean;
         message?: string;
         allowedMediaIds?: string[];
+        deliveries?: EventFileDelivery[];
         downloadsUsed?: number;
         downloadsRemaining?: number | null;
       };
@@ -6592,14 +6586,9 @@ export default function ParentGalleryPage() {
         throw new Error(payload.message || "Could not prepare this photo for download.");
       }
 
-      const allowedIds = new Set(
-        (payload.allowedMediaIds ?? []).map((value) => clean(value)).filter(Boolean),
-      );
-      if (!allowedIds.has(image.id)) {
-        throw new Error("This photo is not available for download right now.");
-      }
+      const deliveryImages = authorizedEventDownloadImages([image], payload);
 
-      const result = await downloadImagesBatch([image], {
+      const result = await downloadImagesBatch(deliveryImages, {
         resolution: galleryDownloadAccess.resolution,
         applyWatermark: currentGalleryExtras.watermarkDownloads,
         includePrintRelease: currentGalleryExtras.includePrintRelease,
@@ -8310,7 +8299,7 @@ export default function ParentGalleryPage() {
     // client just sends "what was selected". The anon key no longer
     // touches `orders` or `order_items`; everything goes through
     // /api/portal/orders/create, which uses the service client.
-    const entriesPayload = checkoutItems.map((entry) => ({
+    const displayEntriesPayload = checkoutItems.map((entry) => ({
       packageId: entry.packageId,
       quantity: entry.quantity,
       backdrop: entry.backdrop
@@ -8331,6 +8320,12 @@ export default function ParentGalleryPage() {
       compositeTitle: entry.compositeTitle ?? null,
       orientation: entry.orientation ?? "portrait",
     }));
+
+    let entriesPayload = displayEntriesPayload;
+    {
+      try { entriesPayload = displayEntriesPayload.map(entry => canonicalEventOrderEntry(entry, images)); }
+      catch (error) { setOrderError(error instanceof Error ? error.message : "Please choose the event photos again."); setPlacing(false); return; }
+    }
 
     const deliveryPayload =
       shippingEnabledForGallery && anyPhysicalCheckoutItem && activeDeliveryMethod === "shipping"
@@ -8400,7 +8395,7 @@ export default function ParentGalleryPage() {
           pin: g.lane.pin,
           schoolId: g.lane.schoolId,
           email: g.lane.email,
-          entries: g.items.map((entry) => ({
+          entries: g.items.map((entry) => canonicalEventOrderEntry({
             packageId: entry.packageId,
             quantity: entry.quantity,
             backdrop: entry.backdrop
@@ -8420,7 +8415,7 @@ export default function ParentGalleryPage() {
             isComposite: !!entry.isCompositeOrder,
             compositeTitle: entry.compositeTitle ?? null,
             orientation: entry.orientation ?? "portrait",
-          })),
+          }, images)),
         }));
         const combinedBody = { groups: groupsPayload, parent: parentPayload, delivery: deliveryPayload, notes: notesPayload };
         const purchaseIntent = sessionStorage.getItem("studio-os-checkout-purchase") || "initial";
@@ -10097,6 +10092,7 @@ export default function ParentGalleryPage() {
             up to 50 most-recent orders with cart_snapshot intact). */}
         {activeView === "orders" && (
           <OrdersHistoryPanel
+            photoPreviews={images.filter(image => image.storagePath).map(image => ({ key: image.storagePath!, url: image.previewUrl || image.url }))}
             pin={pin}
             email={parentEmail || schoolViewerEmail || eventEmail || ""}
             schoolId={isSchoolMode ? student?.school_id ?? null : null}

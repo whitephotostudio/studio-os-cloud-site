@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { retryPortalPreviewImage } from "@/lib/portal-preview-retry";
 
 type EventGalleryCoverProps = {
   title: string;
@@ -90,7 +91,10 @@ export function EventGalleryCover(props: EventGalleryCoverProps) {
   }, [revealReady, preview]);
 
   const photo = showImage ? <div className="event-cover-photo-frame" style={{ position: "relative", overflow: "hidden", background: tone.surface, border: layout === "minimal" ? `1px solid ${tone.border}` : undefined }}>
-    <img ref={imageRef} src={props.imageUrl!} alt="" fetchPriority={preview ? "auto" : "high"} onLoad={() => setLoadedImageUrl(props.imageUrl)} onError={() => setFailedImageUrl(props.imageUrl)}
+    <img ref={imageRef} src={props.imageUrl!} alt="" fetchPriority={preview ? "auto" : "high"} onLoad={() => setLoadedImageUrl(props.imageUrl)} onError={event => {
+      if (retryPortalPreviewImage(event.currentTarget, window.setTimeout)) return;
+      setFailedImageUrl(props.imageUrl);
+    }}
       style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", filter: props.imageFilter }} />
     {layout !== "minimal" ? <div className="event-cover-photo-overlay" aria-hidden="true" style={{ position: "absolute", inset: 0, background: layout === "centered" ? `linear-gradient(180deg, rgba(0,0,0,${overlayOpacity * 0.44}), rgba(0,0,0,${overlayOpacity}) 50%, rgba(0,0,0,${overlayOpacity}))` : `rgba(0,0,0,${overlayOpacity * 0.3})` }} /> : null}
   </div> : null;

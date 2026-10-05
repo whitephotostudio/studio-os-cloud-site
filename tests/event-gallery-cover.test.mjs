@@ -63,6 +63,7 @@ function coverHarness({ reducedMotion = false, cachedImageUrls = [], brokenCache
         },
       };
       if (name === "react/jsx-runtime") return { jsx, jsxs: jsx };
+      if (name === "@/lib/portal-preview-retry") return load("../lib/portal-preview-retry.ts", { URL });
       throw new Error(`Unexpected module ${name}`);
     },
   });
@@ -75,6 +76,7 @@ function coverHarness({ reducedMotion = false, cachedImageUrls = [], brokenCache
       nextRefs.add(ref);
       const key = type === "img" ? `img:${node.props.src}` : "button";
       if (!domNodes.has(key)) domNodes.set(key, {
+        src: node.props.src, isConnected: true, alt: node.props.alt, dataset: {}, style: { opacity: "1" },
         complete: type === "img" && [...cachedImageUrls, ...brokenCachedImageUrls].includes(node.props.src),
         naturalWidth: type === "img" && cachedImageUrls.includes(node.props.src) ? 1600 : 0,
         focus() { focused++; },
@@ -83,7 +85,7 @@ function coverHarness({ reducedMotion = false, cachedImageUrls = [], brokenCache
       else ref.current = domNodes.get(key);
     }
     for (const ref of mountedRefs) if (!nextRefs.has(ref)) {
-      if (typeof ref === "function") ref(null); else ref.current = null;
+      if (typeof ref === "function") ref(null); else { if (ref.current) ref.current.isConnected = false; ref.current = null; }
     }
     mountedRefs = nextRefs;
   }
@@ -113,7 +115,7 @@ function coverHarness({ reducedMotion = false, cachedImageUrls = [], brokenCache
       }
       throw new Error("Cover timers did not settle");
     },
-    unmount() { for (const hook of hooks) if (hook.kind === "effect") hook.cleanup?.(); },
+    unmount() { for (const hook of hooks) { if (hook.kind === "effect") hook.cleanup?.(); if(hook.kind === "ref" && hook.value.current) hook.value.current.isConnected=false; } },
     get focused() { return focused; },
     get pendingTimers() { return timers.size; },
   };
@@ -134,6 +136,20 @@ const coverProps = (overrides = {}) => ({
   serifTitle: false,
   overlayOpacity: 0.5,
   ...overrides,
+});
+
+test("authorized cover preview retries stay bounded while welcome access and loading reveal remain usable", () => {
+  const ui=coverHarness(),props=coverProps({imageUrl:"/api/portal/event-preview/authorized.jpg?token=signed"});
+  let tree=ui.render(props),photo=findAll(tree,"img")[0],image=photo.props.ref.current;
+  photo.props.onError({currentTarget:image});tree=ui.render(props);
+  assert.equal(findAll(tree,"img").length,1,"temporary preview error must not permanently remove the authorized cover");
+  ui.advance(1500);assert.match(image.src,/previewRetry=1/);
+  assert.equal(ui.advance(1000).props["data-reveal-ready"],true,"welcome still opens after its2500ms fallback");
+  photo.props.onError({currentTarget:image});ui.advance(60000);assert.match(image.src,/previewRetry=2/);
+  photo.props.onLoad();assert.equal(ui.render(props).props["data-reveal-ready"],true);
+  photo.props.onError({currentTarget:image});tree=ui.render(props);
+  assert.equal(findAll(tree,"img").length,0,"exhausted preview retry keeps the existing safe fallback");
+  assert.equal(findAll(tree,"button").length,1);
 });
 
 test("welcome presents the full cover, client name, and one accessible way to albums", () => {
@@ -167,7 +183,7 @@ test("welcome presents the full cover, client name, and one accessible way to al
 test("broken cover falls back to a readable welcome and a changed image may load", () => {
   const ui = coverHarness(), props = coverProps();
   const cover = findAll(ui.render(props), "img")[0];
-  cover.props.onError();
+  cover.props.onError({currentTarget:cover.props.ref.current});
   const fallback = ui.render(props);
   assert.equal(findAll(fallback, "img").length, 0);
   assert.equal(fallback.props.style.color, "#fff");
@@ -241,7 +257,8 @@ test("slow and broken cached media never prevent access after the fallback deadl
 
 test("failed media and galleries without a cover reveal the welcome and keep keyboard entry usable", () => {
   const props = coverProps(), ui = coverHarness();
-  findAll(ui.render(props), "img")[0].props.onError();
+  const failedPhoto=findAll(ui.render(props), "img")[0];
+  failedPhoto.props.onError({currentTarget:failedPhoto.props.ref.current});
   assert.equal(ui.render(props).props["data-reveal-ready"], true);
   ui.advance(1000);
   assert.equal(ui.focused, 1);
@@ -315,7 +332,8 @@ test("saved welcome layouts change the photo and text arrangement without changi
 test("all layouts honor the selected tone when there is no usable photo", () => {
   for (const layout of ["centered", "split", "minimal"]) {
     const ui = coverHarness(), props = coverProps({ layout, tone: lightTone });
-    findAll(ui.render(props), "img")[0].props.onError();
+    const photo = findAll(ui.render(props), "img")[0];
+    photo.props.onError({ currentTarget: photo.props.ref.current });
     const failed = ui.render(props);
     assert.equal(failed.props.style.background, lightTone.background);
     assert.equal(failed.props.style.color, lightTone.text);
@@ -394,7 +412,8 @@ test("embedded owner previews reveal immediately, grow to fit entry controls, an
     assert.equal(ui.pendingTimers, 0);
     ui.advance(5000);
     assert.equal(ui.focused, 0);
-    findAll(tree, "img")[0].props.onError();
+    const photo = findAll(tree, "img")[0];
+    photo.props.onError({ currentTarget: photo.props.ref.current });
     ui.render({ ...props, imageUrl: "/authorized/updated-preview.jpg" });
     assert.equal(ui.pendingTimers, 0);
     ui.unmount();

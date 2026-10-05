@@ -1,3 +1,4 @@
+import { hasCalendarBoundaryPassed } from "@/lib/calendar-dates";
 import { createDashboardServiceClient } from "@/lib/dashboard-auth";
 import { accessibleEventCollections, fetchEventProjectCollections, matchesEventCollectionPin } from "@/lib/event-download-scope";
 
@@ -65,7 +66,7 @@ export async function validateEventGalleryAccess(params: {
   const { data: projectRow, error: projectError } = await service
     .from("projects")
     .select(
-      "id,title,workflow_type,status,email_required,access_mode,access_pin,gallery_settings,photographer_id,order_due_date,expiration_date",
+      "id,title,workflow_type,status,email_required,access_mode,access_pin,gallery_settings,photographer_id,order_due_date,expiration_date,portal_status",
     )
     .eq("id", selectedProjectId)
     .maybeSingle<EventGalleryProjectAccessRow>();
@@ -74,6 +75,9 @@ export async function validateEventGalleryAccess(params: {
   if (!projectRow || !isEventProject(projectRow) || isInactive(projectRow.status)) {
     return { ok: false as const, status: 404, message: "Event gallery not found." };
   }
+
+  if (hasCalendarBoundaryPassed(projectRow.expiration_date)) return { ok: false as const, status: 410, message: "This event gallery has expired." };
+  if (["inactive", "closed", "pre_release"].includes(clean((projectRow as EventGalleryProjectAccessRow & { portal_status?: string | null }).portal_status).toLowerCase())) return { ok: false as const, status: 403, message: "This event gallery is not currently available." };
 
   const { data: whitelistRows, error: whitelistError } = await service
     .from("pre_release_emails")

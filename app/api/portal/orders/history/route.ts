@@ -1,3 +1,8 @@
+import { hasCurrentDigitalPayment } from "@/lib/digital-entitlement-payment";
+import { canonicalPortalOrderReference, canonicalPortalOrderSnapshot } from "@/lib/portal-order-media";
+import { hasCalendarBoundaryPassed } from "@/lib/calendar-dates";
+import { hasActiveSubscription } from "@/lib/subscription-gate";
+import { validateEventGalleryAccess } from "@/lib/event-gallery-access";
 // GET /api/portal/orders/history
 //
 // Returns the parent's order history for a single gallery — fuels the new
@@ -33,7 +38,6 @@ import { rateLimit, getClientIp } from "@/lib/rate-limit";
 import { parseJson } from "@/lib/api-validation";
 import type { RateLimitConfig } from "@/lib/rate-limit";
 import {
-  isWebImageUrl,
   isPackageComponentItem,
   parseOrderPhotoSelections,
   resolveOrderItemDisplayCents,
@@ -41,15 +45,7 @@ import {
   resolveOrderTotalCents,
 } from "@/lib/order-display";
 import { createDigitalDeliveryDownloadUrl } from "@/lib/digital-delivery";
-import {
-  privateMediaKeyFromReference,
-  signedPrivateMediaReference,
-  signPrivateMediaReferencesDeep,
-} from "@/lib/private-media-references";
-
 export const dynamic = "force-dynamic";
-
-const ORDER_HISTORY_MEDIA_TTL_SECONDS = 6 * 60 * 60;
 
 const QuerySchema = z.object({
   pin: z.string().trim().min(3).max(64),
@@ -70,6 +66,8 @@ type OrderRow = {
   id: string;
   created_at: string | null;
   paid_at: string | null;
+  refund_status: string | null;
+  refund_amount_cents: number | null;
   status: string | null;
   payment_status: string | null;
   total_cents: number | null;
@@ -115,20 +113,7 @@ function looksDigital(value: string | null | undefined) {
   );
 }
 
-function isPaidEnough(row: OrderRow) {
-  const status = lower(row.status);
-  const paymentStatus = lower(row.payment_status);
-  if (row.paid_at) return true;
-  if (paymentStatus === "paid" || paymentStatus === "succeeded") return true;
-  return [
-    "paid",
-    "digital_paid",
-    "digital_sent",
-    "reviewed",
-    "sent_to_print",
-    "completed",
-  ].includes(status);
-}
+function isPaidEnough(row: OrderRow) { return hasCurrentDigitalPayment(row); }
 
 function orderHasDigitalDelivery(row: OrderRow, items: OrderItemRow[]) {
   if (looksDigital(row.package_name) || looksDigital(row.status)) return true;
@@ -188,6 +173,13 @@ export async function POST(request: NextRequest) {
   // that gallery.  Both checks together prevent a malicious viewer from
   // pulling another parent's order history.
   if (body.schoolId) {
+    const { data: school, error: schoolError } = await sb.from("schools").select("id,photographer_id,status,portal_status,expiration_date").eq("id", body.schoolId).maybeSingle();
+    if (schoolError) return NextResponse.json({ ok: false, message: "Could not verify this school gallery." }, { status: 503 });
+    if (!school || hasCalendarBoundaryPassed(school.expiration_date) || lower(school.portal_status || school.status).replaceAll("-", "_") === "pre_release") return NextResponse.json({ ok: false, message: "This school gallery is not available." }, { status: 403 });
+    if (school.photographer_id) {
+      const { data: owner, error: ownerError } = await sb.from("photographers").select("id,is_platform_admin,subscription_status,trial_starts_at,trial_ends_at,created_at").eq("id", school.photographer_id).maybeSingle();
+      if (ownerError || !hasActiveSubscription(owner)) return NextResponse.json({ ok: false, message: "This school gallery is not available." }, { status: 403 });
+    }
     const { data: studentRow } = await sb
       .from("students")
       .select("id,school_id,first_name,last_name")
@@ -206,7 +198,7 @@ export async function POST(request: NextRequest) {
       .from("school_gallery_visitors")
       .select("viewer_email")
       .eq("school_id", body.schoolId)
-      .ilike("viewer_email", emailLower)
+      .eq("viewer_email", emailLower)
       .maybeSingle();
 
     // Visitor rows are best-effort tracking.  Older paid orders can exist
@@ -219,7 +211,7 @@ export async function POST(request: NextRequest) {
       .from("orders")
       .select(
         `id,created_at,paid_at,status,total_cents,subtotal_cents,tax_cents,currency,package_name,
-         payment_status,
+         payment_status,refund_status,refund_amount_cents,
          total_amount,
          parent_name,parent_email,parent_phone,customer_email,special_notes,notes,
          cart_snapshot,photographer_id,
@@ -247,7 +239,7 @@ export async function POST(request: NextRequest) {
         .from("orders")
         .select(
           `id,created_at,paid_at,status,total_cents,subtotal_cents,tax_cents,currency,package_name,
-           payment_status,
+           payment_status,refund_status,refund_amount_cents,
            total_amount,
            parent_name,parent_email,parent_phone,customer_email,special_notes,notes,
            cart_snapshot,photographer_id,
@@ -269,7 +261,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       ok: true,
-      orders: historyRows.map((row) => formatOrder(row, {
+      orders: historyRows.filter(row => row.photographer_id === school.photographer_id).map((row) => formatOrder(row, {
         student_name: [
           clean((studentRow as { first_name?: string }).first_name),
           clean((studentRow as { last_name?: string }).last_name),
@@ -279,36 +271,14 @@ export async function POST(request: NextRequest) {
     });
   }
 
-  // Event mode — validate the PIN matches the project's access_pin
-  // (same gating as school-mode's PIN-on-students check).  Without this,
-  // someone holding only a parent's email + projectId could pull their
-  // order history without ever proving they have the PIN.
-  const { data: projectRow } = await sb
-    .from("projects")
-    .select("id,access_pin")
-    .eq("id", body.projectId!)
-    .maybeSingle();
-
-  if (!projectRow) {
-    return NextResponse.json(
-      { ok: false, message: "Invalid event." },
-      { status: 404 },
-    );
-  }
-
-  const projectPin = clean((projectRow as { access_pin?: string }).access_pin);
-  if (projectPin && projectPin !== body.pin) {
-    return NextResponse.json(
-      { ok: false, message: "Invalid PIN for this event." },
-      { status: 404 },
-    );
-  }
+  const access = await validateEventGalleryAccess({ projectId: body.projectId!, email: emailLower, pin: body.pin });
+  if (!access.ok) return NextResponse.json({ ok: false, message: access.message }, { status: access.status });
 
   const { data: visitorRow } = await sb
     .from("event_gallery_visitors")
     .select("viewer_email")
     .eq("project_id", body.projectId!)
-    .ilike("viewer_email", emailLower)
+    .eq("viewer_email", emailLower)
     .maybeSingle();
 
   if (!visitorRow) {
@@ -322,7 +292,7 @@ export async function POST(request: NextRequest) {
     .from("orders")
     .select(
       `id,created_at,paid_at,status,total_cents,subtotal_cents,tax_cents,currency,package_name,
-       payment_status,
+       payment_status,refund_status,refund_amount_cents,
        total_amount,
        parent_name,parent_email,parent_phone,customer_email,special_notes,notes,
        cart_snapshot,photographer_id,
@@ -345,9 +315,17 @@ export async function POST(request: NextRequest) {
 
   return NextResponse.json({
     ok: true,
-    orders: (orders ?? []).map((row) =>
+    orders: (orders ?? []).filter(row => rowEmailMatches(row as unknown as OrderRow, emailLower) && (row.photographer_id ?? null) === access.project.photographer_id && historyEventScopeAllowed(row.cart_snapshot, body.projectId!, access.collectionIds)).map((row) =>
       formatOrder(row as unknown as OrderRow, { student_name: null }),
     ),
+  });
+}
+
+function historyEventScopeAllowed(snapshot: unknown, projectId: string, collectionIds: string[]) {
+  const allowed = new Set(collectionIds);
+  return !Array.isArray(snapshot) || snapshot.every(entry => {
+    const scope = entry && typeof entry === "object" ? entry.purchasedEventScope : null;
+    return !scope || (scope.version === 1 && scope.projectId === projectId && Array.isArray(scope.collectionIds) && scope.collectionIds.length > 0 && scope.collectionIds.every((id: unknown) => typeof id === "string" && allowed.has(id)));
   });
 }
 
@@ -358,16 +336,11 @@ function formatOrder(
   const allowPrivateDetails = ctx.allow_private_details !== false;
   const rawSpecialNotes = row.special_notes ?? row.notes ?? null;
   const notePhotos = parseOrderPhotoSelections(rawSpecialNotes);
-  const signedSpecialNotes = notePhotos.reduce<string | null>(
+  const canonicalSpecialNotes = notePhotos.reduce<string | null>(
     (notes, photo) => {
       if (!notes) return notes;
-      const signed = signedPrivateMediaReference(
-        photo.url,
-        ORDER_HISTORY_MEDIA_TTL_SECONDS,
-      );
-      return signed && signed !== photo.url
-        ? notes.split(photo.url).join(signed)
-        : notes;
+      const signed = canonicalPortalOrderReference(photo.url);
+      return notes.split(photo.url).join(signed || "Photo unavailable");
     },
     rawSpecialNotes,
   );
@@ -400,7 +373,7 @@ function formatOrder(
       try {
         digitalDownload = {
           available: true,
-          url: createDigitalDeliveryDownloadUrl(row.id, recipientEmail),
+          url: createDigitalDeliveryDownloadUrl(row.id, recipientEmail, { currentOrder: row }),
           message: "Download digital files",
         };
       } catch (error) {
@@ -413,14 +386,7 @@ function formatOrder(
   }
   const items = rawItems.map((it, index) => {
     const rawSku = clean(it.sku);
-    const imageReference = privateMediaKeyFromReference(rawSku)
-      ? signedPrivateMediaReference(
-          rawSku,
-          ORDER_HISTORY_MEDIA_TTL_SECONDS,
-        )
-      : isWebImageUrl(rawSku)
-        ? rawSku
-        : notePhotos[index]?.url ?? null;
+    const imageReference = canonicalPortalOrderReference(rawSku) || canonicalPortalOrderReference(notePhotos[index]?.url);
     return {
       productName: it.product_name ?? "Item",
       quantity: it.quantity ?? 1,
@@ -447,10 +413,7 @@ function formatOrder(
     currency: row.currency ?? "cad",
     packageName: row.package_name ?? null,
     items,
-    cartSnapshot: signPrivateMediaReferencesDeep(
-      row.cart_snapshot ?? null,
-      ORDER_HISTORY_MEDIA_TTL_SECONDS,
-    ),
+    cartSnapshot: canonicalPortalOrderSnapshot(row.cart_snapshot ?? null),
     schoolId: row.school_id,
     projectId: row.project_id,
     studentId: row.student_id,
@@ -459,7 +422,7 @@ function formatOrder(
     parentName: allowPrivateDetails ? row.parent_name ?? null : null,
     parentEmail: allowPrivateDetails ? row.parent_email ?? row.customer_email ?? null : null,
     parentPhone: allowPrivateDetails ? row.parent_phone ?? null : null,
-    specialNotes: signedSpecialNotes,
+    specialNotes: canonicalSpecialNotes,
     digitalDownload,
   };
 }

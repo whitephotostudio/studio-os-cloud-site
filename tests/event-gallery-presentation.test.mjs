@@ -7,10 +7,10 @@ import ts from "typescript";
 const compile = source => ts.transpileModule(source, {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX },
 }).outputText;
-function load(path, modules = {}) {
+function load(path, modules = {}, globals = {}) {
   const exports = {};
   vm.runInNewContext(compile(readFileSync(new URL(`../${path}`, import.meta.url), "utf8")), {
-    exports,
+    exports, ...globals,
     require(name) { assert.ok(name in modules, `Unexpected dependency ${name}`); return modules[name]; },
   });
   return exports;
@@ -26,8 +26,12 @@ const textOf = node => typeof node === "string" || typeof node === "number" ? St
 
 function heroHarness() {
   const state = [];
+  const timers = [];
   let cursor = 0;
   const jsx = (type, props) => ({ type, props });
+  const previewRetry = load("lib/portal-preview-retry.ts", {}, {
+    URL, setTimeout(callback, delay) { timers.push({ callback, delay }); },
+  });
   const { EventAlbumHero } = load("components/parents/event-album-hero.tsx", {
     react: { useState(initial) {
       const index = cursor++;
@@ -35,9 +39,20 @@ function heroHarness() {
       return [state[index], value => { state[index] = value; }];
     } },
     "react/jsx-runtime": { jsx, jsxs: jsx, Fragment: Symbol.for("fragment") },
+    "@/lib/portal-preview-retry": previewRetry,
   });
-  return { render(props) { cursor = 0; return EventAlbumHero(props); } };
+  return {
+    render(props) { cursor = 0; return EventAlbumHero(props); },
+    get pendingTimers() { return timers.length; },
+    runNextTimer(delay) {
+      const timer = timers.shift();
+      assert.ok(timer, "A preview retry must have been scheduled");
+      assert.equal(timer.delay, delay);
+      timer.callback();
+    },
+  };
 }
+const imageTarget = photo => ({ src: photo.props.src, alt: photo.props.alt, isConnected: true, dataset: {}, style: { opacity: "1" } });
 const heroProps = overrides => ({
   title: "The Giles School — Terry Fox event", imageUrl: "/authorized/album-cover.jpg",
   imageFilter: "grayscale(1)", metadata: ["427 photos", "October 15", "Private access"],
@@ -87,7 +102,8 @@ test("album photos use the saved filter/overlay and failure restores the selecte
   assert.equal(photo.props.style.filter, props.imageFilter);
   assert.equal(first.props.style.color, "#ffffff");
   assert.ok(findAll(first, "span").some(node => node.props.style?.background === "rgba(0,0,0,0.5)"));
-  photo.props.onError();
+  photo.props.onError({ currentTarget: imageTarget(photo) });
+  assert.equal(ui.pendingTimers, 0, "Ordinary owner cover files must use the fallback immediately");
   const failed = ui.render(props);
   assert.equal(findAll(failed, "img").length, 0);
   assert.equal(failed.props.style.background, tone.background);
@@ -97,6 +113,45 @@ test("album photos use the saved filter/overlay and failure restores the selecte
   assert.match(textOf(failed), /Terry Fox event/);
   assert.match(textOf(failed), /427 photos/);
   assert.equal(findAll(ui.render({ ...props, imageUrl: "/authorized/replacement.jpg" }), "img")[0].props.src, "/authorized/replacement.jpg");
+});
+
+test("protected album hero previews retry twice before falling back without losing the album text", () => {
+  for (const scope of ["event", "school"]) {
+    const props = heroProps({ imageUrl: `/api/portal/${scope}-preview/cover.jpg?token=signed%2Btoken` });
+    const ui = heroHarness(), photo = findAll(ui.render(props), "img")[0], image = imageTarget(photo);
+    for (const [retry, delay] of [[1, 1500], [2, 60000]]) {
+      photo.props.onError({ currentTarget: image });
+      assert.equal(findAll(ui.render(props), "img").length, 1, "A temporary protected preview error must keep the hero photo available");
+      assert.equal(ui.pendingTimers, 1);
+      assert.equal(image.alt, "Preview temporarily unavailable. Retrying.");
+      ui.runNextTimer(delay);
+      const retriedUrl = new URL(image.src);
+      assert.equal(retriedUrl.searchParams.get("token"), "signed+token");
+      assert.equal(retriedUrl.searchParams.get("previewRetry"), String(retry));
+    }
+    photo.props.onError({ currentTarget: image });
+    const failed = ui.render(props);
+    assert.equal(ui.pendingTimers, 0);
+    assert.equal(findAll(failed, "img").length, 0);
+    assert.equal(failed.props.style.background, props.tone.background);
+    assert.equal(failed.props.style.color, props.tone.text);
+    assert.match(textOf(failed), /Terry Fox event/);
+    assert.match(textOf(failed), /427 photos/);
+  }
+});
+
+test("album hero preview retries cannot replace a disconnected image or a newer image source", () => {
+  for (const staleReason of ["disconnected", "replaced"]) {
+    const props = heroProps({ imageUrl: "/api/portal/event-preview/cover.jpg?token=signed" });
+    const ui = heroHarness(), photo = findAll(ui.render(props), "img")[0], image = imageTarget(photo);
+    photo.props.onError({ currentTarget: image });
+    if (staleReason === "disconnected") image.isConnected = false;
+    else image.src = "/api/portal/event-preview/new-cover.jpg?token=new-signed";
+    const source = image.src;
+    ui.runNextTimer(1500);
+    assert.equal(image.src, source);
+    assert.equal(ui.pendingTimers, 0);
+  }
 });
 
 test("photo-free album headers and hidden metadata remain readable without adding invented totals", () => {

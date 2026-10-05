@@ -78,19 +78,16 @@ export function isPaidUploadedDeliveryOrder(order: {
   status?: string | null;
   payment_status?: string | null;
   paid_at?: string | null;
+  refund_status?: string | null;
+  refund_amount_cents?: number | null;
 }) {
-  const status = clean(order.status).toLowerCase();
-  const paymentStatus = clean(order.payment_status).toLowerCase();
-  if (clean(order.paid_at)) return true;
-  if (paymentStatus === "paid" || paymentStatus === "succeeded") return true;
-  return [
-    "paid",
-    "digital_paid",
-    "digital_sent",
-    "reviewed",
-    "sent_to_print",
-    "completed",
-  ].includes(status);
+  // Keep in step with hasCurrentDigitalPayment; this standalone helper is also
+  // imported directly by native Node security checks without application aliases.
+  const status = clean(order.status).toLowerCase(), payment = clean(order.payment_status).toLowerCase(), refund = clean(order.refund_status).toLowerCase();
+  const amount = order.refund_amount_cents == null ? 0 : Number(order.refund_amount_cents);
+  if (!Number.isFinite(amount) || amount !== 0 || (refund && !["none", "not_refunded", "not_requested"].includes(refund)) || ["refunded", "refund_pending", "cancelled", "canceled", "cancel_pending"].includes(status)) return false;
+  if (payment) return ["paid", "succeeded", "no_payment_required"].includes(payment);
+  return ["paid", "digital_paid"].includes(status) || (!!clean(order.paid_at) && ["digital_sent", "completed", "fulfilled"].includes(status));
 }
 
 export function createUploadedDeliveryToken(payload: UploadedDeliveryTokenPayload) {

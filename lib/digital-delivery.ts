@@ -1,3 +1,4 @@
+import { hasCurrentDigitalPayment } from "@/lib/digital-entitlement-payment";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
@@ -29,6 +30,8 @@ type OrderRow = {
   status: string | null;
   payment_status?: string | null;
   paid_at?: string | null;
+  refund_status?: string | null;
+  refund_amount_cents?: number | null;
   parent_email?: string | null;
   customer_email?: string | null;
   parent_name?: string | null;
@@ -120,6 +123,7 @@ export type DigitalDeliveryTokenPayload = {
   orderId: string;
   recipientEmail: string;
   exp: number;
+  orderAccessGrant?: string;
 };
 
 function clean(value: string | null | undefined) {
@@ -250,8 +254,8 @@ export function createDigitalDeliveryToken(payload: DigitalDeliveryTokenPayload)
 }
 
 export function verifyDigitalDeliveryToken(token: string) {
-  const [encoded, signature] = clean(token).split(".");
-  if (!encoded || !signature) throw new Error("Invalid digital delivery link.");
+  const [encoded, signature, extra] = clean(token).split(".");
+  if (!encoded || !signature || extra || encoded.length > 25000) throw new Error("Invalid digital delivery link.");
   const expected = signEncodedPayload(encoded);
   const actualBuffer = Buffer.from(signature, "utf8");
   const expectedBuffer = Buffer.from(expected, "utf8");
@@ -279,7 +283,7 @@ function tokenDownloadUrl(payload: DigitalDeliveryTokenPayload) {
 export function createDigitalDeliveryDownloadUrl(
   orderId: string,
   recipientEmail: string,
-  options?: { expiresInDays?: number },
+  options?: { expiresInDays?: number; currentOrder?: OrderRow },
 ) {
   const days = Math.max(1, Math.min(90, options?.expiresInDays ?? 30));
   return tokenDownloadUrl({
@@ -287,25 +291,12 @@ export function createDigitalDeliveryDownloadUrl(
     kind: "digital-order-delivery",
     orderId,
     recipientEmail: recipientEmail.toLowerCase(),
+    ...(options?.currentOrder ? { orderAccessGrant: createDigitalDeliveryOrderAccessGrant(options.currentOrder) } : {}),
     exp: Date.now() + 1000 * 60 * 60 * 24 * days,
   });
 }
 
-function isPaidEnough(order: OrderRow) {
-  const status = lower(order.status);
-  const paymentStatus = lower(order.payment_status);
-  if (["refunded", "refund_pending", "cancelled", "canceled", "cancel_pending"].includes(status) || paymentStatus === "refunded") return false;
-  if (order.paid_at) return true;
-  if (paymentStatus === "paid" || paymentStatus === "succeeded") return true;
-  return [
-    "paid",
-    "digital_paid",
-    "digital_sent",
-    "reviewed",
-    "sent_to_print",
-    "completed",
-  ].includes(status);
-}
+function isPaidEnough(order: OrderRow) { return hasCurrentDigitalPayment(order); }
 
 async function fetchProjectMediaRows(service: ServiceClient, projectId: string, collectionIds: string[]) {
   const rows: MediaRow[] = [];
@@ -330,7 +321,7 @@ async function fetchProjectMediaRows(service: ServiceClient, projectId: string, 
 async function fetchOrderContext(service: ServiceClient, orderId: string) {
   const { data: order, error: orderError } = await service
     .from("orders")
-    .select("id,photographer_id,status,payment_status,paid_at,parent_email,customer_email,parent_name,customer_name,package_name,notes,cart_snapshot,school_id,project_id,student_id")
+    .select("id,photographer_id,status,payment_status,paid_at,refund_status,refund_amount_cents,parent_email,customer_email,parent_name,customer_name,package_name,notes,cart_snapshot,school_id,project_id,student_id")
     .eq("id", orderId)
     .maybeSingle();
   if (orderError) throw orderError;
@@ -541,7 +532,7 @@ async function resolveBackdropForDelivery(
 export async function resolveDigitalDeliveryContext(
   service: ServiceClient,
   orderId: string,
-  options?: { recipientEmail?: string | null; requirePaid?: boolean },
+  options?: { recipientEmail?: string | null; requirePaid?: boolean; orderAccessGrant?: string; requireRecipientMatch?: boolean },
 ): Promise<DigitalDeliveryContext> {
   const { order, items, photographer, student, school, project } =
     await fetchOrderContext(service, orderId);
@@ -550,6 +541,11 @@ export async function resolveDigitalDeliveryContext(
     throw new Error("This order is not paid yet.");
   }
 
+  if (options?.orderAccessGrant) {
+    if (options.orderAccessGrant !== createDigitalDeliveryOrderAccessGrant(order)) throw new DigitalDeliveryAccessError();
+  } else if (options?.requireRecipientMatch && ![order.parent_email, order.customer_email].some(value => lower(value) === lower(options.recipientEmail))) {
+    throw new DigitalDeliveryAccessError();
+  }
   const recipientEmail =
     clean(options?.recipientEmail) ||
     clean(order.customer_email) ||
@@ -677,6 +673,12 @@ export async function* buildDigitalDeliveryZipEntries(
   }
 }
 
+export class DigitalDeliveryAccessError extends Error {
+  constructor() { super("This delivery link no longer matches the current order. Ask the photographer for a fresh link."); }
+}
+export function createDigitalDeliveryOrderAccessGrant(order: Pick<OrderRow, "id" | "photographer_id" | "school_id" | "student_id" | "project_id" | "parent_email" | "customer_email" | "cart_snapshot">) {
+  return createHmac("sha256", signingSecret()).update(JSON.stringify(["digital-order-access-v1", order.id, order.photographer_id ?? null, order.school_id ?? null, order.student_id ?? null, order.project_id ?? null, lower(order.parent_email), lower(order.customer_email), order.cart_snapshot ?? null])).digest("hex");
+}
 export class DigitalDeliveryReviewError extends Error {
   constructor() { super("This order's selected backdrop needs a verified paid cutout. Review or process the original photo in Studio OS, then retry delivery."); }
 }
@@ -733,6 +735,7 @@ export async function sendDigitalDeliveryEmailForOrder(
     kind: "digital-order-delivery",
     orderId,
     recipientEmail: context.recipientEmail.toLowerCase(),
+    orderAccessGrant: createDigitalDeliveryOrderAccessGrant(context.order),
     exp: Date.now() + 1000 * 60 * 60 * 24 * 30,
   };
   const downloadUrl = tokenDownloadUrl(tokenPayload);

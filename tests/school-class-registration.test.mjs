@@ -72,7 +72,7 @@ function fixture({ enabled = false, status = 'pre_release', classes = ['Grade 7'
     '@/lib/ensure-package-profile': {},
     '@/lib/calendar-dates': { hasCalendarBoundaryPassed: () => false },
   };
-  for (const key of ['checkout-tax', 'school-gallery-downloads', 'storage-images', 'backdrop-media-references', 'private-media-references', 'package-profile-selection', 'storage-folder', 'school-sync', 'school-photo-deletions']) dependencies[`@/lib/${key}`] = {};
+  for (const key of ['checkout-tax', 'school-gallery-downloads', 'storage-images', 'backdrop-media-references', 'private-media-references', 'package-profile-selection', 'storage-folder', 'school-sync', 'school-photo-deletions', 'school-composite-scope', 'school-portal-media', 'school-order-media']) dependencies[`@/lib/${key}`] = {};
   const req = data => ({ url: 'https://example.test/api', json: async () => data });
   return { tables, school, schedule, calls, sent, rpcCalls, dependencies, req, context: { params: Promise.resolve({ schoolId }) } };
 }

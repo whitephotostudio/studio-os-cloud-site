@@ -1,7 +1,9 @@
+import { schoolMediaGrant, buildSchoolFavoriteDownloadAccess, schoolStudentsForMediaKey } from "@/lib/school-portal-media";
 import { NextRequest, NextResponse } from "next/server";
+import { reserveGalleryDownload } from "@/lib/gallery-download-quota";
 import { createDashboardServiceClient } from "@/lib/dashboard-auth";
 import { normalizeEventGallerySettings } from "@/lib/event-gallery-settings";
-import { buildSchoolGalleryDownloadAccess } from "@/lib/school-gallery-downloads";
+import { buildSchoolGalleryDownloadAccess, schoolClassAllowsFreeDownloads } from "@/lib/school-gallery-downloads";
 import { getClientIp, rateLimit } from "@/lib/rate-limit";
 import { validateIdentifierArray } from "@/lib/request-validation";
 import {
@@ -25,6 +27,7 @@ type SchoolRow = {
 type StudentAccessRow = {
   id: string;
   school_id: string;
+  pin?: string | null;
   photo_url?: string | null;
   class_id?: string | null;
   class_name?: string | null;
@@ -84,7 +87,7 @@ async function validateSchoolDownloadAccess(params: {
   // by the visitor. A duplicate display name must never widen access.
   const pinResult = await service
     .from("students")
-    .select("id,school_id,photo_url,class_id,class_name,folder_name")
+    .select("id,school_id,pin,photo_url,class_id,class_name,folder_name")
     .eq("pin", selectedPin)
     .eq("school_id", selectedSchoolId);
 
@@ -191,24 +194,31 @@ export async function POST(request: NextRequest) {
         { status: 400 },
       );
     }
-    const mediaIds = mediaIdsResult.value;
+    const mediaIds = [...new Set(mediaIdsResult.value)];
     const downloadType = body.downloadType === "favorites" ? "favorites" : "gallery";
 
+    const policyMediaIds = downloadType === "favorites" ? mediaIds : mediaIds.filter(key => {
+      const owners = schoolStudentsForMediaKey(access.school, access.studentCandidates, key);
+      return owners.length > 0 && owners.every(owner => schoolClassAllowsFreeDownloads(access.school.gallery_settings, owner.class_id, owner.class_name));
+    });
+    const firstPolicyStudent = policyMediaIds.flatMap(key => schoolStudentsForMediaKey(access.school, access.studentCandidates, key))[0];
+    if (!policyMediaIds.length) return NextResponse.json({ ok: false, message: "Those photos are not available for download in this class." }, { status: 403 });
     const downloadAccess = await buildSchoolGalleryDownloadAccess({
       service: access.service,
       schoolId: access.schoolId,
       viewerEmail: access.viewerEmail,
       gallerySettings: access.school.gallery_settings,
-      classId: access.classId,
-      className: access.className,
+      classId: firstPolicyStudent?.class_id ?? access.classId,
+      className: firstPolicyStudent?.class_name ?? access.className,
     });
     const settings = normalizeEventGallerySettings(access.school.gallery_settings);
+    const favoriteAccess = downloadType === "favorites" ? await buildSchoolFavoriteDownloadAccess(access.service, access.school, access.studentCandidates, access.viewerEmail, mediaIds) : null;
     const providedDownloadPin = clean(body.downloadPin);
     const expectedDownloadPin = clean(settings.extras.downloadPin);
 
-    if (!downloadAccess.enabled) {
+    if (downloadType === "favorites" ? !favoriteAccess?.canDownload : !downloadAccess.enabled) {
       return NextResponse.json(
-        { ok: false, message: downloadAccess.message || "Gallery downloads are turned off." },
+        { ok: false, message: favoriteAccess?.message || downloadAccess.message || "Gallery downloads are turned off." },
         { status: 403 },
       );
     }
@@ -232,7 +242,7 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    if (!downloadAccess.canDownload) {
+    if (downloadType === "gallery" && !downloadAccess.canDownload) {
       return NextResponse.json(
         {
           ok: false,
@@ -252,7 +262,7 @@ export async function POST(request: NextRequest) {
       schoolId: access.schoolId,
       service: access.service,
     });
-    const downloadableMediaIds = mediaIds.filter((id) => allowedMediaIdSet.has(id));
+    const downloadableMediaIds = policyMediaIds.filter((id) => allowedMediaIdSet.has(id));
 
     if (!downloadableMediaIds.length) {
       return NextResponse.json(
@@ -266,8 +276,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const allowedMediaIds =
-      downloadAccess.downloadsRemaining === null
+    let allowedMediaIds =
+      downloadType === "favorites" || downloadAccess.downloadsRemaining === null
         ? downloadableMediaIds
         : downloadableMediaIds.slice(0, downloadAccess.downloadsRemaining);
 
@@ -283,7 +293,18 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { error: insertError } = await access.service
+    const reservation = downloadType === "gallery" ? await reserveGalleryDownload({ service: access.service, galleryKind: "school", galleryId: access.schoolId,
+      photographerId: access.school.photographer_id, viewerEmail: access.viewerEmail, mediaIds: allowedMediaIds, gallerySettings: access.school.gallery_settings }) : null;
+    if (reservation) {
+      allowedMediaIds = reservation.allowedMediaIds;
+      if (!allowedMediaIds.length) return NextResponse.json({ ok: false, message: "There are no free downloads remaining for this gallery.",
+        downloadsUsed: reservation.downloadsUsed, downloadsRemaining: reservation.downloadsRemaining }, { status: 403 });
+    }
+    const deliveries = allowedMediaIds.map(mediaId => ({ mediaId,
+      url: `/api/portal/school-download-file?token=${encodeURIComponent(schoolMediaGrant({ school: access.school, students: schoolStudentsForMediaKey(access.school, access.studentCandidates, mediaId), email: access.viewerEmail, mediaKey: mediaId, kind: "school-photo-download", downloadType }))}`,
+      resolution: settings.extras.freeDigitalResolution, watermarked: settings.extras.watermarkDownloads,
+    }));
+    const { error: insertError } = downloadType === "favorites" ? await access.service
       .from("school_gallery_downloads")
       .insert({
         school_id: access.schoolId,
@@ -291,7 +312,7 @@ export async function POST(request: NextRequest) {
         download_type: downloadType,
         download_count: allowedMediaIds.length,
         media_ids: allowedMediaIds,
-      });
+      }) : { error: null };
 
     if (
       insertError &&
@@ -306,9 +327,10 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       ok: true,
       allowedMediaIds,
-      downloadsUsed: downloadAccess.downloadsUsed + allowedMediaIds.length,
+      deliveries,
+      downloadsUsed: reservation?.downloadsUsed ?? downloadAccess.downloadsUsed + allowedMediaIds.length,
       downloadsRemaining:
-        downloadAccess.downloadsRemaining === null
+        reservation ? reservation.downloadsRemaining : downloadAccess.downloadsRemaining === null
           ? null
           : Math.max(0, downloadAccess.downloadsRemaining - allowedMediaIds.length),
     });

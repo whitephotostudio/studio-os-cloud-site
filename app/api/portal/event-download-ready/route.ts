@@ -7,7 +7,7 @@ import {
   splitIntoBatches,
   type EventGalleryDownloadManifest,
 } from "@/lib/event-gallery-downloads";
-import { createEventGalleryBatchToken, createEventCollectionDownloadGrant, createEventProjectDownloadGrant } from "@/lib/event-gallery-download-tokens";
+import { createEventGalleryBatchToken, createEventCollectionDownloadGrant, createEventProjectDownloadGrant, createEventDownloadPolicyGrant } from "@/lib/event-gallery-download-tokens";
 import { authorizedEventMediaIds, eventGalleryDownloadsUsed, resolveEventDownloadScope } from "@/lib/event-download-scope";
 import { normalizeEventGallerySettings } from "@/lib/event-gallery-settings";
 import { validateUuid, validateUuidArray } from "@/lib/request-validation";
@@ -300,6 +300,8 @@ export async function POST(request: NextRequest) {
         collectionGrants,
         photographerId: access.project.photographer_id,
         projectAccessGrant: createEventProjectDownloadGrant(access.project),
+        downloadPolicyGrant: createEventDownloadPolicyGrant(access.project.gallery_settings),
+        deliveryType: "gallery",
         exp: Date.parse(expiresAt),
       });
 

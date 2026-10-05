@@ -7,6 +7,8 @@ import ts from 'typescript';
 const compile = file => ts.transpileModule(readFileSync(new URL(`../${file}`, import.meta.url), 'utf8'), {
   compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
 }).outputText;
+const payment = {};
+vm.runInNewContext(compile("lib/digital-entitlement-payment.ts"), { exports: payment });
 const display = {};
 vm.runInNewContext(compile('lib/order-display.ts'), { exports: display });
 const backdrop = { id: 'blue', image_url: 'backdrops/blue.jpg' };
@@ -35,6 +37,7 @@ async function resolve(snapshot, orderName = '5x7 Print + All Digital Package', 
     '@/lib/r2-signed-urls': { r2KeyFromAnyUrl: value => value ?? '', r2PresignedGetUrl: forbidden },
     '@/lib/resend': { resendConfigured: forbidden, resolveReplyTo: forbidden, sendResendEmail: forbidden },
     '@/lib/order-display': display,
+    '@/lib/digital-entitlement-payment': payment,
     '@/lib/zip': { createZipStream: forbidden },
     '@/lib/backdrop-composites': { hasBackdropCompositeSelection: selection => !!selection?.image_url,
       backdropCompositeFileName: (name, selection) => `${selection.id}-${name}`, composeBackdropImage: forbidden },
