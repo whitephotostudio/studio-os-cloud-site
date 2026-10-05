@@ -77,6 +77,8 @@ Tests:
 `tests/paid-order-email-outbox-database.test.mjs`,
 `tests/paid-order-emails.test.mjs`, plus import/behavior compatibility fixtures in
 `tests/credit-payment-flow.test.mjs`, `tests/order-refund-webhook.test.mjs`,
-`tests/order-payment-maintenance.test.mjs`, and `tests/delivery-cutout-refusal.test.mjs`.
+`tests/order-payment-maintenance.test.mjs`, `tests/delivery-cutout-refusal.test.mjs`,
+`tests/photoroom-preview-verification.test.mjs`, and
+`tests/r2-staging-preview-verification.test.mjs` (the approved new release guard).
 This document records scope and evidence; release logs record the final checked
 commit, build, migration and deployment outcomes.

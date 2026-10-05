@@ -29,6 +29,6 @@ test('wrong project and missing retry secret block before provider requests; loc
   const forbidden = () => assert.fail('provider call forbidden');
   await assert.rejects(verifyOrderVolumeRelease({ ...env, NEXT_PUBLIC_SUPABASE_URL: 'https://wrong.supabase.co' }, forbidden), /project/);
   for (const secret of ['', '   ', ' [SENSITIVE] ']) await assert.rejects(verifyOrderVolumeRelease({ ...env, CRON_SECRET: secret }, forbidden), /retry-worker/);
-  await verifyOrderVolumeRelease({ ...env, RESEND_FROM_EMAIL: ' galleries@studiooscloud.com ' }, fixture().fetcher, () => {});
+  for (const sender of [' galleries@studiooscloud.com ', '   ']) await verifyOrderVolumeRelease({ ...env, RESEND_FROM_EMAIL: sender }, fixture().fetcher, () => {});
   await verifyOrderVolumeRelease({}, forbidden);
 });

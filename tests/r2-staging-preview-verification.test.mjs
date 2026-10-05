@@ -272,5 +272,5 @@ test('runtime failures and malformed synthetic images disclose only fixed local 
 
 test('build wiring appends the default-no-op R2 verifier after existing payment and provider guards', () => {
   const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
-  assert.equal(pkg.scripts.prebuild, 'node scripts/verify-payment-release.mjs && node scripts/verify-photoroom-preview.mjs && node scripts/verify-r2-staging-preview.mjs && node scripts/verify-legacy-cutouts-preview.mjs && node scripts/verify-order-production-release.mjs');
+  assert.equal(pkg.scripts.prebuild, 'node scripts/verify-payment-release.mjs && node scripts/verify-photoroom-preview.mjs && node scripts/verify-r2-staging-preview.mjs && node scripts/verify-legacy-cutouts-preview.mjs && node scripts/verify-order-production-release.mjs && node scripts/verify-order-volume-release.mjs');
 });

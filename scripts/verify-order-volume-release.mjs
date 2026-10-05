@@ -31,7 +31,8 @@ export async function verifyOrderVolumeRelease(env = process.env, fetcher = fetc
   const missing = functions.filter(name => !schema.paths?.[`/rpc/${name}`]?.post);
   if (missing.length) throw new Error(`Order recovery RPCs are missing: ${missing.join(', ')}.`);
   const domains = await get('https://api.resend.com/domains', { Authorization: `Bearer ${emailKey}` });
-  const domain = (env.RESEND_FROM_EMAIL || 'galleries@studiooscloud.com').trim().split('@')[1]?.toLowerCase();
+  const sender = (env.RESEND_FROM_EMAIL || '').trim() || 'galleries@studiooscloud.com';
+  const domain = sender.split('@')[1]?.toLowerCase();
   if (!domains.data?.some(item => item.name.toLowerCase() === domain && item.status === 'verified')) {
     throw new Error('Paid order email sender domain is not verified.');
   }
