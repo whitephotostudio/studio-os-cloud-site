@@ -10637,8 +10637,10 @@ export default function ParentGalleryPage() {
                             lineHeight: 1.5,
                           }}
                         >
-                          {compactCountLabel(activeScenePhotoCount, "photo")}
-                          {galleryEventDate ? ` · ${galleryEventDate}` : ""}
+                          {[
+                            !currentGalleryExtras.hideAlbumPhotoCount ? compactCountLabel(activeScenePhotoCount, "photo") : "",
+                            galleryEventDate,
+                          ].filter(Boolean).join(" · ")}
                         </div>
                       </div>
                     </div>
@@ -10736,7 +10738,7 @@ export default function ParentGalleryPage() {
                             }}
                           >
                             Load more photos
-                            <span
+                            {!currentGalleryExtras.hideAlbumPhotoCount ? <span
                               style={{
                                 color: "rgba(255,255,255,0.72)",
                                 fontSize: 12,
@@ -10744,7 +10746,7 @@ export default function ParentGalleryPage() {
                               }}
                             >
                               {eventPhotoGridRemainingCount} left
-                            </span>
+                            </span> : null}
                           </button>
                         </div>
                       ) : null}
@@ -10833,7 +10835,7 @@ export default function ParentGalleryPage() {
                           <X size={14} />
                           Close Viewer
                         </button>
-                        <div
+                        {!currentGalleryExtras.hideAlbumPhotoCount ? <div
                           style={{
                             color: "#8b8176",
                             padding: 0,
@@ -10845,7 +10847,7 @@ export default function ParentGalleryPage() {
                           }}
                         >
                           {selectedImageIndex + 1} / {visibleImages.length}
-                        </div>
+                        </div> : null}
                       </div>
                       {selectedImage ? (
                         <div
