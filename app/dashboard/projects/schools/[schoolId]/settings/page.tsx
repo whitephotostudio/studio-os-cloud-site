@@ -945,7 +945,7 @@ export default function SchoolSettingsPage() {
                 <div className="space-y-6">
                   <Card title="Advanced" description="Configure your advanced settings.">
                     <ToggleRow title='Hide the "All Photos" Album' description="Show only the albums you've created" checked={extras.hideAllPhotosAlbum} onChange={(next) => setExtra("hideAllPhotosAlbum", next)} />
-                    <ToggleRow title="Hide Album Photo Count" description="On the main gallery view, hide the photo count for each album" checked={extras.hideAlbumPhotoCount} onChange={(next) => setExtra("hideAlbumPhotoCount", next)} />
+                    <ToggleRow title="Show photo counts" description="Show photo totals on the welcome screen, album thumbnails, and photo browser. Off by default for new galleries." checked={!extras.hideAlbumPhotoCount} onChange={(next) => setExtra("hideAlbumPhotoCount", !next)} />
                     <ToggleRow title="Automatically Send Gallery to Archive After Expiration" description="Archiving frees up space after the expiration date." checked={extras.autoArchiveAfterExpiration} onChange={(next) => setExtra("autoArchiveAfterExpiration", next)} />
                     {registrationClassRequired
                       ? <p className="text-sm text-neutral-600">Class registration is enabled. Send updates from Share → Selected Classes / Grades.</p>
