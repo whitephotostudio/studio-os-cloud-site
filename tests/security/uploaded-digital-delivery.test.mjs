@@ -83,8 +83,8 @@ test("only accepts bounded files in the paid order's exact student folder", () =
 
 test("requires confirmed payment before delivery", () => {
   assert.equal(isPaidUploadedDeliveryOrder({ payment_status: "paid" }), true);
-  assert.equal(isPaidUploadedDeliveryOrder({ paid_at: new Date().toISOString() }), true);
-  assert.equal(isPaidUploadedDeliveryOrder({ status: "digital_sent" }), true);
+  assert.equal(isPaidUploadedDeliveryOrder({ status: "completed", paid_at: new Date().toISOString() }), true);
+  assert.equal(isPaidUploadedDeliveryOrder({ status: "digital_paid" }), true);
   assert.equal(isPaidUploadedDeliveryOrder({ status: "new", payment_status: "pending" }), false);
 });
 
@@ -99,3 +99,15 @@ test("dashboard and portal routes re-check authorization instead of trusting the
   assert.doesNotMatch(dashboardRoute, /R2_PUBLIC_URL/);
   assert.doesNotMatch(portalRoute, /R2_PUBLIC_URL/);
 });
+
+ test("historical paid_at never overrides a revoked uploaded-file order",()=>{
+ for(const change of [{status:"refunded"},{status:"refund_pending"},{status:"cancelled"},{payment_status:"refunded"},{payment_status:"partially_refunded"}]) assert.equal(isPaidUploadedDeliveryOrder({status:"digital_paid",payment_status:"paid",paid_at:"2026-10-01",...change}),false);
+ });
+
+ test("production progress does not prove payment for uploaded digital files",()=>{
+ for(const status of ["reviewed","sent_to_print"]) assert.equal(isPaidUploadedDeliveryOrder({status,payment_status:"pending"}),false);
+ });
+
+ test("current payment and refund fields override stale paid markers in uploaded delivery",()=>{
+ for(const change of [{payment_status:"pending"},{payment_status:"failed"},{payment_status:"processing"},{payment_status:"unknown"},{refund_status:"pending"},{refund_amount_cents:100}]) assert.equal(isPaidUploadedDeliveryOrder({status:"digital_paid",payment_status:"paid",paid_at:"2026-10-01",...change}),false);
+ });

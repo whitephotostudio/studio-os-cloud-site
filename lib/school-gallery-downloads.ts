@@ -81,6 +81,12 @@ export function defaultSchoolGalleryDownloadAccess(
   };
 }
 
+export function schoolClassAllowsFreeDownloads(gallerySettings: unknown, classId?: string | null, className?: string | null) {
+  const settings = normalizeEventGallerySettings(gallerySettings);
+  const override = getSchoolClassDownloadOverrideKeys({ classId, className }).map(key => settings.extras.schoolClassDownloadOverrides[key]).find(Boolean);
+  return override?.freeDigitalRuleEnabled !== false;
+}
+
 export async function buildSchoolGalleryDownloadAccess(params: {
   service: ServiceClient;
   schoolId: string;
@@ -146,15 +152,22 @@ export async function buildSchoolGalleryDownloadAccess(params: {
     }
   }
 
-  const { data: downloadRows, error: downloadError } = await params.service
-    .from("school_gallery_downloads")
-    .select("download_count")
-    .eq("school_id", params.schoolId)
-    .eq("viewer_email", normalizedEmail)
-    .eq("download_type", "gallery");
-
-  if (downloadError && !isMissingDownloadsTable(downloadError)) {
-    throw downloadError;
+  const downloadRows: DownloadLogRow[] = [];
+  const seen = new Set<string>();
+  for (let offset = 0; offset < 20000; offset += 500) {
+    const { data, error } = await params.service.from("school_gallery_downloads")
+      .select("id,download_count").eq("school_id", params.schoolId).eq("viewer_email", normalizedEmail)
+      .eq("download_type", "gallery").order("id", { ascending: true }).range(offset, offset + 499);
+    if (error) {
+      if (!isMissingDownloadsTable(error) || base.downloadLimit !== "unlimited") throw error;
+      break;
+    }
+    for (const row of data ?? []) {
+      if (seen.has(row.id)) throw new Error("Download history changed while loading. Please retry.");
+      seen.add(row.id); downloadRows.push(row);
+    }
+    if ((data?.length ?? 0) < 500) break;
+    if (offset === 19500) throw new Error("Download history is too large to verify safely.");
   }
 
   const downloadsUsed = ((downloadRows ?? []) as DownloadLogRow[]).reduce(

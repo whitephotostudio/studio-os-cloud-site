@@ -17,6 +17,7 @@ function sourceSection(contents, startMarker, endMarker) {
 const batchRoute = source("app/api/portal/event-download-batch/route.ts");
 const readyRoute = source("app/api/portal/event-download-ready/route.ts");
 const tokenSource = source("lib/event-gallery-download-tokens.ts");
+const quotaStream = source("lib/gallery-download-quota-stream.ts");
 
 test("ZIP JSON preflight and unwatermarked streaming do not initialize Sharp", () => {
   assert.doesNotMatch(batchRoute, /^import sharp from ["']sharp["'];/m);
@@ -62,14 +63,12 @@ test("a completed ZIP records only streamed media once per signed batch", () => 
   assert.match(tokenSource, /downloadLogId\?: string/);
   assert.match(tokenSource, /collectionId\?: string \| null/);
   assert.match(batchRoute, /onPhotoComplete\?\.\(mediaId\)/);
-  assert.match(batchRoute, /function recordAfterZipCompletion/);
-  assert.match(batchRoute, /const next = await reader\.read\(\)/);
-  assert.match(batchRoute, /if \(!next\.done\)[\s\S]*controller\.enqueue\(next\.value\)/);
-  assert.match(batchRoute, /await onComplete\(\)/);
-  assert.match(batchRoute, /async cancel\(reason\)[\s\S]*await reader\.cancel\(reason\)/);
-  assert.match(batchRoute, /\.upsert\([\s\S]*id: downloadLogId[\s\S]*download_count: options\.mediaIds\.length[\s\S]*\{ onConflict: ["']id["'], ignoreDuplicates: true \}/);
-  assert.match(
-    batchRoute,
-    /if \(!downloadLogId \|\| !options\.mediaIds\.length\) return/,
-  );
+  assert.match(batchRoute, /recordAfterZipCompletion/);
+  assert.match(batchRoute, /reserveGalleryDownload[\s\S]*mode: "zip", reservationId: payload\.downloadLogId/);
+  assert.match(batchRoute, /finishGalleryDownload\(service, reservation, completedMediaIds\)/);
+  assert.match(batchRoute, /finishGalleryDownload\(service, reservation, \[\], true\)/);
+  assert.match(quotaStream, /const next = await reader\.read\(\)/);
+  assert.match(quotaStream, /await onComplete\(\)[\s\S]*controller\.enqueue\(pending\)/);
+  assert.match(quotaStream, /Promise\.race\(\[reader\.cancel\(reason\)/);
+  assert.match(quotaStream, /timeoutMs = 240000/);
 });

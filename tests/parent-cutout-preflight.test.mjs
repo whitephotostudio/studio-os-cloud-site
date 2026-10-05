@@ -165,7 +165,7 @@ test('tombstoned originals are ineligible even while old paid files remain', asy
 test('original-background and stripped retouch lines remain available without cutout proof', async () => {
   const h = setup({ paidKeys: [] });
   assert.equal((await h.post(createPath, schoolBody([entry(print, [original()], { backdrop: null })]))).status, 200);
-  assert.equal(h.proofQueries.length, 0); assert.equal(h.folderReads.length, 0);
+  assert.equal(h.proofQueries.length, 0); assert.equal(h.paidReads.length, 0); assert.ok(h.folderReads.every(prefix => prefix.includes("Student12345")), "Original choices are checked against current student folders");
   const retouchOnly = setup({ paidKeys: [] });
   const result = await retouchOnly.post(createPath, schoolBody([
     entry(print, [original()], { backdrop: null }),

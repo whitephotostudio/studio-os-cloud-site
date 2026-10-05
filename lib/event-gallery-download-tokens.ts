@@ -1,6 +1,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { EventGalleryDownloadResolution } from "@/lib/event-gallery-downloads";
 import { eventCollectionAccessMode, type EventDownloadCollection } from "@/lib/event-download-scope";
+import { normalizeEventGallerySettings } from "@/lib/event-gallery-settings";
 
 export type EventGalleryBatchTokenPayload = {
   v: 1;
@@ -26,6 +27,8 @@ export type EventGalleryBatchTokenPayload = {
   collectionGrants?: Record<string, string>;
   photographerId?: string | null;
   projectAccessGrant?: string;
+  downloadPolicyGrant?: string;
+  deliveryType?: "gallery" | "favorites";
   exp: number;
 };
 
@@ -76,6 +79,33 @@ export function createEventProjectDownloadGrant(row: {
   return signEncodedPayload(JSON.stringify([
     "event-project-access", row.id, eventCollectionAccessMode(row.access_mode), clean(row.access_pin),
   ]));
+}
+
+export function createEventDownloadPolicyGrant(settings: unknown) {
+  return signEncodedPayload(JSON.stringify(["event-download-policy", normalizeEventGallerySettings(settings).extras]));
+}
+
+export type EventPreviewTokenPayload = {
+  v: 1; kind: "event-gallery-preview"; projectId: string; viewerEmail: string;
+  collectionIds: string[]; collectionGrants: Record<string, string>;
+  photographerId: string | null; projectAccessGrant: string; exp: number;
+};
+
+export function createEventPreviewToken(payload: EventPreviewTokenPayload) {
+  const encoded = Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
+  return `${encoded}.${signEncodedPayload(encoded)}`;
+}
+
+export function verifyEventPreviewToken(token: string): EventPreviewTokenPayload {
+  const parts = clean(token).split(".");
+  if (parts.length !== 2 || parts[0].length > 25000) throw new Error("Invalid preview token.");
+  const [encoded, signature] = parts;
+  const expected = Buffer.from(signEncodedPayload(encoded));
+  const actual = Buffer.from(signature);
+  if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) throw new Error("Invalid preview token.");
+  const payload = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8")) as EventPreviewTokenPayload;
+  if (payload.v !== 1 || payload.kind !== "event-gallery-preview" || !Number.isFinite(payload.exp) || payload.exp <= Date.now()) throw new Error("Expired preview token.");
+  return payload;
 }
 
 export function createEventGalleryBatchToken(payload: EventGalleryBatchTokenPayload) {

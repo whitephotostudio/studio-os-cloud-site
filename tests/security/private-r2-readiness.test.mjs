@@ -81,10 +81,10 @@ test("order history refreshes legacy media while new orders store durable keys",
   assert.match(privateMediaSource, /\.r2\\\.cloudflarestorage\\\.com\$\/i/);
   assert.match(privateMediaSource, /r2KeyFromAnyUrl\(value\)/);
   assert.match(privateMediaSource, /return safeR2Key\(raw\) \|\| raw/);
-  assert.match(orderHistorySource, /signPrivateMediaReferencesDeep\(/);
-  assert.match(orderHistorySource, /signedPrivateMediaReference\(/);
+  assert.match(orderHistorySource, /canonicalPortalOrderSnapshot\(/);
+  assert.match(orderHistorySource, /canonicalPortalOrderReference\(/);
   assert.doesNotMatch(orderHistorySource, /cartSnapshot: row\.cart_snapshot/);
-  assert.match(orderHistorySource, /specialNotes: signedSpecialNotes/);
+  assert.match(orderHistorySource, /specialNotes: canonicalSpecialNotes/);
   assert.doesNotMatch(orderHistorySource, /specialNotes: row\.special_notes/);
   assert.match(orderCreateSource, /durablePrivateMediaReference\(/);
   assert.match(combinedOrderCreateSource, /durablePrivateMediaReference\(/);

@@ -13,7 +13,10 @@ import {
 } from "@/lib/storage-images";
 import { fetchEventProjectCollections } from "@/lib/event-download-scope";
 import { validateUuid, validateUuidArray } from "@/lib/request-validation";
+import { authorizeEventMediaToken, transformEventImage } from "@/lib/event-media-delivery";
 import { galleryZipBatchSize } from "@/lib/event-gallery-downloads";
+import { reserveGalleryDownload, finishGalleryDownload } from "@/lib/gallery-download-quota";
+import { recordAfterZipCompletion } from "@/lib/gallery-download-quota-stream";
 import { createZipStream, type ZipStreamEntry } from "@/lib/zip";
 
 export const dynamic = "force-dynamic";
@@ -37,15 +40,6 @@ type MediaRow = {
 
 function clean(value: string | null | undefined) {
   return (value ?? "").trim();
-}
-
-function isMissingDownloadsTable(error: unknown) {
-  return (
-    !!error &&
-    typeof error === "object" &&
-    "code" in error &&
-    (error as { code?: string }).code === "42P01"
-  );
 }
 
 function safeZipFileName(value: string | null | undefined) {
@@ -194,10 +188,11 @@ function buildPdfFromJpegBytes(imageBytes: Uint8Array, width: number, height: nu
   return result;
 }
 
-async function fetchBuffer(url: string) {
+async function fetchBuffer(url: string, signal?: AbortSignal) {
   const response = await fetch(url, {
     cache: "no-store",
-    redirect: "follow",
+    redirect: "error",
+    signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(20000)]) : AbortSignal.timeout(20000),
   });
 
   if (!response.ok) {
@@ -211,10 +206,11 @@ async function fetchBuffer(url: string) {
   };
 }
 
-async function fetchStream(url: string) {
+async function fetchStream(url: string, signal?: AbortSignal) {
   const response = await fetch(url, {
     cache: "no-store",
-    redirect: "follow",
+    redirect: "error",
+    signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(20000)]) : AbortSignal.timeout(20000),
   });
 
   if (!response.ok || !response.body) {
@@ -230,11 +226,13 @@ async function fetchStream(url: string) {
 async function fetchFirstAvailable(
   urls: string[],
   mediaId: string,
+  signal?: AbortSignal,
 ): Promise<{ buffer: Buffer; contentType: string; url: string }> {
   const errors: string[] = [];
   for (const url of urls) {
     try {
-      const result = await fetchBuffer(url);
+      signal?.throwIfAborted();
+      const result = await fetchBuffer(url, signal);
       return { ...result, url };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -250,11 +248,13 @@ async function fetchFirstAvailable(
 async function fetchFirstAvailableStream(
   urls: string[],
   mediaId: string,
+  signal?: AbortSignal,
 ): Promise<{ stream: ReadableStream<Uint8Array>; contentType: string; url: string }> {
   const errors: string[] = [];
   for (const url of urls) {
     try {
-      const result = await fetchStream(url);
+      signal?.throwIfAborted();
+      const result = await fetchStream(url, signal);
       return { ...result, url };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -289,29 +289,8 @@ function preferredDownloadUrls(
     return originalCandidate ? [originalCandidate] : [];
   }
 
-  // Primary ranked candidates from the canonical URL builder.
-  const primary =
-    resolution === "web"
-      ? [mediaUrls.thumbnailUrl, mediaUrls.previewUrl, mediaUrls.originalUrl]
-      : /* "large" */ [mediaUrls.previewUrl, mediaUrls.originalUrl, mediaUrls.thumbnailUrl];
-
-  // ALSO try the raw DB-stored URLs as last-resort fallbacks. buildStoredMediaUrls
-  // discards Supabase-hosted preview/thumbnail URLs in favour of the R2
-  // originalUrl, so if R2 serves 404 for this key (which happens when a row was
-  // migrated to R2 pointers but the object never made it across), we still have
-  // working Supabase URLs to try.
-  const rawFallbacks = [clean(row.preview_url), clean(row.thumbnail_url)];
-
-  // De-dupe while preserving order.
-  const seen = new Set<string>();
-  const ordered: string[] = [];
-  for (const value of [...primary, ...rawFallbacks]) {
-    const v = clean(value);
-    if (!v || seen.has(v)) continue;
-    seen.add(v);
-    ordered.push(v);
-  }
-  return ordered;
+  const originalCandidate = clean(mediaUrls.originalUrl);
+  return originalCandidate ? [originalCandidate] : [];
 }
 
 async function buildPrintReleasePdf(options: {
@@ -485,6 +464,7 @@ async function* buildDownloadZipEntries(options: {
   logoBuffer: Buffer | null;
   logoMimeType: string | null;
   onPhotoComplete?: (mediaId: string) => void;
+  signal?: AbortSignal;
 }): AsyncGenerator<ZipStreamEntry> {
   const { payload, mediaMap, logoBuffer, logoMimeType, onPhotoComplete } = options;
   const failedFileNames: string[] = [];
@@ -492,6 +472,7 @@ async function* buildDownloadZipEntries(options: {
   const usedNames = new Map<string, number>();
 
   for (const mediaId of payload.mediaIds) {
+    options.signal?.throwIfAborted();
     const row = mediaMap.get(mediaId);
     if (!row) {
       failedFileNames.push(mediaId);
@@ -508,14 +489,15 @@ async function* buildDownloadZipEntries(options: {
 
     let sourceUrl = candidateUrls[0];
     try {
-      if (payload.applyWatermark) {
-        const source = await fetchFirstAvailable(candidateUrls, mediaId);
+      if (payload.applyWatermark || payload.resolution !== "original") {
+        const source = await fetchFirstAvailable(candidateUrls, mediaId, options.signal);
         sourceUrl = source.url;
-        const watermarked = await addWatermarkToImageBuffer(source.buffer, {
+        const resized = await transformEventImage(source.buffer, { resolution: payload.resolution, watermark: false });
+        const watermarked = payload.applyWatermark ? await addWatermarkToImageBuffer(resized.buffer, {
           watermarkText: payload.watermarkText,
           logoBuffer,
           logoMimeType,
-        });
+        }) : { buffer: resized.buffer, outputExt: ".jpg" };
         const resolvedFallbackName =
           clean(row.filename) || fileNameFromUrl(sourceUrl, `photo${watermarked.outputExt}`);
         const normalizedName = clean(resolvedFallbackName).includes(".")
@@ -530,7 +512,7 @@ async function* buildDownloadZipEntries(options: {
         continue;
       }
 
-      const source = await fetchFirstAvailableStream(candidateUrls, mediaId);
+      const source = await fetchFirstAvailableStream(candidateUrls, mediaId, options.signal);
       sourceUrl = source.url;
       const outputExt = clean(row.filename).toLowerCase().endsWith(".png") ? ".png" : ".jpg";
       const resolvedFallbackName =
@@ -581,83 +563,8 @@ async function* buildDownloadZipEntries(options: {
   }
 }
 
-function recordAfterZipCompletion(
-  zipStream: ReadableStream<Uint8Array>,
-  onComplete: () => Promise<void>,
-) {
-  const reader = zipStream.getReader();
-  let released = false;
-
-  const release = () => {
-    if (released) return;
-    released = true;
-    reader.releaseLock();
-  };
-
-  return new ReadableStream<Uint8Array>({
-    async pull(controller) {
-      try {
-        const next = await reader.read();
-        if (!next.done) {
-          controller.enqueue(next.value);
-          return;
-        }
-
-        // The source ZIP has emitted its central directory and end record. A
-        // failed/cancelled stream never reaches this point, so only a complete
-        // downloadable archive is counted.
-        try {
-          await onComplete();
-        } catch (error) {
-          // Activity logging must never corrupt an otherwise complete ZIP file.
-          console.error("[event-download-batch] could not record completed ZIP", error);
-        }
-        release();
-        controller.close();
-      } catch (error) {
-        release();
-        controller.error(error);
-      }
-    },
-    async cancel(reason) {
-      try {
-        await reader.cancel(reason);
-      } finally {
-        release();
-      }
-    },
-  });
-}
-
-async function recordCompletedGalleryDownload(options: {
-  service: ReturnType<typeof createDashboardServiceClient>;
-  payload: EventGalleryBatchTokenPayload;
-  mediaIds: string[];
-}) {
-  const downloadLogId = clean(options.payload.downloadLogId);
-  // Legacy v1 sessions have no batch log ID because the ready endpoint already
-  // recorded them. Skipping avoids double-counting those still-valid tokens.
-  if (!downloadLogId || !options.mediaIds.length) return;
-
-  const { error } = await options.service
-    .from("event_gallery_downloads")
-    .upsert(
-      {
-        id: downloadLogId,
-        project_id: options.payload.projectId,
-        collection_id: clean(options.payload.collectionId) || null,
-        viewer_email: clean(options.payload.viewerEmail).toLowerCase(),
-        download_type: "gallery",
-        download_count: options.mediaIds.length,
-        media_ids: options.mediaIds,
-      },
-      { onConflict: "id", ignoreDuplicates: true },
-    );
-
-  if (error && !isMissingDownloadsTable(error)) throw error;
-}
-
 export async function GET(request: NextRequest) {
+  let releaseQuota: (() => Promise<void>) | null = null;
   try {
     const token = clean(request.nextUrl.searchParams.get("token"));
     const wantsJson = clean(request.nextUrl.searchParams.get("format")) === "json";
@@ -747,6 +654,10 @@ export async function GET(request: NextRequest) {
         }
       }
     }
+    const tokenAccess = await authorizeEventMediaToken(service, payload, true);
+    if (!tokenAccess) {
+      return NextResponse.json({ ok: false, message: "Download permission changed. Prepare the download again." }, { status: 403 });
+    }
     const currentCollections = await fetchEventProjectCollections(service, payload.projectId, "id,kind,slug,access_mode,access_pin");
     const allowedCollections = new Set(currentCollections.filter(row =>
       scopedCollections.value.includes(row.id) &&
@@ -759,15 +670,28 @@ export async function GET(request: NextRequest) {
     for (const row of mediaRows) {
       if (row.collection_id && allowedCollections.has(row.collection_id)) mediaMap.set(row.id, row);
     }
-    if (mediaRows.some(row => !row.collection_id || !allowedCollections.has(row.collection_id)) || !mediaMap.size) {
+    if (mediaRows.some(row => !row.collection_id || !allowedCollections.has(row.collection_id)) || mediaMap.size !== new Set(payload.mediaIds).size) {
       return NextResponse.json({ ok: false, message: "Album access changed. Return to the gallery and prepare the download again." }, { status: 403 });
     }
 
+    // Legacy sessions without a log ID were already charged at preparation.
+    // Current signed batches hold capacity before any original is fetched.
+    const reservation = payload.downloadLogId ? await reserveGalleryDownload({ service, galleryKind: "event", galleryId: payload.projectId,
+      photographerId: payload.photographerId ?? null, viewerEmail: payload.viewerEmail,
+      collectionId: payload.collectionId, mediaIds: [...new Set(payload.mediaIds)], mode: "zip", reservationId: payload.downloadLogId,
+      gallerySettings: tokenAccess.project.gallery_settings }) : null;
+    if (reservation && (!reservation.allowedMediaIds.length || reservation.busy)) {
+      return NextResponse.json({ ok: false, message: reservation.busy ? "This ZIP is already downloading. Please wait before retrying." :
+        "The remaining free allowance changed. Return to the gallery and prepare the download again.",
+        downloadsUsed: reservation.downloadsUsed, downloadsRemaining: reservation.downloadsRemaining }, { status: reservation.busy ? 409 : 403 });
+    }
+    const upstream = new AbortController();
+    if (reservation) releaseQuota = () => { upstream.abort(); return finishGalleryDownload(service, reservation, [], true); };
     let logoBuffer: Buffer | null = null;
     let logoMimeType: string | null = null;
     if (payload.applyWatermark && clean(payload.watermarkLogoUrl)) {
       try {
-        const logoResult = await fetchBuffer(payload.watermarkLogoUrl);
+        const logoResult = await fetchBuffer(payload.watermarkLogoUrl, upstream.signal);
         logoBuffer = logoResult.buffer;
         logoMimeType = logoResult.contentType || "image/png";
       } catch {
@@ -784,17 +708,16 @@ export async function GET(request: NextRequest) {
         logoBuffer,
         logoMimeType,
         onPhotoComplete: (mediaId) => completedMediaIds.push(mediaId),
+        signal: upstream.signal,
       }),
     );
-    const zipStream = recordAfterZipCompletion(sourceZipStream, () =>
-      recordCompletedGalleryDownload({
-        service,
-        payload,
-        mediaIds: completedMediaIds,
-      }),
+    const zipStream = recordAfterZipCompletion(sourceZipStream,
+      () => reservation ? finishGalleryDownload(service, reservation, completedMediaIds) : Promise.resolve(),
+      () => reservation ? finishGalleryDownload(service, reservation, [], true) : Promise.resolve(),
+      240000, () => upstream.abort(),
     );
 
-    return new NextResponse(zipStream, {
+    const response = new NextResponse(zipStream, {
       status: 200,
       headers: {
         "content-type": "application/zip",
@@ -802,7 +725,12 @@ export async function GET(request: NextRequest) {
         "cache-control": "private, no-store",
       },
     });
+    releaseQuota = null; // Stream completion/cancellation now owns the hold.
+    return response;
   } catch (error) {
+    if (releaseQuota) {
+      try { await releaseQuota(); } catch (releaseError) { console.error("[event-download-batch] quota release failed", releaseError); }
+    }
     console.error("[event-download-batch]", error);
     return NextResponse.json(
       { ok: false, message: "Failed to build the gallery ZIP file." },

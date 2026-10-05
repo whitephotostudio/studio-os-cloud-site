@@ -13,6 +13,7 @@ const load = (path, globals = {}) => {
   return exports;
 };
 const helpers = load("../lib/event-album-navigation.ts");
+const mediaHelpers = load("../lib/event-gallery-media-client.ts", { URL, atob, TextDecoder, Uint8Array });
 const plain = value => JSON.parse(JSON.stringify(value));
 const collections = [
   { id: "terry", title: "Terry" },
@@ -178,7 +179,7 @@ collect(pageAst);
 function pageHarness(overrides = {}) {
   const requests = [], state = [], notices = [], deliveries = [], routes = [];
   const sandbox = {
-    exports: {}, ...helpers,
+    exports: {}, ...helpers, ...mediaHelpers,
     clean: value => (value ?? "").trim(),
     images, visibleImages: images, visibleDownloadImages: images,
     eventAlbumChoices: choicesFor(), eventHasAlbums: true, eventPhotoGridInitialLimit: 60,
@@ -201,7 +202,7 @@ function pageHarness(overrides = {}) {
     fetch: async (url, options) => {
       const body = JSON.parse(options.body);
       requests.push({ url, body });
-      return { ok: true, json: async () => ({ ok: true, allowedMediaIds: body.mediaIds, downloadsRemaining: null, manifest: { id: "fixture", photoCount: body.mediaIds.length, downloadsRemaining: null } }) };
+      return { ok: true, json: async () => ({ ok: true, allowedMediaIds: body.mediaIds, deliveries: body.mediaIds.map(mediaId => ({mediaId,url:"/api/portal/event-download-file?token=fixture",watermarked:false,resolution:"original"})), downloadsRemaining: null, manifest: { id: "fixture", photoCount: body.mediaIds.length, downloadsRemaining: null } }) };
     },
     ...overrides,
   };

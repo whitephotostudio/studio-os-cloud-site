@@ -48,6 +48,7 @@ export type OrderHistoryRow = {
 };
 
 type Props = {
+  photoPreviews?: Array<{ key: string; url: string }>;
   pin: string;
   email: string;
   schoolId?: string | null;
@@ -104,6 +105,7 @@ function statusPill(status: string) {
 }
 
 export default function OrdersHistoryPanel({
+  photoPreviews = [],
   pin,
   email,
   schoolId,
@@ -390,9 +392,9 @@ export default function OrdersHistoryPanel({
                         borderRadius: 10,
                       }}
                     >
-                      {item.sku ? (
+                      {photoPreviews.some(photo => photo.key === item.sku) ? (
                         <img
-                          src={item.sku}
+                          src={photoPreviews.find(photo => photo.key === item.sku)?.url}
                           alt=""
                           style={{
                             width: compact ? 38 : 44,

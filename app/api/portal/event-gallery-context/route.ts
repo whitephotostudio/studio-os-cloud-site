@@ -1,3 +1,4 @@
+import { hasCalendarBoundaryPassed } from "@/lib/calendar-dates";
 import { NextRequest, NextResponse } from "next/server";
 import { createDashboardServiceClient } from "@/lib/dashboard-auth";
 import { accessibleEventCollections, eventGalleryDownloadsUsed, EventGallerySizeLimitError, fetchEventGalleryMediaRows, fetchEventProjectCollections, matchesEventCollectionPin } from "@/lib/event-download-scope";
@@ -6,69 +7,20 @@ import {
   sanitizeEventGallerySettingsForClient,
 } from "@/lib/event-gallery-settings";
 import {
-  buildSignedMediaUrls,
   extractStoragePathFromSupabaseUrl,
   SIGNED_URL_TTL_PARENTS_PORTAL_SECONDS,
 } from "@/lib/storage-images";
 import { filterPackagesForProfile } from "@/lib/package-profile-selection";
 import { hasActiveSubscription } from "@/lib/subscription-gate";
 import { applyCheckoutTaxFallbackToSettings } from "@/lib/checkout-tax";
+import { createEventPreviewToken, createEventProjectDownloadGrant, createEventCollectionDownloadGrant } from "@/lib/event-gallery-download-tokens";
+import { hasEventAllDigitalsPurchase } from "@/lib/event-media-delivery";
 import { signedPrivateMediaReference } from "@/lib/private-media-references";
 
 export const dynamic = "force-dynamic";
 
 function clean(value: string | null | undefined) {
   return (value ?? "").trim();
-}
-
-function isR2CloudflareStorageUrl(value: string) {
-  try {
-    return /\.r2\.cloudflarestorage\.com$/i.test(new URL(value).host);
-  } catch {
-    return false;
-  }
-}
-
-function isKnownStorageUrl(value: string) {
-  try {
-    const parsed = new URL(value);
-    return (
-      parsed.pathname.startsWith("/api/r2/img/") ||
-      /\.r2\.dev$/i.test(parsed.host) ||
-      /\.r2\.cloudflarestorage\.com$/i.test(parsed.host) ||
-      value.includes("/storage/v1/object/public/") ||
-      value.includes("/storage/v1/render/image/public/")
-    );
-  } catch {
-    return false;
-  }
-}
-
-function resolvePortalCoverUrl(value: string | null | undefined) {
-  const cover = clean(value);
-  if (!cover) return "";
-
-  const isHttpUrl = /^https?:\/\//i.test(cover);
-  if (isHttpUrl && !isKnownStorageUrl(cover)) return cover;
-
-  const isR2SignedUrl = isHttpUrl && isR2CloudflareStorageUrl(cover);
-  const storagePath =
-    !isHttpUrl && !cover.startsWith("/api/r2/img/")
-      ? cover
-      : isR2SignedUrl
-        ? ""
-        : extractStoragePathFromSupabaseUrl(cover) ?? "";
-
-  const signed = buildSignedMediaUrls(
-    {
-      storagePath,
-      previewUrl: cover,
-      thumbnailUrl: cover,
-    },
-    { ttlSeconds: SIGNED_URL_TTL_PARENTS_PORTAL_SECONDS },
-  );
-
-  return signed.originalUrl || signed.previewUrl || signed.thumbnailUrl || cover;
 }
 
 function looksLikeImageAssetUrl(value: string | null | undefined) {
@@ -169,22 +121,6 @@ type PhotographerRow = {
   created_at?: string | null;
 };
 
-type OrderRow = {
-  id: string;
-  package_id: string | null;
-  package_name: string | null;
-  status: string | null;
-  parent_email: string | null;
-  customer_email: string | null;
-};
-
-type PurchasedPackageRow = {
-  id: string;
-  name: string | null;
-  description: string | null;
-  category: string | null;
-};
-
 type FavoriteDownloadAccess = {
   enabled: boolean;
   requiresAllDigitalsPurchase: boolean;
@@ -241,32 +177,6 @@ function isMissingVisitorsTable(error: unknown) {
 
 
 
-function isPaidOrderStatus(value: string | null | undefined) {
-  const normalized = clean(value).toLowerCase();
-  return (
-    normalized === "paid" ||
-    normalized === "digital_paid" ||
-    normalized === "ready" ||
-    normalized === "printed"
-  );
-}
-
-function isDigitalPackageText(...values: Array<string | null | undefined>) {
-  const haystack = values.map((value) => clean(value).toLowerCase()).join(" ");
-  return /digital|download|downloads|file|files|jpeg|jpg/.test(haystack);
-}
-
-function isAllDigitalsText(...values: Array<string | null | undefined>) {
-  const haystack = values.map((value) => clean(value).toLowerCase()).join(" ");
-  return (
-    /(all|full|entire|complete)\s+(digital|digitals|downloads|files|gallery|album|collection|photos|images)/.test(
-      haystack,
-    ) ||
-    /(digital|downloads|files)\s+(all|full|entire|complete)/.test(haystack) ||
-    /buy all/.test(haystack)
-  );
-}
-
 export async function POST(request: NextRequest) {
   try {
     const { projectId, email, pin } = (await request.json()) as {
@@ -315,6 +225,9 @@ export async function POST(request: NextRequest) {
         { status: 404 },
       );
     }
+
+    if (hasCalendarBoundaryPassed(projectRow.expiration_date)) return NextResponse.json({ ok: false, message: "This event gallery has expired." }, { status: 410 });
+    if (["inactive", "closed", "pre_release"].includes(clean(projectRow.portal_status).toLowerCase())) return NextResponse.json({ ok: false, message: "This event gallery is not currently available." }, { status: 403 });
 
     const { data: whitelistRows, error: whitelistError } = await service
       .from("pre_release_emails")
@@ -404,21 +317,17 @@ export async function POST(request: NextRequest) {
         "id,collection_id,storage_path,preview_url,thumbnail_url,filename,created_at,sort_order",
       );
 
-      // 2026-04-30 — Parents portal sessions stay open for hours
-      // during shopping/checkout, so we sign with a 6-hour TTL.
-      mediaRows = ((mediaData ?? []) as MediaRow[]).map((row) => {
-        const mediaUrls = buildSignedMediaUrls({
-          storagePath: row.storage_path,
-          previewUrl: row.preview_url,
-          thumbnailUrl: row.thumbnail_url,
-        }, { ttlSeconds: SIGNED_URL_TTL_PARENTS_PORTAL_SECONDS });
-
-        return {
-          ...row,
-          download_url: mediaUrls.originalUrl || null,
-          preview_url: mediaUrls.previewUrl || null,
-          thumbnail_url: mediaUrls.thumbnailUrl || null,
-        };
+      const previewTokens = new Map(collections.map(collection => [collection.id, createEventPreviewToken({
+        v: 1, kind: "event-gallery-preview", projectId: selectedProjectId, viewerEmail: normalizedEmail,
+        collectionIds: [collection.id], collectionGrants: { [collection.id]: createEventCollectionDownloadGrant(selectedProjectId, collection) },
+        photographerId: projectRow.photographer_id, projectAccessGrant: createEventProjectDownloadGrant(projectRow),
+        exp: Date.now() + SIGNED_URL_TTL_PARENTS_PORTAL_SECONDS * 1000,
+      })]));
+      mediaRows = mediaData.map(row => {
+        const token = row.collection_id ? previewTokens.get(row.collection_id) : null;
+        if (!token) throw new Error("Gallery album access changed while loading.");
+        const preview = `/api/portal/event-preview/${row.id}.jpg?token=${encodeURIComponent(token)}`;
+        return { ...row, download_url: undefined, preview_url: preview, thumbnail_url: `${preview}&size=thumbnail` };
       });
     }
 
@@ -583,73 +492,11 @@ export async function POST(request: NextRequest) {
       favoriteDownloadAccess.enabled &&
       favoriteDownloadAccess.requiresAllDigitalsPurchase
     ) {
-      const { data: orderRows, error: orderError } = await service
-        .from("orders")
-        .select("id,package_id,package_name,status,parent_email,customer_email")
-        .eq("project_id", selectedProjectId);
-
-      if (orderError) throw orderError;
-
-      const matchingOrders = ((orderRows ?? []) as OrderRow[]).filter((row) => {
-        if (!isPaidOrderStatus(row.status)) return false;
-        const orderEmails = [
-          clean(row.parent_email).toLowerCase(),
-          clean(row.customer_email).toLowerCase(),
-        ].filter(Boolean);
-        return orderEmails.includes(normalizedEmail);
-      });
-
-      const packageIds = Array.from(
-        new Set(
-          matchingOrders
-            .map((row) => clean(row.package_id))
-            .filter((value) => value.length > 0),
-        ),
-      );
-
-      const purchasedPackageMap = new Map<string, PurchasedPackageRow>();
-      if (packageIds.length > 0) {
-        const { data: packageRows, error: packageError } = await service
-          .from("packages")
-          .select("id,name,description,category")
-          .in("id", packageIds);
-
-        if (packageError) throw packageError;
-
-        for (const row of (packageRows ?? []) as PurchasedPackageRow[]) {
-          purchasedPackageMap.set(row.id, row);
-        }
-      }
-
-      const paidDigitalOrders = matchingOrders.filter((row) => {
-        const linkedPackage = purchasedPackageMap.get(clean(row.package_id));
-        return (
-          clean(linkedPackage?.category).toLowerCase() === "digital" ||
-          isDigitalPackageText(
-            row.package_name,
-            linkedPackage?.name,
-            linkedPackage?.description,
-          )
-        );
-      });
-
-      const paidAllDigitalsOrder = paidDigitalOrders.find((row) => {
-        const linkedPackage = purchasedPackageMap.get(clean(row.package_id));
-        return isAllDigitalsText(
-          row.package_name,
-          linkedPackage?.name,
-          linkedPackage?.description,
-        );
-      });
-
+      const hasPurchasedAllDigitals = await hasEventAllDigitalsPurchase(service, selectedProjectId, normalizedEmail, projectRow.photographer_id);
       favoriteDownloadAccess = {
-        ...favoriteDownloadAccess,
-        hasPaidDigitalOrder: paidDigitalOrders.length > 0,
-        hasPurchasedAllDigitals: !!paidAllDigitalsOrder,
-        canDownload: !!paidAllDigitalsOrder,
-        message: paidAllDigitalsOrder
-          ? null
-          : "Favorites download unlocks after the full digital package is purchased.",
+        ...favoriteDownloadAccess, hasPaidDigitalOrder: hasPurchasedAllDigitals, hasPurchasedAllDigitals,
+        canDownload: hasPurchasedAllDigitals,
+        message: hasPurchasedAllDigitals ? null : "Favorites download unlocks after the full digital package is purchased.",
       };
     }
 
@@ -703,24 +550,30 @@ export async function POST(request: NextRequest) {
       watermark: Boolean(projectRow.screenshot_protection_watermark),
     };
 
+    const safeCover = (reference: string | null, collectionId?: string) => {
+      const candidates = mediaRows.filter(row => !collectionId || row.collection_id === collectionId);
+      const key = extractStoragePathFromSupabaseUrl(reference);
+      const matching = key ? candidates.find(row => row.storage_path === key) : null;
+      return matching?.preview_url || candidates[0]?.preview_url || null;
+    };
     const projectForClient = {
       ...projectRow,
+      gallery_settings: publicGallerySettings,
       access_pin: undefined,
-      cover_photo_url: resolvePortalCoverUrl(projectRow.cover_photo_url) || projectRow.cover_photo_url,
+      cover_photo_url: safeCover(projectRow.cover_photo_url),
     };
     const collectionsForClient = collections.map((collection) => ({
       ...collection,
       access_pin: undefined,
       cover_photo_url:
-        resolvePortalCoverUrl(collection.cover_photo_url) || collection.cover_photo_url,
+        safeCover(collection.cover_photo_url, collection.id),
     }));
     const activeCollectionForClient = matchingCollection
       ? {
           ...matchingCollection,
           access_pin: undefined,
           cover_photo_url:
-            resolvePortalCoverUrl(matchingCollection.cover_photo_url) ||
-            matchingCollection.cover_photo_url,
+            safeCover(matchingCollection.cover_photo_url, matchingCollection.id),
         }
       : null;
 
@@ -740,7 +593,7 @@ export async function POST(request: NextRequest) {
       studioInfo,
       lateOrderPolicy,
       screenshotProtection,
-    });
+    }, { headers: { "cache-control": "private, no-store" } });
   } catch (error) {
     if (error instanceof EventGallerySizeLimitError) {
       return NextResponse.json({ ok: false, message: error.message }, { status: 413 });

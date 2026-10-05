@@ -43,6 +43,7 @@ function fixture({ composite = null, selected = true, throwComposite = false } =
   };
   const modules = {
     'next/server': { NextResponse: FixtureResponse }, '@/lib/order-display': display,
+    '@/lib/digital-entitlement-payment': load('lib/digital-entitlement-payment.ts'),
     '@/lib/backdrop-composites': compositeModule,
     '@/lib/dashboard-auth': { resolveDashboardAuth: async () => ({ user: { id: studio }, mfaSatisfied: true }), createDashboardServiceClient: () => service },
     '@/lib/event-gallery-downloads': { buildArchiveBaseName: (value, fallback) => value || fallback },
