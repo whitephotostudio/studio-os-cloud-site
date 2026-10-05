@@ -17,6 +17,7 @@ import {
   Sparkles,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { EventGalleryCover } from "@/components/parents/event-gallery-cover";
 import {
   defaultEventGalleryBranding,
   defaultEventGalleryExtras,
@@ -26,7 +27,9 @@ import {
   type EventGalleryExtraSettings,
   type EventGalleryLinkedContact,
   type EventGalleryShareSettings,
+  type EventGallerySettings,
 } from "@/lib/event-gallery-settings";
+import { galleryPresentationTone, galleryPresentationAccent, galleryIntroButtonLabel } from "@/lib/event-gallery-presentation";
 import { resolvePackageProfileId } from "@/lib/package-profile-selection";
 import { calendarDateInputValue, cleanCalendarDateInput } from "@/lib/calendar-dates";
 
@@ -58,14 +61,19 @@ function cx(...parts: Array<string | false | null | undefined>) {
   return parts.filter(Boolean).join(" ");
 }
 
-function Toggle({ checked, onChange }: { checked: boolean; onChange: (next: boolean) => void }) {
+function Toggle({ checked, onChange, disabled = false, label }: { checked: boolean; onChange: (next: boolean) => void; disabled?: boolean; label: string }) {
   return (
     <button
       type="button"
-      onClick={() => onChange(!checked)}
+      role="switch"
+      aria-checked={checked}
+      aria-label={label}
+      disabled={disabled}
+      onClick={() => { if (!disabled) onChange(!checked); }}
       className={cx(
         "relative inline-flex h-7 w-12 shrink-0 items-center rounded-full border transition",
-        checked ? "border-neutral-950 bg-neutral-950" : "border-neutral-300 bg-neutral-200"
+        checked ? "border-neutral-950 bg-neutral-950" : "border-neutral-300 bg-neutral-200",
+        disabled && "cursor-not-allowed opacity-50"
       )}
     >
       <span
@@ -103,11 +111,13 @@ function ToggleRow({
   description,
   checked,
   onChange,
+  disabled = false,
 }: {
   title: string;
   description?: string;
   checked: boolean;
   onChange: (next: boolean) => void;
+  disabled?: boolean;
 }) {
   return (
     <div className="flex items-start justify-between gap-4 rounded-2xl border border-neutral-200 bg-neutral-50 px-4 py-4">
@@ -115,7 +125,7 @@ function ToggleRow({
         <div className="text-[15px] font-semibold text-neutral-900">{title}</div>
         {description ? <div className="mt-1 text-sm text-neutral-600">{description}</div> : null}
       </div>
-      <Toggle checked={checked} onChange={onChange} />
+      <Toggle checked={checked} onChange={onChange} disabled={disabled} label={title} />
     </div>
   );
 }
@@ -343,6 +353,7 @@ function FontDropdown({
   return (
     <div ref={ref} className="relative">
       <div className="mb-2 text-[13px] font-semibold text-neutral-800">Typography</div>
+      <p className="mb-3 text-sm text-neutral-600">Font styles use available system fonts. Some options can look alike when a named font is not installed.</p>
       <button
         type="button"
         onClick={() => setOpen(!open)}
@@ -402,119 +413,37 @@ function FontDropdown({
   );
 }
 
-function BrandPreview({ branding, projectName }: { branding: EventGalleryBrandingSettings; projectName: string }) {
-  const palette =
-    branding.backgroundMode === "light"
-      ? branding.tone === "graphite"
-        ? { bg: "#f3f5f7", panel: "#ffffff", text: "#27313b", muted: "#6b7280" }
-        : branding.tone === "smoke"
-          ? { bg: "#f6f6f6", panel: "#ffffff", text: "#2f2f2f", muted: "#757575" }
-          : { bg: "#f8f8f8", panel: "#ffffff", text: "#262626", muted: "#7b7b7b" }
-      : branding.tone === "graphite"
-      ? { bg: "#0f1115", panel: "#171a20", text: "#c8ccd2", muted: "#8e96a3" }
-      : branding.tone === "smoke"
-        ? { bg: "#181818", panel: "#232323", text: "#cdcdcd", muted: "#979797" }
-        : { bg: "#0a0a0a", panel: "#141414", text: "#cfcfcf", muted: "#8a8a8a" };
+function BrandPreview({ branding, projectName, project, studioBrand }: { branding: EventGalleryBrandingSettings; projectName: string; project: ProjectRow | null; studioBrand: { businessName: string; logoUrl: string | null } }) {
+  const coverUrl = typeof project?.cover_photo_url === "string" ? project.cover_photo_url : null;
+  const clientName = typeof project?.client_name === "string" ? project.client_name : "";
+  const overlayOpacity = branding.heroOverlayStrength === "dramatic" ? 0.72 : branding.heroOverlayStrength === "soft" ? 0.44 : 0.58;
 
-  const titleStyle = galleryFontFamily(branding.fontPreset);
-
-  return (
-    <div className="grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
-      <div
-        className="relative min-h-[210px] overflow-hidden rounded-[22px] border border-neutral-800"
-        style={{
-              background:
-                branding.introLayout === "minimal"
-                  ? `linear-gradient(135deg, ${palette.bg}, #202020)`
-              : `linear-gradient(120deg, ${palette.bg} 0%, ${branding.backgroundMode === "light" ? "#dde2e8" : "#2a2a2a"} 100%)`,
-        }}
-      >
-        <div
-          className="absolute inset-0"
-          style={{
-            background:
-              "radial-gradient(circle at top right, rgba(255,255,255,0.14), transparent 28%), radial-gradient(circle at bottom left, rgba(255,255,255,0.08), transparent 24%)",
-          }}
-        />
-        <div className="relative flex h-full flex-col justify-between p-5">
-          <div className="text-[11px] font-semibold uppercase tracking-[0.22em]" style={{ color: palette.muted }}>
-            Studio OS
-          </div>
-          <div className={cx("max-w-[70%]", branding.introLayout === "centered" ? "mx-auto text-center" : "")}>
-            <div
-              className="text-[30px] font-semibold leading-[1.02] tracking-[-0.04em]"
-              style={{
-                color: palette.text,
-                fontFamily: titleStyle,
-                textTransform: branding.themePreset === "cinema" ? "uppercase" : "none",
-                letterSpacing: branding.themePreset === "cinema" ? "0.05em" : undefined,
-              }}
-            >
-              {branding.introHeadline || projectName || "Event Gallery"}
-            </div>
-            <div className="mt-3 max-w-[42ch] text-sm leading-6" style={{ color: palette.muted }}>
-              {branding.introMessage || "A private Studio OS gallery designed for your event."}
-            </div>
-            <div
-              className="mt-5 inline-flex rounded-full border px-4 py-2 text-[12px] font-semibold"
-              style={{ color: palette.text, borderColor: palette.text }}
-            >
-              {branding.introCtaLabel || "Enter Gallery"}
-            </div>
-          </div>
-        </div>
-      </div>
-      <div className="rounded-[22px] border border-neutral-200 bg-neutral-50 p-4">
-        <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-neutral-500">Brand Preview</div>
-        <div className="mt-3 grid gap-3">
-          <div className="rounded-2xl border border-neutral-200 bg-white p-3">
-            <div className="text-xs font-semibold uppercase tracking-[0.16em] text-neutral-500">Typography</div>
-            <div
-              className="mt-2 text-2xl leading-none tracking-[-0.03em] text-neutral-600"
-              style={{ fontFamily: titleStyle }}
-            >
-              {galleryFontLabel(branding.fontPreset)}
-            </div>
-          </div>
-          <div className="rounded-2xl border border-neutral-200 bg-white p-3">
-            <div className="text-xs font-semibold uppercase tracking-[0.16em] text-neutral-500">Layout</div>
-            <div className="mt-3 text-sm font-semibold text-neutral-700">
-              {branding.photoLayout === "cascade"
-                ? "Cascade photo wall"
-                : branding.photoLayout === "editorial"
-                  ? "Editorial mix"
-                  : "Subway grid"}
-            </div>
-            <div className="mt-3 grid grid-cols-4 gap-2">
-              {branding.photoLayout === "cascade" ? (
-                <>
-                  <div className="h-20 rounded-xl bg-neutral-900" />
-                  <div className="h-14 rounded-xl bg-neutral-500" />
-                  <div className="h-24 rounded-xl bg-neutral-700" />
-                  <div className="h-16 rounded-xl bg-neutral-300" />
-                </>
-              ) : branding.photoLayout === "editorial" ? (
-                <>
-                  <div className="col-span-2 h-24 rounded-xl bg-neutral-900" />
-                  <div className="h-11 rounded-xl bg-neutral-500" />
-                  <div className="h-11 rounded-xl bg-neutral-300" />
-                  <div className="h-14 rounded-xl bg-neutral-700" />
-                  <div className="h-14 rounded-xl bg-neutral-300" />
-                </>
-              ) : (
-                <>
-                  <div className="h-16 rounded-xl bg-neutral-900" />
-                  <div className="h-16 rounded-xl bg-neutral-700" />
-                  <div className="h-16 rounded-xl bg-neutral-500" />
-                  <div className="h-16 rounded-xl bg-neutral-300" />
-                </>
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
+  return <div className="space-y-3">
+    <div className="text-[13px] font-semibold text-neutral-800">Welcome screen preview</div>
+    <p className="text-sm text-neutral-600">This uses the same welcome screen clients see before choosing an album. Changes are published after you save and reload the client gallery.</p>
+    {branding.introEnabled ? <div className="relative overflow-hidden rounded-[22px] border border-neutral-200">
+      <EventGalleryCover
+        preview
+        title={branding.introHeadline.trim() || projectName || "Event Gallery"}
+        clientName={clientName}
+        imageUrl={branding.useCoverAsIntro ? coverUrl : null}
+        brandName={studioBrand.businessName || "Your studio"}
+        brandLogoUrl={studioBrand.logoUrl}
+        showStudioMark={branding.showStudioMark}
+        metadata={[]}
+        message={branding.introMessage}
+        buttonLabel={galleryIntroButtonLabel(branding.introCtaLabel, "View albums")}
+        onEnter={() => {}}
+        fontFamily={galleryFontFamily(branding.fontPreset)}
+        serifTitle={["editorial-serif", "baskerville", "playfair", "spectral"].includes(branding.fontPreset)}
+        overlayOpacity={overlayOpacity}
+        layout={branding.introLayout}
+        themePreset={branding.themePreset}
+        tone={galleryPresentationTone(branding)}
+        accentColor={galleryPresentationAccent(branding).solid}
+      />
+    </div> : <div className="rounded-[22px] border border-neutral-200 bg-neutral-50 p-6 text-sm text-neutral-600">The welcome screen is off. Clients go directly to the album chooser.</div>}
+  </div>;
 }
 
 export default function ProjectSettingsPage() {
@@ -527,6 +456,9 @@ export default function ProjectSettingsPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [project, setProject] = useState<ProjectRow | null>(null);
+  const [persistedGallerySettings, setPersistedGallerySettings] = useState<EventGallerySettings>(() => normalizeEventGallerySettings(null));
+  const [studioBrand, setStudioBrand] = useState<{ businessName: string; logoUrl: string | null }>({ businessName: "", logoUrl: null });
+  const loadRequestRef = useRef(0);
   const [saveNotice, setSaveNotice] = useState<string | null>(null);
   const [packageProfiles, setPackageProfiles] = useState<PackageProfileRow[]>([]);
 
@@ -555,10 +487,13 @@ export default function ProjectSettingsPage() {
 
   useEffect(() => {
     void loadAll();
+    return () => { loadRequestRef.current++; };
   }, [projectId]);
 
   async function loadAll() {
+    const requestId = ++loadRequestRef.current;
     setLoading(true);
+    setSaveNotice(null);
 
     const [{ data: projectData }] = await Promise.all([
       supabase.from("projects").select("*").eq("id", projectId).maybeSingle(),
@@ -566,9 +501,10 @@ export default function ProjectSettingsPage() {
 
     let nextPackageProfiles: PackageProfileRow[] = [];
     let nextPackageProfilePackages: PackageProfilePackageRow[] = [];
+    let nextStudioBrand = { businessName: "", logoUrl: null as string | null };
 
     if (projectData?.photographer_id) {
-      const [profileResult, packagesResult] = await Promise.all([
+      const [profileResult, packagesResult, studioResult] = await Promise.all([
         supabase
           .from("package_profiles")
           .select("id,name,profile_name,photographer_id,created_at")
@@ -579,7 +515,12 @@ export default function ProjectSettingsPage() {
           .select("profile_id,profile_name")
           .eq("photographer_id", projectData.photographer_id)
           .order("profile_name"),
+        supabase.from("photographers").select("business_name,logo_url").eq("id", projectData.photographer_id).maybeSingle(),
       ]);
+      nextStudioBrand = {
+        businessName: typeof studioResult.data?.business_name === "string" ? studioResult.data.business_name : "",
+        logoUrl: typeof studioResult.data?.logo_url === "string" ? studioResult.data.logo_url : null,
+      };
 
       const rawProfiles = (profileResult.data ?? []) as PackageProfileRow[];
       const rawPackages = (packagesResult.data ?? []) as PackageProfilePackageRow[];
@@ -604,16 +545,17 @@ export default function ProjectSettingsPage() {
       }
     }
 
+    if (requestId !== loadRequestRef.current) return;
+    let nextGallerySettings = normalizeEventGallerySettings(projectData?.gallery_settings);
+
     if (projectData) {
       setProject(projectData);
       setProjectName(projectData.project_name || projectData.name || projectData.title || "");
       setPortalStatus(projectData.portal_status || projectData.status || "inactive");
-      setShootDate(calendarDateInputValue((projectData.shoot_date || projectData.event_date) as string | null | undefined));
+      setShootDate(calendarDateInputValue((projectData.event_date || projectData.shoot_date) as string | null | undefined));
       setOrderDueDate(calendarDateInputValue(projectData.order_due_date as string | null | undefined));
       setExpirationDate(calendarDateInputValue(projectData.expiration_date as string | null | undefined));
-      const normalizedStoredSettings = normalizeEventGallerySettings(
-        projectData.gallery_settings,
-      );
+      const normalizedStoredSettings = nextGallerySettings;
       setPackageProfileId(
         resolvePackageProfileId({
           selectedProfileId:
@@ -638,19 +580,12 @@ export default function ProjectSettingsPage() {
         !Array.isArray(projectData.gallery_settings) &&
         Object.keys(projectData.gallery_settings).length > 0;
 
-      if (hasPersistedGallerySettings) {
-        const normalized = normalizedStoredSettings;
-        setGalleryLanguage(normalized.galleryLanguage);
-        setExtras(normalized.extras);
-        setBranding(normalized.branding);
-        setLinkedContacts(normalized.linkedContacts);
-        setShare(normalized.share);
-      } else {
+      if (!hasPersistedGallerySettings) {
         try {
           const raw = window.localStorage.getItem(storageKey);
           if (raw) {
             const parsed = JSON.parse(raw) as Record<string, unknown>;
-            const normalized = normalizeEventGallerySettings(
+            nextGallerySettings = normalizeEventGallerySettings(
               parsed.extras || parsed.branding
                 ? parsed
                 : {
@@ -658,16 +593,34 @@ export default function ProjectSettingsPage() {
                     extras: parsed,
                   },
             );
-            setGalleryLanguage(normalized.galleryLanguage);
-            setExtras(normalized.extras);
-            setBranding(normalized.branding);
-            setLinkedContacts(normalized.linkedContacts);
-            setShare(normalized.share);
           }
         } catch {}
       }
+    } else {
+      setProject(null);
+      setProjectName("");
+      setPortalStatus("inactive");
+      setShootDate("");
+      setOrderDueDate("");
+      setExpirationDate("");
+      setPackageProfileId("");
+      setEmailRequired(false);
+      setCheckoutContactRequired(false);
+      setInternalNotes("");
+      setProjectAccessMode("public");
+      setProjectPin("");
+      setProtectDesktop(false);
+      setProtectMobile(false);
+      setProtectWatermark(false);
     }
 
+    setPersistedGallerySettings(nextGallerySettings);
+    setGalleryLanguage(nextGallerySettings.galleryLanguage);
+    setExtras(nextGallerySettings.extras);
+    setBranding(nextGallerySettings.branding);
+    setLinkedContacts(nextGallerySettings.linkedContacts);
+    setShare(nextGallerySettings.share);
+    setStudioBrand(nextStudioBrand);
     setPackageProfiles(nextPackageProfiles);
 
     setLoading(false);
@@ -691,6 +644,8 @@ export default function ProjectSettingsPage() {
     const payload: Record<string, unknown> = {
       portal_status: portalStatus,
       shoot_date: cleanCalendarDateInput(shootDate),
+      event_date: cleanCalendarDateInput(shootDate),
+      expected_updated_at: project ? (typeof project.updated_at === "string" ? project.updated_at : null) : undefined,
       order_due_date: cleanCalendarDateInput(orderDueDate),
       expiration_date: cleanCalendarDateInput(expirationDate),
       package_profile_id: packageProfileId || null,
@@ -705,6 +660,7 @@ export default function ProjectSettingsPage() {
       screenshot_protection_mobile: protectMobile,
       screenshot_protection_watermark: protectWatermark,
       gallery_settings: normalizeEventGallerySettings({
+        ...persistedGallerySettings,
         galleryLanguage,
         extras: {
           ...extras,
@@ -756,49 +712,21 @@ export default function ProjectSettingsPage() {
       if (result.project) {
         setProject(result.project);
       }
+      const savedGallerySettings = normalizeEventGallerySettings(result.project?.gallery_settings ?? payload.gallery_settings);
+      setPersistedGallerySettings(savedGallerySettings);
 
       try {
         window.localStorage.setItem(
           storageKey,
-          JSON.stringify({ galleryLanguage, extras, branding, linkedContacts, share })
+          JSON.stringify(savedGallerySettings)
         );
       } catch {}
-      setSaveNotice("Saved");
-      setTimeout(() => setSaveNotice(null), 2500);
+      setSaveNotice("Saved. Reload the client gallery to see changes.");
+      setTimeout(() => setSaveNotice(null), 6000);
     } catch (error) {
       alert(error instanceof Error ? error.message : "Failed to save project settings.");
     } finally {
       setSaving(false);
-    }
-  }
-
-  function saveAsPreset() {
-    const name = window.prompt("Preset name");
-    if (!name) return;
-    try {
-      const key = "studioos_gallery_presets";
-      const current = JSON.parse(window.localStorage.getItem(key) || "[]") as Array<Record<string, unknown>>;
-      current.push({
-        id: crypto.randomUUID(),
-        name,
-        createdAt: new Date().toISOString(),
-        values: {
-          galleryLanguage,
-          portalStatus,
-          emailRequired,
-          checkoutContactRequired,
-          packageProfileId,
-          extras,
-          branding,
-          linkedContacts,
-          share,
-        },
-      });
-      window.localStorage.setItem(key, JSON.stringify(current));
-      setSaveNotice(`Preset “${name}” saved`);
-      setTimeout(() => setSaveNotice(null), 2500);
-    } catch {
-      alert("Unable to save preset on this browser.");
     }
   }
 
@@ -853,7 +781,7 @@ export default function ProjectSettingsPage() {
     {
       value: "minimal",
       label: "Minimal Entrance",
-      description: "Quiet overlay with the least amount of UI before entry.",
+      description: "A smaller cover photo above a quiet, centered welcome.",
       preview: (
         <div
           className="flex h-24 items-center justify-center p-2"
@@ -1113,7 +1041,7 @@ export default function ProjectSettingsPage() {
           <div className="flex flex-wrap items-center gap-3">
             {saveNotice ? <span className="inline-flex items-center gap-2 rounded-full bg-green-50 px-3 py-2 text-sm font-semibold text-green-700"><Check size={16} />{saveNotice}</span> : null}
             <button onClick={() => router.push(`/dashboard/projects/${projectId}`)} className="rounded-2xl border border-neutral-300 bg-white px-5 py-2.5 text-sm font-semibold text-neutral-900 transition hover:border-neutral-500">Cancel</button>
-            <button onClick={saveAsPreset} className="rounded-2xl px-5 py-2.5 text-sm font-semibold text-neutral-900 transition hover:text-[#991b1b]">Save as a Preset</button>
+            <button type="button" disabled title="Presets cannot be applied yet. Existing saved presets are kept." className="cursor-not-allowed rounded-2xl px-5 py-2.5 text-sm font-semibold text-neutral-400">Presets unavailable</button>
             <button onClick={saveAll} disabled={saving} className="rounded-2xl bg-neutral-950 px-5 py-2.5 text-sm font-semibold text-white shadow-[0_10px_20px_rgba(0,0,0,0.16)] transition hover:bg-[#991b1b] disabled:opacity-60">{saving ? "Saving..." : "Save"}</button>
           </div>
         </div>
@@ -1168,7 +1096,7 @@ export default function ProjectSettingsPage() {
                 <div className="space-y-6">
                   <Card title="General">
                     <div className="grid gap-5 md:grid-cols-2">
-                      <Field label="Shoot Date*" hint="The date of the photo session or event">
+                      <Field label="Shoot / Event Date" hint="The session date shown in the client gallery">
                         <input type="date" value={shootDate} onChange={(e) => setShootDate(e.target.value)} className="w-full rounded-xl border border-neutral-200 bg-white px-4 py-3 text-sm text-neutral-800 placeholder:text-neutral-400" />
                       </Field>
                       <Field label="Project/Event Name">
@@ -1195,7 +1123,7 @@ export default function ProjectSettingsPage() {
                     {extras.allowSocialSharing ? (
                       <textarea value={extras.socialShareMessage} onChange={(e) => setExtra("socialShareMessage", e.target.value)} className="min-h-[110px] w-full rounded-xl border border-neutral-200 bg-white px-4 py-3 text-sm text-neutral-800 placeholder:text-neutral-400" placeholder="Check out the photos from this gallery!" />
                     ) : null}
-                    <ToggleRow title="Allow Black & White Filtering" description="Clients may view and order black and white versions of your photos" checked={extras.allowBlackWhiteFiltering} onChange={(next) => setExtra("allowBlackWhiteFiltering", next)} />
+                    <ToggleRow title="Allow Black & White Preview" description="Let clients preview photos in black and white. Downloads and ordered files retain their original appearance." checked={extras.allowBlackWhiteFiltering} onChange={(next) => setExtra("allowBlackWhiteFiltering", next)} />
                   </Card>
                 </div>
               )}
@@ -1203,10 +1131,10 @@ export default function ProjectSettingsPage() {
               {activeSection === "branding" && (
                 <div className="space-y-8">
                   {/* Live Preview */}
-                  <BrandPreview branding={branding} projectName={projectName || "Event Gallery"} />
+                  <BrandPreview branding={branding} projectName={projectName || "Event Gallery"} project={project} studioBrand={studioBrand} />
 
                   {/* Style */}
-                  <Card title="Style" description="Set the visual tone of your gallery.">
+                  <Card title="Style" description="Set the theme, colors, and type used by your welcome screen and client gallery.">
                     <div className="grid gap-6 lg:grid-cols-2">
                       <BackgroundModePicker
                         value={branding.backgroundMode}
@@ -1262,7 +1190,7 @@ export default function ProjectSettingsPage() {
                   </Card>
 
                   {/* Layout */}
-                  <Card title="Gallery Layout" description="Control how photos are arranged.">
+                  <Card title="Photos inside an album" description="Control the photo wall and header inside an opened album. The welcome preview above shows the separate welcome screen.">
                     <VisualChoiceGrid
                       title="Photo Wall Style"
                       value={branding.photoLayout}
@@ -1282,8 +1210,8 @@ export default function ProjectSettingsPage() {
                       onChange={(next) => setBrandingField("imageSpacing", next)}
                     />
                     <ToggleRow
-                      title="Show Hero Header"
-                      description="Display a large cover section at the top of the gallery."
+                      title="Show Album Header"
+                      description="Display the album title, cover, and details above the photos inside an album. The welcome screen is controlled separately below."
                       checked={branding.showHeroHeader}
                       onChange={(next) => setBrandingField("showHeroHeader", next)}
                     />
@@ -1320,17 +1248,17 @@ export default function ProjectSettingsPage() {
                   </Card>
 
                   {/* Intro Experience */}
-                  <Card title="Intro Page" description="The first thing clients see before entering the gallery.">
+                  <Card title="Welcome before albums" description="The full-screen welcome appears after sign-in, before the client chooses an album. Album-specific access opens that album directly.">
                     <ToggleRow
-                      title="Show Intro Page"
-                      description="Present a full-screen welcome page before the photo gallery opens."
+                      title="Show Welcome Screen"
+                      description="Show the cover photo and welcome details before the album chooser."
                       checked={branding.introEnabled}
                       onChange={(next) => setBrandingField("introEnabled", next)}
                     />
                     {branding.introEnabled && (
                       <>
                         <div>
-                          <div className="mb-2 text-[13px] font-semibold text-neutral-800">Intro Layout</div>
+                          <div className="mb-2 text-[13px] font-semibold text-neutral-800">Welcome Layout</div>
                           <div className="relative">
                             <select
                               value={branding.introLayout}
@@ -1358,12 +1286,12 @@ export default function ProjectSettingsPage() {
                             placeholder="Welcome message or ordering notes."
                           />
                         </Field>
-                        <Field label="Enter Button Label">
+                        <Field label="View Albums Button Label" hint="Leave blank for View albums. A custom label changes the welcome button.">
                           <input
-                            value={branding.introCtaLabel}
+                            value={branding.introCtaLabel.trim() === "Enter Gallery" ? "" : branding.introCtaLabel}
                             onChange={(e) => setBrandingField("introCtaLabel", e.target.value)}
                             className="w-full max-w-xs rounded-xl border border-neutral-200 bg-white px-4 py-3 text-sm text-neutral-800 placeholder:text-neutral-400"
-                            placeholder="Enter Gallery"
+                            placeholder="View albums"
                           />
                         </Field>
                         <ToggleRow
@@ -1473,7 +1401,7 @@ export default function ProjectSettingsPage() {
                     <div>
                       <div className="mb-3 text-[13px] font-semibold text-neutral-800">Screenshot Protection</div>
                       <div className="mb-4 rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-800">
-                        These defenses only apply to the parents portal — your dashboard is never affected. Motivated attackers can still capture the screen, but these toggles block the casual "Cmd+Shift+3" / long-press save flow that covers the majority of real-world leaks.
+                        These defenses only apply to the parents portal — your dashboard is never affected. Motivated attackers can still capture the screen, but these toggles block the casual &quot;Cmd+Shift+3&quot; / long-press save flow that covers the majority of real-world leaks.
                       </div>
                       <div className="space-y-3">
                         <ToggleRow
@@ -1496,9 +1424,9 @@ export default function ProjectSettingsPage() {
                         />
                       </div>
                     </div>
-                    <Field label="Client Email Capture Foundation" hint="This does not gate entry yet. It defines how this event should be prepared for future capture workflows.">
+                    <Field label="Additional Email Capture (not available)" hint="Use Email required above for current gallery access. This additional capture option is not available yet; saved preferences are kept.">
                       <div className="relative max-w-md">
-                        <select value={extras.emailCaptureMode} onChange={(e) => setExtra("emailCaptureMode", e.target.value as EventGalleryExtraSettings["emailCaptureMode"])} className="w-full appearance-none rounded-xl border border-neutral-200 bg-white px-4 py-3 pr-10 text-sm text-neutral-700">
+                        <select disabled value={extras.emailCaptureMode} className="w-full appearance-none rounded-xl border border-neutral-200 bg-neutral-50 px-4 py-3 pr-10 text-sm text-neutral-500 disabled:cursor-not-allowed">
                           <option value="off">Off</option>
                           <option value="optional">Optional capture</option>
                           <option value="required">Required before entry</option>
@@ -1539,10 +1467,10 @@ export default function ProjectSettingsPage() {
                     <ToggleRow title="Enable free digital rule" description="Create a downloadable rule for this gallery or album." checked={extras.freeDigitalRuleEnabled} onChange={(next) => setExtra("freeDigitalRuleEnabled", next)} />
                     {extras.freeDigitalRuleEnabled ? (
                       <div className="grid gap-4 md:grid-cols-2">
-                        <Field label="Who should be able to download photos for free?">
+                        <Field label="Who should be able to download photos for free?" hint="The album option applies when a client opens an album. It does not select or restrict the rule to one named album.">
                           <select value={extras.freeDigitalAudience} onChange={(e) => setExtra("freeDigitalAudience", e.target.value as EventGalleryExtraSettings["freeDigitalAudience"])} className="w-full rounded-xl border border-neutral-200 bg-white px-4 py-3 text-sm text-neutral-800 placeholder:text-neutral-400">
                             <option value="gallery">All visitors to this gallery</option>
-                            <option value="album">Visitors to a specific album</option>
+                            <option value="album">Visitors viewing an album</option>
                             <option value="person">One specific person</option>
                           </select>
                         </Field>
@@ -1671,10 +1599,10 @@ export default function ProjectSettingsPage() {
                     <Field label="Minimum Order Amount (optional)" hint="Set a minimum order amount for this gallery">
                       <input value={extras.minimumOrderAmount} onChange={(e) => setExtra("minimumOrderAmount", e.target.value)} className="max-w-md rounded-xl border border-neutral-200 bg-white px-4 py-3 text-sm text-neutral-800 placeholder:text-neutral-400" placeholder="ex. $20.00" />
                     </Field>
-                    <ToggleRow title="Allow Cropping" description="Clients may crop photos on orders" checked={extras.allowCropping} onChange={(next) => setExtra("allowCropping", next)} />
+                    <ToggleRow title="Allow Cropping" description="Client crop selection is not available yet. Your saved preference is kept." disabled checked={extras.allowCropping} onChange={(next) => setExtra("allowCropping", next)} />
                     <ToggleRow title="Enable Store" description="Allow your clients to shop by product first" checked={extras.enableStore} onChange={(next) => setExtra("enableStore", next)} />
                     <ToggleRow title="Enable Shipping" description="Show a Shipping option at checkout for this event." checked={extras.shippingEnabled} onChange={(next) => setExtra("shippingEnabled", next)} />
-                    <ToggleRow title="Enable Pickup" description="Let clients choose Pickup instead of Shipping." checked={extras.pickupEnabled} onChange={(next) => setExtra("pickupEnabled", next)} />
+                    <ToggleRow title="Enable Pickup" description="When Shipping is on, allow clients to choose Pickup too. When Shipping is off, Pickup remains the delivery method." checked={extras.pickupEnabled} onChange={(next) => setExtra("pickupEnabled", next)} />
                     <ToggleRow title="Use Special Pickup Location" description="Show a studio or custom pickup address instead of the default event pickup." checked={extras.pickupLocationEnabled} onChange={(next) => setExtra("pickupLocationEnabled", next)} />
                     {extras.pickupLocationEnabled ? (
                       <div className="grid gap-4 md:grid-cols-2">
@@ -1692,7 +1620,7 @@ export default function ProjectSettingsPage() {
                     <ToggleRow title="Enable Abandoned Cart Email" description="Automatically send a reminder email to clients who abandon their shopping carts" checked={extras.enableAbandonedCartEmail} onChange={(next) => setExtra("enableAbandonedCartEmail", next)} />
                     <ToggleRow title="Show Buy All Button" checked={extras.showBuyAllButton} onChange={(next) => setExtra("showBuyAllButton", next)} />
                     <ToggleRow title="Offer Packages Only" description="Hide a la carte items and allow clients to only purchase packages" checked={extras.offerPackagesOnly} onChange={(next) => setExtra("offerPackagesOnly", next)} />
-                    <ToggleRow title="Allow Client to Pay Later" checked={extras.allowClientToPayLater} onChange={(next) => setExtra("allowClientToPayLater", next)} />
+                    <ToggleRow title="Allow Client to Pay Later" description="Deferred client payment is not available yet. Your saved preference is kept." disabled checked={extras.allowClientToPayLater} onChange={(next) => setExtra("allowClientToPayLater", next)} />
                     <ToggleRow title="Allow Client to Comment on Items in Cart" checked={extras.allowClientComments} onChange={(next) => setExtra("allowClientComments", next)} />
                   </Card>
                 </div>
@@ -1703,10 +1631,10 @@ export default function ProjectSettingsPage() {
                   <Card title="Advanced" description="Configure your advanced settings.">
                     <ToggleRow title='Hide the "All Photos" Album' description="Show only the albums you've created" checked={extras.hideAllPhotosAlbum} onChange={(next) => setExtra("hideAllPhotosAlbum", next)} />
                     <ToggleRow title="Show photo counts" description="Show photo totals on the welcome screen, album thumbnails, and photo browser. Off by default for new galleries." checked={!extras.hideAlbumPhotoCount} onChange={(next) => setExtra("hideAlbumPhotoCount", !next)} />
-                    <ToggleRow title="Automatically Send Gallery to Archive After Expiration" description="Archiving frees up space after the expiration date." checked={extras.autoArchiveAfterExpiration} onChange={(next) => setExtra("autoArchiveAfterExpiration", next)} />
-                    <ToggleRow title="Send Email Campaign" description="Automatically send emails to your clients and gallery visitors" checked={extras.sendEmailCampaign} onChange={(next) => setExtra("sendEmailCampaign", next)} />
-                    <ToggleRow title="Set Album Cover Images automatically" description="During upload, allow the system to select a photo as the album cover" checked={extras.autoChooseAlbumCover} onChange={(next) => setExtra("autoChooseAlbumCover", next)} />
-                    <ToggleRow title="Set Project/Event Cover automatically" description="During upload, allow the system to select a photo as the event cover" checked={extras.autoChooseProjectCover} onChange={(next) => setExtra("autoChooseProjectCover", next)} />
+                    <ToggleRow title="Archive Gallery After Expiration" description="A scheduled archive check marks expired event galleries inactive. The photos remain stored." checked={extras.autoArchiveAfterExpiration} onChange={(next) => setExtra("autoArchiveAfterExpiration", next)} />
+                    <ToggleRow title="Send Email Campaign" description="Turning this on and saving an active gallery sends a campaign to eligible client and visitor email addresses." checked={extras.sendEmailCampaign} onChange={(next) => setExtra("sendEmailCampaign", next)} />
+                    <ToggleRow title="Set Album Cover Images automatically" description="Supported desktop uploads and school sync fill empty album covers. Existing chosen covers are kept; Manual only disables automatic selection." checked={extras.autoChooseAlbumCover} onChange={(next) => setExtra("autoChooseAlbumCover", next)} />
+                    <ToggleRow title="Set Project/Event Cover automatically" description="Supported desktop uploads and school sync fill an empty project cover. Existing chosen covers are kept; Manual only disables automatic selection." checked={extras.autoChooseProjectCover} onChange={(next) => setExtra("autoChooseProjectCover", next)} />
                     <Field label="Automatic cover source">
                       <div className="relative max-w-md">
                         <select value={extras.coverSource} onChange={(e) => setExtra("coverSource", e.target.value as EventGalleryExtraSettings["coverSource"])} className="w-full appearance-none rounded-xl border border-neutral-200 bg-white px-4 py-3 pr-10 text-sm text-neutral-700">
@@ -1723,32 +1651,35 @@ export default function ProjectSettingsPage() {
                     </Field>
                   </Card>
 
-                  <Card title="Future Event Foundation" description="Prepare this event for later live feeds, guest scans, instant uploads, and notification workflows without changing the current gallery behavior.">
+                  <Card title="Planned Event Features" description="These features are not available yet. Existing saved preferences remain stored.">
                     <ToggleRow
-                      title="Live Event Mode Foundation"
-                      description="Expose live-mode readiness on the client landing page and preserve a clean extension point for real-time feeds later."
+                      title="Live Event Mode"
+                      description="Live photo feeds are not available yet."
+                      disabled
                       checked={extras.liveGalleryMode}
                       onChange={(next) => setExtra("liveGalleryMode", next)}
                     />
-                    <Field label="Guest Identification Mode">
+                    <Field label="Guest Identification Mode (not available)" hint="QR and barcode guest matching are not available yet. Your saved selection is kept.">
                       <div className="relative max-w-md">
-                        <select value={extras.guestIdentificationMode} onChange={(e) => setExtra("guestIdentificationMode", e.target.value as EventGalleryExtraSettings["guestIdentificationMode"])} className="w-full appearance-none rounded-xl border border-neutral-200 bg-white px-4 py-3 pr-10 text-sm text-neutral-700">
+                        <select disabled value={extras.guestIdentificationMode} className="w-full appearance-none rounded-xl border border-neutral-200 bg-neutral-50 px-4 py-3 pr-10 text-sm text-neutral-500 disabled:cursor-not-allowed">
                           <option value="none">Standard event access</option>
-                          <option value="qr">QR guest mode foundation</option>
-                          <option value="barcode">Barcode guest mode foundation</option>
+                          <option value="qr">QR guest identification</option>
+                          <option value="barcode">Barcode guest identification</option>
                         </select>
                         <ChevronDown className="pointer-events-none absolute right-3 top-3.5 text-neutral-600" size={18} />
                       </div>
                     </Field>
                     <ToggleRow
-                      title="Instant Upload Feed Foundation"
-                      description="Reserve this event for near real-time image appearance and live wall updates later."
+                      title="Instant Upload Feed"
+                      description="Automatic live wall updates are not available yet."
+                      disabled
                       checked={extras.instantPhotoDelivery}
                       onChange={(next) => setExtra("instantPhotoDelivery", next)}
                     />
                     <ToggleRow
                       title="Order Notification Hooks"
-                      description="Mark the event ready for downstream push, Apple Watch, or order alert integrations later."
+                      description="Push and watch integrations are not available yet. Existing order emails continue to use the current order workflow."
+                      disabled
                       checked={extras.orderNotificationHooks}
                       onChange={(next) => setExtra("orderNotificationHooks", next)}
                     />

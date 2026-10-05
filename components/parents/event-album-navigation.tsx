@@ -33,6 +33,8 @@ export function EventAlbumOverview(props: AlbumNavigationProps & {
   brandLogoUrl?: string | null;
   metadata: string[];
   isMobile: boolean;
+  themePreset?: "signature" | "editorial" | "cinema";
+  accentColor?: string;
   tone: { background: string; surface: string; text: string; mutedText: string; border: string };
 }) {
   const secondaryText = `color-mix(in srgb, ${props.tone.mutedText} 80%, ${props.tone.text})`;
@@ -64,9 +66,9 @@ export function EventAlbumOverview(props: AlbumNavigationProps & {
           {props.brandLogoUrl ? <img src={props.brandLogoUrl} alt={props.brandName} style={{ maxWidth: "min(200px, 70vw)", maxHeight: 44, objectFit: "contain" }} />
             : <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.16em", textTransform: "uppercase", overflowWrap: "anywhere" }}>{props.brandName}</span>}
         </div>
-        <h1 style={{ margin: 0, maxWidth: "100%", fontSize: "clamp(30px, 3.4vw, 46px)", fontWeight: 500, letterSpacing: "-0.025em", lineHeight: 1.15, overflowWrap: "anywhere" }}>{props.title}</h1>
+        <h1 style={{ margin: 0, maxWidth: "100%", fontSize: "clamp(30px, 3.4vw, 46px)", fontWeight: props.themePreset === "editorial" ? 400 : 500, fontStyle: props.themePreset === "editorial" ? "italic" : undefined, textTransform: props.themePreset === "cinema" ? "uppercase" : undefined, letterSpacing: props.themePreset === "cinema" ? "0.06em" : "-0.025em", lineHeight: 1.15, overflowWrap: "anywhere" }}>{props.title}</h1>
         {props.metadata.length ? <div style={{ color: secondaryText, fontSize: 12, lineHeight: 1.7, letterSpacing: "0.04em" }}>{props.metadata.join(" · ")}</div> : null}
-        <span aria-hidden="true" style={{ width: 40, height: 1, background: props.tone.border, margin: "4px 0" }} />
+        <span aria-hidden="true" style={{ width: 40, height: 2, background: props.accentColor ?? props.tone.border, margin: "4px 0" }} />
         <p style={{ margin: 0, maxWidth: 560, color: secondaryText, fontSize: 14, lineHeight: 1.7 }}>{props.description}</p>
       </header>
       <div className="event-album-cards">
@@ -80,7 +82,7 @@ export function EventAlbumOverview(props: AlbumNavigationProps & {
               <span style={{ fontSize: 16, fontWeight: 600, lineHeight: 1.4, overflowWrap: "anywhere" }}>{choice.title}</span>
               {!props.hidePhotoCount ? <span style={{ fontSize: 12, color: secondaryText, lineHeight: 1.5 }}>{photoCount(choice, props)}</span> : null}
             </span>
-            <ChevronRight className="event-album-arrow" size={18} color={props.tone.mutedText} aria-hidden="true" />
+            <ChevronRight className="event-album-arrow" size={18} color={props.accentColor ?? props.tone.mutedText} aria-hidden="true" />
           </span>
         </button>)}
       </div>

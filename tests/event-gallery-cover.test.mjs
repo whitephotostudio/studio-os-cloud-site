@@ -301,6 +301,139 @@ test("changing photos restarts readiness and unmount cancels fallback and focus 
   assert.equal(ui.focused, 0);
 });
 
+const lightTone = { background: "#f4f6f8", surface: "#ffffff", text: "#27313b", mutedText: "#6b7280", border: "#d7dde5" };
+const divWithClass = (tree, className) => findAll(tree, "div").find(node => node.props.className === className);
+
+test("saved welcome layouts change the photo and text arrangement without changing gallery entry", () => {
+  for (const layout of [undefined, "centered", "split", "minimal"]) {
+    let entered = 0;
+    const tree = coverHarness().render(coverProps({ layout, tone: lightTone, onEnter: () => entered++ }));
+    assert.equal(tree.props["data-layout"], layout ?? "centered");
+    const frame = divWithClass(tree, "event-cover-frame");
+    const panel = divWithClass(tree, "event-cover-panel");
+    const copy = divWithClass(tree, "event-cover-copy");
+    assert.equal(findAll(frame, "img").length, 1);
+    assert.equal(findAll(panel, "img").length, layout === "minimal" ? 1 : 0);
+    assert.equal(findAll(copy, "img").length, layout === "minimal" ? 1 : 0);
+    assert.equal(tree.props.style.color, layout === "split" || layout === "minimal" ? lightTone.text : "#fff");
+    if (layout === "split") {
+      assert.equal(panel.props.style.background, lightTone.surface);
+      assert.equal(panel.props.style.border, `1px solid ${lightTone.border}`);
+    }
+    const css = textOf(findAll(tree, "style")[0]);
+    assert.match(css, /data-layout="split"[\s\S]*grid-template-columns:\s*minmax\(0, 1\.05fr\) minmax\(0, 1fr\)/);
+    assert.match(css, /@media\s*\(max-width:\s*720px\)[\s\S]*grid-template-columns:\s*1fr/);
+    assert.match(css, /data-layout="minimal"[^}]*width:\s*min\(340px, 68%\)/);
+    findAll(tree, "button")[0].props.onClick();
+    assert.equal(entered, 1);
+  }
+});
+
+test("all layouts honor the selected tone when there is no usable photo", () => {
+  for (const layout of ["centered", "split", "minimal"]) {
+    const ui = coverHarness(), props = coverProps({ layout, tone: lightTone });
+    findAll(ui.render(props), "img")[0].props.onError({ currentTarget: { src: props.imageUrl, isConnected: true, alt: "", dataset: {} } });
+    const failed = ui.render(props);
+    assert.equal(failed.props.style.background, lightTone.background);
+    assert.equal(failed.props.style.color, lightTone.text);
+    assert.equal(failed.props["data-has-image"], false);
+    assert.equal(failed.props["data-reveal-ready"], true);
+    assert.equal(divWithClass(failed, "event-cover-photo-overlay"), undefined);
+    assert.equal(divWithClass(failed, "event-cover-panel").props.style.background, undefined);
+    assert.equal(findAll(failed, "p").find(node => textOf(node) === props.message).props.style.color, lightTone.mutedText);
+    const absent = ui.render({ ...props, imageUrl: null });
+    assert.equal(absent.props.style.background, lightTone.background);
+    assert.equal(absent.props.style.color, lightTone.text);
+    assert.equal(findAll(absent, "img").length, 0);
+  }
+});
+
+test("signature, editorial, and cinema use distinct typography while keeping the selected font", () => {
+  const titles = ["signature", "editorial", "cinema"].map(themePreset => {
+    const tree = coverHarness().render(coverProps({ themePreset, fontFamily: "Chosen Studio Font" }));
+    assert.equal(tree.props["data-theme"], themePreset);
+    const title = findAll(tree, "h1")[0];
+    assert.equal(title.props.style.fontFamily, "Chosen Studio Font");
+    assert.equal(title.props.style.overflowWrap, "anywhere");
+    return title.props.style;
+  });
+  assert.equal(titles[0].fontWeight, 600);
+  assert.equal(titles[1].fontWeight, 400);
+  assert.equal(titles[1].fontStyle, "italic");
+  assert.equal(titles[2].fontWeight, 800);
+  assert.equal(titles[2].textTransform, "uppercase");
+  assert.ok(new Set(titles.map(style => style.letterSpacing)).size === 3);
+});
+
+test("photo overlay strength follows its saved value rather than tinting photo-free panels", () => {
+  for (const overlayOpacity of [0, 0.35, 0.8, 1]) {
+    const tree = coverHarness().render(coverProps({ overlayOpacity }));
+    assert.ok(divWithClass(tree, "event-cover-photo-overlay").props.style.background.includes(`rgba(0,0,0,${overlayOpacity})`));
+  }
+  const minimal = coverHarness().render(coverProps({ layout: "minimal", overlayOpacity: 0.8 }));
+  assert.equal(divWithClass(minimal, "event-cover-photo-overlay"), undefined);
+});
+
+test("saved accents appear on the entry button with readable text", () => {
+  const luminance = color => {
+    let hex = color.replace("#", "");
+    if (hex.length === 3) hex = [...hex].map(value => value.repeat(2)).join("");
+    const values = [0, 2, 4].map(index => Number.parseInt(hex.slice(index, index + 2), 16) / 255)
+      .map(value => value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4);
+    return values[0] * 0.2126 + values[1] * 0.7152 + values[2] * 0.0722;
+  };
+  for (const accentColor of ["#991b1b", "#c4a574", "#f2ede5", "#757575", "#fff"]) {
+    const tree = coverHarness().render(coverProps({ accentColor }));
+    const button = findAll(tree, "button")[0];
+    assert.equal(button.props.style.background, accentColor);
+    assert.equal(button.props.style.border, `1px solid ${accentColor}`);
+    const values = [luminance(button.props.style.background), luminance(button.props.style.color)].sort((a, b) => b - a);
+    assert.ok((values[0] + 0.05) / (values[1] + 0.05) >= 4.5, `${accentColor} button text needs contrast`);
+  }
+  const fallback = coverHarness().render(coverProps());
+  assert.equal(findAll(fallback, "button")[0].props.style.background, "#fff");
+});
+
+test("embedded owner previews reveal immediately, grow to fit entry controls, and never move focus or schedule global work", () => {
+  for (const layout of ["centered", "split", "minimal"]) {
+    const ui = coverHarness(), props = coverProps({ preview: true, layout, tone: lightTone });
+    const tree = ui.render(props);
+    assert.equal(tree.props.style.position, "relative");
+    assert.equal(tree.props.style.inset, undefined);
+    assert.equal(tree.props.style.zIndex, undefined);
+    assert.equal(tree.props.style.minHeight, 520);
+    assert.equal(tree.props.style.height, undefined);
+    assert.equal(tree.props.style.maxHeight, undefined);
+    assert.match(textOf(findAll(tree, "style")[0]), /data-preview="true"[^}]*event-cover-frame[^}]*min-height:\s*520px/);
+    assert.equal(tree.props["data-reveal-ready"], true);
+    assert.equal(findAll(tree, "h1").length, 0);
+    assert.equal(textOf(findAll(tree, "h2")[0]), props.title);
+    assert.equal(ui.pendingTimers, 0);
+    ui.advance(5000);
+    assert.equal(ui.focused, 0);
+    findAll(tree, "img")[0].props.onError({ currentTarget: { src: props.imageUrl, isConnected: true, alt: "", dataset: {} } });
+    ui.render({ ...props, imageUrl: "/authorized/updated-preview.jpg" });
+    assert.equal(ui.pendingTimers, 0);
+    ui.unmount();
+    assert.equal(ui.focused, 0);
+  }
+});
+
+test("switching a live cover into an owner preview cancels pending photo and focus work", () => {
+  const ui = coverHarness(), props = coverProps();
+  findAll(ui.render(props), "img")[0].props.onLoad();
+  ui.render(props);
+  assert.ok(ui.pendingTimers > 0);
+  ui.render({ ...props, preview: true });
+  assert.equal(ui.pendingTimers, 0);
+  ui.advance(5000);
+  assert.equal(ui.focused, 0);
+  ui.render({ ...props, preview: false, imageUrl: "/authorized/live-again.jpg" });
+  assert.ok(ui.pendingTimers > 0);
+  ui.unmount();
+  assert.equal(ui.pendingTimers, 0);
+});
+
 const pageSource = readFileSync(new URL("../app/parents/[pin]/page.tsx", import.meta.url), "utf8");
 const pageAst = ts.createSourceFile("page.tsx", pageSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 const functions = new Map(), variables = new Map(), introEntryArguments = [];
