@@ -22,7 +22,7 @@ export function EventAlbumHero(props: {
     <style>{`.event-album-hero .event-album-hero-content { min-height: 260px; padding: 40px 32px; } @media(max-width:560px) { .event-album-hero .event-album-hero-content { min-height: 180px; padding: 28px 22px; } }`}</style>
     {showImage ? <>
       <img src={props.imageUrl!} alt="" loading="lazy" onError={event => {
-        if (retryPortalPreviewImage(event.currentTarget, window.setTimeout)) return;
+        if (retryPortalPreviewImage(event.currentTarget)) return;
         setFailedImageUrl(props.imageUrl);
       }} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", filter: props.imageFilter }} />
       <span aria-hidden="true" style={{ position: "absolute", inset: 0, background: `rgba(0,0,0,${props.overlayOpacity})` }} />

@@ -413,25 +413,66 @@ function FontDropdown({
   );
 }
 
-function BrandPreview({ branding, projectName, project, studioBrand }: { branding: EventGalleryBrandingSettings; projectName: string; project: ProjectRow | null; studioBrand: { businessName: string; logoUrl: string | null } }) {
-  const coverUrl = typeof project?.cover_photo_url === "string" ? project.cover_photo_url : null;
+async function loadProjectPreviewImage(supabase: ReturnType<typeof createClient>, projectId: string) {
+  const controller = new AbortController();
+  let timeout: number | undefined;
+  // The preview is optional; slow auth, transport, or response bodies must not
+  // prevent the owner's saved settings from opening.
+  const deadline = new Promise<null>(resolve => {
+    timeout = window.setTimeout(() => { controller.abort(); resolve(null); }, 8000);
+  });
+  try {
+    const lookup = (async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (controller.signal.aborted) return null;
+      const response = await fetch(`/api/dashboard/events/${encodeURIComponent(projectId)}?mediaLimit=1`, {
+        method: "GET",
+        cache: "no-store",
+        signal: controller.signal,
+        headers: session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {},
+      });
+      if (!response.ok || controller.signal.aborted) return null;
+      const result = (await response.json()) as {
+        ok?: boolean;
+        project?: { cover_photo_url?: unknown };
+        media?: Array<{ preview_url?: unknown; thumbnail_url?: unknown }>;
+      };
+      if (result.ok === false || controller.signal.aborted) return null;
+      const projectCover = typeof result.project?.cover_photo_url === "string" ? result.project.cover_photo_url.trim() : "";
+      const firstImage = Array.isArray(result.media) ? result.media[0] : null;
+      return projectCover
+        || (typeof firstImage?.preview_url === "string" ? firstImage.preview_url.trim() : "")
+        || (typeof firstImage?.thumbnail_url === "string" ? firstImage.thumbnail_url.trim() : "")
+        || null;
+    })();
+    return await Promise.race([lookup, deadline]);
+  } catch {
+    return null;
+  } finally {
+    window.clearTimeout(timeout);
+    controller.abort();
+  }
+}
+
+function BrandPreview({ branding, projectName, project, studioBrand, coverImageUrl }: { branding: EventGalleryBrandingSettings; projectName: string; project: ProjectRow | null; studioBrand: { businessName: string; logoUrl: string | null }; coverImageUrl: string | null }) {
   const clientName = typeof project?.client_name === "string" ? project.client_name : "";
+  const introMessage = branding.introMessage.trim();
   const overlayOpacity = branding.heroOverlayStrength === "dramatic" ? 0.72 : branding.heroOverlayStrength === "soft" ? 0.44 : 0.58;
 
   return <div className="space-y-3">
     <div className="text-[13px] font-semibold text-neutral-800">Welcome screen preview</div>
-    <p className="text-sm text-neutral-600">This uses the same welcome screen clients see before choosing an album. Changes are published after you save and reload the client gallery.</p>
+    <p className="text-sm text-neutral-600">This previews the welcome screen design clients see before choosing an album. Gallery totals are omitted here. Changes are published after you save and reload the client gallery.</p>
     {branding.introEnabled ? <div className="relative overflow-hidden rounded-[22px] border border-neutral-200">
       <EventGalleryCover
         preview
         title={branding.introHeadline.trim() || projectName || "Event Gallery"}
         clientName={clientName}
-        imageUrl={branding.useCoverAsIntro ? coverUrl : null}
+        imageUrl={branding.useCoverAsIntro ? coverImageUrl : null}
         brandName={studioBrand.businessName || "Your studio"}
         brandLogoUrl={studioBrand.logoUrl}
         showStudioMark={branding.showStudioMark}
         metadata={[]}
-        message={branding.introMessage}
+        message={introMessage === defaultEventGalleryBranding.introMessage.trim() ? "" : introMessage}
         buttonLabel={galleryIntroButtonLabel(branding.introCtaLabel, "View albums")}
         onEnter={() => {}}
         fontFamily={galleryFontFamily(branding.fontPreset)}
@@ -458,6 +499,7 @@ export default function ProjectSettingsPage() {
   const [project, setProject] = useState<ProjectRow | null>(null);
   const [persistedGallerySettings, setPersistedGallerySettings] = useState<EventGallerySettings>(() => normalizeEventGallerySettings(null));
   const [studioBrand, setStudioBrand] = useState<{ businessName: string; logoUrl: string | null }>({ businessName: "", logoUrl: null });
+  const [previewImageUrl, setPreviewImageUrl] = useState<string | null>(null);
   const loadRequestRef = useRef(0);
   const [saveNotice, setSaveNotice] = useState<string | null>(null);
   const [packageProfiles, setPackageProfiles] = useState<PackageProfileRow[]>([]);
@@ -494,10 +536,19 @@ export default function ProjectSettingsPage() {
     const requestId = ++loadRequestRef.current;
     setLoading(true);
     setSaveNotice(null);
+    setPreviewImageUrl(null);
 
     const [{ data: projectData }] = await Promise.all([
       supabase.from("projects").select("*").eq("id", projectId).maybeSingle(),
     ]);
+    if (requestId !== loadRequestRef.current) return;
+
+    const storedCoverUrl = typeof projectData?.cover_photo_url === "string" ? projectData.cover_photo_url.trim() : "";
+    const previewImagePromise = !projectData
+      ? Promise.resolve(null)
+      : /^https:\/\//i.test(storedCoverUrl)
+        ? Promise.resolve(storedCoverUrl)
+        : loadProjectPreviewImage(supabase, projectId);
 
     let nextPackageProfiles: PackageProfileRow[] = [];
     let nextPackageProfilePackages: PackageProfilePackageRow[] = [];
@@ -545,6 +596,7 @@ export default function ProjectSettingsPage() {
       }
     }
 
+    const nextPreviewImageUrl = await previewImagePromise;
     if (requestId !== loadRequestRef.current) return;
     let nextGallerySettings = normalizeEventGallerySettings(projectData?.gallery_settings);
 
@@ -621,6 +673,7 @@ export default function ProjectSettingsPage() {
     setLinkedContacts(nextGallerySettings.linkedContacts);
     setShare(nextGallerySettings.share);
     setStudioBrand(nextStudioBrand);
+    setPreviewImageUrl(nextPreviewImageUrl);
     setPackageProfiles(nextPackageProfiles);
 
     setLoading(false);
@@ -1131,7 +1184,7 @@ export default function ProjectSettingsPage() {
               {activeSection === "branding" && (
                 <div className="space-y-8">
                   {/* Live Preview */}
-                  <BrandPreview branding={branding} projectName={projectName || "Event Gallery"} project={project} studioBrand={studioBrand} />
+                  <BrandPreview branding={branding} projectName={projectName || "Event Gallery"} project={project} studioBrand={studioBrand} coverImageUrl={previewImageUrl} />
 
                   {/* Style */}
                   <Card title="Style" description="Set the theme, colors, and type used by your welcome screen and client gallery.">

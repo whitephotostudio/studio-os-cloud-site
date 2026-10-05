@@ -332,7 +332,8 @@ test("saved welcome layouts change the photo and text arrangement without changi
 test("all layouts honor the selected tone when there is no usable photo", () => {
   for (const layout of ["centered", "split", "minimal"]) {
     const ui = coverHarness(), props = coverProps({ layout, tone: lightTone });
-    findAll(ui.render(props), "img")[0].props.onError({ currentTarget: { src: props.imageUrl, isConnected: true, alt: "", dataset: {} } });
+    const photo = findAll(ui.render(props), "img")[0];
+    photo.props.onError({ currentTarget: photo.props.ref.current });
     const failed = ui.render(props);
     assert.equal(failed.props.style.background, lightTone.background);
     assert.equal(failed.props.style.color, lightTone.text);
@@ -411,7 +412,8 @@ test("embedded owner previews reveal immediately, grow to fit entry controls, an
     assert.equal(ui.pendingTimers, 0);
     ui.advance(5000);
     assert.equal(ui.focused, 0);
-    findAll(tree, "img")[0].props.onError({ currentTarget: { src: props.imageUrl, isConnected: true, alt: "", dataset: {} } });
+    const photo = findAll(tree, "img")[0];
+    photo.props.onError({ currentTarget: photo.props.ref.current });
     ui.render({ ...props, imageUrl: "/authorized/updated-preview.jpg" });
     assert.equal(ui.pendingTimers, 0);
     ui.unmount();

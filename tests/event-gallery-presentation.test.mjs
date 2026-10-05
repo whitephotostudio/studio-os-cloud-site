@@ -10,9 +10,8 @@ const compile = source => ts.transpileModule(source, {
 function load(path, modules = {}, globals = {}) {
   const exports = {};
   vm.runInNewContext(compile(readFileSync(new URL(`../${path}`, import.meta.url), "utf8")), {
-    exports,
+    exports, ...globals,
     require(name) { assert.ok(name in modules, `Unexpected dependency ${name}`); return modules[name]; },
-    ...globals,
   });
   return exports;
 }
@@ -30,6 +29,9 @@ function heroHarness() {
   const timers = [];
   let cursor = 0;
   const jsx = (type, props) => ({ type, props });
+  const previewRetry = load("lib/portal-preview-retry.ts", {}, {
+    URL, setTimeout(callback, delay) { timers.push({ callback, delay }); },
+  });
   const { EventAlbumHero } = load("components/parents/event-album-hero.tsx", {
     react: { useState(initial) {
       const index = cursor++;
@@ -37,10 +39,20 @@ function heroHarness() {
       return [state[index], value => { state[index] = value; }];
     } },
     "react/jsx-runtime": { jsx, jsxs: jsx, Fragment: Symbol.for("fragment") },
-    "@/lib/portal-preview-retry": load("lib/portal-preview-retry.ts", {}, { URL }),
-  }, { window: { setTimeout(run, delay) { timers.push({ run, delay }); } } });
-  return { timers, render(props) { cursor = 0; return EventAlbumHero(props); } };
+    "@/lib/portal-preview-retry": previewRetry,
+  });
+  return {
+    render(props) { cursor = 0; return EventAlbumHero(props); },
+    get pendingTimers() { return timers.length; },
+    runNextTimer(delay) {
+      const timer = timers.shift();
+      assert.ok(timer, "A preview retry must have been scheduled");
+      assert.equal(timer.delay, delay);
+      timer.callback();
+    },
+  };
 }
+const imageTarget = photo => ({ src: photo.props.src, alt: photo.props.alt, isConnected: true, dataset: {}, style: { opacity: "1" } });
 const heroProps = overrides => ({
   title: "The Giles School — Terry Fox event", imageUrl: "/authorized/album-cover.jpg",
   imageFilter: "grayscale(1)", metadata: ["427 photos", "October 15", "Private access"],
@@ -90,7 +102,8 @@ test("album photos use the saved filter/overlay and failure restores the selecte
   assert.equal(photo.props.style.filter, props.imageFilter);
   assert.equal(first.props.style.color, "#ffffff");
   assert.ok(findAll(first, "span").some(node => node.props.style?.background === "rgba(0,0,0,0.5)"));
-  photo.props.onError({ currentTarget: { src: photo.props.src, isConnected: true, alt: "", dataset: {}, style: { opacity: "1" } } });
+  photo.props.onError({ currentTarget: imageTarget(photo) });
+  assert.equal(ui.pendingTimers, 0, "Ordinary owner cover files must use the fallback immediately");
   const failed = ui.render(props);
   assert.equal(findAll(failed, "img").length, 0);
   assert.equal(failed.props.style.background, tone.background);
@@ -102,34 +115,55 @@ test("album photos use the saved filter/overlay and failure restores the selecte
   assert.equal(findAll(ui.render({ ...props, imageUrl: "/authorized/replacement.jpg" }), "img")[0].props.src, "/authorized/replacement.jpg");
 });
 
-test("selected album hero retries protected previews before its readable fallback, without retrying originals", () => {
-  const props = heroProps({ imageUrl: "/api/portal/event-preview/authorized.jpg?token=signed" });
-  const ui = heroHarness();
-  const image = { src: props.imageUrl, isConnected: true, alt: "", dataset: {}, style: { opacity: "1" } };
-  findAll(ui.render(props), "img")[0].props.onError({ currentTarget: image });
-  assert.equal(findAll(ui.render(props), "img").length, 1, "transient protected-preview errors should keep the album cover for retry");
-  assert.equal(ui.timers.length, 1);
-  assert.equal(ui.timers[0].delay, 1500);
-  ui.timers[0].run();
-  assert.equal(new URL(image.src).searchParams.get("previewRetry"), "1");
-  assert.equal(new URL(image.src).searchParams.get("token"), "signed");
-  findAll(ui.render(props), "img")[0].props.onError({ currentTarget: image });
-  assert.equal(ui.timers.length, 2);
-  assert.equal(ui.timers[1].delay, 60000);
-  ui.timers[1].run();
-  assert.equal(new URL(image.src).searchParams.get("previewRetry"), "2");
-  findAll(ui.render(props), "img")[0].props.onError({ currentTarget: image });
-  assert.equal(findAll(ui.render(props), "img").length, 0, "retry exhaustion restores the readable header");
-  assert.equal(ui.timers.length, 2);
-  assert.match(textOf(ui.render(props)), /Terry Fox event/);
-  const replacement = { ...props, imageUrl: "/api/portal/event-preview/replacement.jpg?token=new" };
-  assert.equal(findAll(ui.render(replacement), "img")[0].props.src, replacement.imageUrl);
+test("protected album hero previews retry twice before falling back without losing the album text", () => {
+  for (const scope of ["event", "school"]) {
+    const props = heroProps({ imageUrl: `/api/portal/${scope}-preview/cover.jpg?token=signed%2Btoken` });
+    const ui = heroHarness(), photo = findAll(ui.render(props), "img")[0], image = imageTarget(photo);
+    for (const [retry, delay] of [[1, 1500], [2, 60000]]) {
+      photo.props.onError({ currentTarget: image });
+      assert.equal(findAll(ui.render(props), "img").length, 1, "A temporary protected preview error must keep the hero photo available");
+      assert.equal(ui.pendingTimers, 1);
+      assert.equal(image.alt, "Preview temporarily unavailable. Retrying.");
+      ui.runNextTimer(delay);
+      const retriedUrl = new URL(image.src);
+      assert.equal(retriedUrl.searchParams.get("token"), "signed+token");
+      assert.equal(retriedUrl.searchParams.get("previewRetry"), String(retry));
+    }
+    photo.props.onError({ currentTarget: image });
+    const failed = ui.render(props);
+    assert.equal(ui.pendingTimers, 0);
+    assert.equal(findAll(failed, "img").length, 0);
+    assert.equal(failed.props.style.background, props.tone.background);
+    assert.equal(failed.props.style.color, props.tone.text);
+    assert.match(textOf(failed), /Terry Fox event/);
+    assert.match(textOf(failed), /427 photos/);
+    const replacement = { ...props, imageUrl: `/api/portal/${scope}-preview/replacement.jpg?token=new` };
+    assert.equal(findAll(ui.render(replacement), "img")[0].props.src, replacement.imageUrl);
+  }
+});
 
-  const originals = heroHarness();
-  const originalProps = heroProps({ imageUrl: "https://storage.example/original.jpg" });
-  findAll(originals.render(originalProps), "img")[0].props.onError({ currentTarget: { ...image, src: originalProps.imageUrl, dataset: {} } });
-  assert.equal(findAll(originals.render(originalProps), "img").length, 0);
-  assert.equal(originals.timers.length, 0);
+test("album hero never retries original or gated delivery URLs as previews", () => {
+  for (const imageUrl of ["https://storage.example/original.jpg", "/api/portal/event-download-file?token=signed"]) {
+    const ui = heroHarness(), props = heroProps({ imageUrl });
+    const photo = findAll(ui.render(props), "img")[0];
+    photo.props.onError({ currentTarget: imageTarget(photo) });
+    assert.equal(ui.pendingTimers, 0);
+    assert.equal(findAll(ui.render(props), "img").length, 0);
+  }
+});
+
+test("album hero preview retries cannot replace a disconnected image or a newer image source", () => {
+  for (const staleReason of ["disconnected", "replaced"]) {
+    const props = heroProps({ imageUrl: "/api/portal/event-preview/cover.jpg?token=signed" });
+    const ui = heroHarness(), photo = findAll(ui.render(props), "img")[0], image = imageTarget(photo);
+    photo.props.onError({ currentTarget: image });
+    if (staleReason === "disconnected") image.isConnected = false;
+    else image.src = "/api/portal/event-preview/new-cover.jpg?token=new-signed";
+    const source = image.src;
+    ui.runNextTimer(1500);
+    assert.equal(image.src, source);
+    assert.equal(ui.pendingTimers, 0);
+  }
 });
 
 test("photo-free album headers and hidden metadata remain readable without adding invented totals", () => {
