@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { createHash } from "node:crypto";
 import {
   createDashboardServiceClient,
   resolveDashboardAuth,
@@ -8,6 +9,7 @@ import { parseJson } from "@/lib/api-validation";
 import { resendConfigured, sendResendEmail } from "@/lib/resend";
 import { guardAgreement } from "@/lib/require-agreement";
 import { signedPrivateMediaReference } from "@/lib/private-media-references";
+import { loadSchoolVisitorData, schoolVisitorEmailAudience } from "@/lib/school-visitor-audience";
 
 export const dynamic = "force-dynamic";
 
@@ -20,7 +22,19 @@ function escHtml(s: string) {
 }
 
 const EmailBodySchema = z.object({
-  recipients: z.array(z.string().email().max(320)).max(5000),
+  recipients: z.array(z.string().email().max(320)).max(5000).default([]),
+  action: z.enum(["preview", "send"]).default("send"),
+  schoolAudience: z.object({
+    schoolId: z.string().uuid(),
+    visitorIds: z.array(z.string().min(1).max(512)).min(1).max(5000),
+    filters: z.object({
+      search: z.string().max(500), className: z.string().max(200),
+      orders: z.enum(["all", "ordered", "no_orders", "paid", "unpaid", "digitals"]),
+      activity: z.enum(["all", "registered", "visited", "favorites", "downloads"]),
+    }),
+    fingerprint: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+    requestId: z.string().uuid().optional(),
+  }).optional(),
   subject: z.string().min(1).max(500),
   headline: z.string().min(1).max(500),
   message: z.string().max(10_000).default(""),
@@ -40,15 +54,8 @@ export async function POST(request: NextRequest) {
 
     const parsed = await parseJson(request, EmailBodySchema);
     if (!parsed.ok) return parsed.response;
-    const { recipients, subject, headline, message } = parsed.data;
-
-    if (!recipients?.length || !subject || !headline) {
-      return NextResponse.json({ ok: false, message: "Missing required fields." }, { status: 400 });
-    }
-
-    if (!resendConfigured()) {
-      return NextResponse.json({ ok: false, message: "Email sending is not configured." }, { status: 500 });
-    }
+    const { subject, headline, message, schoolAudience, action } = parsed.data;
+    let recipients = [...new Set(parsed.data.recipients.map(email => email.trim().toLowerCase()))];
 
     const service = createDashboardServiceClient();
 
@@ -68,6 +75,35 @@ export async function POST(request: NextRequest) {
       .maybeSingle();
 
     const pg = pgRow as Record<string, unknown> | null;
+    if (!pg) return NextResponse.json({ ok: false, message: "Photographer not found." }, { status: 403 });
+    if (schoolAudience) {
+      const { data: school, error } = await service.from("schools").select("id,photographer_id")
+        .eq("id", schoolAudience.schoolId).maybeSingle();
+      if (error) throw error;
+      if (!school || school.photographer_id !== pg.id) {
+        return NextResponse.json({ ok: false, message: "School not found." }, { status: 404 });
+      }
+      const data = await loadSchoolVisitorData(service, schoolAudience.schoolId);
+      let audience;
+      try {
+        audience = schoolVisitorEmailAudience(schoolAudience.schoolId, data, schoolAudience.visitorIds, schoolAudience.filters);
+      } catch {
+        return NextResponse.json({ ok: false, message: "The recipient list changed. Refresh the report and review recipients again." }, { status: 409 });
+      }
+      // Ignore submitted custom addresses. Resolve the reviewed school
+      // audience again, including all orders, immediately before sending.
+      recipients = audience.recipients;
+      if (action === "preview") return NextResponse.json({ ok: true, audience });
+      if (!schoolAudience.requestId || schoolAudience.fingerprint !== audience.fingerprint) {
+        return NextResponse.json({ ok: false, message: "The recipient list changed. Refresh the report and review recipients again." }, { status: 409 });
+      }
+    } else if (action === "preview") {
+      return NextResponse.json({ ok: false, message: "Choose a school audience." }, { status: 400 });
+    }
+    if (!recipients.length) return NextResponse.json({ ok: false, message: "No recipients selected." }, { status: 400 });
+    if (!resendConfigured()) {
+      return NextResponse.json({ ok: false, message: "Email sending is not configured." }, { status: 500 });
+    }
     const businessName = clean(pg?.business_name as string) || "Studio OS";
     const replyTo = clean(pg?.studio_email as string) || clean(pg?.billing_email as string) || "";
     const logoUrl = signedPrivateMediaReference(
@@ -125,6 +161,7 @@ export async function POST(request: NextRequest) {
             fromName: businessName,
             replyTo: replyTo || null,
             tags: [{ name: "type", value: "mass-promo" }],
+            idempotencyKey: schoolAudience ? `school-visitors-${schoolAudience.requestId}-${createHash("sha256").update(email).digest("hex")}` : null,
           }),
         ),
       );
