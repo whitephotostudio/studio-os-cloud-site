@@ -742,12 +742,13 @@ export default function SchoolVisitorsPage() {
 
           {/* Table */}
           <div style={{ background: cardBg, border: `1px solid ${borderColor}`, overflow: "auto" }}>
-            <div style={{ minWidth: 1300 }}>
+            <div style={{ minWidth: 1400 }}>
               {/* Table header */}
               <div
                 style={{
                   display: "grid",
                   gridTemplateColumns: reportGridColumns,
+                  columnGap: 12,
                   padding: "12px 18px",
                   background: "#fafafa",
                   borderBottom: `1px solid ${borderColor}`,
@@ -791,6 +792,7 @@ export default function SchoolVisitorsPage() {
                       style={{
                         display: "grid",
                         gridTemplateColumns: reportGridColumns,
+                  columnGap: 12,
                         padding: "12px 18px",
                         borderBottom: `1px solid ${borderColor}`,
                         alignItems: "center",
