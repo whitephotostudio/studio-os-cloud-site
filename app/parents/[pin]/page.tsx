@@ -41,7 +41,7 @@ import {
   normalizeEventGallerySettings,
   type EventGallerySettings,
 } from "@/lib/event-gallery-settings";
-import { getPackageCategory } from "@/lib/package-categories";
+import { getGalleryPackageCategory, getPackageCategory } from "@/lib/package-categories";
 import { defaultSchoolGalleryDownloadAccess } from "@/lib/school-gallery-downloads";
 import { extractStoragePathFromSupabaseUrl } from "@/lib/storage-images";
 import {
@@ -1084,6 +1084,12 @@ function printSizeLabel(name: string): string {
   return s.trim();
 }
 
+function galleryPrintLabel(pkg: PackageRow): string {
+  // Included quantities are part of the configured product name (e.g. two
+  // 5x7 prints or eight wallets), so keep them visible in the Prints grid.
+  return pkg.items?.length ? pkg.name.trim() : printSizeLabel(pkg.name);
+}
+
 // The remaining descriptor after the size/wallet token is stripped (e.g.
 // "Lustre"), shown as a small subtitle under the size.
 function printFinishLabel(name: string): string {
@@ -1785,39 +1791,8 @@ function getCategory(pkg: PackageRow): string {
   return getPackageCategory(pkg);
 }
 
-// A standalone wallet print (e.g. "Wallets (8 Cut) Lustre") is stored under the
-// "package" category because its name carries no NxM size token. For the CLIENT
-// gallery ONLY we surface it as a print size so it joins the size grid. This is
-// display-only: the stored category, the studio dashboard, and wallet
-// fulfilment (one sheet of 8) are untouched — orders still reference the same
-// package id. Bundles like "1-5x7 + 8 Wallets" are excluded (they have items /
-// a "+" / a real size and stay packages).
-function isStandaloneWalletPrint(pkg: PackageRow): boolean {
-  const name = pkg.name ?? "";
-  return (
-    getCategory(pkg) === "package" &&
-    !(pkg.items && pkg.items.length) &&
-    /\bwallets?\b/i.test(name) &&
-    !/\+/.test(name) &&
-    extractPackageSizes(pkg).length === 0
-  );
-}
-
-// A row the base classifier labels "print" but that actually bundles more than
-// one print — it carries package items (e.g. "2-5x7", a two-pack). It belongs
-// in Packages, not the single-size Prints grid. True single prints carry no
-// items, so this never catches a real 5x7/8x10/etc.
-function isGalleryPrintBundle(pkg: PackageRow): boolean {
-  return getCategory(pkg) === "print" && (pkg.items?.length ?? 0) >= 1;
-}
-
-// Category key used for browsing in the client gallery only (never the
-// dashboard or checkout). Identical to getCategory() except: a standalone
-// wallet print joins Prints, and a multi-print pack is pushed to Packages.
 function galleryCategoryKey(pkg: PackageRow): string {
-  if (isStandaloneWalletPrint(pkg)) return "print";
-  if (isGalleryPrintBundle(pkg)) return "package";
-  return getCategory(pkg);
+  return getGalleryPackageCategory(pkg);
 }
 
 function packageSearchText(pkg: PackageRow): string {
@@ -3801,6 +3776,11 @@ export default function ParentGalleryPage() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerView, setDrawerView] = useState<DrawerView>("product-select");
   const [activeCategoryKey, setActiveCategoryKey] = useState<string>("package");
+  const drawerContentRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    drawerContentRef.current?.scrollTo({ top: 0 });
+  }, [drawerView, activeCategoryKey]);
 
   // Prints size grid (ShootProof-style). Each size tile carries its own
   // quantity (stored per package id via get/setChosenQty) and its own Buy
@@ -7125,16 +7105,13 @@ export default function ParentGalleryPage() {
   }
 
   // Per-tile "Buy" in the Prints size grid.
-  //  • Quantity 1 → one-tap add the pose currently in the viewer (fast path;
-  //    the pendingPrintAdd effect finalises it and keeps them on the grid).
-  //  • Quantity 2+ → open the pose-assignment screen (the same slot UI packages
-  //    use, with "1 of 3" labels) so the parent can give each copy a different
-  //    pose. They tap "Add to Basket" there. Slots are pre-filled with the
-  //    current pose, so they can also just add as-is.
+  // One configured print or wallet sheet can use the one-tap add. Products
+  // containing multiple prints retain the pose-assignment screen so the parent
+  // can choose each included pose, even when ordering only one product set.
   function buyPrintTile(pkg: PackageRow) {
     if (orderingDisabled) return;
     const qty = getChosenQty(pkg.id);
-    if (qty > 1) {
+    if (qty > 1 || packageConfiguredItemCount(pkg) > 1) {
       selectPackage(pkg, { quantityOverride: qty });
       return;
     }
@@ -11491,7 +11468,7 @@ export default function ParentGalleryPage() {
               </div>
 
               {/* Drawer content */}
-              <div style={{ flex: 1, overflowY: "auto", padding: 18 }}>
+              <div ref={drawerContentRef} style={{ flex: 1, overflowY: "auto", padding: 18 }}>
                 {/* "Unlock another gallery" entry pill — opens the
                     CombineOrdersDrawer for sibling combine, past-year
                     orders, and lost-PIN recovery.  Visible whenever the
@@ -11929,7 +11906,7 @@ export default function ParentGalleryPage() {
                       }}
                     >
                       {printGridPackages.map((pkg) => {
-                        const finish = printFinishLabel(pkg.name);
+                        const finish = pkg.items?.length ? "" : printFinishLabel(pkg.name);
                         const tileQty = getChosenQty(pkg.id);
                         const justAdded = justAddedPrintId === pkg.id;
                         const lineCents = pkg.price_cents * Math.max(1, tileQty);
@@ -11962,7 +11939,7 @@ export default function ParentGalleryPage() {
                           >
                             <div>
                               <div style={{ fontSize: 17, fontWeight: 700, color: "#fff" }}>
-                                {printSizeLabel(pkg.name)}
+                                {galleryPrintLabel(pkg)}
                               </div>
                               {finish ? (
                                 <div style={{ fontSize: 11, color: "#8f8f8f", marginTop: 2 }}>
@@ -11991,7 +11968,7 @@ export default function ParentGalleryPage() {
                             >
                               <button
                                 type="button"
-                                aria-label={`Decrease ${printSizeLabel(pkg.name)} quantity`}
+                                aria-label={`Decrease ${galleryPrintLabel(pkg)} quantity`}
                                 onClick={() => setChosenQty(pkg.id, tileQty - 1)}
                                 style={stepStyle}
                               >
@@ -12009,7 +11986,7 @@ export default function ParentGalleryPage() {
                               </span>
                               <button
                                 type="button"
-                                aria-label={`Increase ${printSizeLabel(pkg.name)} quantity`}
+                                aria-label={`Increase ${galleryPrintLabel(pkg)} quantity`}
                                 onClick={() => setChosenQty(pkg.id, tileQty + 1)}
                                 style={stepStyle}
                               >
