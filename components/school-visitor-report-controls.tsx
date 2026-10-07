@@ -11,7 +11,7 @@ export function SchoolVisitorReportControls({ filters, onChange, classNames, cou
     ["paid", "Paid buyers"], ["digitals", "Digital buyers"],
   ] as const;
   const control = { padding: "9px 12px", border: "1px solid #ddd", borderRadius: 6, background: "#fff", color: "#111", fontSize: 13 };
-  return <div style={{ marginBottom: 18 }}>
+  return <div style={{ marginBottom: 18, color: "#111" }}>
     <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 16 }}>
       {cards.map(([key, label]) => <button key={key} type="button" onClick={() => onChange({ ...filters, orders: key })}
         aria-pressed={filters.orders === key}
