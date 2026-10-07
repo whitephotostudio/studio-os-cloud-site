@@ -143,6 +143,42 @@ test("server verifies actual sheet JPEG hashes, purchased quantities and physica
     await exports.verifyNoritsuZip(archive(), "owner", ["order"]),
     { pieces: 1, orders: 1 },
   );
+  // Current Flutter NoritsuPrintSlot.toJson() puts all coordinates in this
+  // object; a flat-only fixture previously hid the desktop/server mismatch.
+  const rectangle = { x: 0, y: 0, width: 300, height: 420 };
+  const slot = {
+    ownerId: "owner", orderId: "order", itemId: "item",
+    productUnitNumber: 1, printWithinUnit: 1, quarterTurns: 0,
+    rectanglePixels: rectangle,
+  };
+  m.sheets[0].slots = [slot];
+  assert.deepEqual(await exports.verifyNoritsuZip(archive(), "owner", ["order"]),
+    { pieces: 1, orders: 1 });
+  for (const invalid of [null, [], {}, { ...rectangle, x: -1 },
+    { ...rectangle, y: .5 }, { ...rectangle, width: 301 },
+    { ...rectangle, height: 0 }, { ...rectangle, x: Number.MAX_SAFE_INTEGER + 1 }]) {
+    slot.rectanglePixels = invalid;
+    await assert.rejects(exports.verifyNoritsuZip(archive(), "owner", ["order"]), /rectangle/);
+  }
+  slot.rectanglePixels = rectangle;
+  slot.x = 0;
+  await assert.rejects(exports.verifyNoritsuZip(archive(), "owner", ["order"]), /rectangle/);
+  delete slot.x;
+  slot.ownerId = "another-studio";
+  await assert.rejects(exports.verifyNoritsuZip(archive(), "owner", ["order"]), /rectangle/);
+  slot.ownerId = "owner";
+  // Eight purchased wallets are eight correctly bounded physical print slots.
+  m.sheets[0].slots = Array.from({length: 8}, (_, index) => ({...slot,
+    printWithinUnit: index + 1,
+    rectanglePixels: { x: (index % 2) * 150, y: Math.floor(index / 2) * 105, width: 150, height: 105 },
+  }));
+  m.purchases[0].printsPerUnit = 8;
+  m.printPieceCount = 8;
+  assert.deepEqual(await exports.verifyNoritsuZip(archive(), "owner", ["order"]),
+    {pieces: 8, orders: 1});
+  m.sheets[0].slots = [slot];
+  m.purchases[0].printsPerUnit = 1;
+  m.printPieceCount = 1;
   m.sheets[0].sha256 = "0".repeat(64);
   await assert.rejects(exports.verifyNoritsuZip(archive(), "owner", ["order"]));
   m.sheets[0].sha256 = hash(jpeg);
