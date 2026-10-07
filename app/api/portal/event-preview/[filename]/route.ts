@@ -29,7 +29,7 @@ export async function GET(request: NextRequest, context: { params: Promise<{ fil
     const { data: media, error } = await service.from("media").select("id,collection_id,storage_path,preview_url,thumbnail_url").eq("project_id", payload.projectId).eq("id", id.value).maybeSingle();
     if (error) throw error;
     if (!media?.collection_id || !access.collectionIds.has(media.collection_id)) return NextResponse.json({ ok: false, message: "Photo unavailable." }, { status: 403 });
-    const image = await eventImageBytes(media, { resolution: request.nextUrl.searchParams.get("size") === "thumbnail" ? "thumbnail" : "preview", watermark: access.watermarkEnabled, watermarkText: "PROOF" });
+    const image = await eventImageBytes(media, { resolution: request.nextUrl.searchParams.get("size") === "thumbnail" ? "thumbnail" : "preview", watermark: access.watermarkEnabled, watermarkText: "PROOF", watermarkOpacity: access.watermarkOpacity });
     return new NextResponse(new Uint8Array(image.buffer), { headers: { "content-type": image.contentType, "cache-control": "private, no-store", "x-content-type-options": "nosniff" } });
   } catch (error) {
     console.error("[event-preview] Preview could not be rendered", error instanceof Error ? error.message : "image read failed");

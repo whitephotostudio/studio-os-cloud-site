@@ -12,6 +12,7 @@ import { readPaidCutout, isManagedCutoutKey } from "@/lib/credit-cutout-access";
 import { loadScopedSchoolCompositeMedia } from "@/lib/school-order-media";
 import { buildSchoolCandidateFolders } from "@/lib/storage-folder";
 import { eventImageBytes, transformEventImage, isFullDigitalPurchaseLabel } from "@/lib/event-media-delivery";
+import { normalizeProofWatermarkOpacity, proofWatermarkVersion } from "@/lib/proof-watermark";
 
 type Service = ReturnType<typeof createDashboardServiceClient>;
 type School = { id: string; photographer_id?: string | null; local_school_id?: string | null; status?: string | null; portal_status?: string | null; expiration_date?: string | null; gallery_settings?: unknown };
@@ -54,15 +55,15 @@ export function schoolMediaGrant(options: { school: School; students: Student[];
   });
 }
 
-export function schoolPreviewUrl(options: Parameters<typeof schoolMediaGrant>[0]) {
+export function schoolPreviewUrl(options: Parameters<typeof schoolMediaGrant>[0] & { watermarkOpacity?: number | null }) {
   const token = schoolMediaGrant({ ...options, kind: "school-gallery-preview" });
   // Stable image path also lets saved carts recover identity after token expiry.
   const name = createHash("sha256").update(options.mediaKey).digest("hex");
-  return `/api/portal/school-preview/${name}.jpg?token=${encodeURIComponent(token)}`;
+  return `/api/portal/school-preview/${name}.jpg?token=${encodeURIComponent(token)}&proof=${encodeURIComponent(proofWatermarkVersion(options.watermarkOpacity))}`;
 }
 
-export function schoolPreviewPresentation<M extends Media, C extends Media, S extends Student>(options: { school: School; students: Student[]; visibleStudents: S[]; email: string; media: M[]; composites: C[]; nobgUrls: Record<string, string> }) {
-  const preview = (mediaKey: string) => schoolPreviewUrl({ school: options.school, students: options.students, email: options.email, mediaKey, kind: "school-gallery-preview" });
+export function schoolPreviewPresentation<M extends Media, C extends Media, S extends Student>(options: { school: School; students: Student[]; visibleStudents: S[]; email: string; media: M[]; composites: C[]; nobgUrls: Record<string, string>; watermarkOpacity?: number | null }) {
+  const preview = (mediaKey: string) => schoolPreviewUrl({ school: options.school, students: options.students, email: options.email, mediaKey, kind: "school-gallery-preview", watermarkOpacity: options.watermarkOpacity });
   const present = <T extends Media>(row: T) => {
     if (!row.storage_path) return { ...row, preview_url: null, thumbnail_url: null, download_url: undefined };
     const url = preview(row.storage_path);
@@ -130,11 +131,13 @@ export async function authorizeSchoolMediaToken(service: Service, token: SchoolM
     if (!composites.some(row => row.storage_path === token.mediaKey)) return null;
   }
   let watermarkEnabled = true;
+  let watermarkOpacity: number | null = null;
   if (school.photographer_id) {
-    const { data: owner, error: ownerError } = await service.from("photographers").select("id,is_platform_admin,subscription_status,trial_starts_at,trial_ends_at,created_at,watermark_enabled").eq("id", school.photographer_id).maybeSingle();
+    const { data: owner, error: ownerError } = await service.from("photographers").select("id,is_platform_admin,subscription_status,trial_starts_at,trial_ends_at,created_at,watermark_enabled,watermark_opacity").eq("id", school.photographer_id).maybeSingle();
     if (ownerError) throw ownerError;
     if (!hasActiveSubscription(owner)) return null;
     watermarkEnabled = owner?.watermark_enabled !== false;
+    watermarkOpacity = normalizeProofWatermarkOpacity(owner?.watermark_opacity);
   }
   const visible = filterTombstonedSchoolPhotoAssets([{ key: token.mediaKey, name: "photo.jpg", url: "" }], tombstoneFamilySet(await loadSchoolPhotoTombstones(service, school.id, { fresh: true })));
   if (!visible.length) return null;
@@ -145,11 +148,11 @@ export async function authorizeSchoolMediaToken(service: Service, token: SchoolM
       if (!extras.allowClientFavoriteDownloads || (extras.favoriteDownloadsRequireAllDigitalsPurchase && !await hasSchoolAllDigitalsPurchase(service, school.id, students.map(row => row.id), token.viewerEmail, school.photographer_id))) return null;
     } else if (!extras.freeDigitalRuleEnabled || !extras.showDownloadAllButton || students.some(student => !schoolClassAllowsFreeDownloads(school.gallery_settings, student.class_id, student.class_name))) return null;
   }
-  return { school, students, watermarkEnabled };
+  return { school, students, watermarkEnabled, watermarkOpacity };
 }
 
-export async function schoolImageBytes(service: Service, token: SchoolMediaToken, preview = true, thumbnail = false, watermarkEnabled = true) {
-  const options = { resolution: preview ? thumbnail ? "thumbnail" as const : "preview" as const : token.resolution || "original" as const, watermark: preview ? watermarkEnabled : !!token.watermark, watermarkText: token.watermarkText || "PROOF" };
+export async function schoolImageBytes(service: Service, token: SchoolMediaToken, preview = true, thumbnail = false, watermarkEnabled = true, watermarkOpacity: number | null = null) {
+  const options = { resolution: preview ? thumbnail ? "thumbnail" as const : "preview" as const : token.resolution || "original" as const, watermark: preview ? watermarkEnabled : !!token.watermark, watermarkText: token.watermarkText || "PROOF", watermarkOpacity: preview ? watermarkOpacity : null };
   if (isManagedCutoutKey(token.mediaKey)) return transformEventImage(await readPaidCutout(service, token.photographerId || "", token.mediaKey), { ...options, preserveTransparency: true, watermark: preview ? false : options.watermark });
   return eventImageBytes({ id: token.mediaKey, collection_id: null, storage_path: token.mediaKey }, options);
 }

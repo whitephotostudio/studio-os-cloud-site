@@ -1,5 +1,6 @@
 import { hasCalendarBoundaryPassed } from "@/lib/calendar-dates";
 import { hasCurrentDigitalPayment } from "@/lib/digital-entitlement-payment";
+import { normalizeProofWatermarkOpacity, proofWatermarkOpacity } from "@/lib/proof-watermark";
 import sharp from "sharp";
 import { createDashboardServiceClient } from "@/lib/dashboard-auth";
 import { createEventCollectionDownloadGrant, createEventDownloadPolicyGrant, createEventProjectDownloadGrant, createEventGalleryBatchToken, type EventPreviewTokenPayload, type EventGalleryBatchTokenPayload } from "@/lib/event-gallery-download-tokens";
@@ -122,11 +123,13 @@ export async function authorizeEventMediaToken(service: Service, payload: EventP
     }
   }
   let watermarkEnabled = true;
+  let watermarkOpacity: number | null = null;
   if (project.photographer_id) {
-    const { data: photographer, error: ownerError } = await service.from("photographers").select("id,is_platform_admin,subscription_status,trial_starts_at,trial_ends_at,created_at,watermark_enabled,business_name").eq("id", project.photographer_id).maybeSingle();
+    const { data: photographer, error: ownerError } = await service.from("photographers").select("id,is_platform_admin,subscription_status,trial_starts_at,trial_ends_at,created_at,watermark_enabled,watermark_opacity,business_name").eq("id", project.photographer_id).maybeSingle();
     if (ownerError) throw ownerError;
     if (!hasActiveSubscription(photographer)) return null;
     watermarkEnabled = photographer?.watermark_enabled !== false;
+    watermarkOpacity = normalizeProofWatermarkOpacity(photographer?.watermark_opacity);
   }
   const allowed = new Set<string>();
   for (let start = 0; start < ids.value.length; start += 300) {
@@ -143,7 +146,7 @@ export async function authorizeEventMediaToken(service: Service, payload: EventP
       if (!extras.allowClientFavoriteDownloads || (extras.favoriteDownloadsRequireAllDigitalsPurchase && !await hasEventAllDigitalsPurchase(service, project.id, payload.viewerEmail.toLowerCase(), project.photographer_id, [...allowed]))) return null;
     } else if (!extras.freeDigitalRuleEnabled || !extras.showDownloadAllButton) return null;
   }
-  return { project, collectionIds: allowed, watermarkEnabled };
+  return { project, collectionIds: allowed, watermarkEnabled, watermarkOpacity };
 }
 
 async function readBoundedImage(url: string) {
@@ -164,7 +167,7 @@ async function readBoundedImage(url: string) {
   return Buffer.concat(parts);
 }
 
-export async function transformEventImage(input: Buffer, options: { resolution: "original" | "large" | "web" | "preview" | "thumbnail"; watermark: boolean; watermarkText?: string; preserveTransparency?: boolean }) {
+export async function transformEventImage(input: Buffer, options: { resolution: "original" | "large" | "web" | "preview" | "thumbnail"; watermark: boolean; watermarkText?: string; watermarkOpacity?: number | null; preserveTransparency?: boolean }) {
   if (!input.length || input.length > MAX_IMAGE_BYTES) throw new Error("Invalid image size.");
   const source = sharp(input, { animated: false, limitInputPixels: MAX_IMAGE_PIXELS, failOn: "error" });
   const metadata = await source.metadata();
@@ -182,7 +185,8 @@ export async function transformEventImage(input: Buffer, options: { resolution: 
     const output = await sharp(buffer).metadata(), width = output.width!, height = output.height!;
     const text = (clean(options.watermarkText) || "PROOF").slice(0, 100).replace(/[&<>"']/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;" }[ch]!));
     const size = Math.max(18, Math.round(width / 17));
-    const svg = Buffer.from(`<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg"><g fill="white" stroke="black" stroke-width="0.5" opacity="0.38" font-family="Arial,sans-serif" font-size="${size}" font-weight="700" text-anchor="middle"><text x="50%" y="35%">${text}</text><text x="50%" y="65%">${text}</text></g></svg>`);
+    const opacity = proofWatermarkOpacity(options.watermarkOpacity, 0.38);
+    const svg = Buffer.from(`<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg"><g fill="white" stroke="black" stroke-width="0.5" opacity="${opacity}" font-family="Arial,sans-serif" font-size="${size}" font-weight="700" text-anchor="middle"><text x="50%" y="35%">${text}</text><text x="50%" y="65%">${text}</text></g></svg>`);
     const marked = sharp(buffer).composite([{ input: svg }]);
     buffer = await (options.preserveTransparency ? marked.png() : marked.jpeg({ quality: 90 })).toBuffer();
   }

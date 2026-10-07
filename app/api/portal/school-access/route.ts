@@ -1,3 +1,4 @@
+import { normalizeProofWatermarkOpacity } from "@/lib/proof-watermark";
 import { loadScopedSchoolCompositeMedia } from "@/lib/school-order-media";
 import { schoolPreviewPresentation, buildSchoolFavoriteDownloadAccess } from "@/lib/school-portal-media";
 import { NextRequest, NextResponse } from "next/server";
@@ -298,7 +299,7 @@ export async function POST(request: NextRequest) {
               .order("sort_order", { ascending: true }),
             service
               .from("photographers")
-              .select("id,watermark_enabled,watermark_logo_url,logo_url,business_name,studio_address,studio_phone,studio_email,default_package_profile_id")
+              .select("id,watermark_enabled,watermark_logo_url,watermark_opacity,logo_url,business_name,studio_address,studio_phone,studio_email,default_package_profile_id")
               .eq("id", gallerySchool.photographer_id)
               .maybeSingle(),
           ]);
@@ -383,6 +384,7 @@ export async function POST(request: NextRequest) {
           );
         }
         const watermarkEnabled = photographer?.watermark_enabled !== false;
+        const watermarkOpacity = normalizeProofWatermarkOpacity(photographer?.watermark_opacity);
         const watermarkLogoCandidate = signedPrivateMediaReference(
           photographer?.watermark_logo_url,
           SIGNED_URL_TTL_PARENTS_PORTAL_SECONDS,
@@ -455,7 +457,7 @@ export async function POST(request: NextRequest) {
             "Classes",
         };
 
-        const presentation = schoolPreviewPresentation({ school: gallerySchool, students: resolvedStudentCandidates, visibleStudents: scopedVisibleStudentCandidates, email: selectedEmail, media: mediaRows, composites: compositeRows, nobgUrls: noBgUrls });
+        const presentation = schoolPreviewPresentation({ school: gallerySchool, students: resolvedStudentCandidates, visibleStudents: scopedVisibleStudentCandidates, email: selectedEmail, media: mediaRows, composites: compositeRows, nobgUrls: noBgUrls, watermarkOpacity });
         const signedStudentCandidates = presentation.students;
         const signedPrimaryStudent = signedStudentCandidates.find(row => row.id === primaryStudent?.id) ?? null;
         const favoriteDownloadAccess = await buildSchoolFavoriteDownloadAccess(service, gallerySchool, resolvedStudentCandidates, selectedEmail);
@@ -482,6 +484,7 @@ export async function POST(request: NextRequest) {
           photographerId: photographer?.id ?? gallerySchool.photographer_id,
           watermarkEnabled,
           watermarkLogoUrl,
+          watermarkOpacity,
           studioInfo,
           screenshotProtection,
           groupLabel,

@@ -1,3 +1,4 @@
+import { normalizeProofWatermarkOpacity, proofWatermarkVersion } from "@/lib/proof-watermark";
 import { hasCalendarBoundaryPassed } from "@/lib/calendar-dates";
 import { NextRequest, NextResponse } from "next/server";
 import { createDashboardServiceClient } from "@/lib/dashboard-auth";
@@ -107,6 +108,7 @@ type PhotographerRow = {
   id: string;
   watermark_enabled: boolean | null;
   watermark_logo_url: string | null;
+  watermark_opacity?: number | null;
   logo_url: string | null;
   business_name: string | null;
   studio_address: string | null;
@@ -340,6 +342,7 @@ export async function POST(request: NextRequest) {
     let packages: PackageRow[] = [];
     let watermarkEnabled = true;
     let watermarkLogoUrl = "";
+    let watermarkOpacity: number | null = null;
     let favoriteDownloadAccess: FavoriteDownloadAccess = {
       enabled: normalizedGallerySettings.extras.allowClientFavoriteDownloads,
       requiresAllDigitalsPurchase:
@@ -410,7 +413,7 @@ export async function POST(request: NextRequest) {
         service
           .from("photographers")
           .select(
-            "id,watermark_enabled,watermark_logo_url,logo_url,business_name,studio_address,studio_phone,studio_email,default_package_profile_id,is_platform_admin,subscription_status,trial_starts_at,trial_ends_at,created_at,shipping_fee_cents,late_handling_fee_percent",
+            "id,watermark_enabled,watermark_logo_url,watermark_opacity,logo_url,business_name,studio_address,studio_phone,studio_email,default_package_profile_id,is_platform_admin,subscription_status,trial_starts_at,trial_ends_at,created_at,shipping_fee_cents,late_handling_fee_percent",
           )
           .eq("id", projectRow.photographer_id)
           .maybeSingle<PhotographerRow>(),
@@ -456,6 +459,7 @@ export async function POST(request: NextRequest) {
       const photographer = photographerResult.data;
       if (photographer) {
         watermarkEnabled = photographer.watermark_enabled !== false;
+        watermarkOpacity = normalizeProofWatermarkOpacity(photographer.watermark_opacity);
         const watermarkLogoCandidate = signedPrivateMediaReference(
           photographer.watermark_logo_url,
           SIGNED_URL_TTL_PARENTS_PORTAL_SECONDS,
@@ -550,6 +554,12 @@ export async function POST(request: NextRequest) {
       watermark: Boolean(projectRow.screenshot_protection_watermark),
     };
 
+    const proofVersion = encodeURIComponent(proofWatermarkVersion(watermarkOpacity));
+    mediaRows = mediaRows.map(row => ({ ...row,
+      preview_url: row.preview_url ? `${row.preview_url}&proof=${proofVersion}` : null,
+      thumbnail_url: row.thumbnail_url ? `${row.thumbnail_url}&proof=${proofVersion}` : null,
+    }));
+
     const safeCover = (reference: string | null, collectionId?: string) => {
       const candidates = mediaRows.filter(row => !collectionId || row.collection_id === collectionId);
       const key = extractStoragePathFromSupabaseUrl(reference);
@@ -590,6 +600,7 @@ export async function POST(request: NextRequest) {
       photographerId: projectRow.photographer_id ?? null,
       watermarkEnabled,
       watermarkLogoUrl,
+      watermarkOpacity,
       studioInfo,
       lateOrderPolicy,
       screenshotProtection,

@@ -1,3 +1,4 @@
+import { normalizeProofWatermarkOpacity } from "@/lib/proof-watermark";
 import { loadScopedSchoolCompositeMedia } from "@/lib/school-order-media";
 import { schoolPreviewPresentation, buildSchoolFavoriteDownloadAccess } from "@/lib/school-portal-media";
 import { NextRequest, NextResponse } from "next/server";
@@ -315,6 +316,7 @@ export async function POST(request: NextRequest) {
     let photographerId: string | null = activeSchool?.photographer_id ?? null;
     let watermarkEnabled = true;
     let watermarkLogoUrl = "";
+    let watermarkOpacity: number | null = null;
     let studioInfo = {
       businessName: "",
       logoUrl: "",
@@ -344,7 +346,7 @@ export async function POST(request: NextRequest) {
           .order("sort_order", { ascending: true }),
         service
           .from("photographers")
-          .select("id,watermark_enabled,watermark_logo_url,logo_url,business_name,studio_address,studio_phone,studio_email,default_package_profile_id,is_platform_admin,subscription_status,trial_starts_at,trial_ends_at,created_at,shipping_fee_cents,late_handling_fee_percent")
+          .select("id,watermark_enabled,watermark_logo_url,watermark_opacity,logo_url,business_name,studio_address,studio_phone,studio_email,default_package_profile_id,is_platform_admin,subscription_status,trial_starts_at,trial_ends_at,created_at,shipping_fee_cents,late_handling_fee_percent")
           .eq("id", activeSchool.photographer_id)
           .maybeSingle(),
       ]);
@@ -392,6 +394,7 @@ export async function POST(request: NextRequest) {
       if (photographer) {
         photographerId = photographer.id ?? photographerId;
         watermarkEnabled = photographer.watermark_enabled !== false;
+        watermarkOpacity = normalizeProofWatermarkOpacity(photographer.watermark_opacity);
         const watermarkLogoCandidate = signedPrivateMediaReference(
           photographer.watermark_logo_url,
           SIGNED_URL_TTL_PARENTS_PORTAL_SECONDS,
@@ -480,7 +483,7 @@ export async function POST(request: NextRequest) {
         "Classes",
     };
 
-    const presentation = schoolPreviewPresentation({ school: activeSchool, students: activeStudentCandidates, visibleStudents: scopedVisibleStudentCandidates, email: selectedEmail, media: mediaRows, composites: compositeRows, nobgUrls });
+    const presentation = schoolPreviewPresentation({ school: activeSchool, students: activeStudentCandidates, visibleStudents: scopedVisibleStudentCandidates, email: selectedEmail, media: mediaRows, composites: compositeRows, nobgUrls, watermarkOpacity });
     const signedStudentCandidates = presentation.students;
     const signedPrimaryStudent = signedStudentCandidates.find(row => row.id === visiblePrimaryStudent.id) ?? null;
     const favoriteDownloadAccess = await buildSchoolFavoriteDownloadAccess(service, activeSchool, activeStudentCandidates, selectedEmail);
@@ -504,6 +507,7 @@ export async function POST(request: NextRequest) {
       photographerId,
       watermarkEnabled,
       watermarkLogoUrl,
+      watermarkOpacity,
       studioInfo,
       lateOrderPolicy,
       screenshotProtection,

@@ -4,6 +4,7 @@ import { createRequire } from 'node:module';
 import test from 'node:test';
 import ts from 'typescript';
 import * as personalization from '../lib/school-gallery-email-personalization.ts';
+import * as proofWatermark from '../lib/proof-watermark.ts';
 import { PGlite } from '@electric-sql/pglite';
 const require = createRequire(import.meta.url);
 const source = path => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
@@ -58,6 +59,7 @@ function fixture({ enabled = false, status = 'pre_release', classes = ['Grade 7'
   };
   const dependencies = {
     'next/server': next,
+    '@/lib/proof-watermark': proofWatermark,
     '@/lib/dashboard-auth': { createDashboardServiceClient: () => service, resolveDashboardAuth: async () => ({ user: owner ? { id: 'owner' } : null }) },
     '@/lib/rate-limit': { getClientIp: () => 'local', rateLimit: async () => ({ allowed: true }) },
     '@/lib/school-registration-classes': { schoolRegistrationClasses: async () => classes },
