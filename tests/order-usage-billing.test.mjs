@@ -136,6 +136,26 @@ test('Basil item periods restore per-order owner fees and repeated sync does not
   assert.equal(f.calls.filter(call => call.path === 'billing/meter_events').length, 2);
 });
 
+test('platform owner subscription sync never stages or reports legacy order fees and preserves existing ledger history', async () => {
+  const f = fixture();
+  f.tables.photographers[0].is_platform_admin = true;
+  f.tables.order_usage_fees.push({ order_id: 'paid', photographer_id: 'studio', stripe_customer_id: 'cus_owner',
+    event_name: 'studio_os_core_order_usage', event_identifier: 'studio-os-usage-order-paid',
+    usage_timestamp: Date.parse('2026-09-20T10:00:00Z') / 1000, amount_cents: 35, currency: 'cad',
+    billing_period: '2026-09', report_status: 'pending', report_first_attempt_at: null,
+    refund_status: 'none', refund_requested_at: null, refund_strategy: null, refund_first_attempt_at: null });
+  f.tables.order_usage_fees.push({ ...f.tables.order_usage_fees[0], order_id: 'previously-reported',
+    event_identifier: 'studio-os-usage-order-previously-reported', report_status: 'reported',
+    reported_at: '2026-09-20T10:01:00Z' });
+  const ordersBefore = structuredClone(f.tables.orders);
+  const ledgerBefore = structuredClone(f.tables.order_usage_fees);
+  await f.exports.syncSubscriptionStateFromStripe(f.service, f.tables.photographers[0], f.subscription);
+  assert.equal(f.calls.filter(call => call.path === 'billing/meter_events').length, 0);
+  assert.deepEqual(f.tables.orders, ordersBefore, 'owner orders do not acquire counted flags or usage periods');
+  assert.deepEqual(f.tables.order_usage_fees, ledgerBefore, 'pending and reported historical fees are preserved');
+  assert.equal(f.tables.photographers[0].is_platform_admin, true);
+});
+
 test('Connect USD and CAD subscription refresh preserve the studio sales currency while the subscription mirror stays CAD', async () => {
   const f = fixture();
   f.tables.photographers[0].billing_currency = 'eur';

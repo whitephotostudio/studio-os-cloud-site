@@ -178,6 +178,22 @@ test('stored snapshot retry skips requoting and freezing and preserves its origi
   assert.equal(f.stripeRequests[0].params.get('payment_intent_data[application_fee_amount]'), '25');
 });
 
+test('owner fee-bearing historical checkout retries are refused before session reuse or payment writes', async () => {
+  for (const legacySession of [undefined, 'open', 'expired']) {
+    const f = fixture({owner: true, storedSnapshot: true, legacySession});
+    const before = structuredClone(f.rows);
+    const response = await f.invoke();
+    assert.equal(response.status, 409);
+    assert.match((await response.json()).message, /owner exemption/i);
+    assert.equal(f.quoteInputs.length, 0);
+    assert.equal(f.freezeCalls.length, 0);
+    assert.equal(f.checkoutInputs.length, 0);
+    assert.equal(f.stripeRequests.length, 0);
+    assert.deepEqual(f.rows, before, 'an existing nonzero snapshot or session is never silently repriced');
+    assert.equal(f.sequence.at(-1), 'unlock');
+  }
+});
+
 test('open legacy checkout is reused without freezing, quoting or creating another session', async () => {
   const f = fixture({legacySession: 'open'}), response = await f.invoke();
   assert.equal(response.status, 200); assert.equal((await response.json()).sessionId, 'cs_legacy');

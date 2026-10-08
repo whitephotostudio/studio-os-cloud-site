@@ -1509,6 +1509,7 @@ async function syncOutstandingStudioUsage(
   usageItem?: StripeSubscriptionItem | null,
 ) {
   if (
+    photographer.is_platform_admin ||
     !normalizePlanCode(photographer.subscription_plan_code) ||
     !isStripeBillingActive(photographer.subscription_status) ||
     !photographer.stripe_subscription_item_usage_id

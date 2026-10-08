@@ -14,6 +14,20 @@ currency and complete saved group before marking the orders paid. New direct
 fees are excluded from subscription usage reporting, preventing collection
 twice. Existing or ambiguous legacy checkouts retain their original policy.
 
+Platform owner exemption is determined from the photographer's saved
+`is_platform_admin` flag, never from the checkout request. New owner orders
+freeze a zero `waived` fee. Legacy usage sync does not stage or report owner
+orders, including pending ledger entries. Previously reported events and issued
+or outstanding invoices retain their existing amounts; this exemption does not
+silently rewrite or refund them.
+
+An owner checkout with an older nonzero frozen fee is refused before returning
+or creating a payable Stripe session. Cancel that unpaid checkout and create a
+new order to receive the exemption; the old snapshot remains unchanged. A
+hosted Stripe URL already issued before this guard remains subject to its
+original Stripe terms until the session is explicitly expired. This application
+guard does not remotely invalidate an existing hosted URL.
+
 Fees accumulate in the platform Stripe balance. The platform's bank payout
 schedule is a separate Stripe account setting; it does not require charging
 the photographer again. Available funds follow Stripe's settlement timing.

@@ -306,6 +306,15 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    if (photographer.is_platform_admin && checkoutOrders.some(member =>
+      member.platform_fee_collection_method === "connect_application_fee" ||
+      Number(member.platform_fee_amount_cents ?? 0) > 0)) {
+      return NextResponse.json(
+        { ok: false, message: "This earlier checkout includes a Studio OS fee. Cancel it and create a new order so the owner exemption can apply." },
+        { status: 409 },
+      );
+    }
+
     const freeTrialActive = isFreeTrialActive(photographer);
     if (!photographer.is_platform_admin && !isStripeBillingActive(photographer.subscription_status) && !freeTrialActive) {
       return NextResponse.json(
