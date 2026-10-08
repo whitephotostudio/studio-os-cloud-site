@@ -24,6 +24,7 @@ import {
   type PlanCode,
 } from "@/lib/studio-pricing";
 import { FREE_TRIAL_DAYS } from "@/lib/trial-config";
+import { formatOrderFeeMoney, ORDER_FEE_BILLING, ORDER_FEE_PURPOSE } from "@/lib/order-fee-display";
 
 type PricingPlan = {
   eyebrow: string;
@@ -333,6 +334,12 @@ export default function PricingPage() {
               );
             })}
           </div>
+
+          <div className="mt-6 rounded-2xl border border-neutral-200 bg-neutral-50 px-6 py-5">
+            <h2 className="marketing-card-title text-[1.15rem]">Flat fees on paid orders</h2>
+            <p className="marketing-body mt-2 text-[1rem] leading-7 text-neutral-600">{ORDER_FEE_PURPOSE}</p>
+            <p className="marketing-body mt-2 text-[1rem] leading-7 text-neutral-600">{ORDER_FEE_BILLING}</p>
+          </div>
         </section>
 
         <PricingComparisonSection />
@@ -489,6 +496,17 @@ function PricingCard({
       <p className={`marketing-body mt-7 text-[1rem] leading-8 ${isFeatured ? "text-white/70" : "text-neutral-600"}`}>
         {plan.description}
       </p>
+
+      {planCode ? (
+        <div className={`mt-5 rounded-xl border px-4 py-3 ${isFeatured ? "border-white/20 bg-white/5 text-white" : "border-neutral-200 bg-neutral-50 text-neutral-950"}`}>
+          <p className="text-[1rem] font-semibold leading-7">
+            {formatOrderFeeMoney(PLAN_DEFS[planCode].usageRateCents)} CAD per paid order
+          </p>
+          <p className={`mt-1 text-sm leading-6 ${isFeatured ? "text-white/70" : "text-neutral-600"}`}>
+            Flat platform fee · billed monthly
+          </p>
+        </div>
+      ) : null}
 
       <FeatureList title="Included" items={plan.included} featured={isFeatured} />
 

@@ -20,10 +20,16 @@ const meter = { id: 'mtr_core_fixture', object: 'billing.meter', event_name: exp
   value_settings: { event_payload_key: 'value' }, event_time_window: null };
 const jsonResponse = value => ({ ok: true, text: async () => JSON.stringify(value) });
 
-async function fixture(run, responder) {
+async function fixture(run, responder, { rates = {} } = {}) {
   const savedFetch = globalThis.fetch;
   const savedKey = process.env.STRIPE_SECRET_KEY;
   const savedCurrency = process.env.STRIPE_BILLING_CURRENCY;
+  const rateVars = ['STRIPE_STARTER_ORDER_USAGE_RATE_CENTS', 'STRIPE_CORE_ORDER_USAGE_RATE_CENTS', 'STRIPE_STUDIO_ORDER_USAGE_RATE_CENTS'];
+  const savedRates = rateVars.map(name => [name, process.env[name]]);
+  for (const name of rateVars) {
+    if (rates[name] === undefined) delete process.env[name];
+    else process.env[name] = String(rates[name]);
+  }
   process.env.STRIPE_SECRET_KEY = 'sk_test_meter_fixture';
   process.env.STRIPE_BILLING_CURRENCY = 'cad';
   const calls = [];
@@ -45,6 +51,9 @@ async function fixture(run, responder) {
     globalThis.fetch = savedFetch;
     if (savedKey === undefined) delete process.env.STRIPE_SECRET_KEY; else process.env.STRIPE_SECRET_KEY = savedKey;
     if (savedCurrency === undefined) delete process.env.STRIPE_BILLING_CURRENCY; else process.env.STRIPE_BILLING_CURRENCY = savedCurrency;
+    for (const [name, value] of savedRates) {
+      if (value === undefined) delete process.env[name]; else process.env[name] = value;
+    }
   }
 }
 
@@ -151,4 +160,70 @@ test('catalog preflight checks ambiguity even when the requested subscription us
     await assert.rejects(api.ensureStripeCatalog(), /event name is ambiguous/);
     assert.ok(calls.every(call => call.path === 'billing/meters' && call.method === 'GET'));
   }, () => ({ data: [meter, { ...meter, id: 'mtr_duplicate' }], has_more: false }));
+});
+
+const planMeters = ['starter', 'core', 'studio'].map(plan => ({ ...meter, id: `mtr_${plan}`, event_name: `studio_os_${plan}_order_usage`,
+  display_name: `${plan[0].toUpperCase()}${plan.slice(1)} Order Usage` }));
+
+function catalogResponder({ oldUsageRates } = {}) {
+  return call => {
+    if (call.path === 'billing/meters') return { data: planMeters, has_more: false };
+    if (call.path === 'prices' && call.method === 'GET') {
+      const lookup = call.query.get('lookup_keys[]');
+      const plan = ['starter', 'core', 'studio'].find(value => lookup === `studio-os-${value}-order-usage-monthly-v2`);
+      if (plan && oldUsageRates?.[plan] !== undefined) return { data: [{ id: `price_old_${plan}`, unit_amount: oldUsageRates[plan], currency: 'cad',
+        recurring: { interval: 'month', usage_type: 'metered', meter: `mtr_${plan}` } }], has_more: false };
+      return { data: [], has_more: false };
+    }
+    if (call.path === 'products' && call.method === 'POST') return { id: `prod_${call.body.get('metadata[lookup_key]')}` };
+    if (call.path === 'prices' && call.method === 'POST') return { id: `price_new_${call.body.get('lookup_key')}` };
+    throw Error(`Unexpected intercepted request: ${call.method} ${call.path}`);
+  };
+}
+
+test('selected default rates produce Starter55c App40c Studio35c prices and matching catalog descriptions', async () => {
+  await fixture(async (api, calls) => {
+    const pricing = load('lib/studio-pricing.ts');
+    assert.deepEqual(['starter', 'core', 'studio'].map(plan => pricing.PLAN_DEFS[plan].usageRateCents), [55, 40, 35]);
+    await api.ensureStripeCatalog();
+    for (const [plan, rate] of [['starter', 55], ['core', 40], ['studio', 35]]) {
+      const lookup = `studio-os-${plan}-order-usage-monthly-v2`;
+      const product = calls.find(call => call.path === 'products' && call.body.get('metadata[lookup_key]') === lookup);
+      const price = calls.find(call => call.path === 'prices' && call.method === 'POST' && call.body.get('lookup_key') === lookup);
+      assert.equal(product.body.get('description'), `Completed paid order usage billed monthly at ${new Intl.NumberFormat('en-CA', { style: 'currency', currency: 'CAD', currencyDisplay: 'code' }).format(rate / 100)} per order`);
+      assert.equal(price.body.get('unit_amount'), String(rate));
+      assert.equal(product.idempotencyKey, `studio-os-product-${lookup}-${rate}`);
+      assert.equal(price.idempotencyKey, `studio-os-price-${lookup}-${rate}`);
+    }
+  }, catalogResponder());
+});
+
+test('configured rate overrides are used in both catalog unit amounts and descriptions', async () => {
+  const rates = { STRIPE_STARTER_ORDER_USAGE_RATE_CENTS: 61, STRIPE_CORE_ORDER_USAGE_RATE_CENTS: 47, STRIPE_STUDIO_ORDER_USAGE_RATE_CENTS: 39 };
+  await fixture(async (api, calls) => {
+    await api.ensureStripeCatalog();
+    for (const [plan, rate] of [['starter', 61], ['core', 47], ['studio', 39]]) {
+      const lookup = `studio-os-${plan}-order-usage-monthly-v2`;
+      const product = calls.find(call => call.path === 'products' && call.body.get('metadata[lookup_key]') === lookup);
+      const price = calls.find(call => call.path === 'prices' && call.method === 'POST' && call.body.get('lookup_key') === lookup);
+      assert.equal(price.body.get('unit_amount'), String(rate));
+      assert.ok(product.body.get('description').includes((rate / 100).toFixed(2)));
+      assert.equal(product.idempotencyKey, `studio-os-product-${lookup}-${rate}`);
+    }
+  }, catalogResponder(), { rates });
+});
+
+test('a prospective rate change creates new prices and transfers lookups without mutating old prices or subscribers', async () => {
+  await fixture(async (api, calls) => {
+    const catalog = await api.ensureStripeCatalog();
+    assert.equal(catalog.usagePriceIds.starter, 'price_old_starter');
+    for (const [plan, rate] of [['core', 40], ['studio', 35]]) {
+      const lookup = `studio-os-${plan}-order-usage-monthly-v2`;
+      assert.equal(catalog.usagePriceIds[plan], `price_new_${lookup}`);
+      const creation = calls.find(call => call.path === 'prices' && call.method === 'POST' && call.body.get('lookup_key') === lookup);
+      assert.equal(creation.body.get('unit_amount'), String(rate));
+      assert.equal(creation.body.get('transfer_lookup_key'), 'true');
+    }
+    assert.ok(calls.every(call => !call.path.startsWith('subscriptions/') && !call.path.startsWith('subscription_items/') && !call.path.startsWith('prices/')));
+  }, catalogResponder({ oldUsageRates: { starter: 55, core: 35, studio: 25 } }));
 });

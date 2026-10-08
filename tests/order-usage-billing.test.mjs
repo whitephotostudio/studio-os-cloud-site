@@ -16,12 +16,13 @@ const ledgerCompiled = ts.transpileModule(readFileSync(new URL('../lib/order-usa
 const ledger = {};
 new Function('require', 'exports', ledgerCompiled)(name => name === 'node:crypto' ? { randomUUID } : {}, ledger);
 
-function fixture({ annual = false, missingUsage = false } = {}) {
+function fixture({ annual = false, missingUsage = false, planCode = 'core', usageRate } = {}) {
   const calls = [];
+  const currentUsageRate = usageRate ?? (missingUsage ? pricing.PLAN_DEFS[planCode].usageRateCents : planCode === 'studio' ? 25 : 35);
   const tables = {
-    photographers: [{ id: 'studio', user_id: 'owner', subscription_plan_code: 'core', subscription_status: 'active',
+    photographers: [{ id: 'studio', user_id: 'owner', subscription_plan_code: planCode, subscription_status: 'active',
       stripe_platform_customer_id: 'cus_owner', stripe_subscription_id: 'sub_owner',
-      stripe_subscription_item_usage_id: missingUsage ? null : 'si_usage', order_usage_rate_cents: 35,
+      stripe_subscription_item_usage_id: missingUsage ? null : 'si_usage', order_usage_rate_cents: currentUsageRate,
       subscription_current_period_start: null, subscription_current_period_end: null }],
     subscriptions: [],
     order_usage_fees: [],
@@ -35,9 +36,9 @@ function fixture({ annual = false, missingUsage = false } = {}) {
   };
   tables.orders.forEach(order => { order.total_cents = 1000; });
   const base = { id: 'si_base', current_period_start: start, current_period_end: annual ? nextYear : end,
-    price: { lookup_key: `studio-os-core-${annual ? 'annual' : 'monthly'}-v2`, currency: 'cad', recurring: { interval: annual ? 'year' : 'month' } } };
+    price: { lookup_key: `studio-os-${planCode}-${annual ? 'annual' : 'monthly'}-v2`, currency: 'cad', recurring: { interval: annual ? 'year' : 'month' } } };
   const usage = { id: 'si_usage', current_period_start: start, current_period_end: end,
-    price: { lookup_key: 'studio-os-core-order-usage-monthly-v2', unit_amount: 35, currency: 'cad', recurring: { interval: 'month', meter: 'meter_core' } } };
+    price: { lookup_key: `studio-os-${planCode}-order-usage-monthly-v2`, unit_amount: currentUsageRate, currency: 'cad', recurring: { interval: 'month', meter: `meter_${planCode}` } } };
   const subscription = { id: 'sub_owner', customer: 'cus_owner', status: 'active', billing_mode: { type: 'classic' }, items: { data: missingUsage ? [base] : [base, usage] } };
   const service = { from(table) {
     let predicate = () => true; let update; let bounds; let sortKey;
@@ -93,7 +94,7 @@ function fixture({ annual = false, missingUsage = false } = {}) {
     let result;
     if (path === 'subscriptions/sub_owner/migrate') { subscription.billing_mode = { type: 'flexible' }; result = subscription; }
     else if (path === 'subscriptions/sub_owner') result = subscription;
-    else if (path === 'subscription_items') { assert.equal(subscription.billing_mode.type, 'flexible'); subscription.items.data.push(usage); result = usage; }
+    else if (path === 'subscription_items') { if (annual) assert.equal(subscription.billing_mode.type, 'flexible'); subscription.items.data.push(usage); result = usage; }
     else if (path === 'billing/meter_events') result = { identifier: params.get('identifier'), created: Math.floor(Date.now() / 1000) };
     else if (path === 'checkout/sessions') result = { id: 'cs_test', url: 'https://checkout.stripe.test' };
     else throw Error(`Unexpected request ${path}`);
@@ -112,7 +113,7 @@ function fixture({ annual = false, missingUsage = false } = {}) {
   new Function('require', 'exports', 'fetch', compiled + '\nexports.seedCatalog = value => { catalogPromise = Promise.resolve(value); };')(
     name => dependencies[name] || {}, exports, fetcher,
   );
-  exports.seedCatalog({ usagePriceIds: { core: 'price_usage' }, planPrices: { core: { month: 'price_month', year: 'price_year' } }, extraDesktopKeyPriceIds: { month: 'price_extra_month', year: 'price_extra_year' } });
+  exports.seedCatalog({ usagePriceIds: { [planCode]: 'price_usage' }, planPrices: { [planCode]: { month: 'price_month', year: 'price_year' } }, extraDesktopKeyPriceIds: { month: 'price_extra_month', year: 'price_extra_year' } });
   process.env.STRIPE_SECRET_KEY = 'sk_test_fixture';
   return { exports, calls, tables, service, subscription };
 }
@@ -133,6 +134,48 @@ test('Basil item periods restore per-order owner fees and repeated sync does not
   assert.equal(f.calls.filter(call => call.path === 'billing/meter_events').length, 2);
 });
 
+test('routine sync retains existing App and Studio prices, mirrors them and snapshots new orders without repricing', async () => {
+  for (const [planCode, oldRate] of [['core', 35], ['studio', 25]]) {
+    const f = fixture({ planCode });
+    assert.notEqual(pricing.PLAN_DEFS[planCode].usageRateCents, oldRate, 'the current catalog has a higher prospective rate');
+    await f.exports.syncSubscriptionStateFromStripe(f.service, f.tables.photographers[0], f.subscription);
+    assert.equal(f.tables.photographers[0].order_usage_rate_cents, oldRate);
+    assert.ok(f.tables.order_usage_fees.every(fee => fee.amount_cents === oldRate));
+    assert.equal(f.subscription.items.data.find(item => item.id === 'si_usage').price.unit_amount, oldRate);
+    assert.ok(f.calls.every(call => call.method === 'GET' || call.path === 'billing/meter_events'), 'normal sync cannot change products, prices or subscription items');
+    await f.exports.syncSubscriptionStateFromStripe(f.service, f.tables.photographers[0], f.subscription);
+    assert.equal(f.calls.filter(call => call.path === 'billing/meter_events').length, 2);
+    const summary = await f.exports.getUsageSummaryForCurrentPeriod(f.service, f.tables.photographers[0]);
+    assert.equal(summary.estimatedChargeCents, oldRate * 2);
+  }
+});
+
+test('missing usage items attach the current App40c or Studio35c price once and repeated sync does not duplicate fees', async () => {
+  for (const [planCode, rate] of [['core', 40], ['studio', 35]]) {
+    const f = fixture({ missingUsage: true, planCode });
+    await f.exports.syncSubscriptionStateFromStripe(f.service, f.tables.photographers[0], f.subscription);
+    assert.equal(f.tables.photographers[0].order_usage_rate_cents, rate);
+    assert.ok(f.tables.order_usage_fees.every(fee => fee.amount_cents === rate));
+    const creations = f.calls.filter(call => call.path === 'subscription_items');
+    assert.equal(creations.length, 1);
+    assert.equal(creations[0].params.get('price'), 'price_usage');
+    await f.exports.syncSubscriptionStateFromStripe(f.service, f.tables.photographers[0], f.subscription);
+    assert.equal(f.calls.filter(call => call.path === 'subscription_items').length, 1);
+    assert.equal(f.calls.filter(call => call.path === 'billing/meter_events').length, 2);
+  }
+});
+
+test('mirror ignores invalid existing usage unit amounts and accepts a valid zero amount', async () => {
+  for (const value of [-1, 35.5, '35', null, undefined, 0]) {
+    const f = fixture();
+    f.subscription.status = 'canceled';
+    f.subscription.items.data.find(item => item.id === 'si_usage').price.unit_amount = value;
+    await f.exports.syncSubscriptionStateFromStripe(f.service, f.tables.photographers[0], f.subscription);
+    assert.equal(f.tables.photographers[0].order_usage_rate_cents, value === 0 ? 0 : pricing.PLAN_DEFS.core.usageRateCents);
+    assert.ok(f.calls.every(call => call.method === 'GET'), 'a canceled subscription cannot report fees or change its price');
+  }
+});
+
 test('annual plan keeps annual renewal date while usage uses its monthly period', async () => {
   const f = fixture({ annual: true, missingUsage: true });
   await f.exports.syncSubscriptionStateFromStripe(f.service, f.tables.photographers[0], f.subscription);
@@ -141,7 +184,7 @@ test('annual plan keeps annual renewal date while usage uses its monthly period'
   assert.equal(f.tables.orders[0].monthly_usage_billing_period, '2026-09-01:2026-10-01');
   const summary = await f.exports.getUsageSummaryForCurrentPeriod(f.service, f.tables.photographers[0]);
   assert.equal(summary.billingPeriodKey, '2026-09-01:2026-10-01');
-  assert.equal(summary.estimatedChargeCents, 70);
+  assert.equal(summary.estimatedChargeCents, 80, 'a newly attached App usage item uses the current40c rate');
 });
 
 test('annual Checkout is flexible and attaches monthly usage after checkout, preserving supported Stripe intervals', async () => {

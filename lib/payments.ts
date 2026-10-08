@@ -760,7 +760,9 @@ async function ensureCatalogEntry(entry: CatalogEntry) {
       description: entry.description,
       "metadata[lookup_key]": entry.lookupKey,
     }),
-    idempotencyKey: `studio-os-product-${entry.lookupKey}`,
+    // A new metered rate has a new description. Keep the previous product and
+    // avoid reusing its idempotency key with a different creation payload.
+    idempotencyKey: `studio-os-product-${entry.lookupKey}${entry.usageType === "metered" ? `-${entry.unitAmount}` : ""}`,
   });
 
   const priceParams = new URLSearchParams();
@@ -789,6 +791,15 @@ async function ensureCatalogEntry(entry: CatalogEntry) {
 }
 
 let catalogPromise: Promise<StripeCatalog> | null = null;
+
+function orderUsageDescription(rateCents: number) {
+  const rate = new Intl.NumberFormat("en-CA", {
+    style: "currency",
+    currency: DEFAULT_BILLING_CURRENCY.toUpperCase(),
+    currencyDisplay: "code",
+  }).format(rateCents / 100);
+  return `Completed paid order usage billed monthly at ${rate} per order`;
+}
 
 export async function ensureStripeCatalog() {
   if (!catalogPromise) {
@@ -887,7 +898,7 @@ export async function ensureStripeCatalog() {
         starter: await ensureCatalogEntry({
           code: "starter_usage",
           name: "Starter Order Usage",
-          description: "Completed paid order usage billed monthly at $0.55 per order",
+          description: orderUsageDescription(PLAN_DEFS.starter.usageRateCents),
           currency: DEFAULT_BILLING_CURRENCY,
           unitAmount: PLAN_DEFS.starter.usageRateCents,
           interval: "month",
@@ -898,7 +909,7 @@ export async function ensureStripeCatalog() {
         core: await ensureCatalogEntry({
           code: "core_usage",
           name: "Core Order Usage",
-          description: "Completed paid order usage billed monthly at $0.35 per order",
+          description: orderUsageDescription(PLAN_DEFS.core.usageRateCents),
           currency: DEFAULT_BILLING_CURRENCY,
           unitAmount: PLAN_DEFS.core.usageRateCents,
           interval: "month",
@@ -909,7 +920,7 @@ export async function ensureStripeCatalog() {
         studio: await ensureCatalogEntry({
           code: "studio_usage",
           name: "Studio Order Usage",
-          description: "Completed paid order usage billed monthly at $0.25 per order",
+          description: orderUsageDescription(PLAN_DEFS.studio.usageRateCents),
           currency: DEFAULT_BILLING_CURRENCY,
           unitAmount: PLAN_DEFS.studio.usageRateCents,
           interval: "month",
@@ -1417,8 +1428,13 @@ export async function syncSubscriptionStateFromStripe(
     refreshedItems.baseItem?.price.currency ||
     photographer.billing_currency ||
     DEFAULT_BILLING_CURRENCY;
+  const existingUsageRate = refreshedItems.usageItem?.price.unit_amount;
+  // Existing subscriptions retain their Stripe price until an explicit plan
+  // change. Mirror that actual rate rather than a newer catalog default.
   const nextUsageRate =
-    refreshedPlanCode ? PLAN_DEFS[refreshedPlanCode].usageRateCents : ORDER_USAGE_RATE_CENTS;
+    typeof existingUsageRate === "number" && Number.isInteger(existingUsageRate) && existingUsageRate >= 0
+      ? existingUsageRate
+      : refreshedPlanCode ? PLAN_DEFS[refreshedPlanCode].usageRateCents : ORDER_USAGE_RATE_CENTS;
 
   const updates = {
     stripe_platform_customer_id: subscription.customer,

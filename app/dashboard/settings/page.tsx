@@ -28,6 +28,7 @@ import {
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import type { BillingInterval } from "@/lib/studio-pricing";
+import { ORDER_FEE_BILLING, ORDER_FEE_PURPOSE } from "@/lib/order-fee-display";
 import { WhatsNewDot, useIsFeatureNew } from "@/components/whats-new-dot";
 
 type StripeStatus = {
@@ -1924,6 +1925,7 @@ export default function SettingsPage() {
                       {plan.code === "starter"
                         ? `${formatMoney(plan.usageRateCents, platformBillingCurrency)} per paid order · web-only plan`
                         : `${formatMoney(plan.usageRateCents, platformBillingCurrency)} per paid order · background credits sold separately`}
+                      <div style={{ marginTop: 4 }}>Flat platform fee · billed monthly</div>
                     </div>
                     <div style={{ marginTop: 10, color: "#475569", lineHeight: 1.7, fontSize: 13 }}>
                       {plan.code === "starter"
@@ -1935,6 +1937,12 @@ export default function SettingsPage() {
                   </button>
                 );
               })}
+            </div>
+
+            <div style={{ marginTop: 16, padding: "14px 16px", borderRadius: 14, background: "#f8fafc", border: "1px solid #e2e8f0", color: "#475569", lineHeight: 1.7, fontSize: 13 }}>
+              <div style={{ fontWeight: 800, color: "#0f172a" }}>Flat fees on paid orders</div>
+              <div style={{ marginTop: 4 }}>{ORDER_FEE_PURPOSE}</div>
+              <div style={{ marginTop: 4 }}>{ORDER_FEE_BILLING}</div>
             </div>
 
             <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 16, marginTop: 18, alignItems: "end" }}>
