@@ -5358,11 +5358,12 @@ export default function ParentGalleryPage() {
   const orderTabHintConsumedRef = useRef(false);
   useEffect(() => {
     if (orderTabHintConsumedRef.current) return;
+    if (loading || error || !student) return;
     if (initialTabHint !== "orders") return;
     if (!galleryTabs.includes("orders")) return;
     orderTabHintConsumedRef.current = true;
     setActiveView("orders");
-  }, [initialTabHint, galleryTabs]);
+  }, [loading, error, student, initialTabHint, galleryTabs]);
 
   useEffect(() => {
     if (!blackWhiteFilteringAllowed && blackWhitePreviewEnabled) {
