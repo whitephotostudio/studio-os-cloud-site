@@ -13,18 +13,41 @@ const ready = {
     ledger_forced_rls: true, ledger_fields_complete: true, service_only: true },
 };
 
-test('production release checks all three schema contracts through read-only requests', async () => {
+test('production release checks schema contracts and both school/student relationships through read-only requests', async () => {
   const calls = [], reports = [];
   await verifyRivieraRelease({ ...env, STUDIO_RIVIERA_RELEASE_VERIFY: undefined, VERCEL_ENV: 'production' }, async (url, options) => {
     calls.push({ url, options });
     assert.equal(options.method, 'GET'); assert.equal(options.body, undefined);
     assert.equal(options.headers.apikey, env.SUPABASE_SERVICE_ROLE_KEY);
-    const name = new URL(url).pathname.split('/').pop();
+    const parsed = new URL(url), name = parsed.pathname.split('/').pop();
+    if (name === 'schools' || name === 'students') {
+      assert.equal(parsed.searchParams.get('limit'), '0');
+      assert.match(parsed.searchParams.get('select'), /!(students_school_id_fkey)/);
+      if (name === 'students') assert.match(parsed.searchParams.get('select'), /!inner/);
+      return Response.json([]);
+    }
     assert.ok(name in ready); return Response.json(ready[name]);
   }, value => reports.push(JSON.parse(value)));
-  assert.equal(calls.length, 3); assert.equal(reports.length, 3);
+  assert.equal(calls.length, 5); assert.equal(reports.length, 5);
   assert.ok(reports.every(r => r.databaseMutations === 0 && r.financialMutations === 0));
   assert.ok(!JSON.stringify(reports).includes(env.SUPABASE_SERVICE_ROLE_KEY));
+});
+
+test('an ambiguous or unavailable school/student relationship blocks release without disclosing provider details', async () => {
+  for (const table of ['schools', 'students']) {
+    await assert.rejects(verifyRivieraRelease(env, async url => {
+      const name = new URL(url).pathname.split('/').pop();
+      if (name === table) return Response.json({ code: 'PGRST201', details: 'private relationship metadata' }, { status: 300 });
+      return Response.json(ready[name] ?? []);
+    }, () => {}), error => error.message.includes(table) && /HTTP 300/.test(error.message) && !error.message.includes('private relationship metadata'));
+  }
+});
+
+test('relationship probes reject unexpected customer rows', async () => {
+  await assert.rejects(verifyRivieraRelease(env, async url => {
+    const name = new URL(url).pathname.split('/').pop();
+    return Response.json(ready[name] ?? [{ id: 'private-record' }]);
+  }, () => {}), error => /zero records/.test(error.message) && !error.message.includes('private-record'));
 });
 
 test('database mismatch fails before credentials can be sent to another project', async () => {

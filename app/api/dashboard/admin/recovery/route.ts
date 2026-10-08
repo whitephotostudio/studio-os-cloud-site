@@ -134,7 +134,7 @@ export async function POST(request: NextRequest) {
   const { data: student } = await ctx.service
     .from("students")
     .select(
-      "id, first_name, last_name, school_id, schools!inner(school_name, photographer_id)",
+      "id, first_name, last_name, school_id, schools:schools!students_school_id_fkey!inner(school_name, photographer_id)",
     )
     .eq("id", body.studentId)
     .maybeSingle();

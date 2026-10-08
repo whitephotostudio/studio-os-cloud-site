@@ -145,7 +145,7 @@ export async function runRecoveryDoorCheck(
     const { data, error } = await service
       .from("students")
       .select(
-        "id, first_name, last_name, parent_email, school_id, schools!inner(id, school_name, photographer_id)",
+        "id, first_name, last_name, parent_email, school_id, schools:schools!students_school_id_fkey!inner(id, school_name, photographer_id)",
       )
       .eq("school_id", input.schoolId)
       .ilike("first_name", input.firstName)

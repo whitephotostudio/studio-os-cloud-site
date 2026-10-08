@@ -230,7 +230,7 @@ function PendingRow({ row, onResolved }: { row: RequestRow; onResolved: () => vo
       const sb = createClient();
       let q = sb
         .from("students")
-        .select("id, first_name, last_name, class_name, schools!inner(school_name, photographer_id)")
+        .select("id, first_name, last_name, class_name, schools:schools!students_school_id_fkey!inner(school_name, photographer_id)")
         .ilike("first_name", row.typed_first_name ?? "%")
         .ilike("last_name", row.typed_last_name ?? "%")
         .limit(8);

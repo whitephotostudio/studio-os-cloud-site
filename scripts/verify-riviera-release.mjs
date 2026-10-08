@@ -6,9 +6,14 @@ const schemas = [
   { rpc: 'gotphoto_migration_schema_status', version: '20261008230000', flags: ['import_rpc', 'ledger_rls', 'ledger_forced_rls', 'ledger_fields_complete', 'service_only'] },
 ];
 
+const relations = [
+  { table: 'schools', selection: 'id,students:students!students_school_id_fkey(count)' },
+  { table: 'students', selection: 'id,schools:schools!students_school_id_fkey!inner(id)' },
+];
+
 // These stable, service-only RPCs inspect schema capabilities without reading
-// customer records. A production build must not ship routes before their
-// database protections are present. No provider or financial calls are made.
+// customer records. The zero-row relationship probes also catch schema-cache
+// ambiguity after adding a bridge table. No provider or financial calls are made.
 export async function verifyRivieraRelease(env = process.env, fetcher = fetch, report = console.log) {
   if (env.STUDIO_RIVIERA_RELEASE_VERIFY !== '1' && env.VERCEL_ENV !== 'production') return;
   const ref = (env.STUDIO_PAYMENT_EXPECTED_PROJECT_REF || '').trim();
@@ -29,6 +34,19 @@ export async function verifyRivieraRelease(env = process.env, fetcher = fetch, r
       throw new Error(`${schema.rpc} reports missing schema protections; apply the reviewed migration before release.`);
     }
     report(JSON.stringify({ check: schema.rpc, ok: true, version: schema.version, databaseMutations: 0, financialMutations: 0 }));
+  }
+  for (const relation of relations) {
+    const url = new URL(`${databaseUrl}/rest/v1/${relation.table}`);
+    url.searchParams.set('select', relation.selection);
+    url.searchParams.set('limit', '0');
+    const response = await fetcher(url.href, {
+      method: 'GET', headers: { apikey: key, Authorization: `Bearer ${key}` },
+      signal: AbortSignal.timeout(20000),
+    });
+    if (!response.ok) throw new Error(`${relation.table} school/student relationship check failed (HTTP ${response.status}); database details withheld.`);
+    const rows = await response.json();
+    if (!Array.isArray(rows) || rows.length !== 0) throw new Error(`${relation.table} relationship verification must return zero records.`);
+    report(JSON.stringify({ check: `${relation.table}_school_student_relationship`, ok: true, rows: 0, databaseMutations: 0, financialMutations: 0 }));
   }
 }
 

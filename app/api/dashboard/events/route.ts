@@ -318,7 +318,7 @@ export async function GET(request: NextRequest) {
       .order("created_at", { ascending: false })
       .range(from, to),
       service.from("schools")
-        .select("id,school_name,local_school_id,students(count)")
+        .select("id,school_name,local_school_id,students:students!students_school_id_fkey(count)")
         .eq("photographer_id", photographerRow.id),
     ]);
     const { data: projectRows, error: projectsError, count: totalCount } = projectResult;

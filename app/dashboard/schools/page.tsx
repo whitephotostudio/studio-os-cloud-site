@@ -244,7 +244,7 @@ export default function SchoolsPage() {
 
       const [schoolResult, projectResult] = await Promise.all([
         supabase.from("schools")
-          .select("id,school_name,photographer_id,package_profile_id,local_school_id,shoot_date,created_at,expiration_date,students(count)")
+          .select("id,school_name,photographer_id,package_profile_id,local_school_id,shoot_date,created_at,expiration_date,students:students!students_school_id_fkey(count)")
           .eq("photographer_id", photographerRow.id)
           .order("created_at", { ascending: false }),
         supabase.from("projects")
@@ -643,12 +643,12 @@ export default function SchoolsPage() {
 
         {loading ? (
           <div style={{ textAlign: "center", padding: 60, color: "#666" }}>Loading schools...</div>
-        ) : schools.length === 0 ? (
+        ) : !error && schools.length === 0 ? (
           <div style={{ textAlign: "center", padding: 60, background: "#fff", borderRadius: 16, border: "2px dashed #e5e7eb" }}>
             <School size={42} color="#c4c4c4" style={{ marginBottom: 12 }} />
             <p style={{ color: "#666", margin: 0 }}>No schools found yet. Sync from Studio OS app first.</p>
           </div>
-        ) : filteredSchools.length === 0 ? (
+        ) : !error && filteredSchools.length === 0 ? (
           <div style={{ textAlign: "center", padding: 60, background: "#fff", borderRadius: 16, border: "2px dashed #e5e7eb" }}>
             <School size={42} color="#c4c4c4" style={{ marginBottom: 12 }} />
             <p style={{ color: "#666", margin: 0 }}>No schools match that search.</p>
