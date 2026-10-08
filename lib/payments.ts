@@ -6,6 +6,7 @@ import { syncPhotographyKeysByPhotographerId } from "@/lib/studio-os-app";
 import { creditMaintenanceActive } from "@/lib/credit-maintenance";
 import { buildOrderNotificationEmail } from "@/lib/order-notification-email";
 import { buildOrderReceiptEmail } from "@/lib/order-receipt-email";
+import { schoolParentGalleryPath } from "@/lib/school-parent-gallery-link";
 import { sendNewOrderPush } from "@/lib/order-push";
 import { notifyOwnerForSetting } from "@/lib/admin-notification-center";
 import { ownerUrl } from "@/lib/owner-notifications";
@@ -1901,7 +1902,7 @@ export async function finalizePaidOrder(
             school_id,project_id,student_id,
             project:projects(title,access_pin),
             school:schools(school_name),
-            student:students(first_name,last_name,pin)
+            student:students(first_name,last_name,pin,school_id)
           `)
         .eq("id", input.orderId)
         .maybeSingle();
@@ -1997,11 +1998,13 @@ export async function finalizePaidOrder(
             (fullOrder.data as Record<string, unknown> | null)?.project_id as string,
           );
           if (studentPin) {
-            const params = new URLSearchParams({
-              email: buyerEmailAddress,
-              tab: "orders",
-            });
-            ordersHistoryUrl = `https://www.studiooscloud.com/parents/${encodeURIComponent(studentPin)}?${params.toString()}`;
+            const schoolId = clean((fullOrder.data as Record<string, unknown> | null)?.school_id as string);
+            const studentSchoolId = clean((student as Record<string, unknown> | null)?.school_id as string);
+            const schoolPath = studentSchoolId === schoolId ? schoolParentGalleryPath({
+              schoolId,
+              pin: studentPin, email: buyerEmailAddress, tab: "orders",
+            }) : null;
+            if (schoolPath) ordersHistoryUrl = `https://www.studiooscloud.com${schoolPath}`;
           } else if (projectPin && projectId) {
             const params = new URLSearchParams({
               mode: "event",
@@ -2443,6 +2446,7 @@ export async function createDirectOrderCheckoutSession(input: {
   description: string;
   successUrl: string;
   cancelUrl: string;
+  schoolReturnContext?: { orderId: string; email: string };
   /**
    * When this checkout represents a combined sibling/cross-year order, this
    * carries the shared group id so the webhook can fan out the "paid" status
@@ -2483,6 +2487,10 @@ export async function createDirectOrderCheckoutSession(input: {
   params.set("metadata[billing_flow]", "customer_order");
   params.set("metadata[order_id]", input.orderId);
   params.set("metadata[photographer_id]", input.photographerId);
+  if (input.schoolReturnContext) {
+    params.set("metadata[portal_return_order_id]", input.schoolReturnContext.orderId);
+    params.set("metadata[portal_return_email]", input.schoolReturnContext.email);
+  }
   if (input.schoolId) params.set("metadata[school_id]", input.schoolId);
   if (input.projectId) params.set("metadata[project_id]", input.projectId);
   if (input.studentId) params.set("metadata[student_id]", input.studentId);

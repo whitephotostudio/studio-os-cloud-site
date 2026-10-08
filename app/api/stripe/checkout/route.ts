@@ -4,6 +4,7 @@ import { createDashboardServiceClient } from "@/lib/dashboard-auth";
 import { assertStoredOrderBackdropCutouts } from "@/lib/stored-order-backdrop-preflight";
 import { ParentCutoutPreflightError } from "@/lib/parent-cutout-preflight";
 import { retouchPrintPurchaseIssue, type RetouchPrintPackage } from "@/lib/retouching";
+import { schoolCheckoutReturnContext, SchoolCheckoutReturnError } from "@/lib/school-parent-gallery-link";
 import {
   createDirectOrderCheckoutSession,
   quoteDirectOrderPlatformFees,
@@ -327,6 +328,11 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    const schoolReturn = isEventOrder ? null : await schoolCheckoutReturnContext(sb, {
+      orders: checkoutOrders, photographerId: photographer.id, preferredOrderId: order.id,
+      schoolId: body.schoolId, pin: body.pin, email: body.email,
+    });
+
     const stripeAccountId = getConnectedAccountId(photographer);
     if (!stripeAccountId) {
       return NextResponse.json(
@@ -517,15 +523,12 @@ export async function POST(req: NextRequest) {
       );
     }
     const origin = baseUrl(req);
-    const baseGalleryUrl = new URL(`/parents/${encodeURIComponent(body.pin || "")}`, origin);
+    const baseGalleryUrl = new URL(schoolReturn?.path || `/parents/${encodeURIComponent(body.pin || "")}`, origin);
 
     if (isEventOrder) {
       baseGalleryUrl.searchParams.set("mode", "event");
       if (effectiveProjectId) baseGalleryUrl.searchParams.set("project", effectiveProjectId);
       if (body.email) baseGalleryUrl.searchParams.set("email", body.email);
-    } else {
-      baseGalleryUrl.searchParams.set("mode", "school");
-      if (effectiveSchoolId) baseGalleryUrl.searchParams.set("school", effectiveSchoolId);
     }
 
     const successUrl = new URL(baseGalleryUrl.toString());
@@ -616,6 +619,7 @@ export async function POST(req: NextRequest) {
       orderGroupId: order.order_group_id,
       previousExpiredSessionId: expiredSessionId,
       platformFee,
+      schoolReturnContext: schoolReturn ? { orderId: schoolReturn.orderId, email: schoolReturn.email } : undefined,
     });
 
     const { error: updateError } = await sb
@@ -642,6 +646,9 @@ export async function POST(req: NextRequest) {
       planCode: photographer.subscription_plan_code,
     });
   } catch (error) {
+    if (error instanceof SchoolCheckoutReturnError) {
+      return NextResponse.json({ ok: false, message: error.message }, { status: 400 });
+    }
     if (error instanceof ParentCutoutPreflightError) {
       return NextResponse.json({ ok: false, message: error.message }, { status: 409 });
     }

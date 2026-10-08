@@ -8,6 +8,7 @@ import { retryPortalPreviewImage } from "@/lib/portal-preview-retry";
 import { authorizedEventDownloadImages, canonicalEventOrderEntry, type EventFileDelivery } from "@/lib/event-gallery-media-client";
 
 import { checkoutAttemptForPayload } from "@/lib/checkout-attempt-client";
+import { hasSchoolCheckoutGalleryContext, schoolCheckoutRecoveryUrl } from "@/lib/parent-checkout-recovery";
 
 import { FormEvent, SyntheticEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -3792,6 +3793,7 @@ export default function ParentGalleryPage() {
   const sessionId = searchParams.get("session_id") ?? "";
   const mode = searchParams.get("mode") ?? "school";
   const isSchoolMode = mode !== "event";
+  const schoolCheckoutContextMissing = isSchoolMode && !hasSchoolCheckoutGalleryContext({ pin, schoolId, email: schoolViewerEmail });
   // 2026-04-25: Optional ?tab=orders deep-link from the receipt email.
   // Drops the parent straight onto their Orders tab once the gallery loads.
   const initialTabHint = searchParams.get("tab") ?? "";
@@ -3910,6 +3912,7 @@ export default function ParentGalleryPage() {
   const [shippingPostalCode, setShippingPostalCode] = useState("");
   const [placing, setPlacing] = useState(false);
   const [confirmingPayment, setConfirmingPayment] = useState(false);
+  const galleryLoading = loading || (confirmingPayment && checkoutStatus === "success" && schoolCheckoutContextMissing);
   const [orderError, setOrderError] = useState("");
   const [orderId, setOrderId] = useState("");
   const [placed, setPlaced] = useState(false);
@@ -4884,9 +4887,13 @@ export default function ParentGalleryPage() {
 
   useEffect(() => {
     let active = true;
+    let recoveryTimeout: number | null = null;
 
     async function confirmCheckout() {
       if (checkoutStatus !== "success" || !sessionId || placed) return;
+      const controller = new AbortController();
+      const confirmationTimeout = window.setTimeout(() => controller.abort(), 60_000);
+      let recovering = false;
       try {
         setConfirmingPayment(true);
         setOrderError("");
@@ -4894,26 +4901,50 @@ export default function ParentGalleryPage() {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ sessionId }),
+          signal: controller.signal,
         });
         const json = (await res.json()) as {
           ok: boolean;
           message?: string;
           orderId?: string;
           customerEmail?: string | null;
+          galleryUrl?: string | null;
         };
         if (!res.ok || !json.ok) {
           throw new Error(json.message || "Payment confirmation failed.");
         }
         if (!active) return;
+        const recoveredUrl = isSchoolMode
+          ? schoolCheckoutRecoveryUrl(json.galleryUrl, { pin, schoolId, email: schoolViewerEmail }, sessionId)
+          : null;
+        if (recoveredUrl) {
+          recovering = true;
+          recoveryTimeout = window.setTimeout(() => {
+            if (active) {
+              setConfirmingPayment(false);
+              setOrderError("Your payment was confirmed, but gallery access could not be restored. Please reopen your gallery from the parent portal.");
+            }
+          }, 15_000);
+          router.replace(recoveredUrl);
+          return;
+        }
+        if (schoolCheckoutContextMissing) {
+          throw new Error("Your payment was confirmed, but the gallery return link could not be verified. Please reopen your gallery from the parent portal.");
+        }
         setOrderId(json.orderId || "");
         if (json.customerEmail) setParentEmail(json.customerEmail);
         setPlaced(true);
         setDrawerOpen(false);
       } catch (err) {
         if (!active) return;
-        setOrderError(err instanceof Error ? err.message : "Payment confirmation failed.");
+        recovering = false;
+        if (recoveryTimeout !== null) window.clearTimeout(recoveryTimeout);
+        setOrderError(err instanceof Error && err.name === "AbortError"
+          ? "Payment confirmation took too long. Please refresh this page to check your purchase."
+          : err instanceof Error ? err.message : "Payment confirmation failed.");
       } finally {
-        if (active) setConfirmingPayment(false);
+        window.clearTimeout(confirmationTimeout);
+        if (active && !recovering) setConfirmingPayment(false);
       }
     }
 
@@ -4927,8 +4958,9 @@ export default function ParentGalleryPage() {
 
     return () => {
       active = false;
+      if (recoveryTimeout !== null) window.clearTimeout(recoveryTimeout);
     };
-  }, [checkoutStatus, sessionId, placed]);
+  }, [checkoutStatus, sessionId, placed, isSchoolMode, pin, schoolId, schoolViewerEmail, schoolCheckoutContextMissing, router]);
 
   // Cutouts add background options to individual poses; they do not decide
   // which authorized originals are visible. The load path already deduplicates
@@ -5370,7 +5402,7 @@ export default function ParentGalleryPage() {
   }, [showPhotoViewer, visibleImages.length, selectedImage, selectedImageIndex]);
 
   useEffect(() => {
-    if (!loading) {
+    if (!galleryLoading) {
       setShowLoadingFallback(false);
       return;
     }
@@ -5380,7 +5412,7 @@ export default function ParentGalleryPage() {
     }, 420);
 
     return () => window.clearTimeout(timeoutId);
-  }, [loading]);
+  }, [galleryLoading]);
 
   useEffect(() => {
     if (isSchoolMode || activeView !== "photos") return;
@@ -8477,7 +8509,7 @@ export default function ParentGalleryPage() {
           schoolId: isSchoolMode ? student?.school_id ?? null : null,
           projectId: resolvedProjectId,
           mode,
-          email: !isSchoolMode ? eventEmail : undefined,
+          email: isSchoolMode ? schoolViewerEmail : eventEmail,
           customerEmail: parentEmail.trim(),
         }),
       });
@@ -8539,7 +8571,7 @@ export default function ParentGalleryPage() {
   }
 
   // ── Loading ───────────────────────────────────────────────────────────────
-  if (loading) {
+  if (galleryLoading) {
     if (!showLoadingFallback) {
       return (
         <div
@@ -8677,7 +8709,7 @@ export default function ParentGalleryPage() {
               margin: "0 0 24px",
             }}
           >
-            {error || "Unable to load this gallery."}
+            {(checkoutStatus === "success" && schoolCheckoutContextMissing && orderError) || error || "Unable to load this gallery."}
           </p>
           <button
             type="button"

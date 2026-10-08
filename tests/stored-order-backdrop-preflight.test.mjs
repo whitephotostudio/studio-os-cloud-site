@@ -11,7 +11,8 @@ import ts from 'typescript';
 const require = createRequire(import.meta.url);
 const root = new URL('../', import.meta.url);
 const photographerId = 'studio';
-const schoolId = 'school';
+const schoolId = '10000000-0000-4000-8000-000000000001';
+const studentIds = { 'child-a': '40000000-0000-4000-8000-000000000001', 'child-b': '40000000-0000-4000-8000-000000000002' };
 const projectId = 'project';
 const folder = student => `${schoolId}/Class/${student}`;
 const original = (student = 'child-a', name = 'pose.JPG') => `${folder(student)}/${name}`;
@@ -27,7 +28,7 @@ const mixed = { ...print, id: 'mixed', name: 'Complete Gallery', items: ['Print'
 const selection = (ref = original(), pkg = print, extra = {}) => ({ packageId: pkg.id, packageName: pkg.name, quantity: 1,
   backdrop: { id: 'blue', name: 'Blue' }, slots: [{ assignedImageUrl: ref }], ...extra });
 const order = (id = 'a', student = 'child-a', snapshot = [selection(original(student))], extra = {}) => ({
-  id, order_group_id: null, school_id: schoolId, project_id: null, student_id: student,
+  id, order_group_id: null, school_id: schoolId, project_id: null, student_id: studentIds[student], parent_email: 'parent@example.test',
   photographer_id: photographerId, package_id: snapshot?.[0]?.packageId || print.id, package_name: 'Photo order',
   cart_snapshot: snapshot, special_notes: null, subtotal_cents: 1000, tax_cents: 0, total_cents: 1000,
   currency: 'cad', status: 'payment_pending', payment_status: 'pending', stripe_checkout_session_id: null, ...extra,
@@ -58,7 +59,7 @@ function loader(stubs) {
     const js = ts.transpileModule(readFileSync(new URL(file, root), 'utf8'), { compilerOptions: {
       target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, esModuleInterop: true,
     } }).outputText;
-    vm.runInNewContext(js, { exports, URL, Response, Request, Buffer, crypto: globalThis.crypto, console, process: { env: {} },
+    vm.runInNewContext(js, { exports, URL, URLSearchParams, Response, Request, Buffer, crypto: globalThis.crypto, console, process: { env: {} },
       fetch() { throw new Error('Network forbidden in saved checkout tests'); },
       require(name) {
         if (name in stubs) return stubs[name];
@@ -107,7 +108,7 @@ function setup({ orders = [order()], lockedOrders = orders, originals = [origina
           let rows = table === 'orders' ? locked ? lockedOrders : orders
             : table === 'order_items' ? items : table === 'packages' ? packages
             : table === 'schools' ? [{ id: schoolId, photographer_id: photographerId, local_school_id: null }]
-            : table === 'students' ? ['child-a', 'child-b'].map(id => ({ id, school_id: schoolId, class_name: 'Class', folder_name: id, photo_url: original(id) }))
+            : table === 'students' ? ['child-a', 'child-b'].map(name => ({ id: studentIds[name], pin, school_id: schoolId, class_name: 'Class', folder_name: name, photo_url: original(name) }))
             : table === 'photographers' ? [{ id: photographerId, subscription_status: 'active', subscription_plan_code: 'core', stripe_account_id: 'acct_studio' }]
             : table === 'projects' ? [{ id: projectId, photographer_id: photographerId, workflow_type: 'event', status: 'active', access_mode: 'pin', access_pin: pin }]
             : table === 'collections' ? [{ id: 'collection-a', project_id: projectId, kind: 'album', slug: pin }, { id: 'collection-b', project_id: projectId, kind: 'album', slug: 'other-pin' }]
@@ -256,7 +257,7 @@ test('original-only orders use no asset reads and remain eligible, including har
 
 test('body event mode cannot reroute a saved school background after successful preflight', async () => {
   const h = setup();
-  assert.equal((await h.post({ orderId: 'a', mode: 'event', schoolId: 'unrelated-school', projectId: 'unrelated', pin: 'current-pin' })).status, 200);
+  assert.equal((await h.post({ orderId: 'a', mode: 'event', schoolId, projectId: 'unrelated', pin: 'current-pin' })).status, 200);
   assert.equal(h.paymentRequests[0].schoolId, schoolId); assert.equal(h.paymentRequests[0].projectId, null);
 });
 
