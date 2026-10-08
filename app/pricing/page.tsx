@@ -236,7 +236,7 @@ export default function PricingPage() {
                 locally, and manages production.
               </p>
               <div className="mt-8 flex flex-wrap justify-center gap-3">
-                {[`${FREE_TRIAL_DAYS}-day launch trial`, "Studio workflow included", "Prices in CAD"].map((label) => (
+                {[`${FREE_TRIAL_DAYS}-day launch trial`, "Studio workflow included", "Subscriptions in CAD"].map((label) => (
                   <span
                     key={label}
                     className="marketing-kicker rounded-full border border-white/15 bg-white/10 px-4 py-2 text-white/75 backdrop-blur"
@@ -313,7 +313,7 @@ export default function PricingPage() {
               </div>
             </div>
             <p className="marketing-caption mt-4 text-neutral-500">
-              All prices are in Canadian dollars (CAD). Annual billing saves {ANNUAL_DISCOUNT_PERCENT}%.
+              Subscription prices are in Canadian dollars (CAD). Annual billing saves {ANNUAL_DISCOUNT_PERCENT}%.
             </p>
           </Reveal>
 
@@ -497,17 +497,6 @@ function PricingCard({
         {plan.description}
       </p>
 
-      {planCode ? (
-        <div className={`mt-5 rounded-xl border px-4 py-3 ${isFeatured ? "border-white/20 bg-white/5 text-white" : "border-neutral-200 bg-neutral-50 text-neutral-950"}`}>
-          <p className="text-[1rem] font-semibold leading-7">
-            {formatOrderFeeMoney(PLAN_DEFS[planCode].usageRateCents)} CAD per paid order
-          </p>
-          <p className={`mt-1 text-sm leading-6 ${isFeatured ? "text-white/70" : "text-neutral-600"}`}>
-            Flat platform fee · billed monthly
-          </p>
-        </div>
-      ) : null}
-
       <FeatureList title="Included" items={plan.included} featured={isFeatured} />
 
       {plan.notIncluded ? (
@@ -519,30 +508,43 @@ function PricingCard({
         />
       ) : null}
 
-      <div
-        className={`marketing-body mt-8 rounded-2xl border px-4 py-4 text-[1rem] leading-7 ${
-          isFeatured
-            ? "border-white/12 bg-white/[0.04] text-white/70"
-            : "border-neutral-200 bg-white text-neutral-600"
-        }`}
-      >
-        {plan.note}
-      </div>
+      <div className="mt-auto pt-8">
+        <div
+          className={`marketing-body rounded-2xl border px-4 py-4 text-[1rem] leading-7 ${
+            isFeatured
+              ? "border-white/12 bg-white/[0.04] text-white/70"
+              : "border-neutral-200 bg-white text-neutral-600"
+          }`}
+        >
+          {plan.note}
+        </div>
 
-      <Link
-        href={href}
-        data-marketing-event="cta_start_trial"
-        data-marketing-label={`Pricing plan: ${plan.name}`}
-        data-marketing-placement="pricing_plan_card"
-        className={`marketing-button premium-button mt-7 inline-flex items-center justify-center gap-2 rounded-2xl px-5 py-4 ${
-          isFeatured
-            ? "bg-white text-neutral-950 hover:bg-neutral-100"
-            : "bg-neutral-950 text-white hover:bg-black"
-        }`}
-      >
-        {plan.cta}
-        <ArrowUpRight className="h-4 w-4" />
-      </Link>
+        {planCode || plan.name === "Free Trial" ? (
+          <div data-order-fee className="mt-4">
+            <p className={`text-[13px] leading-6 ${isFeatured ? "text-white/70" : "text-neutral-600"}`}>
+              {formatOrderFeeMoney(PLAN_DEFS[planCode || "studio"].usageRateCents)} per paid order · deducted from each sale
+            </p>
+            <p className={`text-[13px] leading-6 ${isFeatured ? "text-white/70" : "text-neutral-600"}`}>
+              Charged in your sales currency. Stripe processing fees are additional.
+            </p>
+          </div>
+        ) : null}
+
+        <Link
+          href={href}
+          data-marketing-event="cta_start_trial"
+          data-marketing-label={`Pricing plan: ${plan.name}`}
+          data-marketing-placement="pricing_plan_card"
+          className={`marketing-button premium-button mt-5 inline-flex w-full items-center justify-center gap-2 rounded-2xl px-5 py-4 ${
+            isFeatured
+              ? "bg-white text-neutral-950 hover:bg-neutral-100"
+              : "bg-neutral-950 text-white hover:bg-black"
+          }`}
+        >
+          {plan.cta}
+          <ArrowUpRight className="h-4 w-4" />
+        </Link>
+      </div>
     </article>
   );
 }

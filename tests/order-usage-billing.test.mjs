@@ -45,6 +45,7 @@ function fixture({ annual = false, missingUsage = false, planCode = 'core', usag
     const chain = {
       select() { return chain; },
       eq(key, value) { const previous = predicate; predicate = row => previous(row) && row[key] === value; return chain; },
+      is(key, value) { assert.equal(value, null); const previous = predicate; predicate = row => previous(row) && row[key] == null; return chain; },
       in(key, values) { const previous = predicate; predicate = row => previous(row) && values.includes(row[key]); return chain; },
       gte(key, value) { const previous = predicate; predicate = row => previous(row) && row[key] >= value; return chain; },
       lt(key, value) { const previous = predicate; predicate = row => previous(row) && row[key] < value; return chain; },
@@ -71,6 +72,7 @@ function fixture({ annual = false, missingUsage = false, planCode = 'core', usag
     const order = tables.orders.find(order => order.id === args.p_order_id);
     let fee = tables.order_usage_fees.find(fee => fee.order_id === args.p_order_id);
     if (name === 'stage_order_usage_fee') {
+      if (order.platform_fee_collection_method != null && !fee) return {data: null, error: null};
       if (!fee && !order.counted_for_monthly_usage && order.refund_status !== 'refunded') {
         fee = { order_id: order.id, photographer_id: args.p_photographer_id, stripe_customer_id: args.p_customer_id, event_name: args.p_event_name,
           event_identifier: `studio-os-usage-order-${order.id}`, usage_timestamp: args.p_usage_timestamp, amount_cents: args.p_amount_cents,
@@ -132,6 +134,42 @@ test('Basil item periods restore per-order owner fees and repeated sync does not
   assert.equal(f.tables.orders[0].counted_for_monthly_usage, true);
   await f.exports.syncSubscriptionStateFromStripe(f.service, f.tables.photographers[0], f.subscription);
   assert.equal(f.calls.filter(call => call.path === 'billing/meter_events').length, 2);
+});
+
+test('Connect USD and CAD subscription refresh preserve the studio sales currency while the subscription mirror stays CAD', async () => {
+  const f = fixture();
+  f.tables.photographers[0].billing_currency = 'eur';
+  f.tables.orders = [];
+  const connected = await f.exports.syncConnectState(f.service, 'studio', {
+    id: 'acct_usd', default_currency: 'usd', details_submitted: true, charges_enabled: true, payouts_enabled: true,
+  });
+  assert.equal(f.tables.photographers[0].billing_currency, 'eur');
+  assert.equal(Object.hasOwn(connected, 'billing_currency'), false);
+  const synced = await f.exports.syncSubscriptionStateFromStripe(f.service, f.tables.photographers[0], f.subscription);
+  assert.equal(f.tables.photographers[0].billing_currency, 'eur');
+  assert.equal(synced.photographer.billing_currency, 'eur');
+  assert.equal(f.tables.subscriptions.at(-1).billing_currency, 'cad');
+  assert.equal(f.subscription.items.data[0].price.currency, 'cad');
+  assert.ok(f.calls.every(call => call.method === 'GET'), 'a currency refresh never changes provider prices or sales currency');
+});
+
+test('direct and waived orders stay outside legacy monthly charging and usage summaries', async () => {
+  const f = fixture();
+  for (const method of ['connect_application_fee', 'waived']) {
+    f.tables.orders.push({id: method, photographer_id: 'studio', paid_at: '2026-09-20T10:00:00Z', payment_status: 'paid',
+      total_cents: 1000, is_test: false, counted_for_monthly_usage: false, platform_fee_collection_method: method,
+      platform_fee_amount_cents: method === 'waived' ? 0 : 40, platform_fee_currency: 'cad', platform_fee_rate_cents: 40});
+  }
+  await f.exports.syncSubscriptionStateFromStripe(f.service, f.tables.photographers[0], f.subscription);
+  await f.exports.syncSubscriptionStateFromStripe(f.service, f.tables.photographers[0], f.subscription);
+  assert.equal(f.calls.filter(call => call.path === 'billing/meter_events').length, 2, 'only the two historical billable orders are metered');
+  assert.deepEqual(f.tables.order_usage_fees.map(fee => fee.order_id).sort(), ['paid', 'partial']);
+  const summary = await f.exports.getUsageSummaryForCurrentPeriod(f.service, f.tables.photographers[0]);
+  assert.equal(summary.billableOrders, 2); assert.equal(summary.countedOrders, 2);
+  assert.equal(summary.estimatedChargeCents, 70, 'legacy35c fees do not gain a direct40c monthly charge');
+  for (const method of ['connect_application_fee', 'waived']) {
+    assert.equal(f.tables.orders.find(order => order.id === method).counted_for_monthly_usage, false);
+  }
 });
 
 test('routine sync retains existing App and Studio prices, mirrors them and snapshots new orders without repricing', async () => {

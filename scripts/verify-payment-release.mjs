@@ -4,7 +4,7 @@ import { pathToFileURL } from 'node:url';
 // [SENSITIVE]. Never export secrets, log provider error bodies, or move money.
 // Explicit webhook configuration flags may update event subscriptions only.
 export async function verifyPaymentRelease(env = process.env, fetcher = fetch, report = console.log) {
-  if (env.STUDIO_PAYMENT_RELEASE_VERIFY !== '1') return;
+  if (env.STUDIO_PAYMENT_RELEASE_VERIFY !== '1' && env.STUDIO_ORDER_PLATFORM_FEE_RELEASE_VERIFY !== '1') return;
   const key = (env.STRIPE_SECRET_KEY || '').trim();
   const serviceKey = (env.SUPABASE_SERVICE_ROLE_KEY || '').trim();
   const databaseUrl = (env.NEXT_PUBLIC_SUPABASE_URL || '').replace(/\/$/, '');
@@ -38,6 +38,15 @@ export async function verifyPaymentRelease(env = process.env, fetcher = fetch, r
   await db('checkout_attempts?select=key&limit=0');
   await db('order_payment_locks?select=key&limit=0');
   report(JSON.stringify({ check: 'payment-migration-api', ok: true }));
+  if (env.STUDIO_ORDER_PLATFORM_FEE_RELEASE_VERIFY === '1') {
+    await db('orders?select=id,platform_fee_collection_method,platform_fee_amount_cents,platform_fee_currency,platform_fee_rate_cents,stripe_application_fee_id&limit=0');
+    const feeSchema = await db('rpc/order_platform_fee_schema_status');
+    const protections = ['columns_present', 'constraint_present', 'snapshot_guard_present', 'legacy_usage_guard_present', 'atomic_freeze_present'];
+    if (feeSchema?.version !== '20261007010000' || protections.some(name => feeSchema?.[name] !== true)) {
+      throw new Error('Direct order service-fee schema protections are missing; apply the exact collection migration before release.');
+    }
+    report(JSON.stringify({ check: 'direct-order-fee-schema', ok: true, version: feeSchema.version, financialMutations: 0, databaseMutations: 0 }));
+  }
   if (env.STUDIO_CREDIT_RELEASE_VERIFY === '1') {
     await db('studio_credits?select=id,studio_id,balance,credit_debt&limit=0');
     await db('order_usage_fees?select=order_id,report_status,refund_status,event_identifier,amount_cents,currency&limit=0');

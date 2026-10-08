@@ -1198,8 +1198,8 @@ export default function SettingsPage() {
             Branding + Billing + Stripe Connect
           </h1>
           <p style={{ marginTop: 12, maxWidth: 840, fontSize: 18, lineHeight: 1.7, color: "#64748b" }}>
-            Photographer sales route through the photographer’s own connected Stripe account, while Studio OS bills plans,
-            extra desktop keys, background credits, and aggregated order usage separately through platform billing.
+            Photographer sales route through the photographer’s own connected Stripe account. Studio OS order fees are deducted from each paid sale.
+            Plans, extra desktop keys, and background credits are billed separately through platform billing.
           </p>
         </div>
 
@@ -1837,7 +1837,7 @@ export default function SettingsPage() {
             )}
 
             <div style={{ fontSize: 13, color: "#64748b", lineHeight: 1.7, marginTop: 14, padding: "12px 14px", background: "#fdf4ff", borderRadius: 14, border: "1px solid #f3e8ff" }}>
-              Your payment method is stored securely by Stripe. It will be used for subscriptions, credit pack purchases, and per-order usage fees.
+              Your payment method is stored securely by Stripe. It will be used for subscriptions, credit pack purchases, and any legacy subscription-billed order fees.
             </div>
           </div>
         </div>
@@ -1904,6 +1904,8 @@ export default function SettingsPage() {
                       padding: 18,
                       textAlign: "left",
                       cursor: "pointer",
+                      display: "flex",
+                      flexDirection: "column",
                     }}
                   >
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
@@ -1921,18 +1923,19 @@ export default function SettingsPage() {
                     <div style={{ marginTop: 10, color: "#64748b", lineHeight: 1.6, fontSize: 14 }}>
                       {plan.description}
                     </div>
-                    <div style={{ marginTop: 10, color: "#334155", lineHeight: 1.7, fontSize: 13 }}>
-                      {plan.code === "starter"
-                        ? `${formatMoney(plan.usageRateCents, platformBillingCurrency)} per paid order · web-only plan`
-                        : `${formatMoney(plan.usageRateCents, platformBillingCurrency)} per paid order · background credits sold separately`}
-                      <div style={{ marginTop: 4 }}>Flat platform fee · billed monthly</div>
-                    </div>
-                    <div style={{ marginTop: 10, color: "#475569", lineHeight: 1.7, fontSize: 13 }}>
-                      {plan.code === "starter"
-                        ? "Online gallery only. Upgrade to Core or Studio to unlock the Studio OS App."
-                        : plan.websiteLogoIncluded
-                          ? "Full Studio OS App access + custom website logo included."
-                          : "Custom website logo + studio branding included."}
+                    <div style={{ marginTop: "auto", paddingTop: 10, color: "#475569", lineHeight: 1.7, fontSize: 13 }}>
+                      <div>
+                        {plan.code === "starter"
+                          ? "Online gallery only. Upgrade to Core or Studio to unlock the Studio OS App."
+                          : plan.websiteLogoIncluded
+                            ? "Full Studio OS App access + custom website logo included."
+                            : "Custom website logo + studio branding included."}
+                      </div>
+                      {plan.code !== "starter" ? <div style={{ marginTop: 4 }}>Background credits sold separately.</div> : null}
+                      <div data-order-fee style={{ marginTop: 10, color: "#64748b", lineHeight: 1.6, fontSize: 13, fontWeight: 400 }}>
+                        <div>{(plan.usageRateCents / 100).toFixed(2)} per paid order in your sales currency · deducted from each sale.</div>
+                        <div>Stripe processing fees are additional.</div>
+                      </div>
                     </div>
                   </button>
                 );
@@ -2047,7 +2050,8 @@ export default function SettingsPage() {
             </div>
 
             <div style={{ marginTop: 16, fontSize: 13, color: "#64748b", lineHeight: 1.7, padding: "12px 14px", background: "#f8fafc", borderRadius: 14, border: "1px solid #e2e8f0" }}>
-              Customer checkout payments go straight to the photographer’s connected Stripe account. Studio OS billing stays separate on the platform account for plans, extra keys, cloud credit packs, and aggregated order usage.
+              Customer checkout payments go to the photographer’s connected Stripe account, with Studio OS order fees deducted from each paid sale.
+              Plans, extra keys, and cloud credit packs are billed separately on the platform account.
             </div>
           </div>
 
@@ -2082,12 +2086,16 @@ export default function SettingsPage() {
               ok={isPlatformAdmin || creditBalance > 0}
             />
 
-            {subscriptionPlanCode || studioUsage.pendingFeeWaivers || studioUsage.feeReviewRequired ? (
-              <div style={{ marginTop: 14, borderRadius: 18, border: "1px solid #cbd5e1", background: "#fff", padding: "16px 18px" }}>
-                <div style={{ fontWeight: 900, color: "#0f172a" }}>{subscriptionPlanCode ? "Order usage this cycle" : "Order fee follow-up"}</div>
-                <div style={{ marginTop: 10, display: "grid", gap: 8, color: "#334155" }}>
+            {isPlatformAdmin || studioUsage.billableOrders || studioUsage.countedOrders || studioUsage.unreportedOrders || studioUsage.refundCreditCents || studioUsage.pendingFeeWaivers || studioUsage.feeReviewRequired ? (
+              <div data-order-usage style={{ marginTop: 14, borderRadius: 18, border: "1px solid #cbd5e1", background: "#fff", padding: "16px 18px" }}>
+                <div style={{ fontWeight: 900, color: "#0f172a" }}>{isPlatformAdmin ? "Owner order fees" : subscriptionPlanCode ? "Legacy order usage this cycle" : "Legacy order fee follow-up"}</div>
+                {isPlatformAdmin ? (
+                  <div style={{ marginTop: 10, color: "#334155", lineHeight: 1.6 }}>
+                    Owner account exempt. No Studio OS per-order fees are billed to this account.
+                  </div>
+                ) : <div style={{ marginTop: 10, display: "grid", gap: 8, color: "#334155" }}>
                   {subscriptionPlanCode && <>
-                    <div>Usage rate: <strong>{formatMoney(orderUsageRateCents, platformBillingCurrency)} per paid order</strong></div>
+                    <div>Legacy usage rate: <strong>{formatMoney(orderUsageRateCents, platformBillingCurrency)} per paid order</strong></div>
                     <div>Billable paid orders: <strong>{studioUsage.billableOrders}</strong></div>
                     <div>Already reported to Stripe: <strong>{studioUsage.countedOrders}</strong></div>
                     <div>Pending report sync: <strong>{studioUsage.unreportedOrders}</strong></div>
@@ -2096,8 +2104,8 @@ export default function SettingsPage() {
                   {Boolean(studioUsage.refundCreditCents) && <div>Next subscription bill: <strong>{formatMoney(studioUsage.refundCreditCents || 0, platformBillingCurrency)}</strong> in refunded order fee credits queued this cycle.</div>}
                   {Boolean(studioUsage.pendingFeeWaivers) && <div>{studioUsage.pendingFeeWaivers} refunded order fee credit(s) pending reconciliation.</div>}
                   {Boolean(studioUsage.feeReviewRequired) && <div>{studioUsage.feeReviewRequired} order fee(s) require billing review.</div>}
-                  <div>Full refunds of reported order fees receive a credit on the next subscription bill. Queued credits do not amend or refund an existing invoice; Stripe determines the invoice where they apply.</div>
-                </div>
+                  <div>Legacy order fees were billed through the subscription. Full refunds of reported legacy order fees receive a credit on the next subscription bill. Queued credits do not amend or refund an existing invoice; Stripe determines the invoice where they apply.</div>
+                </div>}
               </div>
             ) : null}
 

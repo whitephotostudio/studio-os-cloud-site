@@ -1,3 +1,4 @@
+import { resolvePhotographerOrderCurrency, type OrderCurrency } from "@/lib/order-currency";
 import { loadScopedSchoolCompositeMedia } from "@/lib/school-order-media";
 import { schoolPreviewPresentation, buildSchoolFavoriteDownloadAccess } from "@/lib/school-portal-media";
 import { NextRequest, NextResponse } from "next/server";
@@ -315,6 +316,7 @@ export async function POST(request: NextRequest) {
     let photographerId: string | null = activeSchool?.photographer_id ?? null;
     let watermarkEnabled = true;
     let watermarkLogoUrl = "";
+    let orderCurrency: OrderCurrency = "cad";
     let studioInfo = {
       businessName: "",
       logoUrl: "",
@@ -344,7 +346,7 @@ export async function POST(request: NextRequest) {
           .order("sort_order", { ascending: true }),
         service
           .from("photographers")
-          .select("id,watermark_enabled,watermark_logo_url,logo_url,business_name,studio_address,studio_phone,studio_email,default_package_profile_id,is_platform_admin,subscription_status,trial_starts_at,trial_ends_at,created_at,shipping_fee_cents,late_handling_fee_percent")
+          .select("id,watermark_enabled,watermark_logo_url,logo_url,business_name,studio_address,studio_phone,studio_email,default_package_profile_id,is_platform_admin,subscription_status,trial_starts_at,trial_ends_at,created_at,shipping_fee_cents,late_handling_fee_percent,billing_currency")
           .eq("id", activeSchool.photographer_id)
           .maybeSingle(),
       ]);
@@ -352,6 +354,11 @@ export async function POST(request: NextRequest) {
       if (packagesResult.error) throw packagesResult.error;
       if (backdropsResult.error) throw backdropsResult.error;
       if (photographerResult.error) throw photographerResult.error;
+      const resolvedCurrency = resolvePhotographerOrderCurrency(photographerResult.data?.billing_currency);
+      if (!resolvedCurrency) {
+        return NextResponse.json({ ok: false, message: "This studio’s sales currency is not supported. Please contact the photographer." }, { status: 409 });
+      }
+      orderCurrency = resolvedCurrency;
 
       // Defense-in-depth gate: block cancelled photographers at read time even
       // if the Stripe-webhook cleanup hasn't landed yet (webhook is
@@ -505,6 +512,7 @@ export async function POST(request: NextRequest) {
       watermarkEnabled,
       watermarkLogoUrl,
       studioInfo,
+      orderCurrency,
       lateOrderPolicy,
       screenshotProtection,
       groupLabel,

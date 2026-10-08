@@ -21,6 +21,25 @@ const entry = (pkg) => ({ packageId: pkg.id, quantity: 1, slots: [{ label: pkg.n
 const group = (entries, pin = '12345') => ({ schoolId, pin, email: 'parent@example.test', entries });
 const common = { parent: { name: 'Test parent', email: 'parent@example.test' }, delivery: { method: 'pickup' } };
 
+// Exercise the real fee quote/hash on these existing checkout guards while
+// keeping auth, provider requests and production configuration isolated.
+function loadPaymentFees() {
+  const cache = new Map();
+  const pure = new Set(['studio-pricing', 'trial-config', 'subscription-access', 'order-payment-policy', 'order-currency']);
+  function load(file) {
+    if (cache.has(file)) return cache.get(file);
+    const exports = {}; cache.set(file, exports);
+    const code = ts.transpileModule(source(file), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText;
+    new Function('require', 'exports', 'process', 'fetch', code)(name => {
+      if (name.startsWith('@/lib/')) return pure.has(name.slice(6)) ? load(`${name.slice(2)}.ts`) : {};
+      return require(name);
+    }, exports, { env: {} }, () => { throw Error('Provider network is forbidden in retouch checkout fixtures'); });
+    return exports;
+  }
+  return load('lib/payments.ts');
+}
+const paymentFees = loadPaymentFees();
+
 function loader(stubs) {
   const cache = new Map();
   function load(path) {
@@ -51,6 +70,11 @@ function setup({ storedOrders = [], storedItems = [] } = {}) {
         writes.push({ table: 'order_items', value: args.p_items });
         return { data: args.p_response, error: null };
       }
+      if (name === 'freeze_order_platform_fees') {
+        assert.equal(args.p_photographer_id, photographerId);
+        for (const snapshot of args.p_snapshots) Object.assign(storedOrders.find(order => order.id === snapshot.id), snapshot);
+        return { data: structuredClone(storedOrders), error: null };
+      }
       throw new Error(`Unexpected RPC: ${name}`);
     },
     from(table) {
@@ -72,7 +96,7 @@ function setup({ storedOrders = [], storedItems = [] } = {}) {
           try {
             let rows = table === 'packages' ? packages : table === 'students' ? ['12345','67890'].map(pin => ({ id: 'student-' + pin, pin, school_id: schoolId, class_id: null }))
               : table === 'schools' ? [{ id: schoolId, photographer_id: photographerId }]
-              : table === 'photographers' ? [{ id: photographerId, subscription_status: 'active' }]
+              : table === 'photographers' ? [{ id: photographerId, subscription_status: 'active', subscription_plan_code: 'core' }]
               : table === 'orders' ? storedOrders : table === 'order_items' ? storedItems : [];
             if (inserted) rows = [{ id: 'new-order-' + writes.length }];
             else if (updated) rows = [];
@@ -99,6 +123,9 @@ function setup({ storedOrders = [], storedItems = [] } = {}) {
       ParentCutoutPreflightError: class extends Error {},
     },
     '@/lib/payments': {
+      quoteDirectOrderPlatformFees: paymentFees.quoteDirectOrderPlatformFees,
+      directOrderPlatformFeePayload: paymentFees.directOrderPlatformFeePayload,
+      isFreeTrialActive: paymentFees.isFreeTrialActive,
       isStripeBillingActive: () => true, getConnectedAccountId: () => 'acct_test',
       retrieveStripeAccount: async () => ({ details_submitted: true, charges_enabled: true, payouts_enabled: true }),
       syncConnectState: async () => {}, describeConnectStatus: () => ({ readyForPayments: true }),

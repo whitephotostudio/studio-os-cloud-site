@@ -150,7 +150,6 @@ export async function GET(request: NextRequest) {
             account.details_submitted && account.charges_enabled && account.payouts_enabled,
           stripe_connect_charges_enabled: account.charges_enabled,
           stripe_connect_payouts_enabled: account.payouts_enabled,
-          billing_currency: account.default_currency || photographer.billing_currency,
         };
         detailsSubmitted = Boolean(account.details_submitted);
         chargesEnabled = Boolean(account.charges_enabled);

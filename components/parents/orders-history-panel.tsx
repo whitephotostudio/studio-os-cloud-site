@@ -8,6 +8,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { formatOrderMoney } from "@/lib/order-money";
 
 export type OrderHistoryItem = {
   productName: string;
@@ -71,12 +72,6 @@ type Props = {
    *  the checkout drawer. */
   onReorder?: (snapshot: unknown, sourceOrderId: string) => void;
 };
-
-function formatCurrency(cents: number, currency: string) {
-  const amount = (cents / 100).toFixed(2);
-  const sym = currency.toLowerCase() === "usd" ? "US$" : "$";
-  return `${sym}${amount}`;
-}
 
 function formatDate(iso: string | null) {
   if (!iso) return "—";
@@ -171,15 +166,15 @@ export default function OrdersHistoryPanel({
     if (onCountChange) onCountChange(orders.length);
   }, [orders.length, onCountChange]);
 
-  const totalSpend = useMemo(
-    () =>
-      orders
-        .filter((o) =>
-          ["paid", "digital_paid"].includes(o.status.toLowerCase()),
-        )
-        .reduce((sum, o) => sum + o.totalCents, 0),
-    [orders],
-  );
+  const totalSpendByCurrency = useMemo(() => {
+    const totals = new Map<string, number>();
+    for (const order of orders) {
+      if (!["paid", "digital_paid"].includes(order.status.toLowerCase())) continue;
+      const currency = order.currency?.trim().toLowerCase() || "cad";
+      totals.set(currency, (totals.get(currency) ?? 0) + order.totalCents);
+    }
+    return [...totals].filter(([, amount]) => amount > 0);
+  }, [orders]);
 
   const containerStyle: React.CSSProperties = {
     flex: 1,
@@ -283,7 +278,7 @@ export default function OrdersHistoryPanel({
             }}
           >
             {orders.length} order{orders.length === 1 ? "" : "s"}
-            {totalSpend > 0 && (
+            {totalSpendByCurrency.length > 0 && (
               <span
                 style={{
                   color: tone.mutedText,
@@ -292,7 +287,7 @@ export default function OrdersHistoryPanel({
                   marginLeft: 10,
                 }}
               >
-                · {formatCurrency(totalSpend, orders[0]?.currency || "cad")} total
+                · {totalSpendByCurrency.map(([currency, amount]) => formatOrderMoney(amount, currency)).join(" + ")} total
               </span>
             )}
           </h2>
@@ -375,7 +370,7 @@ export default function OrdersHistoryPanel({
                       whiteSpace: "nowrap",
                     }}
                   >
-                    {formatCurrency(order.totalCents, order.currency)}
+                    {formatOrderMoney(order.totalCents, order.currency)}
                   </div>
                 </div>
 
@@ -442,7 +437,7 @@ export default function OrdersHistoryPanel({
                           {item.includedInPackage
                             ? " · Included"
                             : item.lineTotalCents > 0
-                            ? ` · ${formatCurrency(item.lineTotalCents, order.currency)}`
+                            ? ` · ${formatOrderMoney(item.lineTotalCents, order.currency)}`
                             : ""}
                         </div>
                       </div>
@@ -493,21 +488,21 @@ export default function OrdersHistoryPanel({
                             <div style={{ display: "flex", justifyContent: "space-between" }}>
                               <span>Subtotal</span>
                               <span style={{ color: tone.text }}>
-                                {formatCurrency(order.subtotalCents, order.currency)}
+                                {formatOrderMoney(order.subtotalCents, order.currency)}
                               </span>
                             </div>
                           )}
                           {discountItems.map((item, idx) => (
                             <div key={`d:${order.id}:${idx}`} style={{ display: "flex", justifyContent: "space-between", color: "#4ade80" }}>
                               <span>{item.productName}</span>
-                              <span>−{formatCurrency(Math.abs(item.lineTotalCents), order.currency)}</span>
+                              <span>−{formatOrderMoney(Math.abs(item.lineTotalCents), order.currency)}</span>
                             </div>
                           ))}
                           {typeof order.taxCents === "number" && order.taxCents > 0 && (
                             <div style={{ display: "flex", justifyContent: "space-between" }}>
                               <span>Tax</span>
                               <span style={{ color: tone.text }}>
-                                {formatCurrency(order.taxCents, order.currency)}
+                                {formatOrderMoney(order.taxCents, order.currency)}
                               </span>
                             </div>
                           )}
@@ -523,7 +518,7 @@ export default function OrdersHistoryPanel({
                             }}
                           >
                             <span>Total paid</span>
-                            <span>{formatCurrency(order.totalCents, order.currency)}</span>
+                            <span>{formatOrderMoney(order.totalCents, order.currency)}</span>
                           </div>
                         </div>
                       )}

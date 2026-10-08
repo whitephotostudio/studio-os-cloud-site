@@ -1,5 +1,8 @@
 "use client";
 
+import { formatOrderMoney } from "@/lib/order-money";
+import { resolvePhotographerOrderCurrency, type OrderCurrency } from "@/lib/order-currency";
+
 import { retryPortalPreviewImage } from "@/lib/portal-preview-retry";
 import { authorizedEventDownloadImages, canonicalEventOrderEntry, type EventFileDelivery } from "@/lib/event-gallery-media-client";
 
@@ -211,6 +214,7 @@ type GalleryContextPayload = {
   photographerId?: string | null;
   watermarkEnabled?: boolean;
   watermarkLogoUrl?: string;
+  orderCurrency?: OrderCurrency;
   studioInfo?: {
     businessName: string;
     logoUrl: string;
@@ -246,6 +250,7 @@ type EventGalleryContextPayload = {
   photographerId?: string | null;
   watermarkEnabled?: boolean;
   watermarkLogoUrl?: string;
+  orderCurrency?: OrderCurrency;
   studioInfo?: {
     businessName: string;
     logoUrl: string;
@@ -741,12 +746,7 @@ function formatEventDateLabel(value: string | null | undefined) {
   }).format(parsed);
 }
 
-function formatGalleryMoney(cents: number | null | undefined) {
-  const amount = Math.max(0, Number(cents ?? 0) || 0) / 100;
-  return `$${amount.toFixed(2)}`;
-}
-
-function buildLateOrderNotice(policy: LateOrderPolicy | null | undefined) {
+function buildLateOrderNotice(policy: LateOrderPolicy | null | undefined, currency: OrderCurrency) {
   const dueDate = clean(policy?.orderDueDate);
   if (!dueDate) return null;
 
@@ -758,7 +758,7 @@ function buildLateOrderNotice(policy: LateOrderPolicy | null | undefined) {
     Number(policy?.lateHandlingFeePercent ?? 0) || 0,
   );
   const feeParts = [
-    shippingFeeCents > 0 ? `${formatGalleryMoney(shippingFeeCents)} shipping` : "",
+    shippingFeeCents > 0 ? `${formatOrderMoney(shippingFeeCents, currency)} shipping` : "",
     lateHandlingPercent > 0 ? `${lateHandlingPercent}% handling` : "",
   ].filter(Boolean);
   const feeText = feeParts.length
@@ -4304,6 +4304,8 @@ export default function ParentGalleryPage() {
     phone: string;
     email: string;
   }>({ businessName: "", logoUrl: "", address: "", phone: "", email: "" });
+  const [orderCurrency, setOrderCurrency] = useState<OrderCurrency>("cad");
+  const money = (cents: number | null | undefined) => formatOrderMoney(cents, orderCurrency);
   const [lateOrderPolicy, setLateOrderPolicy] = useState<LateOrderPolicy | null>(null);
   const [lateOrderNoticeHidden, setLateOrderNoticeHidden] = useState(false);
 
@@ -4455,6 +4457,9 @@ export default function ParentGalleryPage() {
             throw new Error(contextPayload.message || "Failed to load event gallery.");
           }
 
+          const nextOrderCurrency = resolvePhotographerOrderCurrency(contextPayload.orderCurrency);
+          if (!nextOrderCurrency) throw new Error("This studio’s sales currency is not supported. Please contact the photographer.");
+
           const activeProject = contextPayload.project ?? null;
           const activeCollection = contextPayload.activeCollection ?? null;
           const collections = contextPayload.collections ?? [];
@@ -4603,6 +4608,7 @@ export default function ParentGalleryPage() {
           setWatermarkEnabled(nextWatermarkEnabled);
           setWatermarkLogoUrl(nextWatermarkLogoUrl);
           setStudioInfo(nextStudioInfo);
+          setOrderCurrency(nextOrderCurrency);
           setLateOrderPolicy(contextPayload.lateOrderPolicy ?? {
             orderDueDate: activeProject?.order_due_date ?? null,
             shippingFeeCents: 0,
@@ -4639,6 +4645,9 @@ export default function ParentGalleryPage() {
             throw new Error(contextPayload.message || "Failed to load gallery context.");
           }
         }
+
+        const nextOrderCurrency = resolvePhotographerOrderCurrency(contextPayload.orderCurrency);
+        if (!nextOrderCurrency) throw new Error("This studio’s sales currency is not supported. Please contact the photographer.");
 
         const currentSchool = contextPayload.currentSchool ?? null;
         const studentCandidates = contextPayload.studentCandidates ?? [];
@@ -4813,6 +4822,7 @@ export default function ParentGalleryPage() {
         setWatermarkEnabled(nextWatermarkEnabled);
         setWatermarkLogoUrl(nextWatermarkLogoUrl);
         setStudioInfo(nextStudioInfo);
+        setOrderCurrency(nextOrderCurrency);
         setLateOrderPolicy(contextPayload.lateOrderPolicy ?? {
           orderDueDate: activeProject?.order_due_date ?? null,
           shippingFeeCents: 0,
@@ -5036,8 +5046,8 @@ export default function ParentGalleryPage() {
   const orderingDisabled =
     hasCalendarBoundaryPassed(project?.order_due_date);
   const lateOrderNotice = useMemo(
-    () => buildLateOrderNotice(lateOrderPolicy),
-    [lateOrderPolicy],
+    () => buildLateOrderNotice(lateOrderPolicy, orderCurrency),
+    [lateOrderPolicy, orderCurrency],
   );
   useEffect(() => {
     if (!lateOrderNotice) return;
@@ -8148,6 +8158,7 @@ export default function ParentGalleryPage() {
         const studentMatches = context.primaryStudent?.id === lane.studentId ||
           context.studentCandidates?.some((candidate) => candidate.id === lane.studentId);
         if (!response.ok || context.ok === false || context.photographerId !== photographerId ||
+            resolvePhotographerOrderCurrency(context.orderCurrency) !== orderCurrency ||
             context.activeSchool?.id !== lane.schoolId || !studentMatches) return PARENT_BACKDROP_UNAVAILABLE;
         const portraits = (context.media ?? []).map((photo) => ({ id: photo.id,
           references: [photo.storage_path, photo.preview_url, photo.thumbnail_url, photo.download_url] }));
@@ -8274,9 +8285,7 @@ export default function ParentGalleryPage() {
 
     if (minimumOrderAmountCents > 0 && totalCents < minimumOrderAmountCents) {
       setOrderError(
-        `This gallery requires a minimum order of $${(
-          minimumOrderAmountCents / 100
-        ).toFixed(2)}.`,
+        `This gallery requires a minimum order of ${money(minimumOrderAmountCents)}.`,
       );
       setPlacing(false);
       return;
@@ -9377,6 +9386,7 @@ export default function ParentGalleryPage() {
       <RetouchUpsellModal
         open={retouchUpsellOpen && retouchAddonPackages.length > 0 && retouchPhotoOptions.length > 0}
         packages={retouchAddonPackages}
+        orderCurrency={orderCurrency}
         photos={retouchPhotoOptions}
         onAdd={addRetouchAddonToCart}
         onSkip={dismissRetouchUpsell}
@@ -9994,7 +10004,7 @@ export default function ParentGalleryPage() {
                       {tile.label}
                     </div>
                     <div style={{ marginTop: 8, fontSize: 13, color: galleryTone.mutedText, lineHeight: 1.6 }}>
-                      {tile.minPrice !== null ? `From $${tile.minPrice.toFixed(2)}` : "Available in this gallery"}
+                      {tile.minPrice !== null ? `From ${money(tile.minPrice * 100)}` : "Available in this gallery"}
                     </div>
                     <div
                       style={{
@@ -10048,7 +10058,7 @@ export default function ParentGalleryPage() {
                           </div>
                           <div style={{ marginTop: 16, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
                             <div style={{ fontSize: 18, fontWeight: 700, color: galleryTone.text }}>
-                              ${(pkg.price_cents / 100).toFixed(2)}
+                              {money(pkg.price_cents)}
                             </div>
                             <button
                               type="button"
@@ -11780,7 +11790,7 @@ export default function ParentGalleryPage() {
                                 }}
                               >
                                 {tile.minPrice !== null
-                                  ? `From $${tile.minPrice.toFixed(2)}`
+                                  ? `From ${money(tile.minPrice * 100)}`
                                   : "Available"}
                               </div>
                             </div>
@@ -11872,7 +11882,7 @@ export default function ParentGalleryPage() {
                                       marginLeft: 12,
                                     }}
                                   >
-                                    ${(pkg.price_cents / 100).toFixed(2)}
+                                    {money(pkg.price_cents)}
                                   </div>
                                 </div>
 
@@ -12045,7 +12055,7 @@ export default function ParentGalleryPage() {
                                   marginTop: 6,
                                 }}
                               >
-                                ${(pkg.price_cents / 100).toFixed(2)}
+                                {money(pkg.price_cents)}
                               </div>
                             </div>
 
@@ -12125,8 +12135,7 @@ export default function ParentGalleryPage() {
                                 </>
                               ) : (
                                 <>
-                                  <ShoppingCart size={15} /> Buy · $
-                                  {(lineCents / 100).toFixed(2)}
+                                  <ShoppingCart size={15} /> Buy · {money(lineCents)}
                                 </>
                               )}
                             </button>
@@ -12250,7 +12259,7 @@ export default function ParentGalleryPage() {
                                 flexShrink: 0,
                               }}
                             >
-                              ${(pkg.price_cents / 100).toFixed(2)}
+                              {money(pkg.price_cents)}
                             </div>
                           </div>
 
@@ -12315,8 +12324,8 @@ export default function ParentGalleryPage() {
 
                           {!digitalPackLimit && chosenQty > 1 ? (
                             <div style={{ marginTop: 10, display: "flex", justifyContent: "space-between", gap: 12, fontSize: 12, color: "#d7d7d7", lineHeight: 1.35 }}>
-                              <span>${(pkg.price_cents / 100).toFixed(2)} per package set</span>
-                              <strong style={{ color: "#fff" }}>${(packageLineTotalCents / 100).toFixed(2)} total</strong>
+                              <span>{money(pkg.price_cents)} per package set</span>
+                              <strong style={{ color: "#fff" }}>{money(packageLineTotalCents)} total</strong>
                             </div>
                           ) : null}
 
@@ -12947,7 +12956,7 @@ export default function ParentGalleryPage() {
                                     color: "#fff",
                                   }}
                                 >
-                                  ${(item.lineTotalCents / 100).toFixed(2)}
+                                  {money(item.lineTotalCents)}
                                 </div>
                                 <button
                                   type="button"
@@ -13027,13 +13036,13 @@ export default function ParentGalleryPage() {
                               color: "#fff",
                             }}
                           >
-                            ${(currentDraftCartItem.lineTotalCents / 100).toFixed(2)}
+                            {money(currentDraftCartItem.lineTotalCents)}
                           </div>
                         </div>
                         {currentDraftCartItem.category !== "digital" && currentDraftCartItem.quantity > 1 ? (
                           <div style={{ marginTop: -4, marginBottom: 10, fontSize: 12, color: "#bfbfbf", lineHeight: 1.5 }}>
-                            {currentDraftCartItem.quantity} package sets x ${(currentDraftCartItem.packageSubtotalCents / Math.max(currentDraftCartItem.quantity, 1) / 100).toFixed(2)}
-                            {" = "}${(currentDraftCartItem.packageSubtotalCents / 100).toFixed(2)} before add-ons.
+                            {currentDraftCartItem.quantity} package sets x {money(currentDraftCartItem.packageSubtotalCents / Math.max(currentDraftCartItem.quantity, 1))}
+                            {" = "}{money(currentDraftCartItem.packageSubtotalCents)} before add-ons.
                           </div>
                         ) : null}
 
@@ -13234,7 +13243,7 @@ export default function ParentGalleryPage() {
                               {m === "shipping" && <Truck size={13} />}
                               {m.charAt(0).toUpperCase() + m.slice(1)}
                               {m === "shipping" && (
-                                <span>· {formatGalleryMoney(configuredShippingFeeCents)}</span>
+                                <span>· {money(configuredShippingFeeCents)}</span>
                               )}
                             </button>
                           ))}
@@ -13377,7 +13386,7 @@ export default function ParentGalleryPage() {
                         }}
                       >
                         <span>Subtotal</span>
-                        <span>${(checkoutSubtotalCents / 100).toFixed(2)}</span>
+                        <span>{money(checkoutSubtotalCents)}</span>
                       </div>
                       {checkoutBackdropTotalCents > 0 && (
                         <div
@@ -13390,7 +13399,7 @@ export default function ParentGalleryPage() {
                           }}
                         >
                           <span>Backdrop add-ons</span>
-                          <span>${(checkoutBackdropTotalCents / 100).toFixed(2)}</span>
+                          <span>{money(checkoutBackdropTotalCents)}</span>
                         </div>
                       )}
                       {anyPhysicalCheckoutItem && activeDeliveryMethod === "shipping" && (
@@ -13404,7 +13413,7 @@ export default function ParentGalleryPage() {
                           }}
                         >
                           <span>Shipping</span>
-                          <span>{formatGalleryMoney(checkoutShippingFeeCents)}</span>
+                          <span>{money(checkoutShippingFeeCents)}</span>
                         </div>
                       )}
                       {checkoutTaxCents > 0 && (
@@ -13420,7 +13429,7 @@ export default function ParentGalleryPage() {
                           <span>
                             {currentGalleryExtras.taxLabel} ({checkoutTaxPercent.toFixed(3).replace(/\.?0+$/, "")}%)
                           </span>
-                          <span>${(checkoutTaxCents / 100).toFixed(2)}</span>
+                          <span>{money(checkoutTaxCents)}</span>
                         </div>
                       )}
                       <div
@@ -13435,7 +13444,7 @@ export default function ParentGalleryPage() {
                         }}
                       >
                         <span>Total</span>
-                        <span>${(checkoutTotalCents / 100).toFixed(2)}</span>
+                        <span>{money(checkoutTotalCents)}</span>
                       </div>
                     </div>
 
@@ -13777,7 +13786,7 @@ export default function ParentGalleryPage() {
                         {blurPreviewActive
                           ? `★ Blur preview · ${selectedBlurAmount}px`
                           : panelPreviewBackdrop.tier === "premium"
-                            ? `★ Premium · $${(panelPreviewBackdrop.price_cents / 100).toFixed(2)}`
+                            ? `★ Premium · ${money(panelPreviewBackdrop.price_cents)}`
                             : "✓ Included Free"}
                       </div>
                       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -14167,7 +14176,7 @@ export default function ParentGalleryPage() {
               }}>
                 <span style={{ fontSize: 13, color: "#888" }}>Backdrop add-on</span>
                 <span style={{ fontSize: 18, fontWeight: 800, color: "#fff" }}>
-                  ${(premiumTarget.price_cents / 100).toFixed(2)}
+                  {money(premiumTarget.price_cents)}
                 </span>
               </div>
 
@@ -14187,7 +14196,7 @@ export default function ParentGalleryPage() {
                   marginBottom: 10,
                 }}
               >
-                Unlock for ${(premiumTarget.price_cents / 100).toFixed(2)}
+                Unlock for {money(premiumTarget.price_cents)}
               </button>
 
               <button
@@ -14436,12 +14445,14 @@ function GroupPhotoDigitalNoticeModal({
 function RetouchUpsellModal({
   open,
   packages,
+  orderCurrency,
   photos,
   onAdd,
   onSkip,
 }: {
   open: boolean;
   packages: PackageRow[];
+  orderCurrency: OrderCurrency;
   photos: RetouchPhotoOption[];
   onAdd: (pkg: PackageRow, selections: RetouchSelection[]) => void;
   onSkip: () => void;
@@ -14666,7 +14677,7 @@ function RetouchUpsellModal({
                     color: "#fff",
                   }}
                 >
-                  ${(pkg.price_cents / 100).toFixed(2)}
+                  {formatOrderMoney(pkg.price_cents, orderCurrency)}
                 </div>
                 <div
                   aria-hidden

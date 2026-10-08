@@ -6,9 +6,12 @@ import { ParentCutoutPreflightError } from "@/lib/parent-cutout-preflight";
 import { retouchPrintPurchaseIssue, type RetouchPrintPackage } from "@/lib/retouching";
 import {
   createDirectOrderCheckoutSession,
+  quoteDirectOrderPlatformFees,
+  directOrderPlatformFeePayload,
   describeConnectStatus,
   getConnectedAccountId,
   isStripeBillingActive,
+  isFreeTrialActive,
   retrieveStripeAccount,
   retrieveCheckoutSession,
   syncConnectState,
@@ -43,9 +46,17 @@ type OrderRow = {
   status: string | null;
   payment_status: string | null;
   stripe_checkout_session_id: string | null;
+  stripe_payment_intent_id: string | null;
+  paid_at: string | null;
+  is_test: boolean | null;
+  counted_for_monthly_usage: boolean | null;
+  platform_fee_collection_method: "connect_application_fee" | "waived" | null;
+  platform_fee_amount_cents: number | null;
+  platform_fee_currency: string | null;
+  platform_fee_rate_cents: number | null;
 };
 
-const ORDER_SELECT = "id,order_group_id,school_id,project_id,student_id,photographer_id,parent_email,customer_email,package_id,package_name,cart_snapshot,special_notes,notes,subtotal_cents,tax_cents,total_cents,total_amount,currency,status,payment_status,stripe_checkout_session_id";
+const ORDER_SELECT = "id,order_group_id,school_id,project_id,student_id,photographer_id,parent_email,customer_email,package_id,package_name,cart_snapshot,special_notes,notes,subtotal_cents,tax_cents,total_cents,total_amount,currency,status,payment_status,stripe_checkout_session_id,stripe_payment_intent_id,paid_at,is_test,counted_for_monthly_usage,platform_fee_collection_method,platform_fee_amount_cents,platform_fee_currency,platform_fee_rate_cents";
 type CheckoutItemRow = {
   line_total_cents: number | null;
   unit_price_cents: number | null;
@@ -78,6 +89,9 @@ type PhotographerRow = {
   subscription_status: string | null;
   subscription_plan_code: string | null;
   is_platform_admin: boolean | null;
+  created_at: string | null;
+  trial_starts_at: string | null;
+  trial_ends_at: string | null;
 };
 
 type CheckoutBody = {
@@ -279,7 +293,7 @@ export async function POST(req: NextRequest) {
     const { data: photographer, error: photographerError } = await sb
       .from("photographers")
       .select(
-        "id,business_name,stripe_account_id,stripe_connected_account_id,stripe_connect_onboarding_complete,stripe_connect_charges_enabled,stripe_connect_payouts_enabled,subscription_status,subscription_plan_code,is_platform_admin",
+        "id,business_name,stripe_account_id,stripe_connected_account_id,stripe_connect_onboarding_complete,stripe_connect_charges_enabled,stripe_connect_payouts_enabled,subscription_status,subscription_plan_code,is_platform_admin,created_at,trial_starts_at,trial_ends_at",
       )
       .eq("id", photographerId)
       .maybeSingle<PhotographerRow>();
@@ -292,7 +306,8 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    if (!photographer.is_platform_admin && !isStripeBillingActive(photographer.subscription_status)) {
+    const freeTrialActive = isFreeTrialActive(photographer);
+    if (!photographer.is_platform_admin && !isStripeBillingActive(photographer.subscription_status) && !freeTrialActive) {
       return NextResponse.json(
         {
           ok: false,
@@ -519,6 +534,47 @@ export async function POST(req: NextRequest) {
       if (existing.status !== "expired") return NextResponse.json({ ok: false, message: "Payment was already submitted. Check your order confirmation before trying again." }, { status: 409 });
       expiredSessionId = existing.id;
     }
+
+    const frozenCount = checkoutOrders.filter(member => member.platform_fee_collection_method != null).length;
+    if (frozenCount !== 0 && frozenCount !== checkoutOrders.length) {
+      throw new Error("This checkout has inconsistent platform fee snapshots.");
+    }
+    // Old sessions and ambiguous requests keep their original collection
+    // method. Never add an application fee to a possibly payable legacy session.
+    const legacyAttempt = frozenCount === 0 && checkoutOrders.some(member =>
+      member.stripe_checkout_session_id || member.stripe_payment_intent_id ||
+      member.paid_at || member.counted_for_monthly_usage || member.status === "checkout_starting");
+    if (frozenCount === 0 && !legacyAttempt) {
+      const quote = await quoteDirectOrderPlatformFees({
+        planCode: freeTrialActive ? "studio" : photographer.subscription_plan_code,
+        subscriptionStatus: photographer.subscription_status,
+        freeTrialActive,
+        isPlatformAdmin: Boolean(photographer.is_platform_admin),
+        currency,
+        orders: checkoutOrders.map(member => ({
+          id: member.id, totalCents: storedOrderTotalCents(member)!, isTest: Boolean(member.is_test),
+        })),
+      });
+      const snapshots = quote.orders.map(member => ({
+        id: member.id,
+        platform_fee_collection_method: member.collectionMethod,
+        platform_fee_amount_cents: member.amountCents,
+        platform_fee_currency: quote.currency,
+        platform_fee_rate_cents: quote.rateCents,
+      }));
+      const { data: saved, error: snapshotError } = await sb.rpc("freeze_order_platform_fees", {
+        p_photographer_id: photographer.id, p_snapshots: snapshots,
+      });
+      if (snapshotError) throw snapshotError;
+      if (!Array.isArray(saved) || saved.length !== checkoutOrders.length ||
+          snapshots.some(snapshot => !saved.some(row => row.id === snapshot.id))) {
+        throw new Error("Platform fee snapshots could not be saved.");
+      }
+      checkoutOrders = checkoutOrders.map(member => ({
+        ...member, ...saved.find(row => row.id === member.id),
+      }));
+    }
+    const platformFee = legacyAttempt ? undefined : directOrderPlatformFeePayload(checkoutOrders, currency);
     // This marker stays on ambiguous network failure. Cancellation must not
     // claim success while an unrecorded Stripe session might still be payable.
     const { error: startingError } = await sb.from("orders").update({ status: "checkout_starting" }).in("id", checkoutOrders.map((member) => member.id));
@@ -550,6 +606,7 @@ export async function POST(req: NextRequest) {
       cancelUrl: cancelUrl.toString(),
       orderGroupId: order.order_group_id,
       previousExpiredSessionId: expiredSessionId,
+      platformFee,
     });
 
     const { error: updateError } = await sb

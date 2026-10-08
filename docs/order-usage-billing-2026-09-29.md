@@ -1,5 +1,37 @@
 # Order service fees and owner revenue
 
+## Current checkout collection (October 7, 2026)
+
+New customer checkouts deduct a Stripe Connect application fee from the sale:
+Starter 0.55, App/Core 0.40, and Studio 0.35 in the order's currency. An active
+free application trial uses the Studio rate. Stripe processing fees are
+additional. Platform owner accounts and test orders remain exempt.
+
+The complete order group receives an immutable fee snapshot before Stripe
+Checkout is created. Retries retain that amount and currency. Payment
+finalization checks the actual connected PaymentIntent fee, gross total,
+currency and complete saved group before marking the orders paid. New direct
+fees are excluded from subscription usage reporting, preventing collection
+twice. Existing or ambiguous legacy checkouts retain their original policy.
+
+Fees accumulate in the platform Stripe balance. The platform's bank payout
+schedule is a separate Stripe account setting; it does not require charging
+the photographer again. Available funds follow Stripe's settlement timing.
+The Studiooscloud platform's monthly payout schedule was visibly verified
+after saving and reloading as monthly on the 1st.
+
+An explicit full customer refund requests the application-fee refund and
+verifies the cumulative fee refund before claiming completion. A refresh never
+moves money. A full customer refund made outside the app can require the
+separate confirmed platform-fee recovery action. Partial refunds keep the
+existing paid-order fee policy. These orders never receive a legacy monthly
+invoice credit.
+
+The following sections describe the preserved legacy subscription usage
+collection, not new direct-fee checkouts.
+
+## Legacy monthly usage collection
+
 Customer gallery orders are direct Stripe Connect charges on the photographer's
 account. Studio OS receives separate platform subscription and credit-pack
 payments. Order service fees are metered on the photographer's platform

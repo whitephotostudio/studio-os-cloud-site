@@ -37,6 +37,7 @@ function fixture() {
       const chain = {
         select() { return chain; },
         eq(key, value) { const previous = predicate; predicate = row => previous(row) && row[key] === value; return chain; },
+        is(key, value) { assert.equal(value, null); const previous = predicate; predicate = row => previous(row) && row[key] == null; return chain; },
         in(key, values) { const previous = predicate; predicate = row => previous(row) && values.includes(row[key]); return chain; },
         gte(key, value) { const previous = predicate; predicate = row => previous(row) && row[key] >= value; return chain; },
         lt(key, value) { const previous = predicate; predicate = row => previous(row) && row[key] < value; return chain; },

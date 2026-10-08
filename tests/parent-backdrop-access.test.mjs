@@ -10,6 +10,8 @@ const compile = (source) => ts.transpileModule(source, {
 }).outputText;
 const helpers = {};
 new Function("exports", compile(helperSource))(helpers);
+const currencyHelpers = {};
+new Function("exports", compile(readFileSync(new URL("../lib/order-currency.ts", import.meta.url), "utf8")))(currencyHelpers);
 const { canOfferParentBackdrops, usableParentCutouts, parentBackdropSelectionIssue, PARENT_BACKDROP_UNAVAILABLE } = helpers;
 const url = (name, signature = "one") => `https://account.r2.cloudflarestorage.com/bucket/schools/school-a/student-a/${name}.jpg?sig=${signature}`;
 const portraits = ["one", "two"].map((name) => ({ id: name, references: [url(name), `schools/school-a/student-a/${name}.jpg`] }));
@@ -121,12 +123,13 @@ function checkoutFixture(options = {}) {
   const laneB = { laneKey: "school-b:student-b", schoolId: "school-b", studentId: "student-b", pin: "pin-b", email: "parent@example.com" };
   const cart = options.items ?? [{ id: "saved", packageId: "print", packageName: "Print", category: "print", backdrop: { id: "background" }, slots: entry.slots, laneKey: laneA.laneKey }];
   const requests = [];
-  const defaultContext = (lane) => ({ ok: true, photographerId: "studio", activeSchool: { id: lane.schoolId }, primaryStudent: { id: lane.studentId },
+  const defaultContext = (lane) => ({ ok: true, photographerId: "studio", orderCurrency: "cad", activeSchool: { id: lane.schoolId }, primaryStudent: { id: lane.studentId },
     media: [{ id: "one", storage_path: "schools/school-a/student-a/one.jpg", download_url: url("one", "fresh") }],
     nobgUrls: { one: "/verified.png" }, backdrops: [{ id: "background" }], packages: [] });
   const values = {
     checkoutItems: cart, combineLanes: [laneA, laneB], currentLane: laneA, isSchoolMode: true,
     photographerId: "studio", parentEmail: "parent@example.com", PARENT_BACKDROP_UNAVAILABLE,
+    orderCurrency: "cad", resolvePhotographerOrderCurrency: currencyHelpers.resolvePhotographerOrderCurrency,
     usableParentCutouts, imageUrlExists: async () => options.canLoad !== false,
     packages: [{ id: "retouch", name: "Retouching" }],
     retouchPolicyEntry: (item) => ({ pkg: { name: item.packageName } }),
@@ -166,6 +169,15 @@ test("combined saved backgrounds verify each lane; readiness from one child cann
   const valid = checkoutFixture({ items });
   assert.equal(await valid.verify(), "");
   assert.equal(valid.requests.length, 2);
+});
+
+test("saved background checkout rejects a changed or unsupported studio currency before order creation", async () => {
+  for (const orderCurrency of ["eur", "jpy"]) {
+    const fixture = checkoutFixture({ context: { orderCurrency } });
+    const before = JSON.stringify(fixture.cart);
+    assert.equal(await fixture.verify(), PARENT_BACKDROP_UNAVAILABLE);
+    assert.equal(JSON.stringify(fixture.cart), before);
+  }
 });
 
 test("original and retouch-only checkout does not require unrelated background proof or make extra requests", async () => {

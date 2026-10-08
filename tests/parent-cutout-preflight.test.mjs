@@ -57,7 +57,7 @@ function loader(stubs) {
   return load;
 }
 
-function setup({ originals = [original()], paidKeys = originals.map(fullCutout), bytes = png, storedBytes = bytes, tombstones = [], media = [], collectionPin = '12345', projectOwner = photographerId, repeatMediaPages = false, localSchoolId = null, mediaPageCap = 1000, mediaCountUnavailable = false } = {}) {
+function setup({ originals = [original()], paidKeys = originals.map(fullCutout), bytes = png, storedBytes = bytes, tombstones = [], media = [], collectionPin = '12345', projectOwner = photographerId, repeatMediaPages = false, localSchoolId = null, mediaPageCap = 1000, mediaCountUnavailable = false, billingCurrency = null } = {}) {
   const writes = [], paidReads = [], proofQueries = [], folderReads = [], mediaPages = [];
   const bindings = paidKeys.map(object_key => ({ object_key, original_sha256: 'a'.repeat(64), cutout_sha256: hash(bytes) }));
   const sb = {
@@ -85,7 +85,7 @@ function setup({ originals = [original()], paidKeys = originals.map(fullCutout),
             : table === 'backdrop_catalog' ? [{ id: backdropId, name: 'Blue', image_url: 'backdrops/blue.jpg', tier: 'premium', price_cents: 250, photographer_id: photographerId, active: true }]
             : table === 'schools' ? [{ id: schoolId, local_school_id: localSchoolId, photographer_id: photographerId }]
             : table === 'students' ? ['12345', '67890'].map(pin => ({ id: `student-${pin}`, pin, school_id: schoolId, class_id: null, class_name: 'Class', folder_name: `Student${pin}`, photo_url: original('pose.JPG', pin) }))
-            : table === 'photographers' ? [{ id: photographerId, subscription_status: 'active' }]
+            : table === 'photographers' ? [{ id: photographerId, subscription_status: 'active', billing_currency: billingCurrency }]
             : table === 'projects' ? [{ id: projectId, photographer_id: projectOwner, workflow_type: 'event', status: 'active', access_mode: 'pin', access_pin: 'project-pin' }]
             : table === 'collections' ? [{ id: 'collection-a', project_id: projectId, kind: 'album', slug: collectionPin, access_mode: 'pin', access_pin: collectionPin }, { id: 'collection-b', project_id: projectId, kind: 'album', slug: 'other-pin', access_mode: 'pin', access_pin: 'other-pin' }]
             : table === 'media' ? media
@@ -119,6 +119,37 @@ function setup({ originals = [original()], paidKeys = originals.map(fullCutout),
     return { status: response.status, body: await response.json() };
   }, preflight: (context, entries) => load('lib/parent-cutout-preflight.ts').assertParentBackdropCutouts(sb, context, entries) };
 }
+
+test('single and combined creation freeze the trusted studio sales currency and ignore a forged client currency', async () => {
+  for (const billingCurrency of ['usd', 'cad', 'eur', 'gbp', 'aud', 'aed', 'sar', 'amd']) {
+    for (const route of [createPath, combinedPath]) {
+      const h = setup({ billingCurrency });
+      const body = route === createPath ? schoolBody([entry()]) : { ...common, groups: [group([entry()])] };
+      const result = await h.post(route, { ...body, currency: billingCurrency === 'usd' ? 'cad' : 'usd' });
+      assert.equal(result.status, 200, `${route} ${billingCurrency}: ${JSON.stringify(result.body)}`);
+      const rows = h.writes.find(w => w.table === 'orders').value;
+      assert.ok(rows.length > 0);
+      assert.ok(rows.every(row => row.currency === billingCurrency));
+      assert.equal(rows[0].subtotal_cents, 1250, 'the currency change does not convert or change saved package prices');
+    }
+  }
+});
+
+test('unset studio currency keeps CAD while unsupported decimal conventions block creation before writes', async () => {
+  for (const route of [createPath, combinedPath]) {
+    const body = route === createPath ? schoolBody([entry()]) : { ...common, groups: [group([entry()])] };
+    const legacy = setup();
+    assert.equal((await legacy.post(route, body)).status, 200);
+    assert.equal(legacy.writes.find(w => w.table === 'orders').value[0].currency, 'cad');
+    for (const billingCurrency of ['jpy', 'bhd', 'unsupported']) {
+      const h = setup({ billingCurrency });
+      const result = await h.post(route, body);
+      assert.equal(result.status, 409);
+      assert.match(result.body.message, /sales currency is not supported/);
+      assert.equal(h.writes.length, 0);
+    }
+  }
+});
 
 test('missing or inactive proof rejects the chosen backdrop before order writes', async () => {
   const h = setup({ paidKeys: [] });

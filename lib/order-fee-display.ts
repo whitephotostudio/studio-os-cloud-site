@@ -9,7 +9,7 @@ export function formatOrderFeeMoney(rateCents: number, currency = "CAD") {
 }
 
 export const ORDER_FEE_PURPOSE =
-  "This flat fee helps cover secure photo hosting, order delivery, and ongoing platform maintenance and support.";
+  "Studio OS charges your studio a small flat fee for each paid order. This helps cover secure photo hosting, order delivery, platform maintenance, and support.";
 
 export const ORDER_FEE_BILLING =
-  "Billed monthly to your studio on paid plans, including annual subscriptions. Payment processing fees and AI background credits are separate.";
+  "Order fees are deducted automatically from each sale, including on annual plans. The same fee amount is charged in your studio’s sales currency. Stripe payment processing fees and AI background credits are additional.";

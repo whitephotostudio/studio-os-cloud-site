@@ -188,6 +188,7 @@ export async function syncOrderUsageFees(service: ServiceClient, input: {
     .eq("photographer_id", input.photographerId)
     .in("payment_status", ["paid", "succeeded", "partially_refunded"])
     .eq("counted_for_monthly_usage", false)
+    .is("platform_fee_collection_method", null)
     .gte("paid_at", input.periodStart).lt("paid_at", input.periodEnd)
     .or("is_test.is.false,is_test.is.null").order("paid_at", { ascending: true });
   if (error) throw error;

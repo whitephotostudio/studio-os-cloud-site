@@ -8,10 +8,12 @@ import { createClient } from "@/lib/supabase/client";
 import { useAuthFormReady } from "@/lib/use-auth-form-ready";
 import {
   getPlanPriceCents,
+  PLAN_DEFS,
   normalizeBillingInterval,
   normalizePlanCode,
 } from "@/lib/studio-pricing";
 import { FREE_TRIAL_DAYS } from "@/lib/trial-config";
+import { formatOrderFeeMoney } from "@/lib/order-fee-display";
 import { authRequestErrorMessage, withAuthRequestTimeout } from "@/lib/auth-request";
 import { PASSWORD_REQUIREMENTS } from "@/lib/password-policy";
 
@@ -243,6 +245,9 @@ export default function SignUpPage() {
                   </h2>
                   <p className="mt-2 text-sm text-neutral-500">
                     No credit card needed. Your {FREE_TRIAL_DAYS}-day trial begins after email verification.
+                  </p>
+                  <p className="mt-2 text-xs leading-5 text-neutral-600">
+                    Paid sales during the trial have a {formatOrderFeeMoney(PLAN_DEFS.studio.usageRateCents)} Studio OS fee per order in your sales currency, deducted from the sale. Stripe processing fees are additional.
                   </p>
 
                   <form method="post" onSubmit={handleSignUp} className="mt-8 space-y-5">
