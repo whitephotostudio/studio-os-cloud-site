@@ -6,6 +6,7 @@ import ts from 'typescript';
 import * as pricing from '../lib/studio-pricing.ts';
 import * as periods from '../lib/stripe-billing-period.ts';
 import * as orderPolicy from '../lib/order-payment-policy.ts';
+import { connectCountry } from './helpers/stripe-connect-country.mjs';
 
 const start = Date.parse('2026-09-01T00:00:00Z') / 1000;
 const end = Date.parse('2026-10-01T00:00:00Z') / 1000;
@@ -69,6 +70,12 @@ function fixture({ annual = false, missingUsage = false, planCode = 'core', usag
         if (update) matching.forEach(row => Object.assign(row, update)); return Promise.resolve({ data: structuredClone(matching), error: null }).then(resolve, reject); },
     }; return chain;
   }, async rpc(name, args) {
+    if (name === 'sync_photographer_connect_state') {
+      Object.assign(tables.photographers[0], { stripe_account_id: args.p_account_id, stripe_connected_account_id: args.p_account_id,
+        stripe_connect_country: args.p_country, stripe_connect_onboarding_complete: args.p_details_submitted && args.p_charges_enabled && args.p_payouts_enabled,
+        stripe_connect_charges_enabled: args.p_charges_enabled, stripe_connect_payouts_enabled: args.p_payouts_enabled });
+      return { data: null, error: null };
+    }
     const order = tables.orders.find(order => order.id === args.p_order_id);
     let fee = tables.order_usage_fees.find(fee => fee.order_id === args.p_order_id);
     if (name === 'stage_order_usage_fee') {
@@ -107,6 +114,7 @@ function fixture({ annual = false, missingUsage = false, planCode = 'core', usag
     '@/lib/stripe-billing-period': periods,
     '@/lib/order-usage-billing': ledger,
     '@/lib/order-payment-policy': orderPolicy,
+    '@/lib/stripe-connect-country': connectCountry,
     '@/lib/trial-config': { FREE_TRIAL_DAYS: 14 },
     '@/lib/subscription-access': { isStripeBillingActive: value => ['active', 'trialing'].includes(value) },
     '@/lib/studio-os-app': { syncPhotographyKeysByPhotographerId: async () => {} },
@@ -161,7 +169,7 @@ test('Connect USD and CAD subscription refresh preserve the studio sales currenc
   f.tables.photographers[0].billing_currency = 'eur';
   f.tables.orders = [];
   const connected = await f.exports.syncConnectState(f.service, 'studio', {
-    id: 'acct_usd', default_currency: 'usd', details_submitted: true, charges_enabled: true, payouts_enabled: true,
+    id: 'acct_usd', country: 'US', default_currency: 'usd', details_submitted: true, charges_enabled: true, payouts_enabled: true,
   });
   assert.equal(f.tables.photographers[0].billing_currency, 'eur');
   assert.equal(Object.hasOwn(connected, 'billing_currency'), false);

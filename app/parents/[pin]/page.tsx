@@ -1,4 +1,5 @@
 "use client";
+import { SchoolYearbookParentPanel } from "@/components/school-yearbook-parent-panel";
 
 import { formatOrderMoney } from "@/lib/order-money";
 import { resolvePhotographerOrderCurrency, type OrderCurrency } from "@/lib/order-currency";
@@ -9817,6 +9818,9 @@ export default function ParentGalleryPage() {
           </div>
         )}
 
+        {isSchoolMode && student?.school_id && schoolViewerEmail ? (
+          <SchoolYearbookParentPanel key={`${student.school_id}:${pin}:${schoolViewerEmail}`} schoolId={student.school_id} pin={pin} email={schoolViewerEmail} />
+        ) : null}
         {galleryActionMessage ? (
           <div
             style={{

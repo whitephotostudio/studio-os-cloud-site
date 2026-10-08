@@ -31,6 +31,7 @@ import { resolveStripeBillingPeriod } from "@/lib/stripe-billing-period";
 import { readAllBillingRows, reconcileOrderUsageFeeRefunds, syncOrderUsageFees } from "@/lib/order-usage-billing";
 import { isStripeBillingActive } from "@/lib/subscription-access";
 import { SUPPORTED_ORDER_CURRENCIES } from "@/lib/order-currency";
+import { ConnectProfileError, normalizeBusinessCountry, normalizeSelectedSalesCurrency, verifiedConnectCountry, type BusinessCountry } from "@/lib/stripe-connect-country";
 export {
   isStripeBillingActive, isTrialStatus, resolveFreeTrialEndsAt,
   getFreeTrialDaysRemaining, isFreeTrialActive, isFreeTrialExpired,
@@ -94,6 +95,9 @@ export type PhotographerBillingRow = {
   subscription_current_period_end: string | null;
   billing_email: string | null;
   billing_currency: string | null;
+  business_country?: string | null;
+  stripe_connect_country?: string | null;
+  sales_currency_configured?: boolean;
   order_usage_rate_cents: number | null;
   extra_desktop_keys: number | null;
   studio_id: string | null;
@@ -117,6 +121,7 @@ type CreditPackageRow = {
 
 type StripeAccount = {
   id: string;
+  country?: string | null;
   object: "account";
   charges_enabled: boolean;
   payouts_enabled: boolean;
@@ -287,7 +292,6 @@ function env(name: string, fallback?: string) {
 }
 
 export const DEFAULT_BILLING_CURRENCY = env("STRIPE_BILLING_CURRENCY", "cad").toLowerCase();
-const DEFAULT_CONNECT_COUNTRY = env("STRIPE_CONNECT_DEFAULT_COUNTRY", "CA").toUpperCase();
 const STRIPE_API_VERSION = env("STRIPE_API_VERSION", "2025-06-30.basil");
 
 export const ORDER_USAGE_RATE_CENTS = DEFAULT_ORDER_USAGE_RATE_CENTS;
@@ -493,7 +497,7 @@ const PHOTOGRAPHER_SELECT_BASE =
   "id,user_id,business_name,brand_color,watermark_enabled,watermark_logo_url,studio_address,studio_phone,stripe_account_id,stripe_connected_account_id,stripe_connect_onboarding_complete,stripe_connect_charges_enabled,stripe_connect_payouts_enabled,stripe_platform_customer_id,stripe_subscription_id,stripe_subscription_item_base_id,stripe_subscription_item_extra_keys_id,stripe_subscription_item_usage_id,subscription_plan_code,subscription_billing_interval,subscription_status,subscription_current_period_start,subscription_current_period_end,billing_email,billing_currency,order_usage_rate_cents,extra_desktop_keys,studio_id,studio_email,logo_url,is_platform_admin,created_at";
 
 /** Full select including trial columns (requires migration). */
-const PHOTOGRAPHER_SELECT_FULL = `${PHOTOGRAPHER_SELECT_BASE},trial_starts_at,trial_ends_at`;
+const PHOTOGRAPHER_SELECT_FULL = `${PHOTOGRAPHER_SELECT_BASE},trial_starts_at,trial_ends_at,business_country,stripe_connect_country,sales_currency_configured`;
 
 export async function getPhotographerByUserId(service: ServiceClient, userId: string) {
   // Try with trial columns first; fall back to base columns if the
@@ -1000,14 +1004,18 @@ export async function retrieveStripeAccount(accountId: string) {
 export async function createConnectedAccount(input: {
   photographerId: string;
   userId: string;
+  country: BusinessCountry;
   email?: string | null;
   businessName?: string | null;
 }) {
   const params = new URLSearchParams();
   params.set("type", "express");
-  params.set("country", DEFAULT_CONNECT_COUNTRY);
+  const country = normalizeBusinessCountry(input.country);
+  if (!country) throw new ConnectProfileError("Choose your business country before connecting Stripe.");
+  params.set("country", country);
   params.set("email", input.email || "");
-  params.set("business_type", "individual");
+  // Stripe-hosted onboarding collects the legal business type. Do not assume
+  // every photography business is an individual sole proprietor.
   params.set("metadata[photographer_id]", input.photographerId);
   params.set("metadata[user_id]", input.userId);
   params.set("capabilities[card_payments][requested]", "true");
@@ -1347,6 +1355,7 @@ export async function syncConnectState(
   photographerId: string,
   account: StripeAccount,
 ) {
+  const country = verifiedConnectCountry(account);
   const updates = {
     stripe_account_id: account.id,
     stripe_connected_account_id: account.id,
@@ -1356,10 +1365,46 @@ export async function syncConnectState(
     stripe_connect_payouts_enabled: account.payouts_enabled,
   };
 
-  const { error } = await service.from("photographers").update(updates).eq("id", photographerId);
-  if (error) throw error;
+  const { error } = await service.rpc("sync_photographer_connect_state", {
+    p_photographer_id: photographerId, p_account_id: account.id, p_country: country,
+    p_details_submitted: account.details_submitted,
+    p_charges_enabled: account.charges_enabled, p_payouts_enabled: account.payouts_enabled,
+  });
+  if (error) {
+    if (error.code === "23514") throw new ConnectProfileError(error.message, 409);
+    throw error;
+  }
 
   return updates;
+}
+
+export async function configureConnectBusinessProfile(
+  service: ServiceClient,
+  photographer: PhotographerBillingRow,
+  input: { businessCountry?: unknown; salesCurrency?: unknown; salesCurrencyExplicit?: unknown },
+  reserveConnect = false,
+) {
+  const country = normalizeBusinessCountry(input.businessCountry);
+  const currency = normalizeSelectedSalesCurrency(input.salesCurrency);
+  if (input.salesCurrencyExplicit != null && typeof input.salesCurrencyExplicit !== "boolean") {
+    throw new ConnectProfileError("The sales currency selection could not be verified.");
+  }
+  const accountId = getConnectedAccountId(photographer);
+  if (accountId) {
+    const account = await retrieveStripeAccount(accountId);
+    verifiedConnectCountry(account, country || photographer.business_country || photographer.stripe_connect_country);
+    await syncConnectState(service, photographer.id, account);
+  }
+  const { data, error } = await service.rpc("configure_photographer_payment_profile", {
+    p_photographer_id: photographer.id, p_business_country: country,
+    p_sales_currency: currency, p_currency_explicit: input.salesCurrencyExplicit === true,
+    p_reserve_connect: reserveConnect,
+  });
+  if (error) {
+    if (error.code === "23514") throw new ConnectProfileError(error.message, 409);
+    throw error;
+  }
+  return data as { businessCountry: BusinessCountry | null; businessCountryLocked: boolean; salesCurrency: string; salesCurrencyConfigured: boolean };
 }
 
 async function upsertSubscriptionMirror(

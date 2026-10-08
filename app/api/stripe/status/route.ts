@@ -32,6 +32,7 @@ import {
   syncConnectState,
   syncSubscriptionStateFromStripe,
 } from "@/lib/payments";
+import { verifiedConnectCountry } from "@/lib/stripe-connect-country";
 
 export const dynamic = "force-dynamic";
 
@@ -59,6 +60,10 @@ const EMPTY_PROFILE = {
   studioEmail: "",
   billingEmail: "",
   billingCurrency: DEFAULT_BILLING_CURRENCY,
+  businessCountry: null,
+  businessCountryLocked: false,
+  stripeAccountCountry: null,
+  salesCurrencyConfigured: false,
   isPlatformAdmin: false,
   subscriptionPlanCode: null,
   subscriptionBillingInterval: "month",
@@ -99,7 +104,7 @@ const EMPTY_PROFILE = {
 
 export async function GET(request: NextRequest) {
   try {
-    const { user } = await resolveDashboardAuth(request);
+    const { user, mfaSatisfied } = await resolveDashboardAuth(request);
     if (!user) {
       return NextResponse.json(
         {
@@ -109,6 +114,7 @@ export async function GET(request: NextRequest) {
         { status: 401 },
       );
     }
+    if (mfaSatisfied === false) return NextResponse.json({ ...EMPTY_PROFILE, signedIn: true, message: "Complete two-factor sign-in before opening billing settings." }, { status: 403 });
     if (creditMaintenanceActive()) {
       return NextResponse.json({
         ...EMPTY_PROFILE, signedIn: true, maintenance: true,
@@ -137,10 +143,14 @@ export async function GET(request: NextRequest) {
     let chargesEnabled = Boolean(photographer.stripe_connect_charges_enabled);
     let payoutsEnabled = Boolean(photographer.stripe_connect_payouts_enabled);
     let connectDisabledReason: string | null = null;
+    let stripeAccountCountry: string | null = null;
+    let connectCountryError: string | null = null;
 
     if (stripeAccountId) {
       try {
         const account = await retrieveStripeAccount(stripeAccountId);
+        stripeAccountCountry = account.country || null;
+        verifiedConnectCountry(account, photographer.business_country || photographer.stripe_connect_country);
         await syncConnectState(service, photographer.id, account);
         photographer = {
           ...photographer,
@@ -156,6 +166,12 @@ export async function GET(request: NextRequest) {
         payoutsEnabled = Boolean(account.payouts_enabled);
         connectDisabledReason = account.requirements?.disabled_reason ?? null;
       } catch (error) {
+        // A cached enabled flag cannot establish that the correct merchant
+        // country was verified when the current provider read failed.
+        detailsSubmitted = false;
+        chargesEnabled = false;
+        payoutsEnabled = false;
+        connectCountryError = error instanceof Error ? error.message : "Unable to verify your Stripe account. Refresh its status before continuing.";
         warnings.push(
           error instanceof Error
             ? error.message
@@ -183,7 +199,7 @@ export async function GET(request: NextRequest) {
     });
     const creditPacks = await ensureCreditPackageCatalog(service);
     const usageSummary = await getUsageSummaryForCurrentPeriod(service, photographer);
-    const connectStatus = describeConnectStatus({
+    const connectStatus = connectCountryError ? { label: "Needs review", message: connectCountryError, readyForPayments: false } : describeConnectStatus({
       accountId: stripeAccountId,
       detailsSubmitted,
       chargesEnabled,
@@ -231,6 +247,10 @@ export async function GET(request: NextRequest) {
       billingEmail:
         photographer.billing_email || photographer.studio_email || user.email || "",
       billingCurrency: photographer.billing_currency || DEFAULT_BILLING_CURRENCY,
+      businessCountry: photographer.business_country || (stripeAccountCountry === "US" || stripeAccountCountry === "CA" ? stripeAccountCountry : null),
+      businessCountryLocked: Boolean(stripeAccountId || photographer.stripe_connect_country),
+      stripeAccountCountry,
+      salesCurrencyConfigured: photographer.sales_currency_configured !== false,
       isPlatformAdmin: Boolean(photographer.is_platform_admin),
       stripePlatformCustomerId: photographer.stripe_platform_customer_id,
       stripeSubscriptionId: photographer.stripe_subscription_id,

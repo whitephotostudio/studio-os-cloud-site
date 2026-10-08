@@ -1,4 +1,5 @@
 "use client";
+import { SchoolYearbookOwnerPanel } from "@/components/school-yearbook-owner-panel";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
@@ -544,6 +545,7 @@ export default function SchoolSettingsPage() {
               {/* General */}
               {activeSection === "general" && (
                 <div className="space-y-6">
+                  <SchoolYearbookOwnerPanel schoolId={schoolId} />
                   <Card title="General">
                     <div className="grid gap-5 md:grid-cols-2">
                       <Field label="Shoot Date*" hint="The date of the photo session">

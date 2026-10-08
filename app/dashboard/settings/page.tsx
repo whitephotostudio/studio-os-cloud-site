@@ -56,6 +56,10 @@ type StripeStatus = {
   studioEmail: string;
   billingEmail: string;
   billingCurrency: string;
+  businessCountry: "CA" | "US" | null;
+  businessCountryLocked: boolean;
+  stripeAccountCountry: string | null;
+  salesCurrencyConfigured: boolean;
   isPlatformAdmin: boolean;
   stripePlatformCustomerId?: string | null;
   stripeSubscriptionId?: string | null;
@@ -397,6 +401,11 @@ export default function SettingsPage() {
   const [studioId, setStudioId] = useState<string | null>(null);
   const [billingEmail, setBillingEmail] = useState("");
   const [billingCurrency, setBillingCurrency] = useState("cad");
+  const [businessCountry, setBusinessCountry] = useState("");
+  const [businessCountryLocked, setBusinessCountryLocked] = useState(false);
+  const [stripeAccountCountry, setStripeAccountCountry] = useState<string | null>(null);
+  const [salesCurrencyConfigured, setSalesCurrencyConfigured] = useState(false);
+  const [savedPaymentProfile, setSavedPaymentProfile] = useState<{ businessCountry: string; salesCurrency: string; salesCurrencyConfigured: boolean } | null>(null);
   const [defaultPaymentMethod, setDefaultPaymentMethod] = useState<StripeStatus["defaultPaymentMethod"]>(null);
   const [isPlatformAdmin, setIsPlatformAdmin] = useState(false);
   const [stripeSubscriptionId, setStripeSubscriptionId] = useState<string | null>(null);
@@ -605,6 +614,11 @@ export default function SettingsPage() {
       }
       setBillingEmail(json.billingEmail || "");
       setBillingCurrency((json.billingCurrency || "cad").toLowerCase());
+      setBusinessCountry(json.businessCountry || "");
+      setBusinessCountryLocked(Boolean(json.businessCountryLocked));
+      setStripeAccountCountry(json.stripeAccountCountry || null);
+      setSalesCurrencyConfigured(Boolean(json.salesCurrencyConfigured));
+      setSavedPaymentProfile({ businessCountry: json.businessCountry || "", salesCurrency: (json.billingCurrency || "cad").toLowerCase(), salesCurrencyConfigured: Boolean(json.salesCurrencyConfigured) });
       setDefaultPaymentMethod(json.defaultPaymentMethod || null);
       setIsPlatformAdmin(Boolean(json.isPlatformAdmin));
       setStripeSubscriptionId(json.stripeSubscriptionId || null);
@@ -763,6 +777,25 @@ export default function SettingsPage() {
         return;
       }
 
+      let paymentProfile = { businessCountry, salesCurrency: billingCurrency, salesCurrencyConfigured, businessCountryLocked };
+      const paymentProfileChanged = !savedPaymentProfile || savedPaymentProfile.businessCountry !== businessCountry ||
+        savedPaymentProfile.salesCurrency !== billingCurrency || savedPaymentProfile.salesCurrencyConfigured !== salesCurrencyConfigured;
+      if (paymentProfileChanged) {
+        const paymentProfileResponse = await fetch("/api/stripe/business-profile", {
+          method: "POST", credentials: "include",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
+          body: JSON.stringify({ businessCountry: businessCountry || null, salesCurrency: billingCurrency, salesCurrencyExplicit: salesCurrencyConfigured }),
+        });
+        const result = await paymentProfileResponse.json();
+        if (!paymentProfileResponse.ok || !result.ok) throw new Error(result.message || "Unable to save your payment profile.");
+        paymentProfile = result;
+        setBillingCurrency(paymentProfile.salesCurrency);
+        setBusinessCountry(paymentProfile.businessCountry || "");
+        setBusinessCountryLocked(Boolean(paymentProfile.businessCountryLocked));
+        setSalesCurrencyConfigured(Boolean(paymentProfile.salesCurrencyConfigured));
+        setSavedPaymentProfile({ businessCountry: paymentProfile.businessCountry || "", salesCurrency: paymentProfile.salesCurrency, salesCurrencyConfigured: Boolean(paymentProfile.salesCurrencyConfigured) });
+      }
+
       const { data: photographer } = await supabase
         .from("photographers")
         .select("id, studio_id")
@@ -787,7 +820,7 @@ export default function SettingsPage() {
             studio_phone: studioPhone,
             studio_email: studioEmail,
             billing_email: billingEmail || studioEmail || user.email || null,
-            billing_currency: billingCurrency || "cad",
+            billing_currency: paymentProfile.salesCurrency,
             sibling_discount_tiers: buildSiblingTiersJson(
               siblingTier2Percent,
               siblingTier3Percent,
@@ -823,7 +856,7 @@ export default function SettingsPage() {
             studio_phone: studioPhone,
             studio_email: studioEmail,
             billing_email: billingEmail || studioEmail || user.email || null,
-            billing_currency: billingCurrency || "cad",
+            billing_currency: paymentProfile.salesCurrency,
             sibling_discount_tiers: buildSiblingTiersJson(
               siblingTier2Percent,
               siblingTier3Percent,
@@ -898,6 +931,9 @@ export default function SettingsPage() {
           logoUrl,
           billingEmail: billingEmail || studioEmail,
           studioEmail,
+          businessCountry: businessCountry || null,
+          salesCurrency: billingCurrency,
+          salesCurrencyExplicit: salesCurrencyConfigured,
         }),
       });
 
@@ -1353,13 +1389,15 @@ export default function SettingsPage() {
               </div>
             </div>
             <StatusRow label="Stripe account ID" value={stripeAccountId || "Not connected yet"} />
+            <StatusRow label="Stripe account country" value={stripeAccountCountry || "Not verified yet"} />
             <StatusRow label="Details submitted" value={detailsSubmitted ? "Yes" : "No"} ok={detailsSubmitted} />
             <StatusRow label="Charges enabled" value={chargesEnabled ? "Yes" : "No"} ok={chargesEnabled} />
             <StatusRow label="Payouts enabled" value={payoutsEnabled ? "Yes" : "No"} ok={payoutsEnabled} />
             <StatusRow label="Onboarding complete" value={onboardingComplete ? "Yes" : "No"} ok={onboardingComplete} />
+            {!businessCountry && !stripeAccountId && <div style={{ marginTop: 12, color: "#b45309", fontSize: 13 }}>Choose your business country under Studio info before connecting Stripe.</div>}
             <button
               onClick={connectStripe}
-              disabled={connecting || !sessionReady}
+              disabled={connecting || !sessionReady || (!businessCountry && !stripeAccountId)}
               style={{
                 marginTop: 12,
                 border: "1px solid #3b82f6",
@@ -1719,13 +1757,31 @@ export default function SettingsPage() {
               <Field label="Studio email" value={studioEmail} onChange={setStudioEmail} placeholder="hello@yourstudio.com" icon={<Mail size={14} color="#94a3b8" />} />
               <Field label="Billing email" value={billingEmail} onChange={setBillingEmail} placeholder="billing@yourstudio.com" icon={<Receipt size={14} color="#94a3b8" />} />
 
+              <label style={{ display: "block" }}>
+                <div style={{ marginBottom: 8, fontSize: 13, fontWeight: 700, color: "#475569" }}>Business country</div>
+                <select aria-label="Business country" value={businessCountry} disabled={businessCountryLocked}
+                  onChange={(event) => {
+                    const country = event.target.value;
+                    setBusinessCountry(country);
+                    if (!salesCurrencyConfigured && country) setBillingCurrency(country === "US" ? "usd" : "cad");
+                  }}
+                  style={{ width: "100%", borderRadius: 18, border: "1px solid #d6dfef", padding: "14px 16px", background: "#fff", fontSize: 16, color: "#0f172a" }}>
+                  <option value="">Choose your business country</option>
+                  <option value="CA">Canada</option>
+                  <option value="US">United States</option>
+                </select>
+                <div style={{ marginTop: 6, fontSize: 12, color: "#64748b" }}>
+                  {businessCountryLocked ? "Your Stripe business country is locked. Contact support if it needs review." : "Choose where your business is legally established before connecting Stripe."}
+                </div>
+              </label>
+
               {/* Currency selector */}
               <label style={{ display: "block" }}>
-                <div style={{ marginBottom: 8, fontSize: 13, fontWeight: 700, color: "#475569" }}>Currency</div>
+                <div style={{ marginBottom: 8, fontSize: 13, fontWeight: 700, color: "#475569" }}>Sales currency</div>
                 <div style={{ position: "relative" }}>
                   <select
                     value={billingCurrency}
-                    onChange={(e) => setBillingCurrency(e.target.value)}
+                    onChange={(e) => { setBillingCurrency(e.target.value); setSalesCurrencyConfigured(true); }}
                     style={{
                       width: "100%",
                       borderRadius: 18,
@@ -1754,7 +1810,7 @@ export default function SettingsPage() {
             </div>
 
             <div style={{ fontSize: 13, color: "#64748b", lineHeight: 1.7, marginTop: 14, padding: "12px 14px", background: "#f0fdf4", borderRadius: 14, border: "1px solid #d1fae5" }}>
-              Contact info and currency will appear on invoices, order forms, and the parent-facing gallery. Currency also applies to the desktop app price lists.
+              Contact info and sales currency will appear on your customer invoices, order forms, and galleries. Sales currency also applies to desktop price lists. Your Studio OS subscription is billed separately in CAD.
             </div>
           </div>
         </div>

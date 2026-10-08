@@ -555,12 +555,17 @@ export default function SchoolsPage() {
               All synced schools live here. Open a school to view classes, roles, and images.
             </p>
           </div>
-          <button
-            onClick={openCreateModal}
-            style={{ display: "inline-flex", alignItems: "center", gap: 8, background: "#111", color: "#fff", border: "none", borderRadius: 12, padding: "11px 18px", fontSize: 14, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap", flexShrink: 0, alignSelf: isMobile ? "flex-start" : undefined }}
-          >
-            <Plus size={16} /> Create School
-          </button>
+          <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10 }}>
+            <Link href="/dashboard/migrations/gotphoto" style={{ color: "#374151", border: "1px solid #d1d5db", borderRadius: 12, padding: "11px 16px", fontSize: 14, fontWeight: 600, textDecoration: "none", whiteSpace: "nowrap" }}>
+              Import from GotPhoto
+            </Link>
+            <button
+              onClick={openCreateModal}
+              style={{ display: "inline-flex", alignItems: "center", gap: 8, background: "#111", color: "#fff", border: "none", borderRadius: 12, padding: "11px 18px", fontSize: 14, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap", flexShrink: 0, alignSelf: isMobile ? "flex-start" : undefined }}
+            >
+              <Plus size={16} /> Create School
+            </button>
+          </div>
         </div>
 
         <div
