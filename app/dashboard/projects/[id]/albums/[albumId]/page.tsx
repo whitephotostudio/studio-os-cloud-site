@@ -7,7 +7,7 @@ import { ArrowLeft, CheckSquare, FolderPlus, Lock, Menu, Settings, Trash2, Uploa
 import { createClient } from "@/lib/supabase/client";
 import { buildStoredMediaUrls } from "@/lib/storage-images";
 import { generateThumbnails } from "@/lib/generate-thumbnails-client";
-import { uploadToR2 } from "@/lib/upload-to-r2-client";
+import { PROJECT_PHOTO_ACCEPT, uploadProjectPhotoToR2, withPhotoUploadTimeout } from "@/lib/project-photo-upload-client";
 
 type ProjectRow = {
   id: string;
@@ -56,6 +56,21 @@ type UploadSession = {
   items: UploadQueueItem[];
 };
 
+type PendingPhotoRecord = {
+  id: string;
+  project_id: string;
+  collection_id: string;
+  storage_path: string;
+  filename: string;
+  mime_type: string;
+  preview_url: string;
+  thumbnail_url: string;
+  sort_order: number;
+  is_cover: boolean;
+};
+
+type UploadFailure = { file: File; message: string };
+
 function clean(value: string | null | undefined) {
   return (value ?? "").trim();
 }
@@ -102,6 +117,9 @@ export default function ProjectAlbumPage() {
   const [loadedMediaIds, setLoadedMediaIds] = useState<Set<string>>(new Set());
   const uploadPreviewRef = useRef<string | null>(null);
   const uploadResetTimeoutRef = useRef<number | null>(null);
+  const pendingPhotoRecords = useRef<Map<File, PendingPhotoRecord>>(new Map());
+  const uploadedPhotoObjects = useRef<Map<File, { key: string; contentType: string }>>(new Map());
+  const [uploadFailures, setUploadFailures] = useState<UploadFailure[]>([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -285,10 +303,15 @@ export default function ProjectAlbumPage() {
 
   async function handleUpload(event: ChangeEvent<HTMLInputElement>) {
     const files = Array.from(event.target.files ?? []);
+    event.target.value = "";
+    await uploadFiles(files);
+  }
+
+  async function uploadFiles(files: File[]) {
     if (!files.length) return;
+    if (uploading) return;
     if (!projectId || !albumId || !album) {
       setError("Album not found.");
-      event.target.value = "";
       return;
     }
 
@@ -299,6 +322,9 @@ export default function ProjectAlbumPage() {
 
     setUploading(true);
     setError("");
+    setUploadFailures([]);
+    const failures: UploadFailure[] = [];
+    const completedFiles = new Set<File>();
     const batchId = Date.now();
     const queueItems: UploadQueueItem[] = files.map((file, index) => ({
       id: `${batchId}-${index}`,
@@ -334,6 +360,7 @@ export default function ProjectAlbumPage() {
           .eq("collection_id", albumId)
           .order("sort_order", { ascending: false })
           .limit(1)
+          .abortSignal(AbortSignal.timeout(15000))
           .maybeSingle();
         if (!maxError && maxRow && typeof maxRow.sort_order === "number") {
           sortOrderBase = maxRow.sort_order + 1;
@@ -368,73 +395,87 @@ export default function ProjectAlbumPage() {
         const storagePath = `projects/${projectId}/albums/${albumId}/${safeName}`;
 
         try {
-          // Upload original to Cloudflare R2 (zero egress fees for downloads)
-          const accessToken = (await supabase.auth.getSession()).data.session?.access_token || "";
-          const r2Result = await uploadToR2(file, storagePath, accessToken);
+          const accessToken = (await withPhotoUploadTimeout(supabase.auth.getSession())).data.session?.access_token || "";
+          if (!accessToken) throw new Error("Your session has expired. Sign in again, then retry the failed photos.");
+          let payload = pendingPhotoRecords.current.get(file);
+          // Keep a stable record ID and uploaded object after a DB failure.
+          // A retry saves only the failed photo, without uploading its bytes again.
+          if (!payload) {
+            let r2Result = uploadedPhotoObjects.current.get(file);
+            if (!r2Result) {
+              r2Result = await uploadProjectPhotoToR2(file, storagePath, accessToken);
+              uploadedPhotoObjects.current.set(file, r2Result);
+            }
+            const uploadedStoragePath = r2Result.key;
 
-          if (!r2Result) {
-            throw new Error("Failed to upload file to storage.");
+            setUploadSession((prev) =>
+              prev
+                ? {
+                    ...prev,
+                    items: prev.items.map((item) =>
+                      item.id === queueId ? { ...item, status: "processing" } : item,
+                    ),
+                  }
+                : prev,
+            );
+
+            const generated = await generateThumbnails(uploadedStoragePath, accessToken, true);
+
+            const previewReference = generated.previewKey || uploadedStoragePath;
+            const thumbnailReference = generated.thumbnailKey || previewReference;
+
+            payload = {
+              id: crypto.randomUUID(),
+              project_id: projectId,
+              collection_id: albumId,
+              storage_path: uploadedStoragePath,
+              filename: file.name,
+              mime_type: r2Result.contentType,
+              preview_url: previewReference,
+              thumbnail_url: thumbnailReference,
+              sort_order: sortOrderBase + uploadedCount + failedCount,
+              is_cover: false,
+            };
+            pendingPhotoRecords.current.set(file, payload);
           }
 
-          const uploadedStoragePath = clean(r2Result.key) || storagePath;
-
-          setUploadSession((prev) =>
-            prev
-              ? {
-                  ...prev,
-                  items: prev.items.map((item) =>
-                    item.id === queueId ? { ...item, status: "processing" } : item,
-                  ),
-                }
-              : prev,
-          );
-
-          // Generate pre-sized thumbnails server-side on R2
-          const generated = await generateThumbnails(uploadedStoragePath, accessToken);
-
-          const previewReference = generated.previewKey || uploadedStoragePath;
-          const thumbnailReference = generated.thumbnailKey || previewReference;
-
-          const payload = {
-            project_id: projectId,
-            collection_id: albumId,
-            storage_path: uploadedStoragePath,
-            filename: file.name,
-            mime_type: file.type || null,
-            preview_url: previewReference || null,
-            thumbnail_url: thumbnailReference || null,
-            sort_order: sortOrderBase + uploadedCount + failedCount,
-            is_cover: false,
-          };
-
-          const { data: insertedRow, error: insertError } = await supabase
+          let { data: insertedRow, error: insertError } = await supabase
             .from("media")
             .insert(payload)
             .select("id,storage_path,thumbnail_url,preview_url,filename,mime_type,created_at,sort_order")
+            .abortSignal(AbortSignal.timeout(30000))
             .single();
+
+          // An earlier request can succeed in the DB while its response is
+          // lost. A stable primary key lets retry confirm that same record.
+          if (insertError?.code === "23505") {
+            const existing = await supabase.from("media")
+              .select("id,storage_path,thumbnail_url,preview_url,filename,mime_type,created_at,sort_order")
+              .eq("id", payload.id).eq("project_id", projectId).eq("collection_id", albumId)
+              .eq("storage_path", payload.storage_path).abortSignal(AbortSignal.timeout(30000)).single();
+            insertedRow = existing.data;
+            insertError = existing.error;
+          }
 
           if (insertError) {
             throw new Error(insertError.message || "Failed to save photo record.");
           }
+          if (!insertedRow?.id || insertedRow.storage_path !== payload.storage_path) {
+            throw new Error("The photo uploaded, but its gallery record was not confirmed. Retry the failed photo.");
+          }
 
           const nextRow = ({
-            ...(insertedRow ?? {
-              id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
-              storage_path: uploadedStoragePath,
-              filename: file.name,
-              mime_type: file.type || null,
-              preview_url: previewReference || null,
-              thumbnail_url: thumbnailReference || null,
-              created_at: new Date().toISOString(),
-              sort_order: sortOrderBase + uploadedCount + failedCount,
-            }),
+            ...insertedRow,
             download_url: buildStoredMediaUrls({
-              storagePath: uploadedStoragePath,
+              storagePath: payload.storage_path,
             }).originalUrl,
           }) as MediaRow;
 
           uploadedCount += 1;
-          setMedia((prev) => [...prev, nextRow]);
+          completedFiles.add(file);
+          pendingPhotoRecords.current.delete(file);
+          uploadedPhotoObjects.current.delete(file);
+          setMedia((prev) => prev.some((row) => row.id === nextRow.id) ? prev : [...prev, nextRow]);
           setUploadSession((prev) =>
             prev
               ? {
@@ -448,6 +489,8 @@ export default function ProjectAlbumPage() {
           );
         } catch (fileError) {
           failedCount += 1;
+          failures.push({ file, message: fileError instanceof Error ? fileError.message : "Could not upload this photo. Please retry." });
+          setUploadFailures([...failures]);
           setUploadSession((prev) =>
             prev
               ? {
@@ -481,7 +524,9 @@ export default function ProjectAlbumPage() {
       );
       scheduleUploadReset(failedCount > 0 ? 5000 : 2600);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to upload photos.");
+      const message = err instanceof Error ? err.message : "Failed to upload photos.";
+      setError(message);
+      setUploadFailures(files.filter((file) => !completedFiles.has(file)).map((file) => ({ file, message })));
       setUploadSession((prev) =>
         prev
           ? {
@@ -494,7 +539,6 @@ export default function ProjectAlbumPage() {
       scheduleUploadReset(5000);
     } finally {
       setUploading(false);
-      event.target.value = "";
     }
   }
 
@@ -663,8 +707,8 @@ export default function ProjectAlbumPage() {
             </div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", justifyContent: "flex-end" }}>
-            <input ref={fileInputRef} type="file" multiple accept="image/*" onChange={handleUpload} style={{ display: "none" }} />
-            <input ref={folderInputRef} type="file" multiple accept="image/*" onChange={handleUpload} style={{ display: "none" }} {...folderInputProps} />
+            <input ref={fileInputRef} type="file" multiple accept={PROJECT_PHOTO_ACCEPT} onChange={handleUpload} style={{ display: "none" }} />
+            <input ref={folderInputRef} type="file" multiple accept={PROJECT_PHOTO_ACCEPT} onChange={handleUpload} style={{ display: "none" }} {...folderInputProps} />
             <button onClick={toggleSelectAll} disabled={!media.length} style={{ display: "inline-flex", alignItems: "center", gap: 8, background: "#fff", border: "1px solid #111111", borderRadius: 12, padding: "12px 16px", fontWeight: 700, color: !media.length ? "#98a2b3" : "#111827", cursor: !media.length ? "default" : "pointer" }}>
               <CheckSquare size={16} /> {allSelected ? "Clear Selection" : "Select Multiple"}
             </button>
@@ -695,6 +739,16 @@ export default function ProjectAlbumPage() {
         {copyNotice ? <div style={{ marginBottom: 14, color: "#b91c1c", fontWeight: 700 }}>{copyNotice}</div> : null}
         {savedNotice ? <div style={{ marginBottom: 14, color: "#b91c1c", fontWeight: 700 }}>{savedNotice}</div> : null}
         {error ? <div style={{ marginBottom: 14, color: "#b42318", fontWeight: 700 }}>{error}</div> : null}
+        {uploadFailures.length > 0 ? (
+          <div role="alert" style={{ marginBottom: 18, padding: 16, background: "#fff5f5", border: "1px solid #f0c6c6", borderRadius: 12, color: "#b42318" }}>
+            <p style={{ margin: "0 0 10px", fontWeight: 700 }}>These photos need another attempt. Your successfully uploaded photos are saved.</p>
+            <ul style={{ margin: "0 0 12px", paddingLeft: 20 }}>
+              {uploadFailures.slice(0, 5).map(({ file, message }, index) => <li key={`${file.name}-${index}`}>{shortFileName(file.name)}: {message}</li>)}
+            </ul>
+            {uploadFailures.length > 5 ? <p>{uploadFailures.length - 5} more failed photos.</p> : null}
+            <button type="button" disabled={uploading} onClick={() => void uploadFiles(uploadFailures.map(({ file }) => file))} style={{ border: 0, borderRadius: 10, background: "#111827", color: "#fff", padding: "10px 14px", fontWeight: 800, cursor: "pointer" }}>Retry failed photos ({uploadFailures.length})</button>
+          </div>
+        ) : null}
 
         {!hasGridContent ? (
           <div style={{ background: "#fff", border: "1px dashed #d0d5dd", borderRadius: 18, padding: 28, color: "#4b5563" }}>

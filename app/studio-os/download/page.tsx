@@ -100,7 +100,8 @@ export default async function StudioOSDownloadPage() {
               workflow. There is no separate license for tethering, no third-party
               plug-in to keep up to date, and no manual export step between capture and
               cloud. Sign in inside the app with the same account you use on
-              studiooscloud.com and your Projects appear automatically.
+              studiooscloud.com. To bring an existing cloud Project onto this Mac, open
+              Cloud → Import Hub → From Cloud, select the Project, then choose Pull selected.
             </p>
           </section>
 
@@ -237,13 +238,14 @@ export default async function StudioOSDownloadPage() {
               </li>
               <li>
                 <span className="font-semibold text-neutral-950">2. Sign in with your photographer account.</span>{" "}
-                Use the same email and password you use at studiooscloud.com. The app
-                will mirror your Projects and access automatically.
+                Use the same email and password you use at studiooscloud.com. Connect to
+                the internet to complete sign-in and the account access check.
               </li>
               <li>
                 <span className="font-semibold text-neutral-950">3. Create or open a Project.</span>{" "}
-                Start a fresh Project from inside the app, or open one synced from the
-                cloud. Tethered capture and AI tools work the same way either direction.
+                Start a fresh Project inside the app. For a Project already on the web,
+                open Cloud → Import Hub → From Cloud, select it, then choose Pull selected.
+                Wait for the import to finish before starting capture.
               </li>
               <li>
                 <span className="font-semibold text-neutral-950">4. Publish to Studio OS Cloud.</span>{" "}

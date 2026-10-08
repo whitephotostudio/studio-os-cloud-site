@@ -1,9 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { withAuthRequestTimeout } from "@/lib/auth-request";
+import { useAuthFormReady } from "@/lib/use-auth-form-ready";
 import { ArrowLeft, CalendarDays, Lock, Globe } from "lucide-react";
 
 const statusOptions = [
@@ -32,6 +34,7 @@ const statusOptions = [
 type GalleryStatus = (typeof statusOptions)[number]["value"];
 
 export default function NewEventPage() {
+  const formReady = useAuthFormReady();
   const router = useRouter();
   const supabase = createClient();
 
@@ -46,9 +49,11 @@ export default function NewEventPage() {
   const [accessPin, setAccessPin] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const createRequestId = useRef<string | null>(null);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (!formReady) return;
     setError(null);
 
     if (!title.trim()) {
@@ -66,7 +71,9 @@ export default function NewEventPage() {
     try {
       const {
         data: { session },
-      } = await supabase.auth.getSession();
+      } = await withAuthRequestTimeout(supabase.auth.getSession(), "Checking your sign-in took too long. Your form is saved here; please try again.");
+
+      createRequestId.current ??= crypto.randomUUID();
 
       const res = await fetch("/api/dashboard/events", {
         method: "POST",
@@ -75,6 +82,7 @@ export default function NewEventPage() {
           Authorization: `Bearer ${session?.access_token ?? ""}`,
         },
         body: JSON.stringify({
+          clientRequestId: createRequestId.current,
           title: title.trim(),
           clientName: clientName.trim() || null,
           eventDate,
@@ -82,29 +90,33 @@ export default function NewEventPage() {
           accessMode,
           accessPin: accessMode === "pin" ? accessPin.trim() : null,
         }),
+        signal: AbortSignal.timeout(30000),
       });
 
-      const payload = await res.json();
+      const payload = await res.json().catch(() => null) as { ok?: boolean; message?: string; project?: { id?: string } } | null;
 
       if (res.status === 401) {
-        router.push("/sign-in");
+        router.push("/sign-in?redirect=%2Fdashboard%2Fprojects%2Fnew");
         return;
       }
 
-      if (!res.ok || payload.ok === false) {
-        setError(payload.message || "Failed to create event.");
+      if (!res.ok || payload?.ok !== true) {
+        setError(payload?.message || "We could not confirm whether your gallery was created. Check your galleries, or retry here safely.");
         setSaving(false);
         return;
       }
 
       // Success — redirect to the new event
       if (payload.project?.id) {
+        createRequestId.current = null;
         router.push(`/dashboard/projects/${payload.project.id}`);
       } else {
-        router.push("/dashboard/projects/events");
+        throw new Error("We could not confirm your new gallery. Check your galleries, or retry here safely.");
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Something went wrong.");
+      setError(err instanceof Error && err.name !== "AbortError" && err.name !== "TimeoutError" && err.name !== "TypeError"
+        ? err.message : "We could not confirm whether your gallery was created. Check your galleries, or retry here safely without creating a second copy.");
+    } finally {
       setSaving(false);
     }
   }
@@ -132,11 +144,12 @@ export default function NewEventPage() {
           {error && (
             <div className="mt-6 rounded-[14px] border border-[#f0c6c6] bg-[#fff5f5] px-5 py-4 text-sm text-[#b42318]">
               {error}
+              <Link href="/dashboard/projects/events" className="mt-2 block font-semibold underline">Check my galleries</Link>
             </div>
           )}
 
           {/* Form */}
-          <form onSubmit={handleSubmit} className="mt-8 space-y-6">
+          <form method="post" onSubmit={handleSubmit} className="mt-8 space-y-6">
             {/* Event Name */}
             <div>
               <label className="mb-2 block text-sm font-medium text-[#13234a]">
@@ -295,7 +308,7 @@ export default function NewEventPage() {
             <div className="flex items-center gap-4 pt-4">
               <button
                 type="submit"
-                disabled={saving}
+                disabled={!formReady || saving}
                 className="inline-flex items-center gap-3 rounded-[22px] bg-[#0c1633] px-7 py-5 text-xl font-semibold text-white shadow-sm transition hover:-translate-y-0.5 disabled:opacity-50 disabled:hover:translate-y-0"
               >
                 {saving ? "Creating…" : "Create Event"}

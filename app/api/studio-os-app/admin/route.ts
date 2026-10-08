@@ -42,12 +42,18 @@ function normalizeReleaseState(value: string | null | undefined): StudioAppRelea
 
 export async function POST(request: NextRequest) {
   try {
-    const { user } = await resolveDashboardAuth(request);
+    const { user, mfaSatisfied } = await resolveDashboardAuth(request);
     if (!user) {
       return NextResponse.json(
         { ok: false, message: "Please sign in again before updating Studio OS App rollout." },
         { status: 401 },
       );
+    }
+    if (mfaSatisfied === false) {
+      return NextResponse.json({
+        ok: false, mfaRequired: true,
+        message: "Complete two-step verification before updating Studio OS App rollout.",
+      }, { status: 403 });
     }
 
     const service = createDashboardServiceClient();

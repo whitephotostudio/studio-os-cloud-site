@@ -5,8 +5,11 @@ import Link from "next/link";
 import { SiteHeader } from "@/components/site-header";
 import { SiteFooter } from "@/components/site-footer";
 import { createClient } from "@/lib/supabase/client";
+import { useAuthFormReady } from "@/lib/use-auth-form-ready";
+import { authRequestErrorMessage, withAuthRequestTimeout } from "@/lib/auth-request";
 
 export default function ForgotPasswordPage() {
+  const formReady = useAuthFormReady();
   const supabase = createClient();
 
   const [email, setEmail] = useState("");
@@ -16,27 +19,32 @@ export default function ForgotPasswordPage() {
 
   async function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    if (!formReady) return;
     setLoading(true);
     setError("");
 
-    const { error: resetError } = await supabase.auth.resetPasswordForEmail(
-      email,
-      { redirectTo: `${window.location.origin}/reset-password` },
-    );
-
-    if (resetError) {
-      setError(resetError.message);
+    try {
+      const { error: resetError } = await withAuthRequestTimeout(supabase.auth.resetPasswordForEmail(
+        email.trim(),
+        { redirectTo: `${window.location.origin}/reset-password` },
+      ), "Sending your reset link took too long. Check your inbox before trying again.");
+      if (resetError) throw resetError;
+      setSent(true);
+    } catch (error) {
+      setError(authRequestErrorMessage(error, "We could not send your reset link. Please try again.", "password reset"));
+    } finally {
       setLoading(false);
-      return;
     }
-
-    setSent(true);
-    setLoading(false);
   }
 
   return (
     <div className="min-h-screen bg-white text-neutral-950">
       <SiteHeader />
+      <noscript>
+        <p className="mx-auto max-w-xl px-6 py-4 text-sm text-red-700 bg-white">
+          Enable JavaScript and reload this page to securely use your Studio OS account.
+        </p>
+      </noscript>
 
       <main className="mx-auto flex max-w-7xl px-6 py-20">
         <div className="mx-auto w-full max-w-md">
@@ -82,13 +90,16 @@ export default function ForgotPasswordPage() {
                   Enter the email you used to sign up and we&apos;ll send you a link to reset your password.
                 </p>
 
-                <form onSubmit={handleSubmit} className="mt-8 space-y-5">
+                <form method="post" onSubmit={handleSubmit} className="mt-8 space-y-5">
                   <div>
-                    <label className="mb-2 block text-sm font-medium text-neutral-700">
+                    <label htmlFor="password-reset-email" className="mb-2 block text-sm font-medium text-neutral-700">
                       Email
                     </label>
                     <input
                       type="email"
+                      id="password-reset-email"
+                      name="email"
+                      autoComplete="email"
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
                       required
@@ -105,7 +116,7 @@ export default function ForgotPasswordPage() {
 
                   <button
                     type="submit"
-                    disabled={loading}
+                    disabled={!formReady || loading}
                     className="w-full rounded-2xl bg-black px-4 py-3 text-sm font-medium text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     {loading ? "Sending..." : "Send Reset Link"}

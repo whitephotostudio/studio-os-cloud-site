@@ -29,8 +29,8 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const { user } = await resolveDashboardAuth(request);
-    if (!user) {
+    const { user, mfaSatisfied } = await resolveDashboardAuth(request);
+    if (!user || mfaSatisfied === false) {
       const signInUrl = new URL("/sign-in", request.url);
       signInUrl.searchParams.set("next", getProtectedStudioAppDownloadHref(platform));
       return NextResponse.redirect(signInUrl);

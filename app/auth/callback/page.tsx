@@ -6,6 +6,7 @@ import { SiteHeader } from "@/components/site-header";
 import { SiteFooter } from "@/components/site-footer";
 import { createClient } from "@/lib/supabase/client";
 import { completeConfirmedAccountSetup } from "@/lib/confirmation-setup";
+import { authRequestErrorMessage, withAuthRequestTimeout } from "@/lib/auth-request";
 
 type CallbackState =
   | { kind: "loading"; confirmed?: boolean }
@@ -54,18 +55,21 @@ export default function AuthCallbackPage() {
         if (code) {
           // Development effect replay and repeat renders must share this one-use exchange.
           confirmationExchange.current ??= supabase.auth.exchangeCodeForSession(code);
-          const { error } = await confirmationExchange.current;
+          const { error } = await withAuthRequestTimeout(confirmationExchange.current,
+            "Email confirmation took too long. Try signing in, or resend the verification email from the sign-in page.");
           if (error) {
-            if (!cancelled) setState({ kind: "error", message: error.message });
+            if (!cancelled) setState({ kind: "error", message: authRequestErrorMessage(error, "We could not confirm your email. Please try signing in.", "email confirmation") });
             return;
           }
         }
 
         // Whether we came in via PKCE or implicit hash, the supabase-js
         // client will have a session by now if verification succeeded.
-        const {
-          data: { session },
-        } = await supabase.auth.getSession();
+        const { data: { session }, error: sessionError } = await withAuthRequestTimeout(
+          supabase.auth.getSession(),
+          "Email confirmation took too long. Try signing in, or resend the verification email from the sign-in page.",
+        );
+        if (sessionError) throw sessionError;
 
         if (!session) {
           if (!cancelled) {
@@ -78,15 +82,29 @@ export default function AuthCallbackPage() {
           return;
         }
 
-        if (!cancelled) setConfirmedSession({ accessToken: session.access_token, email: session.user.email ?? null });
+        if (!cancelled) {
+          // A refresh must not replay a one-use code or keep auth tokens in the address bar.
+          url.searchParams.delete("code");
+          url.hash = "";
+          try { window.history.replaceState(window.history.state, "", url.pathname + url.search); } catch {
+            // History changes are optional; account setup still needs to finish.
+          }
+          try {
+            if (window.localStorage.getItem("studio-os-transient-session") === "1") {
+              // This confirmation establishes a fresh session in this browser,
+              // even when the photographer previously opted out of remembering it.
+              window.sessionStorage.setItem("studio-os-session-started", "1");
+            }
+          } catch {
+            // Locked-down storage cannot prevent confirmation or account setup.
+          }
+          setConfirmedSession({ accessToken: session.access_token, email: session.user.email ?? null });
+        }
       } catch (err) {
         if (!cancelled) {
           setState({
             kind: "error",
-            message:
-              err instanceof Error
-                ? err.message
-                : "Something went wrong confirming your email.",
+            message: authRequestErrorMessage(err, "Something went wrong confirming your email.", "email confirmation"),
           });
         }
       }

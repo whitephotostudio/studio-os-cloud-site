@@ -100,7 +100,7 @@ function harness(fetcher, props = { publicRelease: true, macReady: true, windows
     "@/lib/trial-config": { FREE_TRIAL_DAYS: 30 },
   };
   vm.runInNewContext(compiled, {
-    exports, window, fetch: fetcher, URLSearchParams, AbortController,
+    exports, window, fetch: fetcher, URLSearchParams, AbortController, AbortSignal,
     require: name => { assert.ok(name in modules, `Unexpected module ${name}`); return modules[name]; },
   });
   return {
@@ -279,5 +279,40 @@ test("the explicit sign-out control retains its behavior", async () => {
   await button(ui.render(), "Not you? Sign out").props.onClick();
   assert.equal(ui.signOutCalls, 1);
   assert.equal(ui.window.location.href, "/studio-os/download");
+  ui.unmount();
+});
+
+
+test("MFA-required status offers verification instead of signup, download or outage retry", async () => {
+  const ui = harness(async () => Response.json({ok:false, signedIn:true, mfaRequired:true, message:"Complete two-step verification to view your photographer keys and app access."}, {status:403}));
+  ui.render(); await settle(); const tree = ui.render();
+  assert.ok(textOf(tree).includes("Complete two-step verification"));
+  assert.ok(findAll(tree, "Link").some(node => node.props.href.startsWith("/sign-in?redirect=%2Fstudio-os%2Fdownload")));
+  assert.equal(button(tree,"Start Free"), undefined);
+  assert.equal(downloads(tree).length,0);
+  assert.equal(ui.signOutCalls,0);
+  ui.unmount();
+});
+
+test("trial starts at signup without depending on an optional interest request", async () => {
+  let calls=0;
+  const ui = harness(async () => { calls++; return Response.json({ok:false,signedIn:false},{status:401}); });
+  ui.render(); await settle(); let tree=ui.render();
+  findAll(tree,"input")[0].props.onChange({target:{value:"photographer@example.invalid"}});
+  tree=ui.render();
+  await button(tree,"Start Free").props.onClick();
+  assert.equal(calls,1);
+  assert.ok(ui.window.location.href.startsWith("/sign-up?redirect=%2Fstudio-os%2Fdownload&source=download-app&email="));
+  ui.unmount();
+});
+
+test("missing desktop entitlement is explained with plan and support recovery", async () => {
+  const ui=harness(async()=>Response.json({...validStatus,entitlement:{canDownload:false}}));
+  ui.render(); await settle(); const tree=ui.render();
+  assert.ok(textOf(tree).includes("does not have desktop download access"));
+  assert.ok(findAll(tree,"Link").some(node=>node.props.href === "/pricing"));
+  assert.ok(findAll(tree,"a").some(node=>node.props.href === "mailto:hello@studiooscloud.com"));
+  assert.ok(!textOf(tree).includes("Mac download coming soon"));
+  assert.equal(downloads(tree).length,0);
   ui.unmount();
 });

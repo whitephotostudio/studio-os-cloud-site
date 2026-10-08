@@ -18,7 +18,8 @@ export async function GET(request: NextRequest) {
   let user: { id: string; email?: string | null } | null = null;
   let photographerId: string | null = null;
   try {
-    ({ user } = await resolveDashboardAuth(request));
+    const auth = await resolveDashboardAuth(request);
+    user = auth.user;
     if (!user) {
       return NextResponse.json(
         {
@@ -28,6 +29,14 @@ export async function GET(request: NextRequest) {
         },
         { status: 401 },
       );
+    }
+    if (auth.mfaSatisfied === false) {
+      return NextResponse.json({
+        ok: false,
+        signedIn: true,
+        mfaRequired: true,
+        message: "Complete two-step verification to view your photographer keys and app access.",
+      }, { status: 403 });
     }
 
     const service = createDashboardServiceClient();

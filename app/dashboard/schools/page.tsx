@@ -6,6 +6,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { withAuthRequestTimeout } from "@/lib/auth-request";
 import { readDashboardListCache, writeDashboardListCache, invalidateDashboardListCache, clearDashboardListCache } from "@/lib/dashboard-list-cache";
 import { Logo } from "@/components/logo";
 import { proxiedPhotoUrl } from "@/lib/photo-url";
@@ -167,6 +168,7 @@ export default function SchoolsPage() {
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState("");
   const createInputRef = useRef<HTMLInputElement>(null);
+  const createRequestId = useRef<string | null>(null);
 
   // Selection state
   const [selectMode, setSelectMode] = useState(false);
@@ -388,6 +390,7 @@ export default function SchoolsPage() {
   }
 
   function openCreateModal() {
+    createRequestId.current = null;
     setNewSchoolName("");
     setCreateError("");
     setShowCreateModal(true);
@@ -401,7 +404,8 @@ export default function SchoolsPage() {
     setCreating(true);
     setCreateError("");
     try {
-      const { data: { session } } = await supabase.auth.getSession();
+      const { data: { session } } = await withAuthRequestTimeout(supabase.auth.getSession(), "Checking your sign-in took too long. Your form is saved here; please try again.");
+      createRequestId.current ??= crypto.randomUUID();
       const res = await fetch("/api/dashboard/schools", {
         method: "POST",
         headers: {
@@ -409,12 +413,15 @@ export default function SchoolsPage() {
           Authorization: `Bearer ${session?.access_token ?? ""}`,
         },
         body: JSON.stringify({
+          clientRequestId: createRequestId.current,
           school_name: name,
           shoot_date: newSchoolShootDate || null,
         }),
+        signal: AbortSignal.timeout(30000),
       });
-      const data = (await res.json()) as { ok?: boolean; message?: string; school?: { id: string } };
-      if (!res.ok || !data.ok) throw new Error(data.message || "Failed to create school.");
+      const data = await res.json().catch(() => null) as { ok?: boolean; message?: string; school?: { id: string } } | null;
+      if (!res.ok || !data?.ok || !data.school?.id) throw new Error(data?.message || "We could not confirm whether your school was created. Check your schools, or retry here safely.");
+      createRequestId.current = null;
       invalidateDashboardListCache("schools");
       setShowCreateModal(false);
       setNewSchoolShootDate(new Date().toISOString().slice(0, 10));
@@ -424,7 +431,8 @@ export default function SchoolsPage() {
         void load();
       }
     } catch (err) {
-      setCreateError(err instanceof Error ? err.message : "Failed to create school.");
+      setCreateError(err instanceof Error && err.name !== "AbortError" && err.name !== "TimeoutError" && err.name !== "TypeError"
+        ? err.message : "We could not confirm whether your school was created. Check your schools, or retry here safely without creating a second copy.");
     } finally {
       setCreating(false);
     }
@@ -961,7 +969,7 @@ export default function SchoolsPage() {
                 <X size={20} />
               </button>
             </div>
-            <form onSubmit={(e) => { void handleCreateSchool(e); }}>
+            <form method="post" onSubmit={(e) => { void handleCreateSchool(e); }}>
               <div style={{ marginBottom: 20 }}>
                 <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#374151", marginBottom: 8 }}>
                   School Name
@@ -1004,6 +1012,7 @@ export default function SchoolsPage() {
               {createError && (
                 <div style={{ marginBottom: 16, padding: "10px 14px", background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 10, color: "#b91c1c", fontSize: 13 }}>
                   {createError}
+                  <button type="button" onClick={() => { setShowCreateModal(false); void load(); }} style={{ display: "block", marginTop: 8, border: 0, background: "none", color: "#b91c1c", fontWeight: 700, textDecoration: "underline", cursor: "pointer" }}>Check my schools</button>
                 </div>
               )}
               <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>

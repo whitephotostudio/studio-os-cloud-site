@@ -71,13 +71,16 @@ export async function POST(request: Request) {
       replyTo:
         process.env.WELCOME_REPLY_TO_EMAIL ||
         process.env.SUPPORT_EMAIL ||
-        "harout@whitephoto.com",
+        "hello@studiooscloud.com",
       tags: [
         { name: "category", value: "signup-welcome" },
         { name: "campaign", value: campaignSource },
       ],
       idempotencyKey: `studio-os-signup-welcome-${user.id}`,
+      timeoutMs: 10_000,
     });
+
+    if (!sent.id) throw new Error("Welcome provider did not return a message receipt.");
 
     const sentAt = new Date().toISOString();
     const { error: updateError } = await service.auth.admin.updateUserById(user.id, {

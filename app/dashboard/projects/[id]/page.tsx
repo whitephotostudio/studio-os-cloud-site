@@ -2,10 +2,11 @@
 
 import { formatCalendarDate } from "@/lib/calendar-dates";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { withAuthRequestTimeout } from "@/lib/auth-request";
 import {
   ArrowLeft,
   Check,
@@ -265,6 +266,8 @@ export default function ProjectDetailPage() {
   const [newAlbumOpen, setNewAlbumOpen] = useState(false);
   const [newAlbumTitle, setNewAlbumTitle] = useState("");
   const [creatingAlbum, setCreatingAlbum] = useState(false);
+  const [newAlbumError, setNewAlbumError] = useState("");
+  const newAlbumRequestId = useRef<string | null>(null);
   const [shareNotice, setShareNotice] = useState("");
   const [shareModalOpen, setShareModalOpen] = useState(false);
   const [shareView, setShareView] = useState<"menu" | "compose" | "report" | "favorites">("menu");
@@ -423,7 +426,7 @@ export default function ProjectDetailPage() {
     };
   }, [projectId]);
 
-  async function requestDashboard<T>(input: string, init?: RequestInit) {
+  async function requestDashboard<T>(input: string, init?: RequestInit, timeoutMilliseconds?: number) {
     const headers = new Headers(init?.headers);
     if (init?.body !== undefined && !headers.has("Content-Type")) {
       headers.set("Content-Type", "application/json");
@@ -431,7 +434,10 @@ export default function ProjectDetailPage() {
 
     // Attach auth token so server-side resolveDashboardAuth succeeds
     if (!headers.has("Authorization")) {
-      const { data: { session } } = await supabase.auth.getSession();
+      const sessionRequest = supabase.auth.getSession();
+      const { data: { session } } = await (timeoutMilliseconds
+        ? withAuthRequestTimeout(sessionRequest, "Checking your sign-in took too long. Please retry; your album name is saved here.")
+        : sessionRequest);
       if (session?.access_token) {
         headers.set("Authorization", `Bearer ${session.access_token}`);
       }
@@ -441,6 +447,7 @@ export default function ProjectDetailPage() {
       cache: "no-store",
       ...init,
       headers,
+      ...(timeoutMilliseconds ? { signal: AbortSignal.timeout(timeoutMilliseconds) } : {}),
     });
 
     const payload = (await response.json().catch(() => ({}))) as {
@@ -928,26 +935,38 @@ export default function ProjectDetailPage() {
     const title = clean(newAlbumTitle);
     if (!title) return;
     setCreatingAlbum(true);
+    setNewAlbumError("");
     try {
+      newAlbumRequestId.current ??= crypto.randomUUID();
       const payload = await requestDashboard<{ album?: CollectionRow | null }>(
         `/api/dashboard/events/${projectId}/albums`,
         {
           method: "POST",
-          body: JSON.stringify({ title }),
+          body: JSON.stringify({ title, clientRequestId: newAlbumRequestId.current }),
         },
+        30000,
       );
 
       const created = payload.album;
-      if (!created) throw new Error("Failed to create album.");
-      setCollections((prev) => sortCollections([...prev, created]));
-      setAlbumsCount((prev) => prev + 1);
+      if (!created?.id) throw new Error("We could not confirm whether your album was created. Check your albums, or retry here safely.");
+      const alreadyListed = collections.some((row) => row.id === created.id);
+      setCollections((prev) => sortCollections(prev.some((row) => row.id === created.id) ? prev : [...prev, created]));
+      if (!alreadyListed) setAlbumsCount((prev) => prev + 1);
+      newAlbumRequestId.current = null;
       setNewAlbumTitle("");
       setNewAlbumOpen(false);
     } catch (err) {
-      alert(err instanceof Error ? err.message : "Failed to create album.");
+      setNewAlbumError(err instanceof Error && err.name !== "AbortError" && err.name !== "TimeoutError" && err.name !== "TypeError"
+        ? err.message : "We could not confirm whether your album was created. Check your albums, or retry here safely without creating a second copy.");
     } finally {
       setCreatingAlbum(false);
     }
+  }
+
+  function openNewAlbum() {
+    newAlbumRequestId.current = null;
+    setNewAlbumError("");
+    setNewAlbumOpen(true);
   }
 
   function generateAlbumPin() {
@@ -1446,7 +1465,7 @@ export default function ProjectDetailPage() {
                   )}
                 </button>
               </div>
-              <button onClick={() => setNewAlbumOpen(true)} style={{ width: "100%", display: "flex", justifyContent: "space-between", alignItems: "center", borderRadius: 10, border: "1px solid #d0d5dd", background: "#fff", color: "#111111", padding: "12px 14px", fontWeight: 800, cursor: "pointer" }}>
+              <button onClick={openNewAlbum} style={{ width: "100%", display: "flex", justifyContent: "space-between", alignItems: "center", borderRadius: 10, border: "1px solid #d0d5dd", background: "#fff", color: "#111111", padding: "12px 14px", fontWeight: 800, cursor: "pointer" }}>
                 <span>Add New Album</span>
                 <FolderOpen size={16} />
               </button>
@@ -1507,7 +1526,7 @@ export default function ProjectDetailPage() {
               <div style={{ display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "flex-end", alignItems: "center" }}>
                 {albumSearch ? <div style={{ color: "#b91c1c", fontSize: 13, fontWeight: 700, minWidth: 72, textAlign: "right" }}>{albumSearchCountLabel}</div> : null}
                 <button style={{ borderRadius: 8, border: "1px solid #111111", background: "#fff", color: "#111111", padding: "9px 12px", fontWeight: 700, cursor: "pointer" }}>Sort by: Name A-Z</button>
-                <button onClick={() => setNewAlbumOpen(true)} style={{ borderRadius: 8, border: "1px solid #111111", background: "#fff", color: "#111111", padding: "9px 12px", fontWeight: 700, cursor: "pointer" }}>Add Albums</button>
+                <button onClick={openNewAlbum} style={{ borderRadius: 8, border: "1px solid #111111", background: "#fff", color: "#111111", padding: "9px 12px", fontWeight: 700, cursor: "pointer" }}>Add Albums</button>
                 <button onClick={() => openDeleteAlbums(selectedAlbumIds)} disabled={!selectedAlbumIds.length} style={{ borderRadius: 8, border: "1px solid #fecaca", background: selectedAlbumIds.length ? "#fff" : "#f8fafc", color: selectedAlbumIds.length ? "#b42318" : "#98a2b3", padding: "9px 12px", fontWeight: 700, cursor: selectedAlbumIds.length ? "pointer" : "not-allowed" }}>Delete Selected{selectedAlbumIds.length ? ` (${selectedAlbumIds.length})` : ""}</button>
                 <button
                   onClick={() => void generateAlbumPasswords()}
@@ -2346,9 +2365,10 @@ export default function ProjectDetailPage() {
                 autoFocus
                 style={{ width: "100%", boxSizing: "border-box", borderRadius: 14, border: "1px solid #d0d5dd", padding: "14px 16px", fontSize: 15, color: "#111111", outline: "none" }}
               />
+              {newAlbumError ? <div role="alert" style={{ marginTop: 12, color: "#b42318", lineHeight: 1.6 }}>{newAlbumError}<button type="button" onClick={() => window.location.reload()} style={{ display: "block", marginTop: 6, background: "none", border: 0, color: "#b42318", fontWeight: 700, textDecoration: "underline", cursor: "pointer" }}>Reload to check my albums</button></div> : null}
             </div>
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 12, padding: "18px 22px", borderTop: "1px solid #eef2f7" }}>
-              <button onClick={() => { setNewAlbumOpen(false); setNewAlbumTitle(""); }} style={{ borderRadius: 14, border: "1px solid #d0d5dd", background: "#fff", color: "#111111", padding: "12px 16px", fontWeight: 800, cursor: "pointer" }}>Cancel</button>
+              <button disabled={creatingAlbum} onClick={() => { newAlbumRequestId.current = null; setNewAlbumError(""); setNewAlbumOpen(false); setNewAlbumTitle(""); }} style={{ borderRadius: 14, border: "1px solid #d0d5dd", background: "#fff", color: "#111111", padding: "12px 16px", fontWeight: 800, cursor: "pointer" }}>Cancel</button>
               <button onClick={createAlbum} disabled={!clean(newAlbumTitle) || creatingAlbum} style={{ borderRadius: 14, border: 0, background: !clean(newAlbumTitle) || creatingAlbum ? "#cbd5e1" : "#0f172a", color: "#fff", padding: "12px 16px", fontWeight: 800, cursor: !clean(newAlbumTitle) || creatingAlbum ? "not-allowed" : "pointer" }}>{creatingAlbum ? "Creating..." : "Create album"}</button>
             </div>
           </div>

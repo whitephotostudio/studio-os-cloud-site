@@ -5,12 +5,15 @@ import Link from "next/link";
 import { SiteHeader } from "@/components/site-header";
 import { SiteFooter } from "@/components/site-footer";
 import { createClient } from "@/lib/supabase/client";
+import { useAuthFormReady } from "@/lib/use-auth-form-ready";
 import {
   getPlanPriceCents,
   normalizeBillingInterval,
   normalizePlanCode,
 } from "@/lib/studio-pricing";
 import { FREE_TRIAL_DAYS } from "@/lib/trial-config";
+import { authRequestErrorMessage, withAuthRequestTimeout } from "@/lib/auth-request";
+import { PASSWORD_REQUIREMENTS } from "@/lib/password-policy";
 
 const publicPlanNames = {
   starter: "Web Gallery Plan",
@@ -19,6 +22,7 @@ const publicPlanNames = {
 } as const;
 
 export default function SignUpPage() {
+  const formReady = useAuthFormReady();
   const supabase = createClient();
   const [selectedPlan, setSelectedPlan] = useState<ReturnType<typeof normalizePlanCode>>(null);
   const [selectedInterval, setSelectedInterval] = useState<"month" | "year">("month");
@@ -52,82 +56,98 @@ export default function SignUpPage() {
 
   async function handleSignUp(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    if (!formReady) return;
     setLoading(true);
     setMessage("");
 
-    const origin = typeof window !== "undefined" ? window.location.origin : "";
-    const { data, error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        data: {
-          full_name: fullName,
-          business_name: businessName,
-          phone: phone,
-          ...(campaignSource
-            ? {
-                campaign_source: campaignSource,
-                campaign_joined_at: new Date().toISOString(),
-              }
-            : {}),
+    try {
+      const missingPasswordRequirements = PASSWORD_REQUIREMENTS.filter(requirement => !requirement.test(password));
+      if (missingPasswordRequirements.length) {
+        throw new Error(`Your password needs: ${missingPasswordRequirements.map(requirement => requirement.label.toLowerCase()).join(", ")}.`);
+      }
+      const origin = typeof window !== "undefined" ? window.location.origin : "";
+      const { data, error } = await withAuthRequestTimeout(supabase.auth.signUp({
+        email: email.trim(),
+        password,
+        options: {
+          data: {
+            full_name: fullName,
+            business_name: businessName,
+            phone: phone,
+            ...(campaignSource
+              ? {
+                  campaign_source: campaignSource,
+                  campaign_joined_at: new Date().toISOString(),
+                }
+              : {}),
+          },
+          // Land on our friendly /auth/callback page after the user clicks the
+          // verification link in their welcome email, then bounce them to the
+          // dashboard with their trial active.
+          emailRedirectTo: origin ? `${origin}/auth/callback` : undefined,
         },
-        // Land on our friendly /auth/callback page after the user clicks the
-        // verification link in their welcome email, then bounce them to the
-        // dashboard with their trial active.
-        emailRedirectTo: origin ? `${origin}/auth/callback` : undefined,
-      },
-    });
+      }), "Account creation took too long. Check your inbox for a confirmation email, or try signing in before trying again.");
 
-    if (error) {
-      setMessage(error.message);
-      setLoading(false);
-      return;
-    }
+      if (error) {
+        throw error;
+      }
 
-    const existingEmailDetected =
-      Array.isArray(data.user?.identities) && data.user!.identities.length === 0;
+      const existingEmailDetected =
+        Array.isArray(data.user?.identities) && data.user!.identities.length === 0;
 
-    if (existingEmailDetected) {
-      setMessage(
-        "This email already has a Studio OS Cloud account. Sign in instead, or use Forgot password if you need to reset it.",
-      );
-      setLoading(false);
-      return;
-    }
+      if (existingEmailDetected) {
+        setMessage(
+          "This email already has a Studio OS Cloud account. Sign in instead, or use Forgot password if you need to reset it.",
+        );
+        return;
+      }
 
-    if (data.user?.id) {
-      void fetch("/api/onboarding/welcome", {
+      if (!data.user?.id) {
+        throw new Error("We could not create your account. Please try again.");
+      }
+
+      if (data.user.id) {
+        void fetch("/api/onboarding/welcome", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ userId: data.user.id }),
+          keepalive: true,
+        }).catch(() => undefined);
+      }
+
+      setAccountCreated(true);
+      setMessage("Check your email to confirm your account, then choose where you want to go next.");
+      let anonymousId: string | undefined;
+      try {
+        anonymousId = window.localStorage.getItem("studio-os-anonymous-visitor-id") ?? undefined;
+      } catch {
+        // Tracking is optional when browser storage is unavailable.
+      }
+      void fetch("/api/marketing/conversions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId: data.user.id }),
+        body: JSON.stringify({
+          event: "signup_account_created",
+          path: window.location.pathname,
+          placement: campaignSource
+            ? "founding_100_signup"
+            : downloadSource
+              ? "download_signup"
+              : "signup_form",
+          label: campaignSource
+            ? "Founding 100 account created"
+            : selectedPlan
+              ? publicPlanNames[selectedPlan]
+              : "No plan selected",
+          anonymousId,
+        }),
         keepalive: true,
       }).catch(() => undefined);
+    } catch (error) {
+      setMessage(authRequestErrorMessage(error, "Unable to create your account. Please try again.", "sign-up"));
+    } finally {
+      setLoading(false);
     }
-
-    setAccountCreated(true);
-    setMessage("Check your email to confirm your account, then choose where you want to go next.");
-    void fetch("/api/marketing/conversions", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        event: "signup_account_created",
-        path: window.location.pathname,
-        placement: campaignSource
-          ? "founding_100_signup"
-          : downloadSource
-            ? "download_signup"
-            : "signup_form",
-        label: campaignSource
-          ? "Founding 100 account created"
-          : selectedPlan
-            ? publicPlanNames[selectedPlan]
-            : "No plan selected",
-        anonymousId:
-          window.localStorage.getItem("studio-os-anonymous-visitor-id") ?? undefined,
-      }),
-      keepalive: true,
-    }).catch(() => undefined);
-    setLoading(false);
   }
 
   const signInHref = (() => {
@@ -154,6 +174,11 @@ export default function SignUpPage() {
   return (
     <div className="min-h-screen bg-white text-neutral-950">
       <SiteHeader />
+      <noscript>
+        <p className="mx-auto max-w-xl px-6 py-4 text-sm text-red-700 bg-white">
+          Enable JavaScript and reload this page to securely use your Studio OS account.
+        </p>
+      </noscript>
 
       <main className="mx-auto flex max-w-7xl px-6 py-20">
         <div className="grid w-full gap-12 lg:grid-cols-2">
@@ -220,13 +245,14 @@ export default function SignUpPage() {
                     No credit card needed. Your {FREE_TRIAL_DAYS}-day trial begins after email verification.
                   </p>
 
-                  <form onSubmit={handleSignUp} className="mt-8 space-y-5">
+                  <form method="post" onSubmit={handleSignUp} className="mt-8 space-y-5">
                     <div>
-                      <label className="mb-2 block text-sm font-medium text-neutral-700">
+                      <label htmlFor="signup-name" className="mb-2 block text-sm font-medium text-neutral-700">
                         Full Name
                       </label>
                       <input
                         type="text"
+                        id="signup-name"
                         name="name"
                         autoComplete="name"
                         value={fullName}
@@ -237,11 +263,12 @@ export default function SignUpPage() {
                     </div>
 
                     <div>
-                      <label className="mb-2 block text-sm font-medium text-neutral-700">
+                      <label htmlFor="signup-organization" className="mb-2 block text-sm font-medium text-neutral-700">
                         Business Name
                       </label>
                       <input
                         type="text"
+                        id="signup-organization"
                         name="organization"
                         autoComplete="organization"
                         value={businessName}
@@ -252,11 +279,12 @@ export default function SignUpPage() {
                     </div>
 
                     <div>
-                      <label className="mb-2 block text-sm font-medium text-neutral-700">
+                      <label htmlFor="signup-tel" className="mb-2 block text-sm font-medium text-neutral-700">
                         Phone Number
                       </label>
                       <input
                         type="tel"
+                        id="signup-tel"
                         name="tel"
                         autoComplete="tel"
                         value={phone}
@@ -267,11 +295,12 @@ export default function SignUpPage() {
                     </div>
 
                     <div>
-                      <label className="mb-2 block text-sm font-medium text-neutral-700">
+                      <label htmlFor="signup-email" className="mb-2 block text-sm font-medium text-neutral-700">
                         Email
                       </label>
                       <input
                         type="email"
+                        id="signup-email"
                         name="email"
                         autoComplete="email"
                         value={email}
@@ -283,19 +312,25 @@ export default function SignUpPage() {
                     </div>
 
                     <div>
-                      <label className="mb-2 block text-sm font-medium text-neutral-700">
+                      <label htmlFor="signup-new-password" className="mb-2 block text-sm font-medium text-neutral-700">
                         Password
                       </label>
                       <input
                         type="password"
+                        id="signup-new-password"
                         name="new-password"
                         autoComplete="new-password"
+                        minLength={8}
                         value={password}
                         onChange={(e) => setPassword(e.target.value)}
                         required
                         className="w-full rounded-2xl border border-neutral-200 px-4 py-3 text-sm outline-none transition focus:border-black"
                         placeholder="Create a password"
+                        aria-describedby="signup-password-help"
                       />
+                      <p id="signup-password-help" className="mt-2 text-xs leading-5 text-neutral-500">
+                        Use at least 8 characters with an uppercase letter, a lowercase letter, a number, and a special character.
+                      </p>
                     </div>
 
                     {message ? (
@@ -306,7 +341,7 @@ export default function SignUpPage() {
 
                     <button
                       type="submit"
-                      disabled={loading}
+                      disabled={!formReady || loading}
                       className="w-full rounded-2xl bg-black px-4 py-3 text-sm font-medium text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
                     >
                       {loading ? "Creating account..." : "Start Free Trial"}

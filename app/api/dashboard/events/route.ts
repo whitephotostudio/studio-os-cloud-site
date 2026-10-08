@@ -13,6 +13,7 @@ import {
 export const dynamic = "force-dynamic";
 
 const CreateEventBodySchema = z.object({
+  clientRequestId: z.string().uuid().optional(),
   title: z.string().max(500).nullable().optional(),
   clientName: z.string().max(500).nullable().optional(),
   eventDate: z.string().max(64).nullable().optional(),
@@ -189,6 +190,20 @@ export async function POST(request: NextRequest) {
     }
 
     const photographerId = photographerRow.id as string;
+    const requestId = body.clientRequestId;
+    const findPreviousCreate = async () => {
+      const { data: previous, error: previousError } = await service.from("projects")
+        .select("id,title,client_name,event_date,access_mode,status")
+        .eq("id", requestId!).eq("photographer_id", photographerId)
+        .eq("workflow_type", "event").eq("source_type", "cloud_only")
+        .abortSignal(AbortSignal.timeout(15000)).maybeSingle();
+      if (previousError) throw previousError;
+      return previous;
+    };
+    if (requestId) {
+      const previous = await findPreviousCreate();
+      if (previous) return NextResponse.json({ ok: true, project: previous });
+    }
     const defaultProfileId = await ensurePackageProfile({
       service,
       photographerId,
@@ -208,6 +223,7 @@ export async function POST(request: NextRequest) {
     const { data, error } = await service
       .from("projects")
       .insert({
+        ...(requestId ? { id: requestId } : {}),
         photographer_id: photographerId,
         workflow_type: "event",
         source_type: "cloud_only",
@@ -226,8 +242,14 @@ export async function POST(request: NextRequest) {
         ...(defaultProfileId ? { package_profile_id: defaultProfileId } : {}),
       })
       .select("id,title,client_name,event_date,access_mode,status")
+      .abortSignal(AbortSignal.timeout(30000))
       .maybeSingle();
 
+    if (error?.code === "23505" && requestId) {
+      const previous = await findPreviousCreate();
+      if (previous) return NextResponse.json({ ok: true, project: previous });
+      return NextResponse.json({ ok: false, message: "We could not confirm this gallery creation. Check your galleries before trying again." }, { status: 409 });
+    }
     if (error) throw error;
     if (!data) {
       return NextResponse.json(

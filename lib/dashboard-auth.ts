@@ -1,6 +1,6 @@
 import { cookies } from "next/headers";
 import { createServerClient } from "@supabase/ssr";
-import { createClient as createSupabaseClient } from "@supabase/supabase-js";
+import { createClient as createSupabaseClient, isAuthRetryableFetchError, type AuthError } from "@supabase/supabase-js";
 import type { NextRequest } from "next/server";
 
 function env(name: string) {
@@ -14,6 +14,13 @@ export type DashboardAuthContext = {
   mfaSatisfied?: boolean;
 };
 
+function assertAuthAvailable(error: AuthError | null) {
+  if (error && (isAuthRetryableFetchError(error) || error.status == null || error.status === 429 || error.status >= 500)) {
+    // An unavailable provider is not evidence that a saved session is invalid.
+    throw new Error("Authentication is temporarily unavailable. Please try again.");
+  }
+}
+
 export async function resolveDashboardAuth(
   request: NextRequest,
 ): Promise<DashboardAuthContext> {
@@ -26,7 +33,8 @@ export async function resolveDashboardAuth(
   const anonClient = createSupabaseClient(supabaseUrl, anonKey);
 
   if (bearer) {
-    const { data } = await anonClient.auth.getUser(bearer);
+    const { data, error } = await anonClient.auth.getUser(bearer);
+    assertAuthAvailable(error);
     if (data.user) {
       const hasMfa = data.user.factors?.some((factor) => factor.status === "verified") ?? false;
       let aal = "";
@@ -58,10 +66,14 @@ export async function resolveDashboardAuth(
 
   const {
     data: { user },
+    error,
   } = await serverClient.auth.getUser();
+  assertAuthAvailable(error);
 
   const hasMfa = user?.factors?.some((factor) => factor.status === "verified") ?? false;
-  const { data: assurance } = hasMfa ? await serverClient.auth.mfa.getAuthenticatorAssuranceLevel() : { data: null };
+  const { data: assurance, error: assuranceError } = hasMfa
+    ? await serverClient.auth.mfa.getAuthenticatorAssuranceLevel() : { data: null, error: null };
+  assertAuthAvailable(assuranceError);
   return { user, mfaSatisfied: !hasMfa || assurance?.currentLevel === "aal2" };
 }
 

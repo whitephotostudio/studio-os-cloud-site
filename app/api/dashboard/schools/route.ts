@@ -10,6 +10,7 @@ import { guardAgreement } from "@/lib/require-agreement";
 export const dynamic = "force-dynamic";
 
 const CreateSchoolBodySchema = z.object({
+  clientRequestId: z.string().uuid().optional(),
   school_name: z.string().max(500).nullable().optional(),
   shoot_date: z.string().max(64).nullable().optional(),
 });
@@ -60,11 +61,26 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const requestId = body.clientRequestId;
+    const findPreviousCreate = async () => {
+      const { data: previous, error: previousError } = await service.from("schools")
+        .select("id,school_name,status,shoot_date,created_at")
+        .eq("id", requestId!).eq("photographer_id", photographerRow.id)
+        .abortSignal(AbortSignal.timeout(15000)).maybeSingle();
+      if (previousError) throw previousError;
+      return previous;
+    };
+    if (requestId) {
+      const previous = await findPreviousCreate();
+      if (previous) return NextResponse.json({ ok: true, school: previous });
+    }
+
     const localSchoolId = `web_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
     const { data: newSchool, error: insertError } = await service
       .from("schools")
       .insert({
+        ...(requestId ? { id: requestId } : {}),
         school_name: schoolName,
         photographer_id: photographerRow.id,
         local_school_id: localSchoolId,
@@ -77,8 +93,14 @@ export async function POST(request: NextRequest) {
         email_required: true,
       })
       .select("id,school_name,status,shoot_date,created_at")
+      .abortSignal(AbortSignal.timeout(30000))
       .single();
 
+    if (insertError?.code === "23505" && requestId) {
+      const previous = await findPreviousCreate();
+      if (previous) return NextResponse.json({ ok: true, school: previous });
+      return NextResponse.json({ ok: false, message: "We could not confirm this school creation. Check your schools before trying again." }, { status: 409 });
+    }
     if (insertError) {
       console.error("School insert error:", insertError);
       return NextResponse.json(
