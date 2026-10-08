@@ -3,6 +3,7 @@ import { canonicalPortalOrderReference, canonicalPortalOrderSnapshot } from "@/l
 import { hasCalendarBoundaryPassed } from "@/lib/calendar-dates";
 import { hasActiveSubscription } from "@/lib/subscription-gate";
 import { validateEventGalleryAccess } from "@/lib/event-gallery-access";
+import { assertParentCheckoutScope, isUnfinishedCheckout, isParentDismissedCheckout, type ParentCheckoutGrant, type ParentCheckoutOrder } from "@/lib/parent-order-dismissal";
 // GET /api/portal/orders/history
 //
 // Returns the parent's order history for a single gallery — fuels the new
@@ -68,6 +69,7 @@ type OrderRow = {
   paid_at: string | null;
   refund_status: string | null;
   refund_amount_cents: number | null;
+  parent_dismissed_at: string | null;
   status: string | null;
   payment_status: string | null;
   total_cents: number | null;
@@ -211,7 +213,7 @@ export async function POST(request: NextRequest) {
       .from("orders")
       .select(
         `id,created_at,paid_at,status,total_cents,subtotal_cents,tax_cents,currency,package_name,
-         payment_status,refund_status,refund_amount_cents,
+         payment_status,refund_status,refund_amount_cents,parent_dismissed_at,
          total_amount,
          parent_name,parent_email,parent_phone,customer_email,special_notes,notes,
          cart_snapshot,photographer_id,
@@ -239,7 +241,7 @@ export async function POST(request: NextRequest) {
         .from("orders")
         .select(
           `id,created_at,paid_at,status,total_cents,subtotal_cents,tax_cents,currency,package_name,
-           payment_status,refund_status,refund_amount_cents,
+           payment_status,refund_status,refund_amount_cents,parent_dismissed_at,
            total_amount,
            parent_name,parent_email,parent_phone,customer_email,special_notes,notes,
            cart_snapshot,photographer_id,
@@ -259,14 +261,19 @@ export async function POST(request: NextRequest) {
       historyRows = (fallbackOrders ?? []) as unknown as OrderRow[];
     }
 
+    const discardable = await discardableHistoryRows(sb, historyRows, {
+      photographerId: school.photographer_id ?? "", schoolId: body.schoolId,
+      studentId: studentRow.id, email: emailLower,
+    });
     return NextResponse.json({
       ok: true,
-      orders: historyRows.filter(row => row.photographer_id === school.photographer_id).map((row) => formatOrder(row, {
+      orders: historyRows.filter(row => row.photographer_id === school.photographer_id && !isParentDismissedCheckout(row)).map((row) => formatOrder(row, {
         student_name: [
           clean((studentRow as { first_name?: string }).first_name),
           clean((studentRow as { last_name?: string }).last_name),
         ].filter(Boolean).join(" ") || null,
         allow_private_details: rowEmailMatches(row, emailLower),
+        can_discard_checkout: discardable.has(row.id),
       })),
     });
   }
@@ -292,7 +299,7 @@ export async function POST(request: NextRequest) {
     .from("orders")
     .select(
       `id,created_at,paid_at,status,total_cents,subtotal_cents,tax_cents,currency,package_name,
-       payment_status,refund_status,refund_amount_cents,
+       payment_status,refund_status,refund_amount_cents,parent_dismissed_at,
        total_amount,
        parent_name,parent_email,parent_phone,customer_email,special_notes,notes,
        cart_snapshot,photographer_id,
@@ -313,12 +320,42 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  const discardable = await discardableHistoryRows(sb, (orders ?? []) as unknown as OrderRow[], {
+    photographerId: access.project.photographer_id ?? "", projectId: body.projectId!,
+    collectionIds: access.collectionIds, email: emailLower,
+  });
   return NextResponse.json({
     ok: true,
-    orders: (orders ?? []).filter(row => rowEmailMatches(row as unknown as OrderRow, emailLower) && (row.photographer_id ?? null) === access.project.photographer_id && historyEventScopeAllowed(row.cart_snapshot, body.projectId!, access.collectionIds)).map((row) =>
-      formatOrder(row as unknown as OrderRow, { student_name: null }),
+    orders: (orders ?? []).filter(row => !isParentDismissedCheckout(row as unknown as OrderRow) && rowEmailMatches(row as unknown as OrderRow, emailLower) && (row.photographer_id ?? null) === access.project.photographer_id && historyEventScopeAllowed(row.cart_snapshot, body.projectId!, access.collectionIds)).map((row) =>
+      formatOrder(row as unknown as OrderRow, { student_name: null, can_discard_checkout: discardable.has(row.id) }),
     ),
   });
+}
+
+async function discardableHistoryRows(service: ReturnType<typeof createDashboardServiceClient>, rows: OrderRow[], grant: ParentCheckoutGrant) {
+  const allowed = new Set<string>();
+  const candidates = rows.filter(row => isUnfinishedCheckout(row));
+  const groupIds = [...new Set(candidates.map(row => row.order_group_id).filter(Boolean))];
+  let members: ParentCheckoutOrder[] = [];
+  if (groupIds.length) {
+    const { data, error, count } = await service.from("orders")
+      .select("id,photographer_id,order_group_id,school_id,project_id,student_id,parent_email,customer_email,status,payment_status,paid_at,refund_status,refund_amount_cents,cart_snapshot", { count: "exact" })
+      .in("order_group_id", groupIds).order("id").limit(1000);
+    // A truncated or unavailable group is viewable but never actionable.
+    if (!error && count != null && data?.length === count) members = data as ParentCheckoutOrder[];
+  }
+  for (const row of candidates) {
+    const checkout = row.order_group_id
+      ? members.filter(member => member.order_group_id === row.order_group_id)
+      : [row as unknown as ParentCheckoutOrder];
+    try {
+      assertParentCheckoutScope(checkout, row.id, grant);
+      if (checkout.every(member => isUnfinishedCheckout(member))) allowed.add(row.id);
+    } catch {
+      // A read-only PIN fallback or another sibling's PIN is insufficient.
+    }
+  }
+  return allowed;
 }
 
 function historyEventScopeAllowed(snapshot: unknown, projectId: string, collectionIds: string[]) {
@@ -331,7 +368,7 @@ function historyEventScopeAllowed(snapshot: unknown, projectId: string, collecti
 
 function formatOrder(
   row: OrderRow,
-  ctx: { student_name: string | null; allow_private_details?: boolean },
+  ctx: { student_name: string | null; allow_private_details?: boolean; can_discard_checkout?: boolean },
 ) {
   const allowPrivateDetails = ctx.allow_private_details !== false;
   const rawSpecialNotes = row.special_notes ?? row.notes ?? null;
@@ -407,6 +444,7 @@ function formatOrder(
     createdAt: row.created_at,
     paidAt: row.paid_at,
     status: displayOrderStatus(row),
+    canDiscardCheckout: ctx.can_discard_checkout === true,
     totalCents: orderTotalCents,
     subtotalCents: resolveOrderSubtotalCents(row, rawItems),
     taxCents: row.tax_cents ?? null,

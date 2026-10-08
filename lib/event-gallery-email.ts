@@ -247,17 +247,34 @@ export function buildGalleryShareEmail(input: EventEmailContentInput) {
 
 export function buildAbandonedCartEmail(input: EventEmailContentInput & {
   orderTotalLabel: string;
+  stopRemindersUrl?: string | null;
 }) {
-  return buildGalleryShareEmail({
+  return withCartReminderStopLink(buildGalleryShareEmail({
     ...input,
     overrideSubject:
-      clean(input.overrideSubject) || `You still have a photo order waiting in ${eventProjectName(input.project)}`,
-    previewText: `Finish your photo order for ${eventProjectName(input.project)}`,
+      clean(input.overrideSubject) || `Continue your photo checkout in ${eventProjectName(input.project)}`,
+    previewText: `Your unfinished checkout for ${eventProjectName(input.project)}`,
     overrideMessage:
       clean(input.overrideMessage) ||
-      `Hi,\n\nYou still have a photo order waiting in ${eventProjectName(input.project)}.\n\nCurrent cart total: ${input.orderTotalLabel}\n\nReturn to the gallery to complete your checkout.\n\nThanks,\n${eventFromName(input.photographer)}`,
-    ctaLabel: clean(input.ctaLabel) || "Resume Order",
-  });
+      `Hi,\n\nWould you like to continue your unfinished photo checkout in ${eventProjectName(input.project)}?\n\nCurrent cart total: ${input.orderTotalLabel}\n\nReturn to the gallery when you are ready to complete your checkout.\n\nThanks,\n${eventFromName(input.photographer)}`,
+    ctaLabel: clean(input.ctaLabel) || "Continue checkout",
+  }), input.stopRemindersUrl);
+}
+
+function withCartReminderStopLink(email: { subject: string; html: string; text: string }, stopUrl?: string | null) {
+  if (!stopUrl) return email;
+  try {
+    const url = new URL(stopUrl);
+    if ((url.protocol !== "https:" || url.hostname !== "www.studiooscloud.com") &&
+      !(process.env.NODE_ENV !== "production" && ["localhost", "127.0.0.1"].includes(url.hostname) && ["http:", "https:"].includes(url.protocol))) return email;
+    if (url.pathname !== "/api/portal/orders/stop-reminders" || url.username || url.password) return email;
+    const message = "Changed your mind? Stop reminders for this checkout. You can also discard it from your gallery’s order history. Completed orders stay available.";
+    return {
+      ...email,
+      text: `${email.text}\n\n${message}\nStop reminders: ${url.toString()}`,
+      html: email.html.replace("</body>", `<div style="max-width:640px;margin:0 auto;padding:0 24px 32px;text-align:center;color:#4b5563;font-size:13px;line-height:1.6">${escapeHtml(message)}<br><a href="${escapeHtml(url.toString())}" style="color:#374151;text-decoration:underline">Stop reminders</a></div></body>`),
+    };
+  } catch { return email; }
 }
 
 export function buildSchoolShareEmail(input: SchoolEmailContentInput) {
@@ -362,15 +379,16 @@ export function buildSchoolAbandonedCartEmail(input: {
   photographer?: EventEmailPhotographer | null;
   origin: string;
   orderTotalLabel: string;
+  stopRemindersUrl?: string | null;
 }) {
   const schoolName = schoolGalleryName(input.school);
-  return buildSchoolShareEmail({
+  return withCartReminderStopLink(buildSchoolShareEmail({
     school: input.school,
     photographer: input.photographer,
     origin: input.origin,
-    previewText: `Finish your photo order for ${schoolName}`,
-    overrideSubject: `You still have a photo order waiting in ${schoolName}`,
-    overrideMessage: `Hi,\n\nYou still have a photo order waiting in ${schoolName}.\n\nCurrent cart total: ${input.orderTotalLabel}\n\nReturn to the gallery to complete your checkout.\n\nThanks,\n${eventFromName(input.photographer)}`,
-    ctaLabel: "Resume Order",
-  });
+    previewText: `Your unfinished checkout for ${schoolName}`,
+    overrideSubject: `Continue your photo checkout in ${schoolName}`,
+    overrideMessage: `Hi,\n\nWould you like to continue your unfinished photo checkout in ${schoolName}?\n\nCurrent cart total: ${input.orderTotalLabel}\n\nReturn to the gallery when you are ready to complete your checkout.\n\nThanks,\n${eventFromName(input.photographer)}`,
+    ctaLabel: "Continue checkout",
+  }), input.stopRemindersUrl);
 }
