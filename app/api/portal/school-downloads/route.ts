@@ -20,6 +20,7 @@ type SchoolRow = {
   photographer_id: string | null;
   local_school_id?: string | null;
   status: string | null;
+  portal_status: string | null;
   expiration_date: string | null;
   gallery_settings: unknown;
 };
@@ -58,7 +59,7 @@ async function validateSchoolDownloadAccess(params: {
 
   const { data: schoolRow, error: schoolError } = await service
     .from("schools")
-    .select("id,school_name,photographer_id,local_school_id,status,expiration_date,gallery_settings")
+    .select("id,school_name,photographer_id,local_school_id,status,portal_status,expiration_date,gallery_settings")
     .eq("id", selectedSchoolId)
     .maybeSingle<SchoolRow>();
 
@@ -71,8 +72,12 @@ async function validateSchoolDownloadAccess(params: {
     return { ok: false as const, status: 409, message: "This gallery has expired." };
   }
 
-  if (normalizedSchoolStatus(schoolRow.status) === "pre_release") {
+  const portalStatus = normalizedSchoolStatus(schoolRow.portal_status ?? schoolRow.status);
+  if (portalStatus === "pre_release") {
     return { ok: false as const, status: 409, message: "This gallery is not live yet." };
+  }
+  if (portalStatus === "closed" || portalStatus === "inactive") {
+    return { ok: false as const, status: 409, message: "This gallery is closed." };
   }
 
   if (!looksLikeEmail(selectedEmail)) {
