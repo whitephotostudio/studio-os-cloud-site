@@ -678,6 +678,7 @@ function DashboardPageContent() {
   const [userEmail, setUserEmail] = useState("");
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [hasLoadedDashboard, setHasLoadedDashboard] = useState(false);
   const [error, setError] = useState("");
   const [photographer, setPhotographer] = useState<Photographer | null>(null);
   const [schools, setSchools] = useState<SchoolRow[]>([]);
@@ -836,10 +837,6 @@ function DashboardPageContent() {
       );
       const schoolRows = (schoolRes.data ?? []) as SchoolRow[];
       const dedupedSchools = dedupeSchools(schoolRows);
-      setProjects(projectRows);
-      setEventProjects(eventPayload.projects ?? []);
-      setOrders(((orderRes.data ?? []) as OrderRow[]).filter(isCustomerOrder));
-
       if (downloadActivityRes?.ok) {
         const downloadPayload =
           (await downloadActivityRes.json().catch(() => null)) as DownloadActivityPayload | null;
@@ -872,8 +869,15 @@ function DashboardPageContent() {
         if (eventLinkedSchoolIds.has(clean(school.id))) return false;
         return !eventNameKeys.has(normalizeLookupName(school.school_name));
       });
+      // Publish a complete snapshot together; initial empty arrays are not
+      // evidence that the account has no galleries, and a failed refresh
+      // should preserve the last successful dashboard.
+      setProjects(projectRows);
+      setEventProjects(eventPayload.projects ?? []);
+      setOrders(((orderRes.data ?? []) as OrderRow[]).filter(isCustomerOrder));
       setSchools(visibleSchools);
       setStudents(studentRows);
+      setHasLoadedDashboard(true);
 
       if (studioAppRes && studioAppRes.ok) {
         const studioJson = (await studioAppRes.json().catch(() => null)) as
@@ -1332,7 +1336,7 @@ function DashboardPageContent() {
             </div>
           ) : null}
 
-          {!error && photographer && schools.length === 0 && eventProjects.length === 0 ? (
+          {!error && hasLoadedDashboard && photographer && schools.length === 0 && eventProjects.length === 0 ? (
             <div style={{ marginBottom: 22, borderRadius: 20, border: `1px solid ${borderSoft}`, background: "#f8fafc", padding: "20px 22px" }}>
               <h2 style={{ margin: 0, fontSize: 23, color: textPrimary }}>Start with your first gallery</h2>
               <p style={{ margin: "10px 0 16px", color: textMuted, lineHeight: 1.6 }}>
@@ -1412,10 +1416,10 @@ function DashboardPageContent() {
           ) : null}
 
           {/* ── Top stat cards ────────────────────────────────────────── */}
-          <div style={{ display: "grid", gridTemplateColumns: isMobile ? "repeat(2,minmax(0,1fr))" : "repeat(4,minmax(0,1fr))", gap: isMobile ? 12 : 18, marginBottom: 24 }}>
-            <OverviewLinkCard href="/dashboard/schools" icon={<GraduationCap size={20} />} label="SCHOOLS" value={schools.length} description="Synced school jobs available from the desktop app." />
-            <OverviewLinkCard href="/dashboard/projects/events" icon={<FolderOpen size={20} />} label="EVENT PROJECTS" value={eventProjects.length} description="Weddings, baptisms, engagements, and private events." />
-            <OverviewLinkCard href="/dashboard/orders" icon={<ShoppingBag size={20} />} label="ORDERS" value={mainWorkflowOrders.length} description="Processed orders received across all schools and events." />
+          <div aria-busy={!hasLoadedDashboard && (loading || refreshing)} style={{ display: "grid", gridTemplateColumns: isMobile ? "repeat(2,minmax(0,1fr))" : "repeat(4,minmax(0,1fr))", gap: isMobile ? 12 : 18, marginBottom: 24 }}>
+            <OverviewLinkCard href="/dashboard/schools" icon={<GraduationCap size={20} />} label="SCHOOLS" value={hasLoadedDashboard ? schools.length : "—"} description="Synced school jobs available from the desktop app." />
+            <OverviewLinkCard href="/dashboard/projects/events" icon={<FolderOpen size={20} />} label="EVENT PROJECTS" value={hasLoadedDashboard ? eventProjects.length : "—"} description="Weddings, baptisms, engagements, and private events." />
+            <OverviewLinkCard href="/dashboard/orders" icon={<ShoppingBag size={20} />} label="ORDERS" value={hasLoadedDashboard ? mainWorkflowOrders.length : "—"} description="Processed orders received across all schools and events." />
             <Link
               href="/dashboard/schools"
               style={overviewCardStyle(true)}
@@ -1436,10 +1440,12 @@ function DashboardPageContent() {
                 </div>
                 <div style={{ fontSize: 14, letterSpacing: "0.08em", fontWeight: 800, color: textMuted }}>PHOTO COVERAGE</div>
                 <div style={{ fontSize: 34, lineHeight: 1.1, fontWeight: 900, color: textPrimary, marginTop: 10 }}>
-                  {coveragePct}%
+                  {hasLoadedDashboard ? `${coveragePct}%` : "—"}
                 </div>
                 <div style={{ fontSize: 14, color: textMuted, marginTop: 10, lineHeight: 1.6 }}>
-                  {imageCount} of {students.length} subjects have at least one synced photo.
+                  {hasLoadedDashboard
+                    ? `${imageCount} of ${students.length} subjects have at least one synced photo.`
+                    : loading || refreshing ? "Loading photo coverage…" : "Photo coverage unavailable."}
                 </div>
               </div>
               {/* Coverage bar + open affordance */}
@@ -1724,15 +1730,15 @@ function DashboardPageContent() {
               </div>
 
               <div style={{ display: "grid", gap: 14 }}>
-                <QuickStat label="TOTAL ORDERS" value={mainWorkflowOrders.length} />
+                <QuickStat label="TOTAL ORDERS" value={hasLoadedDashboard ? mainWorkflowOrders.length : "—"} />
                 <QuickStat
                   label="PENDING ORDERS"
-                  value={pendingOrders.length}
+                  value={hasLoadedDashboard ? pendingOrders.length : "—"}
                   accent={pendingOrders.length > 0 ? "#c2410c" : textPrimary}
                 />
-                <QuickStat label="REVENUE TRACKED" value={moneyFromCents(revenueTracked)} />
-                <QuickStat label="SCHOOL PROJECTS LINKED" value={schoolProjects.length} />
-                <QuickStat label="PHOTO COVERAGE" value={`${coveragePct}%`} accent={coveragePct >= 80 ? "#15803d" : "#cc0000"} />
+                <QuickStat label="REVENUE TRACKED" value={hasLoadedDashboard ? moneyFromCents(revenueTracked) : "—"} />
+                <QuickStat label="SCHOOL PROJECTS LINKED" value={hasLoadedDashboard ? schoolProjects.length : "—"} />
+                <QuickStat label="PHOTO COVERAGE" value={hasLoadedDashboard ? `${coveragePct}%` : "—"} accent={coveragePct >= 80 ? "#15803d" : "#cc0000"} />
               </div>
 
               <div style={{ marginTop: 22, paddingTop: 18, borderTop: "1px solid #e5e5e5" }}>
