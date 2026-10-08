@@ -44,7 +44,7 @@ export function SchoolYearbookOwnerPanel({ schoolId }: { schoolId: string }) {
   const control = "rounded-lg border border-neutral-300 bg-white px-3 py-2 text-sm text-neutral-900 disabled:opacity-50";
   return <section className="rounded-[24px] border border-neutral-200 bg-white p-6 text-neutral-900 shadow-sm" style={{ colorScheme: "light" }} aria-label="Yearbook portrait selection">
     <h3 className="font-semibold">Yearbook portrait selection</h3>
-    <p className="mt-1 text-sm text-neutral-600">Optional for each school. Allow parent yearbook choices below and save to collect one designated portrait per student. Choices are saved separately from shopping favorites and desktop best shots.</p>
+    <p className="mt-1 text-sm text-neutral-600">Optional for each school. Allow parent yearbook choices below and save to collect one designated portrait per student. Choices stay separate from shopping favorites and desktop Best Photo by default. After installing the V2 update, you can enable Yearbook sync for this school under School → Admin → Yearbook sync to use saved online choices as Best Photo.</p>
     {error ? <p role="alert" className="mt-3 text-sm text-red-700">{error} <button className={control} onClick={() => load().catch(error => setError(error.message))}>Reload</button></p> : null}
     {settings ? <>
       <div className="my-4 flex flex-wrap items-end gap-4">
