@@ -3,7 +3,7 @@ import test from 'node:test';
 import {readFileSync} from 'node:fs';
 import {PGlite} from '@electric-sql/pglite';
 import {randomUUID} from 'node:crypto';
-const names=['20260930010000_atomic_credit_accounting.sql','20260930012000_protect_photographer_billing.sql','20260930013000_cloud_credit_jobs.sql','20260930120000_paid_cutout_entitlements.sql','20260930130000_preserve_verified_legacy_cutouts.sql'];
+const names=['20260930010000_atomic_credit_accounting.sql','20260930012000_protect_photographer_billing.sql','20260930013000_cloud_credit_jobs.sql','20260930120000_paid_cutout_entitlements.sql','20260930130000_preserve_verified_legacy_cutouts.sql','20261005193000_restore_legacy_owner_cutout_receipts.sql'];
 const a='a'.repeat(64), b='b'.repeat(64), c='c'.repeat(64), d='d'.repeat(64);
 async function fixture(run) {
   const db=new PGlite();
@@ -139,4 +139,103 @@ test('legacy compatibility is exact owner/object read access and never grants ne
   await assert.rejects(f.client('select * from credit_legacy_cutout_objects'));
   await assert.rejects(f.client(`insert into credit_legacy_cutout_objects(object_key,studio_id,original_sha256,cutout_sha256,source_key,scope_kind,scope_id,review_snapshot_at) values($1,$2,$3,$4,'school/photo.jpg','school',$5,now())`,[key+'2',f.studio,a,b,randomUUID()]));
   assert.equal((await f.db.query('select count(*) from credit_transactions')).rows[0].count,0);
+}));
+
+const ownerJobRef=studio=>`studio-bg-job:${studio}:${randomUUID()}:${a}`;
+async function legacyOwnerReceipt(f, reference=ownerJobRef(f.studio), changes={}) {
+  const row={studio_id:f.studio,photographer_id:f.photographer,type:'usage',amount:0,balance_after:0,
+    ai_operation:'bg_removal_local',processing_method:'photoshop_reservation',source:null,
+    source_reference_id:`old-${randomUUID()}`,photo_path:reference,...changes};
+  const columns=Object.keys(row), values=Object.values(row);
+  const result=await f.db.query(`insert into credit_transactions(${columns.join(',')},created_at)
+    values(${columns.map((_,index)=>`$${index+1}`).join(',')},
+    (select secured_at-interval '1 second' from credit_cutout_security_epoch where singleton)) returning id`,values);
+  return {id:result.rows[0].id,reference};
+}
+async function financialSnapshot(f) {
+  const tables=['credit_transactions','studio_credits','credit_lots','credit_usage_allocations'];
+  return Promise.all(tables.map(async table=>({table,rows:(await f.db.query(`select row_to_json(t) as row from ${table} t order by row_to_json(t)::text`)).rows})));
+}
+
+test('pre-security server-owner zero-cost receipt restores exact outputs without changing financial records',()=>fixture(async f=>{
+  await f.db.query('update photographers set is_platform_admin=true where id=$1',[f.photographer]);
+  const {id,reference}=await legacyOwnerReceipt(f);
+  await legacyOwnerReceipt(f,reference,{processing_method:'photoshop_final'});
+  const before=await financialSnapshot(f);
+  assert.equal((await f.grant(a,b,reference)).rows[0].ok,true);
+  assert.equal((await f.grant(c,d,reference)).rows[0].ok,true);
+  assert.equal((await f.grant(a,b,reference)).rows[0].ok,true);
+  assert.equal((await f.entitled(a,b)).rows[0].ok,true);
+  assert.equal((await f.db.query('select _cutout_receipt_capacity($1) as capacity',[id])).rows[0].capacity,2147483647);
+  assert.deepEqual(await financialSnapshot(f),before);
+  await assert.rejects(f.client('select _is_legacy_owner_cutout_receipt($1)',[id]));
+}));
+
+test('legacy zero-cost receipt requires current server owner status and matching authenticated studio',()=>fixture(async f=>{
+  const {reference}=await legacyOwnerReceipt(f);
+  assert.equal((await f.grant(a,b,reference)).rows[0].ok,false);
+  await f.db.query('update photographers set is_platform_admin=true where id=$1',[f.photographer]);
+  const otherPhotographer=randomUUID();
+  await f.db.query('insert into photographers(id,user_id,is_platform_admin) values($1,$2,true)',[otherPhotographer,f.other]);
+  assert.equal((await f.client('select register_studio_cutout_entitlement($1,$2,$3) as ok',[a,b,reference],f.other)).rows[0].ok,false);
+  assert.equal((await f.grant(a,b,reference)).rows[0].ok,true);
+  assert.equal((await f.entitled(a,b,f.other)).rows[0].ok,false);
+}));
+
+test('only canonical same-studio pre-security owner Photoshop reservation metadata is accepted',()=>fixture(async f=>{
+  await f.db.query('update photographers set is_platform_admin=true where id=$1',[f.photographer]);
+  for(const changes of [{type:'refund'},{amount:-1},{amount:1},{processing_method:'photoshop_final'},
+    {processing_method:'cloud_processing'},{ai_operation:'bg_removal_cloud'},{ai_operation:'auto_enhance'},
+    {source:'usage'},{source:'cloud_processing'},{source:''}]) {
+    const {id,reference}=await legacyOwnerReceipt(f,ownerJobRef(f.studio),changes);
+    assert.equal((await f.grant(a,b,reference)).rows[0].ok,false,JSON.stringify(changes));
+    assert.equal((await f.db.query('select _is_legacy_owner_cutout_receipt($1) as ok',[id])).rows[0].ok,false);
+    if(changes.source!=='usage') assert.equal((await f.db.query('select _cutout_receipt_capacity($1) as capacity',[id])).rows[0].capacity,0);
+  }
+  for(const reference of ['invented-job',ownerJobRef(f.other),ownerJobRef(f.studio)+'suffix',
+    `studio-bg-job:${f.studio}:not-a-uuid:${a}`,`studio-bg-job:${f.studio}:${randomUUID()}:not-a-hash`]) {
+    const {id}=await legacyOwnerReceipt(f,reference);
+    assert.equal((await f.grant(a,b,reference)).rows[0].ok,false);
+    assert.equal((await f.db.query('select _cutout_receipt_capacity($1) as capacity',[id])).rows[0].capacity,0);
+  }
+  const {id,reference}=await legacyOwnerReceipt(f);
+  await f.db.query("update credit_transactions set created_at=(select secured_at+interval '1 second' from credit_cutout_security_epoch) where id=$1",[id]);
+  assert.equal((await f.grant(a,b,reference)).rows[0].ok,false);
+  assert.equal((await f.db.query('select _cutout_receipt_capacity($1) as capacity',[id])).rows[0].capacity,0);
+  assert.equal((await f.db.query('select count(*) from credit_cutout_claims')).rows[0].count,0);
+}));
+
+test('legacy owner compatibility rejects debt, missing receipts and duplicate reservations',()=>fixture(async f=>{
+  await f.db.query('update photographers set is_platform_admin=true where id=$1',[f.photographer]);
+  assert.equal((await f.grant(a,b,ownerJobRef(f.studio))).rows[0].ok,false);
+  const duplicate=ownerJobRef(f.studio);
+  await legacyOwnerReceipt(f,duplicate);await legacyOwnerReceipt(f,duplicate);
+  assert.equal((await f.grant(a,b,duplicate)).rows[0].ok,false);
+  const {id,reference}=await legacyOwnerReceipt(f);
+  await f.db.query('insert into studio_credits(studio_id,photographer_id,balance,credit_debt) values($1,$2,0,1)',[f.studio,f.photographer]);
+  assert.equal((await f.grant(a,b,reference)).rows[0].ok,false);
+  assert.equal((await f.db.query('select _cutout_receipt_capacity($1) as capacity',[id])).rows[0].capacity,0);
+}));
+
+test('modern receipt remains authoritative and cannot fall back to legacy owner capacity',()=>fixture(async f=>{
+  await f.db.query('update photographers set is_platform_admin=true where id=$1',[f.photographer]);
+  const {reference}=await legacyOwnerReceipt(f);
+  const modern=await f.db.query(`insert into credit_transactions(studio_id,photographer_id,type,amount,balance_after,
+    source,source_reference_id,ai_operation,processing_method,photo_path)
+    values($1,$2,'usage',-1,0,'usage',$3,'bg_removal_local','photoshop_reservation',$3) returning id`,[f.studio,f.photographer,reference]);
+  assert.equal((await f.grant(a,b,reference)).rows[0].ok,false,'An unallocated modern receipt must hold instead of using a legacy owner receipt');
+  await f.db.query('update credit_transactions set amount=0 where id=$1',[modern.rows[0].id]);
+  assert.equal((await f.grant(a,b,reference)).rows[0].ok,true);
+  assert.equal((await f.db.query('select receipt_id from credit_cutout_claims')).rows[0].receipt_id,modern.rows[0].id);
+}));
+
+test('legacy owner restored original keeps its first output immutable and revoked owner claims inactive',()=>fixture(async f=>{
+  await f.db.query('update photographers set is_platform_admin=true where id=$1',[f.photographer]);
+  const {reference}=await legacyOwnerReceipt(f);
+  assert.equal((await f.grant(a,b,reference)).rows[0].ok,true);
+  assert.equal((await f.grant(a,d,reference)).rows[0].ok,false);
+  assert.equal((await f.entitled(a,d)).rows[0].ok,false);
+  await f.db.query('update photographers set is_platform_admin=false where id=$1',[f.photographer]);
+  assert.equal((await f.entitled(a,b)).rows[0].ok,false);
+  assert.equal((await f.grant(c,d,reference)).rows[0].ok,false);
 }));
