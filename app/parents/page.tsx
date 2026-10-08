@@ -42,7 +42,9 @@ type EventProjectRow = {
   email_required: boolean | null;
 };
 
-type StudentSchoolRow = { school_id: string | null };
+type SchoolChoiceRow = SchoolRow & {
+  students: { count: number }[] | null;
+};
 
 function clean(value: string | null | undefined) {
   return (value ?? "").trim();
@@ -91,28 +93,20 @@ async function getPortalChoices(
       eventsQuery = eventsQuery.eq("photographer_id", photographerIdFilter);
     }
 
-    const [schoolsResult, studentsResult, eventsResult] = await Promise.all([
+    const [schoolsResult, eventsResult] = await Promise.all([
       service
         .from("schools")
-        .select("id,school_name,status,portal_status,expiration_date,email_required,registration_class_required")
+        .select("id,school_name,status,portal_status,expiration_date,email_required,registration_class_required,students:students!students_school_id_fkey(count)")
         .order("school_name"),
-      // ✅ PERF: Only fetch school_id column (minimal payload)
-      service.from("students").select("school_id").not("school_id", "is", null),
       eventsQuery,
     ]);
 
     if (schoolsResult.error) throw schoolsResult.error;
-    if (studentsResult.error) throw studentsResult.error;
     if (eventsResult.error) throw eventsResult.error;
 
-    const schoolIdsWithStudents = new Set(
-      ((studentsResult.data ?? []) as StudentSchoolRow[])
-        .map((row) => row.school_id)
-        .filter((v): v is string => !!v),
-    );
-
     const uniqueSchools = new Map<string, SchoolRow>();
-    for (const row of (schoolsResult.data ?? []) as SchoolRow[]) {
+    for (const row of (schoolsResult.data ?? []) as SchoolChoiceRow[]) {
+      const { students, ...school } = row;
       const trimmedName = clean(row.school_name);
       const key = trimmedName.toLowerCase();
       if (!trimmedName) continue;
@@ -121,11 +115,13 @@ async function getPortalChoices(
       //   (a) has at least one student synced (normal case), OR
       //   (b) is in pre_release status — so parents can register their
       //       email for a notification before the gallery has any photos.
-      const hasStudents = schoolIdsWithStudents.has(row.id);
+      // Count the full roster in the database; a global student-row scan can
+      // omit entire schools once it reaches the API's result limit.
+      const hasStudents = (students?.[0]?.count ?? 0) > 0;
       const isPrefilledSchool = !!prefilledSchoolId && row.id === prefilledSchoolId;
       if (!hasStudents && !isPreRelease(row.portal_status ?? row.status) && !isPrefilledSchool) continue;
       if (isPrefilledSchool || !uniqueSchools.has(key)) {
-        uniqueSchools.set(key, { ...row, school_name: trimmedName });
+        uniqueSchools.set(key, { ...school, school_name: trimmedName });
       }
     }
 

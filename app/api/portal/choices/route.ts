@@ -25,8 +25,8 @@ type EventProjectRow = {
   email_required: boolean | null;
 };
 
-type StudentSchoolRow = {
-  school_id: string | null;
+type SchoolChoiceRow = SchoolRow & {
+  students: { count: number }[] | null;
 };
 
 function clean(value: string | null | undefined) {
@@ -48,12 +48,11 @@ function projectLabel(project: EventProjectRow) {
 export async function GET() {
   try {
     const service = createDashboardServiceClient();
-    const [schoolsResult, studentsResult, eventsResult] = await Promise.all([
+    const [schoolsResult, eventsResult] = await Promise.all([
       service
         .from("schools")
-        .select("id,school_name,status,expiration_date,email_required")
+        .select("id,school_name,status,expiration_date,email_required,students:students!students_school_id_fkey(count)")
         .order("school_name"),
-      service.from("students").select("school_id"),
       service
         .from("projects")
         .select("id,title,client_name,workflow_type,status,portal_status,event_date,email_required")
@@ -62,24 +61,18 @@ export async function GET() {
     ]);
 
     if (schoolsResult.error) throw schoolsResult.error;
-    if (studentsResult.error) throw studentsResult.error;
     if (eventsResult.error) throw eventsResult.error;
 
-    const schoolIdsWithStudents = new Set(
-      ((studentsResult.data ?? []) as StudentSchoolRow[])
-        .map((row) => row.school_id)
-        .filter((value): value is string => !!value),
-    );
-
     const uniqueSchools = new Map<string, SchoolRow>();
-    for (const row of (schoolsResult.data ?? []) as SchoolRow[]) {
+    for (const row of (schoolsResult.data ?? []) as SchoolChoiceRow[]) {
+      const { students, ...school } = row;
       const trimmedName = clean(row.school_name);
       const key = trimmedName.toLowerCase();
       if (!trimmedName) continue;
-      if (!schoolIdsWithStudents.has(row.id)) continue;
+      if ((students?.[0]?.count ?? 0) <= 0) continue;
       if (isInactive(row.status)) continue;
       if (!uniqueSchools.has(key)) {
-        uniqueSchools.set(key, { ...row, school_name: trimmedName });
+        uniqueSchools.set(key, { ...school, school_name: trimmedName });
       }
     }
 

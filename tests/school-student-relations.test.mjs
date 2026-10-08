@@ -10,6 +10,7 @@ const root = new URL('../', import.meta.url);
 const files = execFileSync('rg', ['--files', 'app', 'lib', 'components'], { cwd: root, encoding: 'utf8' })
   .trim().split('\n').filter(path => /\.tsx?$/.test(path));
 const queries = [];
+const publicChoiceQueries = new Set(['app/parents/page.tsx', 'app/api/portal/choices/route.ts']);
 for (const path of files) {
   const source = readFileSync(new URL(path, root), 'utf8');
   const file = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true, path.endsWith('tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
@@ -73,11 +74,12 @@ function databaseFixture() {
   return { client, requests };
 }
 
-test('school/student embed inventory covers listing, events, parent recovery, manual recovery, and spotlight', () => {
+test('school/student embed inventory covers owner workflows and both public school-choice loaders', () => {
   assert.deepEqual(queries.map(query => query.path).sort(), [
     'app/api/dashboard/admin/recovery/route.ts', 'app/api/dashboard/events/route.ts',
     'app/dashboard/admin/recovery-requests/page.tsx', 'app/dashboard/schools/page.tsx',
     'components/spotlight-search.tsx', 'lib/pin-recovery.ts',
+    'app/parents/page.tsx', 'app/api/portal/choices/route.ts',
   ].sort());
 });
 
@@ -101,8 +103,15 @@ for (const query of queries) {
     assert.ok(rows.every(row => query.relation in row));
     const request = requests[0];
     if (query.table === 'schools') {
-      assert.equal(request.searchParams.get('photographer_id'), 'eq.owner');
-      assert.deepEqual(rows.map(row => row.id), ['owned-school']);
+      if (publicChoiceQueries.has(query.path)) {
+        // The public chooser intentionally lists school names across studios.
+        // Its loaders strip this internal count before returning choices.
+        assert.equal(request.searchParams.get('photographer_id'), null);
+        assert.deepEqual(rows.map(row => row.id), ['owned-school', 'private-school']);
+      } else {
+        assert.equal(request.searchParams.get('photographer_id'), 'eq.owner');
+        assert.deepEqual(rows.map(row => row.id), ['owned-school']);
+      }
       assert.equal(rows[0].students[0].count, 23);
     } else {
       assert.match(query.selection, /schools:schools!students_school_id_fkey!inner\(/);

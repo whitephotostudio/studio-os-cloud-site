@@ -6,6 +6,7 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import {
   ArrowLeft,
+  BookOpen,
   Check,
   ChevronDown,
   Download,
@@ -83,6 +84,7 @@ const defaultExtras: ExtraSettings = {
 const sections = [
   { key: "general", label: "General", icon: Settings2 },
   { key: "registration", label: "Parent Registration", icon: Settings2 },
+  { key: "yearbook", label: "Yearbook", icon: BookOpen },
   { key: "privacy", label: "Access & Privacy", icon: ShieldCheck },
   { key: "free-digital", label: "Free Digitals", icon: Download },
   { key: "store", label: "Shopping Cart/Store", icon: ShoppingCart },
@@ -545,7 +547,6 @@ export default function SchoolSettingsPage() {
               {/* General */}
               {activeSection === "general" && (
                 <div className="space-y-6">
-                  <SchoolYearbookOwnerPanel schoolId={schoolId} />
                   <Card title="General">
                     <div className="grid gap-5 md:grid-cols-2">
                       <Field label="Shoot Date*" hint="The date of the photo session">
@@ -615,6 +616,10 @@ export default function SchoolSettingsPage() {
                     <ToggleRow title="Allow Black & White Filtering" description="Clients may view and order black and white versions of your photos" checked={extras.allowBlackWhiteFiltering} onChange={(next) => setExtra("allowBlackWhiteFiltering", next)} />
                   </Card>
                 </div>
+              )}
+
+              {activeSection === "yearbook" && (
+                <SchoolYearbookOwnerPanel schoolId={schoolId} />
               )}
 
               {activeSection === "registration" && (
