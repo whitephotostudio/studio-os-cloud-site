@@ -4,6 +4,7 @@ import { createRequire } from 'node:module';
 import vm from 'node:vm';
 import test from 'node:test';
 import ts from 'typescript';
+import { localCalendarDate } from '../lib/calendar-dates.ts';
 
 const require = createRequire(import.meta.url);
 const source = file => readFileSync(new URL('../' + file, import.meta.url), 'utf8');
@@ -116,7 +117,7 @@ function formHarness(kind, { hangSession = false, lostResponse = false, formRead
   const timers = new Map(), posts = [], navigation = [], state = { busy: false, error: '' };
   let timerId = 0, requestCount = 0, generatedIds = 0;
   const context = {
-    exports: {}, Error, Promise, AbortSignal, Date, Headers, window: { location: {} }, console: quiet,
+    exports: {}, Error, Promise, AbortSignal, Date, Headers, localCalendarDate, window: { location: {} }, console: quiet,
     crypto: { randomUUID: () => ++generatedIds === 1 ? requestId : otherId },
     setTimeout(fn) { timers.set(++timerId, fn); return timerId; }, clearTimeout(id) { timers.delete(id); },
     formReady, title: 'First gallery', clientName: '', eventDate: '2026-10-07', galleryStatus: 'active', accessMode: 'public', accessPin: '',
@@ -182,6 +183,67 @@ test('new gallery native submit cannot leak a private PIN before hydration', asy
   await app.submit();
   assert.equal(app.posts.length, 0);
   assert.match(source('app/dashboard/projects/new/page.tsx'), /<form method="post"/);
+});
+
+test('new-gallery and school date defaults use the photographer local day across UTC midnight and DST', () => {
+  const previous = process.env.TZ;
+  try {
+    process.env.TZ = 'America/Toronto';
+    assert.equal(localCalendarDate(new Date('2026-10-08T00:30:00Z')), '2026-10-07');
+    assert.equal(localCalendarDate(new Date('2026-03-08T04:30:00Z')), '2026-03-07');
+    assert.equal(localCalendarDate(new Date('2026-03-08T07:30:00Z')), '2026-03-08');
+    process.env.TZ = 'Australia/Sydney';
+    assert.equal(localCalendarDate(new Date('2026-10-07T15:30:00Z')), '2026-10-08');
+    assert.equal(localCalendarDate(new Date('2026-01-01T00:30:00Z')), '2026-01-01');
+  } finally {
+    if (previous === undefined) delete process.env.TZ; else process.env.TZ = previous;
+  }
+  assert.match(source('app/dashboard/projects/new/page.tsx'), /localCalendarDate\(\)/);
+  assert.equal((source('app/dashboard/schools/page.tsx').match(/localCalendarDate\(\)/g) ?? []).length, 2);
+});
+
+test('server and client date inputs start alike, then local hydration keeps a photographer selected day', () => {
+  for (const [file, stateName, setterName] of [
+    ['app/dashboard/projects/new/page.tsx', 'eventDate', 'setEventDate'],
+    ['app/dashboard/schools/page.tsx', 'newSchoolShootDate', 'setNewSchoolShootDate'],
+  ]) {
+    const parsed = ts.createSourceFile(file, source(file), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+    let initializer, effect;
+    function visit(node) {
+      if (ts.isVariableDeclaration(node) && ts.isArrayBindingPattern(node.name) && node.name.elements[0]?.name?.getText(parsed) === stateName) initializer = node.initializer;
+      if (ts.isCallExpression(node) && node.expression.getText(parsed) === 'useEffect' && node.arguments[0]?.getText(parsed).includes(setterName)) effect = node.arguments[0].getText(parsed);
+      ts.forEachChild(node, visit);
+    }
+    visit(parsed);
+    assert.equal(initializer?.arguments[0]?.getText(parsed), '""', 'SSR and first client render must use the same neutral date');
+    assert.ok(effect);
+    for (const [timeZone, instant, expected] of [
+      ['America/Toronto', '2026-10-08T00:30:00Z', '2026-10-07'],
+      ['Australia/Sydney', '2026-10-07T15:30:00Z', '2026-10-08'],
+    ]) {
+      const previousTimeZone = process.env.TZ;
+      try {
+        process.env.TZ = timeZone;
+        let value = '';
+        const tasks = [], context = {
+          exports: {}, queueMicrotask: task => tasks.push(task),
+          localCalendarDate: () => localCalendarDate(new Date(instant)),
+          [setterName]: update => { value = update(value); },
+        };
+        vm.runInNewContext(transpile('exports.run = ' + effect + ';'), context);
+        context.exports.run(); tasks.splice(0).forEach(task => task());
+        assert.equal(value, expected);
+        value = '2026-10-15';
+        context.exports.run(); tasks.splice(0).forEach(task => task());
+        assert.equal(value, '2026-10-15', 'Hydration must keep an edited date');
+        value = '';
+        const cleanup = context.exports.run(); cleanup(); tasks.splice(0).forEach(task => task());
+        assert.equal(value, '', 'An unmounted or replayed effect must not write late');
+      } finally {
+        if (previousTimeZone === undefined) delete process.env.TZ; else process.env.TZ = previousTimeZone;
+      }
+    }
+  }
 });
 
 test('dashboard auth and missing overview responses become retryable errors instead of a permanent loading screen', async () => {

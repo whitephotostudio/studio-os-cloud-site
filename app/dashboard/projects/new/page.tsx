@@ -1,11 +1,12 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { withAuthRequestTimeout } from "@/lib/auth-request";
 import { useAuthFormReady } from "@/lib/use-auth-form-ready";
+import { localCalendarDate } from "@/lib/calendar-dates";
 import { ArrowLeft, CalendarDays, Lock, Globe } from "lucide-react";
 
 const statusOptions = [
@@ -40,9 +41,7 @@ export default function NewEventPage() {
 
   const [title, setTitle] = useState("");
   const [clientName, setClientName] = useState("");
-  const [eventDate, setEventDate] = useState(
-    new Date().toISOString().slice(0, 10),
-  );
+  const [eventDate, setEventDate] = useState("");
   const [galleryStatus, setGalleryStatus] =
     useState<GalleryStatus>("active");
   const [accessMode, setAccessMode] = useState<"public" | "pin">("public");
@@ -50,6 +49,16 @@ export default function NewEventPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const createRequestId = useRef<string | null>(null);
+
+  // Server and browser begin with the same blank input. After hydration use
+  // the photographer's local day, keeping any date they already selected.
+  useEffect(() => {
+    let active = true;
+    queueMicrotask(() => {
+      if (active) setEventDate((current) => current || localCalendarDate());
+    });
+    return () => { active = false; };
+  }, []);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();

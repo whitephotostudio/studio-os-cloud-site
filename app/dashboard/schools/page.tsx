@@ -1,6 +1,6 @@
 "use client";
 
-import { formatCalendarDate } from "@/lib/calendar-dates";
+import { formatCalendarDate, localCalendarDate } from "@/lib/calendar-dates";
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
@@ -164,11 +164,21 @@ export default function SchoolsPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [newSchoolName, setNewSchoolName] = useState("");
-  const [newSchoolShootDate, setNewSchoolShootDate] = useState(new Date().toISOString().slice(0, 10));
+  const [newSchoolShootDate, setNewSchoolShootDate] = useState("");
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState("");
   const createInputRef = useRef<HTMLInputElement>(null);
   const createRequestId = useRef<string | null>(null);
+
+  // A server may use another timezone. Fill today's date only in the browser
+  // and keep a photographer's selection if they already edited the input.
+  useEffect(() => {
+    let active = true;
+    queueMicrotask(() => {
+      if (active) setNewSchoolShootDate((current) => current || localCalendarDate());
+    });
+    return () => { active = false; };
+  }, []);
 
   // Selection state
   const [selectMode, setSelectMode] = useState(false);
@@ -424,7 +434,7 @@ export default function SchoolsPage() {
       createRequestId.current = null;
       invalidateDashboardListCache("schools");
       setShowCreateModal(false);
-      setNewSchoolShootDate(new Date().toISOString().slice(0, 10));
+      setNewSchoolShootDate(localCalendarDate());
       if (data.school?.id) {
         router.push(`/dashboard/projects/schools/${data.school.id}/settings`);
       } else {
