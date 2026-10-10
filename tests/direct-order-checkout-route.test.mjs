@@ -96,7 +96,7 @@ function fixture(options = {}) {
     stripeRequests.push({headers: request.headers, params: new URLSearchParams(request.body)});
     return Response.json({id: 'cs_created', url: 'https://checkout.stripe.invalid/fixture'});
   }
-  const pure = new Set(['studio-pricing', 'trial-config', 'subscription-access', 'order-payment-policy', 'order-checkout-totals', 'order-currency', 'school-parent-gallery-link']);
+  const pure = new Set(['studio-pricing', 'trial-config', 'subscription-access', 'order-payment-policy', 'order-checkout-totals', 'order-currency', 'school-parent-gallery-link', 'online-backdrop-policy']);
   function load(path, overrides = {}) {
     if (cache.has(path)) return cache.get(path);
     const exports = {}; cache.set(path, exports);

@@ -56,6 +56,7 @@ import { resolvePhotographerOrderCurrency } from "@/lib/order-currency";
 import { parseJson } from "@/lib/api-validation";
 import { durablePrivateMediaReference } from "@/lib/private-media-references";
 import { assertParentBackdropCutouts, isAllDigitalBackdropPackage, ParentCutoutPreflightError } from "@/lib/parent-cutout-preflight";
+import { assertNewOnlineBackdropPurchase, OnlineBackdropsDisabledError } from "@/lib/online-backdrop-policy";
 import { isRetouchPackage, retouchPrintPurchaseIssue, parseRetouchSelections, retouchSelectionIssue, retouchNotesBlock, customerNotesBlock, retouchSlots, type RetouchSelection } from "@/lib/retouching";
 import {
   computeCombineTotals,
@@ -589,6 +590,8 @@ export async function POST(request: NextRequest) {
     // Validate every student before the first order write; a later sibling
     // failure must not leave a partially created combined checkout.
     for (const group of resolvedGroups) {
+      await assertNewOnlineBackdropPurchase(sb, { photographerId: group.photographerId, schoolId: group.schoolId },
+        resolvedEntries.some(entry => entry.groupIndex === group.groupIndex && !!entry.backdrop));
       await assertParentBackdropCutouts(sb, { mode: "school", photographerId: group.photographerId,
         schoolId: group.schoolId, studentId: group.studentId },
       resolvedEntries.filter(entry => entry.groupIndex === group.groupIndex).map(entry => ({
@@ -989,7 +992,7 @@ export async function POST(request: NextRequest) {
     if (persistError) throw persistError;
     return NextResponse.json(result);
   } catch (error) {
-    if (error instanceof ParentCutoutPreflightError) return NextResponse.json({ ok: false, message: error.message }, { status: 409 });
+    if (error instanceof ParentCutoutPreflightError || error instanceof OnlineBackdropsDisabledError) return NextResponse.json({ ok: false, message: error.message }, { status: 409 });
     console.error("[portal:orders:create-combined]", error);
     return NextResponse.json(
       { ok: false, message: "Failed to create combined order. Please try again." },

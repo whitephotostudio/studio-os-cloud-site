@@ -57,7 +57,7 @@ function loader(stubs) {
   return load;
 }
 
-function setup({ originals = [original()], paidKeys = originals.map(fullCutout), bytes = png, storedBytes = bytes, tombstones = [], media = [], collectionPin = '12345', projectOwner = photographerId, repeatMediaPages = false, localSchoolId = null, mediaPageCap = 1000, mediaCountUnavailable = false, billingCurrency = null } = {}) {
+function setup({ originals = [original()], paidKeys = originals.map(fullCutout), bytes = png, storedBytes = bytes, tombstones = [], media = [], collectionPin = '12345', projectOwner = photographerId, repeatMediaPages = false, localSchoolId = null, mediaPageCap = 1000, mediaCountUnavailable = false, billingCurrency = null, onlineBackdropsEnabled = true, schoolBackdropsOverride = null } = {}) {
   const writes = [], paidReads = [], proofQueries = [], folderReads = [], mediaPages = [];
   const bindings = paidKeys.map(object_key => ({ object_key, original_sha256: 'a'.repeat(64), cutout_sha256: hash(bytes) }));
   const sb = {
@@ -83,9 +83,9 @@ function setup({ originals = [original()], paidKeys = originals.map(fullCutout),
         then(resolve, reject) {
           let rows = table === 'packages' ? [print, digital, allDigital, retouch, mixedPrint]
             : table === 'backdrop_catalog' ? [{ id: backdropId, name: 'Blue', image_url: 'backdrops/blue.jpg', tier: 'premium', price_cents: 250, photographer_id: photographerId, active: true }]
-            : table === 'schools' ? [{ id: schoolId, local_school_id: localSchoolId, photographer_id: photographerId }]
+            : table === 'schools' ? [{ id: schoolId, local_school_id: localSchoolId, photographer_id: photographerId, online_backdrops_override: schoolBackdropsOverride }]
             : table === 'students' ? ['12345', '67890'].map(pin => ({ id: `student-${pin}`, pin, school_id: schoolId, class_id: null, class_name: 'Class', folder_name: `Student${pin}`, photo_url: original('pose.JPG', pin) }))
-            : table === 'photographers' ? [{ id: photographerId, subscription_status: 'active', billing_currency: billingCurrency }]
+            : table === 'photographers' ? [{ id: photographerId, subscription_status: 'active', billing_currency: billingCurrency, online_backdrops_enabled: onlineBackdropsEnabled }]
             : table === 'projects' ? [{ id: projectId, photographer_id: projectOwner, workflow_type: 'event', status: 'active', access_mode: 'pin', access_pin: 'project-pin' }]
             : table === 'collections' ? [{ id: 'collection-a', project_id: projectId, kind: 'album', slug: collectionPin, access_mode: 'pin', access_pin: collectionPin }, { id: 'collection-b', project_id: projectId, kind: 'album', slug: 'other-pin', access_mode: 'pin', access_pin: 'other-pin' }]
             : table === 'media' ? media
@@ -361,3 +361,29 @@ test('a lower database response cap still checks the complete gallery, and unkno
   assert.equal((await unknown.post(createPath, eventBody([entry(allDigital, [])]))).status, 409);
   assert.equal(unknown.paidReads.length, 0); assert.equal(unknown.writes.length, 0);
 });
+
+for (const route of [createPath, combinedPath]) {
+  test(`online backdrop Off rejects stale selected backgrounds before writes or cutout reads: ${route}`, async () => {
+    const h = setup({ onlineBackdropsEnabled: false });
+    const body = route === createPath ? schoolBody([entry()]) : { ...common, groups: [group([entry()])] };
+    const result = await h.post(route, body);
+    assert.equal(result.status, 409); assert.match(result.body.message, /Background changes are no longer available/);
+    assert.equal(h.writes.length, 0); assert.equal(h.paidReads.length, 0); assert.equal(h.proofQueries.length, 0);
+  });
+  test(`school override On works with default Off; explicit Off rejects default On: ${route}`, async () => {
+    const body = route === createPath ? schoolBody([entry()]) : { ...common, groups: [group([entry()])] };
+    const yes = setup({ onlineBackdropsEnabled: false, schoolBackdropsOverride: true });
+    assert.equal((await yes.post(route, body)).status, 200);
+    const no = setup({ onlineBackdropsEnabled: true, schoolBackdropsOverride: false });
+    assert.equal((await no.post(route, body)).status, 409); assert.equal(no.writes.length, 0);
+  });
+  test(`original-photo orders remain available while online backdrop changes are Off: ${route}`, async () => {
+    const h = setup({ onlineBackdropsEnabled: false, paidKeys: [] });
+    const entries = [entry(print, [original()], { backdrop: null })];
+    const body = route === createPath ? schoolBody(entries) : { ...common, groups: [group(entries)] };
+    const result = await h.post(route, body);
+    assert.equal(result.status, 200, JSON.stringify(result.body));
+    assert.equal(h.writes.find(w => w.table === 'orders').value[0].subtotal_cents, 1000);
+    assert.equal(h.paidReads.length, 0); assert.equal(h.proofQueries.length, 0);
+  });
+}

@@ -21,10 +21,10 @@ function load(path, dependencies) {
   return exports;
 }
 const next = { NextResponse: { json: (data, options) => Response.json(data, options) } };
-function fixture({ enabled = false, status = 'pre_release', classes = ['Grade 7', 'Grade 12'], owner = true, contactError = false, registrationError = false, matchingPin = true } = {}) {
+function fixture({ enabled = false, status = 'pre_release', classes = ['Grade 7', 'Grade 12'], owner = true, contactError = false, registrationError = false, matchingPin = true, backdropOverride = null } = {}) {
   const calls = [], sent = [], rpcCalls = [];
   const schedule = { shootDates: ['2026-10-05', '2026-10-26', '2026-11-02'], slotMinutes: 10 };
-  const school = { id: schoolId, photographer_id: photographerId, school_name: 'School', status, registration_class_required: enabled, gallery_settings: { schedule, share: {}, extras: { sendEmailCampaign: false } } };
+  const school = { id: schoolId, photographer_id: photographerId, school_name: 'School', status, registration_class_required: enabled, online_backdrops_override: backdropOverride, gallery_settings: { schedule, share: {}, extras: { sendEmailCampaign: false } } };
   const tables = {
     schools: [school], photographers: [{ id: photographerId, user_id: 'owner', studio_email: 'studio@example.com' }],
     students: matchingPin ? [{ id: studentId, school_id: schoolId, pin: '12345', photo_url: 'ready.jpg' }] : [],
@@ -36,6 +36,7 @@ function fixture({ enabled = false, status = 'pre_release', classes = ['Grade 7'
       const query = {
         select() { return query; },
         eq(key, expected) { const prev = predicate; predicate = row => prev(row) && row[key] === expected; return query; },
+        is(key, expected) { return query.eq(key, expected); },
         insert(nextValue) { operation = 'insert'; value = nextValue; return query; },
         upsert(nextValue) { operation = 'upsert'; value = nextValue; return query; },
         update(nextValue) { operation = 'update'; value = nextValue; return query; },
@@ -125,6 +126,42 @@ test('toggle alone does not send email, change schedule, or silently enable scho
   assert.equal(empty.school.registration_class_required, false);
   const anon = fixture({ owner: false });
   assert.equal((await load('app/api/dashboard/schools/[schoolId]/route.ts', anon.dependencies).PATCH(anon.req({ registration_class_required: true }), anon.context)).status, 401);
+});
+test('school backdrop override saves On, Off and inherited without changing photos, schedule or notifications', async () => {
+  const f = fixture({ status: 'active' });
+  const originalStudents = structuredClone(f.tables.students);
+  const route = load('app/api/dashboard/schools/[schoolId]/route.ts', f.dependencies);
+  let expected = null;
+  for (const override of [false, true, null]) {
+    const response = await route.PATCH(f.req({ online_backdrops_override: override, expected_online_backdrops_override: expected }), f.context);
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).school.online_backdrops_override, override);
+    assert.equal(f.school.online_backdrops_override, override);
+    assert.deepEqual(f.tables.students, originalStudents);
+    assert.deepEqual(f.school.gallery_settings.schedule, f.schedule);
+    assert.equal(f.sent.length, 0);
+    expected = override;
+  }
+  assert.ok(f.calls.every(c => !['orders', 'photos', 'student_photos', 'backdrop_catalog'].includes(c.table)));
+});
+test('desktop-style school updates keep explicit Off, and stale gallery windows cannot overwrite it', async () => {
+  const f = fixture({ status: 'active', backdropOverride: false });
+  const route = load('app/api/dashboard/schools/[schoolId]/route.ts', f.dependencies);
+  assert.equal((await route.PATCH(f.req({ school_name: 'Renamed school', gallery_settings: { share: {}, extras: {} } }), f.context)).status, 200);
+  assert.equal(f.school.online_backdrops_override, false);
+  assert.equal((await route.PATCH(f.req({ online_backdrops_override: true, expected_online_backdrops_override: null }), f.context)).status, 409);
+  assert.equal(f.school.online_backdrops_override, false);
+});
+test('school backdrop settings reject anonymous, wrong-owner and invalid policy writes', async () => {
+  const anon = fixture({ owner: false });
+  assert.equal((await load('app/api/dashboard/schools/[schoolId]/route.ts', anon.dependencies).PATCH(anon.req({ online_backdrops_override: false }), anon.context)).status, 401);
+  assert.equal(anon.school.online_backdrops_override, null);
+  const other = fixture(); other.school.photographer_id = 'another-owner';
+  assert.equal((await load('app/api/dashboard/schools/[schoolId]/route.ts', other.dependencies).PATCH(other.req({ online_backdrops_override: false }), other.context)).status, 404);
+  assert.equal(other.school.online_backdrops_override, null);
+  const invalid = fixture();
+  assert.equal((await load('app/api/dashboard/schools/[schoolId]/route.ts', invalid.dependencies).PATCH(invalid.req({ online_backdrops_override: 'false' }), invalid.context)).status, 400);
+  assert.equal(invalid.school.online_backdrops_override, null);
 });
 test('a failed notification contact write never blocks a valid PIN login; invalid PIN creates no contact', async () => {
   const f = fixture({ enabled: true, status: 'active', contactError: true });

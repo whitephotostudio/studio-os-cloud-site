@@ -41,6 +41,8 @@ const SchoolUpdateBodySchema = z.object({
   access_mode: z.string().max(64).nullable().optional(),
   access_pin: z.string().max(64).nullable().optional(),
   gallery_settings: z.unknown().optional(),
+  online_backdrops_override: z.boolean().nullable().optional(),
+  expected_online_backdrops_override: z.boolean().nullable().optional(),
   gallery_slug: z.string().max(200).nullable().optional(),
   // Screenshot protection flags — all default false in the DB.
   screenshot_protection_desktop: z.boolean().optional(),
@@ -73,6 +75,7 @@ type SchoolRow = {
   access_pin?: string | null;
   cover_photo_url?: string | null;
   gallery_settings?: unknown;
+  online_backdrops_override?: boolean | null;
   gallery_slug?: string | null;
   screenshot_protection_desktop?: boolean | null;
   screenshot_protection_mobile?: boolean | null;
@@ -260,7 +263,7 @@ export async function PATCH(
 
     const { data: schoolRow, error: schoolError } = await service
       .from("schools")
-      .select("id,school_name,photographer_id,local_school_id,status,shoot_date,order_due_date,expiration_date,package_profile_id,email_required,registration_class_required,checkout_contact_required,internal_notes,access_mode,access_pin,cover_photo_url,gallery_settings,gallery_slug,screenshot_protection_desktop,screenshot_protection_mobile,screenshot_protection_watermark,group_label_singular,group_label_plural")
+      .select("id,school_name,photographer_id,local_school_id,status,shoot_date,order_due_date,expiration_date,package_profile_id,email_required,registration_class_required,checkout_contact_required,internal_notes,access_mode,access_pin,cover_photo_url,gallery_settings,gallery_slug,screenshot_protection_desktop,screenshot_protection_mobile,screenshot_protection_watermark,group_label_singular,group_label_plural,online_backdrops_override")
       .eq("id", schoolId)
       .eq("photographer_id", photographerRow.id)
       .maybeSingle<SchoolRow>();
@@ -310,6 +313,9 @@ export async function PATCH(
     if (hasOwn(body, "internal_notes")) updates.internal_notes = clean(body.internal_notes) || null;
     if (hasOwn(body, "gallery_settings")) {
       updates.gallery_settings = normalizeEventGallerySettings(body.gallery_settings);
+    }
+    if (hasOwn(body, "online_backdrops_override")) {
+      updates.online_backdrops_override = body.online_backdrops_override;
     }
     if (hasOwn(body, "access_mode") || hasOwn(body, "access_pin")) {
       const requestedMode = clean(body.access_mode || schoolRow.access_mode).toLowerCase();
@@ -369,16 +375,28 @@ export async function PATCH(
     const previousStatus = clean(schoolRow.status);
     const previousSettings = normalizeEventGallerySettings(schoolRow.gallery_settings);
 
-    const { data: updatedSchoolRow, error: updateError } = await service
+    let updateQuery = service
       .from("schools")
       .update(updates)
       .eq("id", schoolId)
-      .eq("photographer_id", photographerRow.id)
-      .select("id,school_name,photographer_id,local_school_id,status,shoot_date,order_due_date,expiration_date,package_profile_id,email_required,registration_class_required,checkout_contact_required,internal_notes,access_mode,access_pin,cover_photo_url,gallery_settings,gallery_slug,screenshot_protection_desktop,screenshot_protection_mobile,screenshot_protection_watermark,group_label_singular,group_label_plural")
+      .eq("photographer_id", photographerRow.id);
+    if (hasOwn(body, "online_backdrops_override") && hasOwn(body, "expected_online_backdrops_override")) {
+      updateQuery = body.expected_online_backdrops_override === null
+        ? updateQuery.is("online_backdrops_override", null)
+        : updateQuery.eq("online_backdrops_override", body.expected_online_backdrops_override);
+    }
+    const { data: updatedSchoolRow, error: updateError } = await updateQuery
+      .select("id,school_name,photographer_id,local_school_id,status,shoot_date,order_due_date,expiration_date,package_profile_id,email_required,registration_class_required,checkout_contact_required,internal_notes,access_mode,access_pin,cover_photo_url,gallery_settings,gallery_slug,screenshot_protection_desktop,screenshot_protection_mobile,screenshot_protection_watermark,group_label_singular,group_label_plural,online_backdrops_override")
       .maybeSingle<SchoolRow>();
 
     if (updateError) throw updateError;
     if (!updatedSchoolRow?.id) {
+      if (hasOwn(body, "online_backdrops_override") && hasOwn(body, "expected_online_backdrops_override")) {
+        return NextResponse.json(
+          { ok: false, message: "This school's background setting changed in another window. Reload before saving." },
+          { status: 409 },
+        );
+      }
       return NextResponse.json(
         { ok: false, message: "School not found after save." },
         { status: 404 },

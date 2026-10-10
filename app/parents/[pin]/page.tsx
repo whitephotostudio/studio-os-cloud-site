@@ -76,7 +76,7 @@ import OrdersHistoryPanel from "@/components/parents/orders-history-panel";
 import { RetouchPhotoFields, type RetouchPhotoOption } from "@/components/parents/retouch-photo-fields";
 import { isRetouchPackage, isRetouchPrintPurchase, retouchPrintPurchaseIssue, RETOUCH_PRINT_REQUIRED, retouchPhotoLimit, retouchSelectionIssue, retouchSlots, type RetouchSelection } from "@/lib/retouching";
 import { calendarDateInputValue, hasCalendarBoundaryPassed } from "@/lib/calendar-dates";
-import { canOfferParentBackdrops, parentBackdropSelectionIssue, usableParentCutouts, PARENT_BACKDROP_UNAVAILABLE, type ParentBackdropPortrait } from "@/lib/parent-backdrop-access";
+import { canOfferParentBackdrops, parentBackdropSelectionIssue, usableParentCutouts, PARENT_BACKDROP_UNAVAILABLE, PARENT_BACKDROPS_DISABLED, type ParentBackdropPortrait } from "@/lib/parent-backdrop-access";
 import { EventAlbumOverview, EventAlbumSwitcher } from "@/components/parents/event-album-navigation";
 import { EventGalleryCover } from "@/components/parents/event-gallery-cover";
 import { EventAlbumHero } from "@/components/parents/event-album-hero";
@@ -212,6 +212,7 @@ type GalleryContextPayload = {
   composites?: CompositeMediaRow[];
   packages?: PackageRow[];
   backdrops?: BackdropRow[];
+  onlineBackdropsEnabled?: boolean;
   nobgUrls?: Record<string, string>;
   photographerId?: string | null;
   watermarkEnabled?: boolean;
@@ -3939,6 +3940,7 @@ export default function ParentGalleryPage() {
   // ── Backdrop selector (school mode only) ────────────────────────────────
   const [backdropPickerOpen, setBackdropPickerOpen] = useState(false);
   const [backdrops, setBackdrops] = useState<BackdropRow[]>([]);
+  const [onlineBackdropsEnabled, setOnlineBackdropsEnabled] = useState(true);
   // 2026-04-26: Tracks how many orders this parent has on this gallery,
   // pushed up from OrdersHistoryPanel via onCountChange.  Used to render
   // an "(N)" badge on the Orders tab label so the parent can see the
@@ -4590,6 +4592,7 @@ export default function ParentGalleryPage() {
           setBlackWhitePreviewEnabled(false);
           setPackages(packageRows);
           setBackdrops([]);
+          setOnlineBackdropsEnabled(false);
           setSelectedBackdrop(null);
           setConfirmedBackdrop(null);
           setFavorites(nextFavorites);
@@ -4808,6 +4811,7 @@ export default function ParentGalleryPage() {
         setBlackWhitePreviewEnabled(false);
         setPackages(packageRows);
         setBackdrops(backdropRows);
+        setOnlineBackdropsEnabled(contextPayload.onlineBackdropsEnabled !== false);
         setFavorites(nextSchoolFavorites);
         setEventFavoritesAvailable(!schoolFavoritesUnavailable);
         if (!schoolFavoritesUnavailable && favoriteSchoolId && schoolViewerEmail) {
@@ -4876,6 +4880,47 @@ export default function ParentGalleryPage() {
       mounted = false;
     };
   }, [eventEmail, isSchoolMode, pin, projectId, schoolId, schoolViewerEmail, supabase]);
+
+  // Refresh only selection controls when a parent returns to an open gallery.
+  // Do not reset photos, favorites, checkout-return state or paid order history.
+  useEffect(() => {
+    if (!isSchoolMode || loading || !schoolId || !photographerId || !student?.id) return;
+    let mounted = true;
+    let refreshing = false;
+    const controller = new AbortController();
+    async function refreshOnlineBackdropControls() {
+      if (refreshing || document.visibilityState === "hidden") return;
+      refreshing = true;
+      try {
+        const response = await fetch("/api/portal/gallery-context", {
+          method: "POST", headers: { "content-type": "application/json" }, cache: "no-store",
+          signal: controller.signal,
+          body: JSON.stringify({ pin, schoolId, email: schoolViewerEmail }),
+        });
+        const context = await response.json() as GalleryContextPayload;
+        const studentMatches = context.primaryStudent?.id === student?.id ||
+          context.studentCandidates?.some((candidate) => candidate.id === student?.id);
+        if (!mounted || !response.ok || context.ok === false ||
+            context.photographerId !== photographerId || context.activeSchool?.id !== schoolId || !studentMatches) return;
+        setOnlineBackdropsEnabled(context.onlineBackdropsEnabled !== false);
+        setBackdrops(context.onlineBackdropsEnabled === false ? [] : context.backdrops ?? []);
+      } catch {
+        // A temporary refresh failure never discards photos or orders. New
+        // purchases still require fresh policy and cutout checks at checkout.
+      } finally {
+        refreshing = false;
+      }
+    }
+    const refresh = () => { void refreshOnlineBackdropControls(); };
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      mounted = false;
+      controller.abort();
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", refresh);
+    };
+  }, [isSchoolMode, loading, photographerId, pin, schoolId, schoolViewerEmail, student?.id]);
 
   useEffect(() => {
     return () => {
@@ -6458,6 +6503,7 @@ export default function ParentGalleryPage() {
 
   function openBackdropPickerForImage(image: GalleryImage) {
     if (!canOfferParentBackdrops({ schoolMode: isSchoolMode,
+      onlineBackdropsEnabled,
       composite: isCompositeGalleryImage(image), catalogCount: backdrops.length,
       cutoutUrl: nobgUrls[image.id] })) return;
     if (!focusImageForActions(image)) return;
@@ -7576,6 +7622,7 @@ export default function ParentGalleryPage() {
   // ── Backdrop helpers (school mode only) ─────────────────────────────────
   const currentNobgUrl = selectedImage ? (nobgUrls[selectedImage.id] ?? null) : null;
   const hasBackdrops = canOfferParentBackdrops({
+    onlineBackdropsEnabled,
     schoolMode: isSchoolMode, composite: isCompositeSelection,
     catalogCount: backdrops.length, cutoutUrl: currentNobgUrl,
   });
@@ -7591,10 +7638,25 @@ export default function ParentGalleryPage() {
     }, 0);
     return () => window.clearTimeout(timer);
   }, [hasBackdrops]);
+  useEffect(() => {
+    if (loading || !isSchoolMode) return;
+    const chosenBackdropHidden = !!confirmedBackdrop && !backdrops.some((row) => row.id === confirmedBackdrop.id);
+    const previewBackdropHidden = !!selectedBackdrop && !backdrops.some((row) => row.id === selectedBackdrop.id);
+    if (onlineBackdropsEnabled && backdrops.length > 0 && !chosenBackdropHidden && !previewBackdropHidden) return;
+    const timer = window.setTimeout(() => {
+      // This is only the actively edited, unpaid choice. Persisted basket
+      // selections and paid orders retain their saved background metadata.
+      handleClearBackdrop();
+      setBackdropPickerOpen(false);
+      setShowPremiumModal(false);
+      setPremiumTarget(null);
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [onlineBackdropsEnabled, backdrops, confirmedBackdrop, selectedBackdrop, loading, isSchoolMode]);
   // Keep the portrait as a separate image in every store mockup. Exporting a
   // flattened canvas can lose a signed-storage cutout or fail CORS checks.
   const productBackdrop: ProductBackdrop | null =
-    confirmedBackdrop && currentNobgUrl && !isCompositeSelection
+    onlineBackdropsEnabled && confirmedBackdrop && currentNobgUrl && !isCompositeSelection
       ? {
           url: confirmedBackdrop.thumbnail_url || confirmedBackdrop.image_url,
           fallbackUrl: confirmedBackdrop.image_url,
@@ -7612,7 +7674,7 @@ export default function ParentGalleryPage() {
 
   // Premium backdrop pricing — added to checkout total
   const premiumBackdropCents =
-    confirmedBackdrop && confirmedBackdrop.tier === "premium"
+    onlineBackdropsEnabled && confirmedBackdrop && confirmedBackdrop.tier === "premium"
       ? (confirmedBackdrop.price_cents ?? 0)
       : 0;
   const currentDraftCartItem = useMemo<CartLineItem | null>(() => {
@@ -7633,7 +7695,7 @@ export default function ParentGalleryPage() {
       null;
     const effectiveOrderQty = digitalLimit ? 1 : selectedOrderQty;
     const packageSubtotalCents = selectedPkg.price_cents * effectiveOrderQty;
-    const backdropSnapshot = confirmedBackdrop
+    const backdropSnapshot = onlineBackdropsEnabled && confirmedBackdrop
       ? {
           id: confirmedBackdrop.id,
           name: confirmedBackdrop.name,
@@ -7650,7 +7712,7 @@ export default function ParentGalleryPage() {
     // portrait for backdrops that don't actually support landscape — the
     // toggle UI shouldn't have allowed it through, but defense in depth.
     const lineOrientation: "portrait" | "landscape" =
-      confirmedBackdrop?.supports_landscape && confirmedOrientation === "landscape"
+      onlineBackdropsEnabled && confirmedBackdrop?.supports_landscape && confirmedOrientation === "landscape"
         ? "landscape"
         : "portrait";
 
@@ -7677,6 +7739,7 @@ export default function ParentGalleryPage() {
     confirmedBlurAmount,
     confirmedBlurBackground,
     confirmedOrientation,
+    onlineBackdropsEnabled,
     isCompositeSelection,
     isSchoolMode,
     premiumBackdropCents,
@@ -7692,9 +7755,10 @@ export default function ParentGalleryPage() {
     () => (currentDraftCartItem ? [...cartItems, currentDraftCartItem] : cartItems),
     [cartItems, currentDraftCartItem],
   );
-  function backdropIssueForItem(item: CartLineItem, portraits = backdropPortraits, cutoutUrls = nobgUrls, configuredPackages = packages) {
+  function backdropIssueForItem(item: CartLineItem, portraits = backdropPortraits, cutoutUrls = nobgUrls, configuredPackages = packages, backdropsAllowed = onlineBackdropsEnabled) {
     const configured = configuredPackages.find((pkg) => pkg.id === item.packageId);
     if (configured && isRetouchPackage(configured)) return "";
+    if (item.backdrop && !backdropsAllowed) return PARENT_BACKDROPS_DISABLED;
     return parentBackdropSelectionIssue({
       hasBackdrop: !!item.backdrop, composite: item.isCompositeOrder,
       category: item.category, selectedImageUrl: item.selectedImageUrl,
@@ -8193,8 +8257,15 @@ export default function ParentGalleryPage() {
       }
       const freshPackage = fresh.context.packages?.find((pkg) => pkg.id === item.packageId);
       if (freshPackage && isRetouchPackage(freshPackage)) continue;
+      if (fresh.context.onlineBackdropsEnabled === false) {
+        if (lane.laneKey === currentLane?.laneKey) {
+          setOnlineBackdropsEnabled(false);
+          setBackdrops([]);
+        }
+        return PARENT_BACKDROPS_DISABLED;
+      }
       if (!fresh.context.backdrops?.some((backdrop) => backdrop.id === item.backdrop?.id)) return PARENT_BACKDROP_UNAVAILABLE;
-      const issue = backdropIssueForItem(item, fresh.portraits, fresh.cutouts, fresh.context.packages ?? []);
+      const issue = backdropIssueForItem(item, fresh.portraits, fresh.cutouts, fresh.context.packages ?? [], true);
       if (issue) return issue;
     }
     return "";
@@ -10295,6 +10366,7 @@ export default function ParentGalleryPage() {
                     const favoriteCardUrl =
                       buildGalleryImageCandidates(img, "wall")[0] || img.downloadUrl || img.url;
                     const canChangeBackdrop = canOfferParentBackdrops({ schoolMode: isSchoolMode,
+                      onlineBackdropsEnabled,
                       composite: isCompositeGalleryImage(img), catalogCount: backdrops.length,
                       cutoutUrl: nobgUrls[img.id] });
                     return (
@@ -10952,7 +11024,7 @@ export default function ParentGalleryPage() {
                     const cachedActive = backdropPickerOpen
                       ? (selectedBackdrop ?? confirmedBackdrop)
                       : confirmedBackdrop;
-                    const activeBackdrop = cachedActive
+                    const activeBackdrop = onlineBackdropsEnabled && cachedActive
                       ? backdrops.find((b) => b.id === cachedActive.id) ?? cachedActive
                       : null;
                     // 2026-04-25: which orientation the big viewer paints.
@@ -11410,7 +11482,9 @@ export default function ParentGalleryPage() {
                       {viewerThumbnailWindow.images.map((img, offset) => {
                         const idx = viewerThumbnailWindow.start + offset;
                         const active = idx === selectedImageIndex;
-                        const hasNobg = !!nobgUrls[img.id];
+                        const hasNobg = canOfferParentBackdrops({ schoolMode: isSchoolMode,
+                          onlineBackdropsEnabled, composite: isCompositeGalleryImage(img),
+                          catalogCount: backdrops.length, cutoutUrl: nobgUrls[img.id] });
                         const showComposite = !!confirmedBackdrop && hasNobg;
                         const thumbCandidates = buildGalleryImageCandidates(img, "viewer-thumb");
                         return (

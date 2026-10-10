@@ -2,6 +2,7 @@ import { lockOrderPayment } from "@/lib/order-payment-lock";
 import { NextRequest, NextResponse } from "next/server";
 import { createDashboardServiceClient } from "@/lib/dashboard-auth";
 import { assertStoredOrderBackdropCutouts } from "@/lib/stored-order-backdrop-preflight";
+import { assertPendingOnlineBackdropOrders, OnlineBackdropsDisabledError } from "@/lib/online-backdrop-policy";
 import { ParentCutoutPreflightError } from "@/lib/parent-cutout-preflight";
 import { retouchPrintPurchaseIssue, type RetouchPrintPackage } from "@/lib/retouching";
 import { schoolCheckoutReturnContext, SchoolCheckoutReturnError } from "@/lib/school-parent-gallery-link";
@@ -542,10 +543,17 @@ export async function POST(req: NextRequest) {
     let expiredSessionId: string | null = null;
     if (existingSessionId) {
       const existing = await retrieveCheckoutSession(existingSessionId, stripeAccountId);
-      if (existing.status === "open" && existing.url) return NextResponse.json({ ok: true, url: existing.url, sessionId: existing.id });
+      if (existing.status === "open" && existing.url) {
+        await assertPendingOnlineBackdropOrders(sb, checkoutOrders);
+        return NextResponse.json({ ok: true, url: existing.url, sessionId: existing.id });
+      }
       if (existing.status !== "expired") return NextResponse.json({ ok: false, message: "Payment was already submitted. Check your order confirmation before trying again." }, { status: 409 });
       expiredSessionId = existing.id;
     }
+
+    // Only unpaid attempts reach this gate. Paid-session confirmations and
+    // delivery use their saved selections regardless of today's gallery setting.
+    await assertPendingOnlineBackdropOrders(sb, checkoutOrders);
 
     const frozenCount = checkoutOrders.filter(member => member.platform_fee_collection_method != null).length;
     if (frozenCount !== 0 && frozenCount !== checkoutOrders.length) {
@@ -649,7 +657,7 @@ export async function POST(req: NextRequest) {
     if (error instanceof SchoolCheckoutReturnError) {
       return NextResponse.json({ ok: false, message: error.message }, { status: 400 });
     }
-    if (error instanceof ParentCutoutPreflightError) {
+    if (error instanceof ParentCutoutPreflightError || error instanceof OnlineBackdropsDisabledError) {
       return NextResponse.json({ ok: false, message: error.message }, { status: 409 });
     }
     console.error("[stripe:checkout]", error);

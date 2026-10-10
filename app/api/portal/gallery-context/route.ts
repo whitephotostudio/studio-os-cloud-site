@@ -20,6 +20,7 @@ import {
   SIGNED_URL_TTL_PARENTS_PORTAL_SECONDS,
 } from "@/lib/storage-images";
 import { signBackdropRows } from "@/lib/backdrop-media-references";
+import { readOnlineBackdropPolicy } from "@/lib/online-backdrop-policy";
 import {
   signedPrivateMediaReference,
 } from "@/lib/private-media-references";
@@ -310,6 +311,7 @@ export async function POST(request: NextRequest) {
 
     let packageRows: PackageRow[] = [];
     let backdropRows: BackdropRow[] = [];
+    let onlineBackdropsEnabled = false;
     let compositeRows: CompositeMediaRow[] = [];
     let mediaRows: CompositeMediaRow[] = [];
     let nobgUrls: Record<string, string> = {};
@@ -354,6 +356,11 @@ export async function POST(request: NextRequest) {
       if (packagesResult.error) throw packagesResult.error;
       if (backdropsResult.error) throw backdropsResult.error;
       if (photographerResult.error) throw photographerResult.error;
+      const onlineBackdropPolicy = await readOnlineBackdropPolicy(service, {
+        photographerId: activeSchool.photographer_id,
+        schoolId: activeSchool.id,
+      });
+      onlineBackdropsEnabled = onlineBackdropPolicy.enabled;
       const resolvedCurrency = resolvePhotographerOrderCurrency(photographerResult.data?.billing_currency);
       if (!resolvedCurrency) {
         return NextResponse.json({ ok: false, message: "This studio’s sales currency is not supported. Please contact the photographer." }, { status: 409 });
@@ -390,10 +397,14 @@ export async function POST(request: NextRequest) {
           publicGallerySettings.extras.priceSheetProfileId ||
           photographerDefaultProfileId,
       }).packages;
-      backdropRows = signBackdropRows(
-        (backdropsResult.data ?? []) as BackdropRow[],
-        SIGNED_URL_TTL_PARENTS_PORTAL_SECONDS,
-      );
+      // Catalogue visibility controls new parent selections only. Photo,
+      // cutout and paid-delivery authorization remain independent below.
+      backdropRows = onlineBackdropsEnabled
+        ? signBackdropRows(
+            (backdropsResult.data ?? []) as BackdropRow[],
+            SIGNED_URL_TTL_PARENTS_PORTAL_SECONDS,
+          )
+        : [];
 
       const photographer = photographerResult.data;
       if (photographer) {
@@ -506,6 +517,7 @@ export async function POST(request: NextRequest) {
       composites: presentation.composites,
       packages: packageRows,
       backdrops: backdropRows,
+      onlineBackdropsEnabled,
       nobgUrls: presentation.nobgUrls,
       favoriteDownloadAccess,
       photographerId,

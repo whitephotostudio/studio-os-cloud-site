@@ -75,7 +75,7 @@ function loader(stubs) {
 
 function setup({ orders = [order()], lockedOrders = orders, originals = [original()], paidKeys = originals.map(fullCutout),
   bytes = png, storedBytes = bytes, packages = [print, digital, allDigital, retouch, mixed], lines, media = [],
-  pin = 'current-pin', orderPageCap = Infinity, existingSession = { id: 'existing', status: 'open', url: 'https://checkout.example/existing' },
+  pin = 'current-pin', orderPageCap = Infinity, onlineBackdropsEnabled = true, schoolBackdropsOverride = null, existingSession = { id: 'existing', status: 'open', url: 'https://checkout.example/existing' },
 } = {}) {
   const events = [], writes = [], snapshotWrites = [], providerCalls = [], paymentRequests = [], paidReads = [], proofQueries = [], assetReads = [], packageReads = [];
   let locked = false;
@@ -107,9 +107,9 @@ function setup({ orders = [order()], lockedOrders = orders, originals = [origina
         then(resolve, reject) {
           let rows = table === 'orders' ? locked ? lockedOrders : orders
             : table === 'order_items' ? items : table === 'packages' ? packages
-            : table === 'schools' ? [{ id: schoolId, photographer_id: photographerId, local_school_id: null }]
+            : table === 'schools' ? [{ id: schoolId, photographer_id: photographerId, local_school_id: null, online_backdrops_override: schoolBackdropsOverride }]
             : table === 'students' ? ['child-a', 'child-b'].map(name => ({ id: studentIds[name], pin, school_id: schoolId, class_name: 'Class', folder_name: name, photo_url: original(name) }))
-            : table === 'photographers' ? [{ id: photographerId, subscription_status: 'active', subscription_plan_code: 'core', stripe_account_id: 'acct_studio' }]
+            : table === 'photographers' ? [{ id: photographerId, subscription_status: 'active', subscription_plan_code: 'core', stripe_account_id: 'acct_studio', online_backdrops_enabled: onlineBackdropsEnabled }]
             : table === 'projects' ? [{ id: projectId, photographer_id: photographerId, workflow_type: 'event', status: 'active', access_mode: 'pin', access_pin: pin }]
             : table === 'collections' ? [{ id: 'collection-a', project_id: projectId, kind: 'album', slug: pin }, { id: 'collection-b', project_id: projectId, kind: 'album', slug: 'other-pin' }]
             : table === 'media' ? media : [];
@@ -405,4 +405,31 @@ test('a real all-digital catalog ID cannot relabel a positive one-image line thr
     quantity: 1, unit_price_cents: 1000, line_total_cents: 1000 }] });
   deniedWithoutPayment(h, await h.post(), /saved order needs review/);
   assert.equal(h.proofQueries.length, 0); assert.equal(h.assetReads.length, 0);
+});
+
+test('default Off refuses unpaid background checkout without changing saved selections or writing a payment attempt', async () => {
+  const saved = order(), before = structuredClone(saved);
+  const h = setup({ orders: [saved], onlineBackdropsEnabled: false });
+  const result = await h.post();
+  assert.equal(result.status, 409); assert.match(result.body.message, /Background changes are no longer available/);
+  assert.equal(h.paymentRequests.length, 0); assert.equal(h.snapshotWrites.length, 0); assert.equal(h.writes.length, 0);
+  assert.deepEqual(saved, before);
+});
+
+test('school override Off blocks an unpaid open-session link but keeps the saved background snapshot', async () => {
+  const saved = order('a', 'child-a', [selection()], { stripe_checkout_session_id: 'existing' });
+  const before = structuredClone(saved);
+  const h = setup({ orders: [saved], schoolBackdropsOverride: false });
+  const result = await h.post();
+  assert.equal(result.status, 409); assert.match(result.body.message, /Background changes are no longer available/);
+  assert.equal(h.paymentRequests.length, 0); assert.equal(h.writes.length, 0); assert.deepEqual(saved, before);
+});
+
+test('a completed Stripe session keeps its prior submitted-payment response after a gallery switch is Off', async () => {
+  const saved = order('a', 'child-a', [selection()], { stripe_checkout_session_id: 'existing' });
+  const h = setup({ orders: [saved], onlineBackdropsEnabled: false,
+    existingSession: { id: 'existing', status: 'complete', payment_status: 'paid' } });
+  const result = await h.post();
+  assert.equal(result.status, 409); assert.match(result.body.message, /Payment was already submitted/);
+  assert.equal(h.paymentRequests.length, 0); assert.equal(h.writes.length, 0);
 });

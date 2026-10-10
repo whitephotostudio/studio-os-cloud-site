@@ -215,7 +215,7 @@ function confirmationHarness({ context = missing, mode = "school", galleryUrl = 
   return { confirm, events, timers, state };
 }
 
-function actualGalleryContextBody(context) {
+function actualGalleryContextBody(context, functionName = "load") {
   const matches = [];
   function visit(node) {
     if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "fetch"
@@ -231,7 +231,10 @@ function actualGalleryContextBody(context) {
     }
     ts.forEachChild(node, visit);
   }
-  visit(gallery);
+  // The focus refresh deliberately makes a second request with the same
+  // viewer scope. Assert each real flow independently instead of requiring
+  // the entire page to contain just one gallery-context request.
+  visit(findFunction(functionName));
   assert.equal(matches.length, 1);
   return JSON.parse(new Function("pin", "schoolId", "schoolViewerEmail", `return ${matches[0]};`)(
     context.pin, context.schoolId, context.email));
@@ -256,6 +259,12 @@ test("production confirmation restores gallery URL before receipt and reloads th
   assert.equal(next.state.confirming, false);
   assert.equal(next.timers.size, 0);
   assert.ok(next.events.some(([name, value]) => name === "parentEmail" && value === "billing@example.test"));
+});
+
+test("background-controls refresh retains the exact school viewer context restored by checkout", () => {
+  assert.deepEqual(actualGalleryContextBody(complete, "refreshOnlineBackdropControls"), {
+    pin: complete.pin, schoolId: complete.schoolId, email: complete.email,
+  });
 });
 
 test("complete school and existing event returns confirm normally without school navigation", async () => {

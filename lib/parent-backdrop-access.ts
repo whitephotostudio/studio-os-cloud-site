@@ -7,13 +7,18 @@ export const PARENT_BACKDROP_UNAVAILABLE =
   "The selected background isn't ready for every photo in this item. " +
   "Choose a photo with background options, or ask your photographer for help.";
 
+export const PARENT_BACKDROPS_DISABLED =
+  "Background changes are no longer offered for this gallery. " +
+  "Remove background items from your basket and add the original photos instead.";
+
 export function canOfferParentBackdrops(options: {
   schoolMode: boolean;
   composite: boolean;
   catalogCount: number;
   cutoutUrl: string | null | undefined;
+  onlineBackdropsEnabled?: boolean;
 }) {
-  return options.schoolMode && !options.composite && options.catalogCount > 0 &&
+  return options.onlineBackdropsEnabled !== false && options.schoolMode && !options.composite && options.catalogCount > 0 &&
     !!options.cutoutUrl?.trim();
 }
 
