@@ -11743,6 +11743,13 @@ export default function ParentGalleryPage() {
                       {" "}None of these reordered items have been added to your basket. Review this change before adding them, or skip this reorder.
                       {" "}Refreshing this page discards this unconfirmed reorder. Your existing basket and previous paid order are unchanged.
                     </p>
+                    <ul style={{ margin: "0 0 14px", paddingLeft: 20, fontSize: 14, lineHeight: 1.6 }}>
+                      {reorderBackdropReview.items.map((item) => (
+                        <li key={item.id}>
+                          {item.packageName} × {item.quantity} — {item.backdrop?.name || "Original photo background"}
+                        </li>
+                      ))}
+                    </ul>
                     <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
                       <button type="button" onClick={acceptOriginalBackgroundReorder} style={{ padding: "10px 12px", borderRadius: 8, border: "none", background: "#fff", color: "#111", fontWeight: 700, cursor: "pointer" }}>
                         Add reviewed reorder

@@ -2,12 +2,15 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import vm from "node:vm";
 import test from "node:test";
+import React from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import ts from "typescript";
 
 const source = readFileSync(new URL("../app/parents/[pin]/page.tsx", import.meta.url), "utf8");
 const ast = ts.createSourceFile("page.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 const compile = (code) => ts.transpileModule(code, {
-  compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
+  fileName: "reorder.tsx",
+  compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.React },
 }).outputText;
 function findNode(predicate) {
   let found;
@@ -177,6 +180,28 @@ test("accepting a reorder review from another studio cannot alter the current ba
   assert.equal(JSON.stringify(result.cart), before);
   assert.equal(result.review.photographerId, "owner");
   assert.equal(result.writes.some(([name]) => name === "OpenReviewedCheckout"), false);
+});
+
+test("the actual review notice lists the accepted output and explains the safe reload reset", () => {
+  const notice = findNode((node) => ts.isJsxExpression(node) &&
+    node.expression?.getText(ast).startsWith("reorderBackdropReview?.photographerId === photographerId"));
+  const result = mixedReview();
+  const scope = { React, result: null, reorderBackdropReview: result.review, photographerId: "owner",
+    acceptOriginalBackgroundReorder: () => {}, skipOriginalBackgroundReorder: () => {} };
+  vm.runInNewContext(compile(`result = (${notice.expression.getText(ast)});`), scope);
+  const html = renderToStaticMarkup(scope.result);
+  assert.match(html, /Review reordered backgrounds/);
+  assert.match(html, /Unavailable backgrounds will use the original photo backgrounds/);
+  assert.match(html, /available selected backgrounds will stay selected/);
+  assert.match(html, /None of these reordered items have been added to your basket/);
+  assert.match(html, /Refreshing this page discards this unconfirmed reorder/);
+  assert.match(html, /Print × 2 — Blue/);
+  assert.match(html, /Print × 2 — Original photo background/);
+  assert.match(html, /Add reviewed reorder/);
+  assert.match(html, /Skip this reorder/);
+  scope.photographerId = "other-studio";
+  vm.runInNewContext(compile(`result = (${notice.expression.getText(ast)});`), scope);
+  assert.equal(renderToStaticMarkup(scope.result), "", "another studio cannot display this scoped review");
 });
 
 test("an explicit reorder resets the prior review and hydration marker before opening Photos, so a repeated review can be rebuilt", () => {
