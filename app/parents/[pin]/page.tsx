@@ -9604,6 +9604,7 @@ export default function ParentGalleryPage() {
       >
         {/* Top bar */}
         <div
+          data-gallery-header
           style={{
             minHeight: isEventImageStage ? 72 : 52,
             flexShrink: 0,
@@ -9698,12 +9699,15 @@ export default function ParentGalleryPage() {
               </div>
 
               <div
+                role="navigation"
+                aria-label="Gallery sections"
                 style={{
                   display: "flex",
                   gap: 4,
-                  position: isMobileViewport ? "static" : "absolute",
-                  left: isMobileViewport ? undefined : "50%",
-                  transform: isMobileViewport ? undefined : "translateX(-50%)",
+                  // Keep the tabs in layout so wide laptop action bars cannot
+                  // slide underneath them. The header can wrap groups instead.
+                  position: "static",
+                  flexShrink: 0,
                   zIndex: 5,
                   pointerEvents: "auto",
                   order: isMobileViewport ? 99 : undefined,
@@ -9739,6 +9743,7 @@ export default function ParentGalleryPage() {
                         cursor: "pointer",
                         transition: "color 0.15s",
                         letterSpacing: "0.01em",
+                        whiteSpace: "nowrap",
                       }}
                     >
                       {label}
@@ -9751,6 +9756,7 @@ export default function ParentGalleryPage() {
 
           {/* Right: cart */}
           <div
+            data-gallery-header-actions
             style={{
               display: "flex",
               alignItems: "center",
