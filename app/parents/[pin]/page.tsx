@@ -3819,7 +3819,14 @@ export default function ParentGalleryPage() {
   const eventPhotoWallRef = useRef<HTMLDivElement | null>(null);
   const [packages, setPackages] = useState<PackageRow[]>([]);
   const [selectedPkg, setSelectedPkg] = useState<PackageRow | null>(null);
+  // Reorder hydration reacts to Orders-to-Photos navigation as well as load.
+  const [activeView, setActiveView] = useState<GalleryView>("photos");
   const [cartItems, setCartItems] = useState<CartLineItem[]>([]);
+  const [reorderBackdropReview, setReorderBackdropReview] = useState<{
+    photographerId: string;
+    items: CartLineItem[];
+    originalBackgroundCount: number;
+  } | null>(null);
 
   // ── Combine-cart sessionStorage sync (Phase 1d) ──────────────────────────
   //
@@ -4141,6 +4148,7 @@ export default function ParentGalleryPage() {
       return image?.previewUrl || image?.url || null;
     };
     const restored: CartLineItem[] = [];
+    const originalBackgroundItems: CartLineItem[] = [];
     for (const raw of parsed as SnapshotEntry[]) {
       const pkg = packages.find((p) => p.id === raw.packageId);
       if (!pkg) continue; // package was removed since the order — skip
@@ -4150,7 +4158,9 @@ export default function ParentGalleryPage() {
       let backdropSelection: CartBackdropSelection | null = null;
       let backdropAddOnCents = 0;
       if (raw.backdrop?.id) {
-        const bd = backdrops.find((b) => b.id === raw.backdrop?.id);
+        const bd = onlineBackdropsEnabled
+          ? backdrops.find((b) => b.id === raw.backdrop?.id)
+          : undefined;
         if (bd) {
           if (bd.tier === "premium") {
             backdropAddOnCents = Math.round(bd.price_cents);
@@ -4173,9 +4183,10 @@ export default function ParentGalleryPage() {
       const itemId =
         typeof crypto !== "undefined" && "randomUUID" in crypto
           ? crypto.randomUUID()
-          : `reorder_${Date.now()}_${restored.length}`;
+          : `reorder_${Date.now()}_${restored.length + originalBackgroundItems.length}`;
 
-      restored.push({
+      const requiresOriginalBackgroundReview = !!raw.backdrop?.id && !backdropSelection;
+      const restoredItem: CartLineItem = {
         id: itemId,
         packageId: pkg.id,
         packageName: pkg.name,
@@ -4195,7 +4206,7 @@ export default function ParentGalleryPage() {
         isCompositeOrder: !!raw.isComposite,
         compositeTitle: raw.compositeTitle ?? null,
         backdrop: backdropSelection,
-        orientation: raw.orientation ?? "portrait",
+        orientation: requiresOriginalBackgroundReview ? "portrait" : raw.orientation ?? "portrait",
         // Tag with the current gallery's lane (best-effort — combine
         // hydration runs separately and re-tags as needed).
         laneKey: currentLane?.laneKey,
@@ -4205,11 +4216,22 @@ export default function ParentGalleryPage() {
         laneEmail: currentLane?.email,
         laneSchoolName: currentLane?.schoolName,
         laneStudentName: currentLane?.studentName,
-      });
+      };
+      // A reorder is a new purchase. Hold changed backgrounds for review.
+      // The source paid snapshot and its delivery assets are never rewritten.
+      if (requiresOriginalBackgroundReview) originalBackgroundItems.push(restoredItem);
+      else restored.push(restoredItem);
     }
 
-    if (restored.length > 0) {
+    if (originalBackgroundItems.length > 0) {
+      // Hold the entire mixed reorder so reload or Skip discards it as one
+      // unconfirmed action, without leaving partial items in the saved basket.
+      setReorderBackdropReview({ photographerId, items: [...restored, ...originalBackgroundItems],
+        originalBackgroundCount: originalBackgroundItems.length });
+    } else if (restored.length > 0) {
       setCartItems((prev) => [...prev, ...restored]);
+    }
+    if (restored.length > 0 || originalBackgroundItems.length > 0) {
       // Drop straight into the cart drawer at the checkout step so the
       // parent confirms what got reloaded before paying again.
       setBackdropPickerOpen(false);
@@ -4225,7 +4247,7 @@ export default function ParentGalleryPage() {
       // ignore
     }
     reorderHydratedRef.current = pendingId;
-  }, [photographerId, packages, backdrops, isSchoolMode, currentLane, images, loading]);
+  }, [photographerId, packages, backdrops, onlineBackdropsEnabled, isSchoolMode, currentLane, images, loading, activeView]);
 
   // Auto-register the CURRENT gallery as a lane.
   useEffect(() => {
@@ -4282,7 +4304,6 @@ export default function ParentGalleryPage() {
   const [activeEventCollectionId, setActiveEventCollectionId] = useState<string | null>(null);
 
   // ── Gallery views + favorites + studio info ──────────────────────────────
-  const [activeView, setActiveView] = useState<GalleryView>("photos");
   const [favorites, setFavorites] = useState<Set<string>>(new Set());
   const [eventFavoritesAvailable, setEventFavoritesAvailable] = useState(true);
   const [favoriteMessage, setFavoriteMessage] = useState("");
@@ -4887,17 +4908,33 @@ export default function ParentGalleryPage() {
     if (!isSchoolMode || loading || !schoolId || !photographerId || !student?.id) return;
     let mounted = true;
     let refreshing = false;
-    const controller = new AbortController();
+    let activeController: AbortController | null = null;
+    let activeTimeout: number | null = null;
     async function refreshOnlineBackdropControls() {
-      if (refreshing || document.visibilityState === "hidden") return;
+      if (!mounted || refreshing || document.visibilityState === "hidden") return;
       refreshing = true;
+      const controller = new AbortController();
+      activeController = controller;
+      let timeoutId: number | null = null;
       try {
-        const response = await fetch("/api/portal/gallery-context", {
+        // Bound both the request and body decoding. Promise.race releases the
+        // refresh lock even if the browser's stalled request ignores abort.
+        const timeout = new Promise<never>((_, reject) => {
+          timeoutId = window.setTimeout(() => {
+            controller.abort();
+            reject(new Error("Gallery backdrop refresh timed out"));
+          }, 15_000);
+          activeTimeout = timeoutId;
+        });
+        const request = fetch("/api/portal/gallery-context", {
           method: "POST", headers: { "content-type": "application/json" }, cache: "no-store",
           signal: controller.signal,
           body: JSON.stringify({ pin, schoolId, email: schoolViewerEmail }),
-        });
-        const context = await response.json() as GalleryContextPayload;
+        }).then(async (response) => ({
+          response,
+          context: await response.json() as GalleryContextPayload,
+        }));
+        const { response, context } = await Promise.race([request, timeout]);
         const studentMatches = context.primaryStudent?.id === student?.id ||
           context.studentCandidates?.some((candidate) => candidate.id === student?.id);
         if (!mounted || !response.ok || context.ok === false ||
@@ -4908,6 +4945,11 @@ export default function ParentGalleryPage() {
         // A temporary refresh failure never discards photos or orders. New
         // purchases still require fresh policy and cutout checks at checkout.
       } finally {
+        if (timeoutId !== null) window.clearTimeout(timeoutId);
+        if (activeController === controller) {
+          activeController = null;
+          activeTimeout = null;
+        }
         refreshing = false;
       }
     }
@@ -4916,7 +4958,8 @@ export default function ParentGalleryPage() {
     document.addEventListener("visibilitychange", refresh);
     return () => {
       mounted = false;
-      controller.abort();
+      activeController?.abort();
+      if (activeTimeout !== null) window.clearTimeout(activeTimeout);
       window.removeEventListener("focus", refresh);
       document.removeEventListener("visibilitychange", refresh);
     };
@@ -7861,6 +7904,22 @@ export default function ParentGalleryPage() {
     setActiveSlotIndex(null);
   }
 
+  function acceptOriginalBackgroundReorder() {
+    if (!reorderBackdropReview || reorderBackdropReview.photographerId !== photographerId) return;
+    const reviewedItems = reorderBackdropReview.items;
+    setCartItems((existing) => {
+      const existingIds = new Set(existing.map((item) => item.id));
+      return [...existing, ...reviewedItems.filter((item) => !existingIds.has(item.id))];
+    });
+    setReorderBackdropReview(null);
+    openCartCheckout();
+  }
+
+  function skipOriginalBackgroundReorder() {
+    setReorderBackdropReview(null);
+    if (checkoutItems.length === 0) setDrawerView("product-select");
+  }
+
   function addCurrentSelectionToCart() {
     if (!currentDraftCartItem) return;
     const backdropIssue = backdropIssueForItem(currentDraftCartItem);
@@ -8042,6 +8101,7 @@ export default function ParentGalleryPage() {
     setOrderError("");
     setPlacing(false);
     setCartItems([]);
+    setReorderBackdropReview(null);
     resetCurrentSelection();
     setDrawerOpen(false);
     setBackdropPickerOpen(false);
@@ -10210,15 +10270,17 @@ export default function ParentGalleryPage() {
               surface: galleryTone.surface,
             }}
             onReorder={(snapshot, sourceOrderId) => {
+              setReorderBackdropReview(null);
+              reorderHydratedRef.current = null;
               // An explicit reorder is a new purchase; normal retries retain
               // their existing intent even after navigation or reload.
               sessionStorage.setItem("studio-os-checkout-purchase", crypto.randomUUID());
               // Stash the snapshot in sessionStorage and switch back to
               // the photos view.  The reorder-hydration effect (declared
               // up by the combine-cart hydration) reads the snapshot,
-              // reconstructs each entry as a CartLineItem using the live
-              // packages + backdrops lookups, pushes them onto cartItems,
-              // and opens the cart drawer at the checkout step.
+              // reconstructs each entry using the live packages + backdrops.
+              // It holds the whole reorder for review if a background changed;
+              // otherwise it adds the items and opens the checkout drawer.
               try {
                 sessionStorage.setItem(
                   `studio-os-reorder:${sourceOrderId}`,
@@ -11672,6 +11734,25 @@ export default function ParentGalleryPage() {
 
               {/* Drawer content */}
               <div style={{ flex: 1, overflowY: "auto", padding: 18 }}>
+                {reorderBackdropReview?.photographerId === photographerId && (
+                  <div role="status" style={{ marginBottom: 18, padding: 16, border: "1px solid #d5ac62", borderRadius: 12, background: "#272014", color: "#fff" }}>
+                    <h3 style={{ margin: "0 0 8px", fontSize: 16 }}>Review reordered backgrounds</h3>
+                    <p style={{ margin: "0 0 12px", fontSize: 14, lineHeight: 1.5 }}>
+                      {reorderBackdropReview.originalBackgroundCount === 1 ? "A background from your previous order is" : "Some backgrounds from your previous order are"} no longer offered for this gallery.
+                      {" "}Unavailable backgrounds will use the original photo backgrounds; available selected backgrounds will stay selected.
+                      {" "}None of these reordered items have been added to your basket. Review this change before adding them, or skip this reorder.
+                      {" "}Refreshing this page discards this unconfirmed reorder. Your existing basket and previous paid order are unchanged.
+                    </p>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                      <button type="button" onClick={acceptOriginalBackgroundReorder} style={{ padding: "10px 12px", borderRadius: 8, border: "none", background: "#fff", color: "#111", fontWeight: 700, cursor: "pointer" }}>
+                        Add reviewed reorder
+                      </button>
+                      <button type="button" onClick={skipOriginalBackgroundReorder} style={{ padding: "10px 12px", borderRadius: 8, border: "1px solid #a58d69", background: "transparent", color: "#fff", fontWeight: 600, cursor: "pointer" }}>
+                        Skip this reorder
+                      </button>
+                    </div>
+                  </div>
+                )}
                 {/* "Unlock another gallery" entry pill — opens the
                     CombineOrdersDrawer for sibling combine, past-year
                     orders, and lost-PIN recovery.  Visible whenever the

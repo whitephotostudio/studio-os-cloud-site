@@ -22,9 +22,9 @@ function load(path, dependencies) {
 }
 const next = { NextResponse: { json: (data, options) => Response.json(data, options) } };
 function fixture({ enabled = false, status = 'pre_release', classes = ['Grade 7', 'Grade 12'], owner = true, contactError = false, registrationError = false, matchingPin = true, backdropOverride = null } = {}) {
-  const calls = [], sent = [], rpcCalls = [];
+  const calls = [], sent = [], rpcCalls = [], audits = [];
   const schedule = { shootDates: ['2026-10-05', '2026-10-26', '2026-11-02'], slotMinutes: 10 };
-  const school = { id: schoolId, photographer_id: photographerId, school_name: 'School', status, registration_class_required: enabled, online_backdrops_override: backdropOverride, gallery_settings: { schedule, share: {}, extras: { sendEmailCampaign: false } } };
+  const school = { id: schoolId, photographer_id: photographerId, school_name: 'School', status, email_required: true, registration_class_required: enabled, online_backdrops_override: backdropOverride, gallery_settings: { schedule, share: {}, extras: { sendEmailCampaign: false } } };
   const tables = {
     schools: [school], photographers: [{ id: photographerId, user_id: 'owner', studio_email: 'studio@example.com' }],
     students: matchingPin ? [{ id: studentId, school_id: schoolId, pin: '12345', photo_url: 'ready.jpg' }] : [],
@@ -59,12 +59,18 @@ function fixture({ enabled = false, status = 'pre_release', classes = ['Grade 7'
   };
   const dependencies = {
     'next/server': next,
-    '@/lib/dashboard-auth': { createDashboardServiceClient: () => service, resolveDashboardAuth: async () => ({ user: owner ? { id: 'owner' } : null }) },
+    '@/lib/dashboard-auth': { createDashboardServiceClient: () => service, resolveDashboardAuth: async () => ({ user: owner ? { id: 'owner' } : null, mfaSatisfied: true }) },
     '@/lib/rate-limit': { getClientIp: () => 'local', rateLimit: async () => ({ allowed: true }) },
     '@/lib/school-registration-classes': { schoolRegistrationClasses: async () => classes },
     '@/lib/require-agreement': { guardAgreement: async () => ({ ok: true }) },
     '@/lib/api-validation': { parseJson: async (req, schema) => { const parsed = schema.safeParse(await req.json()); return parsed.success ? { ok: true, data: parsed.data } : { ok: false, response: Response.json({ ok: false }, { status: 400 }) }; } },
-    '@/lib/audit': { recordAudit: async () => {}, diffFields: () => ({ before: {}, after: {} }) },
+    '@/lib/audit': {
+      recordAudit: async params => { audits.push(params); },
+      diffFields: (before, after, keys) => {
+        const changed = keys.filter(key => before[key] !== after[key]);
+        return { before: Object.fromEntries(changed.map(key => [key, before[key]])), after: Object.fromEntries(changed.map(key => [key, after[key]])) };
+      },
+    },
     '@/lib/event-gallery-settings': { normalizeEventGallerySettings: v => v ?? { extras: {}, share: {} }, sanitizeEventGallerySettingsForClient: v => v },
     '@/lib/event-gallery-email': { buildSchoolShareEmail: () => ({ subject: 'Ready', html: 'ready', text: 'ready' }), eventFromName: () => 'Studio', eventReplyTo: () => 'studio@example.com' },
     '@/lib/project-email-deliveries': { hasProjectEmailDelivery: async () => false, recordProjectEmailDelivery: async () => {} },
@@ -75,7 +81,7 @@ function fixture({ enabled = false, status = 'pre_release', classes = ['Grade 7'
   };
   for (const key of ['checkout-tax', 'school-gallery-downloads', 'storage-images', 'backdrop-media-references', 'private-media-references', 'package-profile-selection', 'storage-folder', 'school-sync', 'school-photo-deletions', 'school-composite-scope', 'school-portal-media', 'school-order-media']) dependencies[`@/lib/${key}`] = {};
   const req = data => ({ url: 'https://example.test/api', json: async () => data });
-  return { tables, school, schedule, calls, sent, rpcCalls, dependencies, req, context: { params: Promise.resolve({ schoolId }) } };
+  return { tables, school, schedule, calls, sent, rpcCalls, audits, dependencies, req, context: { params: Promise.resolve({ schoolId }) } };
 }
 
 test('existing school and project email-only registration works with class feature off', async () => {
@@ -140,6 +146,11 @@ test('school backdrop override saves On, Off and inherited without changing phot
     assert.deepEqual(f.tables.students, originalStudents);
     assert.deepEqual(f.school.gallery_settings.schedule, f.schedule);
     assert.equal(f.sent.length, 0);
+    const audit = f.audits.at(-1);
+    assert.equal(audit.actorUserId, 'owner');
+    assert.equal(audit.targetPhotographerId, photographerId);
+    assert.deepEqual(audit.before, { online_backdrops_override: expected });
+    assert.deepEqual(audit.after, { online_backdrops_override: override });
     expected = override;
   }
   assert.ok(f.calls.every(c => !['orders', 'photos', 'student_photos', 'backdrop_catalog'].includes(c.table)));
@@ -149,8 +160,45 @@ test('desktop-style school updates keep explicit Off, and stale gallery windows 
   const route = load('app/api/dashboard/schools/[schoolId]/route.ts', f.dependencies);
   assert.equal((await route.PATCH(f.req({ school_name: 'Renamed school', gallery_settings: { share: {}, extras: {} } }), f.context)).status, 200);
   assert.equal(f.school.online_backdrops_override, false);
+  const auditsBeforeConflict = f.audits.length;
   assert.equal((await route.PATCH(f.req({ online_backdrops_override: true, expected_online_backdrops_override: null }), f.context)).status, 409);
   assert.equal(f.school.online_backdrops_override, false);
+  assert.equal(f.audits.length, auditsBeforeConflict);
+});
+test('successful school CAS audits the matched prior override after an intervening save, including inherited null', async () => {
+  for (const expected of [null, false, true]) {
+    const initial = expected === true ? false : true;
+    const next = expected === false ? true : false;
+    const f = fixture({ status: 'active', backdropOverride: initial });
+    const service = f.dependencies['@/lib/dashboard-auth'].createDashboardServiceClient();
+    const from = service.from.bind(service);
+    let intervened = false;
+    service.from = table => {
+      const query = from(table);
+      if (table !== 'schools') return query;
+      const update = query.update.bind(query);
+      query.update = patch => {
+        assert.equal(intervened, false);
+        // The initial school read is a cloned row. Another tab's save
+        // changes the stored value before this request's atomic filter.
+        intervened = true;
+        f.school.online_backdrops_override = expected;
+        return update(patch);
+      };
+      return query;
+    };
+    const route = load('app/api/dashboard/schools/[schoolId]/route.ts', f.dependencies);
+    const response = await route.PATCH(f.req({
+      online_backdrops_override: next, expected_online_backdrops_override: expected,
+    }), f.context);
+    assert.equal(response.status, 200);
+    assert.equal(intervened, true);
+    assert.equal(f.school.online_backdrops_override, next);
+    assert.equal(f.audits.length, 1);
+    assert.deepEqual(f.audits[0].before, { online_backdrops_override: expected });
+    assert.deepEqual(f.audits[0].after, { online_backdrops_override: next });
+    assert.equal(f.sent.length, 0);
+  }
 });
 test('school backdrop settings reject anonymous, wrong-owner and invalid policy writes', async () => {
   const anon = fixture({ owner: false });
@@ -162,6 +210,22 @@ test('school backdrop settings reject anonymous, wrong-owner and invalid policy 
   const invalid = fixture();
   assert.equal((await load('app/api/dashboard/schools/[schoolId]/route.ts', invalid.dependencies).PATCH(invalid.req({ online_backdrops_override: 'false' }), invalid.context)).status, 400);
   assert.equal(invalid.school.online_backdrops_override, null);
+});
+test('school policy mutation requires verified MFA and refuses before writes or success audit; legacy field-omitting sync remains valid', async () => {
+  for (const mfaSatisfied of [false, undefined, 'true']) {
+    const f = fixture({ status: 'active', backdropOverride: false });
+    f.dependencies['@/lib/dashboard-auth'].resolveDashboardAuth = async () => ({ user: { id: 'owner' }, mfaSatisfied });
+    const route = load('app/api/dashboard/schools/[schoolId]/route.ts', f.dependencies);
+    const rejected = await route.PATCH(f.req({ online_backdrops_override: true, expected_online_backdrops_override: false }), f.context);
+    assert.equal(rejected.status, 403);
+    assert.match((await rejected.json()).message, /two-step verification/);
+    assert.equal(f.calls.length, 0);
+    assert.equal(f.audits.length, 0);
+    assert.equal(f.sent.length, 0);
+    assert.equal(f.school.online_backdrops_override, false);
+    assert.equal((await route.PATCH(f.req({ school_name: 'Desktop synced' }), f.context)).status, 200);
+    assert.equal(f.school.online_backdrops_override, false);
+  }
 });
 test('a failed notification contact write never blocks a valid PIN login; invalid PIN creates no contact', async () => {
   const f = fixture({ enabled: true, status: 'active', contactError: true });

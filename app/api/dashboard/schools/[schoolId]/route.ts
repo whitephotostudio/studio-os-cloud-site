@@ -225,7 +225,7 @@ export async function PATCH(
   context: { params: Promise<{ schoolId: string }> },
 ) {
   try {
-    const { user } = await resolveDashboardAuth(request);
+    const { user, mfaSatisfied } = await resolveDashboardAuth(request);
     if (!user) {
       return NextResponse.json(
         { ok: false, message: "Please sign in again." },
@@ -237,6 +237,12 @@ export async function PATCH(
     const parsed = await parseJson(request, SchoolUpdateBodySchema);
     if (!parsed.ok) return parsed.response;
     const body = parsed.data;
+    if (hasOwn(body, "online_backdrops_override") && mfaSatisfied !== true) {
+      return NextResponse.json(
+        { ok: false, message: "Complete two-step verification before changing backdrop settings." },
+        { status: 403 },
+      );
+    }
     const service = createDashboardServiceClient();
 
     // Agreement gate — refuse to act for users who haven't accepted the
@@ -439,7 +445,11 @@ export async function PATCH(
     }
 
     const auditDiff = diffFields(
-      schoolRow as Record<string, unknown>,
+      // When the policy CAS succeeds, its expected value is the verified
+      // before-state; the initial school read may predate another tab's save.
+      (hasOwn(body, "online_backdrops_override") && hasOwn(body, "expected_online_backdrops_override")
+        ? { ...schoolRow, online_backdrops_override: body.expected_online_backdrops_override }
+        : schoolRow) as Record<string, unknown>,
       updatedSchoolRow as Record<string, unknown>,
       [
         "school_name",
@@ -460,6 +470,7 @@ export async function PATCH(
         "screenshot_protection_watermark",
         "group_label_singular",
         "group_label_plural",
+        "online_backdrops_override",
       ] as (keyof Record<string, unknown>)[],
     );
     await recordAudit({

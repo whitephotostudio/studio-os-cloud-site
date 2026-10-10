@@ -132,7 +132,7 @@ test('only chosen-background new purchases read policy; school exceptions are ch
   assert.deepEqual(saved, before); assert.equal(f.writes.length, 0);
 });
 
-function settingsRoute(service, auth) {
+function settingsRoute(service, auth, audits = [], auditRecorder = async params => { audits.push(params); }) {
   const exports = {};
   const source = ts.transpileModule(readFileSync(new URL('../app/api/dashboard/backdrop-settings/route.ts', import.meta.url), 'utf8'), {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
@@ -140,6 +140,7 @@ function settingsRoute(service, auth) {
   new Function('require', 'exports', 'console', source)(name => {
     if (name === 'next/server') return { NextResponse: { json: (body, init) => Response.json(body, init) } };
     if (name === '@/lib/dashboard-auth') return { resolveDashboardAuth: async () => auth, createDashboardServiceClient: () => service };
+    if (name === '@/lib/audit') return { recordAudit: auditRecorder };
     throw new Error(`Unexpected dependency ${name}`);
   }, exports, { error() {} });
   return exports;
@@ -147,7 +148,8 @@ function settingsRoute(service, auth) {
 
 test('owner settings API saves only the authenticated studio, persists On/Off and refuses stale or forged patches', async t => {
   const f = await database(t);
-  const route = settingsRoute(f.service, { user: { id: user }, mfaSatisfied: true });
+  const audits = [];
+  const route = settingsRoute(f.service, { user: { id: user }, mfaSatisfied: true }, audits);
   const patch = body => route.PATCH({ json: async () => body });
   assert.deepEqual(await (await route.GET({})).json(), { onlineBackdropsEnabled: true });
   assert.equal((await patch({ onlineBackdropsEnabled: false, expectedOnlineBackdropsEnabled: true })).status, 200);
@@ -157,20 +159,94 @@ test('owner settings API saves only the authenticated studio, persists On/Off an
   assert.equal((await patch({ onlineBackdropsEnabled: true, photographerId: owner })).status, 400);
   assert.equal((await patch({ onlineBackdropsEnabled: true, expectedOnlineBackdropsEnabled: false })).status, 200);
   assert.deepEqual((await f.db.query('select * from orders')).rows, f.paidBefore);
+  assert.equal(audits.length, 2, 'only confirmed successful updates are audited');
+  assert.deepEqual(audits.map(audit => ({ before: audit.before, after: audit.after })), [
+    { before: { online_backdrops_enabled: true }, after: { online_backdrops_enabled: false } },
+    { before: { online_backdrops_enabled: false }, after: { online_backdrops_enabled: true } },
+  ]);
+  assert.ok(audits.every(audit => audit.actorUserId === user && audit.actorPhotographerId === owner &&
+    audit.entityId === owner && audit.targetPhotographerId === owner && audit.result === 'ok'));
 });
 
+test('successful studio CAS audits the matched prior value after another tab changes it between read and update', async t => {
+  const f = await database(t), audits = [];
+  let intervened = false;
+  const racingService = { from(table) {
+    const chain = f.service.from(table);
+    const update = chain.update.bind(chain);
+    chain.update = patch => {
+      const query = update(patch);
+      const execute = query.maybeSingle.bind(query);
+      query.maybeSingle = async () => {
+        assert.equal(intervened, false);
+        // The handler has already read On. A separate tab now saves Off,
+        // matching the caller's expected Off just before the real SQL CAS.
+        intervened = true;
+        await f.db.query('update photographers set online_backdrops_enabled=false where id=$1', [owner]);
+        return execute();
+      };
+      return query;
+    };
+    return chain;
+  } };
+  const route = settingsRoute(racingService, { user: { id: user }, mfaSatisfied: true }, audits);
+  const response = await route.PATCH({ json: async () => ({
+    onlineBackdropsEnabled: true, expectedOnlineBackdropsEnabled: false,
+  }) });
+  assert.equal(response.status, 200);
+  assert.equal(intervened, true);
+  assert.equal((await readOnlineBackdropPolicy(f.service, { photographerId: owner })).enabled, true);
+  assert.equal(audits.length, 1);
+  assert.deepEqual(audits[0].before, { online_backdrops_enabled: false });
+  assert.deepEqual(audits[0].after, { online_backdrops_enabled: true });
+  assert.deepEqual((await f.db.query('select * from orders')).rows, f.paidBefore);
+});
 test('settings endpoint rejects anonymous, MFA-incomplete and cross-owner users before a preference write', async t => {
   const f = await database(t);
+  const audits = [];
   for (const [auth, status] of [
     [{ user: null, mfaSatisfied: false }, 401],
     [{ user: { id: user }, mfaSatisfied: false }, 403],
+    [{ user: { id: user } }, 403],
+    [{ user: { id: user }, mfaSatisfied: 'true' }, 403],
     [{ user: { id: owner }, mfaSatisfied: true }, 403],
   ]) {
-    const route = settingsRoute(f.service, auth);
+    const route = settingsRoute(f.service, auth, audits);
     assert.equal((await route.GET({})).status, status);
     assert.equal((await route.PATCH({ json: async () => ({ onlineBackdropsEnabled: false }) })).status, status);
   }
   assert.equal(f.writes.length, 0);
+  assert.equal(audits.length, 0);
+});
+
+test('a failed audit insert never turns a confirmed studio preference save into an error or touches paid selections', async t => {
+  const f = await database(t);
+  const auditModule = {}, warnings = [], inserts = [];
+  const compiled = ts.transpileModule(readFileSync(new URL('../lib/audit.ts', import.meta.url), 'utf8'), {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+  }).outputText;
+  new Function('require', 'exports', 'console', compiled)(name => {
+    if (name === '@/lib/dashboard-auth') return { createDashboardServiceClient: () => ({
+      from(table) {
+        assert.equal(table, 'audit_log');
+        return { insert: async row => { inserts.push(row); return { error: { message: 'Audit store unavailable' } }; } };
+      },
+    }) };
+    if (name === '@/lib/rate-limit') return { getClientIp: () => 'fixture' };
+    throw new Error(`Unexpected audit dependency ${name}`);
+  }, auditModule, { warn: (...args) => warnings.push(args) });
+  const route = settingsRoute(f.service, { user: { id: user }, mfaSatisfied: true }, [], auditModule.recordAudit);
+  const response = await route.PATCH({ headers: new Headers(), json: async () => ({
+    onlineBackdropsEnabled: false, expectedOnlineBackdropsEnabled: true,
+  }) });
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).onlineBackdropsEnabled, false);
+  assert.equal((await readOnlineBackdropPolicy(f.service, { photographerId: owner })).enabled, false);
+  assert.equal(inserts.length, 1);
+  assert.equal(warnings.length, 1);
+  assert.deepEqual(inserts[0].before, { online_backdrops_enabled: true });
+  assert.deepEqual(inserts[0].after, { online_backdrops_enabled: false });
+  assert.deepEqual((await f.db.query('select * from orders')).rows, f.paidBefore);
 });
 
 test('unavailable settings schema returns a retryable error and never claims the toggle was saved', async t => {

@@ -131,12 +131,13 @@ function effectContaining(fragment) {
 
 test("returning to the open parent gallery refreshes only backdrop controls and ignores mismatched authorization", async () => {
   for (const authorized of [true, false]) {
-    const listeners = new Map(), states = [], requests = [];
+    const listeners = new Map(), states = [], requests = [], timers = new Map();
     const values = { isSchoolMode: true, loading: false, schoolId, photographerId,
       student: { id: "child" }, pin: "12345", schoolViewerEmail: "parent@example.test", AbortController,
       document: { visibilityState: "visible", addEventListener: (event, handler) => listeners.set(event, handler),
         removeEventListener: (event) => listeners.delete(event) },
-      window: { addEventListener: (event, handler) => listeners.set(event, handler), removeEventListener: (event) => listeners.delete(event) },
+      window: { addEventListener: (event, handler) => listeners.set(event, handler), removeEventListener: (event) => listeners.delete(event),
+        setTimeout: (handler, delay) => { timers.set(1, { handler, delay }); return 1; }, clearTimeout: (id) => timers.delete(id) },
       setOnlineBackdropsEnabled: (value) => states.push(["enabled", value]), setBackdrops: (value) => states.push(["catalog", value]),
       fetch: async (url, request) => { requests.push({ url, request }); return { ok: true, json: async () => ({ ok: true,
         photographerId: authorized ? photographerId : "other-studio", activeSchool: { id: schoolId }, primaryStudent: { id: "child" },
@@ -149,8 +150,83 @@ test("returning to the open parent gallery refreshes only backdrop controls and 
     assert.equal(requests.length, 1, "focus and visibility events share one refresh");
     assert.equal(requests[0].request.cache, "no-store");
     assert.deepEqual(states, authorized ? [["enabled", false], ["catalog", []]] : []);
+    assert.equal(timers.size, 0, "successful or unauthorized responses release the timeout");
     cleanup(); assert.equal(listeners.size, 0);
   }
+});
+
+function refreshHarness(fetchResponse) {
+  const listeners = new Map(), timers = new Map(), states = [], requests = [];
+  let nextTimer = 0;
+  const values = { isSchoolMode: true, loading: false, schoolId, photographerId,
+    student: { id: "child" }, pin: "12345", schoolViewerEmail: "parent@example.test", AbortController,
+    document: { visibilityState: "visible", addEventListener: (event, handler) => listeners.set(event, handler),
+      removeEventListener: (event) => listeners.delete(event) },
+    window: { addEventListener: (event, handler) => listeners.set(event, handler), removeEventListener: (event) => listeners.delete(event),
+      setTimeout: (handler, delay) => { const id = ++nextTimer; timers.set(id, { handler, delay }); return id; },
+      clearTimeout: (id) => timers.delete(id) },
+    setOnlineBackdropsEnabled: (value) => states.push(["enabled", value]), setBackdrops: (value) => states.push(["catalog", value]),
+    fetch: (url, request) => { requests.push({ url, request }); return fetchResponse(requests.length, request); },
+  };
+  const effect = new Function(...Object.keys(values), compile(`return ${effectContaining("async function refreshOnlineBackdropControls")};`))(...Object.values(values));
+  const cleanup = effect();
+  return { listeners, timers, states, requests, cleanup };
+}
+const refreshResponse = (enabled) => ({ ok: true, json: async () => ({ ok: true, photographerId,
+  activeSchool: { id: schoolId }, primaryStudent: { id: "child" }, onlineBackdropsEnabled: enabled, backdrops: catalog }) });
+const settle = () => new Promise((resolve) => setImmediate(resolve));
+
+test("a stalled focus request times out, aborts and allows the next focus without applying a late response", async () => {
+  let finishStalledRequest;
+  const harness = refreshHarness((attempt) => attempt === 1
+    ? new Promise((resolve) => { finishStalledRequest = resolve; })
+    : Promise.resolve(refreshResponse(false)));
+  harness.listeners.get("focus")();
+  harness.listeners.get("visibilitychange")();
+  assert.equal(harness.requests.length, 1);
+  const [timeoutId, timeout] = [...harness.timers][0];
+  assert.equal(timeout.delay, 15_000, "refresh remains bounded without polling");
+  harness.timers.delete(timeoutId);
+  timeout.handler();
+  await settle();
+  assert.equal(harness.requests[0].request.signal.aborted, true);
+  assert.deepEqual(harness.states, [], "timeout cannot discard gallery controls, photos or orders");
+
+  harness.listeners.get("focus")();
+  await settle();
+  assert.equal(harness.requests.length, 2, "timeout releases the refresh lock");
+  assert.notEqual(harness.requests[0].request.signal, harness.requests[1].request.signal);
+  assert.equal(harness.requests[1].request.signal.aborted, false, "retry uses a fresh controller");
+  assert.deepEqual(harness.states, [["enabled", false], ["catalog", []]]);
+  assert.equal(harness.timers.size, 0);
+
+  finishStalledRequest(refreshResponse(true));
+  await settle();
+  assert.deepEqual(harness.states, [["enabled", false], ["catalog", []]], "a timed-out late response cannot replace the newer policy");
+  harness.cleanup();
+  assert.equal(harness.listeners.size, 0);
+});
+
+test("a stalled gallery response body is also bounded and gallery teardown aborts pending refreshes", async () => {
+  let finishBody;
+  const harness = refreshHarness(() => Promise.resolve({ ok: true, json: () => new Promise((resolve) => { finishBody = resolve; }) }));
+  harness.listeners.get("focus")();
+  await settle();
+  const timeout = [...harness.timers.values()][0];
+  timeout.handler();
+  await settle();
+  assert.equal(harness.requests[0].request.signal.aborted, true);
+  assert.equal(harness.timers.size, 0);
+  harness.listeners.get("focus")();
+  await settle();
+  assert.equal(harness.requests.length, 2, "a body timeout also releases the lock");
+  harness.cleanup();
+  assert.equal(harness.requests[1].request.signal.aborted, true);
+  assert.equal(harness.timers.size, 0);
+  assert.equal(harness.listeners.size, 0);
+  finishBody(await refreshResponse(true).json());
+  await settle();
+  assert.deepEqual(harness.states, [], "unmounted gallery cannot apply a late policy response");
 });
 
 test("policy-off or Hide All clears only the actively edited choice and closes the selector", () => {

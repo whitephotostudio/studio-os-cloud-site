@@ -1,12 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createDashboardServiceClient, resolveDashboardAuth } from "@/lib/dashboard-auth";
+import { recordAudit } from "@/lib/audit";
 
 export const dynamic = "force-dynamic";
 
 async function context(request: NextRequest) {
   const auth = await resolveDashboardAuth(request);
   if (!auth.user) return { response: NextResponse.json({ error: "Sign in to change backdrop settings." }, { status: 401 }) };
-  if (!auth.mfaSatisfied) return { response: NextResponse.json({ error: "Complete two-step verification before changing backdrop settings." }, { status: 403 }) };
+  if (auth.mfaSatisfied !== true) return { response: NextResponse.json({ error: "Complete two-step verification before changing backdrop settings." }, { status: 403 }) };
   const service = createDashboardServiceClient();
   const { data: photographer, error } = await service.from("photographers")
     .select("id,online_backdrops_enabled").eq("user_id", auth.user.id)
@@ -47,6 +48,21 @@ export async function PATCH(request: NextRequest) {
     const { data, error } = await update.select("online_backdrops_enabled").maybeSingle<{ online_backdrops_enabled: boolean }>();
     if (error) throw error;
     if (!data) return NextResponse.json({ error: "This setting changed in another tab. Reload before saving again." }, { status: 409 });
+    await recordAudit({
+      request,
+      actorUserId: ctx.userId,
+      actorPhotographerId: ctx.photographer.id,
+      action: "backdrop.online_default.update",
+      entityType: "photographer",
+      entityId: ctx.photographer.id,
+      targetPhotographerId: ctx.photographer.id,
+      // A successful CAS proves the immediately preceding value, even when
+      // another tab changed the setting after the earlier profile read.
+      before: { online_backdrops_enabled: typeof body.expectedOnlineBackdropsEnabled === "boolean"
+        ? body.expectedOnlineBackdropsEnabled : ctx.photographer.online_backdrops_enabled },
+      after: { online_backdrops_enabled: data.online_backdrops_enabled },
+      result: "ok",
+    });
     return NextResponse.json({ ok: true, onlineBackdropsEnabled: data.online_backdrops_enabled });
   } catch (error) {
     console.error("[backdrop-settings:patch]", error);
