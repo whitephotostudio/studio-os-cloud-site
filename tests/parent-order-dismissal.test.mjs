@@ -7,6 +7,7 @@ import * as policy from '../lib/parent-order-dismissal.ts';
 import * as paymentPolicy from '../lib/order-payment-policy.ts';
 import * as orderDisplay from '../lib/order-display.ts';
 import { hasCurrentDigitalPayment } from '../lib/digital-entitlement-payment.ts';
+import * as digitalLabels from '../lib/digital-product-label.ts';
 
 const require = createRequire(import.meta.url);
 const compiled = ts.transpileModule(readFileSync(new URL('../app/api/portal/orders/dismiss/route.ts', import.meta.url), 'utf8'), {
@@ -101,6 +102,7 @@ function fixture(options = {}) {
     '@/lib/order-payment-lock': { lockOrderPayment: async () => { options.onLock?.(orders); locked = true; return async () => { locked = false; }; } },
     '@/lib/order-payment-policy': paymentPolicy, '@/lib/parent-order-dismissal': policy,
     '@/lib/order-display': orderDisplay, '@/lib/digital-entitlement-payment': { hasCurrentDigitalPayment },
+    '@/lib/digital-product-label': digitalLabels,
     '@/lib/portal-order-media': { canonicalPortalOrderReference: value => value || null, canonicalPortalOrderSnapshot: value => value },
     '@/lib/digital-delivery': { createDigitalDeliveryDownloadUrl: () => '/verified-download' },
     '@/lib/audit': { recordAudit: async value => audit.push(value) },

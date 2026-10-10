@@ -9,6 +9,8 @@ const compile = file => ts.transpileModule(readFileSync(new URL(`../${file}`, im
 }).outputText;
 const payment = {};
 vm.runInNewContext(compile("lib/digital-entitlement-payment.ts"), { exports: payment });
+const productLabels = {};
+vm.runInNewContext(compile("lib/digital-product-label.ts"), { exports: productLabels });
 const display = {};
 vm.runInNewContext(compile('lib/order-display.ts'), { exports: display });
 const backdrop = { id: 'blue', image_url: 'backdrops/blue.jpg' };
@@ -38,6 +40,7 @@ async function resolve(snapshot, orderName = '5x7 Print + All Digital Package', 
     '@/lib/resend': { resendConfigured: forbidden, resolveReplyTo: forbidden, sendResendEmail: forbidden },
     '@/lib/order-display': display,
     '@/lib/digital-entitlement-payment': payment,
+    '@/lib/digital-product-label': productLabels,
     '@/lib/zip': { createZipStream: forbidden },
     '@/lib/backdrop-composites': { hasBackdropCompositeSelection: selection => !!selection?.image_url,
       backdropCompositeFileName: (name, selection) => `${selection.id}-${name}`, composeBackdropImage: forbidden },

@@ -1,4 +1,5 @@
 import type { ConfirmedRefund } from "@/lib/order-refund-notifications";
+import { hasDigitalProductLabel } from "@/lib/digital-product-label";
 import { allocateRefundCents, orderCheckoutIdempotencyKey, type ApplicationFeeCharge, type PaymentOrder } from "@/lib/order-payment-policy";
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { createDashboardServiceClient } from "@/lib/dashboard-auth";
@@ -1841,7 +1842,8 @@ export async function finalizePaidOrder(
     return order;
   }
 
-  const isDigital = (order.package_name ?? "").toLowerCase().includes("digital");
+  const isDigital = hasDigitalProductLabel(order.package_name) &&
+    (order.package_name ?? "").toLowerCase().includes("digital");
   const nextStatus = isDigital ? "digital_paid" : "paid";
   const mergedNotes = await appendOrderNote(order.notes ?? null, input.note);
   const paidAt = input.paidAt || new Date().toISOString();
@@ -2096,19 +2098,8 @@ export async function finalizePaidOrder(
 
           const hasDigitalDeliveryItem =
             nextStatus === "digital_paid" ||
-            ((itemRows ?? []) as Array<{ product_name?: string | null }>).some((item) => {
-              const name = (item.product_name ?? "").toLowerCase();
-              if (name.includes("retouch")) return false;
-              return (
-                name.includes("digital") ||
-                name.includes("download") ||
-                name.includes("file") ||
-                name.includes("jpg") ||
-                name.includes("jpeg") ||
-                name.includes("png") ||
-                name.includes("usb")
-              );
-            });
+            ((itemRows ?? []) as Array<{ product_name?: string | null }>).some((item) =>
+              hasDigitalProductLabel(item.product_name));
 
           if (hasDigitalDeliveryItem) {
             try {

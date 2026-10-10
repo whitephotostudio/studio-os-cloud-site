@@ -8,6 +8,8 @@ import { ownerUrl } from "@/lib/owner-notifications";
 import { resendConfigured, sendResendEmail } from "@/lib/resend";
 import { r2DeletePrefix } from "@/lib/r2";
 import { recordAudit } from "@/lib/audit";
+import { verifyOrderWebhookPayment } from "@/lib/order-webhook-payment";
+import { lockOrderPayment } from "@/lib/order-payment-lock";
 import { resolveStripeBillingPeriod, stripeInvoiceSubscriptionId } from "@/lib/stripe-billing-period";
 import {
   finalizePaidOrderOrGroup,
@@ -129,6 +131,29 @@ function webhookSecrets() {
     process.env.STRIPE_PLATFORM_WEBHOOK_SECRET,
     process.env.STRIPE_CONNECT_WEBHOOK_SECRET,
   ].filter((value): value is string => Boolean(value && value.trim()));
+}
+
+async function finalizeVerifiedCustomerOrder(service: ReturnType<typeof createDashboardServiceClient>, input: {
+  accountId: string; orderId: string; checkoutSessionId?: string | null;
+  paymentIntentId?: string | null; paymentStatus: string; note: string;
+}) {
+  const proofInput = { ...input, outcome: "paid" as const };
+  const verified = await verifyOrderWebhookPayment(service, proofInput);
+  if (!verified) return;
+  // Use the saved verified group identity, shared with checkout/cancel/refund.
+  // Metadata on a merchant-controlled Stripe object cannot select the lock.
+  const release = await lockOrderPayment(service, verified.lockKey);
+  try {
+    const current = await verifyOrderWebhookPayment(service, proofInput);
+    if (!current || current.lockKey !== verified.lockKey) throw new Error("The saved payment checkout changed while verifying.");
+    await finalizePaidOrderOrGroup(service, {
+      orderId: input.orderId, checkoutSessionId: input.checkoutSessionId,
+      paymentIntentId: input.paymentIntentId, paymentStatus: input.paymentStatus,
+      note: input.note, paidAt: new Date().toISOString(),
+    });
+  } finally {
+    await release();
+  }
 }
 
 async function findPhotographer(
@@ -502,6 +527,17 @@ export async function POST(req: NextRequest) {
     ((event.type === "checkout.session.completed" || event.type === "checkout.session.async_payment_succeeded") && billingFlow === "credit_pack") ||
     (["charge.refunded", "refund.updated", "refund.failed"].includes(event.type) && typeof object.payment_intent === "string")
   );
+  // Customer payment finalization is already idempotent by saved order state.
+  // Record completion afterward so a hard crash cannot consume Stripe's retry
+  // while leaving a paid customer order pending. Older orphan event rows also
+  // receive the same verified, serialized repair when Stripe redelivers them.
+  const processPaidOrderFirst = Boolean(event.account && object.metadata && (
+    (event.type === "payment_intent.succeeded" && (object.metadata as Record<string, string>).order_id) ||
+    (["checkout.session.completed", "checkout.session.async_payment_succeeded"].includes(event.type) &&
+      ["paid", "no_payment_required"].includes(String(object.payment_status)) &&
+      (billingFlow === "customer_order" || (object.metadata as Record<string, string>).order_id))
+  ));
+  const processBeforeRecording = processCreditsFirst || processPaidOrderFirst;
 
   // Insert-first dedup: atomically claim this event.id before doing any work.
   // If another concurrent delivery already inserted it, recordStripeEvent
@@ -511,7 +547,7 @@ export async function POST(req: NextRequest) {
   // and both run the handler.
   let dedupResult = { inserted: false };
   try {
-    if (!processCreditsFirst) {
+    if (!processBeforeRecording) {
       dedupResult = await recordStripeEvent(
         service,
         event,
@@ -526,7 +562,7 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  if (!processCreditsFirst && !dedupResult.inserted) {
+  if (!processBeforeRecording && !dedupResult.inserted) {
     return NextResponse.json({ ok: true, duplicate: true });
   }
 
@@ -681,13 +717,13 @@ export async function POST(req: NextRequest) {
             // finalizePaidOrderOrGroup fans out across every order sharing
             // an order_group_id, so combined sibling/cross-year orders all
             // flip to paid in one shot.  Single orders are unaffected.
-            await finalizePaidOrderOrGroup(service, {
+            await finalizeVerifiedCustomerOrder(service, {
+              accountId: event.account,
               orderId: session.metadata?.order_id ?? "",
               checkoutSessionId: session.id,
               paymentIntentId: session.payment_intent ?? null,
               paymentStatus: session.payment_status ?? "paid",
               note: `[Stripe webhook ${session.id}] payment confirmed`,
-              paidAt: new Date().toISOString(),
             });
           }
         }
@@ -697,12 +733,12 @@ export async function POST(req: NextRequest) {
       case "payment_intent.succeeded": {
         const paymentIntent = object as unknown as StripePaymentIntent;
         if (event.account && paymentIntent.metadata?.order_id) {
-          await finalizePaidOrderOrGroup(service, {
+          await finalizeVerifiedCustomerOrder(service, {
+            accountId: event.account,
             orderId: paymentIntent.metadata.order_id,
             paymentIntentId: paymentIntent.id,
             paymentStatus: paymentIntent.status ?? "succeeded",
             note: `[Stripe payment intent ${paymentIntent.id}] payment confirmed`,
-            paidAt: new Date().toISOString(),
           });
         }
         break;
@@ -711,6 +747,10 @@ export async function POST(req: NextRequest) {
       case "payment_intent.payment_failed": {
         const paymentIntent = object as unknown as StripePaymentIntent;
         if (event.account && paymentIntent.metadata?.order_id) {
+          if (!await verifyOrderWebhookPayment(service, {
+            accountId: event.account, orderId: paymentIntent.metadata.order_id,
+            paymentIntentId: paymentIntent.id, outcome: "failed",
+          })) break;
           await markOrderOrGroupPaymentFailure(service, {
             paymentIntentId: paymentIntent.id,
             orderId: paymentIntent.metadata.order_id,
@@ -773,7 +813,7 @@ export async function POST(req: NextRequest) {
         break;
     }
 
-    if (processCreditsFirst) await recordStripeEvent(service, event, JSON.parse(rawBody) as Record<string, unknown>);
+    if (processBeforeRecording) await recordStripeEvent(service, event, JSON.parse(rawBody) as Record<string, unknown>);
     return NextResponse.json({ ok: true });
   } catch (error) {
     console.error("[stripe-webhook] handler failed", {

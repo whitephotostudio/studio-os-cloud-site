@@ -228,6 +228,24 @@ export async function composeBackdropImage(options: {
       .toBuffer();
     left = Math.round((canvasWidth - targetWidth) / 2);
     top = Math.max(0, Math.round((canvasHeight - targetHeight) / 2 + canvasHeight * 0.04));
+
+    // Landscape framing deliberately enlarges the foreground past the page
+    // edge. Sharp requires an overlay no larger than its base image, so crop
+    // the visible intersection rather than shrink the purchased composition.
+    const cropLeft = Math.max(0, -left);
+    const cropTop = Math.max(0, -top);
+    const visibleLeft = Math.max(0, left);
+    const visibleTop = Math.max(0, top);
+    const visibleWidth = Math.min(targetWidth - cropLeft, canvasWidth - visibleLeft);
+    const visibleHeight = Math.min(targetHeight - cropTop, canvasHeight - visibleTop);
+    if (cropLeft || cropTop || visibleWidth !== targetWidth || visibleHeight !== targetHeight) {
+      overlayInput = await sharp(overlayInput, { animated: false })
+        .extract({ left: cropLeft, top: cropTop, width: visibleWidth, height: visibleHeight })
+        .png()
+        .toBuffer();
+    }
+    left = visibleLeft;
+    top = visibleTop;
   }
 
   const buffer = await sharp(backgroundBuffer, { animated: false })

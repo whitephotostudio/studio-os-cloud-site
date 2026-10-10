@@ -63,7 +63,6 @@ import {
 import {
   clearCombineCart,
   groupCartByLane,
-  isMultiLane,
   laneKeyFor,
   loadCombineCart,
   saveCombineCart,
@@ -383,6 +382,55 @@ type CartLineItem = {
   laneSchoolName?: string;
   laneStudentName?: string;
 };
+
+function requiresCombinedParentCheckout(
+  schoolMode: boolean,
+  photographerId: string | null,
+  items: Pick<CartLineItem, "laneKey">[],
+  currentLaneKey: string | undefined,
+): boolean {
+  if (!schoolMode || !photographerId) return false;
+  const laneKeys = items.map((item) => item.laneKey ?? currentLaneKey);
+  return new Set(laneKeys).size > 1 || laneKeys.some((key) => key !== currentLaneKey);
+}
+function persistParentCartItems(cartItems: CartLineItem[]): PersistedCartItem[] {
+    return cartItems
+      .filter((item) => !!item.laneKey) // only persist tagged items
+      .map((item) => ({
+        id: item.id,
+        laneKey: item.laneKey as string,
+        packageId: item.packageId,
+        packageName: item.packageName,
+        category: item.category,
+        quantity: item.quantity,
+        packageSubtotalCents: item.packageSubtotalCents,
+        backdropAddOnCents: item.backdropAddOnCents,
+        lineTotalCents: item.lineTotalCents,
+        selectedImageUrl: item.selectedImageUrl,
+        retouchSelections: item.retouchSelections ?? [],
+        digitalSelections: item.digitalSelections ?? [],
+        digitalLimit: item.digitalLimit ?? null,
+        isCompositeOrder: item.isCompositeOrder,
+        compositeTitle: item.compositeTitle,
+        slots: item.slots.map((s) => ({
+          label: s.label,
+          assignedImageUrl: s.assignedImageUrl ?? null,
+        })),
+        backdrop: item.backdrop
+          ? {
+              id: item.backdrop.id,
+              name: item.backdrop.name ?? "Backdrop",
+              imageUrl: item.backdrop.image_url ?? null,
+              blurred: !!item.backdrop.blurred,
+              blurAmount: item.backdrop.blurAmount ?? DEFAULT_BACKDROP_BLUR_PX,
+              tier: item.backdrop.tier ?? null,
+              priceCents: item.backdrop.price_cents ?? 0,
+            }
+          : null,
+        orientation: item.orientation ?? "portrait",
+      }));
+}
+
 type GalleryView = "photos" | "store" | "favorites" | "orders" | "about";
 type EventPhotoStage = "albums" | "grid" | "viewer";
 
@@ -3842,43 +3890,10 @@ export default function ParentGalleryPage() {
 
   // Convert the in-memory CartLineItem[] into the flat persisted shape.
   // Stable across renders so we don't rewrite sessionStorage every render.
-  const persistedItems = useMemo<PersistedCartItem[]>(() => {
-    return cartItems
-      .filter((item) => !!item.laneKey) // only persist tagged items
-      .map((item) => ({
-        id: item.id,
-        laneKey: item.laneKey as string,
-        packageId: item.packageId,
-        packageName: item.packageName,
-        category: item.category,
-        quantity: item.quantity,
-        packageSubtotalCents: item.packageSubtotalCents,
-        backdropAddOnCents: item.backdropAddOnCents,
-        lineTotalCents: item.lineTotalCents,
-        selectedImageUrl: item.selectedImageUrl,
-        retouchSelections: item.retouchSelections ?? [],
-        digitalSelections: item.digitalSelections ?? [],
-        digitalLimit: item.digitalLimit ?? null,
-        isCompositeOrder: item.isCompositeOrder,
-        compositeTitle: item.compositeTitle,
-        slots: item.slots.map((s) => ({
-          label: s.label,
-          assignedImageUrl: s.assignedImageUrl ?? null,
-        })),
-        backdrop: item.backdrop
-          ? {
-              id: item.backdrop.id,
-              name: item.backdrop.name ?? "Backdrop",
-              imageUrl: item.backdrop.image_url ?? null,
-              blurred: !!item.backdrop.blurred,
-              blurAmount: item.backdrop.blurAmount ?? DEFAULT_BACKDROP_BLUR_PX,
-              tier: item.backdrop.tier ?? null,
-              priceCents: item.backdrop.price_cents ?? 0,
-            }
-          : null,
-        orientation: item.orientation ?? "portrait",
-      }));
-  }, [cartItems]);
+  const persistedItems = useMemo<PersistedCartItem[]>(
+    () => persistParentCartItems(cartItems),
+    [cartItems],
+  );
 
   const [selectedOrderQty, setSelectedOrderQty] = useState(1);
   const [packageQuantities, setPackageQuantities] = useState<Record<string, number>>({});
@@ -4001,13 +4016,13 @@ export default function ParentGalleryPage() {
       schoolId: schId,
       studentId: sId,
       pin: clean(pin),
-      email: clean(parentEmail),
+      email: clean(schoolViewerEmail),
       schoolName: clean(schoolName) || "School",
       studentName,
       className:
         ((student as unknown as { class_name?: string | null })?.class_name as string | null) ?? null,
     };
-  }, [photographerId, student, pin, parentEmail, schoolName]);
+  }, [photographerId, student, pin, schoolViewerEmail, schoolName]);
 
   // Hydrate from sessionStorage once photographerId is known.
   useEffect(() => {
@@ -4271,11 +4286,9 @@ export default function ParentGalleryPage() {
       lanes: combineLanes,
       items: persistedItems,
     };
-    const sig = JSON.stringify({
-      l: cart.lanes.length,
-      i: cart.items.length,
-      ids: cart.items.map((i) => i.id),
-    });
+    // Same IDs do not imply the same authorization or selections. Refreshing
+    // a gallery must save its current viewer email/PIN as well as its items.
+    const sig = JSON.stringify(cart);
     if (sig === lastPersistedSignatureRef.current) return;
     lastPersistedSignatureRef.current = sig;
     saveCombineCart(cart);
@@ -7798,6 +7811,9 @@ export default function ParentGalleryPage() {
     () => (currentDraftCartItem ? [...cartItems, currentDraftCartItem] : cartItems),
     [cartItems, currentDraftCartItem],
   );
+  const combinedCheckoutEstimate = requiresCombinedParentCheckout(
+    isSchoolMode, photographerId, checkoutItems, currentLane?.laneKey,
+  );
   function backdropIssueForItem(item: CartLineItem, portraits = backdropPortraits, cutoutUrls = nobgUrls, configuredPackages = packages, backdropsAllowed = onlineBackdropsEnabled) {
     const configured = configuredPackages.find((pkg) => pkg.id === item.packageId);
     if (configured && isRetouchPackage(configured)) return "";
@@ -8539,14 +8555,29 @@ export default function ParentGalleryPage() {
     // year galleries, route to /api/portal/orders/create-combined which
     // splits into N orders sharing one order_group_id + applies the
     // sibling discount.  Otherwise stay on the legacy single-order path.
+    // Submit the exact reviewed basket, including the currently selected
+    // package. Persistence contains only explicitly saved items; using it here
+    // would omit a draft or attach another child's prints to this gallery.
     const taggedCart: CombineCart = {
       version: 1,
       photographerId: photographerId ?? "",
-      lanes: combineLanes,
-      items: persistedItems,
+      lanes: currentLane ? upsertLane({ version: 1, photographerId: photographerId ?? "",
+        lanes: combineLanes, items: [] }, currentLane).lanes : combineLanes,
+      items: persistParentCartItems(checkoutItems.map((item) => item.laneKey
+        ? item : { ...item, laneKey: currentLane?.laneKey })),
     };
-    const useCombinedEndpoint =
-      isSchoolMode && photographerId && isMultiLane(taggedCart);
+    const groupedCheckout = isSchoolMode ? groupCartByLane(taggedCart) : [];
+    if (isSchoolMode && (taggedCart.items.length !== checkoutItems.length ||
+        groupedCheckout.reduce((count, group) => count + group.items.length, 0) !== checkoutItems.length)) {
+      setOrderError("A gallery in your basket needs to be reopened before checkout. Your basket was kept.");
+      setPlacing(false);
+      return;
+    }
+    const checkoutReturnLane = groupedCheckout.find((group) => group.lane.laneKey === currentLane?.laneKey)?.lane
+      ?? groupedCheckout[0]?.lane ?? null;
+    const useCombinedEndpoint = requiresCombinedParentCheckout(
+      isSchoolMode, photographerId, checkoutItems, currentLane?.laneKey,
+    );
 
     let createdOrderId: string;
     try {
@@ -8555,8 +8586,7 @@ export default function ParentGalleryPage() {
         // lane carries its own pin/email/schoolId; entries are the cart
         // items belonging to that lane converted into the common entry
         // shape the server expects.
-        const grouped = groupCartByLane(taggedCart);
-        const groupsPayload = grouped.map((g) => ({
+        const groupsPayload = groupedCheckout.map((g) => ({
           pin: g.lane.pin,
           schoolId: g.lane.schoolId,
           email: g.lane.email,
@@ -8637,11 +8667,11 @@ export default function ParentGalleryPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           orderId: createdOrderId,
-          pin,
-          schoolId: isSchoolMode ? student?.school_id ?? null : null,
+          pin: checkoutReturnLane?.pin ?? pin,
+          schoolId: isSchoolMode ? checkoutReturnLane?.schoolId ?? student?.school_id ?? null : null,
           projectId: resolvedProjectId,
           mode,
-          email: isSchoolMode ? schoolViewerEmail : eventEmail,
+          email: isSchoolMode ? checkoutReturnLane?.email ?? schoolViewerEmail : eventEmail,
           customerEmail: parentEmail.trim(),
         }),
       });
@@ -13633,9 +13663,14 @@ export default function ParentGalleryPage() {
                           color: "#fff",
                         }}
                       >
-                        <span>Total</span>
+                        <span>{combinedCheckoutEstimate ? "Estimated total" : "Total"}</span>
                         <span>{money(checkoutTotalCents)}</span>
                       </div>
+                      {combinedCheckoutEstimate && (
+                        <p style={{ color: "#bbb", fontSize: 12, lineHeight: 1.5, margin: "10px 0 0" }}>
+                          Final sibling discounts, each school&apos;s tax and delivery charges are shown in secure checkout before you pay.
+                        </p>
+                      )}
                     </div>
 
                     <div style={{ display: "flex", gap: 10 }}>

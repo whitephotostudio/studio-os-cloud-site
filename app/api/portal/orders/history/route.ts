@@ -1,4 +1,5 @@
 import { hasCurrentDigitalPayment } from "@/lib/digital-entitlement-payment";
+import { hasDigitalProductLabel } from "@/lib/digital-product-label";
 import { canonicalPortalOrderReference, canonicalPortalOrderSnapshot } from "@/lib/portal-order-media";
 import { hasCalendarBoundaryPassed } from "@/lib/calendar-dates";
 import { hasActiveSubscription } from "@/lib/subscription-gate";
@@ -102,17 +103,7 @@ function lower(v: string | null | undefined) {
 }
 
 function looksDigital(value: string | null | undefined) {
-  const text = lower(value);
-  if (!text || text.includes("retouch")) return false;
-  return (
-    text.includes("digital") ||
-    text.includes("download") ||
-    text.includes("file") ||
-    text.includes("jpg") ||
-    text.includes("jpeg") ||
-    text.includes("png") ||
-    text.includes("usb")
-  );
+  return hasDigitalProductLabel(value);
 }
 
 function isPaidEnough(row: OrderRow) { return hasCurrentDigitalPayment(row); }

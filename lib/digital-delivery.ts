@@ -1,4 +1,5 @@
 import { hasCurrentDigitalPayment } from "@/lib/digital-entitlement-payment";
+import { hasDigitalProductLabel } from "@/lib/digital-product-label";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
@@ -135,17 +136,7 @@ function lower(value: string | null | undefined) {
 }
 
 function looksDigital(value: string | null | undefined) {
-  const text = lower(value);
-  if (text.includes("retouch")) return false;
-  return (
-    text.includes("digital") ||
-    text.includes("download") ||
-    text.includes("file") ||
-    text.includes("jpg") ||
-    text.includes("jpeg") ||
-    text.includes("png") ||
-    text.includes("usb")
-  );
+  return hasDigitalProductLabel(value);
 }
 
 function looksAllDigital(...values: Array<string | null | undefined>) {

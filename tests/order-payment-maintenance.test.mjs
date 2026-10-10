@@ -6,6 +6,7 @@ import ts from 'typescript';
 import * as pricing from '../lib/studio-pricing.ts';
 import * as periods from '../lib/stripe-billing-period.ts';
 import * as orderPolicy from '../lib/order-payment-policy.ts';
+import * as digitalLabels from '../lib/digital-product-label.ts';
 import { creditMaintenanceActive } from '../lib/credit-maintenance.ts';
 
 function load(path, dependencies = {}) {
@@ -73,6 +74,7 @@ function fixture(options = {}) {
     '@/lib/studio-pricing': pricing,
     '@/lib/stripe-billing-period': periods,
     '@/lib/order-payment-policy': orderPolicy,
+    '@/lib/digital-product-label': digitalLabels,
     '@/lib/school-parent-gallery-link': load('lib/school-parent-gallery-link.ts'),
     '@/lib/order-usage-billing': ledger,
     '@/lib/credit-maintenance': { creditMaintenanceActive },

@@ -53,15 +53,15 @@ const executable = ts.transpileModule([
 ].join("\n"), {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
 }).outputText;
-const serialize = new Function("params", "searchParams", "createdOrderId", "student", "project", "parentEmail", executable);
+const serialize = new Function("params", "searchParams", "createdOrderId", "student", "project", "parentEmail", "checkoutReturnLane", executable);
 const schoolId = "55555555-5555-4555-8555-555555555555";
 const orderId = "11111111-1111-4111-8111-111111111111";
 
 function payload(url, { buyer = "billing@example.test", student = { school_id: schoolId },
-  project = null, createdOrderId = orderId } = {}) {
+  project = null, createdOrderId = orderId, checkoutReturnLane = null } = {}) {
   const location = new URL(url, "https://gallery.example.test");
   return JSON.parse(serialize({ pin: location.pathname.split("/").at(-1) }, location.searchParams,
-    createdOrderId, student, project, buyer));
+    createdOrderId, student, project, buyer, checkoutReturnLane));
 }
 
 test("school checkout retains its viewer email separately from editable billing email", () => {

@@ -6,6 +6,7 @@ import ts from 'typescript';
 import * as pricing from '../lib/studio-pricing.ts';
 import * as orderPolicy from '../lib/order-payment-policy.ts';
 import * as orderCurrency from '../lib/order-currency.ts';
+import * as digitalLabels from '../lib/digital-product-label.ts';
 
 const compiled = ts.transpileModule(readFileSync(new URL('../lib/payments.ts', import.meta.url), 'utf8'), {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
@@ -33,6 +34,7 @@ function fixture(context) {
   const dependencies = {
     'node:crypto': crypto, '@/lib/studio-pricing': pricing, '@/lib/order-payment-policy': orderPolicy,
     '@/lib/order-currency': orderCurrency,
+    '@/lib/digital-product-label': digitalLabels,
     '@/lib/trial-config': { FREE_TRIAL_DAYS: 30 },
     '@/lib/subscription-access': { isStripeBillingActive: value => ['active', 'trialing'].includes(value) },
     '@/lib/credit-maintenance': { creditMaintenanceActive: () => false }, '@/lib/resend': { resendConfigured: () => false },
