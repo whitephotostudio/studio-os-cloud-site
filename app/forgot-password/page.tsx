@@ -4,13 +4,13 @@ import { FormEvent, useState } from "react";
 import Link from "next/link";
 import { SiteHeader } from "@/components/site-header";
 import { SiteFooter } from "@/components/site-footer";
-import { createClient } from "@/lib/supabase/client";
+import { createPasswordRecoveryClient } from "@/lib/supabase/password-recovery-client";
 import { useAuthFormReady } from "@/lib/use-auth-form-ready";
 import { authRequestErrorMessage, withAuthRequestTimeout } from "@/lib/auth-request";
 
 export default function ForgotPasswordPage() {
   const formReady = useAuthFormReady();
-  const supabase = createClient();
+  const [supabase] = useState(() => createPasswordRecoveryClient(false));
 
   const [email, setEmail] = useState("");
   const [loading, setLoading] = useState(false);

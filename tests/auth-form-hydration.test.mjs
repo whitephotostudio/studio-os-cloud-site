@@ -21,6 +21,7 @@ function serverHtml(path, {signinMfa = false, resetStage} = {}) {
     'next/link': {__esModule: true, default: ({children, ...props}) => React.createElement('a', props, children)},
     '@/components/site-header': {SiteHeader: () => null}, '@/components/site-footer': {SiteFooter: () => null},
     '@/lib/supabase/client': {createClient: () => ({auth: {}})},
+    '@/lib/supabase/password-recovery-client': {createPasswordRecoveryClient: () => ({auth: {}})},
   };
   function load(file) {
     const exports = {};

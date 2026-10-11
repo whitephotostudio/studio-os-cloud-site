@@ -4,9 +4,10 @@ import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { SiteHeader } from "@/components/site-header";
 import { SiteFooter } from "@/components/site-footer";
-import { createClient } from "@/lib/supabase/client";
+import { createPasswordRecoveryClient } from "@/lib/supabase/password-recovery-client";
 import { useAuthFormReady } from "@/lib/use-auth-form-ready";
 import { PASSWORD_REQUIREMENTS } from "@/lib/password-policy";
+import type { Session } from "@supabase/supabase-js";
 
 type ResetStage =
   | "verifying-link"
@@ -66,9 +67,12 @@ export default function ResetPasswordPage() {
   const formReady = useAuthFormReady();
   // Keep one client for the lifetime of this page. Recreating it during a
   // render can lose the one-time PASSWORD_RECOVERY auth event.
-  const [supabase] = useState(() => createClient());
+  const [supabase] = useState(() => createPasswordRecoveryClient());
 
   const recoveryProofRef = useRef<RecoveryProof | null>(null);
+  const recoveryExchangeRef = useRef<
+    ReturnType<typeof supabase.auth.exchangeCodeForSession> | null
+  >(null);
   const [recoveryUserId, setRecoveryUserId] = useState("");
   const [securityCheckVersion, setSecurityCheckVersion] = useState(0);
   const [stage, setStage] = useState<ResetStage>("verifying-link");
@@ -118,18 +122,23 @@ export default function ResetPasswordPage() {
       }
     }, 10000);
 
+    const acceptRecovery = (session: Session) => {
+      if (!active || !session.user?.id) return;
+      window.clearTimeout(timeoutId);
+      recoveryProofRef.current = { userId: session.user.id };
+      setRecoveryUserId(session.user.id);
+      setSecurityCheckVersion((version) => version + 1);
+      setError("");
+      setStage("checking-security");
+    };
+
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((event, session) => {
       if (!active) return;
 
       if (event === "PASSWORD_RECOVERY" && session?.user?.id) {
-        window.clearTimeout(timeoutId);
-        recoveryProofRef.current = { userId: session.user.id };
-        setRecoveryUserId(session.user.id);
-        setSecurityCheckVersion((version) => version + 1);
-        setError("");
-        setStage("checking-security");
+        acceptRecovery(session);
         return;
       }
 
@@ -143,6 +152,49 @@ export default function ResetPasswordPage() {
         );
       }
     });
+
+    // The dedicated implicit client waits for this subscription so a fast
+    // callback cannot consume the one-time recovery event before hydration.
+    async function verifyLink() {
+      const url = new URL(window.location.href);
+      const code = url.searchParams.get("code");
+      if (!code) return supabase.auth.initialize();
+
+      // The SDK's automatic PKCE URL handler drops the recovery marker.
+      // Explicit exchange preserves it; an ordinary sign-in code is never
+      // sufficient proof for this password reset screen.
+      recoveryExchangeRef.current ??= supabase.auth.exchangeCodeForSession(code);
+      const { data, error: exchangeError } =
+        await recoveryExchangeRef.current;
+      if (!active) return { error: null };
+      if (exchangeError) return { error: exchangeError };
+      const redirectType = "redirectType" in data ? data.redirectType : null;
+      if (redirectType !== "PASSWORD_RECOVERY" || !data.session?.user?.id) {
+        return { error: new Error("Password recovery verification required.") };
+      }
+      url.searchParams.delete("code");
+      window.history.replaceState(window.history.state, "", url.toString());
+      acceptRecovery(data.session);
+      return { error: null };
+    }
+
+    void verifyLink()
+      .then(({ error: linkError }) => {
+        if (active && linkError) {
+          window.clearTimeout(timeoutId);
+          invalidateRecovery(
+            "This password reset link could not be verified. Request a new link and try again.",
+          );
+        }
+      })
+      .catch(() => {
+        if (active) {
+          window.clearTimeout(timeoutId);
+          invalidateRecovery(
+            "This password reset link could not be verified. Request a new link and try again.",
+          );
+        }
+      });
 
     return () => {
       active = false;
@@ -471,10 +523,10 @@ export default function ResetPasswordPage() {
                   it to sign in to Studio OS Cloud.
                 </p>
                 <Link
-                  href="/dashboard"
+                  href="/sign-in"
                   className="mt-6 inline-block w-full rounded-2xl bg-black px-4 py-3 text-center text-sm font-medium text-white transition hover:opacity-90"
                 >
-                  Go to Dashboard
+                  Back to Sign In
                 </Link>
               </div>
             ) : stage === "invalid" ? (
