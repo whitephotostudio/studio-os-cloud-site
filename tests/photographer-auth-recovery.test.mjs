@@ -11,7 +11,7 @@ function pageHarness(path, {auth = {}, blockedStorage = false, search = ''} = {}
   const react = {
     useState(initial) {
       const index = hook++;
-      slots[index] ??= {value: initial};
+      slots[index] ??= {value: typeof initial === 'function' ? initial() : initial};
       return [slots[index].value, update => {
         slots[index].value = typeof update === 'function' ? update(slots[index].value) : update;
         dirty = true;
@@ -57,6 +57,7 @@ function pageHarness(path, {auth = {}, blockedStorage = false, search = ''} = {}
     react, 'react/jsx-runtime': {jsx, jsxs: jsx, Fragment: 'fragment'}, 'next/link': 'link',
     '@/components/site-header': {SiteHeader: 'header'}, '@/components/site-footer': {SiteFooter: 'footer'},
     '@/lib/supabase/client': {createClient: () => supabase},
+    '@/lib/supabase/password-recovery-client': {createPasswordRecoveryClient: () => supabase},
   };
   function load(file) {
     const exports = {};
