@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {readFileSync} from 'node:fs';
+import {BroadcastChannel as NodeBroadcastChannel} from 'node:worker_threads';
 import ts from 'typescript';
 import * as sdk from '@supabase/supabase-js';
 import * as ssr from '@supabase/ssr';
@@ -19,16 +20,16 @@ const user = {
   created_at: '2026-10-10T00:00:00Z',
 };
 
-function session() {
+function session(currentUser = user) {
   const expiresAt = Math.floor(Date.now() / 1000) + 3600;
-  const payload = Buffer.from(JSON.stringify({sub: user.id, exp: expiresAt, aal: 'aal1', amr: []})).toString('base64url');
+  const payload = Buffer.from(JSON.stringify({sub: currentUser.id, exp: expiresAt, aal: 'aal1', amr: []})).toString('base64url');
   return {
     access_token: `eyJhbGciOiJIUzI1NiJ9.${payload}.fixture`,
     refresh_token: 'fixture-refresh-token',
     token_type: 'bearer',
     expires_in: 3600,
     expires_at: expiresAt,
-    user,
+    user: currentUser,
   };
 }
 
@@ -63,13 +64,19 @@ function recoveryFactory() {
   }).createPasswordRecoveryClient;
 }
 
-async function browserFixture(t, {url = recoveryUrl(), rejectUser = false, rejectCode = false, cookies = {}} = {}) {
+async function browserFixture(t, {url = recoveryUrl(), rejectUser = false, rejectCode = false, cookies = {}, broadcast = false} = {}) {
   const originals = new Map();
   const replace = (name, value) => {
     originals.set(name, Object.getOwnPropertyDescriptor(globalThis, name));
     Object.defineProperty(globalThis, name, {value, configurable: true, writable: true});
   };
   const requests = [];
+  const channels = [];
+  const broadcasts = [];
+  class FixtureBroadcastChannel extends NodeBroadcastChannel {
+    constructor(name) {super(name); channels.push(this); this.unref();}
+    postMessage(message) {broadcasts.push({name: this.name, message}); super.postMessage(message);}
+  }
   const cookieValues = new Map(Object.entries({'unrelated-dashboard-cookie': 'preserve', ...cookies}));
   const cookieWrites = [];
   const localValues = new Map([['unrelated-local-value', 'preserve']]);
@@ -100,7 +107,7 @@ async function browserFixture(t, {url = recoveryUrl(), rejectUser = false, rejec
   replace('window', window);
   replace('document', document);
   replace('navigator', {});
-  replace('BroadcastChannel', undefined);
+  replace('BroadcastChannel', broadcast ? FixtureBroadcastChannel : undefined);
   replace('localStorage', {
     getItem: key => localValues.get(key) ?? null,
     setItem(key, value) {localWrites.push([key, value]); localValues.set(key, value);},
@@ -131,6 +138,7 @@ async function browserFixture(t, {url = recoveryUrl(), rejectUser = false, rejec
       client.auth.stopAutoRefresh();
       await client.removeAllChannels?.();
     }
+    for (const channel of channels) channel.close();
     await new Promise(resolve => setTimeout(resolve, 0));
     for (const [name, descriptor] of originals) {
       if (descriptor) Object.defineProperty(globalThis, name, descriptor);
@@ -138,7 +146,7 @@ async function browserFixture(t, {url = recoveryUrl(), rejectUser = false, rejec
     }
   });
   const track = client => {clients.push(client); return client;};
-  return {requests, window, cookieValues, cookieWrites, localValues, localWrites, track};
+  return {requests, window, cookieValues, cookieWrites, localValues, localWrites, channels, broadcasts, track};
 }
 
 async function initializeAndObserve(client) {
@@ -149,6 +157,31 @@ async function initializeAndObserve(client) {
   const result = await client.auth.initialize();
   await new Promise(resolve => setTimeout(resolve, 10));
   return {events, result, unsubscribe: () => subscription.unsubscribe()};
+}
+
+async function dashboardObserver(h) {
+  const dashboardUser = {...user, id: '00000000-0000-4000-8000-000000000002', email: 'dashboard@example.invalid'};
+  const stored = new Map([[storageKey, JSON.stringify(session(dashboardUser))]]);
+  const client = h.track({auth: new sdk.AuthClient({
+    url: `${projectUrl}/auth/v1`,
+    headers: {apikey: fixtureKey, Authorization: `Bearer ${fixtureKey}`},
+    storageKey,
+    persistSession: true,
+    autoRefreshToken: false,
+    detectSessionInUrl: false,
+    skipAutoInitialize: true,
+    storage: {
+      getItem: key => stored.get(key) ?? null,
+      setItem: (key, value) => stored.set(key, value),
+      removeItem: key => stored.delete(key),
+    },
+  })});
+  const observed = await initializeAndObserve(client);
+  assert.equal(observed.result.error, null);
+  assert.equal((await client.auth.getSession()).data.session?.user.id, dashboardUser.id);
+  observed.events.length = 0;
+  h.broadcasts.length = 0;
+  return {client, ...observed, userId: dashboardUser.id};
 }
 
 test('installed SSR SDK rejects implicit recovery despite requesting implicit flow', async t => {
@@ -303,4 +336,79 @@ test('an expired or reused legacy code cannot create recovery authorization', as
   assert.match(result.error?.message ?? '', /expired|used/);
   assert.equal(result.data.session, null);
   assert.equal(h.cookieValues.has(`${storageKey}-code-verifier`), false);
+});
+
+test('real SDK shares a sign-in event with a dashboard using the same BroadcastChannel key', async t => {
+  const h = await browserFixture(t, {
+    url: 'https://www.studiooscloud.com/reset-password?code=fixture-recovery-code',
+    broadcast: true,
+  });
+  const dashboard = await dashboardObserver(h);
+  const stored = new Map([[`${storageKey}-code-verifier`, JSON.stringify('fixture-verifier/PASSWORD_RECOVERY')]]);
+  const shared = h.track({auth: new sdk.AuthClient({
+    url: `${projectUrl}/auth/v1`,
+    headers: {apikey: fixtureKey, Authorization: `Bearer ${fixtureKey}`},
+    storageKey,
+    persistSession: true,
+    autoRefreshToken: false,
+    detectSessionInUrl: false,
+    skipAutoInitialize: true,
+    flowType: 'pkce',
+    storage: {
+      getItem: key => stored.get(key) ?? null,
+      setItem: (key, value) => stored.set(key, value),
+      removeItem: key => stored.delete(key),
+    },
+  })});
+  const result = await shared.auth.exchangeCodeForSession('fixture-recovery-code');
+  assert.equal(result.error, null);
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.deepEqual(dashboard.events, [{event: 'SIGNED_IN', userId: user.id}],
+    'The enabled native channel must reproduce the session leak with the original shared key');
+  dashboard.unsubscribe();
+});
+
+test('legacy recovery broadcasts only on its isolated channel and leaves dashboard observers untouched', async t => {
+  const originalSessionCookie = JSON.stringify(session());
+  const h = await browserFixture(t, {
+    url: 'https://www.studiooscloud.com/reset-password?code=fixture-recovery-code',
+    cookies: {
+      [storageKey]: originalSessionCookie,
+      [`${storageKey}-code-verifier`]: JSON.stringify('fixture-verifier/PASSWORD_RECOVERY'),
+    },
+    broadcast: true,
+  });
+  const dashboard = await dashboardObserver(h);
+  const client = h.track(recoveryFactory()());
+  const result = await client.auth.exchangeCodeForSession('fixture-recovery-code');
+  assert.equal(result.error, null);
+  assert.equal(result.data.redirectType, 'PASSWORD_RECOVERY');
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.deepEqual(dashboard.events, [], 'Recovery must not publish a session to an open dashboard');
+  assert.equal((await dashboard.client.auth.getSession()).data.session?.user.id, dashboard.userId);
+  assert.equal(h.cookieValues.get(storageKey), originalSessionCookie);
+  assert.equal(h.cookieValues.has(`${storageKey}-code-verifier`), false);
+  assert.deepEqual(h.broadcasts.map(({name, message}) => ({name, event: message.event, userId: message.session?.user.id})), [
+    {name: `${storageKey}-password-recovery`, event: 'SIGNED_IN', userId: user.id},
+  ], 'The SDK still emits its event, but under a recovery-only channel key');
+  assert.deepEqual(h.localWrites, []);
+  dashboard.unsubscribe();
+});
+
+test('implicit recovery emits no BroadcastChannel session and leaves dashboard observers untouched', async t => {
+  const h = await browserFixture(t, {broadcast: true});
+  const dashboard = await dashboardObserver(h);
+  const client = h.track(recoveryFactory()());
+  const observed = await initializeAndObserve(client);
+  assert.equal(observed.result.error, null);
+  assert.equal(observed.events.filter(({event}) => event === 'PASSWORD_RECOVERY').length, 1);
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.deepEqual(dashboard.events, []);
+  assert.equal((await dashboard.client.auth.getSession()).data.session?.user.id, dashboard.userId);
+  assert.deepEqual(h.broadcasts, [], 'Ephemeral implicit recovery must not publish a session');
+  assert.equal(h.channels.length, 1, 'Only the existing dashboard owns a BroadcastChannel');
+  assert.deepEqual(h.cookieWrites, []);
+  assert.deepEqual(h.localWrites, []);
+  dashboard.unsubscribe();
+  observed.unsubscribe();
 });
