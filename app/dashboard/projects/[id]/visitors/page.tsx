@@ -335,14 +335,12 @@ export default function EventVisitorsPage() {
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) {
-      setError("Please sign in again.");
-      setLoading(false);
-      return;
-    }
 
     try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        throw new Error("Please sign in again.");
+      }
       const { data: { user } } = await supabase.auth.getUser();
       if (user) {
         const { data: pg } = await supabase
@@ -461,10 +459,10 @@ export default function EventVisitorsPage() {
                 Gallery Visitors
               </h1>
               <div style={{ fontSize: 13, color: textMuted, marginTop: 4 }}>
-                {projectName ? `${projectName} · ` : ""}{visitors.length} visitor{visitors.length !== 1 ? "s" : ""}
+                {error ? "Visitor count unavailable" : `${projectName ? `${projectName} · ` : ""}${visitors.length} visitor${visitors.length !== 1 ? "s" : ""}`}
               </div>
             </div>
-            {selected.size > 0 && (
+            {!error && selected.size > 0 && (
               <button
                 type="button"
                 onClick={() => {
@@ -481,8 +479,11 @@ export default function EventVisitorsPage() {
         </div>
 
         {error ? (
-          <div style={{ marginBottom: 16, padding: "12px 14px", borderRadius: 10, border: "1px solid #fecaca", background: "#fef2f2", color: "#991b1b", fontSize: 13, fontWeight: 700 }}>
-            {error}
+          <div role="alert" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, marginBottom: 16, padding: "12px 14px", borderRadius: 10, border: "1px solid #fecaca", background: "#fef2f2", color: "#991b1b", fontSize: 13, fontWeight: 700 }}>
+            <span>{error}</span>
+            <button type="button" onClick={() => void load()} style={{ padding: "7px 12px", border: "1px solid #fecaca", borderRadius: 6, background: "#fff", color: "#991b1b", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
+              Try again
+            </button>
           </div>
         ) : null}
 
@@ -492,6 +493,7 @@ export default function EventVisitorsPage() {
           <input
             type="text"
             placeholder="Search by email or order ID…"
+            disabled={Boolean(error)}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             style={{ width: "100%", padding: "10px 12px 10px 36px", border: `1px solid ${borderColor}`, borderRadius: 8, fontSize: 13, color: textPrimary, background: cardBg, boxSizing: "border-box" }}
@@ -501,7 +503,7 @@ export default function EventVisitorsPage() {
         {/* Table */}
         <div style={{ background: cardBg, borderRadius: 12, border: `1px solid ${borderColor}`, overflow: "hidden" }}>
           <div style={{ display: "grid", gridTemplateColumns: "40px 1fr 1fr 80px 80px 80px 100px", padding: "12px 16px", background: "#fafafa", borderBottom: `1px solid ${borderColor}`, fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: textMuted }}>
-            <div><input type="checkbox" checked={allSelected} onChange={toggleAll} style={{ width: 16, height: 16, cursor: "pointer" }} /></div>
+            <div><input type="checkbox" checked={allSelected} disabled={Boolean(error)} onChange={toggleAll} style={{ width: 16, height: 16, cursor: "pointer" }} /></div>
             <div>Visitor</div>
             <div>Last Activity</div>
             <div>Favs</div>
@@ -510,7 +512,11 @@ export default function EventVisitorsPage() {
             <div>Actions</div>
           </div>
 
-          {filtered.length === 0 ? (
+          {error ? (
+            <div style={{ padding: 40, textAlign: "center", color: textMuted, fontSize: 14 }}>
+              Visitor data is unavailable. Try loading again.
+            </div>
+          ) : filtered.length === 0 ? (
             <div style={{ padding: 40, textAlign: "center", color: textMuted, fontSize: 14 }}>
               {search ? "No visitors match your search." : "No visitors yet."}
             </div>
