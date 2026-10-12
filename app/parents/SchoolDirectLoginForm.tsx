@@ -170,6 +170,7 @@ export default function SchoolDirectLoginForm({ school }: { school: SchoolRow })
         style={{
           width: "min(100%, 520px)",
           background: "rgba(255,255,255,0.92)",
+          colorScheme: "light",
           border: "1px solid rgba(17,24,39,0.08)",
           borderRadius: 24,
           boxShadow: "0 28px 80px rgba(17,24,39,0.12)",
@@ -312,6 +313,9 @@ const inputStyle: CSSProperties = {
   borderRadius: 14,
   border: "1px solid #d9dee7",
   background: "#fff",
+  color: "#111827",
+  WebkitTextFillColor: "#111827",
+  caretColor: "#111827",
   padding: "0 14px",
   fontSize: 14,
   outline: "none",
