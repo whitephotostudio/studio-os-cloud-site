@@ -7,6 +7,8 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { Readable, Transform, Writable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
+import http from 'node:http';
+import https from 'node:https';
 import { S3Client, ListObjectsV2Command } from '@aws-sdk/client-s3';
 import { createClient } from '@supabase/supabase-js';
 
@@ -21,6 +23,59 @@ const encode = value => encodeURIComponent(value).replace(/[!*'()]/g, c => `%${c
 const safeId = value => typeof value === 'string' && /^[a-zA-Z0-9_-]{12,80}$/.test(value);
 const fail = code => { const error = new Error(code); error.code = code; throw error; };
 const cleanEtag = value => typeof value === 'string' ? value.replace(/^W\//, '').replace(/^"|"$/g, '') : '';
+
+// The one-time downloader can run for hours. Use Node's streaming HTTP client
+// rather than the bundled fetch parser, which can assert inside Undici after
+// a TLS response ends. Each body still flows through the same size/hash/GCM
+// pipeline, and caller-supplied fetchers remain available to isolated tests.
+export function createBackupDownloadTransport({ concurrency = 6, ca } = {}) {
+  if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 16) fail('INVALID_CONCURRENCY');
+  const options = { keepAlive: true, maxSockets: concurrency, maxTotalSockets: concurrency,
+    maxFreeSockets: concurrency, scheduling: 'lifo' };
+  const httpAgent = new http.Agent(options);
+  const httpsAgent = new https.Agent({ ...options, maxCachedSessions: concurrency, ...(ca ? { ca } : {}) });
+  let closed = false;
+  const fetcher = (input, init = {}) => new Promise((resolve, reject) => {
+    if (closed) { reject(Object.assign(new Error('BACKUP_TRANSPORT_CLOSED'), { code: 'BACKUP_TRANSPORT_CLOSED' })); return; }
+    let url;
+    try { url = new URL(input); } catch { reject(Object.assign(new Error('INVALID_SOURCE_URL'), { code: 'INVALID_SOURCE_URL' })); return; }
+    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || (init.method && init.method !== 'GET') || init.body != null) {
+      reject(Object.assign(new Error('INVALID_SOURCE_REQUEST'), { code: 'INVALID_SOURCE_REQUEST' })); return;
+    }
+    const headers = Object.fromEntries(new Headers(init.headers));
+    // Back up stored bytes verbatim; Node does not transparently decompress.
+    headers['accept-encoding'] ||= 'identity';
+    const client = url.protocol === 'https:' ? https : http;
+    let incoming;
+    const request = client.request(url, { method: 'GET', headers,
+      agent: url.protocol === 'https:' ? httpsAgent : httpAgent, signal: init.signal }, response => {
+      incoming = response;
+      const status = response.statusCode || 0;
+      if (status >= 300 && status < 400) {
+        response.destroy();
+        reject(Object.assign(new Error('SOURCE_REDIRECT_REJECTED'), { code: 'SOURCE_REDIRECT_REJECTED' })); return;
+      }
+      try {
+        const responseHeaders = new Headers();
+        for (let i = 0; i < response.rawHeaders.length; i += 2) responseHeaders.append(response.rawHeaders[i], response.rawHeaders[i + 1]);
+        // Do not retain an error response body or tie up a pooled connection
+        // while the existing downloader decides whether to retry it.
+        if (status < 200 || status >= 300 || status === 204) {
+          response.destroy(); resolve(new Response(null, { status, headers: responseHeaders })); return;
+        }
+        resolve(new Response(Readable.toWeb(response), { status, headers: responseHeaders }));
+      } catch (error) { response.destroy(); request.destroy(); reject(error); }
+    });
+    request.once('error', error => {
+      // A post-header abort or truncated response must reject the body stream,
+      // not escape as an unhandled asynchronous transport exception.
+      if (incoming && !incoming.destroyed) incoming.destroy(error);
+      reject(error);
+    });
+    request.end();
+  });
+  return { fetcher, close() { closed = true; httpAgent.destroy(); httpsAgent.destroy(); } };
+}
 
 export function presignGet(config, key, now = new Date()) {
   const stamp = now.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, ''), date = stamp.slice(0, 8);
@@ -284,8 +339,9 @@ export async function downloadBackup({ manifestFile, expectedManifestSha256, pri
       const file = path.join(root, 'objects', `${id}.enc`), temporary = `${file}.partial-${randomBytes(6).toString('hex')}`;
       let record;
       for (let attempt = 0; attempt < 3; attempt += 1) {
+        let response;
         try {
-          const response = await fetcher(object.url, { redirect: 'error', cache: 'no-store', headers: object.etag ? { 'If-Match': `"${cleanEtag(object.etag)}"` } : {}, signal: AbortSignal.any([cancellation.signal, AbortSignal.timeout(20 * 60_000)]) });
+          response = await fetcher(object.url, { redirect: 'error', cache: 'no-store', headers: object.etag ? { 'If-Match': `"${cleanEtag(object.etag)}"` } : {}, signal: AbortSignal.any([cancellation.signal, AbortSignal.timeout(20 * 60_000)]) });
           if (object.etag && cleanEtag(response.headers.get('etag')) !== cleanEtag(object.etag)) fail('SOURCE_ETAG_CHANGED');
           record = { ...await encryptPhotoResponse(response, temporary, masterKey, objectAad(manifest.backupId, id, object), object.size), etag: object.etag };
           await fs.rename(temporary, file); break;
@@ -294,6 +350,10 @@ export async function downloadBackup({ manifestFile, expectedManifestSha256, pri
           if (failure) throw failure;
           if (attempt === 2) throw error;
           await new Promise(resolve => setTimeout(resolve, 1000 * (attempt + 1)));
+        } finally {
+          // An ETag/size/header rejection happens before the encryption
+          // pipeline owns the body. Release it so retries cannot fill the pool.
+          if (response?.body) { try { await response.body.cancel(); } catch { /* Already consumed/locked by the pipeline. */ } }
         }
       }
       const encoded = JSON.stringify(record), recordTemp = `${file}.json.partial`;
@@ -331,10 +391,14 @@ async function main() {
     const args = argumentsMap(process.argv.slice(3));
     if (!args.manifest || !args['manifest-sha256'] || !args['private-key'] || !args['key-dir'] || !args.destination) fail('INVALID_ARGUMENTS');
     let last = 0;
-    const result = await downloadBackup({ manifestFile: args.manifest, expectedManifestSha256: args['manifest-sha256'], privateKeyFile: args['private-key'], keyDirectory: args['key-dir'], destination: args.destination,
-      concurrency: args.concurrency === undefined ? 6 : Number(args.concurrency),
-      progress: value => { if (Date.now() - last > 5000) { console.log(JSON.stringify(value)); last = Date.now(); } } });
-    console.log(JSON.stringify(result));
+    const concurrency = args.concurrency === undefined ? 6 : Number(args.concurrency);
+    const transport = createBackupDownloadTransport({ concurrency });
+    try {
+      const result = await downloadBackup({ manifestFile: args.manifest, expectedManifestSha256: args['manifest-sha256'], privateKeyFile: args['private-key'], keyDirectory: args['key-dir'], destination: args.destination,
+        concurrency, fetcher: transport.fetcher,
+        progress: value => { if (Date.now() - last > 5000) { console.log(JSON.stringify(value)); last = Date.now(); } } });
+      console.log(JSON.stringify(result));
+    } finally { transport.close(); }
   } else fail('INVALID_MODE');
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
