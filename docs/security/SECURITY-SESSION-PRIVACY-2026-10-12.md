@@ -2,9 +2,9 @@
 
 This follows the [earlier production hardening record](./SECURITY-HARDENING-2026-10-12.md). It records a bounded security change, not a guarantee against compromise or future data loss.
 
-**Release status: integration and independent review in progress; this follow-up has not been deployed.** The earlier production runtime is `51101a332a98c71e83f8ac7c1226ec5b4ac5230a`. Do not interpret source tests as proof of the new live behavior.
+**Release status: deployed and verified.** Production runs `c73187b95fbb938e5dfd70f2fa1daa1bf8bc1638`, deployment `dpl_DZRGeVkT8zNTBwJttdVEGfV2RXau`, ready at `https://www.studiooscloud.com`. The clean-checkout `npm run deploy:production` completed with owning exit zero, **1,988/1,988 tests**, build and read-only production preflights passing. Both GitHub push/PR verification runs passed for that source, with zero unresolved review threads. This report update changes documentation only and skips another Vercel build.
 
-## Changes prepared
+## Released changes
 
 - New parent access uses a random host-only, Secure, HttpOnly, SameSite=Lax browser cookie. Only its SHA-256 hash is stored. Gallery lane IDs select an authorized scope; they are not access credentials. Every action rechecks the current PIN, gallery, studio, expiry and applicable email whitelist, then retains the original route's media, price and order authorization.
 - New gallery URLs, JSON action requests, recovery redirects and Stripe return URLs omit the parent PIN/email. Browser cart persistence keeps products, quantities, photo choices, backdrop settings and sibling identities while replacing authentication copies with opaque lane references. Active event favorite/ratio choices migrate before navigation. Unavailable reauthentication retains the basket for reopening.
@@ -17,9 +17,19 @@ This follows the [earlier production hardening record](./SECURITY-HARDENING-2026
 
 ## Release and preservation gates
 
-The additive migrations create three service-only tables and four service-only functions. They do not delete or rewrite photos, students, orders or order items. Production application must follow reviewed migration order `20261012110000` then `20261012120000`, with fresh catalog/record checkpoints and exact function/ACL/RLS verification. The prebuild check reads all three schemas with `limit=0` and requires anonymous denial; it issues no session, order, email or payment.
+The additive migrations create three service-only tables and four service-only functions. Both applied individually with owning exit zero in reviewed order `20261012110000` then `20261012120000`. They do not delete or rewrite photos, students, orders or order items. The prebuild check read all three schemas with `limit=0` and confirmed anonymous denial on each; it issued no session, order, email or payment.
 
-Release requires a clean committed checkout, the complete test suite, production build and provider preflights through `npm run deploy:production`. Live checks must cover printed QR/legacy entry, a clean private URL, photo/backdrop navigation, saved-basket reload and existing paid-order access. Pre/post record comparisons must distinguish legitimate customer activity from an unintended change.
+The final post-release repeatable-read snapshot at **2026-10-12 13:54:32 UTC** passed all **19/19** permission/ownership/RLS/function checks, matched all four exact migration definitions, and retained the entire captured existing catalog unchanged. Database-native hashes across every column found **zero missing, changed or new records** among 283 orders, 945 order items, 11,175 media rows and 1,090 students. All 2,516 fresh baseline storage IDs and bucket associations were preserved. The original earlier checkpoint was not overwritten. Protected proof: `parent-sessions-postrelease-final-v3-1uphr1/final-postrelease-preservation-proof-v3.json`.
+
+An initial 4.6 MB preservation query exceeded the provider's HTTP request limit. The release process was stopped before Vercel deployment. A reviewed 25,907-byte query then captured the native row hashes, storage IDs and current catalog in one read-only repeatable-read transaction; a strict local comparator checked string hashes against the protected baseline. Eight synthetic corruption/precision cases passed independently. The successful guarded release was restarted only after that post-apply check passed.
+
+Live checks confirmed:
+
+- The existing printed-label/PIN URL automatically opened a clean private URL and the seven-photo gallery. The large Photo 1 → 2 view displayed a different portrait with the Book backdrop retained. One warm desktop click, accessibility read and screenshot completed in 436 ms; this is not a cold-load or mobile-network benchmark.
+- A temporary local basket item retained its two print slots, package price and Book backdrop after reload. Only that temporary item was then removed, restoring the original empty local basket. No checkout was submitted. Actual sibling migration and selection preservation also pass synthetic tests.
+- Signed-in Safari reloaded Gallery Visitors with six visitors and no load error. Typed synthetic email/PIN values remained dark and readable on the white parent form; they were not submitted and were cleared. This new Safari check used desktop dimensions; the earlier phone-size verification is recorded in the prior report.
+- Live HTTP checks confirmed secure host-cookie flags, no PIN in server-rendered HTML/context DTOs, and denial of missing-cookie, foreign-origin, foreign-school and different-browser lane access. The encrypted sharing entry successfully opened a fresh browser session without exposing PIN/email or copying checkout markers.
+- The existing expected paid order remained visible with its original paid status, amount and currency. Its newly encrypted delivery metadata returned one file, and the exact original passed a ranged native HTTP 206 header check with the response body cancelled and zero photo bytes consumed. No live confirmation, order/payment write or email send occurred. No unexpired historical paid link was available for a separate live legacy check; six actual pre-change issued-token fixtures verify legacy compatibility locally.
 
 Rollback must retain the new private tables, capability decoders, session views and checkout-return compatibility once new URLs have been issued. The old `51101a3` runtime preserves customer data but cannot by itself serve the new URLs. Use a reviewed corrective release or compatible rollback; do not drop private metadata or rewrite customer orders to roll back application behavior.
 
@@ -28,6 +38,8 @@ Rollback must retain the new private tables, capability decoders, session views 
 The earlier encrypted photo backup remains intact: 48,080 objects and 204,209,791,892 source bytes, plus its independently checked fresh-inventory delta. The 132-file final encrypted source/database/catalog checkpoint was separately authenticated and verified from the external drive.
 
 This follow-up also completed an offline partial data recovery rehearsal using the authenticated final checkpoint. It recovered all 111 saved relation snapshots and 33,290 records, preserved original JSON numeric lexemes, and found zero violations across 169 internal foreign-key checks. Twenty-three references into managed authentication data were explicitly deferred. No archived SQL, application jobs, triggers, policies or provider functions were executed; no production request or mutation occurred. This proves a bounded data-mirror recovery, not a full Supabase/application disaster-recovery rehearsal.
+
+Fresh post-migration recovery exports captured all 114 inventoried relations (109 tables, four views, one sequence) and 33,291 records, including the new private metadata tables. Catalog and data raw bytes remain unchanged in protected mode-600 files under a mode-700 directory. Table/view rows share the data snapshot at 13:49:15 UTC; catalog capture is separate at 13:47:20 UTC, and sequence state is explicitly non-MVCC. These exports retain the same public/storage-only scope and do not include managed authentication rows or system secrets. Protected proof: `parent-sessions-final-recovery-20261012-SkwQZ4/complete-recovery-capture-proof.json`.
 
 ## Remaining owner actions and limits
 
