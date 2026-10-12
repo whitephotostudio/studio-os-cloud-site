@@ -5,6 +5,11 @@
 -- SET studio_os.legacy_storage_cutover_verified='gateway-and-backup-verified';
 -- This file changes only two bucket flags and their exact public SELECT policies.
 -- It does not change, move, overwrite, or delete any object or customer row.
+-- Direct SQL bypasses the Storage API's public-to-private CDN purge side effect.
+-- After commit, explicitly purge each photo bucket's CDN cache through the
+-- documented /storage/v1/cdn/<bucket> endpoint, then require anonymous HTTP
+-- denial and authorized reads after propagation. Cache purging deletes no object.
+-- https://supabase.com/docs/guides/storage/cdn/purge-cdn-cache
 begin;
 do $$
 begin
