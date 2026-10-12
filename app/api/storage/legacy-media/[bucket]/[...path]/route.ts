@@ -27,7 +27,7 @@ export async function GET(request: NextRequest, context: { params: Promise<{ buc
       if (!auth.user) return denied(401);
       userId = auth.user.id;
     }
-    const limit = await rateLimit(userId || getClientIp(request), { namespace: "legacy-storage-read", limit: 300, windowSeconds: 60 });
+    const limit = await rateLimit(userId || getClientIp(request), { namespace: "legacy-storage-read", limit: 3000, windowSeconds: 60 });
     if (!limit.allowed) return denied(429);
     const service = createDashboardServiceClient();
     const ownerId = await legacyStorageOwner(service, reference.bucket, reference.key);

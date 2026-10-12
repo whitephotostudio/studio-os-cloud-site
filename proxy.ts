@@ -13,6 +13,7 @@ const STRICT_ROUTES = [
 
 /** Routes that get standard API rate limiting */
 const API_PREFIX = "/api/";
+const PRIVATE_MEDIA_PREFIXES = ["/api/r2/img/", "/api/storage/legacy-media/"];
 
 function addSecurityHeaders(response: NextResponse) {
   response.headers.set("X-Content-Type-Options", "nosniff");
@@ -61,11 +62,16 @@ export async function proxy(request: NextRequest) {
     }
   }
 
-  // Standard rate limiting for all API routes (100 requests per minute)
+  // A gallery can request the original, preview and thumbnail for hundreds
+  // of photos. Keep those reads bounded independently of checkout/actions.
+  // This chooses a counter only; the image route still checks capability or
+  // dashboard MFA and retained namespace ownership before any storage read.
+  const isPrivateMediaRead = (request.method === "GET" || request.method === "HEAD") &&
+    PRIVATE_MEDIA_PREFIXES.some(prefix => pathname.startsWith(prefix) && pathname.length > prefix.length);
   if (pathname.startsWith(API_PREFIX)) {
     const result = await rateLimit(ip, {
-      namespace: "api",
-      limit: 100,
+      namespace: isPrivateMediaRead ? "private-media-read" : "api",
+      limit: isPrivateMediaRead ? 3000 : 100,
       windowSeconds: 60,
     });
 
@@ -97,6 +103,10 @@ export async function proxy(request: NextRequest) {
 
 export const config = {
   matcher: [
+    // Apply the finite media budget even when the stored key ends in a
+    // lowercase image extension excluded by the generic matcher below.
+    "/api/r2/img/:path*",
+    "/api/storage/legacy-media/:path*",
     /*
      * Match all request paths except:
      * - _next/static (static files)

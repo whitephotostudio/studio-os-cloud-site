@@ -68,12 +68,16 @@ export function createGalleryImageCache({
     try { image = createImage(); } catch (error) { return Promise.reject(error); }
     image.decoding = "async";
     image.fetchPriority = priority;
-    // Preserve the canvas loader's signed-R2 behavior. Setting anonymous CORS
-    // on these signed URLs would reject images from buckets without CORS rules.
+    // Native R2 URLs and these authorized gateways can reach storage without
+    // CORS rules. A gateway's same-origin URL still redirects cross-origin;
+    // anonymous CORS would reject its image before canvas consumers can draw it.
     let anonymousCors = true;
     try {
       const origin = typeof window === "undefined" ? "https://gallery.invalid" : window.location.origin;
-      anonymousCors = !/\.r2\.cloudflarestorage\.com$/i.test(new URL(src, origin).hostname);
+      const url = new URL(src, origin);
+      const redirectsToPrivateStorage = url.pathname.startsWith("/api/r2/img/") ||
+        url.pathname.startsWith("/api/storage/legacy-media/");
+      anonymousCors = !redirectsToPrivateStorage && !/\.r2\.cloudflarestorage\.com$/i.test(url.hostname);
     } catch { /* Let the image loader report an invalid URL. */ }
     image.crossOrigin = anonymousCors ? "anonymous" : null;
 

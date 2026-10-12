@@ -110,16 +110,71 @@ test("signed URLs retain exact viewer credentials and configure CORS before star
     "/api/portal/school-preview/pose.png?token=first-viewer",
     "/api/portal/school-preview/pose.png?token=second-viewer",
     "https://bucket.account.r2.cloudflarestorage.com/pose.png?X-Amz-Signature=fixture",
+    "/api/r2/img/backdrops/blue.jpg?mediaToken=viewer%2Bfirst",
+    "https://gallery.example/api/r2/img/backdrops/blue.jpg?mediaToken=viewer%2Bsecond",
+    "/api/storage/legacy-media/nobg-photos/pose.png?token=viewer%2Bfirst",
+    "https://gallery.example/api/storage/legacy-media/thumbs/pose.png?token=viewer%2Bsecond",
+    "/api/portal/event-preview/pose.png?token=event-viewer",
   ];
   for (const url of urls) {
     const pending = h.cache.load(url, "high");
     h.images.at(-1).succeed();
     await pending;
   }
-  assert.equal(h.images.length, 3);
+  assert.equal(h.images.length, urls.length);
   assert.deepEqual(h.images.map(image => image.source), urls);
-  assert.deepEqual(h.images.map(image => image.corsAtLoad), ["anonymous", "anonymous", null]);
+  assert.deepEqual(h.images.map(image => image.corsAtLoad), ["anonymous", "anonymous", null, null, null, null, null, "anonymous"]);
   assert.ok(h.images.every(image => image.priorityAtLoad === "high"));
+});
+
+test("private gateway redirects load from storage without CORS while retaining exact capabilities", async () => {
+  const requests = [];
+  const cache = createGalleryImageCache({
+    createImage() {
+      return {
+        naturalWidth: 0, naturalHeight: 0,
+        async decode() {},
+        set src(value) {
+          requests.push(value);
+          // Model a redirect to a storage response without ACAO: CORS-mode
+          // image requests fail before onload, while display-mode images load.
+          Promise.resolve().then(() => {
+            if (this.crossOrigin === "anonymous") { this.onerror?.(); return; }
+            this.naturalWidth = 600; this.naturalHeight = 900; this.onload?.();
+          });
+        },
+      };
+    },
+  });
+  for (const src of [
+    "/api/r2/img/backdrops/blue.jpg?mediaToken=exact%2Bcapability",
+    "/api/storage/legacy-media/nobg-photos/pose.png?token=exact%2Bcapability",
+  ]) {
+    const first = cache.load(src, "low");
+    assert.equal(cache.load(src, "high"), first);
+    const image = await first;
+    assert.equal(image.naturalWidth, 600);
+    assert.equal(cache.peek(src), image, "composite canvases can reuse the decoded image");
+  }
+  assert.deepEqual(requests, [
+    "/api/r2/img/backdrops/blue.jpg?mediaToken=exact%2Bcapability",
+    "/api/storage/legacy-media/nobg-photos/pose.png?token=exact%2Bcapability",
+  ]);
+});
+
+test("unrelated and derivative URLs keep anonymous CORS rather than a broad retry", async () => {
+  const h = fixture();
+  for (const src of [
+    "/api/r2/img-not-a-gateway/photo.jpg",
+    "/api/storage/legacy-media-not-a-gateway/photo.jpg",
+    "https://images.example/portrait.png?mediaToken=fixture",
+    "/api/portal/school-preview/pose.png?token=fixture",
+  ]) {
+    const pending = h.cache.load(src);
+    assert.equal(h.images.at(-1).corsAtLoad, "anonymous");
+    h.images.at(-1).succeed();
+    await pending;
+  }
 });
 
 test("thumbnail sizing uses only existing protected preview derivatives", () => {

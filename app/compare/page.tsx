@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { ArrowRight } from "lucide-react";
-import { BreadcrumbJsonLd } from "@/components/json-ld";
+import { BreadcrumbJsonLd, JsonLd } from "@/components/json-ld";
 
 const baseUrl = "https://www.studiooscloud.com";
 
@@ -97,10 +97,7 @@ export default function ComparePage() {
           { name: "Compare", item: `${baseUrl}/compare` },
         ]}
       />
-      <script
-        type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(itemListJsonLd) }}
-      />
+      <JsonLd data={itemListJsonLd} />
 
       <section className="mx-auto max-w-5xl px-4 pb-10 pt-16 sm:px-6 lg:px-8">
         <p className="marketing-caption text-xs font-semibold uppercase tracking-[0.18em] text-red-600">
