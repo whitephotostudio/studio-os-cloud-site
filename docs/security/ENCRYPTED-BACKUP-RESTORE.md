@@ -25,6 +25,14 @@ the same USB drive cannot authenticate that drive's contents. Retain the trusted
 receipt separately with the private key. RSA encryption alone does not establish
 who created a replacement key envelope.
 
+New downloads automatically retain a mode-600
+`photo-backup-<PHOTO-BACKUP-ID>.authenticity-receipt.json` in the protected key
+directory, after authenticating the manifest and comparing the persisted wrapped
+key with the protected Mac master key. Resume refuses a mismatching receipt.
+Recovering a missing Mac master key requires this previously trusted receipt;
+the USB envelope alone cannot establish trust. The initial backup's separately
+captured `photo-backup-authenticity-receipt.json` is also retained for compatibility.
+
 ## What is backed up
 
 - The photo backup's ID folder contains the encrypted inventory, RSA-wrapped
@@ -35,6 +43,8 @@ who created a replacement key envelope.
   and rollback SQL. Its encrypted index records the selected files and SHA256s.
 - `checkpoint-<ID>.enc.verification.json` records archive and ciphertext SHA256s.
   A matching receipt also remains on the protected Mac.
+- Creating a checkpoint copies both standalone restoration helpers and this
+  guide onto the destination drive by default.
 
 The private key, raw/master keys, `.b64` files and live browser fixtures are excluded
 from the checkpoint archive. Provider backup evidence records what the provider

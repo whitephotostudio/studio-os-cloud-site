@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Local-only encrypted checkpoint archive. Source data and keys stay on the Mac.
-import { promises as fs, createReadStream, createWriteStream } from 'node:fs';
+import { promises as fs, constants as fileConstants, createReadStream, createWriteStream } from 'node:fs';
 import { createHash, createCipheriv, createDecipheriv, createPublicKey, createPrivateKey, publicEncrypt, privateDecrypt, randomBytes, constants } from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
 import { Transform, Writable } from 'node:stream';
@@ -32,6 +32,21 @@ async function privateFile(file) {
   const stat = await fs.lstat(file);
   if (!stat.isFile() || stat.isSymbolicLink() || (stat.mode & 0o077) || (process.getuid && stat.uid !== process.getuid())) fail('PRIVATE_FILE_REQUIRED');
   return fs.readFile(file);
+}
+
+async function copyRecoveryFile(source, destination) {
+  let existing;
+  try { existing = await fs.lstat(destination); }
+  catch (error) { if (error.code !== 'ENOENT') throw error; }
+  if (existing && (!existing.isFile() || existing.isSymbolicLink())) fail('RECOVERY_FILE_DESTINATION_UNSAFE');
+  if (existing && await fs.realpath(source) === await fs.realpath(destination)) return;
+  const temporary = `${destination}.${randomBytes(12).toString('hex')}.partial`;
+  try {
+    await fs.writeFile(temporary, await fs.readFile(source), { flag: 'wx', mode: 0o600 });
+    // Rename replaces the destination entry without following a substituted
+    // symlink or modifying another file through a pre-existing hard link.
+    await fs.rename(temporary, destination);
+  } finally { await fs.rm(temporary, { force: true }); }
 }
 
 export async function checkpointFiles(directory) {
@@ -133,11 +148,13 @@ export async function createCheckpointBackup({ sourceDirectory, publicKeyB64File
   const wrappedKey = publicEncrypt({ key: publicKey, padding: constants.RSA_PKCS1_OAEP_PADDING, oaepHash: 'sha256' }, key);
   const metadata = Buffer.from(JSON.stringify({ format: FORMAT, checkpointId, wrappedKey: wrappedKey.toString('base64'), iv: iv.toString('base64') }));
   const prefix = Buffer.alloc(12); MAGIC.copy(prefix); prefix.writeUInt32BE(metadata.length, 8);
-  let archiveBytes = 0, child, createdArchive = false, createdReceipt = false;
+  let archiveBytes = 0, child, archiveHandle, createdArchive = false, createdReceipt = false;
   try {
     await fs.writeFile(path.join(stage, 'checkpoint-index.json'), JSON.stringify({ format: FORMAT, checkpointId, entries }, null, 2), { mode: 0o600 });
-    await fs.writeFile(archiveFile, Buffer.concat([prefix, metadata]), { flag: 'wx', mode: 0o600 });
+    archiveHandle = await fs.open(archiveFile, fileConstants.O_RDWR | fileConstants.O_CREAT | fileConstants.O_EXCL | fileConstants.O_NOFOLLOW, 0o600);
     createdArchive = true;
+    const header = Buffer.concat([prefix, metadata]);
+    await archiveHandle.writeFile(header);
     const digest = createHash('sha256'), cipher = createCipheriv('aes-256-gcm', key, iv); cipher.setAAD(aad);
     child = spawn('tar', ['-czf', '-', '-C', source, ...files, '-C', stage, 'checkpoint-index.json'], { stdio: ['ignore', 'pipe', 'pipe'] });
     child.stderr.resume();
@@ -148,29 +165,37 @@ export async function createCheckpointBackup({ sourceDirectory, publicKeyB64File
       if (archiveBytes > maxBytes) callback(Object.assign(new Error('ARCHIVE_CAP_EXCEEDED'), { code: 'ARCHIVE_CAP_EXCEEDED' }));
       else { digest.update(chunk); callback(null, chunk); }
     } });
-    await pipeline(child.stdout, counter, cipher, createWriteStream(archiveFile, { flags: 'a' }));
+    const encryptedOutput = new Writable({ write(chunk, _encoding, callback) {
+      archiveHandle.writeFile(chunk).then(() => callback(), callback);
+    } });
+    await pipeline(child.stdout, counter, cipher, encryptedOutput);
     if (await closed !== 0 || spawnError) fail('SOURCE_ARCHIVE_FAILED');
-    await fs.appendFile(archiveFile, cipher.getAuthTag());
+    const tag = cipher.getAuthTag();
+    if ((await archiveHandle.write(tag, 0, tag.length, header.length + archiveBytes)).bytesWritten !== tag.length) fail('CHECKPOINT_WRITE_FAILED');
+    await archiveHandle.sync();
+    await archiveHandle.close(); archiveHandle = undefined;
     for (const entry of entries) if (entry.sha256 !== await hashFile(path.join(source, entry.name))) fail('SOURCE_CHANGED');
-    const handle = await fs.open(archiveFile, 'r+'); try { await handle.sync(); } finally { await handle.close(); }
     const receipt = { format: FORMAT, checkpointId, createdAt: new Date().toISOString(), fileCount: entries.length,
       archiveBytes, archiveSha256: digest.digest('hex'), ciphertextBytes: (await fs.stat(archiveFile)).size, ciphertextSha256: await hashFile(archiveFile) };
     await fs.writeFile(receiptFile, JSON.stringify(receipt, null, 2), { flag: 'wx', mode: 0o600 });
     createdReceipt = true;
     await verifyCheckpoint({ archiveFile, privateKeyFile, receiptFile });
-    await fs.copyFile(receiptFile, `${archiveFile}.verification.json`);
+    await copyRecoveryFile(receiptFile, `${archiveFile}.verification.json`);
     if (copyRestoreTools) {
-      await fs.copyFile(fileURLToPath(import.meta.url), path.join(target, 'restore-checkpoint.mjs'));
+      await copyRecoveryFile(fileURLToPath(import.meta.url), path.join(target, 'restore-checkpoint.mjs'));
+      const photoRestore = fileURLToPath(new URL('./security-photo-restore.mjs', import.meta.url));
+      await copyRecoveryFile(photoRestore, path.join(target, 'security-photo-restore.mjs'));
       const runbook = fileURLToPath(new URL('../docs/security/ENCRYPTED-BACKUP-RESTORE.md', import.meta.url));
-      await fs.copyFile(runbook, path.join(target, 'RESTORE-README.md'));
+      await copyRecoveryFile(runbook, path.join(target, 'RESTORE-README.md'));
     }
     return { ...receipt, restoreVerified: true };
   } catch (error) {
     child?.kill('SIGTERM');
+    await archiveHandle?.close(); archiveHandle = undefined;
     if (createdArchive) { await fs.rm(archiveFile, { force: true }); await fs.rm(`${archiveFile}.verification.json`, { force: true }); }
     if (createdReceipt) await fs.rm(receiptFile, { force: true });
     throw error;
-  } finally { await fs.rm(stage, { recursive: true, force: true }); }
+  } finally { await archiveHandle?.close(); await fs.rm(stage, { recursive: true, force: true }); }
 }
 
 export async function restoreCheckpoint({ archiveFile, privateKeyFile, receiptFile, restoreDirectory }) {

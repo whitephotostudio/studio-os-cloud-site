@@ -61,7 +61,79 @@ test('checkpoint archive is ciphertext only and verifies a full local decrypt/SH
   assert.doesNotMatch(listing.stdout, /\.pem|\.b64|\.key|browser-gallery/);
   assert.equal((await fs.readdir(f.destination)).includes('restore-checkpoint.mjs'), true);
   assert.equal((await fs.readdir(f.destination)).includes('RESTORE-README.md'), true);
+  assert.deepEqual(await fs.readFile(path.join(f.destination, 'security-photo-restore.mjs')),
+    await fs.readFile(new URL('../../scripts/security-photo-restore.mjs', import.meta.url)));
   assert.equal((await fs.readdir(f.sourceDirectory)).some(name => name.startsWith('.checkpoint-stage-')), false);
+});
+
+test('checkpoint refreshes standalone recovery tools without modifying hard-linked originals', async t => {
+  const f = await fixture(t);
+  await fs.mkdir(f.destination);
+  const oldTool = path.join(f.root, 'old-tool.mjs');
+  await fs.writeFile(oldTool, 'old tool content');
+  await fs.link(oldTool, path.join(f.destination, 'security-photo-restore.mjs'));
+  await createCheckpointBackup(f);
+  assert.equal(await fs.readFile(oldTool, 'utf8'), 'old tool content');
+  assert.deepEqual(await fs.readFile(path.join(f.destination, 'security-photo-restore.mjs')),
+    await fs.readFile(new URL('../../scripts/security-photo-restore.mjs', import.meta.url)));
+  assert.equal((await fs.readdir(f.destination)).some(name => name.endsWith('.partial')), false);
+});
+
+test('checkpoint rejects symlinked recovery tools and can explicitly omit tool copies', async t => {
+  const f = await fixture(t);
+  await fs.mkdir(f.destination);
+  await fs.symlink(f.privateKeyFile, path.join(f.destination, 'security-photo-restore.mjs'));
+  await assert.rejects(createCheckpointBackup(f), /RECOVERY_FILE_DESTINATION_UNSAFE/);
+  assert.equal(await fs.readFile(f.privateKeyFile, 'utf8'), keys.privateKey);
+  await assert.rejects(fs.stat(f.archiveFile), { code: 'ENOENT' });
+  await fs.rm(path.join(f.destination, 'security-photo-restore.mjs'));
+  await fs.rm(path.join(f.destination, 'restore-checkpoint.mjs'));
+  await createCheckpointBackup({ ...f, copyRestoreTools: false });
+  for (const name of ['restore-checkpoint.mjs', 'security-photo-restore.mjs', 'RESTORE-README.md']) {
+    assert.equal((await fs.readdir(f.destination)).includes(name), false);
+  }
+});
+
+test('checkpoint receipt copies never follow symlinks or modify hard-linked private files', async t => {
+  const f = await fixture(t);
+  await fs.mkdir(f.destination);
+  const usbReceipt = `${f.archiveFile}.verification.json`;
+  const sentinel = path.join(f.sourceDirectory, 'sentinel-receipt.json');
+  const original = 'preserved protected receipt';
+  await fs.writeFile(sentinel, original, { mode: 0o600 });
+  await fs.symlink(sentinel, usbReceipt);
+  await assert.rejects(createCheckpointBackup(f), /RECOVERY_FILE_DESTINATION_UNSAFE/);
+  assert.equal(await fs.readFile(sentinel, 'utf8'), original);
+  await assert.rejects(fs.stat(f.archiveFile), { code: 'ENOENT' });
+  // Failed cleanup removes only the destination entry, never its target.
+  await assert.rejects(fs.lstat(usbReceipt), { code: 'ENOENT' });
+  await fs.link(sentinel, usbReceipt);
+  await createCheckpointBackup(f);
+  assert.equal(await fs.readFile(sentinel, 'utf8'), original);
+  assert.equal(JSON.parse(await fs.readFile(usbReceipt, 'utf8')).checkpointId, checkpointId);
+  assert.equal((await fs.readdir(f.destination)).some(name => name.endsWith('.partial')), false);
+});
+
+test('checkpoint keeps ciphertext writes on its exclusive descriptor when the external path is substituted', async t => {
+  const f = await fixture(t), open = fs.open, detached = path.join(f.root, 'detached-ciphertext.enc');
+  const originalKey = await fs.readFile(f.privateKeyFile);
+  let substituted = false;
+  fs.open = async (file, ...options) => {
+    const handle = await open(file, ...options);
+    if (typeof file === 'string' && path.basename(file) === path.basename(f.archiveFile) && !substituted) {
+      substituted = true;
+      await fs.rename(file, detached);
+      await fs.symlink(f.privateKeyFile, file);
+    }
+    return handle;
+  };
+  try { await assert.rejects(createCheckpointBackup(f), /INVALID_CHECKPOINT/); }
+  finally { fs.open = open; }
+  assert.equal(substituted, true);
+  assert.deepEqual(await fs.readFile(f.privateKeyFile), originalKey);
+  assert.equal((await fs.readFile(detached)).subarray(0, 8).toString(), 'SOSCKB01');
+  await assert.rejects(fs.lstat(f.archiveFile), { code: 'ENOENT' });
+  await assert.rejects(fs.lstat(f.receiptFile), { code: 'ENOENT' });
 });
 
 test('checkpoint tampering, changed receipt and a different RSA key cannot verify', async t => {
