@@ -1,14 +1,15 @@
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import test from 'node:test';
 import vm from 'node:vm';
 import ts from 'typescript';
 import { createClient } from '@supabase/supabase-js';
 
 const root = new URL('../', import.meta.url);
-const files = execFileSync('rg', ['--files', 'app', 'lib', 'components'], { cwd: root, encoding: 'utf8' })
-  .trim().split('\n').filter(path => /\.tsx?$/.test(path));
+const files = ['app', 'lib', 'components'].flatMap(directory =>
+  readdirSync(new URL(`${directory}/`, root), { recursive: true })
+    .filter(path => /\.tsx?$/.test(path))
+    .map(path => `${directory}/${path.replaceAll('\\', '/')}`));
 const queries = [];
 const publicChoiceQueries = new Set(['app/parents/page.tsx', 'app/api/portal/choices/route.ts']);
 for (const path of files) {
