@@ -28,6 +28,7 @@ import {
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import type { BillingInterval } from "@/lib/studio-pricing";
+import { ORDER_FEE_BILLING, ORDER_FEE_PURPOSE } from "@/lib/order-fee-display";
 import { WhatsNewDot, useIsFeatureNew } from "@/components/whats-new-dot";
 import { ProofWatermarkOverlay } from "@/components/parents/proof-watermark-overlay";
 import { normalizeProofWatermarkOpacity, proofWatermarkOpacity } from "@/lib/proof-watermark";
@@ -57,6 +58,10 @@ type StripeStatus = {
   studioEmail: string;
   billingEmail: string;
   billingCurrency: string;
+  businessCountry: "CA" | "US" | null;
+  businessCountryLocked: boolean;
+  stripeAccountCountry: string | null;
+  salesCurrencyConfigured: boolean;
   isPlatformAdmin: boolean;
   stripePlatformCustomerId?: string | null;
   stripeSubscriptionId?: string | null;
@@ -402,6 +407,11 @@ export default function SettingsPage() {
   const [studioId, setStudioId] = useState<string | null>(null);
   const [billingEmail, setBillingEmail] = useState("");
   const [billingCurrency, setBillingCurrency] = useState("cad");
+  const [businessCountry, setBusinessCountry] = useState("");
+  const [businessCountryLocked, setBusinessCountryLocked] = useState(false);
+  const [stripeAccountCountry, setStripeAccountCountry] = useState<string | null>(null);
+  const [salesCurrencyConfigured, setSalesCurrencyConfigured] = useState(false);
+  const [savedPaymentProfile, setSavedPaymentProfile] = useState<{ businessCountry: string; salesCurrency: string; salesCurrencyConfigured: boolean } | null>(null);
   const [defaultPaymentMethod, setDefaultPaymentMethod] = useState<StripeStatus["defaultPaymentMethod"]>(null);
   const [isPlatformAdmin, setIsPlatformAdmin] = useState(false);
   const [stripeSubscriptionId, setStripeSubscriptionId] = useState<string | null>(null);
@@ -624,6 +634,11 @@ export default function SettingsPage() {
       }
       setBillingEmail(json.billingEmail || "");
       setBillingCurrency((json.billingCurrency || "cad").toLowerCase());
+      setBusinessCountry(json.businessCountry || "");
+      setBusinessCountryLocked(Boolean(json.businessCountryLocked));
+      setStripeAccountCountry(json.stripeAccountCountry || null);
+      setSalesCurrencyConfigured(Boolean(json.salesCurrencyConfigured));
+      setSavedPaymentProfile({ businessCountry: json.businessCountry || "", salesCurrency: (json.billingCurrency || "cad").toLowerCase(), salesCurrencyConfigured: Boolean(json.salesCurrencyConfigured) });
       setDefaultPaymentMethod(json.defaultPaymentMethod || null);
       setIsPlatformAdmin(Boolean(json.isPlatformAdmin));
       setStripeSubscriptionId(json.stripeSubscriptionId || null);
@@ -782,6 +797,25 @@ export default function SettingsPage() {
         return;
       }
 
+      let paymentProfile = { businessCountry, salesCurrency: billingCurrency, salesCurrencyConfigured, businessCountryLocked };
+      const paymentProfileChanged = !savedPaymentProfile || savedPaymentProfile.businessCountry !== businessCountry ||
+        savedPaymentProfile.salesCurrency !== billingCurrency || savedPaymentProfile.salesCurrencyConfigured !== salesCurrencyConfigured;
+      if (paymentProfileChanged) {
+        const paymentProfileResponse = await fetch("/api/stripe/business-profile", {
+          method: "POST", credentials: "include",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
+          body: JSON.stringify({ businessCountry: businessCountry || null, salesCurrency: billingCurrency, salesCurrencyExplicit: salesCurrencyConfigured }),
+        });
+        const result = await paymentProfileResponse.json();
+        if (!paymentProfileResponse.ok || !result.ok) throw new Error(result.message || "Unable to save your payment profile.");
+        paymentProfile = result;
+        setBillingCurrency(paymentProfile.salesCurrency);
+        setBusinessCountry(paymentProfile.businessCountry || "");
+        setBusinessCountryLocked(Boolean(paymentProfile.businessCountryLocked));
+        setSalesCurrencyConfigured(Boolean(paymentProfile.salesCurrencyConfigured));
+        setSavedPaymentProfile({ businessCountry: paymentProfile.businessCountry || "", salesCurrency: paymentProfile.salesCurrency, salesCurrencyConfigured: Boolean(paymentProfile.salesCurrencyConfigured) });
+      }
+
       const { data: photographer } = await supabase
         .from("photographers")
         .select("id, studio_id")
@@ -806,7 +840,7 @@ export default function SettingsPage() {
             studio_phone: studioPhone,
             studio_email: studioEmail,
             billing_email: billingEmail || studioEmail || user.email || null,
-            billing_currency: billingCurrency || "cad",
+            billing_currency: paymentProfile.salesCurrency,
             sibling_discount_tiers: buildSiblingTiersJson(
               siblingTier2Percent,
               siblingTier3Percent,
@@ -842,7 +876,7 @@ export default function SettingsPage() {
             studio_phone: studioPhone,
             studio_email: studioEmail,
             billing_email: billingEmail || studioEmail || user.email || null,
-            billing_currency: billingCurrency || "cad",
+            billing_currency: paymentProfile.salesCurrency,
             sibling_discount_tiers: buildSiblingTiersJson(
               siblingTier2Percent,
               siblingTier3Percent,
@@ -949,6 +983,9 @@ export default function SettingsPage() {
           logoUrl,
           billingEmail: billingEmail || studioEmail,
           studioEmail,
+          businessCountry: businessCountry || null,
+          salesCurrency: billingCurrency,
+          salesCurrencyExplicit: salesCurrencyConfigured,
         }),
       });
 
@@ -1249,8 +1286,8 @@ export default function SettingsPage() {
             Branding + Billing + Stripe Connect
           </h1>
           <p style={{ marginTop: 12, maxWidth: 840, fontSize: 18, lineHeight: 1.7, color: "#64748b" }}>
-            Photographer sales route through the photographer’s own connected Stripe account, while Studio OS bills plans,
-            extra desktop keys, background credits, and aggregated order usage separately through platform billing.
+            Photographer sales route through the photographer’s own connected Stripe account. Studio OS order fees are deducted from each paid sale.
+            Plans, extra desktop keys, and background credits are billed separately through platform billing.
           </p>
         </div>
 
@@ -1404,13 +1441,15 @@ export default function SettingsPage() {
               </div>
             </div>
             <StatusRow label="Stripe account ID" value={stripeAccountId || "Not connected yet"} />
+            <StatusRow label="Stripe account country" value={stripeAccountCountry || "Not verified yet"} />
             <StatusRow label="Details submitted" value={detailsSubmitted ? "Yes" : "No"} ok={detailsSubmitted} />
             <StatusRow label="Charges enabled" value={chargesEnabled ? "Yes" : "No"} ok={chargesEnabled} />
             <StatusRow label="Payouts enabled" value={payoutsEnabled ? "Yes" : "No"} ok={payoutsEnabled} />
             <StatusRow label="Onboarding complete" value={onboardingComplete ? "Yes" : "No"} ok={onboardingComplete} />
+            {!businessCountry && !stripeAccountId && <div style={{ marginTop: 12, color: "#b45309", fontSize: 13 }}>Choose your business country under Studio info before connecting Stripe.</div>}
             <button
               onClick={connectStripe}
-              disabled={connecting || !sessionReady}
+              disabled={connecting || !sessionReady || (!businessCountry && !stripeAccountId)}
               style={{
                 marginTop: 12,
                 border: "1px solid #3b82f6",
@@ -1799,13 +1838,31 @@ export default function SettingsPage() {
               <Field label="Studio email" value={studioEmail} onChange={setStudioEmail} placeholder="hello@yourstudio.com" icon={<Mail size={14} color="#94a3b8" />} />
               <Field label="Billing email" value={billingEmail} onChange={setBillingEmail} placeholder="billing@yourstudio.com" icon={<Receipt size={14} color="#94a3b8" />} />
 
+              <label style={{ display: "block" }}>
+                <div style={{ marginBottom: 8, fontSize: 13, fontWeight: 700, color: "#475569" }}>Business country</div>
+                <select aria-label="Business country" value={businessCountry} disabled={businessCountryLocked}
+                  onChange={(event) => {
+                    const country = event.target.value;
+                    setBusinessCountry(country);
+                    if (!salesCurrencyConfigured && country) setBillingCurrency(country === "US" ? "usd" : "cad");
+                  }}
+                  style={{ width: "100%", borderRadius: 18, border: "1px solid #d6dfef", padding: "14px 16px", background: "#fff", fontSize: 16, color: "#0f172a" }}>
+                  <option value="">Choose your business country</option>
+                  <option value="CA">Canada</option>
+                  <option value="US">United States</option>
+                </select>
+                <div style={{ marginTop: 6, fontSize: 12, color: "#64748b" }}>
+                  {businessCountryLocked ? "Your Stripe business country is locked. Contact support if it needs review." : "Choose where your business is legally established before connecting Stripe."}
+                </div>
+              </label>
+
               {/* Currency selector */}
               <label style={{ display: "block" }}>
-                <div style={{ marginBottom: 8, fontSize: 13, fontWeight: 700, color: "#475569" }}>Currency</div>
+                <div style={{ marginBottom: 8, fontSize: 13, fontWeight: 700, color: "#475569" }}>Sales currency</div>
                 <div style={{ position: "relative" }}>
                   <select
                     value={billingCurrency}
-                    onChange={(e) => setBillingCurrency(e.target.value)}
+                    onChange={(e) => { setBillingCurrency(e.target.value); setSalesCurrencyConfigured(true); }}
                     style={{
                       width: "100%",
                       borderRadius: 18,
@@ -1834,7 +1891,7 @@ export default function SettingsPage() {
             </div>
 
             <div style={{ fontSize: 13, color: "#64748b", lineHeight: 1.7, marginTop: 14, padding: "12px 14px", background: "#f0fdf4", borderRadius: 14, border: "1px solid #d1fae5" }}>
-              Contact info and currency will appear on invoices, order forms, and the parent-facing gallery. Currency also applies to the desktop app price lists.
+              Contact info and sales currency will appear on your customer invoices, order forms, and galleries. Sales currency also applies to desktop price lists. Your Studio OS subscription is billed separately in CAD.
             </div>
           </div>
         </div>
@@ -1917,7 +1974,7 @@ export default function SettingsPage() {
             )}
 
             <div style={{ fontSize: 13, color: "#64748b", lineHeight: 1.7, marginTop: 14, padding: "12px 14px", background: "#fdf4ff", borderRadius: 14, border: "1px solid #f3e8ff" }}>
-              Your payment method is stored securely by Stripe. It will be used for subscriptions, credit pack purchases, and per-order usage fees.
+              Your payment method is stored securely by Stripe. It will be used for subscriptions, credit pack purchases, and any legacy subscription-billed order fees.
             </div>
           </div>
         </div>
@@ -1984,6 +2041,8 @@ export default function SettingsPage() {
                       padding: 18,
                       textAlign: "left",
                       cursor: "pointer",
+                      display: "flex",
+                      flexDirection: "column",
                     }}
                   >
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
@@ -2001,21 +2060,29 @@ export default function SettingsPage() {
                     <div style={{ marginTop: 10, color: "#64748b", lineHeight: 1.6, fontSize: 14 }}>
                       {plan.description}
                     </div>
-                    <div style={{ marginTop: 10, color: "#334155", lineHeight: 1.7, fontSize: 13 }}>
-                      {plan.code === "starter"
-                        ? `${formatMoney(plan.usageRateCents, platformBillingCurrency)} per paid order · web-only plan`
-                        : `${formatMoney(plan.usageRateCents, platformBillingCurrency)} per paid order · background credits sold separately`}
-                    </div>
-                    <div style={{ marginTop: 10, color: "#475569", lineHeight: 1.7, fontSize: 13 }}>
-                      {plan.code === "starter"
-                        ? "Online gallery only. Upgrade to Core or Studio to unlock the Studio OS App."
-                        : plan.websiteLogoIncluded
-                          ? "Full Studio OS App access + custom website logo included."
-                          : "Custom website logo + studio branding included."}
+                    <div style={{ marginTop: "auto", paddingTop: 10, color: "#475569", lineHeight: 1.7, fontSize: 13 }}>
+                      <div>
+                        {plan.code === "starter"
+                          ? "Online gallery only. Upgrade to Core or Studio to unlock the Studio OS App."
+                          : plan.websiteLogoIncluded
+                            ? "Full Studio OS App access + custom website logo included."
+                            : "Custom website logo + studio branding included."}
+                      </div>
+                      {plan.code !== "starter" ? <div style={{ marginTop: 4 }}>Background credits sold separately.</div> : null}
+                      <div data-order-fee style={{ marginTop: 10, color: "#64748b", lineHeight: 1.6, fontSize: 13, fontWeight: 400 }}>
+                        <div>{(plan.usageRateCents / 100).toFixed(2)} per paid order in your sales currency · deducted from each sale.</div>
+                        <div>Stripe processing fees are additional.</div>
+                      </div>
                     </div>
                   </button>
                 );
               })}
+            </div>
+
+            <div style={{ marginTop: 16, padding: "14px 16px", borderRadius: 14, background: "#f8fafc", border: "1px solid #e2e8f0", color: "#475569", lineHeight: 1.7, fontSize: 13 }}>
+              <div style={{ fontWeight: 800, color: "#0f172a" }}>Flat fees on paid orders</div>
+              <div style={{ marginTop: 4 }}>{ORDER_FEE_PURPOSE}</div>
+              <div style={{ marginTop: 4 }}>{ORDER_FEE_BILLING}</div>
             </div>
 
             <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 16, marginTop: 18, alignItems: "end" }}>
@@ -2120,7 +2187,8 @@ export default function SettingsPage() {
             </div>
 
             <div style={{ marginTop: 16, fontSize: 13, color: "#64748b", lineHeight: 1.7, padding: "12px 14px", background: "#f8fafc", borderRadius: 14, border: "1px solid #e2e8f0" }}>
-              Customer checkout payments go straight to the photographer’s connected Stripe account. Studio OS billing stays separate on the platform account for plans, extra keys, cloud credit packs, and aggregated order usage.
+              Customer checkout payments go to the photographer’s connected Stripe account, with Studio OS order fees deducted from each paid sale.
+              Plans, extra keys, and cloud credit packs are billed separately on the platform account.
             </div>
           </div>
 
@@ -2155,12 +2223,16 @@ export default function SettingsPage() {
               ok={isPlatformAdmin || creditBalance > 0}
             />
 
-            {subscriptionPlanCode || studioUsage.pendingFeeWaivers || studioUsage.feeReviewRequired ? (
-              <div style={{ marginTop: 14, borderRadius: 18, border: "1px solid #cbd5e1", background: "#fff", padding: "16px 18px" }}>
-                <div style={{ fontWeight: 900, color: "#0f172a" }}>{subscriptionPlanCode ? "Order usage this cycle" : "Order fee follow-up"}</div>
-                <div style={{ marginTop: 10, display: "grid", gap: 8, color: "#334155" }}>
+            {isPlatformAdmin || studioUsage.billableOrders || studioUsage.countedOrders || studioUsage.unreportedOrders || studioUsage.refundCreditCents || studioUsage.pendingFeeWaivers || studioUsage.feeReviewRequired ? (
+              <div data-order-usage style={{ marginTop: 14, borderRadius: 18, border: "1px solid #cbd5e1", background: "#fff", padding: "16px 18px" }}>
+                <div style={{ fontWeight: 900, color: "#0f172a" }}>{isPlatformAdmin ? "Owner order fees" : subscriptionPlanCode ? "Legacy order usage this cycle" : "Legacy order fee follow-up"}</div>
+                {isPlatformAdmin ? (
+                  <div style={{ marginTop: 10, color: "#334155", lineHeight: 1.6 }}>
+                    Owner account exempt. No Studio OS per-order fees are billed to this account.
+                  </div>
+                ) : <div style={{ marginTop: 10, display: "grid", gap: 8, color: "#334155" }}>
                   {subscriptionPlanCode && <>
-                    <div>Usage rate: <strong>{formatMoney(orderUsageRateCents, platformBillingCurrency)} per paid order</strong></div>
+                    <div>Legacy usage rate: <strong>{formatMoney(orderUsageRateCents, platformBillingCurrency)} per paid order</strong></div>
                     <div>Billable paid orders: <strong>{studioUsage.billableOrders}</strong></div>
                     <div>Already reported to Stripe: <strong>{studioUsage.countedOrders}</strong></div>
                     <div>Pending report sync: <strong>{studioUsage.unreportedOrders}</strong></div>
@@ -2169,8 +2241,8 @@ export default function SettingsPage() {
                   {Boolean(studioUsage.refundCreditCents) && <div>Next subscription bill: <strong>{formatMoney(studioUsage.refundCreditCents || 0, platformBillingCurrency)}</strong> in refunded order fee credits queued this cycle.</div>}
                   {Boolean(studioUsage.pendingFeeWaivers) && <div>{studioUsage.pendingFeeWaivers} refunded order fee credit(s) pending reconciliation.</div>}
                   {Boolean(studioUsage.feeReviewRequired) && <div>{studioUsage.feeReviewRequired} order fee(s) require billing review.</div>}
-                  <div>Full refunds of reported order fees receive a credit on the next subscription bill. Queued credits do not amend or refund an existing invoice; Stripe determines the invoice where they apply.</div>
-                </div>
+                  <div>Legacy order fees were billed through the subscription. Full refunds of reported legacy order fees receive a credit on the next subscription bill. Queued credits do not amend or refund an existing invoice; Stripe determines the invoice where they apply.</div>
+                </div>}
               </div>
             ) : null}
 

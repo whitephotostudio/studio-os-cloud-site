@@ -9,6 +9,8 @@ const compile = file => ts.transpileModule(readFileSync(new URL(`../${file}`, im
 }).outputText;
 const payment = {};
 vm.runInNewContext(compile("lib/digital-entitlement-payment.ts"), { exports: payment });
+const productLabels = {};
+vm.runInNewContext(compile("lib/digital-product-label.ts"), { exports: productLabels });
 const display = {};
 vm.runInNewContext(compile('lib/order-display.ts'), { exports: display });
 const backdrop = { id: 'blue', image_url: 'backdrops/blue.jpg' };
@@ -30,14 +32,21 @@ async function resolve(snapshot, orderName = '5x7 Print + All Digital Package', 
     return query;
   } };
   const forbidden = () => { throw new Error('No network, rendering, email or financial writes in file-selection tests'); };
+  const authorized = [];
   const modules = {
     'node:crypto': { createHmac: forbidden, timingSafeEqual: forbidden },
     '@/lib/event-gallery-downloads': { buildArchiveBaseName: () => 'fixture' },
     '@/lib/storage-folder': { buildSchoolCandidateFolders: () => ['school/Class/Student'], loadFolderMediaRows: async () => photos },
     '@/lib/r2-signed-urls': { r2KeyFromAnyUrl: value => value ?? '', r2PresignedGetUrl: forbidden },
+    '@/lib/authorized-media': { authorizedMediaUrl: async (actualService, reference, owner) => {
+      assert.equal(actualService, service); assert.equal(owner, order.photographer_id);
+      assert.ok((event?.photos ?? photos).some(photo => photo.storage_path === reference), 'only the selected owned gallery can be authorized');
+      authorized.push(reference); return `https://native.fixture.test/${reference}`;
+    } },
     '@/lib/resend': { resendConfigured: forbidden, resolveReplyTo: forbidden, sendResendEmail: forbidden },
     '@/lib/order-display': display,
     '@/lib/digital-entitlement-payment': payment,
+    '@/lib/digital-product-label': productLabels,
     '@/lib/zip': { createZipStream: forbidden },
     '@/lib/backdrop-composites': { hasBackdropCompositeSelection: selection => !!selection?.image_url,
       backdropCompositeFileName: (name, selection) => `${selection.id}-${name}`, composeBackdropImage: forbidden },
@@ -45,7 +54,10 @@ async function resolve(snapshot, orderName = '5x7 Print + All Digital Package', 
   const exports = {};
   vm.runInNewContext(compile('lib/digital-delivery.ts'), { exports, Buffer, URL, process: { env: {} }, fetch: forbidden,
     require(name) { assert.ok(name in modules, `Unexpected module ${name}`); return modules[name]; } });
-  return (await exports.resolveDigitalDeliveryContext(service, order.id)).files;
+  const files = (await exports.resolveDigitalDeliveryContext(service, order.id)).files;
+  assert.equal(authorized.length, files.length);
+  assert.ok(files.every(file => file.authorizedUrl === `https://native.fixture.test/${file.key}`));
+  return files;
 }
 
 test('a print background never changes the purchased original-background all-digital files', async () => {

@@ -21,6 +21,7 @@ const VisitorPatchBodySchema = z.object({
 });
 
 const UUID_REGEX = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+const MEDIA_LOOKUP_BATCH_SIZE = 100;
 
 type MediaRow = {
   id: string;
@@ -204,18 +205,20 @@ export async function GET(
     const queryableMediaIds = Array.from(
       new Set([...downloadedMediaIds, ...favoriteMediaIds].filter(looksLikeUuid)),
     );
-    const mediaRowsResult = queryableMediaIds.length
-      ? await service
-          .from("media")
-          .select("id,storage_path,preview_url,thumbnail_url,filename")
-          .eq("project_id", projectId)
-          .in("id", queryableMediaIds)
-      : { data: [] as MediaRow[], error: null };
-
-    if (mediaRowsResult.error) throw mediaRowsResult.error;
+    const mediaRows: MediaRow[] = [];
+    // Keep PostgREST query URLs bounded even when visitors download a full gallery.
+    for (let offset = 0; offset < queryableMediaIds.length; offset += MEDIA_LOOKUP_BATCH_SIZE) {
+      const { data, error } = await service
+        .from("media")
+        .select("id,storage_path,preview_url,thumbnail_url,filename")
+        .eq("project_id", projectId)
+        .in("id", queryableMediaIds.slice(offset, offset + MEDIA_LOOKUP_BATCH_SIZE));
+      if (error) throw error;
+      mediaRows.push(...((data ?? []) as MediaRow[]));
+    }
 
     const mediaById = new Map(
-      ((mediaRowsResult.data ?? []) as MediaRow[]).map((row) => [
+      mediaRows.map((row) => [
         row.id,
         previewFromEventMediaRow(row),
       ] as const),

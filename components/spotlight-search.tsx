@@ -185,7 +185,7 @@ export function useSpotlight(term: string, enabled: boolean) {
           .select(
             // Pull schools.shoot_date + created_at so we can show a year
             // tag on each student hit ("Mary Smith · 2002 · Riverside Prep").
-            "id, first_name, last_name, photo_url, school_id, class_id, class_name, role, schools!inner(school_name, photographer_id, shoot_date, created_at)",
+            "id, first_name, last_name, photo_url, school_id, class_id, class_name, role, schools:schools!students_school_id_fkey!inner(school_name, photographer_id, shoot_date, created_at)",
           )
           .eq("schools.photographer_id", photographerId);
         if (nameOrEmpty.length >= 2) {

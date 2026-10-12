@@ -1,8 +1,9 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { canonicalCheckoutJson } from "@/lib/checkout-attempt";
-import { sumStoredOrderTotalsCents } from "@/lib/order-checkout-totals";
 import { finalizePaidOrderOrGroup, getConnectedAccountId, markOrderOrGroupPaymentFailure, recordStripeEvent, retrieveCheckoutSession } from "@/lib/payments";
+import { verifyOrderWebhookPayment } from "@/lib/order-webhook-payment";
+import { lockOrderPayment } from "@/lib/order-payment-lock";
 
 export type CustomerOrderStripeEvent = {
   id: string; type: string; account?: string; livemode?: boolean;
@@ -55,16 +56,21 @@ async function verifiedOrderScope(service: SupabaseClient, event: CustomerOrderS
     (paymentIntentId && row.stripe_payment_intent_id && row.stripe_payment_intent_id !== paymentIntentId))) {
     throw new PaymentScopeError("Customer payment references do not match the saved order.");
   }
-  const currency = clean(object.currency).toLowerCase(), total = sumStoredOrderTotalsCents(orders);
-  const amount = sessionEvent ? object.amount_total : object.amount;
-  if (!currency || !Number.isSafeInteger(amount) || total == null || amount !== total ||
+  // Payment proof also supports an explicitly saved zero-cost checkout. The
+  // ordinary checkout helper intentionally accepts positive sale totals only.
+  const amounts = orders.map(row => row.total_cents != null ? Number(row.total_cents)
+    : row.total_amount != null ? Math.round(Number(row.total_amount) * 100) : Number.NaN);
+  const total = amounts.reduce((sum, value) => sum + value, 0);
+  const currency = clean(object.currency).toLowerCase(), amount = sessionEvent ? object.amount_total : object.amount;
+  if (!currency || amounts.some(value => !Number.isSafeInteger(value) || value < 0) ||
+      !Number.isSafeInteger(total) || !Number.isSafeInteger(amount) || amount !== total ||
       orders.some(row => clean(row.currency || "cad").toLowerCase() !== currency)) throw new PaymentScopeError("Customer payment amount or currency does not match the saved order.");
   return { orderId, sessionId, paymentIntentId, ownerId: seed.photographer_id, groupId: seed.order_group_id, ids: orders.map(row => row.id) };
 }
 
 async function verifyPaidCompletion(service: SupabaseClient, scope: Awaited<ReturnType<typeof verifiedOrderScope>>) {
   let query = service.from("orders")
-    .select("id,photographer_id,order_group_id,paid_at,payment_status,stripe_checkout_session_id,stripe_payment_intent_id", { count: "exact" });
+    .select("id,photographer_id,order_group_id,status,paid_at,payment_status,stripe_checkout_session_id,stripe_payment_intent_id", { count: "exact" });
   query = scope.groupId ? query.eq("order_group_id", scope.groupId) : query.in("id", scope.ids);
   const { data, error, count } = await query;
   if (error) throw error;
@@ -72,7 +78,12 @@ async function verifyPaidCompletion(service: SupabaseClient, scope: Awaited<Retu
     !scope.ids.includes(row.id) || row.photographer_id !== scope.ownerId || row.order_group_id !== scope.groupId)) {
     throw new PaymentScopeError("Customer payment order scope changed during completion.");
   }
-  if (data.some(row => !row.paid_at || !["paid", "succeeded", "no_payment_required", "partially_refunded", "refunded"].includes(clean(row.payment_status).toLowerCase()) ||
+  // The finalizer deliberately preserves terminal cancellation/refund states.
+  // A provider-verified delayed payment delivery must acknowledge those states
+  // without turning them paid or leaving an impossible completion retry.
+  const terminal = new Set(["refunded", "refund_pending", "cancelled", "canceled", "cancel_pending"]);
+  if (data.some(row => (!terminal.has(clean(row.status).toLowerCase()) && (!row.paid_at ||
+      !["paid", "succeeded", "no_payment_required", "partially_refunded", "refunded"].includes(clean(row.payment_status).toLowerCase()))) ||
     (scope.sessionId && row.stripe_checkout_session_id !== scope.sessionId) ||
     (scope.paymentIntentId && row.stripe_payment_intent_id !== scope.paymentIntentId))) {
     throw new Error("Customer payment completion is incomplete; retry required.");
@@ -101,17 +112,35 @@ export async function processCustomerOrderStripeEvent(service: SupabaseClient, e
   };
   try {
     const scope = await verifiedOrderScope(service, event), object = event.data.object;
-    if (event.type === "payment_intent.payment_failed") {
-      await markOrderOrGroupPaymentFailure(service, { orderId: scope.orderId, paymentIntentId: scope.paymentIntentId, note: `[Stripe payment intent ${scope.paymentIntentId}] payment failed` });
-    } else if ((event.type.startsWith("checkout.session.") && ["paid", "no_payment_required"].includes(clean(object.payment_status))) ||
-      (event.type === "payment_intent.succeeded" && object.status === "succeeded")) {
-      const finalized = await finalizePaidOrderOrGroup(service, {
-        orderId: scope.orderId, checkoutSessionId: scope.sessionId, paymentIntentId: scope.paymentIntentId,
-        paymentStatus: event.type === "payment_intent.succeeded" ? "succeeded" : clean(object.payment_status),
-        note: `[Stripe ${event.type} ${clean(object.id)}] payment confirmed`, paidAt: new Date().toISOString(),
-      });
-      if (!finalized) throw new PaymentScopeError("Customer payment order disappeared during completion.");
-      await verifyPaidCompletion(service, scope);
+    const failed = event.type === "payment_intent.payment_failed";
+    const paid = (event.type.startsWith("checkout.session.") && ["paid", "no_payment_required"].includes(clean(object.payment_status))) ||
+      (event.type === "payment_intent.succeeded" && object.status === "succeeded");
+    if (failed || paid) {
+      // A valid merchant webhook and editable metadata are not payment proof.
+      // Preserve the saved-checkout/provider verification and order/group lock
+      // used by checkout, refunds and the legacy webhook path.
+      const proof = { accountId: event.account!, orderId: scope.orderId, checkoutSessionId: scope.sessionId,
+        paymentIntentId: scope.paymentIntentId, outcome: failed ? "failed" as const : "paid" as const };
+      const verified = await verifyOrderWebhookPayment(service, proof);
+      if (!verified && paid) throw new PaymentScopeError("The saved payment order is no longer available.");
+      if (verified) {
+        const release = await lockOrderPayment(service, verified.lockKey);
+        try {
+          const current = await verifyOrderWebhookPayment(service, proof);
+          if (!current || current.lockKey !== verified.lockKey) throw new Error("The saved payment changed during verification.");
+          if (failed) {
+            await markOrderOrGroupPaymentFailure(service, { orderId: scope.orderId, paymentIntentId: scope.paymentIntentId, note: `[Stripe payment intent ${scope.paymentIntentId}] payment failed` });
+          } else {
+            const finalized = await finalizePaidOrderOrGroup(service, {
+              orderId: scope.orderId, checkoutSessionId: scope.sessionId, paymentIntentId: scope.paymentIntentId,
+              paymentStatus: event.type === "payment_intent.succeeded" ? "succeeded" : clean(object.payment_status),
+              note: `[Stripe ${event.type} ${clean(object.id)}] payment confirmed`, paidAt: new Date().toISOString(),
+            });
+            if (!finalized) throw new PaymentScopeError("Customer payment order disappeared during completion.");
+            await verifyPaidCompletion(service, scope);
+          }
+        } finally { await release(); }
+      }
     }
     // Preserve the existing provider-event audit history after fulfillment.
     // Its insert-only dedupe never decides whether this leased work is done.

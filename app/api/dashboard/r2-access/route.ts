@@ -8,16 +8,14 @@ import {
 import { guardAgreement } from "@/lib/require-agreement";
 import { getR2Client, R2_BUCKET } from "@/lib/r2";
 import {
-  isUuid,
   normalizeR2Key,
-  scopeForR2Key,
-  type R2ResourceScope,
 } from "@/lib/r2-access-security";
 import {
   r2PresignedGetUrl,
   r2PresignedPutUrl,
 } from "@/lib/r2-signed-urls";
 import { rateLimit } from "@/lib/rate-limit";
+import { r2MediaOwnedBy } from "@/lib/r2-media-ownership";
 import { authorizedCutoutBindings, CreditCutoutAccessError, isManagedCutoutKey, readPaidCutout, signVerifiedCutout } from "@/lib/credit-cutout-access";
 
 export const runtime = "nodejs";
@@ -41,46 +39,6 @@ function jsonError(message: string, status: number) {
   return NextResponse.json({ ok: false, error: message }, { status });
 }
 
-async function photographerOwnsScope(
-  service: ServiceClient,
-  photographerId: string,
-  scope: R2ResourceScope,
-) {
-  if (scope.kind === "photographer") return scope.id === photographerId;
-
-  if (scope.kind === "project") {
-    if (!isUuid(scope.id)) return false;
-    const { data, error } = await service
-      .from("projects")
-      .select("id")
-      .eq("id", scope.id)
-      .eq("photographer_id", photographerId)
-      .maybeSingle();
-    if (error) throw error;
-    return Boolean(data?.id);
-  }
-
-  if (isUuid(scope.id)) {
-    const { data: schoolById, error: schoolByIdError } = await service
-      .from("schools")
-      .select("id")
-      .eq("photographer_id", photographerId)
-      .eq("id", scope.id)
-      .maybeSingle();
-    if (schoolByIdError) throw schoolByIdError;
-    if (schoolById?.id) return true;
-  }
-
-  const { data: schoolByLocalId, error: schoolByLocalIdError } = await service
-    .from("schools")
-    .select("id")
-    .eq("photographer_id", photographerId)
-    .eq("local_school_id", scope.id)
-    .maybeSingle();
-  if (schoolByLocalIdError) throw schoolByLocalIdError;
-  return Boolean(schoolByLocalId?.id);
-}
-
 async function authorizeKey(
   service: ServiceClient,
   photographerId: string,
@@ -90,11 +48,9 @@ async function authorizeKey(
   if (typeof rawKey !== "string") return null;
   const key = normalizeR2Key(rawKey, options);
   if (!key) return null;
-  const scope = scopeForR2Key(key, options);
-  if (!scope) return null;
-  return (await photographerOwnsScope(service, photographerId, scope))
-    ? key
-    : null;
+  // Durable first-owner claims include retained local-school aliases and reject
+  // foreign, ambiguous, deleted and server-only namespaces.
+  return await r2MediaOwnedBy(service, key, photographerId, options) ? key : null;
 }
 
 function isMissingObjectError(error: unknown) {
@@ -113,8 +69,8 @@ function isMissingObjectError(error: unknown) {
 
 export async function POST(request: NextRequest) {
   const auth = await resolveDashboardAuth(request);
-  if (!auth.user) return jsonError("Unauthorized", 401);
   if (auth.mfaSatisfied === false) return jsonError("Complete two-step verification before accessing photos.", 403);
+  if (!auth.user) return jsonError("Unauthorized", 401);
 
   const service = createDashboardServiceClient();
   const { data: photographer, error: photographerError } = await service
@@ -174,7 +130,7 @@ export async function POST(request: NextRequest) {
         return jsonError("Invalid upload size.", 400);
       }
 
-      const url = r2PresignedPutUrl(key, 15 * 60);
+      const url = r2PresignedPutUrl(key, 15 * 60, { contentLength, contentType });
       if (!url) throw new Error("R2 signing is unavailable");
       return NextResponse.json({
         ok: true,

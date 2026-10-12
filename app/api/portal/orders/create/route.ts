@@ -10,9 +10,11 @@ import { calculateCheckoutTaxCents } from "@/lib/checkout-tax";
 import { isOrderingWindowOpen } from "@/lib/ordering-window";
 import { getClientIp, rateLimit } from "@/lib/rate-limit";
 import { hasActiveSubscription } from "@/lib/subscription-gate";
+import { resolvePhotographerOrderCurrency } from "@/lib/order-currency";
 import { resolveShipping } from "@/lib/combine-orders";
 import { durablePrivateMediaReference } from "@/lib/private-media-references";
 import { assertParentBackdropCutouts, ParentCutoutPreflightError } from "@/lib/parent-cutout-preflight";
+import { assertNewOnlineBackdropPurchase, OnlineBackdropsDisabledError } from "@/lib/online-backdrop-policy";
 import { isRetouchPackage, retouchPrintPurchaseIssue, parseRetouchSelections, retouchSelectionIssue, retouchNotesBlock, customerNotesBlock, retouchSlots, type RetouchSelection } from "@/lib/retouching";
 import {
   ensureObjectBody,
@@ -154,6 +156,7 @@ type BackdropRow = {
 
 type PhotographerGateRow = {
   id: string;
+  billing_currency?: string | null;
   is_platform_admin?: boolean | null;
   subscription_status?: string | null;
   trial_starts_at?: string | null;
@@ -747,9 +750,9 @@ export async function POST(request: NextRequest) {
     }
 
     const photographerSelect =
-      "id,is_platform_admin,subscription_status,trial_starts_at,trial_ends_at,created_at,shipping_fee_cents,late_handling_fee_percent,tax_enabled,tax_percent,tax_label,tax_country,tax_rates_by_country";
+      "id,billing_currency,is_platform_admin,subscription_status,trial_starts_at,trial_ends_at,created_at,shipping_fee_cents,late_handling_fee_percent,tax_enabled,tax_percent,tax_label,tax_country,tax_rates_by_country";
     const photographerBaseSelect =
-      "id,is_platform_admin,subscription_status,trial_starts_at,trial_ends_at,created_at,shipping_fee_cents,late_handling_fee_percent";
+      "id,billing_currency,is_platform_admin,subscription_status,trial_starts_at,trial_ends_at,created_at,shipping_fee_cents,late_handling_fee_percent";
     let photographerResult = await sb
       .from("photographers")
       .select(photographerSelect)
@@ -775,6 +778,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         { ok: false, message: "This gallery is no longer available." },
         { status: 410 },
+      );
+    }
+    const orderCurrency = resolvePhotographerOrderCurrency(photographer?.billing_currency);
+    if (!orderCurrency) {
+      return NextResponse.json(
+        { ok: false, message: "This studio's sales currency is not supported. Please contact the studio before ordering." },
+        { status: 409 },
       );
     }
 
@@ -984,6 +994,7 @@ export async function POST(request: NextRequest) {
       });
     }
 
+    await assertNewOnlineBackdropPurchase(sb, { photographerId, schoolId }, resolved.some(entry => !!entry.backdropRow));
     await assertParentBackdropCutouts(sb, mode === "school"
       ? { mode: "school", photographerId, schoolId: schoolId!, studentId: student!.id }
       : { mode: "event", photographerId, projectId: projectId!, pin: pinResult.value },
@@ -1197,7 +1208,7 @@ export async function POST(request: NextRequest) {
       tax_cents: taxCents,
       total_cents: orderTotalCents,
       total_amount: orderTotalCents / 100,
-      currency: "cad",
+      currency: orderCurrency,
       cart_snapshot: cartSnapshot,
     };
 
@@ -1344,7 +1355,7 @@ export async function POST(request: NextRequest) {
     if (persistError) throw persistError;
     return NextResponse.json(result);
   } catch (error) {
-    if (error instanceof ParentCutoutPreflightError) return NextResponse.json({ ok: false, message: error.message }, { status: 409 });
+    if (error instanceof ParentCutoutPreflightError || error instanceof OnlineBackdropsDisabledError) return NextResponse.json({ ok: false, message: error.message }, { status: 409 });
     console.error("[portal:orders:create]", error);
     return NextResponse.json(
       { ok: false, message: "Failed to create your order. Please try again." },

@@ -23,7 +23,7 @@ export async function GET(request: NextRequest) {
     const { data: media, error } = await service.from("media").select("id,collection_id,storage_path,preview_url,thumbnail_url,filename").eq("project_id", payload.projectId).eq("id", id.value).maybeSingle();
     if (error) throw error;
     if (!media?.collection_id || !access.collectionIds.has(media.collection_id) || (payload.collectionId && media.collection_id !== payload.collectionId)) return NextResponse.json({ ok: false, message: "Photo access changed." }, { status: 403 });
-    const image = await eventImageBytes(media, { resolution: payload.resolution, watermark: payload.applyWatermark, watermarkText: payload.watermarkText });
+    const image = await eventImageBytes(media, { resolution: payload.resolution, watermark: payload.applyWatermark, watermarkText: payload.watermarkText }, { service, photographerId: access.project.photographer_id });
     const name = (media.filename || "photo.jpg").replace(/[\r\n"\\/]/g, "_");
     return new NextResponse(new Uint8Array(image.buffer), { headers: { "content-type": image.contentType, "cache-control": "private, no-store", "content-disposition": `attachment; filename*=UTF-8''${encodeURIComponent(name)}`, "x-content-type-options": "nosniff" } });
   } catch (error) {

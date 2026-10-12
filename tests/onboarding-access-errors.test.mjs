@@ -3,14 +3,14 @@ import test from 'node:test';
 import { readFileSync } from 'node:fs';
 import ts from 'typescript';
 
-function route({ user = { id: 'confirmed-user' }, authError, profileError, dashboardError } = {}) {
+function route({ user = { id: 'confirmed-user' }, mfaSatisfied = true, authError, profileError, dashboardError } = {}) {
   const audit = [];
   const exports = {};
   const source = readFileSync(new URL('../app/api/studio-os-app/status/route.ts', import.meta.url), 'utf8');
   const dependencies = {
     'next/server': { NextResponse: { json: (data, options) => Response.json(data, options) } },
     '@/lib/dashboard-auth': {
-      resolveDashboardAuth: async () => { if (authError) throw authError; return { user }; },
+      resolveDashboardAuth: async () => { if (authError) throw authError; return { user, mfaSatisfied }; },
       createDashboardServiceClient: () => ({}),
     },
     '@/lib/payments': {
@@ -65,4 +65,14 @@ test('a genuinely absent session returns the explicit 401 signed-out response', 
   assert.equal(response.status, 401);
   assert.equal((await response.json()).signedIn, false);
   assert.deepEqual(audit, []);
+});
+
+test('an enrolled account awaiting MFA cannot provision or view photographer keys', async () => {
+  const {GET, audit} = route({mfaSatisfied: false, profileError: Error('Profile must not be accessed before MFA')});
+  const response = await GET({headers: new Headers()});
+  const payload = await response.json();
+  assert.equal(response.status, 403);
+  assert.equal(payload.signedIn, true); assert.equal(payload.mfaRequired, true);
+  assert.match(payload.message, /two-step verification/);
+  assert.equal(payload.keys, undefined); assert.deepEqual(audit, []);
 });

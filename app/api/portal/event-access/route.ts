@@ -3,6 +3,7 @@ import { hasCalendarBoundaryPassed } from "@/lib/calendar-dates";
 import { NextRequest, NextResponse } from "next/server";
 import { createDashboardServiceClient } from "@/lib/dashboard-auth";
 import { getClientIp, rateLimit } from "@/lib/rate-limit";
+import { grantPortalPinBudget } from "@/lib/portal-pin-rate-limit";
 
 export const dynamic = "force-dynamic";
 
@@ -213,12 +214,12 @@ export async function POST(request: NextRequest) {
     // Capture email for marketing — non-fatal, ignore duplicates
     try { await service.from("portal_email_captures").insert({ email: normalizedEmail, project_id: selectedEventId, source: "event_login" }); } catch { /* non-fatal */ }
 
-    return NextResponse.json({
+    return grantPortalPinBudget(NextResponse.json({
       ok: true,
       projectId: selectedEventId,
       email: normalizedEmail,
       pin: pinValue,
-    });
+    }), request, { kind: "event", galleryId: selectedEventId, pin: pinValue, email: normalizedEmail });
   } catch (error) {
     console.error("[event-access]", error);
     return NextResponse.json(

@@ -43,11 +43,11 @@ const projectionSource = [
 ].join("\n");
 const project = new Function(
   "images", "nobgUrls", "isSchoolMode", "activeEventCollectionId", "selectedImageIndex", "backdrops",
-  "imagesInEventAlbum", "canOfferParentBackdrops", compile(projectionSource),
+  "imagesInEventAlbum", "canOfferParentBackdrops", "onlineBackdropsEnabled", compile(projectionSource),
 );
 function view(images, nobgUrls = {}, options = {}) {
   return project(images, nobgUrls, options.schoolMode ?? true, options.album ?? null,
-    options.index ?? 0, options.backdrops ?? [{ id: "background" }], imagesInEventAlbum, canOfferParentBackdrops);
+    options.index ?? 0, options.backdrops ?? [{ id: "background" }], imagesInEventAlbum, canOfferParentBackdrops, options.onlineBackdropsEnabled ?? true);
 }
 
 const photos = Array.from({ length: 6 }, (_, index) => ({
@@ -112,6 +112,9 @@ test("the actual selected-photo chooser remains gated to a usable portrait and c
     assert.equal(view(photos, usable, { index }).hasBackdrops, false, `Pose ${index + 1} has no cutout`);
   }
   assert.equal(view(photos, usable, { backdrops: [] }).hasBackdrops, false);
+  const hiddenCatalog = view(photos, usable, { onlineBackdropsEnabled: false });
+  assert.equal(hiddenCatalog.hasBackdrops, false, "Disabled catalogue policy must override a ready cutout");
+  assert.deepEqual(hiddenCatalog.visibleImages.map((photo) => photo.id), photoIds, "Catalogue visibility cannot hide authorized poses");
   const composite = { id: "composite-class", source: "composite", url: "/class.jpg" };
   assert.equal(view([composite], { [composite.id]: "/unexpected.png" }).hasBackdrops, false);
   assert.equal(view(photos, usable, { schoolMode: false }).hasBackdrops, false);

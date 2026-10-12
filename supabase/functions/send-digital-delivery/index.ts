@@ -61,6 +61,27 @@ Deno.serve(async (req) => {
       return json({ error: "Please sign in again." }, 401);
     }
 
+    // Legacy desktop callers must satisfy the same enrolled second factor as
+    // the current Cloud delivery API before any order or media is accessed.
+    const hasVerifiedMfa = userData.user.factors?.some((factor) => factor.status === "verified") ?? false;
+    if (hasVerifiedMfa) {
+      const { data: assurance, error: assuranceError } = await userClient.auth.mfa
+        .getAuthenticatorAssuranceLevel(authorization.slice(7));
+      if (assuranceError || assurance?.currentLevel !== "aal2") {
+        return json({ error: "Complete two-step verification before sending photos." }, 403);
+      }
+    } else {
+      // Administrative roles must enroll MFA; ordinary desktop studios retain
+      // the same no-factor compatibility as the Cloud authentication resolver.
+      const [profileRole, subscriptionRole] = await Promise.all([
+        admin.from("photographers").select("is_platform_admin").eq("user_id", userData.user.id).maybeSingle(),
+        admin.from("subscriptions").select("is_admin").eq("user_id", userData.user.id).maybeSingle(),
+      ]);
+      if (profileRole.error || subscriptionRole.error || profileRole.data?.is_platform_admin || subscriptionRole.data?.is_admin) {
+        return json({ error: "Enroll and complete two-step verification before sending photos." }, 403);
+      }
+    }
+
     const payload = await req.json().catch(() => ({}));
     const orderId = validateOrderId(payload?.order_id);
     if (!orderId) return json({ error: "A valid order is required." }, 400);

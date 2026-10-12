@@ -15,6 +15,8 @@ import {
   resolveSubscriptionAccess,
 } from "@/lib/subscription-access";
 import { resolveOrderTotalCents } from "@/lib/order-display";
+import { hasSeenStudioWelcome, markStudioWelcomeSeen } from "@/lib/studio-welcome-state";
+import { authRequestErrorMessage, withAuthRequestTimeout } from "@/lib/auth-request";
 import {
   FolderOpen,
   GraduationCap,
@@ -136,7 +138,6 @@ const textMuted = "#667085";
 const borderSoft = "#e5e7eb";
 
 const DISMISSED_KEY = "dashboard_dismissed_orders";
-const STUDIO_WELCOME_PREFIX = "studio_os_download_welcome_seen:";
 
 function loadDismissed(): Set<string> {
   try {
@@ -677,6 +678,7 @@ function DashboardPageContent() {
   const [userEmail, setUserEmail] = useState("");
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [hasLoadedDashboard, setHasLoadedDashboard] = useState(false);
   const [error, setError] = useState("");
   const [photographer, setPhotographer] = useState<Photographer | null>(null);
   const [schools, setSchools] = useState<SchoolRow[]>([]);
@@ -699,7 +701,7 @@ function DashboardPageContent() {
       const {
         data: { user },
         error: userErr,
-      } = await supabase.auth.getUser();
+      } = await withAuthRequestTimeout(supabase.auth.getUser(), "Checking your account took too long. You are still signed in. Please retry loading your dashboard.");
 
       if (userErr) throw userErr;
       if (!user) {
@@ -710,7 +712,7 @@ function DashboardPageContent() {
       setUserEmail(user.email ?? "");
       const {
         data: { session },
-      } = await supabase.auth.getSession();
+      } = await withAuthRequestTimeout(supabase.auth.getSession(), "Checking your session took too long. You are still signed in. Please retry loading your dashboard.");
       const authHeaders: Record<string, string> = session?.access_token
         ? { Authorization: `Bearer ${session.access_token}` }
         : {};
@@ -719,6 +721,7 @@ function DashboardPageContent() {
         .from("photographers")
         .select("id,business_name,logo_url,is_platform_admin,subscription_status,subscription_plan_code,trial_starts_at,trial_ends_at,created_at")
         .eq("user_id", user.id)
+        .abortSignal(AbortSignal.timeout(15000))
         .maybeSingle();
       let photographerRow = photographerResult.data;
 
@@ -732,13 +735,14 @@ function DashboardPageContent() {
           (!photographerRow.subscription_plan_code || !photographerRow.trial_starts_at || !photographerRow.trial_ends_at))) {
         bootstrapStudioAppResponse = await fetch("/api/studio-os-app/status", {
           method: "GET", cache: "no-store", credentials: "include", headers: authHeaders,
+          signal: AbortSignal.timeout(30000),
         });
         if (!bootstrapStudioAppResponse.ok) {
           throw new Error("Unable to finish account setup. Please refresh to try again.");
         }
         const retry = await supabase.from("photographers")
           .select("id,business_name,logo_url,is_platform_admin,subscription_status,subscription_plan_code,trial_starts_at,trial_ends_at,created_at")
-          .eq("user_id", user.id).maybeSingle();
+          .eq("user_id", user.id).abortSignal(AbortSignal.timeout(15000)).maybeSingle();
         if (retry.error) throw retry.error;
         photographerRow = retry.data;
       }
@@ -767,33 +771,41 @@ function DashboardPageContent() {
           .from("schools")
           .select("id,school_name,local_school_id,created_at")
           .eq("photographer_id", photographerRow.id)
-          .order("created_at", { ascending: false }),
+          .order("created_at", { ascending: false })
+          .abortSignal(AbortSignal.timeout(20000)),
         supabase
           .from("projects")
           .select("id,title,workflow_type,client_name,event_date,created_at,status,linked_local_school_id,linked_school_id")
           .eq("photographer_id", photographerRow.id)
-          .order("created_at", { ascending: false }),
+          .order("created_at", { ascending: false })
+          .abortSignal(AbortSignal.timeout(20000)),
         supabase
           .from("orders")
           .select("id,customer_name,customer_email,parent_name,parent_email,package_name,total_cents,total_amount,created_at,status,payment_status,paid_at,stripe_payment_intent_id,stripe_checkout_session_id,school_id,class_id,student_id,project_id")
           .eq("photographer_id", photographerRow.id)
           .order("created_at", { ascending: false })
-          .limit(200),
+          .limit(200)
+          .abortSignal(AbortSignal.timeout(20000)),
         fetch("/api/dashboard/events", {
           method: "GET",
           cache: "no-store",
+          credentials: "include",
+          headers: authHeaders,
+          signal: AbortSignal.timeout(20000),
         }),
         bootstrapStudioAppResponse ?? fetch("/api/studio-os-app/status", {
           method: "GET",
           cache: "no-store",
           credentials: "include",
           headers: authHeaders,
+          signal: AbortSignal.timeout(20000),
         }).catch(() => null),
         fetch("/api/dashboard/download-activity", {
           method: "GET",
           cache: "no-store",
           credentials: "include",
           headers: authHeaders,
+          signal: AbortSignal.timeout(20000),
         }).catch(() => null),
       ]);
 
@@ -825,10 +837,6 @@ function DashboardPageContent() {
       );
       const schoolRows = (schoolRes.data ?? []) as SchoolRow[];
       const dedupedSchools = dedupeSchools(schoolRows);
-      setProjects(projectRows);
-      setEventProjects(eventPayload.projects ?? []);
-      setOrders(((orderRes.data ?? []) as OrderRow[]).filter(isCustomerOrder));
-
       if (downloadActivityRes?.ok) {
         const downloadPayload =
           (await downloadActivityRes.json().catch(() => null)) as DownloadActivityPayload | null;
@@ -845,7 +853,8 @@ function DashboardPageContent() {
           .in(
             "school_id",
             dedupedSchools.map((s) => s.id),
-          );
+          )
+          .abortSignal(AbortSignal.timeout(20000));
 
         if (studentErr) throw studentErr;
         studentRows = (fetchedStudentRows ?? []) as StudentRow[];
@@ -860,8 +869,15 @@ function DashboardPageContent() {
         if (eventLinkedSchoolIds.has(clean(school.id))) return false;
         return !eventNameKeys.has(normalizeLookupName(school.school_name));
       });
+      // Publish a complete snapshot together; initial empty arrays are not
+      // evidence that the account has no galleries, and a failed refresh
+      // should preserve the last successful dashboard.
+      setProjects(projectRows);
+      setEventProjects(eventPayload.projects ?? []);
+      setOrders(((orderRes.data ?? []) as OrderRow[]).filter(isCustomerOrder));
       setSchools(visibleSchools);
       setStudents(studentRows);
+      setHasLoadedDashboard(true);
 
       if (studioAppRes && studioAppRes.ok) {
         const studioJson = (await studioAppRes.json().catch(() => null)) as
@@ -881,9 +897,8 @@ function DashboardPageContent() {
             studioJson?.entitlement?.planCode === "studio");
 
         if (eligible && studioJson?.release) {
-          const versionKey = `${STUDIO_WELCOME_PREFIX}${studioJson.release.version}`;
           const queryRequestedWelcome = searchParams.get("studio-os-welcome") === "1";
-          const alreadySeen = typeof window !== "undefined" && localStorage.getItem(versionKey) === "1";
+          const alreadySeen = hasSeenStudioWelcome(photographerRow.id, studioJson.release.version);
 
           setStudioWelcome({
             release: studioJson.release,
@@ -900,7 +915,9 @@ function DashboardPageContent() {
       }
     } catch (err) {
       console.error("[dashboard] load error:", err);
-      setError(err instanceof Error ? err.message : "Failed to load dashboard");
+      setError(err instanceof Error && (err.name === "AbortError" || err.name === "TimeoutError")
+        ? "Loading your dashboard took too long. You are still signed in. Please retry."
+        : authRequestErrorMessage(err, "We could not load your dashboard. You are still signed in. Please retry.", "dashboard"));
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -940,10 +957,8 @@ function DashboardPageContent() {
   }
 
   function dismissStudioWelcome() {
-    if (studioWelcome?.release.version) {
-      try {
-        localStorage.setItem(`${STUDIO_WELCOME_PREFIX}${studioWelcome.release.version}`, "1");
-      } catch {}
+    if (studioWelcome?.release.version && photographer?.id) {
+      markStudioWelcomeSeen(photographer.id, studioWelcome.release.version);
     }
     setShowStudioWelcome(false);
     if (typeof window !== "undefined") {
@@ -1317,6 +1332,22 @@ function DashboardPageContent() {
           {error ? (
             <div style={{ marginBottom: 18, background: "#fef2f2", border: "1px solid #fecaca", color: "#991b1b", padding: "12px 14px", borderRadius: 10, fontSize: 13 }}>
               {error}
+              <button type="button" onClick={() => void load(true)} disabled={refreshing} style={{ display: "block", marginTop: 8, background: "#fff", border: "1px solid #fecaca", borderRadius: 8, padding: "8px 12px", color: "#991b1b", fontWeight: 700, cursor: "pointer" }}>Retry dashboard</button>
+            </div>
+          ) : null}
+
+          {!error && hasLoadedDashboard && photographer && schools.length === 0 && eventProjects.length === 0 ? (
+            <div style={{ marginBottom: 22, borderRadius: 20, border: `1px solid ${borderSoft}`, background: "#f8fafc", padding: "20px 22px" }}>
+              <h2 style={{ margin: 0, fontSize: 23, color: textPrimary }}>Start with your first gallery</h2>
+              <p style={{ margin: "10px 0 16px", color: textMuted, lineHeight: 1.6 }}>
+                Create a gallery, add an album, and upload a few photos to try the client experience.
+                You can use web galleries on Mac or Windows. The desktop app is available for Mac; Windows is coming soon.
+              </p>
+              <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+                <Link href="/dashboard/projects/new" style={{ textDecoration: "none", background: "#0f172a", color: "#fff", borderRadius: 12, padding: "12px 16px", fontWeight: 800 }}>Create a gallery</Link>
+                <Link href="/dashboard/schools" style={{ textDecoration: "none", background: "#fff", color: textPrimary, border: `1px solid ${borderSoft}`, borderRadius: 12, padding: "12px 16px", fontWeight: 800 }}>Set up a school</Link>
+                <Link href="/contact" style={{ textDecoration: "none", color: textPrimary, padding: "12px 0", fontWeight: 700 }}>Get setup help</Link>
+              </div>
             </div>
           ) : null}
 
@@ -1340,7 +1371,7 @@ function DashboardPageContent() {
                     {dashboardTrialDaysRemaining} day{dashboardTrialDaysRemaining === 1 ? "" : "s"} left in your Studio OS trial
                   </div>
                   <div style={{ marginTop: 8, color: "#475569", fontSize: 15, lineHeight: 1.7 }}>
-                    You have full Studio OS access right now. Download the app, test your workflow, and choose a paid plan before
+                    You have full Studio OS access right now. Create a web gallery or download the Mac app, test your workflow, and choose a paid plan before
                     {dashboardTrialEndsLabel ? ` ${dashboardTrialEndsLabel}` : " your trial ends"}.
                   </div>
                 </div>
@@ -1360,7 +1391,7 @@ function DashboardPageContent() {
                       fontWeight: 800,
                     }}
                   >
-                    <Download size={16} /> Download App
+                    <Download size={16} /> Download Mac App
                   </Link>
                   <Link
                     href="/pricing"
@@ -1385,10 +1416,10 @@ function DashboardPageContent() {
           ) : null}
 
           {/* ── Top stat cards ────────────────────────────────────────── */}
-          <div style={{ display: "grid", gridTemplateColumns: isMobile ? "repeat(2,minmax(0,1fr))" : "repeat(4,minmax(0,1fr))", gap: isMobile ? 12 : 18, marginBottom: 24 }}>
-            <OverviewLinkCard href="/dashboard/schools" icon={<GraduationCap size={20} />} label="SCHOOLS" value={schools.length} description="Synced school jobs available from the desktop app." />
-            <OverviewLinkCard href="/dashboard/projects/events" icon={<FolderOpen size={20} />} label="EVENT PROJECTS" value={eventProjects.length} description="Weddings, baptisms, engagements, and private events." />
-            <OverviewLinkCard href="/dashboard/orders" icon={<ShoppingBag size={20} />} label="ORDERS" value={mainWorkflowOrders.length} description="Processed orders received across all schools and events." />
+          <div aria-busy={!hasLoadedDashboard && (loading || refreshing)} style={{ display: "grid", gridTemplateColumns: isMobile ? "repeat(2,minmax(0,1fr))" : "repeat(4,minmax(0,1fr))", gap: isMobile ? 12 : 18, marginBottom: 24 }}>
+            <OverviewLinkCard href="/dashboard/schools" icon={<GraduationCap size={20} />} label="SCHOOLS" value={hasLoadedDashboard ? schools.length : "—"} description="Synced school jobs available from the desktop app." />
+            <OverviewLinkCard href="/dashboard/projects/events" icon={<FolderOpen size={20} />} label="EVENT PROJECTS" value={hasLoadedDashboard ? eventProjects.length : "—"} description="Weddings, baptisms, engagements, and private events." />
+            <OverviewLinkCard href="/dashboard/orders" icon={<ShoppingBag size={20} />} label="ORDERS" value={hasLoadedDashboard ? mainWorkflowOrders.length : "—"} description="Processed orders received across all schools and events." />
             <Link
               href="/dashboard/schools"
               style={overviewCardStyle(true)}
@@ -1409,10 +1440,12 @@ function DashboardPageContent() {
                 </div>
                 <div style={{ fontSize: 14, letterSpacing: "0.08em", fontWeight: 800, color: textMuted }}>PHOTO COVERAGE</div>
                 <div style={{ fontSize: 34, lineHeight: 1.1, fontWeight: 900, color: textPrimary, marginTop: 10 }}>
-                  {coveragePct}%
+                  {hasLoadedDashboard ? `${coveragePct}%` : "—"}
                 </div>
                 <div style={{ fontSize: 14, color: textMuted, marginTop: 10, lineHeight: 1.6 }}>
-                  {imageCount} of {students.length} subjects have at least one synced photo.
+                  {hasLoadedDashboard
+                    ? `${imageCount} of ${students.length} subjects have at least one synced photo.`
+                    : loading || refreshing ? "Loading photo coverage…" : "Photo coverage unavailable."}
                 </div>
               </div>
               {/* Coverage bar + open affordance */}
@@ -1697,15 +1730,15 @@ function DashboardPageContent() {
               </div>
 
               <div style={{ display: "grid", gap: 14 }}>
-                <QuickStat label="TOTAL ORDERS" value={mainWorkflowOrders.length} />
+                <QuickStat label="TOTAL ORDERS" value={hasLoadedDashboard ? mainWorkflowOrders.length : "—"} />
                 <QuickStat
                   label="PENDING ORDERS"
-                  value={pendingOrders.length}
+                  value={hasLoadedDashboard ? pendingOrders.length : "—"}
                   accent={pendingOrders.length > 0 ? "#c2410c" : textPrimary}
                 />
-                <QuickStat label="REVENUE TRACKED" value={moneyFromCents(revenueTracked)} />
-                <QuickStat label="SCHOOL PROJECTS LINKED" value={schoolProjects.length} />
-                <QuickStat label="PHOTO COVERAGE" value={`${coveragePct}%`} accent={coveragePct >= 80 ? "#15803d" : "#cc0000"} />
+                <QuickStat label="REVENUE TRACKED" value={hasLoadedDashboard ? moneyFromCents(revenueTracked) : "—"} />
+                <QuickStat label="SCHOOL PROJECTS LINKED" value={hasLoadedDashboard ? schoolProjects.length : "—"} />
+                <QuickStat label="PHOTO COVERAGE" value={hasLoadedDashboard ? `${coveragePct}%` : "—"} accent={coveragePct >= 80 ? "#15803d" : "#cc0000"} />
               </div>
 
               <div style={{ marginTop: 22, paddingTop: 18, borderTop: "1px solid #e5e5e5" }}>

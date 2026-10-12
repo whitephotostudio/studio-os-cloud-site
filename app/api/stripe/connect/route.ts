@@ -5,6 +5,7 @@ import {
 } from "@/lib/dashboard-auth";
 import {
   connectReturnUrl,
+  configureConnectBusinessProfile,
   createConnectedAccount,
   createConnectedAccountLink,
   getConnectedAccountId,
@@ -12,10 +13,14 @@ import {
   retrieveStripeAccount,
   syncConnectState,
 } from "@/lib/payments";
+import { ConnectProfileError, verifiedConnectCountry } from "@/lib/stripe-connect-country";
 
 export const dynamic = "force-dynamic";
 
 type ConnectBody = {
+  businessCountry?: unknown;
+  salesCurrency?: unknown;
+  salesCurrencyExplicit?: unknown;
   businessName?: string | null;
   studioName?: string | null;
   brandColor?: string | null;
@@ -34,17 +39,22 @@ function requestOrigin(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const { user } = await resolveDashboardAuth(request);
+    const { user, mfaSatisfied } = await resolveDashboardAuth(request);
     if (!user) {
       return NextResponse.json(
         { ok: false, message: "Please sign in again before connecting Stripe." },
         { status: 401 },
       );
     }
+    if (mfaSatisfied === false) return NextResponse.json({ ok: false, message: "Complete two-factor sign-in before connecting Stripe." }, { status: 403 });
 
     const service = createDashboardServiceClient();
     const body = (await request.json().catch(() => ({}))) as ConnectBody;
     let photographer = await getOrCreatePhotographerByUser(service, user);
+    // Reserve an explicit business country under a row lock before any Stripe
+    // creation request; an uncertain request retries the same account/country.
+    const profile = await configureConnectBusinessProfile(service, photographer, body, true);
+    if (!profile.businessCountry) throw new ConnectProfileError("Choose your business country before connecting Stripe.");
 
     const brandingUpdates: Record<string, string | null> = {};
     const businessName = clean(body.businessName) || photographer.business_name || null;
@@ -95,6 +105,7 @@ export async function POST(request: NextRequest) {
         userId: user.id,
         email: billingEmail,
         businessName,
+        country: profile.businessCountry,
       });
 
       stripeAccountId = account.id;
@@ -110,6 +121,7 @@ export async function POST(request: NextRequest) {
       if (accountSaveError) throw accountSaveError;
     }
 
+    verifiedConnectCountry(account, profile.businessCountry);
     await syncConnectState(service, photographer.id, account);
 
     const origin = requestOrigin(request);
@@ -122,6 +134,8 @@ export async function POST(request: NextRequest) {
       ok: true,
       url: link.url,
       stripeAccountId,
+      businessCountry: profile.businessCountry,
+      stripeAccountCountry: account.country,
       onboardingComplete:
         account.details_submitted && account.charges_enabled && account.payouts_enabled,
       chargesEnabled: account.charges_enabled,
@@ -131,12 +145,9 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(
       {
         ok: false,
-        message:
-          error instanceof Error
-            ? error.message
-            : "Unable to start Stripe Connect onboarding.",
+        message: error instanceof ConnectProfileError ? error.message : "Unable to start Stripe Connect onboarding. Check your business country and try again, or contact Studio OS support.",
       },
-      { status: 500 },
+      { status: error instanceof ConnectProfileError ? error.status : 500 },
     );
   }
 }

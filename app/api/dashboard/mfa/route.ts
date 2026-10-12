@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { isTrustedDashboardRequest } from "@/lib/dashboard-auth";
 import { z } from "zod";
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
@@ -99,6 +100,9 @@ export async function GET() {
  *   { action: "unenroll", factorId }              → Remove a verified factor
  */
 export async function POST(request: NextRequest) {
+  if (!isTrustedDashboardRequest(request)) {
+    return NextResponse.json({ ok: false, message: "Invalid request origin." }, { status: 403 });
+  }
   try {
     const supabase = await createAuthClient();
 

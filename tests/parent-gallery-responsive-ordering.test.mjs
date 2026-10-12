@@ -62,7 +62,7 @@ test("tablet panel breakpoint is independent from the saved phone photo density"
   for (const width of [320, 390, 639, 640, 768, 1024, 1099, 1100, 1440]) {
     let state = false, cleanup, subscription;
     const queries = [];
-    const useIsMobile = loadFunction("useIsMobile", {
+    const renderMobileHook = loadFunction("useIsMobile", {
       useState: () => [state, value => { state = value; }],
       useEffect: callback => { cleanup = callback(); },
       window: { matchMedia(query) {
@@ -74,7 +74,7 @@ test("tablet panel breakpoint is independent from the saved phone photo density"
         };
       } },
     });
-    useIsMobile(1100);
+    renderMobileHook(1100);
     assert.deepEqual(queries, ["(max-width: 1099px)"]);
     assert.equal(state, width < 1100, `${width}px panel layout`);
     assert.equal(typeof subscription, "function");
@@ -132,16 +132,18 @@ test("phone and tablet order/backdrop panels occupy the full canvas instead of s
 
 test("tablet headers stack the picker and actions without desktop absolute navigation", () => {
   const topbar = styleWhere(object => property(object, "minHeight")?.getText(ast) === "isEventImageStage ? 72 : 52");
-  const nav = styleWhere(object => property(object, "position")?.getText(ast).includes('"static" : "absolute"') && property(object, "order"));
+  const nav = styleWhere(object => property(object, "position")?.getText(ast) === '"static"' && property(object, "order"));
   for (const compact of [true, false]) {
     const globals = styleGlobals({ isCompactPanelViewport: compact });
     const headerStyle = evaluate(topbar.getText(ast), globals);
     assert.equal(headerStyle.display, compact ? "grid" : "flex");
     assert.equal(headerStyle.gridTemplateColumns, compact ? "minmax(0, 1fr)" : undefined);
     const navStyle = evaluate(nav.getText(ast), globals);
-    assert.equal(navStyle.position, compact ? "static" : "absolute");
+    assert.equal(navStyle.position, "static", "Both desktop and compact tabs reserve header space");
+    assert.equal(navStyle.flexShrink, 0);
+    assert.equal(navStyle.left, undefined);
     assert.equal(navStyle.width, compact ? "100%" : undefined);
-    assert.equal(navStyle.transform, compact ? undefined : "translateX(-50%)");
+    assert.equal(navStyle.transform, undefined);
     assert.equal(evaluate(topbar.getText(ast), { ...globals, isEventLanding: true }).display, "none");
   }
 });

@@ -5,13 +5,15 @@ import { createDashboardServiceClient } from "@/lib/dashboard-auth";
 import { hasCalendarBoundaryPassed } from "@/lib/calendar-dates";
 import { normalizeEventGallerySettings } from "@/lib/event-gallery-settings";
 import { privateMediaKeyFromReference } from "@/lib/private-media-references";
+import { privateSupabaseStorageReference, legacyStorageReference, type LegacyPrivateStorageReference } from "@/lib/photo-url";
+import { authorizedMediaUrl } from "@/lib/authorized-media";
 import { extractStoragePathFromSupabaseUrl } from "@/lib/storage-images";
 import { hasActiveSubscription } from "@/lib/subscription-gate";
 import { filterTombstonedSchoolPhotoAssets, loadSchoolPhotoTombstones, tombstoneFamilySet } from "@/lib/school-photo-deletions";
 import { readPaidCutout, isManagedCutoutKey } from "@/lib/credit-cutout-access";
 import { loadScopedSchoolCompositeMedia } from "@/lib/school-order-media";
 import { buildSchoolCandidateFolders } from "@/lib/storage-folder";
-import { eventImageBytes, transformEventImage, isFullDigitalPurchaseLabel } from "@/lib/event-media-delivery";
+import { eventImageBytes, imageBytesFromSignedUrl, transformEventImage, isFullDigitalPurchaseLabel } from "@/lib/event-media-delivery";
 import { normalizeProofWatermarkOpacity, proofWatermarkVersion } from "@/lib/proof-watermark";
 
 type Service = ReturnType<typeof createDashboardServiceClient>;
@@ -21,6 +23,7 @@ type Media = { id: string; storage_path: string | null; preview_url?: string | n
 export type SchoolMediaToken = {
   v: 1; kind: "school-gallery-preview" | "school-photo-download"; schoolId: string; photographerId: string | null;
   mediaKey: string; viewerEmail: string; studentGrants: Record<string, string>; schoolGrant: string; exp: number;
+  legacyStorage?: LegacyPrivateStorageReference;
   resolution?: "original" | "large" | "web"; watermark?: boolean; watermarkText?: string;
   policyGrant?: string; downloadType?: "gallery" | "favorites";
 };
@@ -42,13 +45,15 @@ export function verifySchoolMediaToken(token: string, kind: SchoolMediaToken["ki
   if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) throw new Error("Invalid school media token.");
   const payload = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8")) as SchoolMediaToken;
   if (payload.v !== 1 || payload.kind !== kind || !Number.isFinite(payload.exp) || payload.exp <= Date.now() || !payload.mediaKey || !payload.studentGrants || !Object.keys(payload.studentGrants).length) throw new Error("Expired school media token.");
+  if (payload.legacyStorage && (!legacyStorageReference(payload.legacyStorage.bucket, payload.legacyStorage.key) || payload.legacyStorage.key !== payload.mediaKey)) throw new Error("Invalid legacy school media reference.");
   return payload;
 }
 
-export function schoolMediaGrant(options: { school: School; students: Student[]; email: string; mediaKey: string; kind: SchoolMediaToken["kind"]; downloadType?: "gallery" | "favorites" }) {
+export function schoolMediaGrant(options: { school: School; students: Student[]; email: string; mediaKey: string; kind: SchoolMediaToken["kind"]; legacyStorage?: LegacyPrivateStorageReference; downloadType?: "gallery" | "favorites" }) {
   const extras = normalizeEventGallerySettings(options.school.gallery_settings).extras;
   return createSchoolMediaToken({
     v: 1, kind: options.kind, schoolId: options.school.id, photographerId: options.school.photographer_id ?? null,
+    ...(options.legacyStorage ? { legacyStorage: options.legacyStorage } : {}),
     mediaKey: options.mediaKey, viewerEmail: options.email.toLowerCase(), studentGrants: Object.fromEntries(options.students.map(row => [row.id, studentGrant(row)])), schoolGrant: schoolGrant(options.school),
     exp: Date.now() + (options.kind === "school-gallery-preview" ? 6 * 60 * 60 : 10 * 60) * 1000,
     ...(options.kind === "school-photo-download" ? { resolution: extras.freeDigitalResolution, watermark: extras.watermarkDownloads, watermarkText: "PROOF", policyGrant: policyGrant(options.school.gallery_settings), downloadType: options.downloadType ?? "gallery" } : {}),
@@ -63,7 +68,7 @@ export function schoolPreviewUrl(options: Parameters<typeof schoolMediaGrant>[0]
 }
 
 export function schoolPreviewPresentation<M extends Media, C extends Media, S extends Student>(options: { school: School; students: Student[]; visibleStudents: S[]; email: string; media: M[]; composites: C[]; nobgUrls: Record<string, string>; watermarkOpacity?: number | null }) {
-  const preview = (mediaKey: string) => schoolPreviewUrl({ school: options.school, students: options.students, email: options.email, mediaKey, kind: "school-gallery-preview", watermarkOpacity: options.watermarkOpacity });
+  const preview = (mediaKey: string, legacyStorage?: LegacyPrivateStorageReference) => schoolPreviewUrl({ school: options.school, students: options.students, email: options.email, mediaKey, legacyStorage, kind: "school-gallery-preview", watermarkOpacity: options.watermarkOpacity });
   const present = <T extends Media>(row: T) => {
     if (!row.storage_path) return { ...row, preview_url: null, thumbnail_url: null, download_url: undefined };
     const url = preview(row.storage_path);
@@ -72,8 +77,9 @@ export function schoolPreviewPresentation<M extends Media, C extends Media, S ex
   return {
     media: options.media.map(present), composites: options.composites.map(present),
     students: options.visibleStudents.map(row => {
-      const key = privateMediaKeyFromReference(row.photo_url) || extractStoragePathFromSupabaseUrl(row.photo_url);
-      return { ...row, photo_storage_path: key || null, photo_url: key ? preview(key) : null };
+      const legacy = privateSupabaseStorageReference(row.photo_url);
+      const key = legacy?.key || privateMediaKeyFromReference(row.photo_url) || extractStoragePathFromSupabaseUrl(row.photo_url);
+      return { ...row, photo_storage_path: key || null, photo_url: key ? preview(key, legacy || undefined) : null };
     }),
     nobgUrls: Object.fromEntries(Object.entries(options.nobgUrls).flatMap(([id, url]) => {
       const key = privateMediaKeyFromReference(url) || extractStoragePathFromSupabaseUrl(url);
@@ -153,6 +159,13 @@ export async function authorizeSchoolMediaToken(service: Service, token: SchoolM
 
 export async function schoolImageBytes(service: Service, token: SchoolMediaToken, preview = true, thumbnail = false, watermarkEnabled = true, watermarkOpacity: number | null = null) {
   const options = { resolution: preview ? thumbnail ? "thumbnail" as const : "preview" as const : token.resolution || "original" as const, watermark: preview ? watermarkEnabled : !!token.watermark, watermarkText: token.watermarkText || "PROOF", watermarkOpacity: preview ? watermarkOpacity : null };
+  if (token.legacyStorage) {
+    const legacy = legacyStorageReference(token.legacyStorage.bucket, token.legacyStorage.key);
+    if (!legacy || legacy.key !== token.mediaKey) throw new Error("Invalid legacy school media reference.");
+    const reference = `${(process.env.NEXT_PUBLIC_SUPABASE_URL || "").replace(/\/$/, "")}/storage/v1/object/public/${legacy.bucket}/${legacy.key.split("/").map(encodeURIComponent).join("/")}`;
+    const url = await authorizedMediaUrl(service, reference, token.photographerId);
+    return imageBytesFromSignedUrl(url, { ...options, ...(legacy.bucket === "nobg-photos" ? { preserveTransparency: true, watermark: preview ? false : options.watermark } : {}) });
+  }
   if (isManagedCutoutKey(token.mediaKey)) return transformEventImage(await readPaidCutout(service, token.photographerId || "", token.mediaKey), { ...options, preserveTransparency: true, watermark: preview ? false : options.watermark });
-  return eventImageBytes({ id: token.mediaKey, collection_id: null, storage_path: token.mediaKey }, options);
+  return eventImageBytes({ id: token.mediaKey, collection_id: null, storage_path: token.mediaKey }, options, { service, photographerId: token.photographerId });
 }

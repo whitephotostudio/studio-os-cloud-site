@@ -46,7 +46,7 @@ async function authorizedPhotos(service: Service, context: ParentBackdropContext
     const originals = new Map<string, PhotoRow>();
     const displayedFamilies = new Set<string>();
     for (const folder of folders) {
-      const files = filterTombstonedSchoolPhotoAssets(await listR2FolderImages(folder), deleted);
+      const files = filterTombstonedSchoolPhotoAssets(await listR2FolderImages(folder, { photographerId: context.photographerId }), deleted);
       for (const file of files) if (keyBelongsToStudentPhotoFolders(file.key, folders)) {
         // Retain exact keys rather than gallery display-family deduplication:
         // photo.JPG and photo.PNG are distinct checkout sources.
@@ -100,7 +100,7 @@ async function authorizedPhotos(service: Service, context: ParentBackdropContext
       if (!row.id || photos.has(row.id)) throw new ParentCutoutPreflightError();
       // Use exactly the server gallery resolver, retaining raw storage keys
       // for proof lookup and adding only its generated display/download refs.
-      const display = buildSignedMediaUrls({ storagePath: row.storage_path, previewUrl: row.preview_url, thumbnailUrl: row.thumbnail_url });
+      const display = buildSignedMediaUrls({ storagePath: row.storage_path, previewUrl: row.preview_url, thumbnailUrl: row.thumbnail_url }, { photographerId: context.photographerId });
       photos.set(row.id, { ...row, displayReferences: Object.values(display) });
     }
     if (photos.size === expectedCount) break;

@@ -41,6 +41,7 @@ registerHooks({
 const {
   filterNewStudioBookingRecipients,
   studioBookingCampaignDeliveryKey,
+  loadStudioBookingEmailCampaign,
 } = await import("../../lib/studio-booking-email-campaign.ts");
 
 const campaignFixture = {
@@ -156,7 +157,7 @@ test("saved direction photos use private object keys and never persist base64", 
   assert.match(saveFunction, /r2Upload\(key, bytes, "image\/jpeg", "private, no-store"\)/);
   assert.match(persistedPayload, /photo_keys:\s*photoKeys/);
   assert.doesNotMatch(persistedPayload, /attachment\.content|base64|data:image|\bcontent\s*:/i);
-  assert.match(helper, /value\.startsWith\(prefix\) && value\.endsWith\("\.jpg"\)/);
+  assert.ok(helper.includes("/^direction-[1-4]\\.jpg$/.test(value.slice(prefix.length))"));
   assert.match(helper, /\.slice\(0, 4\)/);
 });
 
@@ -354,4 +355,15 @@ test("send-new revalidates after photo loading and keeps stable-key recovery act
   assert.doesNotMatch(newOnlyAction, /saved campaign was paused/);
   assert.match(resultActions, /result\.deliveryKind === "new"[\s\S]*retrySeconds > 0/);
   assert.doesNotMatch(resultActions, /campaignError/);
+});
+
+
+test("mutable campaign attachment paths cannot traverse or select another studio", async () => {
+  const {id,eventId,photographerId}=campaignFixture;
+  const prefix=`booking-email-campaigns/${photographerId}/${eventId}/${id}/`;
+  const wanted=[`${prefix}direction-1.jpg`, `${prefix}direction-4.jpg`];
+  const row={status:"template",subject:"Details",payload:{campaign_id:id,event_id:eventId,headline:"Details",message:"Arrive on time",photo_keys:[...wanted,`${prefix}../foreign.jpg`,`${prefix}direction-5.jpg`,`${prefix}subfolder/photo.jpg`,`${prefix}direction-2.jpg/../../foreign.jpg`]}};
+  const query={select:()=>query,eq:()=>query,limit:()=>query,maybeSingle:async()=>({data:row,error:null})};
+  const campaign=await loadStudioBookingEmailCampaign({from:()=>query},photographerId,eventId);
+  assert.deepEqual(campaign.photoKeys,wanted);
 });

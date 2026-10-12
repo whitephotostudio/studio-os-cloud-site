@@ -108,6 +108,7 @@ export async function POST(request: NextRequest) {
   for (const [label, size] of Object.entries(SIZES)) {
     try {
       const resized = await sharp(buffer)
+        .rotate()
         .resize({ width: size.width, withoutEnlargement: true, fit: "inside" })
         .jpeg({ quality: size.quality, mozjpeg: true })
         .toBuffer();

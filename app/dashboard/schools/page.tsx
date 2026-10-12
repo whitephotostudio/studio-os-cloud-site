@@ -1,11 +1,12 @@
 "use client";
 
-import { formatCalendarDate } from "@/lib/calendar-dates";
+import { formatCalendarDate, localCalendarDate } from "@/lib/calendar-dates";
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { withAuthRequestTimeout } from "@/lib/auth-request";
 import { readDashboardListCache, writeDashboardListCache, invalidateDashboardListCache, clearDashboardListCache } from "@/lib/dashboard-list-cache";
 import { Logo } from "@/components/logo";
 import { proxiedPhotoUrl } from "@/lib/photo-url";
@@ -163,10 +164,21 @@ export default function SchoolsPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [newSchoolName, setNewSchoolName] = useState("");
-  const [newSchoolShootDate, setNewSchoolShootDate] = useState(new Date().toISOString().slice(0, 10));
+  const [newSchoolShootDate, setNewSchoolShootDate] = useState("");
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState("");
   const createInputRef = useRef<HTMLInputElement>(null);
+  const createRequestId = useRef<string | null>(null);
+
+  // A server may use another timezone. Fill today's date only in the browser
+  // and keep a photographer's selection if they already edited the input.
+  useEffect(() => {
+    let active = true;
+    queueMicrotask(() => {
+      if (active) setNewSchoolShootDate((current) => current || localCalendarDate());
+    });
+    return () => { active = false; };
+  }, []);
 
   // Selection state
   const [selectMode, setSelectMode] = useState(false);
@@ -232,7 +244,7 @@ export default function SchoolsPage() {
 
       const [schoolResult, projectResult] = await Promise.all([
         supabase.from("schools")
-          .select("id,school_name,photographer_id,package_profile_id,local_school_id,shoot_date,created_at,expiration_date,students(count)")
+          .select("id,school_name,photographer_id,package_profile_id,local_school_id,shoot_date,created_at,expiration_date,students:students!students_school_id_fkey(count)")
           .eq("photographer_id", photographerRow.id)
           .order("created_at", { ascending: false }),
         supabase.from("projects")
@@ -388,6 +400,7 @@ export default function SchoolsPage() {
   }
 
   function openCreateModal() {
+    createRequestId.current = null;
     setNewSchoolName("");
     setCreateError("");
     setShowCreateModal(true);
@@ -401,7 +414,8 @@ export default function SchoolsPage() {
     setCreating(true);
     setCreateError("");
     try {
-      const { data: { session } } = await supabase.auth.getSession();
+      const { data: { session } } = await withAuthRequestTimeout(supabase.auth.getSession(), "Checking your sign-in took too long. Your form is saved here; please try again.");
+      createRequestId.current ??= crypto.randomUUID();
       const res = await fetch("/api/dashboard/schools", {
         method: "POST",
         headers: {
@@ -409,22 +423,26 @@ export default function SchoolsPage() {
           Authorization: `Bearer ${session?.access_token ?? ""}`,
         },
         body: JSON.stringify({
+          clientRequestId: createRequestId.current,
           school_name: name,
           shoot_date: newSchoolShootDate || null,
         }),
+        signal: AbortSignal.timeout(30000),
       });
-      const data = (await res.json()) as { ok?: boolean; message?: string; school?: { id: string } };
-      if (!res.ok || !data.ok) throw new Error(data.message || "Failed to create school.");
+      const data = await res.json().catch(() => null) as { ok?: boolean; message?: string; school?: { id: string } } | null;
+      if (!res.ok || !data?.ok || !data.school?.id) throw new Error(data?.message || "We could not confirm whether your school was created. Check your schools, or retry here safely.");
+      createRequestId.current = null;
       invalidateDashboardListCache("schools");
       setShowCreateModal(false);
-      setNewSchoolShootDate(new Date().toISOString().slice(0, 10));
+      setNewSchoolShootDate(localCalendarDate());
       if (data.school?.id) {
         router.push(`/dashboard/projects/schools/${data.school.id}/settings`);
       } else {
         void load();
       }
     } catch (err) {
-      setCreateError(err instanceof Error ? err.message : "Failed to create school.");
+      setCreateError(err instanceof Error && err.name !== "AbortError" && err.name !== "TimeoutError" && err.name !== "TypeError"
+        ? err.message : "We could not confirm whether your school was created. Check your schools, or retry here safely without creating a second copy.");
     } finally {
       setCreating(false);
     }
@@ -537,12 +555,17 @@ export default function SchoolsPage() {
               All synced schools live here. Open a school to view classes, roles, and images.
             </p>
           </div>
-          <button
-            onClick={openCreateModal}
-            style={{ display: "inline-flex", alignItems: "center", gap: 8, background: "#111", color: "#fff", border: "none", borderRadius: 12, padding: "11px 18px", fontSize: 14, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap", flexShrink: 0, alignSelf: isMobile ? "flex-start" : undefined }}
-          >
-            <Plus size={16} /> Create School
-          </button>
+          <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10 }}>
+            <Link href="/dashboard/migrations/gotphoto" style={{ color: "#374151", border: "1px solid #d1d5db", borderRadius: 12, padding: "11px 16px", fontSize: 14, fontWeight: 600, textDecoration: "none", whiteSpace: "nowrap" }}>
+              Import from GotPhoto
+            </Link>
+            <button
+              onClick={openCreateModal}
+              style={{ display: "inline-flex", alignItems: "center", gap: 8, background: "#111", color: "#fff", border: "none", borderRadius: 12, padding: "11px 18px", fontSize: 14, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap", flexShrink: 0, alignSelf: isMobile ? "flex-start" : undefined }}
+            >
+              <Plus size={16} /> Create School
+            </button>
+          </div>
         </div>
 
         <div
@@ -620,12 +643,12 @@ export default function SchoolsPage() {
 
         {loading ? (
           <div style={{ textAlign: "center", padding: 60, color: "#666" }}>Loading schools...</div>
-        ) : schools.length === 0 ? (
+        ) : !error && schools.length === 0 ? (
           <div style={{ textAlign: "center", padding: 60, background: "#fff", borderRadius: 16, border: "2px dashed #e5e7eb" }}>
             <School size={42} color="#c4c4c4" style={{ marginBottom: 12 }} />
             <p style={{ color: "#666", margin: 0 }}>No schools found yet. Sync from Studio OS app first.</p>
           </div>
-        ) : filteredSchools.length === 0 ? (
+        ) : !error && filteredSchools.length === 0 ? (
           <div style={{ textAlign: "center", padding: 60, background: "#fff", borderRadius: 16, border: "2px dashed #e5e7eb" }}>
             <School size={42} color="#c4c4c4" style={{ marginBottom: 12 }} />
             <p style={{ color: "#666", margin: 0 }}>No schools match that search.</p>
@@ -961,7 +984,7 @@ export default function SchoolsPage() {
                 <X size={20} />
               </button>
             </div>
-            <form onSubmit={(e) => { void handleCreateSchool(e); }}>
+            <form method="post" onSubmit={(e) => { void handleCreateSchool(e); }}>
               <div style={{ marginBottom: 20 }}>
                 <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#374151", marginBottom: 8 }}>
                   School Name
@@ -1004,6 +1027,7 @@ export default function SchoolsPage() {
               {createError && (
                 <div style={{ marginBottom: 16, padding: "10px 14px", background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 10, color: "#b91c1c", fontSize: 13 }}>
                   {createError}
+                  <button type="button" onClick={() => { setShowCreateModal(false); void load(); }} style={{ display: "block", marginTop: 8, border: 0, background: "none", color: "#b91c1c", fontWeight: 700, textDecoration: "underline", cursor: "pointer" }}>Check my schools</button>
                 </div>
               )}
               <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>

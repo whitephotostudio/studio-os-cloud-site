@@ -1,4 +1,7 @@
 import { firstPaidCutoutBytes, type CreditCutoutService } from "@/lib/credit-cutout-access";
+import { authorizedMediaUrl } from "@/lib/authorized-media";
+import { privateMediaKeyFromReference } from "@/lib/private-media-references";
+import { privateSupabaseStorageReference } from "@/lib/photo-url";
 
 const DEFAULT_BLUR_PX = 4;
 const MIN_BLUR_PX = 4;
@@ -32,11 +35,6 @@ async function loadSharp() {
   ) => Promise<typeof import("sharp") & { default?: typeof import("sharp") }>;
   const mod = await dynamicImport("sharp");
   return mod.default ?? mod;
-}
-
-async function downloadR2(key: string) {
-  const mod = await import("@/lib/r2");
-  return mod.r2Download(key);
 }
 
 function safeNumber(value: number | null | undefined) {
@@ -125,25 +123,30 @@ function nobgCandidateKeysForOriginalKey(originalKey: string) {
 async function loadHttpsImageBytes(value: string | null | undefined) {
   const raw = clean(value);
   if (!/^https:\/\//i.test(raw)) return null;
-  const response = await fetch(raw, { cache: "no-store", redirect: "follow" });
+  const response = await fetch(raw, { cache: "no-store", redirect: "error", signal: AbortSignal.timeout(20000) });
   if (!response.ok) return null;
   return Buffer.from(await response.arrayBuffer());
 }
 
-async function loadTrustedImageBytes(value: string | null | undefined) {
+async function loadTrustedImageBytes(value: string | null | undefined, options: { service?: CreditCutoutService; photographerId?: string | null }) {
   const raw = clean(value);
   if (!raw) return null;
 
-  const key = normalizeOriginalKey(raw);
-  if (key) {
+  if (privateMediaKeyFromReference(raw) || privateSupabaseStorageReference(raw)) {
     try {
-      return await downloadR2(key);
-    } catch {
-      // Some backdrop URLs are stored outside R2; fall back to HTTPS below.
-    }
+      const service = options.service || (await import("@/lib/dashboard-auth")).createDashboardServiceClient();
+      const url = await authorizedMediaUrl(service as Parameters<typeof authorizedMediaUrl>[0], raw, options.photographerId);
+      return await loadHttpsImageBytes(url);
+    } catch { return null; }
   }
-
-  return loadHttpsImageBytes(raw);
+  // Intentionally public studio artwork is the only unauthenticated asset
+  // source. Arbitrary external URLs cannot become private R2 object keys.
+  try {
+    const source = new URL(raw), configured = new URL(process.env.NEXT_PUBLIC_SUPABASE_URL || "");
+    if (source.protocol === "https:" && source.origin === configured.origin &&
+      /^\/storage\/v1\/(?:object|render\/image)\/public\/(?:backdrops|studio-logos)\//.test(source.pathname)) return await loadHttpsImageBytes(raw);
+  } catch { return null; }
+  return null;
 }
 
 function backdropImageUrl(backdrop: BackdropCompositeSelection | null | undefined) {
@@ -188,7 +191,7 @@ export async function composeBackdropImage(options: {
 
   const [foregroundBuffer, backdropBuffer] = await Promise.all([
     firstPaidCutoutBytes(nobgCandidateKeysForOriginalKey(originalKey), { service: options.service, photographerId: options.photographerId }),
-    loadTrustedImageBytes(backdropUrl),
+    loadTrustedImageBytes(backdropUrl, options),
   ]);
   if (!foregroundBuffer || !backdropBuffer) return null;
 
@@ -228,6 +231,24 @@ export async function composeBackdropImage(options: {
       .toBuffer();
     left = Math.round((canvasWidth - targetWidth) / 2);
     top = Math.max(0, Math.round((canvasHeight - targetHeight) / 2 + canvasHeight * 0.04));
+
+    // Landscape framing deliberately enlarges the foreground past the page
+    // edge. Sharp requires an overlay no larger than its base image, so crop
+    // the visible intersection rather than shrink the purchased composition.
+    const cropLeft = Math.max(0, -left);
+    const cropTop = Math.max(0, -top);
+    const visibleLeft = Math.max(0, left);
+    const visibleTop = Math.max(0, top);
+    const visibleWidth = Math.min(targetWidth - cropLeft, canvasWidth - visibleLeft);
+    const visibleHeight = Math.min(targetHeight - cropTop, canvasHeight - visibleTop);
+    if (cropLeft || cropTop || visibleWidth !== targetWidth || visibleHeight !== targetHeight) {
+      overlayInput = await sharp(overlayInput, { animated: false })
+        .extract({ left: cropLeft, top: cropTop, width: visibleWidth, height: visibleHeight })
+        .png()
+        .toBuffer();
+    }
+    left = visibleLeft;
+    top = visibleTop;
   }
 
   const buffer = await sharp(backgroundBuffer, { animated: false })

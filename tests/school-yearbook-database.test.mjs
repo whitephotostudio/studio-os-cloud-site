@@ -1,0 +1,58 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { readFileSync } from 'node:fs';
+import { PGlite } from '@electric-sql/pglite';
+
+const migration=readFileSync(new URL('../supabase/migrations/20261008030000_school_yearbook_selections.sql',import.meta.url),'utf8');
+const id=n=>`10000000-0000-4000-8000-${String(n).padStart(12,'0')}`;
+const school=id(1),studio=id(2),student=id(3),otherSchool=id(4),otherStudent=id(5),owner=id(6),otherOwner=id(7);
+test('actual yearbook SQL enforces RLS, service-only RPCs, race checks and current student/photo/window state',async()=>{
+  const db=new PGlite();
+  try {
+    await db.exec(`create role anon; create role authenticated; create role service_role bypassrls;
+      create schema auth; create function auth.uid() returns uuid language sql stable as $$select nullif(current_setting('request.jwt.claim.sub',true),'')::uuid$$;
+      grant usage on schema public,auth to anon,authenticated,service_role; grant execute on function auth.uid() to authenticated;
+      create table public.photographers(id uuid primary key,user_id uuid,is_platform_admin boolean,subscription_status text,trial_starts_at timestamptz,trial_ends_at timestamptz,created_at timestamptz);
+      create table public.schools(id uuid primary key,photographer_id uuid,local_school_id text,status text,portal_status text,expiration_date date);
+      create table public.students(id uuid primary key,school_id uuid,pin text,photo_url text,class_name text,folder_name text);
+      create table public.school_photo_deletions(id uuid,school_id uuid,storage_family text);
+      grant select on public.photographers,public.schools,public.students to authenticated;
+      insert into photographers values('${studio}','${owner}',false,'active',null,null,now());
+      insert into schools values('${school}','${studio}',null,'active','active',null),('${otherSchool}','${id(8)}',null,'active','active',null);
+      insert into students values('${student}','${school}','12345','schools/${school}/Seniors/Jane/photo.jpg','Seniors','Jane'),('${otherStudent}','${otherSchool}','12345','other/photo.jpg','Seniors','John');`);
+    await db.exec(migration);
+    const status=(await db.query('select public.school_yearbook_schema_status() as status')).rows[0].status;
+    assert.equal(status.version,1);for(const [key,value]of Object.entries(status))if(key!=='version')assert.equal(value,true,key);
+    const settingsArgs=[school,studio,true,null,0];
+    const setSettings=(args=settingsArgs)=>db.query('select public.save_school_yearbook_settings($1,$2,$3,$4,$5) as saved',args);
+    await setSettings();await assert.rejects(()=>setSettings(),/Settings changed/);
+    await assert.rejects(()=>setSettings([school,id(99),true,null,1]),/School owner changed/);
+    const snapshot={school_id:school,photo_url:`schools/${school}/Seniors/Jane/photo.jpg`,class_name:'Seniors',folder_name:'Jane'};
+    const args=[school,student,studio,`schools/${school}/Seniors/Jane/photo.jpg`,'photo.jpg','Seniors/Jane/photo','parent','parent@example.test','12345',0,snapshot,{local_school_id:null,photographer_id:studio}];
+    const save=(overrides={})=>{const copied=[...args];for(const [position,value]of Object.entries(overrides))copied[Number(position)]=value;return db.query('select public.save_school_yearbook_selection($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) as saved',copied);};
+    const saved=(await save()).rows[0].saved;assert.equal(saved.revision,1);assert.equal(saved.source,'parent');assert.equal('viewer_email'in saved,false);
+    await assert.rejects(()=>save(),/Selection changed/);
+    await assert.rejects(()=>save({1:otherStudent}),/Student no longer belongs/);
+    await assert.rejects(()=>save({2:id(99)}),/School owner changed/);
+    await assert.rejects(()=>save({8:'00000',9:1}),/Student access changed/);
+    await assert.rejects(()=>save({10:{...snapshot,folder_name:'Other'},9:1}),/Student gallery changed/);
+    await assert.rejects(()=>save({11:{local_school_id:'old-id',photographer_id:studio},9:1}),/School changed/);
+    await assert.rejects(()=>save({3:`schools/${school}/Seniors/Jane/photo_preview.jpg`,9:1}),/Invalid original portrait/);
+    await assert.rejects(()=>save({3:'nobg-photos/photo.png',9:1}),/Invalid original portrait/);
+    await db.exec(`update school_yearbook_settings set deadline='2020-01-01' where school_id='${school}'`);await assert.rejects(()=>save({9:1}),/Selection window closed/);
+    assert.equal((await save({6:'photographer',7:null,8:null,9:1})).rows[0].saved.revision,2);
+    await db.exec(`update school_yearbook_settings set deadline=null,enabled=false where school_id='${school}'`);await assert.rejects(()=>save({9:2}),/Selection window closed/);
+    await db.exec(`update school_yearbook_settings set enabled=true where school_id='${school}';update schools set portal_status='pre_release' where id='${school}'`);await assert.rejects(()=>save({9:2}),/Gallery closed/);
+    await db.exec(`update schools set portal_status='active' where id='${school}';update photographers set subscription_status='cancelled' where id='${studio}'`);await assert.rejects(()=>save({9:2}),/Studio subscription inactive/);
+    await db.exec(`update photographers set subscription_status='active' where id='${studio}';insert into school_photo_deletions values('${id(20)}','${school}','Seniors/Jane/photo')`);await assert.rejects(()=>save({9:2}),/Portrait removed/);
+    await db.exec(`set role authenticated; select set_config('request.jwt.claim.sub','${otherOwner}',false)`);
+    assert.equal((await db.query('select * from school_yearbook_selections')).rows.length,0);
+    await db.exec(`select set_config('request.jwt.claim.sub','${owner}',false)`);
+    assert.equal((await db.query('select * from school_yearbook_selections')).rows.length,1);
+    await assert.rejects(()=>db.exec('delete from school_yearbook_selections'),/permission denied/);
+    await assert.rejects(()=>db.query('select public.save_school_yearbook_settings($1,$2,$3,$4,$5)',[school,studio,true,null,1]),/permission denied/);
+    await assert.rejects(()=>db.query('select public.save_school_yearbook_selection($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)',args),/permission denied/);
+    await assert.rejects(()=>db.exec('select public.school_yearbook_schema_status()'),/permission denied/);
+    await db.exec('reset role; set role anon');await assert.rejects(()=>db.exec('select * from school_yearbook_selections'),/permission denied/);
+  } finally { await db.close(); }
+});

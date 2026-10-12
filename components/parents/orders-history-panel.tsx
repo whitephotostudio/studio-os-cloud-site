@@ -7,7 +7,8 @@
 // and bounces the parent into the checkout flow.
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { formatOrderMoney } from "@/lib/order-money";
 
 export type OrderHistoryItem = {
   productName: string;
@@ -35,6 +36,7 @@ export type OrderHistoryRow = {
   projectId: string | null;
   studentId: string | null;
   orderGroupId: string | null;
+  canDiscardCheckout?: boolean;
   studentName: string | null;
   parentName?: string | null;
   parentEmail?: string | null;
@@ -72,12 +74,6 @@ type Props = {
   onReorder?: (snapshot: unknown, sourceOrderId: string) => void;
 };
 
-function formatCurrency(cents: number, currency: string) {
-  const amount = (cents / 100).toFixed(2);
-  const sym = currency.toLowerCase() === "usd" ? "US$" : "$";
-  return `${sym}${amount}`;
-}
-
 function formatDate(iso: string | null) {
   if (!iso) return "—";
   return new Date(iso).toLocaleDateString("en-US", {
@@ -92,8 +88,14 @@ function statusPill(status: string) {
   if (s === "paid" || s === "digital_paid") {
     return { label: "Processed", color: "#0f7a4a", bg: "rgba(15,122,74,0.14)" };
   }
-  if (s === "payment_pending" || s === "pending") {
+  if (s === "payment_pending") {
+    return { label: "Unfinished checkout", color: "#a36b00", bg: "rgba(163,107,0,0.14)" };
+  }
+  if (s === "pending") {
     return { label: "Pending", color: "#a36b00", bg: "rgba(163,107,0,0.14)" };
+  }
+  if (s === "cancel_pending") {
+    return { label: "Discard requested", color: "#a36b00", bg: "rgba(163,107,0,0.14)" };
   }
   if (s === "refunded") {
     return { label: "Refunded", color: "#7a4a0f", bg: "rgba(122,74,15,0.14)" };
@@ -121,6 +123,61 @@ export default function OrdersHistoryPanel({
   // Track which order card the parent has expanded.  Single-select so the
   // panel doesn't bloat into 6 expanded sheets at once.
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [discardOrder, setDiscardOrder] = useState<OrderHistoryRow | null>(null);
+  const [discarding, setDiscarding] = useState(false);
+  const [discardError, setDiscardError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const scope = JSON.stringify([pin, email, schoolId, projectId]);
+  const scopeRef = useRef(scope);
+  scopeRef.current = scope;
+
+  useEffect(() => {
+    setDiscardOrder(null);
+    setDiscardError(null);
+    setNotice(null);
+    setDiscarding(false);
+  }, [pin, email, schoolId, projectId]);
+
+  useEffect(() => {
+    if (!discardOrder) return;
+    const previous = document.activeElement;
+    dialogRef.current?.focus();
+    return () => {
+      if (previous instanceof HTMLElement && previous.isConnected) previous.focus();
+    };
+  }, [discardOrder]);
+
+  async function discardCheckout() {
+    if (!discardOrder || discarding) return;
+    const submittedScope = scope;
+    setDiscarding(true);
+    setDiscardError(null);
+    try {
+      const res = await fetch("/api/portal/orders/dismiss", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ orderId: discardOrder.id, pin, email,
+          schoolId: schoolId || undefined, projectId: projectId || undefined, confirmed: true }),
+      });
+      const json = await res.json() as { ok?: boolean; cancelledOrderIds?: unknown; message?: string };
+      if (scopeRef.current !== submittedScope) return;
+      if (!res.ok || !json.ok || !Array.isArray(json.cancelledOrderIds) ||
+          !json.cancelledOrderIds.every(id => typeof id === "string") ||
+          !json.cancelledOrderIds.includes(discardOrder.id)) {
+        setDiscardError(json.message || "Couldn't discard this checkout. Refresh its status and try again.");
+        return;
+      }
+      const ids = new Set(json.cancelledOrderIds);
+      setOrders(current => current.filter(order => !ids.has(order.id)));
+      setNotice("Unfinished checkout deleted. Its reminders have stopped. Completed orders stay available.");
+      setDiscardOrder(null);
+    } catch {
+      if (scopeRef.current === submittedScope) setDiscardError("Couldn't reach the server. Refresh its status before trying again.");
+    } finally {
+      if (scopeRef.current === submittedScope) setDiscarding(false);
+    }
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -171,15 +228,15 @@ export default function OrdersHistoryPanel({
     if (onCountChange) onCountChange(orders.length);
   }, [orders.length, onCountChange]);
 
-  const totalSpend = useMemo(
-    () =>
-      orders
-        .filter((o) =>
-          ["paid", "digital_paid"].includes(o.status.toLowerCase()),
-        )
-        .reduce((sum, o) => sum + o.totalCents, 0),
-    [orders],
-  );
+  const totalSpendByCurrency = useMemo(() => {
+    const totals = new Map<string, number>();
+    for (const order of orders) {
+      if (!["paid", "digital_paid"].includes(order.status.toLowerCase())) continue;
+      const currency = order.currency?.trim().toLowerCase() || "cad";
+      totals.set(currency, (totals.get(currency) ?? 0) + order.totalCents);
+    }
+    return [...totals].filter(([, amount]) => amount > 0);
+  }, [orders]);
 
   const containerStyle: React.CSSProperties = {
     flex: 1,
@@ -227,6 +284,7 @@ export default function OrdersHistoryPanel({
     return (
       <div style={containerStyle}>
         <div style={{ maxWidth: 720, width: "100%", textAlign: "center", marginTop: 40 }}>
+          {notice && <p role="status" style={{ color: tone.text, fontSize: 13, lineHeight: 1.6 }}>{notice}</p>}
           <div
             style={{
               fontSize: 11,
@@ -283,7 +341,7 @@ export default function OrdersHistoryPanel({
             }}
           >
             {orders.length} order{orders.length === 1 ? "" : "s"}
-            {totalSpend > 0 && (
+            {totalSpendByCurrency.length > 0 && (
               <span
                 style={{
                   color: tone.mutedText,
@@ -292,11 +350,13 @@ export default function OrdersHistoryPanel({
                   marginLeft: 10,
                 }}
               >
-                · {formatCurrency(totalSpend, orders[0]?.currency || "cad")} total
+                · {totalSpendByCurrency.map(([currency, amount]) => formatOrderMoney(amount, currency)).join(" + ")} total
               </span>
             )}
           </h2>
         </div>
+
+        {notice && <p role="status" style={{ color: tone.text, fontSize: 13, lineHeight: 1.6 }}>{notice}</p>}
 
         <div style={{ display: "flex", flexDirection: "column", gap: compact ? 12 : 14 }}>
           {orders.map((order) => {
@@ -306,6 +366,8 @@ export default function OrdersHistoryPanel({
             const reorderable = !!order.cartSnapshot;
             const download = order.digitalDownload ?? null;
             const expanded = expandedId === order.id;
+            const unfinished = order.status.toLowerCase() === "payment_pending";
+            const canDiscard = order.canDiscardCheckout === true && unfinished && !order.paidAt;
             return (
               <div
                 key={order.id}
@@ -375,7 +437,7 @@ export default function OrdersHistoryPanel({
                       whiteSpace: "nowrap",
                     }}
                   >
-                    {formatCurrency(order.totalCents, order.currency)}
+                    {formatOrderMoney(order.totalCents, order.currency)}
                   </div>
                 </div>
 
@@ -442,7 +504,7 @@ export default function OrdersHistoryPanel({
                           {item.includedInPackage
                             ? " · Included"
                             : item.lineTotalCents > 0
-                            ? ` · ${formatCurrency(item.lineTotalCents, order.currency)}`
+                            ? ` · ${formatOrderMoney(item.lineTotalCents, order.currency)}`
                             : ""}
                         </div>
                       </div>
@@ -493,21 +555,21 @@ export default function OrdersHistoryPanel({
                             <div style={{ display: "flex", justifyContent: "space-between" }}>
                               <span>Subtotal</span>
                               <span style={{ color: tone.text }}>
-                                {formatCurrency(order.subtotalCents, order.currency)}
+                                {formatOrderMoney(order.subtotalCents, order.currency)}
                               </span>
                             </div>
                           )}
                           {discountItems.map((item, idx) => (
                             <div key={`d:${order.id}:${idx}`} style={{ display: "flex", justifyContent: "space-between", color: "#4ade80" }}>
                               <span>{item.productName}</span>
-                              <span>−{formatCurrency(Math.abs(item.lineTotalCents), order.currency)}</span>
+                              <span>−{formatOrderMoney(Math.abs(item.lineTotalCents), order.currency)}</span>
                             </div>
                           ))}
                           {typeof order.taxCents === "number" && order.taxCents > 0 && (
                             <div style={{ display: "flex", justifyContent: "space-between" }}>
                               <span>Tax</span>
                               <span style={{ color: tone.text }}>
-                                {formatCurrency(order.taxCents, order.currency)}
+                                {formatOrderMoney(order.taxCents, order.currency)}
                               </span>
                             </div>
                           )}
@@ -522,8 +584,8 @@ export default function OrdersHistoryPanel({
                               fontWeight: 700,
                             }}
                           >
-                            <span>Total paid</span>
-                            <span>{formatCurrency(order.totalCents, order.currency)}</span>
+                            <span>{unfinished ? "Checkout total" : "Total paid"}</span>
+                            <span>{formatOrderMoney(order.totalCents, order.currency)}</span>
                           </div>
                         </div>
                       )}
@@ -646,7 +708,16 @@ export default function OrdersHistoryPanel({
                         letterSpacing: "0.02em",
                       }}
                     >
-                      Reorder these items
+                      {unfinished ? "Continue with these items" : "Reorder these items"}
+                    </button>
+                  )}
+                  {canDiscard && (
+                    <button type="button" disabled={discarding}
+                      onClick={() => { setDiscardError(null); setDiscardOrder(order); }}
+                      style={{ width: "100%", padding: "10px 14px", background: "transparent",
+                        color: tone.mutedText, border: `1px solid ${tone.border}`, borderRadius: 999,
+                        fontSize: compact ? 12 : 13, fontWeight: 700, cursor: discarding ? "wait" : "pointer" }}>
+                      Delete unfinished checkout
                     </button>
                   )}
                 </div>
@@ -666,6 +737,47 @@ export default function OrdersHistoryPanel({
           Showing your last {orders.length} order{orders.length === 1 ? "" : "s"} from this gallery.
         </div>
       </div>
+      {discardOrder && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 1000, background: "rgba(0,0,0,0.65)",
+          display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+          <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="discard-checkout-title"
+            aria-describedby="discard-checkout-description" tabIndex={-1}
+            onKeyDown={event => {
+              if (event.key === "Escape" && !discarding) setDiscardOrder(null);
+              if (event.key === "Tab") {
+                const buttons = dialogRef.current?.querySelectorAll<HTMLButtonElement>("button:not(:disabled)");
+                const first = buttons?.[0];
+                const last = buttons?.[buttons.length - 1];
+                if (!first || !last) { event.preventDefault(); return; }
+                if (event.shiftKey && (document.activeElement === first || document.activeElement === dialogRef.current)) {
+                  event.preventDefault(); last.focus();
+                } else if (!event.shiftKey && (document.activeElement === last || document.activeElement === dialogRef.current)) {
+                  event.preventDefault(); first.focus();
+                }
+              }
+            }}
+            style={{ width: "100%", maxWidth: 440, maxHeight: "calc(100dvh - 32px)", overflowY: "auto",
+              background: tone.surface, color: tone.text, border: `1px solid ${tone.border}`, borderRadius: 16,
+              padding: compact ? 20 : 28, boxShadow: "0 20px 80px rgba(0,0,0,0.35)" }}>
+            <h3 id="discard-checkout-title" style={{ margin: "0 0 12px", fontSize: 20 }}>Delete unfinished checkout?</h3>
+            <p id="discard-checkout-description" style={{ fontSize: 14, lineHeight: 1.6, color: tone.mutedText }}>
+              Checkout #{discardOrder.shortId} will be removed from your Orders list and its reminder emails will stop.
+              Your completed orders and purchased photos stay available. You can start a new checkout whenever you like.
+            </p>
+            {discardError && <p role="alert" style={{ color: "#b54343", fontSize: 13, lineHeight: 1.6 }}>{discardError}</p>}
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginTop: 20 }}>
+              <button type="button" disabled={discarding} onClick={() => setDiscardOrder(null)}
+                style={{ flex: 1, padding: "11px 15px", borderRadius: 999, border: `1px solid ${tone.border}`,
+                  color: tone.text, background: "transparent", cursor: discarding ? "wait" : "pointer" }}>Keep checkout</button>
+              <button type="button" disabled={discarding} onClick={discardCheckout}
+                style={{ flex: 1, padding: "11px 15px", borderRadius: 999, border: "none", color: tone.surface,
+                  background: tone.text, fontWeight: 700, cursor: discarding ? "wait" : "pointer" }}>
+                {discarding ? "Deleting…" : "Delete & stop reminders"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

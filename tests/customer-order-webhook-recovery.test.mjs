@@ -30,8 +30,8 @@ async function fixture(options = {}) {
   const ids = [orderId, ...(group ? [crypto.randomUUID()] : [])];
   await db.query("insert into photographers values($1,'acct_fixture',null)", [owner]);
   for (const id of ids) await db.query("insert into orders(id,photographer_id,order_group_id,total_cents,currency,stripe_checkout_session_id) values($1,$2,$3,2900,'cad','cs_fixture')", [id, owner, group]);
-  const calls = [], receipts = new Set(), providerReads = [], history = new Set();
-  let failure = options.failure, truncate = options.truncate;
+  const calls = [], receipts = new Set(), providerReads = [], history = new Set(), providerEvents = new Map();
+  let failure = options.failure, truncate = options.truncate, intentStatus = "succeeded";
   const service = {
     from(table) {
       assert.ok(["orders", "photographers", "customer_order_webhooks"].includes(table));
@@ -92,27 +92,38 @@ async function fixture(options = {}) {
     },
     async markOrderOrGroupPaymentFailure(_service, input) { calls.push({ failed: input }); },
     async recordStripeEvent(_service, event) { const inserted = !history.has(event.id); history.add(event.id); return { inserted }; },
+    async retrievePaymentIntent(intentId, account) {
+      assert.equal(account, "acct_fixture");
+      const source=[...providerEvents.values()].find(value=>value.payment_intent===intentId)||event.data.object;
+      assert.equal(source.payment_intent,intentId);
+      return { id: intentId, amount: source.amount_total, amount_received: source.amount_total, currency: "cad", status: intentStatus,
+        metadata: { ...source.metadata }, ...(options.intentOverrides ?? {}) };
+    },
     async retrieveCheckoutSession(sessionId, account) {
       providerReads.push({ sessionId, account });
       assert.equal(account, "acct_fixture");
       if (options.providerUnavailable) throw new Error("fixture Stripe outage");
-      return { ...event.data.object, ...(options.sessionOverrides ?? {}) };
+      return { mode: "payment", status: "complete", ...(providerEvents.get(sessionId)||event.data.object), ...(options.sessionOverrides ?? {}) };
     },
   };
+  const verifier=load("lib/order-webhook-payment.ts", {"@/lib/payments":payments});
+  const locks=[];
+  const lock={lockOrderPayment:async (_service,key)=>{assert.ok((await db.query("select id from orders where id=$1 or order_group_id=$1 limit 1",[key])).rows.length);locks.push(key);return async()=>{};}};
   const api = load("lib/customer-order-webhook.ts", {
+    "@/lib/order-webhook-payment":verifier,"@/lib/order-payment-lock":lock,
     "node:crypto": crypto, "@/lib/checkout-attempt": { canonicalCheckoutJson },
     "@/lib/order-checkout-totals": { sumStoredOrderTotalsCents }, "@/lib/payments": payments,
   });
   const event = {
     id: "evt_fixture", type: "checkout.session.completed", account: "acct_fixture", livemode: false,
     data: { object: { id: "cs_fixture", payment_intent: "pi_fixture", payment_status: "paid", amount_total: 2900 * ids.length, currency: "cad",
-      metadata: { order_id: orderId, photographer_id: owner, ...(group ? { order_group_id: group } : {}) } } },
+      metadata: { billing_flow: "customer_order", order_id: orderId, photographer_id: owner, ...(group ? { order_group_id: group } : {}) } } },
   };
   const claim = token => service.rpc("claim_customer_order_webhook", {
     p_event_id: event.id, p_order_id: orderId, p_account: event.account, p_event_type: event.type,
     p_payload_hash: crypto.createHash("sha256").update(canonicalCheckoutJson(event)).digest("hex"), p_payload: event, p_token: token,
   });
-  return { db, service, api, event, owner, ids, calls, receipts, providerReads, history, claim, payments, setTruncate: value => { truncate = value; } };
+  return { db, service, api, event, owner, ids, calls, receipts, providerReads, history, claim, payments, verifier, lock, locks, providerEvents, setIntentStatus: value => { intentStatus = value; }, setTruncate: value => { truncate = value; } };
 }
 async function run(options, callback) {
   const f = await fixture(options);
@@ -201,6 +212,9 @@ test("unpaid completion, delayed success and payment-intent events preserve thei
   assert.equal(f.calls[1].checkoutSessionId, null);
   assert.equal(f.calls[1].paymentIntentId, "pi_fixture");
   assert.equal((await f.api.processCustomerOrderStripeEvent(f.service, { ...f.event, id: "evt_failed", type: "payment_intent.payment_failed", data: { object: { ...intent, status: "requires_payment_method" } } })).status, 200);
+  assert.equal(f.calls.length,2,"A delayed failure cannot regress an already succeeded provider payment");
+  f.setIntentStatus("requires_payment_method");
+  assert.equal((await f.api.processCustomerOrderStripeEvent(f.service, { ...f.event, id: "evt_genuine_failure", type: "payment_intent.payment_failed", data: { object: { ...intent, status: "requires_payment_method" } } })).status,200);
   assert.equal(f.calls[2].failed.paymentIntentId, "pi_fixture");
   assert.equal(f.receipts.size, 1);
 }));
@@ -209,7 +223,8 @@ test("pending reconciliation uses the saved account, provider-confirmed payment 
   const result = await f.api.reconcilePendingCustomerOrderPayments(f.service);
   assert.equal(result.checked, 1);
   assert.equal(result.recovered, 1);
-  assert.deepEqual(f.providerReads, [{ sessionId: "cs_fixture", account: "acct_fixture" }]);
+  assert.deepEqual(f.providerReads, Array.from({length:3},()=>({ sessionId: "cs_fixture", account: "acct_fixture" })));
+  assert.deepEqual(f.locks,[f.ids.length>1?(await f.db.query("select order_group_id from orders limit 1")).rows[0].order_group_id:f.ids[0]]);
   assert.equal(f.receipts.size, 2);
 }));
 
@@ -245,6 +260,7 @@ test("webhook signatures are checked before customer payment claims and other fl
   const deps = {
     "next/server": { NextResponse: { json: (value, options) => Response.json(value, options) } },
     "@/lib/dashboard-auth": { createDashboardServiceClient: () => f.service },
+    "@/lib/order-webhook-payment":f.verifier,"@/lib/order-payment-lock":f.lock,
     "@/lib/customer-order-webhook": { ...f.api, processCustomerOrderStripeEvent: async (...args) => { claimed++; return f.api.processCustomerOrderStripeEvent(...args); } },
     "@/lib/payments": { verifyStripeSignature: async () => signatureValid, recordStripeEvent: async () => { legacy++; return { inserted: false }; } },
     "@/lib/credit-maintenance": { pausePlatformCreditEvent: () => false },
@@ -295,8 +311,9 @@ test("1000 payment events and concurrent retries produce 1000 durable completion
   for (let index = 0; index < 1000; index++) {
     const id = crypto.randomUUID();
     await f.db.query("insert into orders(id,photographer_id,total_cents,currency,stripe_checkout_session_id) values($1,$2,2900,'cad',$3)", [id, f.owner, `cs_load_${index}`]);
-    events.push({ ...f.event, id: `evt_load_${index}`, data: { object: { ...f.event.data.object, id: `cs_load_${index}`, payment_intent: `pi_load_${index}`, metadata: { order_id: id, photographer_id: f.owner } } } });
+    events.push({ ...f.event, id: `evt_load_${index}`, data: { object: { ...f.event.data.object, id: `cs_load_${index}`, payment_intent: `pi_load_${index}`, metadata: { billing_flow: "customer_order", order_id: id, photographer_id: f.owner } } } });
   }
+  for(const event of events) f.providerEvents.set(event.data.object.id,event.data.object);
   for (let index = 0; index < events.length; index += 10) {
     const results = await Promise.all(events.slice(index, index + 10).map(event => f.api.processCustomerOrderStripeEvent(f.service, event)));
     assert.ok(results.every(result => result.status === 200));
@@ -314,3 +331,12 @@ test("1000 payment events and concurrent retries produce 1000 durable completion
   await assert.rejects(() => f.db.query("select * from customer_order_payment_checks"));
   await assert.rejects(() => f.db.query("select * from claim_pending_customer_order_payment_checks(10)"));
 }));
+
+
+for(const overrides of [{sessionOverrides:{payment_status:"unpaid"}},{sessionOverrides:{payment_status:"no_payment_required"}},{intentOverrides:{amount_received:1}},{intentOverrides:{metadata:{billing_flow:"unrelated"}}}]) {
+  test(`leased recovery preserves actual provider proof: ${JSON.stringify(overrides)}`,()=>run(overrides,async f=>{
+    const result=await f.api.processCustomerOrderStripeEvent(f.service,f.event);
+    assert.notEqual(result.status,200);assert.equal(f.calls.length,0);assert.equal(f.receipts.size,0);assert.deepEqual(f.locks,[]);
+    assert.equal((await f.db.query("select payment_status from orders")).rows[0].payment_status,"pending");
+  }));
+}

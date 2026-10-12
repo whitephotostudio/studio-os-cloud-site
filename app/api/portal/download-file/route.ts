@@ -71,6 +71,14 @@ function isAllowedDownloadUrl(target: URL) {
     );
   }
 
+  // These exact, tenant-bound capability routes validate ownership before
+  // redirecting to private provider storage. Never proxy a session-only URL.
+  const configuredSite = process.env.NEXT_PUBLIC_SITE_URL || process.env.NEXT_PUBLIC_APP_URL || process.env.SITE_URL || "https://www.studiooscloud.com";
+  if (matchesOriginPrefix(target, configuredSite)) {
+    return (target.pathname.startsWith("/api/r2/img/") && !!target.searchParams.get("mediaToken")) ||
+      (target.pathname.startsWith("/api/storage/legacy-media/") && !!target.searchParams.get("token"));
+  }
+
   return false;
 }
 

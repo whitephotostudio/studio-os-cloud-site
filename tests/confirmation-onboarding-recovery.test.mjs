@@ -61,7 +61,7 @@ test('directory preserves complete, expired, owner, billing-linked and canceled 
 });
 
 /** Execute the actual callback page with a tiny hook scheduler and controlled transport/timers. */
-function callbackHarness({session = {access_token: 'test-token', user: {email: 'person@example.invalid'}}, code = 'one-time-code'} = {}) {
+function callbackHarness({session = {access_token: 'test-token', user: {email: 'person@example.invalid'}}, code = 'one-time-code', exchangeError = null, sessionRequest, transient = false, storageUnavailable = false} = {}) {
   const slots = [], pendingEffects = [], requests = [], timers = new Map();
   let hook = 0, dirty = false, tree, nextTimer = 1, exchangeCalls = 0, signOutCalls = 0;
   const jsx = (type, props) => ({type, props});
@@ -96,6 +96,10 @@ function callbackHarness({session = {access_token: 'test-token', user: {email: '
     },
   };
   const browser = {location: {href: 'https://example.invalid/auth/callback' + (code ? '?code=' + code : ''), hash: ''}};
+  browser.history = {state: null, replaceState(_state, _title, path) {browser.location.href = 'https://example.invalid' + path;}};
+  const localValues = new Map(transient ? [['studio-os-transient-session', '1']] : []), sessionValues = new Map();
+  browser.localStorage = {getItem(key) {if (storageUnavailable) throw Error('Storage blocked'); return localValues.get(key) ?? null;}};
+  browser.sessionStorage = {setItem(key, value) {if (storageUnavailable) throw Error('Storage blocked'); sessionValues.set(key, value);}};
   const fetcher = (url, options) => new Promise((resolve, reject) => {
     requests.push({url, options, resolve, reject});
     options.signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), {once: true});
@@ -106,8 +110,8 @@ function callbackHarness({session = {access_token: 'test-token', user: {email: '
     clearTimeout: id => timers.delete(id),
   };
   const supabase = {auth: {
-    exchangeCodeForSession: async () => {exchangeCalls++; return {error: null};},
-    getSession: async () => ({data: {session}}),
+    exchangeCodeForSession: async () => {exchangeCalls++; return {error: exchangeError};},
+    getSession: sessionRequest ?? (async () => ({data: {session}})),
     signOut: async () => {signOutCalls++;},
   }};
   const overrides = {
@@ -131,7 +135,7 @@ function callbackHarness({session = {access_token: 'test-token', user: {email: '
   }
   render();
   return {
-    requests, timers, browser, flush,
+    requests, timers, browser, flush, localValues, sessionValues,
     state: () => slots.find(slot => slot?.kind === 'state' && slot.value?.kind)?.value,
     text: () => descendants(tree).filter(node => typeof node === 'string' || typeof node === 'number').join(' '),
     retry: () => descendants(tree).find(node => node.type === 'button').props.onClick(),
@@ -151,6 +155,7 @@ test('confirmation initializes the authenticated account before success or dashb
   assert.equal(h.requests[0].url, '/api/studio-os-app/status');
   assert.equal(h.requests[0].options.headers.Authorization, 'Bearer test-token');
   assert.equal(h.requests[0].options.credentials, 'include');
+  assert.equal(h.browser.location.href, 'https://example.invalid/auth/callback');
   assert.equal([...h.timers.values()].some(timer => timer.delay === 1800), false);
   h.requests[0].resolve(Response.json(ready));
   await h.flush();
@@ -160,6 +165,44 @@ test('confirmation initializes the authenticated account before success or dashb
   assert.equal(h.browser.location.href, '/dashboard');
   assert.equal(h.signOutCalls(), 0);
   h.unmount();
+});
+
+test('confirmation auth timeout returns a sign-in recovery path instead of an endless spinner', async () => {
+  const h = callbackHarness({sessionRequest: () => new Promise(() => {})}); await h.flush();
+  h.runTimers(15000); await h.flush();
+  assert.equal(h.state().kind, 'error');
+  assert.match(h.text(), /took too long/);
+  assert.equal(h.requests.length, 0);
+  assert.equal(h.timers.size, 0); h.unmount();
+});
+
+test('invalid confirmation codes do not succeed using a different existing session', async () => {
+  const h = callbackHarness({exchangeError: Error('Confirmation link expired'), session: {access_token: 'other-user-token', user: {email: 'other@example.invalid'}}});
+  await h.flush(); assert.equal(h.state().kind, 'error');
+  assert.match(h.text(), /link expired/);
+  assert.equal(h.requests.length, 0); h.unmount();
+});
+
+test('a session provider error cannot be mislabeled as completed email confirmation', async () => {
+  const h = callbackHarness({sessionRequest: async () => ({data: {session: null}, error: Error('Auth provider temporarily unavailable')})});
+  await h.flush(); assert.equal(h.state().kind, 'error');
+  assert.match(h.text(), /temporarily unavailable/);
+  assert.equal(h.requests.length, 0); h.unmount();
+});
+
+test('a newly confirmed transient session can reach the dashboard without turning remember-me on', async () => {
+  const h = callbackHarness({transient: true}); await h.flush();
+  assert.equal(h.sessionValues.get('studio-os-session-started'), '1');
+  assert.equal(h.localValues.get('studio-os-transient-session'), '1');
+  assert.equal(h.localValues.get('studio-os-remember-me'), undefined);
+  h.requests[0].resolve(Response.json(ready)); await h.flush();
+  assert.equal(h.state().kind, 'success'); h.unmount();
+});
+
+test('locked-down browser storage cannot stop confirmed account setup', async () => {
+  const h = callbackHarness({transient: true, storageUnavailable: true}); await h.flush();
+  assert.equal(h.requests.length, 1); h.requests[0].resolve(Response.json(ready)); await h.flush();
+  assert.equal(h.state().kind, 'success'); h.unmount();
 });
 
 test('temporary setup failure keeps confirmation/session, offers retry and never repeats the one-time code', async () => {
@@ -221,4 +264,13 @@ test('unconfirmed callback has no setup request; malformed or unauthenticated se
     await h.flush(); assert.equal(h.state().kind, 'setup-error');
     assert.equal(h.signOutCalls(), 0); assert.doesNotMatch(h.text(), /Create a new account/); h.unmount();
   }
+});
+
+test('confirmed users awaiting MFA receive the sign-in verification recovery path', async () => {
+  const h = callbackHarness(); await h.flush();
+  h.requests[0].resolve(Response.json({ok: false, signedIn: true, mfaRequired: true}, {status: 403}));
+  await h.flush(); assert.equal(h.state().kind, 'setup-error');
+  assert.match(h.text(), /complete two-step verification/);
+  assert.match(h.text(), /Sign in to finish setup/);
+  assert.equal(h.signOutCalls(), 0); h.unmount();
 });

@@ -1,9 +1,15 @@
 "use client";
+import { SchoolYearbookParentPanel } from "@/components/school-yearbook-parent-panel";
 
+import { formatOrderMoney } from "@/lib/order-money";
+import { resolvePhotographerOrderCurrency, type OrderCurrency } from "@/lib/order-currency";
+
+import { loadGalleryImage, cachedGalleryImage, galleryThumbnailUrl } from "@/lib/gallery-image-cache";
 import { retryPortalPreviewImage } from "@/lib/portal-preview-retry";
 import { authorizedEventDownloadImages, canonicalEventOrderEntry, type EventFileDelivery } from "@/lib/event-gallery-media-client";
 
 import { checkoutAttemptForPayload } from "@/lib/checkout-attempt-client";
+import { hasSchoolCheckoutGalleryContext, schoolCheckoutRecoveryUrl } from "@/lib/parent-checkout-recovery";
 
 import { FormEvent, SyntheticEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -58,7 +64,6 @@ import {
 import {
   clearCombineCart,
   groupCartByLane,
-  isMultiLane,
   laneKeyFor,
   loadCombineCart,
   saveCombineCart,
@@ -71,7 +76,7 @@ import OrdersHistoryPanel from "@/components/parents/orders-history-panel";
 import { RetouchPhotoFields, type RetouchPhotoOption } from "@/components/parents/retouch-photo-fields";
 import { isRetouchPackage, isRetouchPrintPurchase, retouchPrintPurchaseIssue, RETOUCH_PRINT_REQUIRED, retouchPhotoLimit, retouchSelectionIssue, retouchSlots, type RetouchSelection } from "@/lib/retouching";
 import { calendarDateInputValue, hasCalendarBoundaryPassed } from "@/lib/calendar-dates";
-import { canOfferParentBackdrops, parentBackdropSelectionIssue, usableParentCutouts, PARENT_BACKDROP_UNAVAILABLE, type ParentBackdropPortrait } from "@/lib/parent-backdrop-access";
+import { canOfferParentBackdrops, parentBackdropSelectionIssue, usableParentCutouts, PARENT_BACKDROP_UNAVAILABLE, PARENT_BACKDROPS_DISABLED, type ParentBackdropPortrait } from "@/lib/parent-backdrop-access";
 import { EventAlbumOverview, EventAlbumSwitcher } from "@/components/parents/event-album-navigation";
 import { EventGalleryCover } from "@/components/parents/event-gallery-cover";
 import { EventAlbumHero } from "@/components/parents/event-album-hero";
@@ -210,10 +215,12 @@ type GalleryContextPayload = {
   composites?: CompositeMediaRow[];
   packages?: PackageRow[];
   backdrops?: BackdropRow[];
+  onlineBackdropsEnabled?: boolean;
   nobgUrls?: Record<string, string>;
   photographerId?: string | null;
   watermarkEnabled?: boolean;
   watermarkLogoUrl?: string;
+  orderCurrency?: OrderCurrency;
   watermarkOpacity?: number | null;
   studioInfo?: {
     businessName: string;
@@ -250,6 +257,7 @@ type EventGalleryContextPayload = {
   photographerId?: string | null;
   watermarkEnabled?: boolean;
   watermarkLogoUrl?: string;
+  orderCurrency?: OrderCurrency;
   watermarkOpacity?: number | null;
   studioInfo?: {
     businessName: string;
@@ -380,6 +388,55 @@ type CartLineItem = {
   laneSchoolName?: string;
   laneStudentName?: string;
 };
+
+function requiresCombinedParentCheckout(
+  schoolMode: boolean,
+  photographerId: string | null,
+  items: Pick<CartLineItem, "laneKey">[],
+  currentLaneKey: string | undefined,
+): boolean {
+  if (!schoolMode || !photographerId) return false;
+  const laneKeys = items.map((item) => item.laneKey ?? currentLaneKey);
+  return new Set(laneKeys).size > 1 || laneKeys.some((key) => key !== currentLaneKey);
+}
+function persistParentCartItems(cartItems: CartLineItem[]): PersistedCartItem[] {
+    return cartItems
+      .filter((item) => !!item.laneKey) // only persist tagged items
+      .map((item) => ({
+        id: item.id,
+        laneKey: item.laneKey as string,
+        packageId: item.packageId,
+        packageName: item.packageName,
+        category: item.category,
+        quantity: item.quantity,
+        packageSubtotalCents: item.packageSubtotalCents,
+        backdropAddOnCents: item.backdropAddOnCents,
+        lineTotalCents: item.lineTotalCents,
+        selectedImageUrl: item.selectedImageUrl,
+        retouchSelections: item.retouchSelections ?? [],
+        digitalSelections: item.digitalSelections ?? [],
+        digitalLimit: item.digitalLimit ?? null,
+        isCompositeOrder: item.isCompositeOrder,
+        compositeTitle: item.compositeTitle,
+        slots: item.slots.map((s) => ({
+          label: s.label,
+          assignedImageUrl: s.assignedImageUrl ?? null,
+        })),
+        backdrop: item.backdrop
+          ? {
+              id: item.backdrop.id,
+              name: item.backdrop.name ?? "Backdrop",
+              imageUrl: item.backdrop.image_url ?? null,
+              blurred: !!item.backdrop.blurred,
+              blurAmount: item.backdrop.blurAmount ?? DEFAULT_BACKDROP_BLUR_PX,
+              tier: item.backdrop.tier ?? null,
+              priceCents: item.backdrop.price_cents ?? 0,
+            }
+          : null,
+        orientation: item.orientation ?? "portrait",
+      }));
+}
+
 type GalleryView = "photos" | "store" | "favorites" | "orders" | "about";
 type EventPhotoStage = "albums" | "grid" | "viewer";
 
@@ -746,12 +803,7 @@ function formatEventDateLabel(value: string | null | undefined) {
   }).format(parsed);
 }
 
-function formatGalleryMoney(cents: number | null | undefined) {
-  const amount = Math.max(0, Number(cents ?? 0) || 0) / 100;
-  return `$${amount.toFixed(2)}`;
-}
-
-function buildLateOrderNotice(policy: LateOrderPolicy | null | undefined) {
+function buildLateOrderNotice(policy: LateOrderPolicy | null | undefined, currency: OrderCurrency) {
   const dueDate = clean(policy?.orderDueDate);
   if (!dueDate) return null;
 
@@ -763,7 +815,7 @@ function buildLateOrderNotice(policy: LateOrderPolicy | null | undefined) {
     Number(policy?.lateHandlingFeePercent ?? 0) || 0,
   );
   const feeParts = [
-    shippingFeeCents > 0 ? `${formatGalleryMoney(shippingFeeCents)} shipping` : "",
+    shippingFeeCents > 0 ? `${formatOrderMoney(shippingFeeCents, currency)} shipping` : "",
     lateHandlingPercent > 0 ? `${lateHandlingPercent}% handling` : "",
   ].filter(Boolean);
   const feeText = feeParts.length
@@ -987,7 +1039,7 @@ function buildGalleryImageCandidates(
     variant === "wall"
       ? uniq([image.previewUrl, image.downloadUrl, image.url, image.thumbnailUrl])
       : variant === "viewer-thumb"
-        ? uniq([image.previewUrl, image.downloadUrl, image.thumbnailUrl, image.url])
+        ? uniq([image.thumbnailUrl, image.previewUrl, image.downloadUrl, image.url])
         : uniq([image.downloadUrl, image.previewUrl, image.thumbnailUrl, image.url]);
 
   return rawCandidates.map((url, candidateIndex) =>
@@ -1135,27 +1187,6 @@ function imageUrlExists(url: string): Promise<boolean> {
     const timeout = window.setTimeout(() => done(false), 8000);
     img.src = url;
   });
-}
-
-function shouldUseAnonymousCanvasCors(url: string | null | undefined): boolean {
-  const candidate = clean(url);
-  if (!candidate) return false;
-  try {
-    const parsed = new URL(candidate, window.location.origin);
-    return !/\.r2\.cloudflarestorage\.com$/i.test(parsed.host);
-  } catch {
-    return true;
-  }
-}
-
-function prepareCanvasImage(img: HTMLImageElement, url: string | null | undefined) {
-  if (shouldUseAnonymousCanvasCors(url)) {
-    img.crossOrigin = "anonymous";
-  } else {
-    img.removeAttribute("crossorigin");
-    img.crossOrigin = null;
-  }
-  img.decoding = "async";
 }
 
 function favoriteStorageKey(projectId: string | null | undefined, email: string | null | undefined, pin: string | null | undefined) {
@@ -2025,51 +2056,24 @@ function getPreviewKind(key: string): PreviewKind {
 }
 
 function useImageAspectRatio(imageUrl?: string | null) {
-  const [aspectRatio, setAspectRatio] = useState<number | null>(() => {
-    if (!imageUrl) return null;
-    return imageAspectRatioCache.get(imageUrl) ?? null;
-  });
-
+  const [measurement, setMeasurement] = useState<{ src: string; ratio: number | null }>({ src: "", ratio: null });
+  const measuredSrc = imageUrl ? galleryThumbnailUrl(imageUrl) : "";
+  const cached = imageUrl ? imageAspectRatioCache.get(imageUrl) : null;
+  const retainedImage = measuredSrc ? cachedGalleryImage(measuredSrc) : null;
+  const retainedRatio = retainedImage ? retainedImage.naturalWidth / retainedImage.naturalHeight : null;
   useEffect(() => {
-    if (!imageUrl) {
-      setAspectRatio(null);
-      return;
-    }
-
-    const cached = imageAspectRatioCache.get(imageUrl);
-    if (cached) {
-      setAspectRatio(cached);
-      return;
-    }
-
+    if (!imageUrl || !measuredSrc || imageAspectRatioCache.has(imageUrl)) return;
     let cancelled = false;
-    const image = new Image();
-
-    image.onload = () => {
-      if (cancelled) return;
-      if (image.naturalWidth > 0 && image.naturalHeight > 0) {
-        const nextRatio = image.naturalWidth / image.naturalHeight;
-        imageAspectRatioCache.set(imageUrl, nextRatio);
-        setAspectRatio(nextRatio);
-        return;
+    void loadGalleryImage(measuredSrc, "high").then((image) => {
+      const ratio = image.naturalWidth / image.naturalHeight;
+      if (Number.isFinite(ratio) && ratio > 0) {
+        imageAspectRatioCache.set(imageUrl, ratio);
+        if (!cancelled) setMeasurement({ src: imageUrl, ratio });
       }
-      setAspectRatio(null);
-    };
-
-    image.onerror = () => {
-      if (!cancelled) {
-        setAspectRatio(null);
-      }
-    };
-
-    image.src = imageUrl;
-
-    return () => {
-      cancelled = true;
-    };
-  }, [imageUrl]);
-
-  return aspectRatio;
+    }).catch(() => { if (!cancelled) setMeasurement({ src: imageUrl, ratio: null }); });
+    return () => { cancelled = true; };
+  }, [imageUrl, measuredSrc]);
+  return cached ?? retainedRatio ?? (measurement.src === imageUrl ? measurement.ratio : null);
 }
 
 function renderPhotoSurface(
@@ -2897,362 +2901,132 @@ function CompositeCanvas({
   preserveForegroundAlignment?: boolean;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const renderKey = `${backdropUrl}|${backdropFallbackUrl ?? ""}|${nobgUrl ?? ""}|${fallbackUrl}|${width}|${height}|${foregroundScale}|${foregroundVerticalOffset}|${trimTransparentForeground ? "trim" : "full"}|${backdropBlurPx}|${preserveForegroundAlignment ? "aligned" : "free"}`;
-  const nextBackdropSrc = backdropUrl || backdropFallbackUrl || "";
-  const nextForegroundSrc = nobgUrl || fallbackUrl;
+  const blurredBackdropRef = useRef<HTMLCanvasElement>(null);
+  const blurredForegroundRef = useRef<HTMLCanvasElement>(null);
+  const foregroundSrc = nobgUrl || fallbackUrl;
+  const thumbnailSrc = nobgUrl ? galleryThumbnailUrl(nobgUrl) : foregroundSrc;
+  const photoIdentity = foregroundSrc;
+  const renderKey = `${backdropUrl}|${backdropFallbackUrl ?? ""}|${foregroundSrc}|${width}|${height}|${foregroundScale}|${foregroundVerticalOffset}|${backdropBlurPx}|${preserveForegroundAlignment ? "aligned" : "free"}`;
   const effectiveBackdropBlurPx = getEffectiveBackdropBlurPx(backdropBlurPx);
   const useDomBlurLayer = effectiveBackdropBlurPx > 0;
-  const [loadedKey, setLoadedKey] = useState("");
-  const [domBackdropSrc, setDomBackdropSrc] = useState(nextBackdropSrc);
-  const [domForegroundSrc, setDomForegroundSrc] = useState(nextForegroundSrc);
-  const [domBackdropLoaded, setDomBackdropLoaded] = useState(false);
-  const [domForegroundLoaded, setDomForegroundLoaded] = useState(false);
-  // Only treat a loaded image as "rendered" if the state src matches the
-  // src we currently WANT to display.  Without this check, switching from
-  // canvas mode → blur mode → a different backdrop can leave us with stale
-  // true flags from a previous render, which hides the fallback photo and
-  // reveals the empty-image black container behind the blur layer.
-  const backdropLoadedForCurrentSrc =
-    domBackdropLoaded && domBackdropSrc === nextBackdropSrc;
-  const foregroundLoadedForCurrentSrc =
-    domForegroundLoaded && domForegroundSrc === nextForegroundSrc;
-  const ready = useDomBlurLayer
-    ? backdropLoadedForCurrentSrc && foregroundLoadedForCurrentSrc
-    : loadedKey === renderKey;
-  const hasRenderedFrame = useDomBlurLayer
-    ? backdropLoadedForCurrentSrc || foregroundLoadedForCurrentSrc
-    : loadedKey.length > 0;
-  // 2026-04-25: Sticky "we've shown at least one frame" flag.  Stays true
-  // forever once we've ever been ready.  Used to keep the canvas / DOM
-  // blur layer at opacity 1 across state changes so the user never sees
-  // the underlying fallback photo (with its blue/gray studio chroma
-  // background) flash through during a re-render — that was the source
-  // of the "blue flashlight" Harout reported when toggling blur or
-  // changing pose.  Browser image caching keeps the OLD <img> content
-  // visible while new srcs load, so atomic swap is seamless.
-  const hasEverRenderedRef = useRef(false);
-  if (ready && !hasEverRenderedRef.current) {
-    hasEverRenderedRef.current = true;
-  }
-  const stickyVisible = ready || hasEverRenderedRef.current;
+  const renderMode = useDomBlurLayer ? "blur" : "canvas";
+  const [renderedFrame, setRenderedFrame] = useState({ identity: "", mode: "", key: "", full: false });
+  const [failedRequest, setFailedRequest] = useState("");
+  const [retryAttempt, setRetryAttempt] = useState(0);
+  const requestKey = `${renderKey}|${retryAttempt}`;
+  const previewFailed = failedRequest === requestKey;
+  // Keep an existing frame during edits to this photo, but never label the
+  // previous pose as the newly selected photo while its preview is loading.
+  const stickyVisible = renderedFrame.identity === photoIdentity && renderedFrame.mode === renderMode;
+  void trimTransparentForeground; // All paths use the complete cutout for alignment.
 
-  useEffect(() => {
-    if (!useDomBlurLayer) return;
-    setDomBackdropSrc((current) => {
-      if (current === nextBackdropSrc) return current;
-      setDomBackdropLoaded(false);
-      return nextBackdropSrc;
-    });
-    setDomForegroundSrc((current) => {
-      if (current === nextForegroundSrc) return current;
-      setDomForegroundLoaded(false);
-      return nextForegroundSrc;
-    });
-  }, [useDomBlurLayer, nextBackdropSrc, nextForegroundSrc]);
-
-  useEffect(() => {
-    if (useDomBlurLayer) return;
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const displayCanvas = canvas;
-
+  useLayoutEffect(() => {
+    const displayCanvas = canvasRef.current;
+    const backdropCanvas = blurredBackdropRef.current;
+    const foregroundCanvas = blurredForegroundRef.current;
+    if (useDomBlurLayer ? !backdropCanvas || !foregroundCanvas : !displayCanvas) return;
     let cancelled = false;
-    const dpr = typeof window !== "undefined" ? window.devicePixelRatio || 1 : 1;
+    const dpr = window.devicePixelRatio || 1;
+    // School previews are bounded to 1200px. Avoid allocating a much larger
+    // retina bitmap than the visible photo can use.
+    const renderScale = Math.min(dpr, 1800 / Math.max(width, height));
     const scratchCanvas = document.createElement("canvas");
-    scratchCanvas.width = width * dpr;
-    scratchCanvas.height = height * dpr;
-    const scratchCtx = scratchCanvas.getContext("2d");
-    if (!scratchCtx) return;
-    const bufferCtx = scratchCtx;
-    bufferCtx.scale(dpr, dpr);
-
+    scratchCanvas.width = Math.max(1, Math.round(width * renderScale));
+    scratchCanvas.height = Math.max(1, Math.round(height * renderScale));
+    const bufferCtx = scratchCanvas.getContext("2d");
+    if (!bufferCtx) return;
+    bufferCtx.scale(renderScale, renderScale);
     const bgSrc = backdropUrl || backdropFallbackUrl || "";
-    const fgSrc = nobgUrl || fallbackUrl;
-    const bgImg = new Image();
-    prepareCanvasImage(bgImg, bgSrc);
-    const fgImg = new Image();
-    prepareCanvasImage(fgImg, fgSrc);
+    let background = cachedGalleryImage(bgSrc);
+    let foreground = cachedGalleryImage(foregroundSrc) || cachedGalleryImage(thumbnailSrc);
+    let fullForeground = !!cachedGalleryImage(foregroundSrc);
 
-    let bgLoaded = false;
-    let fgLoaded = false;
-    let triedBackdropFallback = false;
-    let fgCrop: { sx: number; sy: number; sw: number; sh: number } | null = null;
-
-    function detectForegroundCrop(image: HTMLImageElement) {
-      if (!trimTransparentForeground) return null;
-
-      try {
-        const naturalWidth = image.naturalWidth || image.width;
-        const naturalHeight = image.naturalHeight || image.height;
-        if (!naturalWidth || !naturalHeight) return null;
-
-        const longestSide = Math.max(naturalWidth, naturalHeight);
-        const sampleScale = longestSide > 1200 ? 1200 / longestSide : 1;
-        const sampleWidth = Math.max(1, Math.round(naturalWidth * sampleScale));
-        const sampleHeight = Math.max(1, Math.round(naturalHeight * sampleScale));
-        const sampleCanvas = document.createElement("canvas");
-        sampleCanvas.width = sampleWidth;
-        sampleCanvas.height = sampleHeight;
-        const sampleContext = sampleCanvas.getContext("2d", { willReadFrequently: true });
-        if (!sampleContext) return null;
-
-        sampleContext.drawImage(image, 0, 0, sampleWidth, sampleHeight);
-        const pixelData = sampleContext.getImageData(0, 0, sampleWidth, sampleHeight).data;
-        const columnCounts = new Uint16Array(sampleWidth);
-        const rowCounts = new Uint16Array(sampleHeight);
-        const alphaThreshold = 28;
-
-        for (let y = 0; y < sampleHeight; y += 1) {
-          const rowOffset = y * sampleWidth * 4;
-          for (let x = 0; x < sampleWidth; x += 1) {
-            const alpha = pixelData[rowOffset + x * 4 + 3];
-            if (alpha < alphaThreshold) continue;
-            columnCounts[x] += 1;
-            rowCounts[y] += 1;
-          }
-        }
-        const minColumnHits = Math.max(4, Math.round(sampleHeight * 0.012));
-        const minRowHits = Math.max(4, Math.round(sampleWidth * 0.012));
-
-        let minX = columnCounts.findIndex((count) => count >= minColumnHits);
-        let maxX = -1;
-        for (let x = sampleWidth - 1; x >= 0; x -= 1) {
-          if (columnCounts[x] >= minColumnHits) {
-            maxX = x;
-            break;
-          }
-        }
-
-        let minY = rowCounts.findIndex((count) => count >= minRowHits);
-        let maxY = -1;
-        for (let y = sampleHeight - 1; y >= 0; y -= 1) {
-          if (rowCounts[y] >= minRowHits) {
-            maxY = y;
-            break;
-          }
-        }
-
-        if (minX < 0 || minY < 0 || maxX < 0 || maxY < 0) {
-          minX = sampleWidth;
-          minY = sampleHeight;
-          maxX = -1;
-          maxY = -1;
-
-          for (let y = 0; y < sampleHeight; y += 1) {
-            const rowOffset = y * sampleWidth * 4;
-            for (let x = 0; x < sampleWidth; x += 1) {
-              const alpha = pixelData[rowOffset + x * 4 + 3];
-              if (alpha < alphaThreshold) continue;
-              if (x < minX) minX = x;
-              if (y < minY) minY = y;
-              if (x > maxX) maxX = x;
-              if (y > maxY) maxY = y;
-            }
-          }
-        }
-
-        if (maxX < 0 || maxY < 0) return null;
-
-        const padX = Math.max(1, Math.round(sampleWidth * 0.01));
-        const padTop = Math.max(1, Math.round(sampleHeight * 0.008));
-        const padBottom = Math.max(1, Math.round(sampleHeight * 0.01));
-        const safeMinX = Math.max(0, minX - padX);
-        const safeMinY = Math.max(0, minY - padTop);
-        const safeMaxX = Math.min(sampleWidth - 1, maxX + padX);
-        const safeMaxY = Math.min(sampleHeight - 1, maxY + padBottom);
-
-        return {
-          sx: Math.round((safeMinX / sampleWidth) * naturalWidth),
-          sy: Math.round((safeMinY / sampleHeight) * naturalHeight),
-          sw: Math.max(1, Math.round(((safeMaxX - safeMinX + 1) / sampleWidth) * naturalWidth)),
-          sh: Math.max(1, Math.round(((safeMaxY - safeMinY + 1) / sampleHeight) * naturalHeight)),
-        };
-      } catch {
-        return null;
-      }
+    function copyFrame(target: HTMLCanvasElement, source: HTMLCanvasElement) {
+      const context = target.getContext("2d");
+      if (!context) return;
+      target.width = source.width;
+      target.height = source.height;
+      context.drawImage(source, 0, 0);
     }
 
     function draw() {
-      if (cancelled || !bgLoaded || !fgLoaded) return;
+      if (cancelled || !background || !foreground || !bufferCtx) return;
       bufferCtx.clearRect(0, 0, width, height);
-
-      // Draw backdrop (cover)
       const canvasRatio = width / height;
-      const bgRatio = bgImg.naturalWidth / bgImg.naturalHeight;
-      let sx = 0, sy = 0, sw = bgImg.naturalWidth, sh = bgImg.naturalHeight;
+      const bgRatio = background.naturalWidth / background.naturalHeight;
+      let sx = 0, sy = 0, sw = background.naturalWidth, sh = background.naturalHeight;
       if (bgRatio > canvasRatio) {
-        sw = bgImg.naturalHeight * canvasRatio;
-        sx = (bgImg.naturalWidth - sw) / 2;
+        sw = background.naturalHeight * canvasRatio;
+        sx = (background.naturalWidth - sw) / 2;
       } else {
-        sh = bgImg.naturalWidth / canvasRatio;
-        sy = (bgImg.naturalHeight - sh) / 2;
+        sh = background.naturalWidth / canvasRatio;
+        sy = (background.naturalHeight - sh) / 2;
       }
-      if (effectiveBackdropBlurPx > 0) {
-        bufferCtx.filter = `blur(${effectiveBackdropBlurPx}px)`;
+      bufferCtx.drawImage(background, sx, sy, sw, sh, 0, 0, width, height);
+      if (useDomBlurLayer && backdropCanvas) {
+        copyFrame(backdropCanvas, scratchCanvas);
+        bufferCtx.clearRect(0, 0, width, height);
       }
-      bufferCtx.drawImage(bgImg, sx, sy, sw, sh, 0, 0, width, height);
-      if (effectiveBackdropBlurPx > 0) {
-        bufferCtx.filter = "none";
-      }
-
-      // For blurred-original mode, redraw the cutout using the exact same cover math
-      // as the original photo so the subject stays perfectly aligned.
-      if (preserveForegroundAlignment) {
-        const fgRatio = fgImg.naturalWidth / fgImg.naturalHeight;
-        let fgSx = 0;
-        let fgSy = 0;
-        let fgSw = fgImg.naturalWidth;
-        let fgSh = fgImg.naturalHeight;
+      if (preserveForegroundAlignment && !useDomBlurLayer) {
+        const fgRatio = foreground.naturalWidth / foreground.naturalHeight;
+        let fgSx = 0, fgSy = 0, fgSw = foreground.naturalWidth, fgSh = foreground.naturalHeight;
         if (fgRatio > canvasRatio) {
-          fgSw = fgImg.naturalHeight * canvasRatio;
-          fgSx = (fgImg.naturalWidth - fgSw) / 2;
+          fgSw = foreground.naturalHeight * canvasRatio;
+          fgSx = (foreground.naturalWidth - fgSw) / 2;
         } else {
-          fgSh = fgImg.naturalWidth / canvasRatio;
-          fgSy = (fgImg.naturalHeight - fgSh) / 2;
+          fgSh = foreground.naturalWidth / canvasRatio;
+          fgSy = (foreground.naturalHeight - fgSh) / 2;
         }
-        bufferCtx.drawImage(fgImg, fgSx, fgSy, fgSw, fgSh, 0, 0, width, height);
+        bufferCtx.drawImage(foreground, fgSx, fgSy, fgSw, fgSh, 0, 0, width, height);
       } else {
-        // Draw foreground (contain, centered).
-        // 2026-04-25: in this branch (used by landscape mode), explicitly
-        // skip fgCrop and use the foreground's NATURAL dimensions.  The
-        // DOM blur path renders the foreground via a sized <img
-        // object-fit:contain> on the full image — it doesn't trim
-        // transparent margins.  Previously the canvas trimmed via fgCrop,
-        // which produced different visible content (e.g. a parent's hand
-        // sitting near the top of the source got pulled in as part of the
-        // trimmed bbox) and shifted the kid downward.  By using natural
-        // dimensions here we render the same content the DOM does,
-        // keeping landscape blur-on and blur-off visually identical.
-      const sourceWidth = fgImg.naturalWidth;
-      const sourceHeight = fgImg.naturalHeight;
-      const fgRatio = sourceWidth / sourceHeight;
-      let dw: number, dh: number;
-      if (fgRatio > canvasRatio) {
-        dw = width;
-        dh = width / fgRatio;
-      } else {
-        dh = height;
-        dw = height * fgRatio;
+        // Match the DOM blur path's contain sizing, including its unscaled
+        // portrait alignment and landscape scale/vertical placement.
+        const fgRatio = foreground.naturalWidth / foreground.naturalHeight;
+        let dw = fgRatio > canvasRatio ? width : height * fgRatio;
+        let dh = fgRatio > canvasRatio ? width / fgRatio : height;
+        const alignedPortrait = useDomBlurLayer && preserveForegroundAlignment;
+        if (!alignedPortrait) { dw *= foregroundScale; dh *= foregroundScale; }
+        const naturalDy = (height - dh) / 2 + (alignedPortrait ? 0 : height * foregroundVerticalOffset * (useDomBlurLayer ? foregroundScale : 1));
+        const dy = !useDomBlurLayer && dh <= height
+          ? clampNumber(naturalDy, -height * 0.02, height - dh + height * 0.035)
+          : naturalDy;
+        bufferCtx.drawImage(foreground, (width - dw) / 2, dy, dw, dh);
       }
-      dw *= foregroundScale;
-      dh *= foregroundScale;
-      const dx = (width - dw) / 2;
-      // Keep parity with the DOM-blur path's foreground placement.
-      // The DOM path applies translateY(foregroundVerticalOffset%) directly
-      // with NO clamp.  Canvas matches: when the cutout is taller than the
-      // canvas (landscape mode where foregroundScale > 1 makes dh > height),
-      // skip the upward clamp so the head stays where the offset says it
-      // should be (matching DOM blur mode exactly).  Keep the portrait-mode
-      // clamp because there it bounds the natural alignment correctly.
-      const naturalDy = (height - dh) / 2 + height * foregroundVerticalOffset;
-      const dy = dh <= height
-        ? clampNumber(
-            naturalDy,
-            -height * 0.02,
-            height - dh + height * 0.035,
-          )
-        : naturalDy;
-      bufferCtx.drawImage(fgImg, dx, dy, dw, dh);
-      }
-
-      const displayCtx = displayCanvas.getContext("2d");
-      if (!displayCtx) return;
-      displayCanvas.width = scratchCanvas.width;
-      displayCanvas.height = scratchCanvas.height;
-      displayCtx.setTransform(1, 0, 0, 1, 0, 0);
-      displayCtx.clearRect(0, 0, displayCanvas.width, displayCanvas.height);
-      displayCtx.drawImage(scratchCanvas, 0, 0);
-      if (cancelled) {
-        return;
-      }
-
-      setLoadedKey(renderKey);
+      const target = useDomBlurLayer ? foregroundCanvas : displayCanvas;
+      if (target) copyFrame(target, scratchCanvas);
+      setRenderedFrame({ identity: photoIdentity, mode: renderMode, key: renderKey, full: fullForeground });
     }
 
-    bgImg.onload = () => { bgLoaded = true; draw(); };
-    fgImg.onload = () => {
-      fgCrop = detectForegroundCrop(fgImg);
-      fgLoaded = true;
-      draw();
-    };
-    bgImg.onerror = () => {
-      if (!triedBackdropFallback && backdropFallbackUrl && backdropFallbackUrl !== backdropUrl) {
-        triedBackdropFallback = true;
-        prepareCanvasImage(bgImg, backdropFallbackUrl);
-        bgImg.src = backdropFallbackUrl;
-        return;
-      }
-      bgLoaded = true;
-      draw();
-    };
-    fgImg.onerror = () => {
-      // If nobg fails, fall back to original photo
-      prepareCanvasImage(fgImg, fallbackUrl);
-      fgImg.src = fallbackUrl;
-    };
-
-    bgImg.src = bgSrc;
-    fgImg.src = fgSrc;
-
+    // A thumbnail already drawn in the strip can update the large pose before
+    // a slower full preview arrives. Cached images draw before the next paint.
+    draw();
+    const backgroundReady = background ? Promise.resolve(background) : loadGalleryImage(bgSrc, "high")
+      .catch((error) => {
+        if (backdropFallbackUrl && backdropFallbackUrl !== bgSrc) return loadGalleryImage(backdropFallbackUrl, "high");
+        throw error;
+      });
+    void backgroundReady.then((image) => { background = image; draw(); }).catch(() => {
+      if (!cancelled) setFailedRequest(requestKey);
+    });
+    if (!fullForeground && thumbnailSrc !== foregroundSrc) {
+      void loadGalleryImage(thumbnailSrc, "high").then((image) => {
+        if (!fullForeground) { foreground = image; draw(); }
+      }).catch(() => {});
+    }
+    if (!fullForeground) {
+      void loadGalleryImage(foregroundSrc, "high").then((image) => {
+        foreground = image;
+        fullForeground = true;
+        draw();
+      }).catch(() => {
+        if (!cancelled && !foreground) setFailedRequest(requestKey);
+      });
+    }
     return () => { cancelled = true; };
-  }, [useDomBlurLayer, backdropUrl, backdropFallbackUrl, nobgUrl, fallbackUrl, width, height, renderKey, trimTransparentForeground, preserveForegroundAlignment, effectiveBackdropBlurPx]);
+  }, [useDomBlurLayer, renderMode, backdropUrl, backdropFallbackUrl, foregroundSrc, thumbnailSrc, photoIdentity, width, height, renderKey, foregroundScale, foregroundVerticalOffset, preserveForegroundAlignment, requestKey]);
 
-  // 2026-04-23 fix: on narrow mobile viewports the previous rules
-  // (`width: auto; height: min(100%, ${h}px); aspectRatio`) left BOTH
-  // axes constrained — `maxWidth: 100%` clamped width to the parent,
-  // height stayed locked at 100% of parent, and `aspect-ratio` was
-  // ignored because CSS won't override an explicitly-set height.  The
-  // canvas filled the stretched wrapper and portraits looked
-  // vertically-elongated.  New rule: drive width from parent (100%,
-  // capped at natural image width), let `aspect-ratio` derive height,
-  // and fall back to `maxHeight: 100%` if the derived height would
-  // overflow (in which case aspect-ratio scales width back down
-  // proportionally, preserving the ratio).  Works identically on
-  // desktop because wide parents never trigger the max-width clamp.
-  // Responsive mode: we want the wrapper to respect BOTH the parent's
-  // width (up to the photo's natural width) AND the photo's aspect
-  // ratio, AND not overflow the parent's height.  The old version
-  // combined `width:100%` with `aspectRatio` but did not set `height`,
-  // which left the browser to infer height from the flex parent —
-  // sometimes producing a landscape box for a portrait photo, which
-  // forced `object-fit:cover` on the foreground cutout to crop/stretch.
-  //
-  // Wrapper sizing: keep width:100% so the box always has a defined
-  // dimension (without it, the absolute-positioned children inside
-  // collapse the wrapper to 0×0, which is what produced the "viewer
-  // 2026-04-25: removed the wrapper `backgroundImage: url(backdrop) cover`
-  // fill that previously painted the backdrop behind the canvas to mask
-  // letterbox bars.  The new aspect-ratio sizing (height-anchored, width
-  // derived) keeps the wrapper exactly the same shape as the canvas, so
-  // there's no letterbox to mask in normal viewports.  Worse, that fill
-  // was the source of the "blue flashlight" flash Harout reported — when
-  // changing pose or toggling blur, the canvas opacity briefly drops to 0
-  // during the redraw, and the wrapper's bare backdrop image painted
-  // through for a frame before the new composite drew over it.  Removing
-  // it eliminates the flash entirely; if a very narrow viewport ever
-  // letterboxes the canvas (max-width clamp without aspect re-derive),
-  // we'll see thin black bars instead of bare backdrop — acceptable trade.
-  const wrapperBackdropFill: React.CSSProperties = {};
-
-  // 2026-04-25: drive width from height + aspect-ratio so the wrapper
-  // ALWAYS preserves the photo's aspect.  Previously we had width:100% +
-  // height:auto + aspect-ratio + max-height — which works UNTIL the
-  // parent's available height is shorter than what aspect-ratio would
-  // require.  In that case the height clamp fires but width stays at
-  // 100% of parent, and the aspect-ratio constraint is silently
-  // violated — portrait photos end up rendering with landscape-shaped
-  // wrappers (the visible bug Harout flagged: "see it should show
-  // portrait till i toggle on").
-  //
-  // The fix: anchor height to 100% of the parent (which has its own
-  // explicit min(68vh, …) cap from the call site), let aspect-ratio
-  // drive width.  If width derived from aspect-ratio overflows the
-  // parent, max-width:100% pulls it back AND because height is the
-  // anchored axis, aspect-ratio re-derives height down to keep the
-  // ratio.  This cleanly fits the wrapper inside the parent box like
-  // an `<img>` with `object-fit:contain`, but works on a div with
-  // absolute children (which would otherwise collapse to 0×0 if both
-  // width and height were `auto`).
+  // Anchor height and derive width from the photo aspect ratio, retaining
+  // the existing portrait/landscape fit on both desktop and narrow screens.
   const wrapperStyle: React.CSSProperties = responsive
     ? {
         position: "relative",
@@ -3266,181 +3040,33 @@ function CompositeCanvas({
         alignSelf: "center",
         borderRadius: 6,
         overflow: "hidden",
-        ...wrapperBackdropFill,
         ...style,
       }
     : { position: "relative", width, height, ...style };
 
   return (
-    <div style={wrapperStyle}>
-      {/*
-        ✅ PERF: Render the original photo as a base layer while the composite
-        is still loading. This eliminates the "Loading preview…" gray box so
-        parents see their photo immediately. The canvas/blur layer renders on
-        top and replaces this once drawn; we unmount it after the first frame
-        so later backdrop swaps stay seamless (old composite stays visible
-        until the new one draws, because the canvas updates atomically).
-      */}
-      {/*
-        Fallback original photo — rendered as a BASE LAYER underneath the
-        canvas/DOM blur layer.  Previously we hid this the instant the
-        composite layer "finished", but in blur mode a stale src mismatch
-        could leave the blur layer showing its #000 background BEFORE the
-        new images loaded, producing a blank viewer.  Keep the fallback
-        present while the composite isn't truly `ready` so the user
-        always sees at least the original photo (letterboxed).  Once the
-        composite is fully rendered it covers this base layer anyway,
-        so there's no visual regression when everything's healthy.
-      */}
-      {/* 2026-04-25: only render the fallback original photo BEFORE the
-          first composite frame has been drawn.  Once we've ever rendered,
-          the canvas/blur layer (kept sticky-opaque above) shows the
-          composite — re-mounting the fallback during a re-render would
-          flash the original photo's chroma backdrop through, which was
-          the source of the "blue flashlight" Harout reported. */}
-      {fallbackUrl && !ready && !hasEverRenderedRef.current ? (
-        <img
-          src={fallbackUrl}
-          alt=""
-          aria-hidden
-          draggable={false}
-          decoding="async"
-          fetchPriority="high"
-          style={{
-            position: "absolute",
-            inset: 0,
-            width: "100%",
-            height: "100%",
-            objectFit: "contain",
-            borderRadius: 6,
-            pointerEvents: "none",
-            userSelect: "none",
-            display: "block",
-          }}
-        />
-      ) : null}
-      {useDomBlurLayer ? (
-        <div
-          style={{
-            position: "absolute",
-            inset: 0,
-            overflow: "hidden",
-            borderRadius: 6,
-            // 2026-04-25: stay opaque once we've ever rendered.  Browser
-            // image caching keeps the OLD <img> content visible while new
-            // srcs load, so atomic swap is seamless and we don't expose
-            // the fallback photo's chroma backdrop during a transition.
-            // No fade transition — instant opacity prevents the blue flash.
-            opacity: stickyVisible ? 1 : 0,
-            // Transparent background — if the images hiccup, the fallback
-            // image layer under us still shows through rather than being
-            // hidden by a solid black fill.
-            background: "transparent",
-          }}
-        >
-          <img
-            src={domBackdropSrc}
-            alt=""
-            draggable={false}
-            decoding="async"
-            onLoad={() => setDomBackdropLoaded(true)}
-            onError={() => {
-              if (backdropFallbackUrl && domBackdropSrc !== backdropFallbackUrl) {
-                setDomBackdropSrc(backdropFallbackUrl);
-                return;
-              }
-              setDomBackdropLoaded(true);
-            }}
-            style={{
-              position: "absolute",
-              inset: 0,
-              width: "100%",
-              height: "100%",
-              objectFit: "cover",
-              filter: `blur(${effectiveBackdropBlurPx}px)`,
-              transform: `translateZ(0) scale(${1 + Math.min(0.12, effectiveBackdropBlurPx / 220)})`,
-              transformOrigin: "center center",
-              display: "block",
-              userSelect: "none",
-              pointerEvents: "none",
-              willChange: "filter, transform",
-              backfaceVisibility: "hidden",
-              contain: "paint",
-              transition: "filter 120ms linear, transform 120ms linear",
-            }}
-          />
-          <img
-            src={domForegroundSrc}
-            alt=""
-            draggable={false}
-            decoding="async"
-            onLoad={() => setDomForegroundLoaded(true)}
-            onError={() => {
-              if (domForegroundSrc !== fallbackUrl) {
-                setDomForegroundSrc(fallbackUrl);
-                return;
-              }
-              setDomForegroundLoaded(true);
-            }}
-            style={
-              preserveForegroundAlignment
-                ? {
-                    position: "absolute",
-                    inset: 0,
-                    width: "100%",
-                    height: "100%",
-                    // contain (not cover) so the person cutout is always
-                    // shown at their true aspect ratio.  cover would
-                    // distort when the wrapper's aspect doesn't perfectly
-                    // match the source photo (e.g. when max-height clamps
-                    // a portrait wrapper into a wider-than-tall box).
-                    // The backdrop above still uses cover to fill the
-                    // background; the foreground only fills the bit it
-                    // actually covers, with transparent margin where
-                    // there's no person — exactly what the alpha cutout
-                    // implies anyway.
-                    objectFit: "contain",
-                    display: "block",
-                    userSelect: "none",
-                    pointerEvents: "none",
-                  }
-                : {
-                    position: "absolute",
-                    left: "50%",
-                    top: "50%",
-                    width: `${foregroundScale * 100}%`,
-                    height: `${foregroundScale * 100}%`,
-                    transform: `translate(-50%, -50%) translateY(${foregroundVerticalOffset * 100}%)`,
-                    objectFit: "contain",
-                    display: "block",
-                    userSelect: "none",
-                    pointerEvents: "none",
-                  }
-            }
-          />
+    <div style={wrapperStyle} data-preview-state={stickyVisible ? renderedFrame.full ? "full" : "thumbnail" : "loading"}>
+      {!stickyVisible || (previewFailed && renderedFrame.key !== renderKey) ? (
+        <div role="status" style={{ position: "absolute", inset: 0, display: "flex", gap: 10, alignItems: "center", justifyContent: "center", color: "#aaa", fontSize: 13, zIndex: 2 }}>
+          {previewFailed ? <>Preview unavailable. <button type="button" onClick={() => setRetryAttempt((attempt) => attempt + 1)}>Retry photo</button></> : "Loading photo…"}
         </div>
-      ) : (
-        <canvas
-          ref={canvasRef}
-          style={{
-            width: "100%",
-            height: "100%",
-            // object-fit: contain preserves the canvas's intrinsic aspect
-            // (set from the photo's natural width/height) even when the
-            // wrapper has been clamped to a different shape by max-height.
-            // Without this, the browser stretched the bitmap to fill the
-            // wrapper and the subject got squeezed.
-            objectFit: "contain",
-            display: "block",
-            borderRadius: 6,
-            // 2026-04-25: same sticky-visible logic as DOM blur layer.
-            // Once we've ever drawn a frame, stay opaque — the canvas
-            // bitmap holds the last-drawn content while a new draw is
-            // in flight, so atomic swap is seamless without a fade.
-            opacity: stickyVisible ? 1 : 0,
-          }}
-        />
-      )}
+      ) : null}
+      {/* Retain both bitmap branches so rapid blur toggles can return to an
+          already painted canvas even after the decoded image cache expires. */}
+      <div style={{ position: "absolute", inset: 0, overflow: "hidden", borderRadius: 6, display: useDomBlurLayer ? "block" : "none", opacity: stickyVisible ? 1 : 0 }}>
+          {/* CSS blur also works in Safari, where canvas filter is unreliable.
+              Drawing retained decoded images avoids a second no-store request. */}
+          <canvas ref={blurredBackdropRef} style={{
+            position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover",
+            filter: `blur(${effectiveBackdropBlurPx}px)`,
+            transform: `translateZ(0) scale(${1 + Math.min(0.12, effectiveBackdropBlurPx / 220)})`,
+            transformOrigin: "center center", display: "block", pointerEvents: "none",
+            willChange: "filter, transform", backfaceVisibility: "hidden", contain: "paint",
+            transition: "filter 120ms linear, transform 120ms linear",
+          }} />
+          <canvas ref={blurredForegroundRef} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "contain", display: "block", pointerEvents: "none" }} />
+      </div>
+      <canvas ref={canvasRef} style={{ width: "100%", height: "100%", objectFit: "contain", display: useDomBlurLayer ? "none" : "block", borderRadius: 6, opacity: stickyVisible ? 1 : 0 }} />
       {showWatermark && watermarkText ? (
         <WatermarkOverlay
           text={watermarkText}
@@ -3449,11 +3075,6 @@ function CompositeCanvas({
           variant={watermarkVariant}
         />
       ) : null}
-      {/*
-        "Loading preview…" overlay removed: the base <img> above now shows
-        the original photo instantly while the composite draws, so a
-        placeholder text is no longer needed.
-      */}
     </div>
   );
 }
@@ -3475,75 +3096,69 @@ function MiniComposite({
   backdropBlurPx?: number;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [visible, setVisible] = useState(() => typeof IntersectionObserver === "undefined");
+  const foregroundSrc = galleryThumbnailUrl(nobgUrl || fallbackUrl);
 
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
+    if (typeof IntersectionObserver === "undefined") return;
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) {
+        setVisible(true);
+        observer.disconnect();
+      }
+    }, { rootMargin: "150px" });
+    observer.observe(canvas);
+    return () => observer.disconnect();
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!visible) return;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
-
-    const dpr = typeof window !== "undefined" ? window.devicePixelRatio || 1 : 1;
-    canvas.width = size * dpr;
-    canvas.height = size * dpr;
-    ctx.scale(dpr, dpr);
-
+    let cancelled = false;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
     const bgSrc = backdropUrl || backdropFallbackUrl || "";
-    const fgSrc = nobgUrl || fallbackUrl;
-    const bgImg = new Image();
-    prepareCanvasImage(bgImg, bgSrc);
-    const fgImg = new Image();
-    prepareCanvasImage(fgImg, fgSrc);
-
-    let bgDone = false, fgDone = false;
-    let triedBackdropFallback = false;
+    let background = cachedGalleryImage(bgSrc);
+    let foreground = cachedGalleryImage(foregroundSrc);
 
     function draw() {
-      if (!bgDone || !fgDone) return;
-      ctx!.clearRect(0, 0, size, size);
-      // BG cover (square crop)
-      const bgR = bgImg.naturalWidth / bgImg.naturalHeight;
-      let sx = 0, sy = 0, sw = bgImg.naturalWidth, sh = bgImg.naturalHeight;
-      if (bgR > 1) { sw = sh; sx = (bgImg.naturalWidth - sw) / 2; }
-      else { sh = sw; sy = (bgImg.naturalHeight - sh) / 2; }
-      const effectiveBackdropBlurPx = getEffectiveBackdropBlurPx(backdropBlurPx);
-      if (effectiveBackdropBlurPx > 0) {
-        ctx!.filter = `blur(${effectiveBackdropBlurPx}px)`;
-      }
-      ctx!.drawImage(bgImg, sx, sy, sw, sh, 0, 0, size, size);
-      if (effectiveBackdropBlurPx > 0) {
-        ctx!.filter = "none";
-      }
-      // FG contain
-      const fR = fgImg.naturalWidth / fgImg.naturalHeight;
-      let dw: number, dh: number;
-      if (fR > 1) { dw = size; dh = size / fR; } else { dh = size; dw = size * fR; }
-      ctx!.drawImage(fgImg, (size - dw) / 2, (size - dh) / 2, dw, dh);
+      if (cancelled || !background || !foreground || !ctx) return;
+      canvas!.width = Math.max(1, Math.round(size * dpr));
+      canvas!.height = Math.max(1, Math.round(size * dpr));
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      const bgR = background.naturalWidth / background.naturalHeight;
+      let sx = 0, sy = 0, sw = background.naturalWidth, sh = background.naturalHeight;
+      if (bgR > 1) { sw = sh; sx = (background.naturalWidth - sw) / 2; }
+      else { sh = sw; sy = (background.naturalHeight - sh) / 2; }
+      const blur = getEffectiveBackdropBlurPx(backdropBlurPx);
+      if (blur > 0) ctx.filter = `blur(${blur}px)`;
+      ctx.drawImage(background, sx, sy, sw, sh, 0, 0, size, size);
+      ctx.filter = "none";
+      const fR = foreground.naturalWidth / foreground.naturalHeight;
+      const dw = fR > 1 ? size : size * fR;
+      const dh = fR > 1 ? size / fR : size;
+      ctx.drawImage(foreground, (size - dw) / 2, (size - dh) / 2, dw, dh);
     }
-
-    bgImg.onload = () => { bgDone = true; draw(); };
-    fgImg.onload = () => { fgDone = true; draw(); };
-    bgImg.onerror = () => {
-      if (!triedBackdropFallback && backdropFallbackUrl && backdropFallbackUrl !== backdropUrl) {
-        triedBackdropFallback = true;
-        prepareCanvasImage(bgImg, backdropFallbackUrl);
-        bgImg.src = backdropFallbackUrl;
-        return;
-      }
-      bgDone = true;
+    draw();
+    const backgroundReady = background ? Promise.resolve(background) : loadGalleryImage(bgSrc, "low")
+      .catch((error) => {
+        if (backdropFallbackUrl && backdropFallbackUrl !== bgSrc) return loadGalleryImage(backdropFallbackUrl, "low");
+        throw error;
+      });
+    const foregroundReady = foreground ? Promise.resolve(foreground) : loadGalleryImage(foregroundSrc, "low");
+    void Promise.all([backgroundReady, foregroundReady]).then(([bg, fg]) => {
+      background = bg;
+      foreground = fg;
       draw();
-    };
-    fgImg.onerror = () => { fgDone = true; draw(); };
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [visible, backdropUrl, backdropFallbackUrl, foregroundSrc, size, backdropBlurPx]);
 
-    bgImg.src = bgSrc;
-    fgImg.src = fgSrc;
-  }, [backdropUrl, backdropFallbackUrl, nobgUrl, fallbackUrl, size, backdropBlurPx]);
-
-  return (
-    <canvas
-      ref={canvasRef}
-      style={{ width: size, height: size, display: "block" }}
-    />
-  );
+  return <canvas ref={canvasRef} style={{ width: size, height: size, display: "block" }} />;
 }
 
 /** Smaller backdrop thumbnail with canvas composite preview */
@@ -3687,6 +3302,7 @@ export default function ParentGalleryPage() {
   const sessionId = searchParams.get("session_id") ?? "";
   const mode = searchParams.get("mode") ?? "school";
   const isSchoolMode = mode !== "event";
+  const schoolCheckoutContextMissing = isSchoolMode && !hasSchoolCheckoutGalleryContext({ pin, schoolId, email: schoolViewerEmail });
   // 2026-04-25: Optional ?tab=orders deep-link from the receipt email.
   // Drops the parent straight onto their Orders tab once the gallery loads.
   const initialTabHint = searchParams.get("tab") ?? "";
@@ -3711,7 +3327,14 @@ export default function ParentGalleryPage() {
   const eventPhotoWallRef = useRef<HTMLDivElement | null>(null);
   const [packages, setPackages] = useState<PackageRow[]>([]);
   const [selectedPkg, setSelectedPkg] = useState<PackageRow | null>(null);
+  // Reorder hydration reacts to Orders-to-Photos navigation as well as load.
+  const [activeView, setActiveView] = useState<GalleryView>("photos");
   const [cartItems, setCartItems] = useState<CartLineItem[]>([]);
+  const [reorderBackdropReview, setReorderBackdropReview] = useState<{
+    photographerId: string;
+    items: CartLineItem[];
+    originalBackgroundCount: number;
+  } | null>(null);
 
   // ── Combine-cart sessionStorage sync (Phase 1d) ──────────────────────────
   //
@@ -3727,43 +3350,10 @@ export default function ParentGalleryPage() {
 
   // Convert the in-memory CartLineItem[] into the flat persisted shape.
   // Stable across renders so we don't rewrite sessionStorage every render.
-  const persistedItems = useMemo<PersistedCartItem[]>(() => {
-    return cartItems
-      .filter((item) => !!item.laneKey) // only persist tagged items
-      .map((item) => ({
-        id: item.id,
-        laneKey: item.laneKey as string,
-        packageId: item.packageId,
-        packageName: item.packageName,
-        category: item.category,
-        quantity: item.quantity,
-        packageSubtotalCents: item.packageSubtotalCents,
-        backdropAddOnCents: item.backdropAddOnCents,
-        lineTotalCents: item.lineTotalCents,
-        selectedImageUrl: item.selectedImageUrl,
-        retouchSelections: item.retouchSelections ?? [],
-        digitalSelections: item.digitalSelections ?? [],
-        digitalLimit: item.digitalLimit ?? null,
-        isCompositeOrder: item.isCompositeOrder,
-        compositeTitle: item.compositeTitle,
-        slots: item.slots.map((s) => ({
-          label: s.label,
-          assignedImageUrl: s.assignedImageUrl ?? null,
-        })),
-        backdrop: item.backdrop
-          ? {
-              id: item.backdrop.id,
-              name: item.backdrop.name ?? "Backdrop",
-              imageUrl: item.backdrop.image_url ?? null,
-              blurred: !!item.backdrop.blurred,
-              blurAmount: item.backdrop.blurAmount ?? DEFAULT_BACKDROP_BLUR_PX,
-              tier: item.backdrop.tier ?? null,
-              priceCents: item.backdrop.price_cents ?? 0,
-            }
-          : null,
-        orientation: item.orientation ?? "portrait",
-      }));
-  }, [cartItems]);
+  const persistedItems = useMemo<PersistedCartItem[]>(
+    () => persistParentCartItems(cartItems),
+    [cartItems],
+  );
 
   const [selectedOrderQty, setSelectedOrderQty] = useState(1);
   const [packageQuantities, setPackageQuantities] = useState<Record<string, number>>({});
@@ -3810,6 +3400,7 @@ export default function ParentGalleryPage() {
   const [shippingPostalCode, setShippingPostalCode] = useState("");
   const [placing, setPlacing] = useState(false);
   const [confirmingPayment, setConfirmingPayment] = useState(false);
+  const galleryLoading = loading || (confirmingPayment && checkoutStatus === "success" && schoolCheckoutContextMissing);
   const [orderError, setOrderError] = useState("");
   const [orderId, setOrderId] = useState("");
   const [placed, setPlaced] = useState(false);
@@ -3836,6 +3427,7 @@ export default function ParentGalleryPage() {
   // ── Backdrop selector (school mode only) ────────────────────────────────
   const [backdropPickerOpen, setBackdropPickerOpen] = useState(false);
   const [backdrops, setBackdrops] = useState<BackdropRow[]>([]);
+  const [onlineBackdropsEnabled, setOnlineBackdropsEnabled] = useState(true);
   // 2026-04-26: Tracks how many orders this parent has on this gallery,
   // pushed up from OrdersHistoryPanel via onCountChange.  Used to render
   // an "(N)" badge on the Orders tab label so the parent can see the
@@ -3890,13 +3482,13 @@ export default function ParentGalleryPage() {
       schoolId: schId,
       studentId: sId,
       pin: clean(pin),
-      email: clean(parentEmail),
+      email: clean(schoolViewerEmail),
       schoolName: clean(schoolName) || "School",
       studentName,
       className:
         ((student as unknown as { class_name?: string | null })?.class_name as string | null) ?? null,
     };
-  }, [photographerId, student, pin, parentEmail, schoolName]);
+  }, [photographerId, student, pin, schoolViewerEmail, schoolName]);
 
   // Hydrate from sessionStorage once photographerId is known.
   useEffect(() => {
@@ -4037,6 +3629,7 @@ export default function ParentGalleryPage() {
       return image?.previewUrl || image?.url || null;
     };
     const restored: CartLineItem[] = [];
+    const originalBackgroundItems: CartLineItem[] = [];
     for (const raw of parsed as SnapshotEntry[]) {
       const pkg = packages.find((p) => p.id === raw.packageId);
       if (!pkg) continue; // package was removed since the order — skip
@@ -4046,7 +3639,9 @@ export default function ParentGalleryPage() {
       let backdropSelection: CartBackdropSelection | null = null;
       let backdropAddOnCents = 0;
       if (raw.backdrop?.id) {
-        const bd = backdrops.find((b) => b.id === raw.backdrop?.id);
+        const bd = onlineBackdropsEnabled
+          ? backdrops.find((b) => b.id === raw.backdrop?.id)
+          : undefined;
         if (bd) {
           if (bd.tier === "premium") {
             backdropAddOnCents = Math.round(bd.price_cents);
@@ -4069,9 +3664,10 @@ export default function ParentGalleryPage() {
       const itemId =
         typeof crypto !== "undefined" && "randomUUID" in crypto
           ? crypto.randomUUID()
-          : `reorder_${Date.now()}_${restored.length}`;
+          : `reorder_${Date.now()}_${restored.length + originalBackgroundItems.length}`;
 
-      restored.push({
+      const requiresOriginalBackgroundReview = !!raw.backdrop?.id && !backdropSelection;
+      const restoredItem: CartLineItem = {
         id: itemId,
         packageId: pkg.id,
         packageName: pkg.name,
@@ -4091,7 +3687,7 @@ export default function ParentGalleryPage() {
         isCompositeOrder: !!raw.isComposite,
         compositeTitle: raw.compositeTitle ?? null,
         backdrop: backdropSelection,
-        orientation: raw.orientation ?? "portrait",
+        orientation: requiresOriginalBackgroundReview ? "portrait" : raw.orientation ?? "portrait",
         // Tag with the current gallery's lane (best-effort — combine
         // hydration runs separately and re-tags as needed).
         laneKey: currentLane?.laneKey,
@@ -4101,11 +3697,22 @@ export default function ParentGalleryPage() {
         laneEmail: currentLane?.email,
         laneSchoolName: currentLane?.schoolName,
         laneStudentName: currentLane?.studentName,
-      });
+      };
+      // A reorder is a new purchase. Hold changed backgrounds for review.
+      // The source paid snapshot and its delivery assets are never rewritten.
+      if (requiresOriginalBackgroundReview) originalBackgroundItems.push(restoredItem);
+      else restored.push(restoredItem);
     }
 
-    if (restored.length > 0) {
+    if (originalBackgroundItems.length > 0) {
+      // Hold the entire mixed reorder so reload or Skip discards it as one
+      // unconfirmed action, without leaving partial items in the saved basket.
+      setReorderBackdropReview({ photographerId, items: [...restored, ...originalBackgroundItems],
+        originalBackgroundCount: originalBackgroundItems.length });
+    } else if (restored.length > 0) {
       setCartItems((prev) => [...prev, ...restored]);
+    }
+    if (restored.length > 0 || originalBackgroundItems.length > 0) {
       // Drop straight into the cart drawer at the checkout step so the
       // parent confirms what got reloaded before paying again.
       setBackdropPickerOpen(false);
@@ -4121,7 +3728,7 @@ export default function ParentGalleryPage() {
       // ignore
     }
     reorderHydratedRef.current = pendingId;
-  }, [photographerId, packages, backdrops, isSchoolMode, currentLane, images, loading]);
+  }, [photographerId, packages, backdrops, onlineBackdropsEnabled, isSchoolMode, currentLane, images, loading, activeView]);
 
   // Auto-register the CURRENT gallery as a lane.
   useEffect(() => {
@@ -4145,11 +3752,9 @@ export default function ParentGalleryPage() {
       lanes: combineLanes,
       items: persistedItems,
     };
-    const sig = JSON.stringify({
-      l: cart.lanes.length,
-      i: cart.items.length,
-      ids: cart.items.map((i) => i.id),
-    });
+    // Same IDs do not imply the same authorization or selections. Refreshing
+    // a gallery must save its current viewer email/PIN as well as its items.
+    const sig = JSON.stringify(cart);
     if (sig === lastPersistedSignatureRef.current) return;
     lastPersistedSignatureRef.current = sig;
     saveCombineCart(cart);
@@ -4178,7 +3783,6 @@ export default function ParentGalleryPage() {
   const [activeEventCollectionId, setActiveEventCollectionId] = useState<string | null>(null);
 
   // ── Gallery views + favorites + studio info ──────────────────────────────
-  const [activeView, setActiveView] = useState<GalleryView>("photos");
   const [favorites, setFavorites] = useState<Set<string>>(new Set());
   const [eventFavoritesAvailable, setEventFavoritesAvailable] = useState(true);
   const [favoriteMessage, setFavoriteMessage] = useState("");
@@ -4206,6 +3810,8 @@ export default function ParentGalleryPage() {
     phone: string;
     email: string;
   }>({ businessName: "", logoUrl: "", address: "", phone: "", email: "" });
+  const [orderCurrency, setOrderCurrency] = useState<OrderCurrency>("cad");
+  const money = (cents: number | null | undefined) => formatOrderMoney(cents, orderCurrency);
   const [lateOrderPolicy, setLateOrderPolicy] = useState<LateOrderPolicy | null>(null);
   const [lateOrderNoticeHidden, setLateOrderNoticeHidden] = useState(false);
 
@@ -4357,6 +3963,9 @@ export default function ParentGalleryPage() {
             throw new Error(contextPayload.message || "Failed to load event gallery.");
           }
 
+          const nextOrderCurrency = resolvePhotographerOrderCurrency(contextPayload.orderCurrency);
+          if (!nextOrderCurrency) throw new Error("This studio’s sales currency is not supported. Please contact the photographer.");
+
           const activeProject = contextPayload.project ?? null;
           const activeCollection = contextPayload.activeCollection ?? null;
           const collections = contextPayload.collections ?? [];
@@ -4484,6 +4093,7 @@ export default function ParentGalleryPage() {
           setBlackWhitePreviewEnabled(false);
           setPackages(packageRows);
           setBackdrops([]);
+          setOnlineBackdropsEnabled(false);
           setSelectedBackdrop(null);
           setConfirmedBackdrop(null);
           setFavorites(nextFavorites);
@@ -4507,6 +4117,7 @@ export default function ParentGalleryPage() {
           setWatermarkLogoUrl(nextWatermarkLogoUrl);
           setWatermarkOpacity(nextWatermarkOpacity);
           setStudioInfo(nextStudioInfo);
+          setOrderCurrency(nextOrderCurrency);
           setLateOrderPolicy(contextPayload.lateOrderPolicy ?? {
             orderDueDate: activeProject?.order_due_date ?? null,
             shippingFeeCents: 0,
@@ -4543,6 +4154,9 @@ export default function ParentGalleryPage() {
             throw new Error(contextPayload.message || "Failed to load gallery context.");
           }
         }
+
+        const nextOrderCurrency = resolvePhotographerOrderCurrency(contextPayload.orderCurrency);
+        if (!nextOrderCurrency) throw new Error("This studio’s sales currency is not supported. Please contact the photographer.");
 
         const currentSchool = contextPayload.currentSchool ?? null;
         const studentCandidates = contextPayload.studentCandidates ?? [];
@@ -4700,6 +4314,7 @@ export default function ParentGalleryPage() {
         setBlackWhitePreviewEnabled(false);
         setPackages(packageRows);
         setBackdrops(backdropRows);
+        setOnlineBackdropsEnabled(contextPayload.onlineBackdropsEnabled !== false);
         setFavorites(nextSchoolFavorites);
         setEventFavoritesAvailable(!schoolFavoritesUnavailable);
         if (!schoolFavoritesUnavailable && favoriteSchoolId && schoolViewerEmail) {
@@ -4719,6 +4334,7 @@ export default function ParentGalleryPage() {
         setWatermarkLogoUrl(nextWatermarkLogoUrl);
         setWatermarkOpacity(nextWatermarkOpacity);
         setStudioInfo(nextStudioInfo);
+        setOrderCurrency(nextOrderCurrency);
         setLateOrderPolicy(contextPayload.lateOrderPolicy ?? {
           orderDueDate: activeProject?.order_due_date ?? null,
           shippingFeeCents: 0,
@@ -4769,6 +4385,69 @@ export default function ParentGalleryPage() {
     };
   }, [eventEmail, isSchoolMode, pin, projectId, schoolId, schoolViewerEmail, supabase]);
 
+  // Refresh only selection controls when a parent returns to an open gallery.
+  // Do not reset photos, favorites, checkout-return state or paid order history.
+  useEffect(() => {
+    if (!isSchoolMode || loading || !schoolId || !photographerId || !student?.id) return;
+    let mounted = true;
+    let refreshing = false;
+    let activeController: AbortController | null = null;
+    let activeTimeout: number | null = null;
+    async function refreshOnlineBackdropControls() {
+      if (!mounted || refreshing || document.visibilityState === "hidden") return;
+      refreshing = true;
+      const controller = new AbortController();
+      activeController = controller;
+      let timeoutId: number | null = null;
+      try {
+        // Bound both the request and body decoding. Promise.race releases the
+        // refresh lock even if the browser's stalled request ignores abort.
+        const timeout = new Promise<never>((_, reject) => {
+          timeoutId = window.setTimeout(() => {
+            controller.abort();
+            reject(new Error("Gallery backdrop refresh timed out"));
+          }, 15_000);
+          activeTimeout = timeoutId;
+        });
+        const request = fetch("/api/portal/gallery-context", {
+          method: "POST", headers: { "content-type": "application/json" }, cache: "no-store",
+          signal: controller.signal,
+          body: JSON.stringify({ pin, schoolId, email: schoolViewerEmail }),
+        }).then(async (response) => ({
+          response,
+          context: await response.json() as GalleryContextPayload,
+        }));
+        const { response, context } = await Promise.race([request, timeout]);
+        const studentMatches = context.primaryStudent?.id === student?.id ||
+          context.studentCandidates?.some((candidate) => candidate.id === student?.id);
+        if (!mounted || !response.ok || context.ok === false ||
+            context.photographerId !== photographerId || context.activeSchool?.id !== schoolId || !studentMatches) return;
+        setOnlineBackdropsEnabled(context.onlineBackdropsEnabled !== false);
+        setBackdrops(context.onlineBackdropsEnabled === false ? [] : context.backdrops ?? []);
+      } catch {
+        // A temporary refresh failure never discards photos or orders. New
+        // purchases still require fresh policy and cutout checks at checkout.
+      } finally {
+        if (timeoutId !== null) window.clearTimeout(timeoutId);
+        if (activeController === controller) {
+          activeController = null;
+          activeTimeout = null;
+        }
+        refreshing = false;
+      }
+    }
+    const refresh = () => { void refreshOnlineBackdropControls(); };
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      mounted = false;
+      activeController?.abort();
+      if (activeTimeout !== null) window.clearTimeout(activeTimeout);
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", refresh);
+    };
+  }, [isSchoolMode, loading, photographerId, pin, schoolId, schoolViewerEmail, student?.id]);
+
   useEffect(() => {
     return () => {
       if (galleryActionTimeoutRef.current) {
@@ -4779,9 +4458,13 @@ export default function ParentGalleryPage() {
 
   useEffect(() => {
     let active = true;
+    let recoveryTimeout: number | null = null;
 
     async function confirmCheckout() {
       if (checkoutStatus !== "success" || !sessionId || placed) return;
+      const controller = new AbortController();
+      const confirmationTimeout = window.setTimeout(() => controller.abort(), 60_000);
+      let recovering = false;
       try {
         setConfirmingPayment(true);
         setOrderError("");
@@ -4789,26 +4472,50 @@ export default function ParentGalleryPage() {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ sessionId }),
+          signal: controller.signal,
         });
         const json = (await res.json()) as {
           ok: boolean;
           message?: string;
           orderId?: string;
           customerEmail?: string | null;
+          galleryUrl?: string | null;
         };
         if (!res.ok || !json.ok) {
           throw new Error(json.message || "Payment confirmation failed.");
         }
         if (!active) return;
+        const recoveredUrl = isSchoolMode
+          ? schoolCheckoutRecoveryUrl(json.galleryUrl, { pin, schoolId, email: schoolViewerEmail }, sessionId)
+          : null;
+        if (recoveredUrl) {
+          recovering = true;
+          recoveryTimeout = window.setTimeout(() => {
+            if (active) {
+              setConfirmingPayment(false);
+              setOrderError("Your payment was confirmed, but gallery access could not be restored. Please reopen your gallery from the parent portal.");
+            }
+          }, 15_000);
+          router.replace(recoveredUrl);
+          return;
+        }
+        if (schoolCheckoutContextMissing) {
+          throw new Error("Your payment was confirmed, but the gallery return link could not be verified. Please reopen your gallery from the parent portal.");
+        }
         setOrderId(json.orderId || "");
         if (json.customerEmail) setParentEmail(json.customerEmail);
         setPlaced(true);
         setDrawerOpen(false);
       } catch (err) {
         if (!active) return;
-        setOrderError(err instanceof Error ? err.message : "Payment confirmation failed.");
+        recovering = false;
+        if (recoveryTimeout !== null) window.clearTimeout(recoveryTimeout);
+        setOrderError(err instanceof Error && err.name === "AbortError"
+          ? "Payment confirmation took too long. Please refresh this page to check your purchase."
+          : err instanceof Error ? err.message : "Payment confirmation failed.");
       } finally {
-        if (active) setConfirmingPayment(false);
+        window.clearTimeout(confirmationTimeout);
+        if (active && !recovering) setConfirmingPayment(false);
       }
     }
 
@@ -4822,11 +4529,13 @@ export default function ParentGalleryPage() {
 
     return () => {
       active = false;
+      if (recoveryTimeout !== null) window.clearTimeout(recoveryTimeout);
     };
-  }, [checkoutStatus, sessionId, placed]);
+  }, [checkoutStatus, sessionId, placed, isSchoolMode, pin, schoolId, schoolViewerEmail, schoolCheckoutContextMissing, router]);
 
-  // Cutout readiness enables backdrop controls for each photo; it must not
-  // remove other authorized poses when the asynchronous cutout check finishes.
+  // Cutouts add background options to individual poses; they do not decide
+  // which authorized originals are visible. The load path already deduplicates
+  // derivatives by their original photo key before storing this image list.
   const visibleImages =
     !isSchoolMode && activeEventCollectionId
       ? imagesInEventAlbum(images, activeEventCollectionId)
@@ -4935,8 +4644,8 @@ export default function ParentGalleryPage() {
   const orderingDisabled =
     hasCalendarBoundaryPassed(project?.order_due_date);
   const lateOrderNotice = useMemo(
-    () => buildLateOrderNotice(lateOrderPolicy),
-    [lateOrderPolicy],
+    () => buildLateOrderNotice(lateOrderPolicy, orderCurrency),
+    [lateOrderPolicy, orderCurrency],
   );
   useEffect(() => {
     if (!lateOrderNotice) return;
@@ -5223,11 +4932,12 @@ export default function ParentGalleryPage() {
   const orderTabHintConsumedRef = useRef(false);
   useEffect(() => {
     if (orderTabHintConsumedRef.current) return;
+    if (loading || error || !student) return;
     if (initialTabHint !== "orders") return;
     if (!galleryTabs.includes("orders")) return;
     orderTabHintConsumedRef.current = true;
     setActiveView("orders");
-  }, [initialTabHint, galleryTabs]);
+  }, [loading, error, student, initialTabHint, galleryTabs]);
 
   useEffect(() => {
     if (!blackWhiteFilteringAllowed && blackWhitePreviewEnabled) {
@@ -5267,7 +4977,7 @@ export default function ParentGalleryPage() {
   }, [showPhotoViewer, visibleImages.length, selectedImage, selectedImageIndex]);
 
   useEffect(() => {
-    if (!loading) {
+    if (!galleryLoading) {
       setShowLoadingFallback(false);
       return;
     }
@@ -5277,7 +4987,7 @@ export default function ParentGalleryPage() {
     }, 420);
 
     return () => window.clearTimeout(timeoutId);
-  }, [loading]);
+  }, [galleryLoading]);
 
   useEffect(() => {
     if (isSchoolMode || activeView !== "photos") return;
@@ -6322,6 +6032,7 @@ export default function ParentGalleryPage() {
 
   function openBackdropPickerForImage(image: GalleryImage) {
     if (!canOfferParentBackdrops({ schoolMode: isSchoolMode,
+      onlineBackdropsEnabled,
       composite: isCompositeGalleryImage(image), catalogCount: backdrops.length,
       cutoutUrl: nobgUrls[image.id] })) return;
     if (!focusImageForActions(image)) return;
@@ -7438,7 +7149,20 @@ export default function ParentGalleryPage() {
 
   // ── Backdrop helpers (school mode only) ─────────────────────────────────
   const currentNobgUrl = selectedImage ? (nobgUrls[selectedImage.id] ?? null) : null;
+  useEffect(() => {
+    if (!showPhotoViewer || !onlineBackdropsEnabled || !isSchoolMode) return;
+    const activeBackdrop = backdropPickerOpen ? selectedBackdrop ?? confirmedBackdrop : confirmedBackdrop;
+    if (!activeBackdrop) return;
+    // Only warm the neighboring full previews. Strip thumbnails use their own
+    // smaller source and do not start a gallery-wide full-cutout download.
+    for (const offset of [1, -1, 2, -2]) {
+      const image = visibleImages[selectedImageIndex + offset];
+      const src = image && image.source !== "composite" ? nobgUrls[image.id] : null;
+      if (src) void loadGalleryImage(src, "low").catch(() => {});
+    }
+  }, [showPhotoViewer, onlineBackdropsEnabled, isSchoolMode, backdropPickerOpen, selectedBackdrop, confirmedBackdrop, visibleImages, selectedImageIndex, nobgUrls]);
   const hasBackdrops = canOfferParentBackdrops({
+    onlineBackdropsEnabled,
     schoolMode: isSchoolMode, composite: isCompositeSelection,
     catalogCount: backdrops.length, cutoutUrl: currentNobgUrl,
   });
@@ -7454,10 +7178,25 @@ export default function ParentGalleryPage() {
     }, 0);
     return () => window.clearTimeout(timer);
   }, [hasBackdrops]);
+  useEffect(() => {
+    if (loading || !isSchoolMode) return;
+    const chosenBackdropHidden = !!confirmedBackdrop && !backdrops.some((row) => row.id === confirmedBackdrop.id);
+    const previewBackdropHidden = !!selectedBackdrop && !backdrops.some((row) => row.id === selectedBackdrop.id);
+    if (onlineBackdropsEnabled && backdrops.length > 0 && !chosenBackdropHidden && !previewBackdropHidden) return;
+    const timer = window.setTimeout(() => {
+      // This is only the actively edited, unpaid choice. Persisted basket
+      // selections and paid orders retain their saved background metadata.
+      handleClearBackdrop();
+      setBackdropPickerOpen(false);
+      setShowPremiumModal(false);
+      setPremiumTarget(null);
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [onlineBackdropsEnabled, backdrops, confirmedBackdrop, selectedBackdrop, loading, isSchoolMode]);
   // Keep the portrait as a separate image in every store mockup. Exporting a
   // flattened canvas can lose a signed-storage cutout or fail CORS checks.
   const productBackdrop: ProductBackdrop | null =
-    confirmedBackdrop && currentNobgUrl && !isCompositeSelection
+    onlineBackdropsEnabled && confirmedBackdrop && currentNobgUrl && !isCompositeSelection
       ? {
           url: confirmedBackdrop.thumbnail_url || confirmedBackdrop.image_url,
           fallbackUrl: confirmedBackdrop.image_url,
@@ -7475,7 +7214,7 @@ export default function ParentGalleryPage() {
 
   // Premium backdrop pricing — added to checkout total
   const premiumBackdropCents =
-    confirmedBackdrop && confirmedBackdrop.tier === "premium"
+    onlineBackdropsEnabled && confirmedBackdrop && confirmedBackdrop.tier === "premium"
       ? (confirmedBackdrop.price_cents ?? 0)
       : 0;
   const currentDraftCartItem = useMemo<CartLineItem | null>(() => {
@@ -7496,7 +7235,7 @@ export default function ParentGalleryPage() {
       null;
     const effectiveOrderQty = digitalLimit ? 1 : selectedOrderQty;
     const packageSubtotalCents = selectedPkg.price_cents * effectiveOrderQty;
-    const backdropSnapshot = confirmedBackdrop
+    const backdropSnapshot = onlineBackdropsEnabled && confirmedBackdrop
       ? {
           id: confirmedBackdrop.id,
           name: confirmedBackdrop.name,
@@ -7513,7 +7252,7 @@ export default function ParentGalleryPage() {
     // portrait for backdrops that don't actually support landscape — the
     // toggle UI shouldn't have allowed it through, but defense in depth.
     const lineOrientation: "portrait" | "landscape" =
-      confirmedBackdrop?.supports_landscape && confirmedOrientation === "landscape"
+      onlineBackdropsEnabled && confirmedBackdrop?.supports_landscape && confirmedOrientation === "landscape"
         ? "landscape"
         : "portrait";
 
@@ -7540,6 +7279,7 @@ export default function ParentGalleryPage() {
     confirmedBlurAmount,
     confirmedBlurBackground,
     confirmedOrientation,
+    onlineBackdropsEnabled,
     isCompositeSelection,
     isSchoolMode,
     premiumBackdropCents,
@@ -7555,9 +7295,13 @@ export default function ParentGalleryPage() {
     () => (currentDraftCartItem ? [...cartItems, currentDraftCartItem] : cartItems),
     [cartItems, currentDraftCartItem],
   );
-  function backdropIssueForItem(item: CartLineItem, portraits = backdropPortraits, cutoutUrls = nobgUrls, configuredPackages = packages) {
+  const combinedCheckoutEstimate = requiresCombinedParentCheckout(
+    isSchoolMode, photographerId, checkoutItems, currentLane?.laneKey,
+  );
+  function backdropIssueForItem(item: CartLineItem, portraits = backdropPortraits, cutoutUrls = nobgUrls, configuredPackages = packages, backdropsAllowed = onlineBackdropsEnabled) {
     const configured = configuredPackages.find((pkg) => pkg.id === item.packageId);
     if (configured && isRetouchPackage(configured)) return "";
+    if (item.backdrop && !backdropsAllowed) return PARENT_BACKDROPS_DISABLED;
     return parentBackdropSelectionIssue({
       hasBackdrop: !!item.backdrop, composite: item.isCompositeOrder,
       category: item.category, selectedImageUrl: item.selectedImageUrl,
@@ -7660,6 +7404,22 @@ export default function ParentGalleryPage() {
     setDrawerOpen(true);
     setDrawerView("checkout");
     setActiveSlotIndex(null);
+  }
+
+  function acceptOriginalBackgroundReorder() {
+    if (!reorderBackdropReview || reorderBackdropReview.photographerId !== photographerId) return;
+    const reviewedItems = reorderBackdropReview.items;
+    setCartItems((existing) => {
+      const existingIds = new Set(existing.map((item) => item.id));
+      return [...existing, ...reviewedItems.filter((item) => !existingIds.has(item.id))];
+    });
+    setReorderBackdropReview(null);
+    openCartCheckout();
+  }
+
+  function skipOriginalBackgroundReorder() {
+    setReorderBackdropReview(null);
+    if (checkoutItems.length === 0) setDrawerView("product-select");
   }
 
   function addCurrentSelectionToCart() {
@@ -7843,6 +7603,7 @@ export default function ParentGalleryPage() {
     setOrderError("");
     setPlacing(false);
     setCartItems([]);
+    setReorderBackdropReview(null);
     resetCurrentSelection();
     setDrawerOpen(false);
     setBackdropPickerOpen(false);
@@ -8048,6 +7809,7 @@ export default function ParentGalleryPage() {
         const studentMatches = context.primaryStudent?.id === lane.studentId ||
           context.studentCandidates?.some((candidate) => candidate.id === lane.studentId);
         if (!response.ok || context.ok === false || context.photographerId !== photographerId ||
+            resolvePhotographerOrderCurrency(context.orderCurrency) !== orderCurrency ||
             context.activeSchool?.id !== lane.schoolId || !studentMatches) return PARENT_BACKDROP_UNAVAILABLE;
         const portraits = (context.media ?? []).map((photo) => ({ id: photo.id,
           references: [photo.storage_path, photo.preview_url, photo.thumbnail_url, photo.download_url] }));
@@ -8057,8 +7819,15 @@ export default function ParentGalleryPage() {
       }
       const freshPackage = fresh.context.packages?.find((pkg) => pkg.id === item.packageId);
       if (freshPackage && isRetouchPackage(freshPackage)) continue;
+      if (fresh.context.onlineBackdropsEnabled === false) {
+        if (lane.laneKey === currentLane?.laneKey) {
+          setOnlineBackdropsEnabled(false);
+          setBackdrops([]);
+        }
+        return PARENT_BACKDROPS_DISABLED;
+      }
       if (!fresh.context.backdrops?.some((backdrop) => backdrop.id === item.backdrop?.id)) return PARENT_BACKDROP_UNAVAILABLE;
-      const issue = backdropIssueForItem(item, fresh.portraits, fresh.cutouts, fresh.context.packages ?? []);
+      const issue = backdropIssueForItem(item, fresh.portraits, fresh.cutouts, fresh.context.packages ?? [], true);
       if (issue) return issue;
     }
     return "";
@@ -8174,9 +7943,7 @@ export default function ParentGalleryPage() {
 
     if (minimumOrderAmountCents > 0 && totalCents < minimumOrderAmountCents) {
       setOrderError(
-        `This gallery requires a minimum order of $${(
-          minimumOrderAmountCents / 100
-        ).toFixed(2)}.`,
+        `This gallery requires a minimum order of ${money(minimumOrderAmountCents)}.`,
       );
       setPlacing(false);
       return;
@@ -8274,14 +8041,29 @@ export default function ParentGalleryPage() {
     // year galleries, route to /api/portal/orders/create-combined which
     // splits into N orders sharing one order_group_id + applies the
     // sibling discount.  Otherwise stay on the legacy single-order path.
+    // Submit the exact reviewed basket, including the currently selected
+    // package. Persistence contains only explicitly saved items; using it here
+    // would omit a draft or attach another child's prints to this gallery.
     const taggedCart: CombineCart = {
       version: 1,
       photographerId: photographerId ?? "",
-      lanes: combineLanes,
-      items: persistedItems,
+      lanes: currentLane ? upsertLane({ version: 1, photographerId: photographerId ?? "",
+        lanes: combineLanes, items: [] }, currentLane).lanes : combineLanes,
+      items: persistParentCartItems(checkoutItems.map((item) => item.laneKey
+        ? item : { ...item, laneKey: currentLane?.laneKey })),
     };
-    const useCombinedEndpoint =
-      isSchoolMode && photographerId && isMultiLane(taggedCart);
+    const groupedCheckout = isSchoolMode ? groupCartByLane(taggedCart) : [];
+    if (isSchoolMode && (taggedCart.items.length !== checkoutItems.length ||
+        groupedCheckout.reduce((count, group) => count + group.items.length, 0) !== checkoutItems.length)) {
+      setOrderError("A gallery in your basket needs to be reopened before checkout. Your basket was kept.");
+      setPlacing(false);
+      return;
+    }
+    const checkoutReturnLane = groupedCheckout.find((group) => group.lane.laneKey === currentLane?.laneKey)?.lane
+      ?? groupedCheckout[0]?.lane ?? null;
+    const useCombinedEndpoint = requiresCombinedParentCheckout(
+      isSchoolMode, photographerId, checkoutItems, currentLane?.laneKey,
+    );
 
     let createdOrderId: string;
     try {
@@ -8290,8 +8072,7 @@ export default function ParentGalleryPage() {
         // lane carries its own pin/email/schoolId; entries are the cart
         // items belonging to that lane converted into the common entry
         // shape the server expects.
-        const grouped = groupCartByLane(taggedCart);
-        const groupsPayload = grouped.map((g) => ({
+        const groupsPayload = groupedCheckout.map((g) => ({
           pin: g.lane.pin,
           schoolId: g.lane.schoolId,
           email: g.lane.email,
@@ -8372,11 +8153,11 @@ export default function ParentGalleryPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           orderId: createdOrderId,
-          pin,
-          schoolId: isSchoolMode ? student?.school_id ?? null : null,
+          pin: checkoutReturnLane?.pin ?? pin,
+          schoolId: isSchoolMode ? checkoutReturnLane?.schoolId ?? student?.school_id ?? null : null,
           projectId: resolvedProjectId,
           mode,
-          email: !isSchoolMode ? eventEmail : undefined,
+          email: isSchoolMode ? checkoutReturnLane?.email ?? schoolViewerEmail : eventEmail,
           customerEmail: parentEmail.trim(),
         }),
       });
@@ -8438,7 +8219,7 @@ export default function ParentGalleryPage() {
   }
 
   // ── Loading ───────────────────────────────────────────────────────────────
-  if (loading) {
+  if (galleryLoading) {
     if (!showLoadingFallback) {
       return (
         <div
@@ -8576,7 +8357,7 @@ export default function ParentGalleryPage() {
               margin: "0 0 24px",
             }}
           >
-            {error || "Unable to load this gallery."}
+            {(checkoutStatus === "success" && schoolCheckoutContextMissing && orderError) || error || "Unable to load this gallery."}
           </p>
           <button
             type="button"
@@ -9280,6 +9061,7 @@ export default function ParentGalleryPage() {
       <RetouchUpsellModal
         open={retouchUpsellOpen && retouchAddonPackages.length > 0 && retouchPhotoOptions.length > 0}
         packages={retouchAddonPackages}
+        orderCurrency={orderCurrency}
         photos={retouchPhotoOptions}
         onAdd={addRetouchAddonToCart}
         onSkip={dismissRetouchUpsell}
@@ -9311,6 +9093,7 @@ export default function ParentGalleryPage() {
       >
         {/* Top bar */}
         <div
+          data-gallery-header
           className="parent-gallery-topbar"
           style={{
             minHeight: isEventImageStage ? 72 : 52,
@@ -9406,12 +9189,15 @@ export default function ParentGalleryPage() {
               </div>
 
               <div
+                role="navigation"
+                aria-label="Gallery sections"
                 style={{
                   display: "flex",
                   gap: 4,
-                  position: isCompactPanelViewport ? "static" : "absolute",
-                  left: isCompactPanelViewport ? undefined : "50%",
-                  transform: isCompactPanelViewport ? undefined : "translateX(-50%)",
+                  // Keep the tabs in layout so wide laptop action bars cannot
+                  // slide underneath them. The header can wrap groups instead.
+                  position: "static",
+                  flexShrink: 0,
                   zIndex: 5,
                   pointerEvents: "auto",
                   order: isCompactPanelViewport ? 99 : undefined,
@@ -9447,6 +9233,7 @@ export default function ParentGalleryPage() {
                         cursor: "pointer",
                         transition: "color 0.15s",
                         letterSpacing: "0.01em",
+                        whiteSpace: "nowrap",
                       }}
                     >
                       {label}
@@ -9459,6 +9246,7 @@ export default function ParentGalleryPage() {
 
           {/* Right: cart */}
           <div
+            data-gallery-header-actions
             style={{
               display: "flex",
               alignItems: "center",
@@ -9711,6 +9499,9 @@ export default function ParentGalleryPage() {
           </div>
         )}
 
+        {isSchoolMode && student?.school_id && schoolViewerEmail ? (
+          <SchoolYearbookParentPanel key={`${student.school_id}:${pin}:${schoolViewerEmail}`} schoolId={student.school_id} pin={pin} email={schoolViewerEmail} />
+        ) : null}
         {galleryActionMessage ? (
           <div
             style={{
@@ -9898,7 +9689,7 @@ export default function ParentGalleryPage() {
                       {tile.label}
                     </div>
                     <div style={{ marginTop: 8, fontSize: 13, color: galleryTone.mutedText, lineHeight: 1.6 }}>
-                      {tile.minPrice !== null ? `From $${tile.minPrice.toFixed(2)}` : "Available in this gallery"}
+                      {tile.minPrice !== null ? `From ${money(tile.minPrice * 100)}` : "Available in this gallery"}
                     </div>
                     <div
                       style={{
@@ -9952,7 +9743,7 @@ export default function ParentGalleryPage() {
                           </div>
                           <div style={{ marginTop: 16, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
                             <div style={{ fontSize: 18, fontWeight: 700, color: galleryTone.text }}>
-                              ${(pkg.price_cents / 100).toFixed(2)}
+                              {money(pkg.price_cents)}
                             </div>
                             <button
                               type="button"
@@ -10005,15 +9796,17 @@ export default function ParentGalleryPage() {
               surface: galleryTone.surface,
             }}
             onReorder={(snapshot, sourceOrderId) => {
+              setReorderBackdropReview(null);
+              reorderHydratedRef.current = null;
               // An explicit reorder is a new purchase; normal retries retain
               // their existing intent even after navigation or reload.
               sessionStorage.setItem("studio-os-checkout-purchase", crypto.randomUUID());
               // Stash the snapshot in sessionStorage and switch back to
               // the photos view.  The reorder-hydration effect (declared
               // up by the combine-cart hydration) reads the snapshot,
-              // reconstructs each entry as a CartLineItem using the live
-              // packages + backdrops lookups, pushes them onto cartItems,
-              // and opens the cart drawer at the checkout step.
+              // reconstructs each entry using the live packages + backdrops.
+              // It holds the whole reorder for review if a background changed;
+              // otherwise it adds the items and opens the checkout drawer.
               try {
                 sessionStorage.setItem(
                   `studio-os-reorder:${sourceOrderId}`,
@@ -10161,6 +9954,7 @@ export default function ParentGalleryPage() {
                     const favoriteCardUrl =
                       buildGalleryImageCandidates(img, "wall")[0] || img.downloadUrl || img.url;
                     const canChangeBackdrop = canOfferParentBackdrops({ schoolMode: isSchoolMode,
+                      onlineBackdropsEnabled,
                       composite: isCompositeGalleryImage(img), catalogCount: backdrops.length,
                       cutoutUrl: nobgUrls[img.id] });
                     return (
@@ -10779,6 +10573,7 @@ export default function ParentGalleryPage() {
                   {visibleImages.length > 1 && (
                     <button
                       type="button"
+                      aria-label="Previous photo"
                       onClick={goPrev}
                       style={{
                         position: "absolute",
@@ -10815,7 +10610,7 @@ export default function ParentGalleryPage() {
                     const cachedActive = backdropPickerOpen
                       ? (selectedBackdrop ?? confirmedBackdrop)
                       : confirmedBackdrop;
-                    const activeBackdrop = cachedActive
+                    const activeBackdrop = onlineBackdropsEnabled && cachedActive
                       ? backdrops.find((b) => b.id === cachedActive.id) ?? cachedActive
                       : null;
                     // 2026-04-25: which orientation the big viewer paints.
@@ -10885,6 +10680,7 @@ export default function ParentGalleryPage() {
                           }}
                         >
                           <CompositeCanvas
+                            key={selectedImage.id}
                             backdropUrl={activeBackdropSource || activeBackdrop.image_url}
                             backdropFallbackUrl={activeBackdrop.image_url}
                             nobgUrl={currentNobgUrl}
@@ -11012,6 +10808,7 @@ export default function ParentGalleryPage() {
                   {visibleImages.length > 1 && (
                     <button
                       type="button"
+                      aria-label="Next photo"
                       onClick={goNext}
                       style={{
                         position: "absolute",
@@ -11275,7 +11072,9 @@ export default function ParentGalleryPage() {
                       {viewerThumbnailWindow.images.map((img, offset) => {
                         const idx = viewerThumbnailWindow.start + offset;
                         const active = idx === selectedImageIndex;
-                        const hasNobg = !!nobgUrls[img.id];
+                        const hasNobg = canOfferParentBackdrops({ schoolMode: isSchoolMode,
+                          onlineBackdropsEnabled, composite: isCompositeGalleryImage(img),
+                          catalogCount: backdrops.length, cutoutUrl: nobgUrls[img.id] });
                         const showComposite = !!confirmedBackdrop && hasNobg;
                         const thumbCandidates = buildGalleryImageCandidates(img, "viewer-thumb");
                         return (
@@ -11285,6 +11084,8 @@ export default function ParentGalleryPage() {
                               viewerThumbnailButtonRefs.current[img.id] = element;
                             }}
                             type="button"
+                            aria-label={`Photo ${idx + 1}`}
+                            aria-current={active ? "true" : undefined}
                             onClick={() => setSelectedImageIndex(idx)}
                           style={{
                               flexShrink: 0,
@@ -11469,6 +11270,32 @@ export default function ParentGalleryPage() {
 
               {/* Drawer content */}
               <div ref={drawerContentRef} style={{ flex: 1, overflowY: "auto", padding: 18 }}>
+                {reorderBackdropReview?.photographerId === photographerId && (
+                  <div role="status" style={{ marginBottom: 18, padding: 16, border: "1px solid #d5ac62", borderRadius: 12, background: "#272014", color: "#fff" }}>
+                    <h3 style={{ margin: "0 0 8px", fontSize: 16 }}>Review reordered backgrounds</h3>
+                    <p style={{ margin: "0 0 12px", fontSize: 14, lineHeight: 1.5 }}>
+                      {reorderBackdropReview.originalBackgroundCount === 1 ? "A background from your previous order is" : "Some backgrounds from your previous order are"} no longer offered for this gallery.
+                      {" "}Unavailable backgrounds will use the original photo backgrounds; available selected backgrounds will stay selected.
+                      {" "}None of these reordered items have been added to your basket. Review this change before adding them, or skip this reorder.
+                      {" "}Refreshing this page discards this unconfirmed reorder. Your existing basket and previous paid order are unchanged.
+                    </p>
+                    <ul style={{ margin: "0 0 14px", paddingLeft: 20, fontSize: 14, lineHeight: 1.6 }}>
+                      {reorderBackdropReview.items.map((item) => (
+                        <li key={item.id}>
+                          {item.packageName} × {item.quantity} — {item.backdrop?.name || "Original photo background"}
+                        </li>
+                      ))}
+                    </ul>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                      <button type="button" onClick={acceptOriginalBackgroundReorder} style={{ padding: "10px 12px", borderRadius: 8, border: "none", background: "#fff", color: "#111", fontWeight: 700, cursor: "pointer" }}>
+                        Add reviewed reorder
+                      </button>
+                      <button type="button" onClick={skipOriginalBackgroundReorder} style={{ padding: "10px 12px", borderRadius: 8, border: "1px solid #a58d69", background: "transparent", color: "#fff", fontWeight: 600, cursor: "pointer" }}>
+                        Skip this reorder
+                      </button>
+                    </div>
+                  </div>
+                )}
                 {/* "Unlock another gallery" entry pill — opens the
                     CombineOrdersDrawer for sibling combine, past-year
                     orders, and lost-PIN recovery.  Visible whenever the
@@ -11689,7 +11516,7 @@ export default function ParentGalleryPage() {
                                 }}
                               >
                                 {tile.minPrice !== null
-                                  ? `From $${tile.minPrice.toFixed(2)}`
+                                  ? `From ${money(tile.minPrice * 100)}`
                                   : "Available"}
                               </div>
                             </div>
@@ -11781,7 +11608,7 @@ export default function ParentGalleryPage() {
                                       marginLeft: 12,
                                     }}
                                   >
-                                    ${(pkg.price_cents / 100).toFixed(2)}
+                                    {money(pkg.price_cents)}
                                   </div>
                                 </div>
 
@@ -11954,7 +11781,7 @@ export default function ParentGalleryPage() {
                                   marginTop: 6,
                                 }}
                               >
-                                ${(pkg.price_cents / 100).toFixed(2)}
+                                {money(pkg.price_cents)}
                               </div>
                             </div>
 
@@ -12034,8 +11861,7 @@ export default function ParentGalleryPage() {
                                 </>
                               ) : (
                                 <>
-                                  <ShoppingCart size={15} /> Buy · $
-                                  {(lineCents / 100).toFixed(2)}
+                                  <ShoppingCart size={15} /> Buy · {money(lineCents)}
                                 </>
                               )}
                             </button>
@@ -12159,7 +11985,7 @@ export default function ParentGalleryPage() {
                                 flexShrink: 0,
                               }}
                             >
-                              ${(pkg.price_cents / 100).toFixed(2)}
+                              {money(pkg.price_cents)}
                             </div>
                           </div>
 
@@ -12224,8 +12050,8 @@ export default function ParentGalleryPage() {
 
                           {!digitalPackLimit && chosenQty > 1 ? (
                             <div style={{ marginTop: 10, display: "flex", justifyContent: "space-between", gap: 12, fontSize: 12, color: "#d7d7d7", lineHeight: 1.35 }}>
-                              <span>${(pkg.price_cents / 100).toFixed(2)} per package set</span>
-                              <strong style={{ color: "#fff" }}>${(packageLineTotalCents / 100).toFixed(2)} total</strong>
+                              <span>{money(pkg.price_cents)} per package set</span>
+                              <strong style={{ color: "#fff" }}>{money(packageLineTotalCents)} total</strong>
                             </div>
                           ) : null}
 
@@ -12860,7 +12686,7 @@ export default function ParentGalleryPage() {
                                     color: "#fff",
                                   }}
                                 >
-                                  ${(item.lineTotalCents / 100).toFixed(2)}
+                                  {money(item.lineTotalCents)}
                                 </div>
                                 <button
                                   type="button"
@@ -12940,13 +12766,13 @@ export default function ParentGalleryPage() {
                               color: "#fff",
                             }}
                           >
-                            ${(currentDraftCartItem.lineTotalCents / 100).toFixed(2)}
+                            {money(currentDraftCartItem.lineTotalCents)}
                           </div>
                         </div>
                         {currentDraftCartItem.category !== "digital" && currentDraftCartItem.quantity > 1 ? (
                           <div style={{ marginTop: -4, marginBottom: 10, fontSize: 12, color: "#bfbfbf", lineHeight: 1.5 }}>
-                            {currentDraftCartItem.quantity} package sets x ${(currentDraftCartItem.packageSubtotalCents / Math.max(currentDraftCartItem.quantity, 1) / 100).toFixed(2)}
-                            {" = "}${(currentDraftCartItem.packageSubtotalCents / 100).toFixed(2)} before add-ons.
+                            {currentDraftCartItem.quantity} package sets x {money(currentDraftCartItem.packageSubtotalCents / Math.max(currentDraftCartItem.quantity, 1))}
+                            {" = "}{money(currentDraftCartItem.packageSubtotalCents)} before add-ons.
                           </div>
                         ) : null}
 
@@ -13157,7 +12983,7 @@ export default function ParentGalleryPage() {
                               {m === "shipping" && <Truck size={13} />}
                               {m.charAt(0).toUpperCase() + m.slice(1)}
                               {m === "shipping" && (
-                                <span>· {formatGalleryMoney(configuredShippingFeeCents)}</span>
+                                <span>· {money(configuredShippingFeeCents)}</span>
                               )}
                             </button>
                           ))}
@@ -13300,7 +13126,7 @@ export default function ParentGalleryPage() {
                         }}
                       >
                         <span>Subtotal</span>
-                        <span>${(checkoutSubtotalCents / 100).toFixed(2)}</span>
+                        <span>{money(checkoutSubtotalCents)}</span>
                       </div>
                       {checkoutBackdropTotalCents > 0 && (
                         <div
@@ -13313,7 +13139,7 @@ export default function ParentGalleryPage() {
                           }}
                         >
                           <span>Backdrop add-ons</span>
-                          <span>${(checkoutBackdropTotalCents / 100).toFixed(2)}</span>
+                          <span>{money(checkoutBackdropTotalCents)}</span>
                         </div>
                       )}
                       {anyPhysicalCheckoutItem && activeDeliveryMethod === "shipping" && (
@@ -13327,7 +13153,7 @@ export default function ParentGalleryPage() {
                           }}
                         >
                           <span>Shipping</span>
-                          <span>{formatGalleryMoney(checkoutShippingFeeCents)}</span>
+                          <span>{money(checkoutShippingFeeCents)}</span>
                         </div>
                       )}
                       {checkoutTaxCents > 0 && (
@@ -13343,7 +13169,7 @@ export default function ParentGalleryPage() {
                           <span>
                             {currentGalleryExtras.taxLabel} ({checkoutTaxPercent.toFixed(3).replace(/\.?0+$/, "")}%)
                           </span>
-                          <span>${(checkoutTaxCents / 100).toFixed(2)}</span>
+                          <span>{money(checkoutTaxCents)}</span>
                         </div>
                       )}
                       <div
@@ -13357,9 +13183,14 @@ export default function ParentGalleryPage() {
                           color: "#fff",
                         }}
                       >
-                        <span>Total</span>
-                        <span>${(checkoutTotalCents / 100).toFixed(2)}</span>
+                        <span>{combinedCheckoutEstimate ? "Estimated total" : "Total"}</span>
+                        <span>{money(checkoutTotalCents)}</span>
                       </div>
+                      {combinedCheckoutEstimate && (
+                        <p style={{ color: "#bbb", fontSize: 12, lineHeight: 1.5, margin: "10px 0 0" }}>
+                          Final sibling discounts, each school&apos;s tax and delivery charges are shown in secure checkout before you pay.
+                        </p>
+                      )}
                     </div>
 
                     <div style={{ display: "flex", gap: 10 }}>
@@ -13707,7 +13538,7 @@ export default function ParentGalleryPage() {
                         {blurPreviewActive
                           ? `★ Blur preview · ${selectedBlurAmount}px`
                           : panelPreviewBackdrop.tier === "premium"
-                            ? `★ Premium · $${(panelPreviewBackdrop.price_cents / 100).toFixed(2)}`
+                            ? `★ Premium · ${money(panelPreviewBackdrop.price_cents)}`
                             : "✓ Included Free"}
                       </div>
                       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -14097,7 +13928,7 @@ export default function ParentGalleryPage() {
               }}>
                 <span style={{ fontSize: 13, color: "#888" }}>Backdrop add-on</span>
                 <span style={{ fontSize: 18, fontWeight: 800, color: "#fff" }}>
-                  ${(premiumTarget.price_cents / 100).toFixed(2)}
+                  {money(premiumTarget.price_cents)}
                 </span>
               </div>
 
@@ -14117,7 +13948,7 @@ export default function ParentGalleryPage() {
                   marginBottom: 10,
                 }}
               >
-                Unlock for ${(premiumTarget.price_cents / 100).toFixed(2)}
+                Unlock for {money(premiumTarget.price_cents)}
               </button>
 
               <button
@@ -14366,12 +14197,14 @@ function GroupPhotoDigitalNoticeModal({
 function RetouchUpsellModal({
   open,
   packages,
+  orderCurrency,
   photos,
   onAdd,
   onSkip,
 }: {
   open: boolean;
   packages: PackageRow[];
+  orderCurrency: OrderCurrency;
   photos: RetouchPhotoOption[];
   onAdd: (pkg: PackageRow, selections: RetouchSelection[]) => void;
   onSkip: () => void;
@@ -14596,7 +14429,7 @@ function RetouchUpsellModal({
                     color: "#fff",
                   }}
                 >
-                  ${(pkg.price_cents / 100).toFixed(2)}
+                  {formatOrderMoney(pkg.price_cents, orderCurrency)}
                 </div>
                 <div
                   aria-hidden

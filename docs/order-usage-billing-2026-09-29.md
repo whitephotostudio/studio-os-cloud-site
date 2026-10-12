@@ -1,5 +1,51 @@
 # Order service fees and owner revenue
 
+## Current checkout collection (October 7, 2026)
+
+New customer checkouts deduct a Stripe Connect application fee from the sale:
+Starter 0.55, App/Core 0.40, and Studio 0.35 in the order's currency. An active
+free application trial uses the Studio rate. Stripe processing fees are
+additional. Platform owner accounts and test orders remain exempt.
+
+The complete order group receives an immutable fee snapshot before Stripe
+Checkout is created. Retries retain that amount and currency. Payment
+finalization checks the actual connected PaymentIntent fee, gross total,
+currency and complete saved group before marking the orders paid. New direct
+fees are excluded from subscription usage reporting, preventing collection
+twice. Existing or ambiguous legacy checkouts retain their original policy.
+
+Platform owner exemption is determined from the photographer's saved
+`is_platform_admin` flag, never from the checkout request. New owner orders
+freeze a zero `waived` fee. Legacy usage sync does not stage or report owner
+orders, including pending ledger entries. Previously reported events and issued
+or outstanding invoices retain their existing amounts; this exemption does not
+silently rewrite or refund them.
+
+An owner checkout with an older nonzero frozen fee is refused before returning
+or creating a payable Stripe session. Cancel that unpaid checkout and create a
+new order to receive the exemption; the old snapshot remains unchanged. A
+hosted Stripe URL already issued before this guard remains subject to its
+original Stripe terms until the session is explicitly expired. This application
+guard does not remotely invalidate an existing hosted URL.
+
+Fees accumulate in the platform Stripe balance. The platform's bank payout
+schedule is a separate Stripe account setting; it does not require charging
+the photographer again. Available funds follow Stripe's settlement timing.
+The Studiooscloud platform's monthly payout schedule was visibly verified
+after saving and reloading as monthly on the 1st.
+
+An explicit full customer refund requests the application-fee refund and
+verifies the cumulative fee refund before claiming completion. A refresh never
+moves money. A full customer refund made outside the app can require the
+separate confirmed platform-fee recovery action. Partial refunds keep the
+existing paid-order fee policy. These orders never receive a legacy monthly
+invoice credit.
+
+The following sections describe the preserved legacy subscription usage
+collection, not new direct-fee checkouts.
+
+## Legacy monthly usage collection
+
 Customer gallery orders are direct Stripe Connect charges on the photographer's
 account. Studio OS receives separate platform subscription and credit-pack
 payments. Order service fees are metered on the photographer's platform

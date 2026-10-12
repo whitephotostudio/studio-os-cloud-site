@@ -17,10 +17,12 @@ import {
 } from "lucide-react";
 import {
   ANNUAL_DISCOUNT_PERCENT,
+  PLAN_DEFS,
   getPlanPriceCents,
   type BillingInterval,
   type PlanCode,
 } from "@/lib/studio-pricing";
+import { formatOrderFeeMoney, ORDER_FEE_BILLING, ORDER_FEE_PURPOSE } from "@/lib/order-fee-display";
 
 type PricingShowcaseProps = {
   variant?: "home" | "page";
@@ -64,7 +66,7 @@ const homePlans: PlanCard[] = [
     eyebrow: "For online delivery",
     summary:
       "A clean web-only plan for photographers who want polished galleries, online viewing, delivery, and ordering without the Studio OS app.",
-    usageFee: "$0.55 per paid order",
+    usageFee: `${formatOrderFeeMoney(PLAN_DEFS.starter.usageRateCents)} per paid order`,
     ctaLabel: "Get Started",
     heroNote: "Online gallery tools only",
     included: [
@@ -89,7 +91,7 @@ const homePlans: PlanCard[] = [
     badge: "Most Popular",
     summary:
       "Built for school and studio photographers who want the Studio OS app, faster production, and new upsell opportunities without jumping to the largest plan.",
-    usageFee: "$0.35 per paid order",
+    usageFee: `${formatOrderFeeMoney(PLAN_DEFS.core.usageRateCents)} per paid order`,
     ctaLabel: "Choose Plan",
     heroNote: "1 Photography Key included",
     included: [
@@ -117,7 +119,7 @@ const homePlans: PlanCard[] = [
     badge: "Best for Growing Studios",
     summary:
       "Full Studio OS workflow with more room to scale, advanced school-day tools, and the only plan that can grow beyond the included keys.",
-    usageFee: "$0.25 per paid order",
+    usageFee: `${formatOrderFeeMoney(PLAN_DEFS.studio.usageRateCents)} per paid order`,
     ctaLabel: "Upgrade to Studio",
     heroNote: "2 Photography Keys included",
     included: [
@@ -148,7 +150,7 @@ const pagePlans: PlanCard[] = [
     eyebrow: "For photographers getting started",
     summary:
       "For photographers getting started or using basic galleries.",
-    usageFee: "$0.55 per paid order",
+    usageFee: `${formatOrderFeeMoney(PLAN_DEFS.starter.usageRateCents)} per paid order`,
     ctaLabel: "Start Free Trial",
     heroNote: "Basic gallery delivery",
     included: [
@@ -174,7 +176,7 @@ const pagePlans: PlanCard[] = [
     badge: "Most Popular",
     summary:
       "For photographers who want full workflow, client ordering, and production tools in one system.",
-    usageFee: "$0.35 per paid order",
+    usageFee: `${formatOrderFeeMoney(PLAN_DEFS.core.usageRateCents)} per paid order`,
     ctaLabel: "Start Free Trial",
     heroNote: "1 Photography Key included",
     included: [
@@ -195,7 +197,7 @@ const pagePlans: PlanCard[] = [
     eyebrow: "For scaling teams and advanced workflows",
     summary:
       "For studios scaling volume, teams, and advanced workflows.",
-    usageFee: "$0.25 per paid order",
+    usageFee: `${formatOrderFeeMoney(PLAN_DEFS.studio.usageRateCents)} per paid order`,
     ctaLabel: "Start Free Trial",
     heroNote: "2 Photography Keys included",
     included: [
@@ -327,9 +329,9 @@ const comparisonRows: ComparisonRow[] = [
   {
     label: "Platform Usage Billing",
     values: {
-      starter: { label: "$0.55 per paid order" },
-      core: { label: "$0.35 per paid order" },
-      studio: { label: "$0.25 per paid order" },
+      starter: { label: `${formatOrderFeeMoney(PLAN_DEFS.starter.usageRateCents)} per paid order` },
+      core: { label: `${formatOrderFeeMoney(PLAN_DEFS.core.usageRateCents)} per paid order` },
+      studio: { label: `${formatOrderFeeMoney(PLAN_DEFS.studio.usageRateCents)} per paid order` },
     },
   },
 ];
@@ -623,8 +625,8 @@ export function PricingShowcase({ variant = "home" }: PricingShowcaseProps) {
                   key={plan.code}
                   className={
                     isFeatured
-                      ? "relative overflow-hidden rounded-[30px] border border-neutral-950 bg-neutral-950 p-6 text-white shadow-2xl sm:p-7"
-                      : "relative overflow-hidden rounded-[30px] border border-neutral-200 bg-white p-6 shadow-lg sm:p-7"
+                      ? "relative flex flex-col overflow-hidden rounded-[30px] border border-neutral-950 bg-neutral-950 p-6 text-white shadow-2xl sm:p-7"
+                      : "relative flex flex-col overflow-hidden rounded-[30px] border border-neutral-200 bg-white p-6 shadow-lg sm:p-7"
                   }
                 >
                   <div
@@ -636,7 +638,7 @@ export function PricingShowcase({ variant = "home" }: PricingShowcaseProps) {
                     }}
                   />
 
-                  <div className="relative">
+                  <div className="relative flex flex-1 flex-col">
                     <div className="flex items-center justify-between gap-4">
                       <div className={isFeatured ? "inline-flex h-12 w-12 items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-white" : "inline-flex h-12 w-12 items-center justify-center rounded-2xl border border-neutral-200 bg-neutral-50 text-neutral-950"}>
                         <Icon className="h-5 w-5" />
@@ -677,19 +679,7 @@ export function PricingShowcase({ variant = "home" }: PricingShowcaseProps) {
                         : "Billed monthly"}
                     </div>
 
-                    {showFullPage ? (
-                      <div
-                        className={
-                          isFeatured
-                            ? "mt-2 text-sm text-neutral-300"
-                            : "mt-2 text-sm text-neutral-500"
-                        }
-                      >
-                        Usage billing: {plan.usageFee}
-                      </div>
-                    ) : null}
-
-                    <div className={isFeatured ? "mt-4 inline-flex rounded-full border border-white/15 bg-white/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-white" : "mt-4 inline-flex rounded-full border border-neutral-200 bg-neutral-50 px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-neutral-700"}>
+                    <div className={isFeatured ? "mt-4 inline-flex self-start rounded-full border border-white/15 bg-white/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-white" : "mt-4 inline-flex self-start rounded-full border border-neutral-200 bg-neutral-50 px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-neutral-700"}>
                       {plan.heroNote}
                     </div>
 
@@ -735,25 +725,42 @@ export function PricingShowcase({ variant = "home" }: PricingShowcaseProps) {
                       </div>
                     ) : null}
 
-                    <div className={isFeatured ? "mt-6 rounded-2xl border border-white/10 bg-white/5 px-4 py-4 text-sm leading-6 text-neutral-200" : "mt-6 rounded-2xl border border-neutral-200 bg-white px-4 py-4 text-sm leading-6 text-neutral-600"}>
-                      {plan.footerNote}
-                    </div>
+                    <div className="mt-auto pt-6">
+                      <div className={isFeatured ? "rounded-2xl border border-white/10 bg-white/5 px-4 py-4 text-sm leading-6 text-neutral-200" : "rounded-2xl border border-neutral-200 bg-white px-4 py-4 text-sm leading-6 text-neutral-600"}>
+                        {plan.footerNote}
+                      </div>
 
-                    <Link
-                      href={`/sign-up?plan=${plan.code}&interval=${billingInterval}`}
-                      className={
-                        isFeatured
-                          ? "mt-6 inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-white px-5 py-3 font-semibold text-neutral-950 transition hover:bg-neutral-100"
-                          : "mt-6 inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-black px-5 py-3 font-semibold text-white transition hover:opacity-90"
-                      }
-                    >
-                      {plan.ctaLabel}
-                      <ArrowUpRight className="h-4 w-4" />
-                    </Link>
+                      <div data-order-fee className="mt-4">
+                        <p className={isFeatured ? "text-[13px] leading-6 text-neutral-300" : "text-[13px] leading-6 text-neutral-600"}>
+                          {plan.usageFee} · deducted from each sale
+                        </p>
+                        <p className={isFeatured ? "text-[13px] leading-6 text-neutral-300" : "text-[13px] leading-6 text-neutral-600"}>
+                          Charged in your sales currency. Stripe processing fees are additional.
+                        </p>
+                      </div>
+
+                      <Link
+                        href={`/sign-up?plan=${plan.code}&interval=${billingInterval}`}
+                        className={
+                          isFeatured
+                            ? "mt-5 inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-white px-5 py-3 font-semibold text-neutral-950 transition hover:bg-neutral-100"
+                            : "mt-5 inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-black px-5 py-3 font-semibold text-white transition hover:opacity-90"
+                        }
+                      >
+                        {plan.ctaLabel}
+                        <ArrowUpRight className="h-4 w-4" />
+                      </Link>
+                    </div>
                   </div>
                 </article>
               );
             })}
+          </div>
+
+          <div className="mt-6 rounded-2xl border border-neutral-200 bg-neutral-50 px-6 py-5 text-sm leading-7 text-neutral-600">
+            <div className="font-semibold text-neutral-950">Flat fees on paid orders</div>
+            <p className="mt-2">{ORDER_FEE_PURPOSE}</p>
+            <p className="mt-2">{ORDER_FEE_BILLING}</p>
           </div>
 
           {showFullPage ? (

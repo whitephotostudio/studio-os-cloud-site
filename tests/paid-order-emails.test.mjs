@@ -28,6 +28,7 @@ function fixture({ orderCount = 1, kinds = ['receipt'], notes = null } = {}) {
     return exports;
   }
   const resend = load('lib/resend.ts');
+  const schoolLinks = load('lib/school-parent-gallery-link.ts');
   for (let index = 0; index < orderCount; index += 1) {
     const order = { id: id(index + 1), photographer_id: id(9000), project_id: id(9001),
       parent_name: `Parent ${index + 1}`, customer_email: `parent-${index + 1}@example.test`, parent_email: `parent-${index + 1}@example.test`,
@@ -124,6 +125,7 @@ function fixture({ orderCount = 1, kinds = ['receipt'], notes = null } = {}) {
     return f.providerBehavior ? f.providerBehavior(payload, f.calls.length) : f.accept(payload);
   };
   f.api = load('lib/paid-order-emails.ts', {
+    '@/lib/school-parent-gallery-link': schoolLinks,
     'node:timers/promises': { setTimeout: async ms => { f.delays.push(ms); f.now += ms; } },
     'next/server': { after: callback => f.deferredWork.push(callback) },
     '@/lib/order-notification-email': { buildOrderNotificationEmail: input => { f.builders.push({ kind: 'photographer', input: plain(input) }); return { subject: 'Photographer order', html: 'Frozen photographer content', text: 'Frozen photographer content' }; } },

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import ts from "typescript";
 
 import { proxiedPhotoUrl } from "../../lib/photo-url.ts";
 
@@ -22,9 +23,11 @@ const galleryEmailSource = source("lib/event-gallery-email.ts");
 const privateMediaSource = source("lib/private-media-references.ts");
 const schoolDashboardSource = source("app/dashboard/projects/schools/[schoolId]/page.tsx");
 
-test("new R2 uploads persist object keys and folder lists return signed URLs", () => {
+test("new R2 uploads persist object keys and folder lists return owner checked proxy URLs", () => {
   assert.match(r2Source, /return key;/);
-  assert.match(r2Source, /url: r2PresignedGetUrl\(key/);
+  assert.match(r2Source, /signedR2MediaUrl\(key, ttlSeconds, options.photographerId\)/);
+  assert.match(r2Source, /`\/api\/r2\/img\//);
+  assert.doesNotMatch(r2Source, /r2PresignedGetUrl/);
   assert.doesNotMatch(r2Source, /function r2PublicUrl/);
   assert.doesNotMatch(thumbnailSource, /r2PublicUrl/);
   assert.match(thumbnailSource, /const originalReference = storageKey/);
@@ -47,12 +50,10 @@ test("browser references route private backdrops and historical R2 URLs through 
 });
 
 test("authenticated image proxy covers every active owned R2 namespace", () => {
-  for (const namespace of ["backdrops", "projects", "probes", "schools", "photos", "nobg-photos"]) {
-    assert.match(imageProxySource, new RegExp(`firstSegment === ["']${namespace}["']`));
-  }
-  assert.match(imageProxySource, /secondSegment === photographerId/);
-  assert.match(imageProxySource, /ownsProject\(thirdSegment\)/);
-  assert.match(imageProxySource, /ownedSchoolId\(thirdSegment\)/);
+  assert.match(imageProxySource, /await resolveR2MediaOwnership\(service, storagePath, photographerId\)/);
+  assert.match(imageProxySource, /if \(!ownership.owned\)/);
+  assert.match(imageProxySource, /const authorizedSchoolId = ownership.schoolId/);
+  assert.doesNotMatch(imageProxySource, /resolveSchoolNamespace|ownsProject\(/);
   assert.match(imageProxySource, /normalizeR2Key\(rawStoragePath,/);
   assert.doesNotMatch(imageProxySource, /unauthorized path: %s/);
   assert.doesNotMatch(imageProxySource, /^import sharp from ["']sharp["'];/m);
@@ -67,7 +68,34 @@ test("school cover pickers use durable R2 keys and real image elements", () => {
 
 test("parent portal signs backdrop references and generic downloads reject public R2 origins", () => {
   assert.match(schoolAccessSource, /backdrops: signBackdropRows\(/);
-  assert.match(galleryContextSource, /backdropRows = signBackdropRows\(/);
+  const parsed = ts.createSourceFile("gallery-context.ts", galleryContextSource, ts.ScriptTarget.Latest, true);
+  const assignments = [];
+  function visit(node) {
+    if (ts.isBinaryExpression(node) && ts.isIdentifier(node.left) && node.left.text === "backdropRows" &&
+        node.operatorToken.kind === ts.SyntaxKind.EqualsToken) assignments.push(node);
+    ts.forEachChild(node, visit);
+  }
+  visit(parsed);
+  assert.equal(assignments.length, 1, "One authoritative parent catalogue assignment");
+  const assignment = assignments[0];
+  assert.ok(ts.isConditionalExpression(assignment.right));
+  assert.equal(assignment.right.condition.getText(parsed), "onlineBackdropsEnabled");
+  assert.ok(ts.isCallExpression(assignment.right.whenTrue));
+  assert.equal(assignment.right.whenTrue.expression.getText(parsed), "signBackdropRows");
+  const compiled = ts.transpileModule(`let backdropRows = []; ${assignment.getText(parsed)}; return backdropRows;`, {
+    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
+  }).outputText;
+  for (const enabled of [true, false]) {
+    const signedCalls = [];
+    const rawRows = [{ image_url: "backdrops/studio/blue.jpg", thumbnail_url: "backdrops/studio/blue-thumb.jpg" }];
+    const resolve = new Function("onlineBackdropsEnabled", "signBackdropRows", "backdropsResult", "SIGNED_URL_TTL_PARENTS_PORTAL_SECONDS", "photographerId", compiled);
+    const rows = resolve(enabled, (rows, ttl, photographerId) => {
+      signedCalls.push({ rows, ttl, photographerId });
+      return rows.map((row) => ({ image_url: `signed:${row.image_url}`, thumbnail_url: `signed:${row.thumbnail_url}` }));
+    }, { data: rawRows }, 3600, "fixture-studio");
+    assert.deepEqual(signedCalls, enabled ? [{ rows: rawRows, ttl: 3600, photographerId: "fixture-studio" }] : []);
+    assert.deepEqual(rows, enabled ? [{ image_url: "signed:backdrops/studio/blue.jpg", thumbnail_url: "signed:backdrops/studio/blue-thumb.jpg" }] : []);
+  }
   assert.match(schoolAccessSource, /studentCandidates: signedStudentCandidates/);
   assert.match(galleryContextSource, /studentCandidates: signedStudentCandidates/);
   assert.match(schoolAccessSource, /primaryStudent: signedPrimaryStudent/);

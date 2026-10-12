@@ -6,6 +6,7 @@ import ts from 'typescript';
 import * as pricing from '../lib/studio-pricing.ts';
 import * as periods from '../lib/stripe-billing-period.ts';
 import * as orderPolicy from '../lib/order-payment-policy.ts';
+import * as digitalLabels from '../lib/digital-product-label.ts';
 import { creditMaintenanceActive } from '../lib/credit-maintenance.ts';
 
 function load(path, dependencies = {}) {
@@ -20,10 +21,16 @@ function load(path, dependencies = {}) {
 
 function fixture(options = {}) {
   const now = Date.now(); const orderId = crypto.randomUUID(); const photographerId = crypto.randomUUID();
-  const sequence = []; const scheduled = []; const pushes = []; const rpcs = [];
+  const sequence = []; const scheduled = []; const pushes = []; const rpcs = []; const receiptInputs = [];
+
   const order = { id: orderId, photographer_id: photographerId, package_name: 'Print package', status: 'pending',
     payment_status: 'pending', paid_at: null, notes: '', counted_for_monthly_usage: false, total_cents: 2900,
     customer_email: 'buyer@example.invalid', parent_name: 'Fixture buyer', currency: 'cad', is_test: false };
+  if (options.school) {
+    order.school_id = crypto.randomUUID();
+    order.student = {pin: '50123', first_name: 'Fixture', last_name: 'Student', school_id: order.school_id};
+  }
+  if (options.event) Object.assign(order, {project_id: crypto.randomUUID(), project: {access_pin: 'EVENTPIN', title: 'Fixture event'}});
   const photographer = { id: photographerId, user_id: 'fixture-account', subscription_plan_code: 'core', subscription_status: 'active',
     stripe_platform_customer_id: 'cus_fixture', stripe_subscription_id: null, stripe_subscription_item_usage_id: 'si_fixture',
     subscription_current_period_start: new Date(now - 86400000).toISOString(),
@@ -37,6 +44,7 @@ function fixture(options = {}) {
       const chain = {
         select() { return chain; },
         eq(key, value) { const previous = predicate; predicate = row => previous(row) && row[key] === value; return chain; },
+        is(key, value) { assert.equal(value, null); const previous = predicate; predicate = row => previous(row) && row[key] == null; return chain; },
         in(key, values) { const previous = predicate; predicate = row => previous(row) && values.includes(row[key]); return chain; },
         gte(key, value) { const previous = predicate; predicate = row => previous(row) && row[key] >= value; return chain; },
         lt(key, value) { const previous = predicate; predicate = row => previous(row) && row[key] < value; return chain; },
@@ -70,6 +78,8 @@ function fixture(options = {}) {
     '@/lib/studio-pricing': pricing,
     '@/lib/stripe-billing-period': periods,
     '@/lib/order-payment-policy': orderPolicy,
+    '@/lib/digital-product-label': digitalLabels,
+    '@/lib/school-parent-gallery-link': load('lib/school-parent-gallery-link.ts'),
     '@/lib/order-usage-billing': ledger,
     '@/lib/credit-maintenance': { creditMaintenanceActive },
     '@/lib/subscription-access': { isStripeBillingActive: value => ['active', 'trialing'].includes(value) },
@@ -78,12 +88,74 @@ function fixture(options = {}) {
       scheduled.push(id); sequence.push('durable-email-recovery');
       if (options.queueUnavailable) throw new Error('retry discovery unavailable');
     } },
+
     '@/lib/order-push': { sendNewOrderPush: async (_service, id, content) => pushes.push({ id, content }) },
   });
   const finalize = () => payments.finalizePaidOrder(service, { orderId, paymentStatus: 'paid', checkoutSessionId: 'cs_fixture',
     paymentIntentId: 'pi_fixture', note: 'Connected-account payment confirmed', paidAt: new Date(now).toISOString() });
-  return { order, photographer, sequence, scheduled, pushes, rpcs, finalize };
+  let receiptRow;
+  const worker = load('lib/paid-order-emails.ts', {
+    'node:timers/promises': { setTimeout: async () => {} },
+    'next/server': { after: () => assert.fail('The payment fixture schedules work explicitly') },
+    '@/lib/school-parent-gallery-link': load('lib/school-parent-gallery-link.ts'),
+    '@/lib/order-notification-email': {}, '@/lib/digital-delivery': {},
+    '@/lib/order-receipt-email': { buildOrderReceiptEmail: input => { receiptInputs.push(input); return { subject: 'Receipt', html: 'Fixture', text: 'Fixture' }; } },
+    '@/lib/resend': { resendConfigured: () => true, resolveReplyTo: value => value || null,
+      ResendRequestError: class extends Error {}, sendResendEmail: async () => ({ id: 'fixture-email' }) },
+  });
+  const deliverReceipts = async () => {
+    assert.ok(scheduled.includes(order.id), 'Payment finalization must discover its durable notification before delivery');
+    receiptRow ??= { id: crypto.randomUUID(), order_id: order.id, photographer_id: photographerId,
+      kind: 'receipt', recipient_email: order.customer_email, status: 'pending', attempts: 1,
+      lease_token: crypto.randomUUID(), first_attempt_at: null, payload: null,
+      snapshot: { order: structuredClone(order), items: tables.order_items, photographer,
+        context: { student_pin: order.student?.school_id === order.school_id ? order.student?.pin : null,
+          project_pin: order.project?.access_pin || null } } };
+    const deliveryService = {
+      async rpc(name, args) {
+        if (name === 'claim_paid_order_emails') return { data: receiptRow.status === 'pending' ? [structuredClone(receiptRow)] : [], error: null };
+        if (name === 'prepare_paid_order_email') { receiptRow.payload ??= args.p_payload; return { data: [structuredClone(receiptRow)], error: null }; }
+        if (name === 'release_paid_order_email_worker') return { data: null, error: null };
+        assert.fail(`Unexpected email RPC ${name}`);
+      },
+      from(table) {
+        assert.equal(table, 'paid_order_emails');
+        let changes; const query = { update(value) { changes = value; return query; },
+          eq() { return query; }, select() { return query; },
+          then(resolve, reject) { Object.assign(receiptRow, changes); return Promise.resolve({ data: [{ id: receiptRow.id }], error: null }).then(resolve, reject); } };
+        return query;
+      },
+    };
+    return worker.deliverPaidOrderEmails(deliveryService);
+  };
+  return { order, photographer, sequence, scheduled, pushes, rpcs, receiptInputs, deliverReceipts, finalize };
+
 }
+
+test('actual school receipt finalization supplies a complete fresh-browser Orders link', async () => {
+  const f = fixture({school: true}); await f.finalize(); await f.deliverReceipts();
+  assert.equal(f.receiptInputs.length, 1);
+  const url = new URL(f.receiptInputs[0].ordersHistoryUrl);
+  assert.equal(url.pathname, '/parents/50123'); assert.equal(url.searchParams.get('mode'), 'school');
+  assert.equal(url.searchParams.get('school'), f.order.school_id); assert.equal(url.searchParams.get('email'), 'buyer@example.invalid');
+  assert.equal(url.searchParams.get('tab'), 'orders');
+  await f.finalize(); await f.deliverReceipts(); assert.equal(f.receiptInputs.length, 1, 'paid retry does not resend a receipt');
+});
+
+test('event receipt finalization retains its existing project/PIN/email link', async () => {
+  const f = fixture({event: true}); await f.finalize(); await f.deliverReceipts();
+  const url = new URL(f.receiptInputs[0].ordersHistoryUrl);
+  assert.equal(url.pathname, '/parents/EVENTPIN'); assert.equal(url.searchParams.get('mode'), 'event');
+  assert.equal(url.searchParams.get('project'), f.order.project_id); assert.equal(url.searchParams.get('email'), 'buyer@example.invalid');
+  assert.equal(url.searchParams.get('school'), null);
+});
+
+test('a moved student does not produce a receipt link pairing the old school with a new student PIN', async () => {
+  const f = fixture({school: true}); f.order.student.school_id = crypto.randomUUID(); await f.finalize(); await f.deliverReceipts();
+  const sql = readFileSync(new URL('../supabase/migrations/20261005004000_paid_order_email_outbox.sql', import.meta.url), 'utf8');
+  assert.match(sql, /student_pin.*school.id=new.school_id and school.photographer_id=new.photographer_id/);
+  assert.equal(f.receiptInputs.length, 1); assert.equal(f.receiptInputs[0].ordersHistoryUrl, null);
+});
 
 for (const maintenance of [true, false]) {
   test(`a paid Connect order schedules durable notification recovery ${maintenance ? 'while fee sync is paused before migration' : 'when the fee ledger is unavailable'}`, async () => {

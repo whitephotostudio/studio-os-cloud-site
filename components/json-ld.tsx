@@ -1,3 +1,5 @@
+"use client";
+
 /**
  * JSON-LD Structured Data Components
  *
@@ -6,16 +8,19 @@
  */
 
 import { homeFaqItems } from "@/lib/marketing-faq";
+import { useCspNonce } from "@/components/csp-nonce";
 
 type JsonLdProps = {
   data: Record<string, unknown>;
 };
 
-function JsonLd({ data }: JsonLdProps) {
+export function JsonLd({ data }: JsonLdProps) {
+  const nonce = useCspNonce();
   return (
     <script
+      nonce={nonce}
       type="application/ld+json"
-      dangerouslySetInnerHTML={{ __html: JSON.stringify(data) }}
+      dangerouslySetInnerHTML={{ __html: JSON.stringify(data).replace(/</g, "\\u003c") }}
     />
   );
 }

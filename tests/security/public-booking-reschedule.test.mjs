@@ -1,19 +1,33 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import test from "node:test";
+import ts from "typescript";
+
+const require = createRequire(import.meta.url);
 
 function source(relativePath) {
   return readFileSync(new URL(`../../${relativePath}`, import.meta.url), "utf8");
 }
 
-async function renderedRoute(relativePath) {
-  const routeModule = await import(new URL(`../../${relativePath}`, import.meta.url));
-  const response = await routeModule.GET();
+function loadTypeScript(relativePath) {
+  const output = ts.transpileModule(source(relativePath), { compilerOptions: {
+    module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022,
+  } }).outputText;
+  const loaded = { exports: {} };
+  new Function("require", "module", "exports", output)(name => name === "@/lib/content-security-policy"
+    ? loadTypeScript("lib/content-security-policy.ts") : require(name), loaded, loaded.exports);
+  return loaded.exports;
+}
+
+async function renderedRoute(relativePath, headers = {}) {
+  const routeModule = loadTypeScript(relativePath);
+  const response = await routeModule.GET(new Request("https://www.studiooscloud.com/", { headers }));
   return { response, html: await response.text() };
 }
 
 function assertInlineScriptParses(html) {
-  const script = html.match(/<script>([\s\S]*?)<\/script>/)?.[1];
+  const script = html.match(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/)?.[1];
   assert.ok(script, "route should contain its booking-page script");
   assert.doesNotThrow(() => new Function(script));
 }
@@ -34,6 +48,29 @@ test("manage page makes rescheduling primary and keeps cancellation recoverable"
   assert.match(route, /fetch\('\/api\/public\/booking-manage\?token='/);
   assert.match(route, /fetch\('\/api\/public\/booking-manage',\{method:'POST'/);
   assert.doesNotMatch(route, /supabase\.co\/functions\/v1/);
+});
+
+test("booking and management scripts carry the response CSP nonce and never cache another parent's nonce", async () => {
+  const supplied = Buffer.from("trusted-proxy-nonce").toString("base64");
+  for (const relativePath of ["app/book/route.ts", "app/manage/route.ts"]) {
+    const { response, html } = await renderedRoute(relativePath, { "x-nonce": supplied });
+    const scriptNonce = html.match(/<script nonce="([A-Za-z0-9+/=]+)">/)?.[1];
+    assert.equal(scriptNonce, supplied);
+    const policy = response.headers.get("content-security-policy");
+    assert.match(policy, new RegExp(`script-src 'self' 'nonce-${supplied}' 'strict-dynamic'`));
+    assert.doesNotMatch(policy.match(/script-src[^;]+/)[0], /unsafe-inline/);
+    assert.equal(response.headers.get("cache-control"), "private, no-store");
+    assert.equal(response.headers.get("referrer-policy"), "no-referrer");
+    assert.equal(loadTypeScript(relativePath).dynamic, "force-dynamic");
+    assertInlineScriptParses(html);
+    const invalid = await renderedRoute(relativePath, { "x-nonce": '\" onload=\"alert(1)' });
+    const fallbackNonce = invalid.html.match(/<script nonce="([A-Za-z0-9+/=]+)">/)?.[1];
+    assert.match(fallbackNonce, /^[A-Za-z0-9+/=]{16,}$/);
+    assert.ok(invalid.response.headers.get("content-security-policy").includes(`'nonce-${fallbackNonce}'`));
+    assert.equal(invalid.html.includes('onload="alert(1)'), false);
+    const fresh = await renderedRoute(relativePath);
+    assert.notEqual(fresh.html.match(/<script nonce="([A-Za-z0-9+/=]+)">/)?.[1], fallbackNonce);
+  }
 });
 
 test("manage page renders optional current, slot, and safe rebooking locations", async () => {

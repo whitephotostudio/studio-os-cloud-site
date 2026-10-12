@@ -26,6 +26,7 @@ type StudioOSDownloadAccessProps = {
 type StudioAppStatusPayload = {
   ok?: boolean;
   signedIn?: boolean;
+  mfaRequired?: boolean;
   userEmail?: string | null;
   message?: string;
   release?: {
@@ -77,7 +78,7 @@ export function StudioOSDownloadAccess({
   const redirectPath = "/studio-os/download";
 
   const [accessState, setAccessState] = useState<
-    "loading" | "signed-in" | "signed-out" | "unavailable"
+    "loading" | "signed-in" | "signed-out" | "verification-required" | "unavailable"
   >("loading");
   const [email, setEmail] = useState("");
   const [status, setStatus] = useState<StudioAppStatusPayload | null>(null);
@@ -118,6 +119,11 @@ export function StudioOSDownloadAccess({
       if (response.status === 401 && json?.ok === false && json.signedIn === false) {
         // A missing web session can offer sign-in without revoking other sessions.
         setAccessState("signed-out");
+        return;
+      }
+      if (response.status === 403 && json?.signedIn === true && json.mfaRequired === true) {
+        setStatus(json);
+        setAccessState("verification-required");
         return;
       }
       if (
@@ -170,36 +176,9 @@ export function StudioOSDownloadAccess({
       return;
     }
 
-    setSubmitting(true);
-    setMessage("");
-
-    try {
-      const response = await fetch("/api/studio-os-app/download-interest", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          email: normalizedEmail,
-          platform: selectedPlatform,
-        }),
-      });
-
-      const json = (await response.json().catch(() => null)) as
-        | { ok?: boolean; message?: string }
-        | null;
-
-      if (!response.ok || !json?.ok) {
-        throw new Error(json?.message || "Unable to save your email right now.");
-      }
-
-      window.location.href = buildSignUpHref(normalizedEmail, redirectPath);
-    } catch (error) {
-      setMessageTone("error");
-      setMessage(
-        error instanceof Error ? error.message : "Unable to start your trial right now.",
-      );
-    } finally {
-      setSubmitting(false);
-    }
+    // The signup form records the account and its source. An optional interest
+    // endpoint must not block a photographer from reaching account creation.
+    window.location.href = buildSignUpHref(normalizedEmail, redirectPath);
   }
 
   async function handleWindowsRegister() {
@@ -224,6 +203,7 @@ export function StudioOSDownloadAccess({
           email: normalizedEmail,
           platform: "windows",
         }),
+        signal: AbortSignal.timeout(15000),
       });
 
       const json = (await response.json().catch(() => null)) as
@@ -293,6 +273,16 @@ export function StudioOSDownloadAccess({
           >
             Retry access check
           </button>
+        </div>
+      ) : null}
+
+      {accessState === "verification-required" ? (
+        <div role="alert" className="mx-auto mt-12 max-w-4xl rounded-[28px] border border-amber-200 bg-amber-50 p-6 sm:p-8">
+          <h2 className="text-xl font-bold text-neutral-950">Complete two-step verification.</h2>
+          <p className="mt-3 text-sm leading-7 text-neutral-700">{status?.message || "Verify your sign-in to check your photographer keys and app access."}</p>
+          <Link href={buildSignInHref(email, redirectPath)} className="mt-4 inline-flex rounded-2xl bg-neutral-950 px-5 py-3 font-semibold text-white">
+            Verify sign-in
+          </Link>
         </div>
       ) : null}
 
@@ -412,10 +402,12 @@ export function StudioOSDownloadAccess({
                 Signed in as {status?.userEmail || email}
               </div>
               <h2 className="mt-4 text-3xl font-black tracking-tight text-neutral-950 sm:text-4xl">
-                Your app download is ready.
+                {releaseReady && macReady ? "Your app download is ready." : "Your account is signed in."}
               </h2>
               <p className="mt-4 text-base leading-7 text-neutral-600">
-                Download the installer, sign in inside the app, and Studio OS will check your trial or subscription access automatically.
+                {status?.entitlement?.canDownload
+                  ? "Download the installer when available, then sign in inside the app to check your trial or subscription access."
+                  : "Your current account does not have desktop download access. Review your plan or contact support for help."}
               </p>
             </div>
 
@@ -426,6 +418,13 @@ export function StudioOSDownloadAccess({
               </div>
             ) : null}
           </div>
+
+          {status?.entitlement?.canDownload === false ? (
+            <div className="mt-5 flex gap-5 text-sm font-semibold">
+              <Link href="/pricing" className="underline underline-offset-4">Review plans</Link>
+              <a href="mailto:hello@studiooscloud.com" className="underline underline-offset-4">Email support</a>
+            </div>
+          ) : null}
 
           {status?.message ? (
             <div className="mt-5 rounded-2xl border border-neutral-200 bg-neutral-50 px-4 py-3 text-sm leading-7 text-neutral-600">
@@ -466,7 +465,7 @@ export function StudioOSDownloadAccess({
               </a>
             ) : (
               <div className="mt-6 inline-flex items-center justify-center rounded-2xl border border-neutral-200 bg-neutral-100 px-5 py-3 font-semibold text-neutral-400">
-                Mac download coming soon
+                {macReady ? "Desktop access required" : "Mac download coming soon"}
               </div>
             )
           ) : signedOut ? (

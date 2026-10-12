@@ -38,6 +38,12 @@ function queryDb(tables, onQuery = () => {}) {
       then(resolve, reject) {
         return Promise.resolve().then(async () => {
           onQuery(q);
+          // Yearbook selections introduce a second school/student join path.
+          // PostgREST rejects an unhinted embed before applying row filters.
+          const relation = q.table === 'schools' ? 'students' : q.table === 'students' ? 'schools' : null;
+          if (relation && new RegExp(`\\b${relation}(?:!inner)?\\(`).test(q.selection)) {
+            return { data: null, count: null, error: { code: 'PGRST201', message: 'More than one school/student relationship' } };
+          }
           let rows = typeof tables[table] === 'function' ? await tables[table](q) : tables[table];
           if (!rows) throw new Error('Unexpected table query: ' + table);
           rows = rows.filter(row => q.filters.every(f => f(row)));
@@ -54,7 +60,10 @@ function schoolsHarness({ roster, photoCounts, verification, projects = [], scho
   const queries = [];
   const tables = {
     photographers: [{ id: 'p', user_id: 'u' }],
-    schools: [{ id: 's', school_name: 'School', local_school_id: 'local-s', photographer_id: 'p', students: [{ count: schoolCount }] }],
+    schools: [
+      { id: 's', school_name: 'School', local_school_id: 'local-s', photographer_id: 'p', students: [{ count: schoolCount }] },
+      { id: 'private-s', school_name: 'Other studio', local_school_id: 'private-local-s', photographer_id: 'other', students: [{ count: 99 }] },
+    ],
     projects, students: () => roster?.promise ?? [],
   };
   const path = 'app/dashboard/schools/page.tsx';
@@ -75,6 +84,29 @@ function schoolsHarness({ roster, photoCounts, verification, projects = [], scho
   vm.runInNewContext(transpile(helpers + '\n' + functionSource(path, 'load') + '\nexports.load = load;'), context);
   return { ...context.exports, state, queries, context };
 }
+
+test('the school list resolves the original roster relationship and preserves owner filtering and count aliases', async () => {
+  cache.clearDashboardListCache();
+  const app = schoolsHarness({ schoolCount: 23 });
+  await app.load();
+  assert.equal(app.state.error, '');
+  assert.equal(app.state.loading, false);
+  assert.deepEqual(Array.from(app.state.schools, school => school.id), ['s']);
+  assert.equal(app.state.schools[0].peopleCount, 23);
+  const q = app.queries.find(q => q.table === 'schools');
+  assert.match(q.selection, /students:students!students_school_id_fkey\(count\)/);
+  await flush();
+});
+
+test('the database fixture reproduces PGRST201 for unhinted embeds in both directions', async () => {
+  const db = queryDb({ schools: [], students: [] });
+  for (const [table, relation] of [['schools', 'students'], ['students', 'schools']]) {
+    const old = await db.from(table).select(`id,${relation}(id)`);
+    assert.equal(old.error.code, 'PGRST201');
+    const corrected = await db.from(table).select(`id,${relation}:${relation}!students_school_id_fkey(id)`);
+    assert.equal(corrected.error, null);
+  }
+});
 
 test('Schools becomes usable before either the roster details or storage scan finishes', async () => {
   cache.clearDashboardListCache();

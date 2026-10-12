@@ -10,7 +10,9 @@ const compile = (source) => ts.transpileModule(source, {
 }).outputText;
 const helpers = {};
 new Function("exports", compile(helperSource))(helpers);
-const { canOfferParentBackdrops, usableParentCutouts, parentBackdropSelectionIssue, PARENT_BACKDROP_UNAVAILABLE } = helpers;
+const currencyHelpers = {};
+new Function("exports", compile(readFileSync(new URL("../lib/order-currency.ts", import.meta.url), "utf8")))(currencyHelpers);
+const { canOfferParentBackdrops, usableParentCutouts, parentBackdropSelectionIssue, PARENT_BACKDROP_UNAVAILABLE, PARENT_BACKDROPS_DISABLED } = helpers;
 const url = (name, signature = "one") => `https://account.r2.cloudflarestorage.com/bucket/schools/school-a/student-a/${name}.jpg?sig=${signature}`;
 const portraits = ["one", "two"].map((name) => ({ id: name, references: [url(name), `schools/school-a/student-a/${name}.jpg`] }));
 const entry = { hasBackdrop: true, category: "print", slots: [{ assignedImageUrl: url("one") }], portraits, cutoutUrls: { one: "/paid-one.png" } };
@@ -18,7 +20,7 @@ const entry = { hasBackdrop: true, category: "print", slots: [{ assignedImageUrl
 test("background chooser requires a usable current cutout, school mode and a non-composite photo", () => {
   const eligible = { schoolMode: true, composite: false, catalogCount: 1, cutoutUrl: "/paid.png" };
   assert.equal(canOfferParentBackdrops(eligible), true);
-  for (const change of [{ cutoutUrl: null }, { cutoutUrl: " " }, { schoolMode: false }, { composite: true }, { catalogCount: 0 }]) {
+  for (const change of [{ cutoutUrl: null }, { cutoutUrl: " " }, { schoolMode: false }, { composite: true }, { catalogCount: 0 }, { onlineBackdropsEnabled: false }]) {
     assert.equal(canOfferParentBackdrops({ ...eligible, ...change }), false);
   }
 });
@@ -104,7 +106,7 @@ test("the actual eligible picker and confirmation retain the chosen background",
 
 test("clicking a ready grid photo uses that photo's readiness, not the previous selection", () => {
   const focused = [], opened = [];
-  const values = { canOfferParentBackdrops, isSchoolMode: true, backdrops: [{ id: "background" }],
+  const values = { canOfferParentBackdrops, isSchoolMode: true, onlineBackdropsEnabled: true, backdrops: [{ id: "background" }],
     isCompositeGalleryImage: (image) => image.source === "composite", nobgUrls: { ready: "/paid.png" },
     focusImageForActions: (image) => focused.push(image.id), showBackdropPickerForReadyPhoto: () => opened.push(true) };
   const click = new Function(...Object.keys(values), compile(extract("function openBackdropPickerForImage", "function openEventPhotoGrid") + "\nreturn openBackdropPickerForImage;"))(...Object.values(values));
@@ -121,12 +123,14 @@ function checkoutFixture(options = {}) {
   const laneB = { laneKey: "school-b:student-b", schoolId: "school-b", studentId: "student-b", pin: "pin-b", email: "parent@example.com" };
   const cart = options.items ?? [{ id: "saved", packageId: "print", packageName: "Print", category: "print", backdrop: { id: "background" }, slots: entry.slots, laneKey: laneA.laneKey }];
   const requests = [];
-  const defaultContext = (lane) => ({ ok: true, photographerId: "studio", activeSchool: { id: lane.schoolId }, primaryStudent: { id: lane.studentId },
+  const defaultContext = (lane) => ({ ok: true, photographerId: "studio", orderCurrency: "cad", activeSchool: { id: lane.schoolId }, primaryStudent: { id: lane.studentId },
     media: [{ id: "one", storage_path: "schools/school-a/student-a/one.jpg", download_url: url("one", "fresh") }],
     nobgUrls: { one: "/verified.png" }, backdrops: [{ id: "background" }], packages: [] });
   const values = {
     checkoutItems: cart, combineLanes: [laneA, laneB], currentLane: laneA, isSchoolMode: true,
-    photographerId: "studio", parentEmail: "parent@example.com", PARENT_BACKDROP_UNAVAILABLE,
+    photographerId: "studio", parentEmail: "parent@example.com", PARENT_BACKDROP_UNAVAILABLE, PARENT_BACKDROPS_DISABLED,
+    setOnlineBackdropsEnabled: () => {}, setBackdrops: () => {},
+    orderCurrency: "cad", resolvePhotographerOrderCurrency: currencyHelpers.resolvePhotographerOrderCurrency,
     usableParentCutouts, imageUrlExists: async () => options.canLoad !== false,
     packages: [{ id: "retouch", name: "Retouching" }],
     retouchPolicyEntry: (item) => ({ pkg: { name: item.packageName } }),
@@ -156,6 +160,14 @@ test("saved background checkout refreshes current proof and preserves the cart w
   assert.equal(await checkoutFixture().verify(), "");
 });
 
+test("fresh disabled policy rejects a stale saved background without mutating the basket", async () => {
+  const fixture = checkoutFixture({ context: { onlineBackdropsEnabled: false } });
+  const before = JSON.stringify(fixture.cart);
+  assert.equal(await fixture.verify(), PARENT_BACKDROPS_DISABLED);
+  assert.equal(JSON.stringify(fixture.cart), before);
+  assert.equal(fixture.requests.length, 1);
+});
+
 test("combined saved backgrounds verify each lane; readiness from one child cannot authorize another", async () => {
   const fixture = checkoutFixture();
   const items = [fixture.cart[0], { ...fixture.cart[0], id: "sibling", laneKey: fixture.laneB.laneKey }];
@@ -166,6 +178,15 @@ test("combined saved backgrounds verify each lane; readiness from one child cann
   const valid = checkoutFixture({ items });
   assert.equal(await valid.verify(), "");
   assert.equal(valid.requests.length, 2);
+});
+
+test("saved background checkout rejects a changed or unsupported studio currency before order creation", async () => {
+  for (const orderCurrency of ["eur", "jpy"]) {
+    const fixture = checkoutFixture({ context: { orderCurrency } });
+    const before = JSON.stringify(fixture.cart);
+    assert.equal(await fixture.verify(), PARENT_BACKDROP_UNAVAILABLE);
+    assert.equal(JSON.stringify(fixture.cart), before);
+  }
 });
 
 test("original and retouch-only checkout does not require unrelated background proof or make extra requests", async () => {

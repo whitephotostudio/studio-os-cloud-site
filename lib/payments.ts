@@ -1,6 +1,7 @@
 import type { ConfirmedRefund } from "@/lib/order-refund-notifications";
-import { allocateRefundCents, orderCheckoutIdempotencyKey } from "@/lib/order-payment-policy";
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { hasDigitalProductLabel } from "@/lib/digital-product-label";
+import { allocateRefundCents, orderCheckoutIdempotencyKey, type ApplicationFeeCharge, type PaymentOrder } from "@/lib/order-payment-policy";
+import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { createDashboardServiceClient } from "@/lib/dashboard-auth";
 import { syncPhotographyKeysByPhotographerId } from "@/lib/studio-os-app";
 import { creditMaintenanceActive } from "@/lib/credit-maintenance";
@@ -29,6 +30,8 @@ import { FREE_TRIAL_DAYS } from "@/lib/trial-config";
 import { resolveStripeBillingPeriod } from "@/lib/stripe-billing-period";
 import { readAllBillingRows, reconcileOrderUsageFeeRefunds, syncOrderUsageFees } from "@/lib/order-usage-billing";
 import { isStripeBillingActive } from "@/lib/subscription-access";
+import { SUPPORTED_ORDER_CURRENCIES } from "@/lib/order-currency";
+import { ConnectProfileError, normalizeBusinessCountry, normalizeSelectedSalesCurrency, verifiedConnectCountry, type BusinessCountry } from "@/lib/stripe-connect-country";
 export {
   isStripeBillingActive, isTrialStatus, resolveFreeTrialEndsAt,
   getFreeTrialDaysRemaining, isFreeTrialActive, isFreeTrialExpired,
@@ -92,6 +95,9 @@ export type PhotographerBillingRow = {
   subscription_current_period_end: string | null;
   billing_email: string | null;
   billing_currency: string | null;
+  business_country?: string | null;
+  stripe_connect_country?: string | null;
+  sales_currency_configured?: boolean;
   order_usage_rate_cents: number | null;
   extra_desktop_keys: number | null;
   studio_id: string | null;
@@ -115,6 +121,7 @@ type CreditPackageRow = {
 
 type StripeAccount = {
   id: string;
+  country?: string | null;
   object: "account";
   charges_enabled: boolean;
   payouts_enabled: boolean;
@@ -224,6 +231,10 @@ type StripePaymentIntent = {
   status: string;
   metadata?: Record<string, string> | null;
   latest_charge?: string | null;
+  amount?: number;
+  amount_received?: number;
+  currency?: string;
+  application_fee_amount?: number | null;
 };
 
 type StripeCharge = {
@@ -281,7 +292,6 @@ function env(name: string, fallback?: string) {
 }
 
 export const DEFAULT_BILLING_CURRENCY = env("STRIPE_BILLING_CURRENCY", "cad").toLowerCase();
-const DEFAULT_CONNECT_COUNTRY = env("STRIPE_CONNECT_DEFAULT_COUNTRY", "CA").toUpperCase();
 const STRIPE_API_VERSION = env("STRIPE_API_VERSION", "2025-06-30.basil");
 
 export const ORDER_USAGE_RATE_CENTS = DEFAULT_ORDER_USAGE_RATE_CENTS;
@@ -440,11 +450,20 @@ export async function verifyStripeSignature(
   signatureHeader: string,
   secrets: string[],
 ) {
-  const parts = signatureHeader.split(",");
-  const timestamp = parts.find((part) => part.startsWith("t="))?.slice(2);
+  const parts = signatureHeader.split(",").map((part) => part.trim());
+  const timestamps = parts.filter((part) => part.startsWith("t="));
+  const timestamp = timestamps.length === 1 ? timestamps[0].slice(2) : "";
   const signatures = parts.filter((part) => part.startsWith("v1=")).map((part) => part.slice(3));
 
-  if (!timestamp || !signatures.length || !secrets.length) {
+  if (!/^\d+$/.test(timestamp) || !signatures.length || !secrets.length) {
+    return false;
+  }
+
+  // Stripe signs each delivery attempt with a fresh timestamp. Reject captured
+  // requests outside a bounded clock-skew window, even when their HMAC is valid.
+  const timestampSeconds = Number(timestamp);
+  if (!Number.isSafeInteger(timestampSeconds) ||
+      Math.abs(Math.floor(Date.now() / 1000) - timestampSeconds) > 300) {
     return false;
   }
 
@@ -453,8 +472,9 @@ export async function verifyStripeSignature(
   return secrets.some((secret) => {
     const digest = createHmac("sha256", secret).update(signedPayload).digest("hex");
     return signatures.some((value) => {
+      if (!/^[a-f0-9]{64}$/i.test(value)) return false;
       try {
-        return timingSafeEqual(Buffer.from(value), Buffer.from(digest));
+        return timingSafeEqual(Buffer.from(value, "hex"), Buffer.from(digest, "hex"));
       } catch {
         return false;
       }
@@ -487,7 +507,7 @@ const PHOTOGRAPHER_SELECT_BASE =
   "id,user_id,business_name,brand_color,watermark_enabled,watermark_logo_url,studio_address,studio_phone,stripe_account_id,stripe_connected_account_id,stripe_connect_onboarding_complete,stripe_connect_charges_enabled,stripe_connect_payouts_enabled,stripe_platform_customer_id,stripe_subscription_id,stripe_subscription_item_base_id,stripe_subscription_item_extra_keys_id,stripe_subscription_item_usage_id,subscription_plan_code,subscription_billing_interval,subscription_status,subscription_current_period_start,subscription_current_period_end,billing_email,billing_currency,order_usage_rate_cents,extra_desktop_keys,studio_id,studio_email,logo_url,is_platform_admin,created_at";
 
 /** Full select including trial columns (requires migration). */
-const PHOTOGRAPHER_SELECT_FULL = `${PHOTOGRAPHER_SELECT_BASE},trial_starts_at,trial_ends_at`;
+const PHOTOGRAPHER_SELECT_FULL = `${PHOTOGRAPHER_SELECT_BASE},trial_starts_at,trial_ends_at,business_country,stripe_connect_country,sales_currency_configured`;
 
 export async function getPhotographerByUserId(service: ServiceClient, userId: string) {
   // Try with trial columns first; fall back to base columns if the
@@ -759,7 +779,9 @@ async function ensureCatalogEntry(entry: CatalogEntry) {
       description: entry.description,
       "metadata[lookup_key]": entry.lookupKey,
     }),
-    idempotencyKey: `studio-os-product-${entry.lookupKey}`,
+    // A new metered rate has a new description. Keep the previous product and
+    // avoid reusing its idempotency key with a different creation payload.
+    idempotencyKey: `studio-os-product-${entry.lookupKey}${entry.usageType === "metered" ? `-${entry.unitAmount}` : ""}`,
   });
 
   const priceParams = new URLSearchParams();
@@ -788,6 +810,15 @@ async function ensureCatalogEntry(entry: CatalogEntry) {
 }
 
 let catalogPromise: Promise<StripeCatalog> | null = null;
+
+function orderUsageDescription(rateCents: number) {
+  const rate = new Intl.NumberFormat("en-CA", {
+    style: "currency",
+    currency: DEFAULT_BILLING_CURRENCY.toUpperCase(),
+    currencyDisplay: "code",
+  }).format(rateCents / 100);
+  return `Completed paid order usage billed monthly at ${rate} per order`;
+}
 
 export async function ensureStripeCatalog() {
   if (!catalogPromise) {
@@ -886,7 +917,7 @@ export async function ensureStripeCatalog() {
         starter: await ensureCatalogEntry({
           code: "starter_usage",
           name: "Starter Order Usage",
-          description: "Completed paid order usage billed monthly at $0.55 per order",
+          description: orderUsageDescription(PLAN_DEFS.starter.usageRateCents),
           currency: DEFAULT_BILLING_CURRENCY,
           unitAmount: PLAN_DEFS.starter.usageRateCents,
           interval: "month",
@@ -897,7 +928,7 @@ export async function ensureStripeCatalog() {
         core: await ensureCatalogEntry({
           code: "core_usage",
           name: "Core Order Usage",
-          description: "Completed paid order usage billed monthly at $0.35 per order",
+          description: orderUsageDescription(PLAN_DEFS.core.usageRateCents),
           currency: DEFAULT_BILLING_CURRENCY,
           unitAmount: PLAN_DEFS.core.usageRateCents,
           interval: "month",
@@ -908,7 +939,7 @@ export async function ensureStripeCatalog() {
         studio: await ensureCatalogEntry({
           code: "studio_usage",
           name: "Studio Order Usage",
-          description: "Completed paid order usage billed monthly at $0.25 per order",
+          description: orderUsageDescription(PLAN_DEFS.studio.usageRateCents),
           currency: DEFAULT_BILLING_CURRENCY,
           unitAmount: PLAN_DEFS.studio.usageRateCents,
           interval: "month",
@@ -983,14 +1014,18 @@ export async function retrieveStripeAccount(accountId: string) {
 export async function createConnectedAccount(input: {
   photographerId: string;
   userId: string;
+  country: BusinessCountry;
   email?: string | null;
   businessName?: string | null;
 }) {
   const params = new URLSearchParams();
   params.set("type", "express");
-  params.set("country", DEFAULT_CONNECT_COUNTRY);
+  const country = normalizeBusinessCountry(input.country);
+  if (!country) throw new ConnectProfileError("Choose your business country before connecting Stripe.");
+  params.set("country", country);
   params.set("email", input.email || "");
-  params.set("business_type", "individual");
+  // Stripe-hosted onboarding collects the legal business type. Do not assume
+  // every photography business is an individual sole proprietor.
   params.set("metadata[photographer_id]", input.photographerId);
   params.set("metadata[user_id]", input.userId);
   params.set("capabilities[card_payments][requested]", "true");
@@ -1330,6 +1365,7 @@ export async function syncConnectState(
   photographerId: string,
   account: StripeAccount,
 ) {
+  const country = verifiedConnectCountry(account);
   const updates = {
     stripe_account_id: account.id,
     stripe_connected_account_id: account.id,
@@ -1337,13 +1373,48 @@ export async function syncConnectState(
       account.details_submitted && account.charges_enabled && account.payouts_enabled,
     stripe_connect_charges_enabled: account.charges_enabled,
     stripe_connect_payouts_enabled: account.payouts_enabled,
-    billing_currency: account.default_currency || DEFAULT_BILLING_CURRENCY,
   };
 
-  const { error } = await service.from("photographers").update(updates).eq("id", photographerId);
-  if (error) throw error;
+  const { error } = await service.rpc("sync_photographer_connect_state", {
+    p_photographer_id: photographerId, p_account_id: account.id, p_country: country,
+    p_details_submitted: account.details_submitted,
+    p_charges_enabled: account.charges_enabled, p_payouts_enabled: account.payouts_enabled,
+  });
+  if (error) {
+    if (error.code === "23514") throw new ConnectProfileError(error.message, 409);
+    throw error;
+  }
 
   return updates;
+}
+
+export async function configureConnectBusinessProfile(
+  service: ServiceClient,
+  photographer: PhotographerBillingRow,
+  input: { businessCountry?: unknown; salesCurrency?: unknown; salesCurrencyExplicit?: unknown },
+  reserveConnect = false,
+) {
+  const country = normalizeBusinessCountry(input.businessCountry);
+  const currency = normalizeSelectedSalesCurrency(input.salesCurrency);
+  if (input.salesCurrencyExplicit != null && typeof input.salesCurrencyExplicit !== "boolean") {
+    throw new ConnectProfileError("The sales currency selection could not be verified.");
+  }
+  const accountId = getConnectedAccountId(photographer);
+  if (accountId) {
+    const account = await retrieveStripeAccount(accountId);
+    verifiedConnectCountry(account, country || photographer.business_country || photographer.stripe_connect_country);
+    await syncConnectState(service, photographer.id, account);
+  }
+  const { data, error } = await service.rpc("configure_photographer_payment_profile", {
+    p_photographer_id: photographer.id, p_business_country: country,
+    p_sales_currency: currency, p_currency_explicit: input.salesCurrencyExplicit === true,
+    p_reserve_connect: reserveConnect,
+  });
+  if (error) {
+    if (error.code === "23514") throw new ConnectProfileError(error.message, 409);
+    throw error;
+  }
+  return data as { businessCountry: BusinessCountry | null; businessCountryLocked: boolean; salesCurrency: string; salesCurrencyConfigured: boolean };
 }
 
 async function upsertSubscriptionMirror(
@@ -1416,8 +1487,13 @@ export async function syncSubscriptionStateFromStripe(
     refreshedItems.baseItem?.price.currency ||
     photographer.billing_currency ||
     DEFAULT_BILLING_CURRENCY;
+  const existingUsageRate = refreshedItems.usageItem?.price.unit_amount;
+  // Existing subscriptions retain their Stripe price until an explicit plan
+  // change. Mirror that actual rate rather than a newer catalog default.
   const nextUsageRate =
-    refreshedPlanCode ? PLAN_DEFS[refreshedPlanCode].usageRateCents : ORDER_USAGE_RATE_CENTS;
+    typeof existingUsageRate === "number" && Number.isInteger(existingUsageRate) && existingUsageRate >= 0
+      ? existingUsageRate
+      : refreshedPlanCode ? PLAN_DEFS[refreshedPlanCode].usageRateCents : ORDER_USAGE_RATE_CENTS;
 
   const updates = {
     stripe_platform_customer_id: subscription.customer,
@@ -1430,7 +1506,6 @@ export async function syncSubscriptionStateFromStripe(
     subscription_status: subscription.status,
     subscription_current_period_start: currentPeriodStart,
     subscription_current_period_end: currentPeriodEnd,
-    billing_currency: nextBillingCurrency,
     order_usage_rate_cents: nextUsageRate,
     extra_desktop_keys: extraDesktopKeys,
   };
@@ -1489,6 +1564,7 @@ async function syncOutstandingStudioUsage(
   usageItem?: StripeSubscriptionItem | null,
 ) {
   if (
+    photographer.is_platform_admin ||
     !normalizePlanCode(photographer.subscription_plan_code) ||
     !isStripeBillingActive(photographer.subscription_status) ||
     !photographer.stripe_subscription_item_usage_id
@@ -1776,7 +1852,8 @@ export async function finalizePaidOrder(
     return order;
   }
 
-  const isDigital = (order.package_name ?? "").toLowerCase().includes("digital");
+  const isDigital = hasDigitalProductLabel(order.package_name) &&
+    (order.package_name ?? "").toLowerCase().includes("digital");
   const nextStatus = isDigital ? "digital_paid" : "paid";
   const mergedNotes = await appendOrderNote(order.notes ?? null, input.note);
   const paidAt = input.paidAt || new Date().toISOString();
@@ -1920,7 +1997,7 @@ export async function markOrderRefunded(
   let query = service
     .from("orders")
     .select(
-      "id,notes,photographer_id,status,payment_status,refund_status,refund_amount_cents",
+      "id,notes,photographer_id,status,payment_status,refund_status,refund_amount_cents,platform_fee_collection_method",
     )
     .limit(1);
 
@@ -1966,7 +2043,7 @@ export async function markOrderRefunded(
 
   if (updateError) throw updateError;
 
-  if (fullyRefunded && order.photographer_id) {
+  if (fullyRefunded && order.photographer_id && order.platform_fee_collection_method == null) {
     // The database trigger durably queues this waiver. Customer refunds remain
     // successful during a platform billing outage; the daily worker retries it.
     try { await reconcileOrderUsageFeeRefunds(service, order.photographer_id as string, stripeRequest); }
@@ -2013,6 +2090,133 @@ export async function retrievePaymentIntent(
   });
 }
 
+export type DirectOrderPlatformFee = {
+  collectionMethod: "connect_application_fee" | "waived";
+  amountCents: number;
+  currency: string;
+  snapshotKey: string;
+  billableOrderCount: number;
+  rateCents: number;
+};
+
+// The studio currency selector supports these Stripe two-decimal currencies.
+// A nominal 40-cent fee must not become 40 whole units in a zero-decimal currency.
+export const DIRECT_ORDER_FEE_CURRENCIES = SUPPORTED_ORDER_CURRENCIES;
+const directOrderFeeCurrencies = new Set<string>(DIRECT_ORDER_FEE_CURRENCIES);
+
+/** Quote new checkout fees from trusted persisted orders and the studio plan. */
+export async function quoteDirectOrderPlatformFees(input: {
+  planCode: string | null;
+  subscriptionStatus: string | null;
+  isPlatformAdmin: boolean;
+  freeTrialActive?: boolean;
+  currency: string;
+  orders: Array<{ id: string; totalCents: number; isTest?: boolean | null }>;
+}) {
+  const currency = input.currency.trim().toLowerCase();
+  if (!directOrderFeeCurrencies.has(currency)) throw new Error("This checkout currency does not support the configured order service fee.");
+  if (!input.orders.length ||
+      new Set(input.orders.map((order) => order.id)).size !== input.orders.length ||
+      input.orders.some((order) => !order.id || !Number.isSafeInteger(order.totalCents) || order.totalCents < 0)) {
+    throw new Error("Could not verify the order service fee.");
+  }
+  const planCode = input.freeTrialActive ? "studio" : normalizePlanCode(input.planCode);
+  if (!input.isPlatformAdmin && (!planCode || (!isStripeBillingActive(input.subscriptionStatus) && !input.freeTrialActive))) {
+    throw new Error("This studio needs an active subscription before accepting payment.");
+  }
+  const billableOrders = input.orders.filter((order) => !input.isPlatformAdmin && order.isTest !== true && order.totalCents > 0);
+  const rateCents = billableOrders.length && planCode ? PLAN_DEFS[planCode].usageRateCents : 0;
+  if (!Number.isSafeInteger(rateCents) || rateCents < 0) throw new Error("Could not verify the order service fee.");
+  const amountCents = rateCents * billableOrders.length;
+  const totalCents = input.orders.reduce((sum, order) => sum + order.totalCents, 0);
+  if (!Number.isSafeInteger(amountCents) || !Number.isSafeInteger(totalCents) || amountCents > totalCents) {
+    throw new Error("This order total is too small for its service fee.");
+  }
+  const billableIds = new Set(billableOrders.map((order) => order.id));
+  return {
+    collectionMethod: amountCents > 0 ? "connect_application_fee" as const : "waived" as const,
+    amountCents, currency, rateCents,
+    billableOrderCount: amountCents > 0 ? billableOrders.length : 0,
+    orders: input.orders.map((order) => ({
+      id: order.id,
+      collectionMethod: billableIds.has(order.id) && rateCents > 0 ? "connect_application_fee" as const : "waived" as const,
+      amountCents: billableIds.has(order.id) ? rateCents : 0,
+    })),
+  };
+}
+
+export type DirectOrderFeeSnapshotRow = {
+  id: string;
+  order_group_id?: string | null;
+  photographer_id?: string | null;
+  total_cents?: number | null;
+  currency?: string | null;
+  platform_fee_collection_method: string | null;
+  platform_fee_amount_cents: number | null;
+  platform_fee_currency: string | null;
+  platform_fee_rate_cents: number | null;
+  stripe_application_fee_id?: string | null;
+  stripe_payment_intent_id?: string | null;
+};
+
+function canonicalDirectOrderFeeRows(rows: DirectOrderFeeSnapshotRow[]) {
+  if (!rows.length || new Set(rows.map((row) => row.id)).size !== rows.length) throw new Error("The saved order service-fee snapshot is incomplete.");
+  return rows.map((row) => {
+    if (!row.id || !["connect_application_fee", "waived"].includes(row.platform_fee_collection_method ?? "") ||
+        !Number.isSafeInteger(row.platform_fee_amount_cents) || Number(row.platform_fee_amount_cents) < 0 ||
+        !Number.isSafeInteger(row.platform_fee_rate_cents) || Number(row.platform_fee_rate_cents) < 0 ||
+        !directOrderFeeCurrencies.has(row.platform_fee_currency ?? "")) {
+      throw new Error("The saved order service-fee snapshot could not be verified.");
+    }
+    const normalized = {
+      id: row.id,
+      platform_fee_collection_method: row.platform_fee_collection_method!,
+      platform_fee_amount_cents: row.platform_fee_amount_cents!,
+      platform_fee_currency: row.platform_fee_currency!,
+      platform_fee_rate_cents: row.platform_fee_rate_cents!,
+    };
+    if ((normalized.platform_fee_collection_method === "waived" && normalized.platform_fee_amount_cents !== 0) ||
+        (normalized.platform_fee_collection_method === "connect_application_fee" && (normalized.platform_fee_amount_cents <= 0 || normalized.platform_fee_rate_cents <= 0 ||
+          normalized.platform_fee_rate_cents !== normalized.platform_fee_amount_cents))) {
+      throw new Error("The saved order service fee does not match its frozen rate.");
+    }
+    return normalized;
+  }).sort((a, b) => a.id.localeCompare(b.id));
+}
+
+export function directOrderPlatformFeeSnapshotKey(rows: DirectOrderFeeSnapshotRow[]) {
+  return createHash("sha256").update(JSON.stringify(canonicalDirectOrderFeeRows(rows))).digest("hex");
+}
+
+export function directOrderPlatformFeePayload(rows: DirectOrderFeeSnapshotRow[], rawCurrency: string): DirectOrderPlatformFee {
+  const currency = rawCurrency.trim().toLowerCase();
+  const saved = canonicalDirectOrderFeeRows(rows);
+  const first = saved[0];
+  if (!directOrderFeeCurrencies.has(currency) || saved.some((row) => row.platform_fee_currency !== currency ||
+      row.platform_fee_rate_cents !== first.platform_fee_rate_cents)) {
+    throw new Error("The combined order service-fee snapshots do not agree.");
+  }
+  const amountCents = saved.reduce((sum, row) => sum + row.platform_fee_amount_cents, 0);
+  if (!Number.isSafeInteger(amountCents)) throw new Error("The combined order service-fee amount could not be verified.");
+  return {
+    collectionMethod: amountCents > 0 ? "connect_application_fee" : "waived",
+    amountCents, currency, rateCents: first.platform_fee_rate_cents,
+    billableOrderCount: saved.filter((row) => row.platform_fee_collection_method === "connect_application_fee").length,
+    snapshotKey: createHash("sha256").update(JSON.stringify(saved)).digest("hex"),
+  };
+}
+
+export function directOrderPlatformFeeMetadata(fee: DirectOrderPlatformFee): Record<string, string> {
+  return {
+    platform_fee_collection_method: fee.collectionMethod,
+    platform_fee_amount_cents: String(fee.amountCents),
+    platform_fee_currency: fee.currency.toLowerCase(),
+    platform_fee_snapshot_key: fee.snapshotKey,
+    platform_fee_billable_order_count: String(fee.billableOrderCount),
+    platform_fee_rate_cents: String(fee.rateCents),
+  };
+}
+
 export async function createDirectOrderCheckoutSession(input: {
   accountId: string;
   orderId: string;
@@ -2027,6 +2231,7 @@ export async function createDirectOrderCheckoutSession(input: {
   description: string;
   successUrl: string;
   cancelUrl: string;
+  schoolReturnContext?: { orderId: string; email: string };
   /**
    * When this checkout represents a combined sibling/cross-year order, this
    * carries the shared group id so the webhook can fan out the "paid" status
@@ -2034,7 +2239,24 @@ export async function createDirectOrderCheckoutSession(input: {
    */
   orderGroupId?: string | null;
   previousExpiredSessionId?: string | null;
+  /** Frozen in the database before creating this session; omit for legacy checkout retries. */
+  platformFee?: DirectOrderPlatformFee;
 }) {
+  const fee = input.platformFee;
+  if (fee && (!input.accountId.startsWith("acct_") || !Number.isSafeInteger(input.totalCents) || input.totalCents <= 0 ||
+      !Number.isSafeInteger(fee.amountCents) || fee.amountCents < 0 ||
+      fee.currency.toLowerCase() !== input.currency.toLowerCase() ||
+      !fee.snapshotKey.trim() || fee.snapshotKey.length > 500 ||
+      !Number.isSafeInteger(fee.billableOrderCount) || fee.billableOrderCount < 0 ||
+      !Number.isSafeInteger(fee.rateCents) || fee.rateCents < 0 || !directOrderFeeCurrencies.has(fee.currency.toLowerCase()) ||
+      (fee.collectionMethod === "connect_application_fee" && (fee.amountCents <= 0 || fee.amountCents > input.totalCents || fee.billableOrderCount <= 0)) ||
+      (fee.collectionMethod === "waived" && (fee.amountCents !== 0 || fee.billableOrderCount !== 0)) ||
+      !["connect_application_fee", "waived"].includes(fee.collectionMethod))) {
+    throw new Error("Could not verify the saved order service fee. No payment was created.");
+  }
+  if (fee && fee.collectionMethod === "connect_application_fee" && (fee.rateCents <= 0 || fee.rateCents * fee.billableOrderCount !== fee.amountCents)) {
+    throw new Error("The saved service fee does not match its frozen rate. No payment was created.");
+  }
   const params = new URLSearchParams();
   params.set("mode", "payment");
   params.set("success_url", input.successUrl);
@@ -2050,6 +2272,10 @@ export async function createDirectOrderCheckoutSession(input: {
   params.set("metadata[billing_flow]", "customer_order");
   params.set("metadata[order_id]", input.orderId);
   params.set("metadata[photographer_id]", input.photographerId);
+  if (input.schoolReturnContext) {
+    params.set("metadata[portal_return_order_id]", input.schoolReturnContext.orderId);
+    params.set("metadata[portal_return_email]", input.schoolReturnContext.email);
+  }
   if (input.schoolId) params.set("metadata[school_id]", input.schoolId);
   if (input.projectId) params.set("metadata[project_id]", input.projectId);
   if (input.studentId) params.set("metadata[student_id]", input.studentId);
@@ -2057,6 +2283,16 @@ export async function createDirectOrderCheckoutSession(input: {
   params.set("payment_intent_data[metadata][billing_flow]", "customer_order");
   params.set("payment_intent_data[metadata][order_id]", input.orderId);
   params.set("payment_intent_data[metadata][photographer_id]", input.photographerId);
+  if (fee) {
+    if (fee.collectionMethod === "connect_application_fee") {
+      params.set("payment_intent_data[application_fee_amount]", String(fee.amountCents));
+    }
+    const feeMetadata = directOrderPlatformFeeMetadata(fee);
+    for (const [key, value] of Object.entries(feeMetadata)) {
+      params.set(`metadata[${key}]`, value);
+      params.set(`payment_intent_data[metadata][${key}]`, value);
+    }
+  }
   if (input.schoolId) params.set("payment_intent_data[metadata][school_id]", input.schoolId);
   if (input.projectId) params.set("payment_intent_data[metadata][project_id]", input.projectId);
   if (input.studentId) params.set("payment_intent_data[metadata][student_id]", input.studentId);
@@ -2134,6 +2370,7 @@ export async function getUsageSummaryForCurrentPeriod(
     .gte("paid_at", periodStart)
     .lt("paid_at", periodEnd)
     .or("is_test.is.false,is_test.is.null")
+    .is("platform_fee_collection_method", null)
     .order("id", { ascending: true }).range(from, to));
 
   const rows =
@@ -2281,23 +2518,24 @@ async function expandOrderIdsForGroup(
   let groupId: string | null = null;
 
   if (args.orderId) {
-    seedOrderId = args.orderId;
-    const { data } = await service
+    const { data, error } = await service
       .from("orders")
       .select("id, order_group_id")
       .eq("id", args.orderId)
       .maybeSingle();
+    if (error) throw error;
     if (data) {
       seedOrderId = data.id as string;
       groupId = (data.order_group_id as string | null) ?? null;
     }
   } else if (args.paymentIntentId) {
-    const { data } = await service
+    const { data, error } = await service
       .from("orders")
       .select("id, order_group_id")
       .eq("stripe_payment_intent_id", args.paymentIntentId)
       .limit(1)
       .maybeSingle();
+    if (error) throw error;
     if (data) {
       seedOrderId = data.id as string;
       groupId = (data.order_group_id as string | null) ?? null;
@@ -2308,19 +2546,61 @@ async function expandOrderIdsForGroup(
   if (!groupId) return [seedOrderId];
 
   // Fan out to every member of the group.
-  const { data: groupMembers } = await service
+  const { data: groupMembers, error: groupError, count: groupCount } = await service
     .from("orders")
-    .select("id")
+    .select("id", { count: "exact" })
     .eq("order_group_id", groupId);
-
+  if (groupError) throw groupError;
   const ids = (groupMembers ?? []).map((row) => row.id as string);
-  return ids.length > 0 ? ids : [seedOrderId];
+  if (groupCount == null || ids.length !== groupCount || !ids.includes(seedOrderId) ||
+      ids.some((id) => !id) || new Set(ids).size !== ids.length) {
+    throw new Error("The complete payment order group could not be verified. Please retry.");
+  }
+  return ids;
 }
 
-/**
- * Group-aware wrapper around `finalizePaidOrder`. When the resolved order
- * belongs to a combined-checkout group, every sibling is finalized too.
- */
+/** Verify the actual connected payment against the complete saved fee scope. */
+export async function verifyDirectOrderPlatformFeePayment(service: ServiceClient, input: {
+  orderIds: string[];
+  paymentIntentId?: string | null;
+}) {
+  if (!input.orderIds.length || new Set(input.orderIds).size !== input.orderIds.length) throw new Error("Payment order scope could not be verified.");
+  const { data, error } = await service.from("orders")
+    .select("id,photographer_id,order_group_id,total_cents,currency,stripe_payment_intent_id,platform_fee_collection_method,platform_fee_amount_cents,platform_fee_currency,platform_fee_rate_cents,stripe_application_fee_id")
+    .in("id", input.orderIds);
+  if (error) throw error;
+  const rows = (data ?? []) as DirectOrderFeeSnapshotRow[];
+  if (rows.length !== input.orderIds.length || rows.some((row) => !input.orderIds.includes(row.id))) throw new Error("Payment order scope could not be verified.");
+  if (rows.every((row) => row.platform_fee_collection_method == null)) return null;
+  const savedPaymentIds = [...new Set(rows.map((row) => row.stripe_payment_intent_id).filter((id): id is string => Boolean(id)))];
+  const paymentIntentId = input.paymentIntentId || (savedPaymentIds.length === 1 ? savedPaymentIds[0] : null);
+  if (!paymentIntentId || savedPaymentIds.some((id) => id !== paymentIntentId) || !rows[0]?.photographer_id || rows.some((row) => row.photographer_id !== rows[0].photographer_id ||
+      row.order_group_id !== rows[0].order_group_id || row.currency?.toLowerCase() !== rows[0].currency?.toLowerCase())) {
+    throw new Error("The order service fee is waiting for a verified payment.");
+  }
+  const fee = directOrderPlatformFeePayload(rows, rows[0].currency || "cad");
+  const { data: photographer, error: ownerError } = await service.from("photographers")
+    .select("stripe_account_id,stripe_connected_account_id,is_platform_admin")
+    .eq("id", rows[0].photographer_id).maybeSingle();
+  if (ownerError) throw ownerError;
+  const accountId = photographer ? getConnectedAccountId(photographer) : null;
+  if (!accountId || (photographer?.is_platform_admin && fee.amountCents !== 0)) throw new Error("Payment account could not be verified.");
+  const intent = await retrievePaymentIntent(paymentIntentId, accountId);
+  const gross = rows.reduce((sum, row) => sum + Number(row.total_cents ?? 0), 0);
+  const expectedMetadata = directOrderPlatformFeeMetadata(fee);
+  if (!Number.isSafeInteger(gross) || gross <= 0 || rows.some((row) => !Number.isSafeInteger(row.total_cents) || Number(row.total_cents) < 0) ||
+      intent.id !== paymentIntentId || intent.status !== "succeeded" || intent.amount !== gross || intent.amount_received !== gross ||
+      intent.currency?.toLowerCase() !== fee.currency || intent.metadata?.billing_flow !== "customer_order" ||
+      intent.metadata?.photographer_id !== rows[0].photographer_id || !rows.some((row) => row.id === intent.metadata?.order_id) ||
+      (rows[0].order_group_id && intent.metadata?.order_group_id !== rows[0].order_group_id) ||
+      (intent.application_fee_amount ?? 0) !== fee.amountCents ||
+      Object.entries(expectedMetadata).some(([key, value]) => intent.metadata?.[key] !== value)) {
+    throw new Error("The Stripe payment does not match the frozen order service fee.");
+  }
+  return fee;
+}
+
+/** Finalize every member of a verified combined checkout, or its single order. */
 export async function finalizePaidOrderOrGroup(
   service: ServiceClient,
   input: {
@@ -2340,6 +2620,10 @@ export async function finalizePaidOrderOrGroup(
     // Fall back to the single-order behavior — finalize will no-op on miss.
     return finalizePaidOrder(service, input);
   }
+
+  // Connected merchants can alter intent metadata. Check both the immutable
+  // application-fee amount and every persisted group snapshot before fulfillment.
+  await verifyDirectOrderPlatformFeePayment(service, { orderIds: ids, paymentIntentId: input.paymentIntentId });
 
   let firstResult: Awaited<ReturnType<typeof finalizePaidOrder>> = null;
   let firstError: unknown = null;
@@ -2449,7 +2733,7 @@ export async function markOrderOrGroupRefunded(
 
 /** Read current Stripe refund state instead of trusting webhook delivery order. */
 export async function reconcileOrderRefundFromStripe(service: ServiceClient, account: string, paymentIntentId: string) {
-  const intent = await stripeRequest<{ id: string; amount: number; metadata?: Record<string, string> }>(`payment_intents/${encodeURIComponent(paymentIntentId)}`, { account });
+  const intent = await stripeRequest<{ id: string; amount: number; currency: string; latest_charge?: string | { id: string } | null; metadata?: Record<string, string> }>(`payment_intents/${encodeURIComponent(paymentIntentId)}`, { account });
   if (!intent.metadata?.order_id) return null;
   const { data: owner, error: ownerError } = await service.from("orders").select("photographer_id").eq("id", intent.metadata.order_id).maybeSingle();
   if (ownerError) throw ownerError;
@@ -2468,6 +2752,31 @@ export async function reconcileOrderRefundFromStripe(service: ServiceClient, acc
     startingAfter = page.has_more ? page.data.at(-1)?.id || "" : "";
   } while (startingAfter);
   let result: MarkOrderRefundedResult | null = null;
+  if (confirmedCents >= intent.amount && confirmedCents > 0) {
+    const ids = await expandOrderIdsForGroup(service, { orderId: intent.metadata.order_id });
+    const { data: rows, error: rowsError } = await service.from("orders")
+      .select("id,photographer_id,order_group_id,status,payment_status,paid_at,stripe_payment_intent_id,stripe_checkout_session_id,total_cents,currency,platform_fee_collection_method,platform_fee_amount_cents,platform_fee_currency,platform_fee_rate_cents,stripe_application_fee_id")
+      .in("id", ids);
+    if (rowsError) throw rowsError;
+    const orders = (rows ?? []) as PaymentOrder[];
+    if (!ids.length || orders.length !== ids.length || new Set(orders.map((row) => row.id)).size !== ids.length || orders.some((row) => !ids.includes(row.id))) {
+      throw new Error("The complete refund order group could not be verified.");
+    }
+    if (orders.some((row) => row.platform_fee_collection_method != null)) {
+      // Customer and platform refunds are independent balances. Keep the
+      // production hold through a pending fee or lost provider response.
+      const { error: holdError } = await service.from("orders").update({ status: "refund_pending" }).in("id", ids).neq("status", "refunded");
+      if (holdError) throw holdError;
+      const chargeId = typeof intent.latest_charge === "string" ? intent.latest_charge : intent.latest_charge?.id;
+      if (!chargeId) throw new Error("The refunded payment charge could not be verified.");
+      const charge = await stripeRequest<ApplicationFeeCharge>(`charges/${encodeURIComponent(chargeId)}`, { account });
+      // Load at call time to keep the provider refund helper's payments import
+      // out of module initialization. This verifier only makes GET requests.
+      const { verifyDirectOrderApplicationFeeRefund } = await import("@/lib/direct-order-fee-refund");
+      const fee = await verifyDirectOrderApplicationFeeRefund({ orders, account, payment: intent, charge }, stripeRequest);
+      if (charge.amount_refunded !== intent.amount || !fee.fullyRefunded) return null;
+    }
+  }
   if (confirmedCents > 0) result = await markOrderOrGroupRefunded(service, { orderId: intent.metadata.order_id, partial: confirmedCents < intent.amount,
     refundAmountCents: confirmedCents, note: `Stripe refund status verified for ${paymentIntentId}.` });
   if (pending) {

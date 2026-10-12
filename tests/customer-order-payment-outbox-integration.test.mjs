@@ -22,7 +22,7 @@ function load(path, modules = {}, fetch = () => assert.fail('Unexpected external
 
 // This adapter executes every payment write, trigger, claim and outbox RPC in
 // PostgreSQL. Fault injection changes only whether a database response arrives.
-async function fixture({ failure = null, combined = false, loseProviderResponse = false } = {}) {
+async function fixture({ failure = null, combined = false, loseProviderResponse = false, providerAmountDelta = 0 } = {}) {
   const db = new PGlite();
   const owner = crypto.randomUUID(), project = crypto.randomUUID(), group = combined ? crypto.randomUUID() : null;
   const ids = [crypto.randomUUID(), ...(combined ? [crypto.randomUUID()] : [])];
@@ -121,7 +121,13 @@ async function fixture({ failure = null, combined = false, loseProviderResponse 
     if (loseProviderResponse) { loseProviderResponse = false; throw new Error('Provider accepted; response lost'); }
     return Response.json({ id: providerReceipts.get(key).id });
   });
-  const media = load('lib/private-media-references.ts', { '@/lib/r2-signed-urls': load('lib/r2-signed-urls.ts', { crypto }) });
+  const photoUrls = load('lib/photo-url.ts');
+  const media = load('lib/private-media-references.ts', {
+    '@/lib/r2-signed-urls': load('lib/r2-signed-urls.ts', { crypto }),
+    '@/lib/photo-url': photoUrls,
+    '@/lib/legacy-storage-token': load('lib/legacy-storage-token.ts', { 'node:crypto': crypto, '@/lib/photo-url': photoUrls }),
+    '@/lib/r2-media-token': load('lib/r2-media-token.ts', { 'node:crypto': crypto, '@/lib/r2-access-security': load('lib/r2-access-security.ts') }),
+  });
   const builderModules = { './order-display': load('lib/order-display.ts'), './private-media-references': media };
   const emails = load('lib/paid-order-emails.ts', {
     'node:timers/promises': { setTimeout: async () => {} },
@@ -129,7 +135,7 @@ async function fixture({ failure = null, combined = false, loseProviderResponse 
     '@/lib/order-notification-email': load('lib/order-notification-email.ts', builderModules),
     '@/lib/order-receipt-email': load('lib/order-receipt-email.ts', builderModules),
     '@/lib/digital-delivery': { buildDigitalDeliveryEmailForOrder: () => assert.fail('Print orders must not invoke digital delivery') },
-    '@/lib/resend': resend,
+    '@/lib/resend': resend, '@/lib/school-parent-gallery-link': load('lib/school-parent-gallery-link.ts'),
   });
   const payments = load('lib/payments.ts', {
     'node:crypto': crypto, '@/lib/studio-pricing': pricing, '@/lib/stripe-billing-period': periods,
@@ -138,9 +144,48 @@ async function fixture({ failure = null, combined = false, loseProviderResponse 
     '@/lib/order-usage-billing': load('lib/order-usage-billing.ts', { 'node:crypto': crypto }),
     '@/lib/credit-maintenance': maintenance, '@/lib/paid-order-emails': emails, '@/lib/resend': resend,
     '@/lib/order-push': { sendNewOrderPush: async () => {} },
+    '@/lib/digital-product-label': load('lib/digital-product-label.ts'),
   });
+  // Use the real payment verifier and finalizer. Only external provider reads
+  // and the lease transport are synthetic; all outbox/claim writes use SQL.
+  const providerReads = [], lockKeys = [], activeLocks = new Set();
+  async function savedProviderPayment(sessionId, accountId) {
+    assert.equal(accountId, 'acct_integration');
+    const { rows } = await db.query('select * from orders where stripe_checkout_session_id=$1 order by id', [sessionId]);
+    assert.ok(rows.length, 'Provider fixture must correspond to a saved checkout');
+    assert.ok(rows.every(row => row.photographer_id === owner && row.order_group_id === rows[0].order_group_id));
+    return { amount: rows.reduce((sum, row) => sum + row.total_cents, 0) + providerAmountDelta,
+      metadata: { billing_flow: 'customer_order', photographer_id: owner, order_id: rows[0].id,
+        ...(rows[0].order_group_id ? { order_group_id: rows[0].order_group_id } : {}) } };
+  }
+  const providerPayments = {
+    ...payments,
+    async retrieveCheckoutSession(sessionId, accountId) {
+      providerReads.push(['session', sessionId]);
+      const saved = await savedProviderPayment(sessionId, accountId);
+      return { id: sessionId, mode: 'payment', status: 'complete', payment_status: 'paid', currency: 'cad',
+        amount_total: saved.amount, payment_intent: `pi_${sessionId}`, metadata: saved.metadata };
+    },
+    async retrievePaymentIntent(intentId, accountId) {
+      providerReads.push(['intent', intentId]);
+      assert.ok(intentId.startsWith('pi_cs_'));
+      const saved = await savedProviderPayment(intentId.slice(3), accountId);
+      return { id: intentId, status: 'succeeded', currency: 'cad', amount: saved.amount,
+        amount_received: saved.amount, metadata: saved.metadata };
+    },
+  };
+  const verifier = load('lib/order-webhook-payment.ts', { '@/lib/payments': providerPayments });
+  const lock = { async lockOrderPayment(lockedService, key) {
+    assert.equal(lockedService, service);
+    const { rows } = await db.query('select id,photographer_id from orders where coalesce(order_group_id,id)=$1', [key]);
+    assert.ok(rows.length > 0 && rows.every(row => row.photographer_id === owner), 'Lock key must bind the exact saved order/group');
+    assert.equal(activeLocks.has(key), false, 'One worker may own an order/group lease at a time');
+    activeLocks.add(key); lockKeys.push(key);
+    return async () => { assert.equal(activeLocks.delete(key), true, 'Every payment lock must be released exactly once'); };
+  } };
   const customer = load('lib/customer-order-webhook.ts', {
-    'node:crypto': crypto, '@/lib/payments': payments,
+    'node:crypto': crypto, '@/lib/payments': providerPayments,
+    '@/lib/order-webhook-payment': verifier, '@/lib/order-payment-lock': lock,
     '@/lib/checkout-attempt': { canonicalCheckoutJson }, '@/lib/order-checkout-totals': { sumStoredOrderTotalsCents },
   });
   const route = load('app/api/stripe/webhook/route.ts', {
@@ -158,13 +203,13 @@ async function fixture({ failure = null, combined = false, loseProviderResponse 
     const digest = crypto.createHmac('sha256', valid ? process.env.STRIPE_WEBHOOK_SECRET : 'wrong-secret').update(`${timestamp}.${raw}`).digest('hex');
     return route.POST({ headers: new Headers({ 'stripe-signature': `t=${timestamp},v1=${digest}` }), text: async () => raw });
   };
-  return { db, owner, ids, group, deferred, providerCalls, providerReceipts, insertOrder, event, post, service, customer, emails };
+  return { db, owner, ids, group, deferred, providerCalls, providerReceipts, insertOrder, event, post, service, customer, emails, providerReads, lockKeys, activeLocks };
 }
 
 async function run(options, callback) {
-  const names = ['STUDIO_CREDIT_MAINTENANCE', 'RESEND_API_KEY', 'RESEND_FROM_EMAIL', 'STRIPE_WEBHOOK_SECRET'];
+  const names = ['STUDIO_CREDIT_MAINTENANCE', 'RESEND_API_KEY', 'RESEND_FROM_EMAIL', 'STRIPE_WEBHOOK_SECRET', 'R2_MEDIA_TOKEN_SECRET', 'LEGACY_STORAGE_TOKEN_SECRET'];
   const before = Object.fromEntries(names.map(name => [name, process.env[name]]));
-  Object.assign(process.env, { STUDIO_CREDIT_MAINTENANCE: '1', RESEND_API_KEY: 'integration-provider-fixture', RESEND_FROM_EMAIL: 'sender@example.test', STRIPE_WEBHOOK_SECRET: 'integration-signature-fixture' });
+  Object.assign(process.env, { STUDIO_CREDIT_MAINTENANCE: '1', RESEND_API_KEY: 'integration-provider-fixture', RESEND_FROM_EMAIL: 'sender@example.test', STRIPE_WEBHOOK_SECRET: 'integration-signature-fixture', R2_MEDIA_TOKEN_SECRET: 'integration-r2-media-fixture', LEGACY_STORAGE_TOKEN_SECRET: 'integration-legacy-media-fixture' });
   const f = await fixture(options);
   try { await callback(f); } finally {
     await f.db.close();
@@ -182,6 +227,10 @@ for (const failure of ['before-paid', 'after-paid']) test(`signed webhook → re
   const orders = (await f.db.query('select * from orders')).rows;
   assert.equal(orders[0].payment_status, 'paid'); assert.ok(orders[0].paid_at);
   assert.equal(orders[0].stripe_payment_intent_id, 'pi_cs_integration');
+  assert.ok(f.providerReads.some(([kind]) => kind === 'session') && f.providerReads.some(([kind]) => kind === 'intent'));
+  assert.ok(f.lockKeys.length >= 2);
+  assert.ok(f.lockKeys.every(key => key === f.ids[0]));
+  assert.equal(f.activeLocks.size, 0);
   const jobs = (await f.db.query('select * from paid_order_emails order by kind')).rows;
   assert.equal(jobs.length, 2);
   assert.ok(jobs.every(row => row.snapshot.items[0].sku === 'private/saved-photo.jpg'));
@@ -202,6 +251,8 @@ test('real combined finalization recovers a partially committed group without du
   assert.deepEqual((await f.db.query('select id from paid_order_emails order by id')).rows, before);
   assert.deepEqual(await f.emails.deliverPaidOrderEmails(f.service), { sent: 4, failed: 0, deferred: 0 });
   assert.equal(f.providerReceipts.size, 4);
+  assert.ok(f.lockKeys.every(key => key === f.group), 'Combined finalization locks the shared group, never a single member');
+  assert.equal(f.activeLocks.size, 0);
 }));
 
 test('real outbox dispatcher retries a lost provider response using its committed frozen request', () => run({ loseProviderResponse: true }, async f => {
@@ -219,6 +270,14 @@ test('real signature validation and connected-account checks prevent unauthorize
   assert.equal((await f.post({ ...f.event(), account: 'acct_other' })).status, 400);
   assert.equal((await f.db.query('select count(*)::int n from paid_order_emails')).rows[0].n, 0);
   assert.equal((await f.db.query('select paid_at from orders')).rows[0].paid_at, null);
+}));
+
+test('real provider verification rejects a signed event when the retrieved checkout amount differs from saved SQL orders', () => run({ providerAmountDelta: 1 }, async f => {
+  assert.equal((await f.post()).status, 503);
+  assert.equal((await f.db.query('select paid_at from orders')).rows[0].paid_at, null);
+  assert.equal((await f.db.query('select count(*)::int n from paid_order_emails')).rows[0].n, 0);
+  assert.equal(f.providerReads.length, 1, 'The real verifier inspects provider checkout before acquiring a payment lease');
+  assert.equal(f.lockKeys.length, 0);
 }));
 
 test('1000 signed webhooks execute real payment finalization and stage exactly 2000 SQL outbox jobs', () => run({}, async f => {

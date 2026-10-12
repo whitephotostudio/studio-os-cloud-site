@@ -1,5 +1,6 @@
 import { createHash } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
+import { matchesEventCollectionPin } from "@/lib/event-download-scope";
 import { createDashboardServiceClient } from "@/lib/dashboard-auth";
 import { getClientIp, rateLimit } from "@/lib/rate-limit";
 import { validateUuid } from "@/lib/request-validation";
@@ -65,7 +66,7 @@ function matchesProjectPin(row: Pick<ProjectRow, "access_mode" | "access_pin">, 
 }
 
 function matchesCollectionPin(row: CollectionAccessRow, pin: string) {
-  return clean(row.slug) === pin || (normalizedAccessMode(row.access_mode) === "pin" && clean(row.access_pin) === pin);
+  return matchesEventCollectionPin(row, pin);
 }
 
 function viewerKey(projectId: string, email: string, pin: string) {

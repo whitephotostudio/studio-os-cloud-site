@@ -3,6 +3,12 @@ import { Geist, Geist_Mono, Fraunces } from "next/font/google";
 import "./globals.css";
 import { OrganizationJsonLd, WebSiteJsonLd } from "@/components/json-ld";
 import { MarketingEventTracker } from "@/components/marketing/MarketingEventTracker";
+import { headers } from "next/headers";
+import { CspNonceProvider } from "@/components/csp-nonce";
+
+// A nonce must be generated for the same response as the HTML, never reused
+// from a static page cache. Image/asset caches remain independent.
+export const dynamic = "force-dynamic";
 
 export const viewport: Viewport = {
   width: "device-width",
@@ -122,16 +128,21 @@ export const metadata: Metadata = {
   },
 };
 
-export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
+export default async function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
+  const nonce = (await headers()).get("x-nonce") ?? undefined;
   return (
     <html lang="en">
       <head>
-        <OrganizationJsonLd />
-        <WebSiteJsonLd />
+        <CspNonceProvider nonce={nonce}>
+          <OrganizationJsonLd />
+          <WebSiteJsonLd />
+        </CspNonceProvider>
       </head>
       <body className={`${geistSans.variable} ${geistMono.variable} ${fraunces.variable} antialiased`}>
-        <MarketingEventTracker />
-        {children}
+        <CspNonceProvider nonce={nonce}>
+          <MarketingEventTracker />
+          {children}
+        </CspNonceProvider>
       </body>
     </html>
   );

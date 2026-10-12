@@ -12,8 +12,11 @@ test("generic signed GET and PUT cannot expose or overwrite a cloud credit outpu
 test("legacy storage proxies reject server output namespace before school compatibility lookups",()=>{
   const image=source("app/api/r2/img/[...path]/route.ts");
   const folder=source("app/api/dashboard/storage-folder/route.ts");
-  assert.ok(image.indexOf("isServerOnlyR2Key(storagePath)")<image.indexOf("resolveSchoolNamespace(firstSegment)"));
-  assert.ok(folder.indexOf("isServerOnlyR2Key(folderPath)")<folder.indexOf("await ownedSchoolId(first)"));
+  assert.ok(image.indexOf("await resolveR2MediaOwnership(service, storagePath, photographerId)") >= 0);
+  assert.ok(image.indexOf("isServerOnlyR2Key(storagePath)")<image.indexOf("await resolveR2MediaOwnership(service, storagePath, photographerId)"));
+  const resolution = folder.indexOf("await resolveR2MediaOwnership(service, folderPath, photographerId, { prefix: true })");
+  assert.ok(resolution >= 0);
+  assert.ok(folder.indexOf("isServerOnlyR2Key(folderPath)") < resolution);
 });
 test("generic transformations and destructive operations cannot copy or consume server credit outputs",()=>{
   const storage=source("lib/r2.ts");
@@ -24,7 +27,8 @@ test("generic transformations and destructive operations cannot copy or consume 
     assert.ok(block.indexOf('"credits"')<block.indexOf("getR2Client()"),name);
   }
   const ownership=source("lib/upload-ownership.ts");
-  assert.ok(ownership.indexOf("isServerOnlyR2Key(key)")<ownership.indexOf('service.from("schools")'));
+  assert.match(ownership, /await r2MediaOwnedBy\(service, rawKey, photographerId\)/);
+  assert.doesNotMatch(ownership, /service.from/);
 });
 test("a generic upload cannot overwrite server output; an explicitly owned gateway upload can",async()=>{
   const calls=[];
@@ -34,7 +38,7 @@ test("a generic upload cannot overwrite server output; an explicitly owned gatew
       S3Client:class {send(command){calls.push(command);return Promise.resolve({});}},
       PutObjectCommand:class {constructor(input){this.input=input;}},
     },
-    "@/lib/r2-signed-urls":{r2PresignedGetUrl:()=>""},
+    "@/lib/r2-media-token":{signedR2MediaUrl:()=>""},
     "@/lib/school-photo-deletions":{schoolPhotoFamilyForKey:()=>null},
   };
   const compiled=ts.transpileModule(source("lib/r2.ts"),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;

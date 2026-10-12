@@ -52,9 +52,11 @@ import { hasCalendarBoundaryPassed } from "@/lib/calendar-dates";
 import { isOrderingWindowOpen } from "@/lib/ordering-window";
 import { getClientIp, rateLimit } from "@/lib/rate-limit";
 import { hasActiveSubscription } from "@/lib/subscription-gate";
+import { resolvePhotographerOrderCurrency } from "@/lib/order-currency";
 import { parseJson } from "@/lib/api-validation";
 import { durablePrivateMediaReference } from "@/lib/private-media-references";
 import { assertParentBackdropCutouts, isAllDigitalBackdropPackage, ParentCutoutPreflightError } from "@/lib/parent-cutout-preflight";
+import { assertNewOnlineBackdropPurchase, OnlineBackdropsDisabledError } from "@/lib/online-backdrop-policy";
 import { isRetouchPackage, retouchPrintPurchaseIssue, parseRetouchSelections, retouchSelectionIssue, retouchNotesBlock, customerNotesBlock, retouchSlots, type RetouchSelection } from "@/lib/retouching";
 import {
   computeCombineTotals,
@@ -329,9 +331,9 @@ export async function POST(request: NextRequest) {
 
     // ── Photographer subscription gate + commerce knobs ─────────────────
     const photographerSelect =
-      "id, is_platform_admin, subscription_status, trial_starts_at, trial_ends_at, created_at, sibling_discount_tiers, shipping_fee_cents, late_handling_fee_percent, tax_enabled, tax_percent, tax_label, tax_country, tax_rates_by_country";
+      "id, billing_currency, is_platform_admin, subscription_status, trial_starts_at, trial_ends_at, created_at, sibling_discount_tiers, shipping_fee_cents, late_handling_fee_percent, tax_enabled, tax_percent, tax_label, tax_country, tax_rates_by_country";
     const photographerBaseSelect =
-      "id, is_platform_admin, subscription_status, trial_starts_at, trial_ends_at, created_at, sibling_discount_tiers, shipping_fee_cents, late_handling_fee_percent";
+      "id, billing_currency, is_platform_admin, subscription_status, trial_starts_at, trial_ends_at, created_at, sibling_discount_tiers, shipping_fee_cents, late_handling_fee_percent";
     let photographerResult = await sb
       .from("photographers")
       .select(photographerSelect)
@@ -355,6 +357,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         { ok: false, message: "This studio is no longer accepting orders." },
         { status: 410 },
+      );
+    }
+    const orderCurrency = resolvePhotographerOrderCurrency(photographer?.billing_currency);
+    if (!orderCurrency) {
+      return NextResponse.json(
+        { ok: false, message: "This studio's sales currency is not supported. Please contact the studio before ordering." },
+        { status: 409 },
       );
     }
 
@@ -581,6 +590,8 @@ export async function POST(request: NextRequest) {
     // Validate every student before the first order write; a later sibling
     // failure must not leave a partially created combined checkout.
     for (const group of resolvedGroups) {
+      await assertNewOnlineBackdropPurchase(sb, { photographerId: group.photographerId, schoolId: group.schoolId },
+        resolvedEntries.some(entry => entry.groupIndex === group.groupIndex && !!entry.backdrop));
       await assertParentBackdropCutouts(sb, { mode: "school", photographerId: group.photographerId,
         schoolId: group.schoolId, studentId: group.studentId },
       resolvedEntries.filter(entry => entry.groupIndex === group.groupIndex).map(entry => ({
@@ -810,7 +821,7 @@ export async function POST(request: NextRequest) {
           tax_cents: taxCents,
           total_cents: orderTotalCents,
           total_amount: orderTotalCents / 100,
-          currency: "cad",
+          currency: orderCurrency,
           school_id: grp.schoolId,
           class_id: grp.classId,
           student_id: grp.studentId,
@@ -981,7 +992,7 @@ export async function POST(request: NextRequest) {
     if (persistError) throw persistError;
     return NextResponse.json(result);
   } catch (error) {
-    if (error instanceof ParentCutoutPreflightError) return NextResponse.json({ ok: false, message: error.message }, { status: 409 });
+    if (error instanceof ParentCutoutPreflightError || error instanceof OnlineBackdropsDisabledError) return NextResponse.json({ ok: false, message: error.message }, { status: 409 });
     console.error("[portal:orders:create-combined]", error);
     return NextResponse.json(
       { ok: false, message: "Failed to create combined order. Please try again." },

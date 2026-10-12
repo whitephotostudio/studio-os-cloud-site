@@ -11,6 +11,8 @@ import {
   ChevronDown,
   ChevronRight,
   Download,
+  Eye,
+  EyeOff,
   FileSpreadsheet,
   FolderOpen,
   GraduationCap,
@@ -1441,7 +1443,9 @@ function OrdersPageContent() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [filter, setFilter] = useState<string>("all");
   const [orderSearch, setOrderSearch] = useState("");
+  const [showRevenue, setShowRevenue] = useState(false);
   const [selected, setSelected] = useState<Order | null>(null);
+  const useTwoSummaryColumns = useIsMobile(selected ? 1600 : 1100);
   const [selectedGroupKey, setSelectedGroupKey] = useState<string | null>(null);
   const detailsPanelRef = useRef<HTMLDivElement | null>(null);
   // On mobile the details panel renders beneath the orders list instead of
@@ -2639,14 +2643,14 @@ function OrdersPageContent() {
             <div
               style={{
                 display: "grid",
-                gridTemplateColumns: isMobile ? "repeat(2, minmax(0, 1fr))" : "repeat(4, minmax(0, 1fr))",
-                gap: isMobile ? 10 : 16,
-                marginBottom: 18,
+                gridTemplateColumns: useTwoSummaryColumns ? "repeat(2, minmax(0, 1fr))" : "repeat(4, minmax(0, 1fr))",
+                gap: isMobile ? 8 : 12,
+                marginBottom: 16,
               }}
             >
               {[
                 { label: "Visible Orders", value: filtered.length, icon: <ShoppingBag size={18} />, note: "Filtered order count" },
-                { label: "Visible Revenue", value: moneyFromCents(totalRevenue, "CAD"), icon: <WalletCards size={18} />, note: "Paid totals from visible list" },
+                { label: "Visible Revenue", value: showRevenue ? moneyFromCents(totalRevenue, "CAD") : "••••", icon: <WalletCards size={18} />, note: "Paid totals from visible list" },
                 { label: "Original Files", value: totalImages, icon: <Images size={18} />, note: "URLs attached to visible orders" },
                 { label: "Lab Ready", value: filtered.filter((o) => o.status === "sent_to_print").length, icon: <Printer size={18} />, note: "Orders already sent to print" },
               ].map((card) => (
@@ -2655,17 +2659,37 @@ function OrdersPageContent() {
                   style={{
                     background: cardBg,
                     border: `1px solid ${borderColor}`,
-                    borderRadius: 22,
-                    padding: 18,
-                    boxShadow: "0 8px 24px rgba(15,23,42,0.05)",
+                    borderRadius: 14,
+                    padding: isMobile ? 10 : 12,
+                    minWidth: 0,
+                    boxShadow: "0 4px 14px rgba(15,23,42,0.04)",
                   }}
                 >
-                  <div style={{ display: "inline-flex", width: 40, height: 40, borderRadius: 14, background: "#f5f5f5", alignItems: "center", justifyContent: "center", color: "#cc0000", marginBottom: 12 }}>
-                    {card.icon}
+                  <div style={{ display: "flex", alignItems: "center", gap: isMobile ? 6 : 8, minHeight: 32 }}>
+                    <div style={{ display: "inline-flex", width: isMobile ? 24 : 30, height: isMobile ? 24 : 30, flexShrink: 0, borderRadius: 9, background: "#f5f5f5", alignItems: "center", justifyContent: "center", color: "#cc0000" }}>
+                      {card.icon}
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0, fontSize: 11, lineHeight: 1.3, letterSpacing: "0.04em", textTransform: "uppercase", fontWeight: 900, color: textMuted, overflowWrap: "anywhere" }}>{card.label}</div>
+                    {card.label === "Visible Revenue" ? (
+                      <button
+                        type="button"
+                        onClick={() => setShowRevenue((visible) => !visible)}
+                        aria-label={showRevenue ? "Hide revenue" : "Show revenue"}
+                        title={showRevenue ? "Hide revenue" : "Show revenue"}
+                        aria-pressed={showRevenue}
+                        aria-controls="visible-revenue-amount"
+                        style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: isMobile ? 28 : 32, height: isMobile ? 28 : 32, flexShrink: 0, background: "none", border: "none", borderRadius: 8, cursor: "pointer", color: "#667085" }}
+                      >
+                        {showRevenue ? <EyeOff size={16} aria-hidden="true" /> : <Eye size={16} aria-hidden="true" />}
+                      </button>
+                    ) : null}
                   </div>
-                  <div style={{ fontSize: 12, letterSpacing: "0.08em", textTransform: "uppercase", fontWeight: 900, color: textMuted }}>{card.label}</div>
-                  <div style={{ fontSize: 28, fontWeight: 900, color: textPrimary, marginTop: 8 }}>{card.value}</div>
-                  <div style={{ marginTop: 8, fontSize: 13, color: textMuted }}>{card.note}</div>
+                  <div
+                    id={card.label === "Visible Revenue" ? "visible-revenue-amount" : undefined}
+                    aria-label={card.label === "Visible Revenue" && !showRevenue ? "Revenue hidden" : undefined}
+                    style={{ fontSize: isMobile ? 21 : 24, lineHeight: 1.2, fontWeight: 900, color: textPrimary, marginTop: 6, overflowWrap: "anywhere" }}
+                  >{card.value}</div>
+                  <div style={{ marginTop: 4, fontSize: 11, lineHeight: 1.4, color: textMuted }}>{card.note}</div>
                 </div>
               ))}
             </div>

@@ -21,7 +21,7 @@ function fixture(options={}) {
 const paid=(overrides={})=>({id:id(80),school_id:schoolId,student_id:student,photographer_id:studio,parent_email:'parent@example.test',package_name:'All Digitals',status:'digital_paid',payment_status:'succeeded',cart_snapshot:[{packageName:'All Digitals'}],...overrides});
 
 for(const route of ['app/api/portal/gallery-context/route.ts','app/api/portal/school-access/route.ts']) test(`${route} exposes true previews plus canonical keys without original portrait URLs`,async()=>{
-  const h=fixture();const result=await h.post(route,h.body({prefetch:true}));
+  const h=fixture(); h.school.access_pin='school-master-secret'; const result=await h.post(route,h.body({prefetch:true}));
   assert.equal(result.status,200);
   const context=result.body.galleryContext||result.body;
   assert.ok(context.media?.length,'prefetch and direct context must both include media');
@@ -29,6 +29,8 @@ for(const route of ['app/api/portal/gallery-context/route.ts','app/api/portal/sc
   assert.match(context.media[0].preview_url,/school-preview/);assert.equal(context.media[0].download_url??null,null);
   assert.match(context.primaryStudent.photo_url,/school-preview/);assert.equal(context.primaryStudent.photo_storage_path,portrait);
   assert.equal(JSON.stringify(context).includes(`https://fixture.test/${portrait}`),false);
+  assert.equal(JSON.stringify(context).includes('school-master-secret'),false);
+  assert.match(result.headers.get('set-cookie'),/HttpOnly/);
   assert.equal(h.fetched.length,0);
   const preview=await h.get(context.media[0].preview_url);assert.equal(preview.status,200);assert.equal((await sharp(preview.body).metadata()).width,1200);assert.equal(preview.headers.get('location'),null);
 });

@@ -11,7 +11,8 @@ import ts from 'typescript';
 const require = createRequire(import.meta.url);
 const root = new URL('../', import.meta.url);
 const photographerId = 'studio';
-const schoolId = 'school';
+const schoolId = '10000000-0000-4000-8000-000000000001';
+const studentIds = { 'child-a': '40000000-0000-4000-8000-000000000001', 'child-b': '40000000-0000-4000-8000-000000000002' };
 const projectId = 'project';
 const folder = student => `${schoolId}/Class/${student}`;
 const original = (student = 'child-a', name = 'pose.JPG') => `${folder(student)}/${name}`;
@@ -27,11 +28,28 @@ const mixed = { ...print, id: 'mixed', name: 'Complete Gallery', items: ['Print'
 const selection = (ref = original(), pkg = print, extra = {}) => ({ packageId: pkg.id, packageName: pkg.name, quantity: 1,
   backdrop: { id: 'blue', name: 'Blue' }, slots: [{ assignedImageUrl: ref }], ...extra });
 const order = (id = 'a', student = 'child-a', snapshot = [selection(original(student))], extra = {}) => ({
-  id, order_group_id: null, school_id: schoolId, project_id: null, student_id: student,
+  id, order_group_id: null, school_id: schoolId, project_id: null, student_id: studentIds[student], parent_email: 'parent@example.test',
   photographer_id: photographerId, package_id: snapshot?.[0]?.packageId || print.id, package_name: 'Photo order',
   cart_snapshot: snapshot, special_notes: null, subtotal_cents: 1000, tax_cents: 0, total_cents: 1000,
   currency: 'cad', status: 'payment_pending', payment_status: 'pending', stripe_checkout_session_id: null, ...extra,
 });
+
+function loadPaymentFees() {
+  const cache = new Map();
+  const pure = new Set(['studio-pricing', 'trial-config', 'subscription-access', 'order-payment-policy', 'order-currency']);
+  function load(file) {
+    if (cache.has(file)) return cache.get(file);
+    const exports = {}; cache.set(file, exports);
+    const code = ts.transpileModule(readFileSync(new URL(file, root), 'utf8'), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText;
+    new Function('require', 'exports', 'process', 'fetch', code)(name => {
+      if (name.startsWith('@/lib/')) return pure.has(name.slice(6)) ? load(`${name.slice(2)}.ts`) : {};
+      return require(name);
+    }, exports, { env: {} }, () => { throw Error('Provider network forbidden in saved checkout fixtures'); });
+    return exports;
+  }
+  return load('lib/payments.ts');
+}
+const paymentFees = loadPaymentFees();
 
 function loader(stubs) {
   const cache = new Map();
@@ -41,7 +59,8 @@ function loader(stubs) {
     const js = ts.transpileModule(readFileSync(new URL(file, root), 'utf8'), { compilerOptions: {
       target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, esModuleInterop: true,
     } }).outputText;
-    vm.runInNewContext(js, { exports, URL, Response, Request, Buffer, crypto: globalThis.crypto, console, process: { env: {} },
+    vm.runInNewContext(js, { exports, URL, URLSearchParams, Response, Request, Buffer, crypto: globalThis.crypto, console,
+      process: { env: { R2_MEDIA_TOKEN_SECRET: 'isolated-saved-order-media-secret' } },
       fetch() { throw new Error('Network forbidden in saved checkout tests'); },
       require(name) {
         if (name in stubs) return stubs[name];
@@ -57,14 +76,21 @@ function loader(stubs) {
 
 function setup({ orders = [order()], lockedOrders = orders, originals = [original()], paidKeys = originals.map(fullCutout),
   bytes = png, storedBytes = bytes, packages = [print, digital, allDigital, retouch, mixed], lines, media = [],
-  pin = 'current-pin', orderPageCap = Infinity, existingSession = { id: 'existing', status: 'open', url: 'https://checkout.example/existing' },
+  pin = 'current-pin', orderPageCap = Infinity, onlineBackdropsEnabled = true, schoolBackdropsOverride = null, existingSession = { id: 'existing', status: 'open', url: 'https://checkout.example/existing' },
 } = {}) {
-  const events = [], writes = [], providerCalls = [], paymentRequests = [], paidReads = [], proofQueries = [], assetReads = [], packageReads = [];
+  const events = [], writes = [], snapshotWrites = [], providerCalls = [], paymentRequests = [], paidReads = [], proofQueries = [], assetReads = [], packageReads = [];
   let locked = false;
   const items = lines ?? lockedOrders.map(saved => ({ order_id: saved.id, product_name: 'Photo', quantity: 1,
     unit_price_cents: saved.subtotal_cents, line_total_cents: saved.subtotal_cents }));
   const sb = {
     async rpc(name, args) {
+      if (name === 'freeze_order_platform_fees') {
+        assert.equal(locked, true);
+        assert.equal(args.p_photographer_id, photographerId);
+        snapshotWrites.push(structuredClone(args.p_snapshots)); events.push('fee-freeze');
+        for (const snapshot of args.p_snapshots) Object.assign(lockedOrders.find(row => row.id === snapshot.id), snapshot);
+        return { data: structuredClone(lockedOrders), error: null };
+      }
       if (name !== 'authorized_credit_cutout_keys') throw new Error(`Unexpected RPC ${name}`);
       proofQueries.push(args); events.push('proof');
       return { data: args.p_photographer_id === photographerId ? paidKeys.filter(key => args.p_keys.includes(key))
@@ -82,9 +108,9 @@ function setup({ orders = [order()], lockedOrders = orders, originals = [origina
         then(resolve, reject) {
           let rows = table === 'orders' ? locked ? lockedOrders : orders
             : table === 'order_items' ? items : table === 'packages' ? packages
-            : table === 'schools' ? [{ id: schoolId, photographer_id: photographerId, local_school_id: null }]
-            : table === 'students' ? ['child-a', 'child-b'].map(id => ({ id, school_id: schoolId, class_name: 'Class', folder_name: id, photo_url: original(id) }))
-            : table === 'photographers' ? [{ id: photographerId, subscription_status: 'active', stripe_account_id: 'acct_studio' }]
+            : table === 'schools' ? [{ id: schoolId, photographer_id: photographerId, local_school_id: null, online_backdrops_override: schoolBackdropsOverride }]
+            : table === 'students' ? ['child-a', 'child-b'].map(name => ({ id: studentIds[name], pin, school_id: schoolId, class_name: 'Class', folder_name: name, photo_url: original(name) }))
+            : table === 'photographers' ? [{ id: photographerId, subscription_status: 'active', subscription_plan_code: 'core', stripe_account_id: 'acct_studio', online_backdrops_enabled: onlineBackdropsEnabled }]
             : table === 'projects' ? [{ id: projectId, photographer_id: photographerId, workflow_type: 'event', status: 'active', access_mode: 'pin', access_pin: pin }]
             : table === 'collections' ? [{ id: 'collection-a', project_id: projectId, kind: 'album', slug: pin }, { id: 'collection-b', project_id: projectId, kind: 'album', slug: 'other-pin' }]
             : table === 'media' ? media : [];
@@ -108,6 +134,9 @@ function setup({ orders = [order()], lockedOrders = orders, originals = [origina
       r2Download: async key => { paidReads.push(key); if (!paidKeys.includes(key)) throw new Error('Absent output'); return storedBytes; },
     },
     '@/lib/payments': {
+      quoteDirectOrderPlatformFees: paymentFees.quoteDirectOrderPlatformFees,
+      directOrderPlatformFeePayload: paymentFees.directOrderPlatformFeePayload,
+      isFreeTrialActive: paymentFees.isFreeTrialActive,
       isStripeBillingActive: () => true, getConnectedAccountId: () => 'acct_studio',
       retrieveStripeAccount: async () => { provider('account'); return { details_submitted: true, charges_enabled: true, payouts_enabled: true }; },
       syncConnectState: async () => provider('connect-sync'), describeConnectStatus: () => ({ readyForPayments: true }),
@@ -115,7 +144,7 @@ function setup({ orders = [order()], lockedOrders = orders, originals = [origina
       createDirectOrderCheckoutSession: async args => { provider('session-create'); paymentRequests.push(args); return { id: 'new-session', url: 'https://checkout.example/new' }; },
     },
   });
-  return { writes, providerCalls, paymentRequests, paidReads, proofQueries, assetReads, packageReads, events, async post(body = { orderId: 'a', pin }) {
+  return { writes, snapshotWrites, providerCalls, paymentRequests, paidReads, proofQueries, assetReads, packageReads, events, async post(body = { orderId: 'a', pin }) {
     const response = await load('app/api/stripe/checkout/route.ts').POST(new Request('https://gallery.example/api/stripe/checkout', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
     })); return { status: response.status, body: await response.json() };
@@ -126,6 +155,7 @@ function deniedWithoutPayment(h, result, copy = /background is not ready/) {
   assert.equal(result.status, 409, JSON.stringify(result));
   assert.match(result.body.message, copy);
   assert.equal(h.providerCalls.length, 0); assert.equal(h.writes.length, 0);
+  assert.equal(h.snapshotWrites.length, 0);
   assert.equal(h.events.at(-1), 'unlock');
 }
 
@@ -144,6 +174,9 @@ test('a valid saved background passes actual proof/decode before provider calls 
   assert.deepEqual(h.paidReads, [fullCutout(original())]);
   assert.ok(h.events.indexOf('proof') < h.events.indexOf('account'));
   assert.ok(h.events.indexOf('proof') < h.events.indexOf('write'));
+  assert.ok(h.events.indexOf('proof') < h.events.indexOf('fee-freeze'));
+  assert.ok(h.events.indexOf('fee-freeze') < h.events.indexOf('write'));
+  assert.equal(h.paymentRequests[0].platformFee.amountCents, 40);
   assert.equal(h.writes[0].value.status, 'checkout_starting');
 });
 
@@ -225,7 +258,7 @@ test('original-only orders use no asset reads and remain eligible, including har
 
 test('body event mode cannot reroute a saved school background after successful preflight', async () => {
   const h = setup();
-  assert.equal((await h.post({ orderId: 'a', mode: 'event', schoolId: 'unrelated-school', projectId: 'unrelated', pin: 'current-pin' })).status, 200);
+  assert.equal((await h.post({ orderId: 'a', mode: 'event', schoolId, projectId: 'unrelated', pin: 'current-pin' })).status, 200);
   assert.equal(h.paymentRequests[0].schoolId, schoolId); assert.equal(h.paymentRequests[0].projectId, null);
 });
 
@@ -373,4 +406,31 @@ test('a real all-digital catalog ID cannot relabel a positive one-image line thr
     quantity: 1, unit_price_cents: 1000, line_total_cents: 1000 }] });
   deniedWithoutPayment(h, await h.post(), /saved order needs review/);
   assert.equal(h.proofQueries.length, 0); assert.equal(h.assetReads.length, 0);
+});
+
+test('default Off refuses unpaid background checkout without changing saved selections or writing a payment attempt', async () => {
+  const saved = order(), before = structuredClone(saved);
+  const h = setup({ orders: [saved], onlineBackdropsEnabled: false });
+  const result = await h.post();
+  assert.equal(result.status, 409); assert.match(result.body.message, /Background changes are no longer available/);
+  assert.equal(h.paymentRequests.length, 0); assert.equal(h.snapshotWrites.length, 0); assert.equal(h.writes.length, 0);
+  assert.deepEqual(saved, before);
+});
+
+test('school override Off blocks an unpaid open-session link but keeps the saved background snapshot', async () => {
+  const saved = order('a', 'child-a', [selection()], { stripe_checkout_session_id: 'existing' });
+  const before = structuredClone(saved);
+  const h = setup({ orders: [saved], schoolBackdropsOverride: false });
+  const result = await h.post();
+  assert.equal(result.status, 409); assert.match(result.body.message, /Background changes are no longer available/);
+  assert.equal(h.paymentRequests.length, 0); assert.equal(h.writes.length, 0); assert.deepEqual(saved, before);
+});
+
+test('a completed Stripe session keeps its prior submitted-payment response after a gallery switch is Off', async () => {
+  const saved = order('a', 'child-a', [selection()], { stripe_checkout_session_id: 'existing' });
+  const h = setup({ orders: [saved], onlineBackdropsEnabled: false,
+    existingSession: { id: 'existing', status: 'complete', payment_status: 'paid' } });
+  const result = await h.post();
+  assert.equal(result.status, 409); assert.match(result.body.message, /Payment was already submitted/);
+  assert.equal(h.paymentRequests.length, 0); assert.equal(h.writes.length, 0);
 });

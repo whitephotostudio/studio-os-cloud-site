@@ -48,7 +48,11 @@ export function buildSignupWelcomeEmail(input: SignupWelcomeEmailInput) {
     "",
     trialSentence,
     "",
-    "First, confirm your email using the verification message from Studio OS Cloud. Then sign in to open your dashboard and start setting up your workflow.",
+    "First, confirm your email using the verification message from Studio OS Cloud. Then sign in, choose Create a gallery, and add a few test photos. You can use the web dashboard on Mac or Windows without installing an app.",
+    "",
+    "The desktop app is available for Mac; Windows desktop is coming soon. If you already created a project on the web, import it in the Mac app from Cloud → Import Hub → From Cloud.",
+    "",
+    "Need help? Reply here or email hello@studiooscloud.com.",
     "",
     "If you’d like personal onboarding, reply to this email with a good time to connect—or tell me which part of your photography workflow you’d like to improve first.",
     "",
@@ -69,10 +73,12 @@ export function buildSignupWelcomeEmail(input: SignupWelcomeEmailInput) {
           <p style="margin:0 0 18px">Hi ${escapedFirstName},</p>
           <p style="margin:0 0 18px">Welcome to Studio OS Cloud! I saw that you created your account, and I wanted to personally reach out and help you get started.${businessSentenceHtml}</p>
           <p style="margin:0 0 18px"><strong>${escapeHtml(trialSentence)}</strong></p>
-          <p style="margin:0 0 22px">First, confirm your email using the verification message from Studio OS Cloud. Then sign in to open your dashboard and start setting up your workflow.</p>
+          <p style="margin:0 0 22px">First, confirm your email using the verification message from Studio OS Cloud. Then sign in, choose Create a gallery, and add a few test photos. You can use the web dashboard on Mac or Windows without installing an app.</p>
           <p style="margin:0 0 24px">
             <a href="https://www.studiooscloud.com/sign-in" style="display:inline-block;background:#111827;color:#ffffff;text-decoration:none;font-weight:700;padding:12px 20px;border-radius:10px">Sign in to Studio OS Cloud</a>
           </p>
+          <p style="margin:0 0 18px">The desktop app is available for Mac; Windows desktop is coming soon. To bring a web project into the Mac app, use <strong>Cloud → Import Hub → From Cloud</strong>.</p>
+          <p style="margin:0 0 18px">Need help? Reply here or email <a href="mailto:hello@studiooscloud.com">hello@studiooscloud.com</a>.</p>
           <p style="margin:0 0 18px">If you’d like personal onboarding, reply to this email with a good time to connect—or tell me which part of your photography workflow you’d like to improve first.</p>
           <p style="margin:24px 0 0">Best,<br><strong>Harout</strong><br>Studio OS Cloud</p>
         </div>

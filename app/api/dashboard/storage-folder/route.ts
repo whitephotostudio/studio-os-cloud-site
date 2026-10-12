@@ -5,12 +5,12 @@ import {
 } from "@/lib/dashboard-auth";
 import { listR2FolderImages } from "@/lib/r2";
 import { guardAgreement } from "@/lib/require-agreement";
-import { isServerOnlyR2Key, isUuid } from "@/lib/r2-access-security";
+import { isServerOnlyR2Key } from "@/lib/r2-access-security";
+import { resolveR2MediaOwnership } from "@/lib/r2-media-ownership";
 import { filterPaidCutoutFiles } from "@/lib/credit-cutout-access";
 import {
   filterTombstonedSchoolPhotoAssets,
   loadSchoolPhotoTombstones,
-  safeLocalSchoolStorageId,
   tombstoneFamilySet,
 } from "@/lib/school-photo-deletions";
 
@@ -23,89 +23,11 @@ async function photographerOwnsFolder(
   photographerId: string,
   folderPath: string,
 ): Promise<{ allowed: boolean; schoolId: string | null }> {
-  if (!folderPath || folderPath.includes("..") || folderPath.startsWith("/")) {
-    return { allowed: false, schoolId: null };
-  }
-  if (isServerOnlyR2Key(folderPath)) return { allowed: false, schoolId: null };
-  const segments = folderPath.split("/").filter(Boolean);
-  if (segments.length === 0) return { allowed: false, schoolId: null };
-  const [first, second, third] = segments;
-
-  async function ownedSchoolId(schoolIdOrLocalId: string | undefined) {
-    const candidate = safeLocalSchoolStorageId(schoolIdOrLocalId);
-    if (!candidate) return null;
-
-    const [byIdResult, byLocalIdResult] = await Promise.all([
-      isUuid(candidate)
-        ? service
-        .from("schools")
-        .select("id,photographer_id")
-        .eq("id", candidate)
-        .limit(2)
-        : Promise.resolve({ data: [], error: null }),
-      service
-        .from("schools")
-        .select("id,photographer_id")
-        .eq("local_school_id", candidate)
-        .limit(2),
-    ]);
-    if (byIdResult.error) throw byIdResult.error;
-    if (byLocalIdResult.error) throw byLocalIdResult.error;
-    const matches = Array.from(
-      new Map(
-        [...(byIdResult.data ?? []), ...(byLocalIdResult.data ?? [])].map(
-          (row) => [row.id, row],
-        ),
-      ).values(),
-    );
-    if (matches.length !== 1) return null;
-    return matches[0]?.photographer_id === photographerId
-      ? matches[0].id
-      : null;
-  }
-
-  if (first === "projects" && segments.length >= 2) {
-    const { data } = await service
-      .from("projects")
-      .select("id")
-      .eq("id", second)
-      .eq("photographer_id", photographerId)
-      .maybeSingle();
-    return { allowed: !!data?.id, schoolId: null };
-  }
-
-  // backdrops/{photographerId}/...  — authorize purely on the path shape; the
-  // frontend always writes uploads under the photographer's own id, and the
-  // previous DB lookup targeted a non-existent `backdrops` table, which
-  // silently rejected every folder list and made the desktop app bail before
-  // ever attempting an upload.
-  if (first === "backdrops") {
-    return { allowed: second === photographerId, schoolId: null };
-  }
-
-  // Current uploads can be rooted at schools/<school-id>/... or
-  // photos/<school-id>/..., while older desktop builds used the database or
-  // local school id directly as the first segment. Keep folder enumeration in
-  // lockstep with the authenticated image proxy for all three shapes.
-  if (first === "schools" || first === "photos") {
-    const schoolId = await ownedSchoolId(second);
-    return { allowed: !!schoolId, schoolId };
-  }
-  if (first === "nobg-photos") {
-    if (second === "projects") {
-      const { data } = await service
-        .from("projects")
-        .select("id")
-        .eq("id", third)
-        .eq("photographer_id", photographerId)
-        .maybeSingle();
-      return { allowed: !!data?.id, schoolId: null };
-    }
-    const schoolId = await ownedSchoolId(second === "schools" ? third : second);
-    return { allowed: !!schoolId, schoolId };
-  }
-  const schoolId = await ownedSchoolId(first);
-  return { allowed: !!schoolId, schoolId };
+  if (!folderPath || isServerOnlyR2Key(folderPath)) return { allowed: false, schoolId: null };
+  // Retained first-owner claims preserve old local-school roots after relabeling.
+  // The shared resolver also rejects foreign, ambiguous and deleted resources.
+  const ownership = await resolveR2MediaOwnership(service, folderPath, photographerId, { prefix: true });
+  return { allowed: ownership.owned, schoolId: ownership.schoolId };
 }
 
 export async function GET(request: NextRequest) {

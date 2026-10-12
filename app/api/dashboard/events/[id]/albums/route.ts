@@ -12,6 +12,7 @@ import { guardAgreement } from "@/lib/require-agreement";
 export const dynamic = "force-dynamic";
 
 const CreateAlbumBodySchema = z.object({
+  clientRequestId: z.string().uuid().optional(),
   title: z.string().max(500).nullable().optional(),
 });
 
@@ -133,12 +134,27 @@ export async function POST(
       );
     }
 
+    const requestId = body.clientRequestId;
+    const findPreviousCreate = async () => {
+      const { data: previous, error: previousError } = await auth.service.from("collections")
+        .select("id,title,kind,slug,cover_photo_url,sort_order,created_at,access_mode,access_pin")
+        .eq("id", requestId!).eq("project_id", projectId).eq("kind", "album")
+        .abortSignal(AbortSignal.timeout(15000)).maybeSingle();
+      if (previousError) throw previousError;
+      return previous;
+    };
+    if (requestId) {
+      const previous = await findPreviousCreate();
+      if (previous) return NextResponse.json({ ok: true, album: previous });
+    }
+
     const { data: lastCollection, error: sortError } = await auth.service
       .from("collections")
       .select("sort_order")
       .eq("project_id", projectId)
       .order("sort_order", { ascending: false })
       .limit(1)
+      .abortSignal(AbortSignal.timeout(15000))
       .maybeSingle();
 
     if (sortError) throw sortError;
@@ -148,6 +164,7 @@ export async function POST(
     const { data: albumData, error: insertError } = await auth.service
       .from("collections")
       .insert({
+        ...(requestId ? { id: requestId } : {}),
         project_id: projectId,
         kind: "album",
         title,
@@ -158,8 +175,14 @@ export async function POST(
       .select(
         "id,title,kind,slug,cover_photo_url,sort_order,created_at,access_mode,access_pin",
       )
+      .abortSignal(AbortSignal.timeout(30000))
       .single();
 
+    if (insertError?.code === "23505" && requestId) {
+      const previous = await findPreviousCreate();
+      if (previous) return NextResponse.json({ ok: true, album: previous });
+      return NextResponse.json({ ok: false, message: "We could not confirm this album creation. Check your albums before trying again." }, { status: 409 });
+    }
     if (insertError) throw insertError;
 
     await recordAudit({

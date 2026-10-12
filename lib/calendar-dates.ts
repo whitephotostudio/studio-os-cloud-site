@@ -2,6 +2,11 @@ const DATE_ONLY_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
 const UTC_MIDNIGHT_RE = /^(\d{4}-\d{2}-\d{2})T00:00:00(?:\.000)?(?:Z|\+00:00)$/;
 const BUSINESS_TIME_ZONE = "America/Toronto";
 
+/** Default date inputs to the photographer's local day, including around UTC midnight. */
+export function localCalendarDate(now: Date = new Date()): string {
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+}
+
 export function calendarDateInputValue(value: string | null | undefined) {
   const trimmed = (value ?? "").trim();
   if (!trimmed) return "";

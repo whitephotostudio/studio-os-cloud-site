@@ -111,7 +111,7 @@ export default function SecurityPage() {
                 sensitive material in your first message. We will reply with a safe way
                 to continue the investigation.
               </p>
-              <a href="mailto:galleries@studiooscloud.com?subject=Studio%20OS%20Security%20Concern" className="marketing-button mt-7 inline-flex items-center gap-2 rounded-full bg-white px-5 py-3 text-neutral-950">
+              <a href="mailto:hello@studiooscloud.com?subject=Studio%20OS%20Security%20Concern" className="marketing-button mt-7 inline-flex items-center gap-2 rounded-full bg-white px-5 py-3 text-neutral-950">
                 Contact Security <ArrowRight className="h-4 w-4" />
               </a>
             </div>

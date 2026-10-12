@@ -4,6 +4,7 @@ import { schoolPreviewPresentation, buildSchoolFavoriteDownloadAccess } from "@/
 import { NextRequest, NextResponse } from "next/server";
 import { createDashboardServiceClient } from "@/lib/dashboard-auth";
 import { getClientIp, rateLimit } from "@/lib/rate-limit";
+import { grantPortalPinBudget } from "@/lib/portal-pin-rate-limit";
 import {
   sanitizeEventGallerySettingsForClient,
 } from "@/lib/event-gallery-settings";
@@ -388,10 +389,12 @@ export async function POST(request: NextRequest) {
         const watermarkLogoCandidate = signedPrivateMediaReference(
           photographer?.watermark_logo_url,
           SIGNED_URL_TTL_PARENTS_PORTAL_SECONDS,
+          gallerySchool.photographer_id,
         );
         const studioLogoCandidate = signedPrivateMediaReference(
           photographer?.logo_url,
           SIGNED_URL_TTL_PARENTS_PORTAL_SECONDS,
+          gallerySchool.photographer_id,
         );
         const resolvedLogoUrl = looksLikeImageAssetUrl(watermarkLogoCandidate)
           ? watermarkLogoCandidate
@@ -464,11 +467,11 @@ export async function POST(request: NextRequest) {
 
         galleryContext = {
           ok: true,
-          currentSchool: { ...selectedSchool, gallery_settings: publicGallerySettings },
-          schoolRowsForMatch: [{ ...gallerySchool, gallery_settings: publicGallerySettings }],
+          currentSchool: { ...selectedSchool, access_pin: undefined, gallery_settings: publicGallerySettings },
+          schoolRowsForMatch: [{ ...gallerySchool, access_pin: undefined, gallery_settings: publicGallerySettings }],
           studentCandidates: signedStudentCandidates,
           primaryStudent: signedPrimaryStudent,
-          activeSchool: { ...gallerySchool, gallery_settings: publicGallerySettings },
+          activeSchool: { ...gallerySchool, access_pin: undefined, gallery_settings: publicGallerySettings },
           activeProject,
           gallerySettings: publicGallerySettings,
           downloadAccess,
@@ -478,6 +481,7 @@ export async function POST(request: NextRequest) {
           backdrops: signBackdropRows(
             backdropsResult.data ?? [],
             SIGNED_URL_TTL_PARENTS_PORTAL_SECONDS,
+            gallerySchool.photographer_id,
           ),
           nobgUrls: presentation.nobgUrls,
           favoriteDownloadAccess,
@@ -495,12 +499,12 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    return NextResponse.json({
+    return grantPortalPinBudget(NextResponse.json({
       ok: true,
       schoolId: resolvedSchoolId,
       pin: selectedPin,
       ...(galleryContext ? { galleryContext } : {}),
-    });
+    }), request, { kind: "school", galleryId: resolvedSchoolId, pin: selectedPin, email: selectedEmail });
   } catch (error) {
     console.error("[school-access]", error);
     return NextResponse.json(

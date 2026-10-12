@@ -14,21 +14,21 @@ const contacts = [
   {
     title: "Book a product demo",
     text: "Tell us what kind of photography you run and which workflow you want to see.",
-    href: "mailto:galleries@studiooscloud.com?subject=Studio%20OS%20Cloud%20Demo%20Request",
+    href: "mailto:hello@studiooscloud.com?subject=Studio%20OS%20Cloud%20Demo%20Request",
     action: "Request a demo",
     icon: CalendarCheck2,
   },
   {
     title: "Photographer support",
     text: "Get help with account access, galleries, booking, the Studio OS app, or production workflow.",
-    href: "mailto:galleries@studiooscloud.com?subject=Studio%20OS%20Cloud%20Support",
+    href: "mailto:hello@studiooscloud.com?subject=Studio%20OS%20Cloud%20Support",
     action: "Email support",
     icon: Headphones,
   },
   {
     title: "Security or privacy",
     text: "Report a concern without including passwords, codes, photos, or other sensitive data in the first message.",
-    href: "mailto:galleries@studiooscloud.com?subject=Studio%20OS%20Security%20Concern",
+    href: "mailto:hello@studiooscloud.com?subject=Studio%20OS%20Security%20Concern",
     action: "Contact security",
     icon: ShieldCheck,
   },
@@ -65,7 +65,7 @@ export default function ContactPage() {
             ))}
           </div>
           <p className="marketing-caption mx-auto mt-8 max-w-3xl text-center text-neutral-500">
-            General email: <a className="font-semibold text-neutral-950 underline underline-offset-4" href="mailto:galleries@studiooscloud.com">galleries@studiooscloud.com</a>
+            General email: <a className="font-semibold text-neutral-950 underline underline-offset-4" href="mailto:hello@studiooscloud.com">hello@studiooscloud.com</a>
           </p>
         </section>
       </main>

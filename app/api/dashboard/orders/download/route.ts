@@ -165,6 +165,7 @@ function fileNameFromUrl(url: string, fallback: string) {
 }
 
 type StudioBranding = {
+  photographerId: string;
   businessName: string;
   email: string;
   phone: string;
@@ -188,10 +189,10 @@ function encodePhotoUrl(url: string): string {
   }
 }
 
-function downloadPhotoUrl(url: string): string {
+function downloadPhotoUrl(url: string, photographerId: string): string {
   const raw = clean(url);
   if (!raw) return "";
-  const resolved = signedPrivateMediaReference(raw, 60 * 60);
+  const resolved = signedPrivateMediaReference(raw, 60 * 60, photographerId);
   return /^https?:\/\//i.test(resolved) ? encodePhotoUrl(resolved) : "";
 }
 
@@ -477,7 +478,7 @@ function buildOrderSummaryHtml(order: any, branding: StudioBranding, photoFileMa
   displayItems.forEach((item: { productName: string; photoUrl: string; quantity: number; backdrop?: CartSnapshotBackdropLike | null }, i: number) => {
     // Look up local filename; fall back to encoded remote URL
     const localFile = photoFileMap.get(item.photoUrl) ?? "";
-    const imgSrc = localFile || (item.photoUrl ? downloadPhotoUrl(item.photoUrl) : "");
+    const imgSrc = localFile || (item.photoUrl ? downloadPhotoUrl(item.photoUrl, branding.photographerId) : "");
     const parsedLabel = parsePackageSlotLabel(item.productName);
     const productName = parsedLabel.baseLabel || item.productName;
     const slotLabel =
@@ -667,6 +668,7 @@ export async function GET(request: NextRequest) {
     }
 
     const branding: StudioBranding = {
+      photographerId: pgRow.id,
       businessName: clean((pgRow as Record<string, unknown>).business_name as string) || "Studio OS",
       email: clean((pgRow as Record<string, unknown>).studio_email as string) || clean((pgRow as Record<string, unknown>).billing_email as string) || "",
       phone: "",
@@ -748,7 +750,7 @@ export async function GET(request: NextRequest) {
             : fileNameFromUrl(url, `photo-${photoIndex}.jpg`);
           let data: Uint8Array | null = composite?.buffer ?? null;
           if (!data) {
-            const fetchUrl = downloadPhotoUrl(url);
+            const fetchUrl = downloadPhotoUrl(url, pgRow.id);
             if (!fetchUrl) continue;
             const resp = await fetch(fetchUrl);
             if (!resp.ok) {

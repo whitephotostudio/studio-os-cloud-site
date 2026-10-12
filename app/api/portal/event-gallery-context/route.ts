@@ -1,7 +1,9 @@
+import { resolvePhotographerOrderCurrency, type OrderCurrency } from "@/lib/order-currency";
 import { normalizeProofWatermarkOpacity, proofWatermarkVersion } from "@/lib/proof-watermark";
 import { hasCalendarBoundaryPassed } from "@/lib/calendar-dates";
 import { NextRequest, NextResponse } from "next/server";
 import { createDashboardServiceClient } from "@/lib/dashboard-auth";
+import { grantPortalPinBudget } from "@/lib/portal-pin-rate-limit";
 import { accessibleEventCollections, eventGalleryDownloadsUsed, EventGallerySizeLimitError, fetchEventGalleryMediaRows, fetchEventProjectCollections, matchesEventCollectionPin } from "@/lib/event-download-scope";
 import {
   normalizeEventGallerySettings,
@@ -105,6 +107,7 @@ type PackageRow = {
 };
 
 type PhotographerRow = {
+  billing_currency?: string | null;
   id: string;
   watermark_enabled: boolean | null;
   watermark_logo_url: string | null;
@@ -389,6 +392,7 @@ export async function POST(request: NextRequest) {
             : null
           : "Gallery downloads are turned off for this event.",
     };
+    let orderCurrency: OrderCurrency = "cad";
     let studioInfo = {
       businessName: "",
       logoUrl: "",
@@ -413,7 +417,7 @@ export async function POST(request: NextRequest) {
         service
           .from("photographers")
           .select(
-            "id,watermark_enabled,watermark_logo_url,watermark_opacity,logo_url,business_name,studio_address,studio_phone,studio_email,default_package_profile_id,is_platform_admin,subscription_status,trial_starts_at,trial_ends_at,created_at,shipping_fee_cents,late_handling_fee_percent",
+            "id,watermark_enabled,watermark_logo_url,watermark_opacity,logo_url,business_name,studio_address,studio_phone,studio_email,default_package_profile_id,is_platform_admin,subscription_status,trial_starts_at,trial_ends_at,created_at,shipping_fee_cents,late_handling_fee_percent,billing_currency",
           )
           .eq("id", projectRow.photographer_id)
           .maybeSingle<PhotographerRow>(),
@@ -421,6 +425,11 @@ export async function POST(request: NextRequest) {
 
       if (packagesResult.error) throw packagesResult.error;
       if (photographerResult.error) throw photographerResult.error;
+      const resolvedCurrency = resolvePhotographerOrderCurrency(photographerResult.data?.billing_currency);
+      if (!resolvedCurrency) {
+        return NextResponse.json({ ok: false, message: "This studio’s sales currency is not supported. Please contact the photographer." }, { status: 409 });
+      }
+      orderCurrency = resolvedCurrency;
 
       // Defense-in-depth gate: block cancelled photographers at read time even
       // if the Stripe-webhook cleanup hasn't landed yet. Platform admins and
@@ -463,10 +472,12 @@ export async function POST(request: NextRequest) {
         const watermarkLogoCandidate = signedPrivateMediaReference(
           photographer.watermark_logo_url,
           SIGNED_URL_TTL_PARENTS_PORTAL_SECONDS,
+          projectRow.photographer_id,
         );
         const studioLogoCandidate = signedPrivateMediaReference(
           photographer.logo_url,
           SIGNED_URL_TTL_PARENTS_PORTAL_SECONDS,
+          projectRow.photographer_id,
         );
         const resolvedLogoUrl = looksLikeImageAssetUrl(watermarkLogoCandidate)
           ? watermarkLogoCandidate
@@ -587,7 +598,7 @@ export async function POST(request: NextRequest) {
         }
       : null;
 
-    return NextResponse.json({
+    return grantPortalPinBudget(NextResponse.json({
       ok: true,
       project: projectForClient,
       gallerySettings: publicGallerySettings,
@@ -602,9 +613,10 @@ export async function POST(request: NextRequest) {
       watermarkLogoUrl,
       watermarkOpacity,
       studioInfo,
+      orderCurrency,
       lateOrderPolicy,
       screenshotProtection,
-    }, { headers: { "cache-control": "private, no-store" } });
+    }, { headers: { "cache-control": "private, no-store" } }), request, { kind: "event", galleryId: selectedProjectId, pin: pinValue, email: normalizedEmail });
   } catch (error) {
     if (error instanceof EventGallerySizeLimitError) {
       return NextResponse.json({ ok: false, message: error.message }, { status: 413 });

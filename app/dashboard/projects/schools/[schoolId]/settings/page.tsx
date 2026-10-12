@@ -1,10 +1,12 @@
 "use client";
+import { SchoolYearbookOwnerPanel } from "@/components/school-yearbook-owner-panel";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import {
   ArrowLeft,
+  BookOpen,
   Check,
   ChevronDown,
   Download,
@@ -43,6 +45,7 @@ type SchoolRow = {
   access_mode?: string | null;
   access_pin?: string | null;
   gallery_settings?: unknown;
+  online_backdrops_override?: boolean | null;
   screenshot_protection_desktop?: boolean | null;
   screenshot_protection_mobile?: boolean | null;
   screenshot_protection_watermark?: boolean | null;
@@ -82,6 +85,7 @@ const defaultExtras: ExtraSettings = {
 const sections = [
   { key: "general", label: "General", icon: Settings2 },
   { key: "registration", label: "Parent Registration", icon: Settings2 },
+  { key: "yearbook", label: "Yearbook", icon: BookOpen },
   { key: "privacy", label: "Access & Privacy", icon: ShieldCheck },
   { key: "free-digital", label: "Free Digitals", icon: Download },
   { key: "store", label: "Shopping Cart/Store", icon: ShoppingCart },
@@ -192,6 +196,9 @@ export default function SchoolSettingsPage() {
     defaultEventGallerySettings,
   );
   const [photographerPlan, setPhotographerPlan] = useState<string>("");
+  const [studioBackdropsDefault, setStudioBackdropsDefault] = useState<boolean | null>(null);
+  const [onlineBackdropsOverride, setOnlineBackdropsOverride] = useState<boolean | null>(null);
+  const [savedBackdropsOverride, setSavedBackdropsOverride] = useState<boolean | null>(null);
 
   // Screenshot protection toggles (parents portal only).
   const [protectDesktop, setProtectDesktop] = useState(false);
@@ -251,12 +258,13 @@ export default function SchoolSettingsPage() {
       }
 
       // Fetch photographer plan
-      const { data: pgRow } = await supabase
+      const { data: pgRow, error: pgError } = await supabase
         .from("photographers")
-        .select("subscription_plan_code")
+        .select("subscription_plan_code,online_backdrops_enabled")
         .eq("id", schoolData.photographer_id)
         .maybeSingle();
       setPhotographerPlan((pgRow as Record<string, unknown> | null)?.subscription_plan_code as string || "");
+      setStudioBackdropsDefault(!pgError && typeof pgRow?.online_backdrops_enabled === "boolean" ? pgRow.online_backdrops_enabled : null);
     }
 
     if (schoolData) {
@@ -288,6 +296,9 @@ export default function SchoolSettingsPage() {
         (schoolData.group_label_plural || "").trim() || "Classes",
       );
       setFullGallerySettings(storedSettings);
+      const backdropOverride = typeof schoolData.online_backdrops_override === "boolean" ? schoolData.online_backdrops_override : null;
+      setOnlineBackdropsOverride(backdropOverride);
+      setSavedBackdropsOverride(backdropOverride);
       setGalleryLanguage(storedSettings.galleryLanguage);
       setExtras({
         ...defaultExtras,
@@ -342,7 +353,7 @@ export default function SchoolSettingsPage() {
       },
     };
 
-    const payload: Partial<SchoolRow> = {
+    const payload: Partial<SchoolRow> & { expected_online_backdrops_override: boolean | null } = {
       school_name: schoolName || null,
       status: portalStatus || null,
       shoot_date: cleanCalendarDateInput(shootDate),
@@ -355,6 +366,8 @@ export default function SchoolSettingsPage() {
       checkout_contact_required: checkoutContactRequired,
       internal_notes: internalNotes || null,
       gallery_settings: nextGallerySettings,
+      online_backdrops_override: onlineBackdropsOverride,
+      expected_online_backdrops_override: savedBackdropsOverride,
       screenshot_protection_desktop: protectDesktop,
       screenshot_protection_mobile: protectMobile,
       screenshot_protection_watermark: protectWatermark,
@@ -397,6 +410,7 @@ export default function SchoolSettingsPage() {
       }
 
       setFullGallerySettings(nextGallerySettings);
+      setSavedBackdropsOverride(onlineBackdropsOverride);
       try {
         window.localStorage.setItem(
           storageKey,
@@ -613,6 +627,10 @@ export default function SchoolSettingsPage() {
                     <ToggleRow title="Allow Black & White Filtering" description="Clients may view and order black and white versions of your photos" checked={extras.allowBlackWhiteFiltering} onChange={(next) => setExtra("allowBlackWhiteFiltering", next)} />
                   </Card>
                 </div>
+              )}
+
+              {activeSection === "yearbook" && (
+                <SchoolYearbookOwnerPanel schoolId={schoolId} />
               )}
 
               {activeSection === "registration" && (
@@ -912,6 +930,19 @@ export default function SchoolSettingsPage() {
                     </Field>
                     <Field label="Minimum Order Amount (optional)" hint="Set a minimum order amount for this gallery">
                       <input value={extras.minimumOrderAmount} onChange={(e) => setExtra("minimumOrderAmount", e.target.value)} className={cx("max-w-md", fieldClass)} placeholder="ex. $20.00" />
+                    </Field>
+                    <Field label="Online background changes" hint="Choose whether clients can change portrait backgrounds in this school gallery. Save to apply.">
+                      <select aria-label="Online background changes for this school" className={cx("max-w-md", fieldClass)} disabled={studioBackdropsDefault === null}
+                        value={onlineBackdropsOverride === null ? "default" : onlineBackdropsOverride ? "on" : "off"}
+                        onChange={(event) => setOnlineBackdropsOverride(event.target.value === "default" ? null : event.target.value === "on")}>
+                        <option value="default">Use studio default ({studioBackdropsDefault === null ? "unavailable" : studioBackdropsDefault ? "On" : "Off"})</option>
+                        <option value="on">On for this school</option>
+                        <option value="off">Off for this school</option>
+                      </select>
+                      <p className="mt-2 text-sm text-neutral-600">
+                        {studioBackdropsDefault === null ? "Could not verify the studio default. Reload these settings to edit this control." : `Background changes are ${(onlineBackdropsOverride ?? studioBackdropsDefault) ? "On" : "Off"} for this school. Available designs and prepared portraits are still required.`} Existing photos and paid orders are preserved.
+                      </p>
+                      <Link href="/dashboard/backdrops" className="mt-2 inline-block text-sm font-semibold text-neutral-900 underline underline-offset-4">Manage studio default and hidden backdrops</Link>
                     </Field>
                     <ToggleRow title="Allow Cropping" description="Clients may crop photos on orders" checked={extras.allowCropping} onChange={(next) => setExtra("allowCropping", next)} />
                     <ToggleRow title="Enable Store" description="Allow your clients to shop by product first" checked={extras.enableStore} onChange={(next) => setExtra("enableStore", next)} />

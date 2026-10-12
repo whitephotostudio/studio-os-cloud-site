@@ -1,9 +1,11 @@
+import { resolvePhotographerOrderCurrency, type OrderCurrency } from "@/lib/order-currency";
 import { normalizeProofWatermarkOpacity } from "@/lib/proof-watermark";
 import { loadScopedSchoolCompositeMedia } from "@/lib/school-order-media";
 import { schoolPreviewPresentation, buildSchoolFavoriteDownloadAccess } from "@/lib/school-portal-media";
 import { NextRequest, NextResponse } from "next/server";
 import { createDashboardServiceClient } from "@/lib/dashboard-auth";
 import { getClientIp, rateLimit } from "@/lib/rate-limit";
+import { grantPortalPinBudget } from "@/lib/portal-pin-rate-limit";
 import {
   sanitizeEventGallerySettingsForClient,
 } from "@/lib/event-gallery-settings";
@@ -20,6 +22,7 @@ import {
   SIGNED_URL_TTL_PARENTS_PORTAL_SECONDS,
 } from "@/lib/storage-images";
 import { signBackdropRows } from "@/lib/backdrop-media-references";
+import { readOnlineBackdropPolicy } from "@/lib/online-backdrop-policy";
 import {
   signedPrivateMediaReference,
 } from "@/lib/private-media-references";
@@ -310,12 +313,14 @@ export async function POST(request: NextRequest) {
 
     let packageRows: PackageRow[] = [];
     let backdropRows: BackdropRow[] = [];
+    let onlineBackdropsEnabled = false;
     let compositeRows: CompositeMediaRow[] = [];
     let mediaRows: CompositeMediaRow[] = [];
     let nobgUrls: Record<string, string> = {};
     let photographerId: string | null = activeSchool?.photographer_id ?? null;
     let watermarkEnabled = true;
     let watermarkLogoUrl = "";
+    let orderCurrency: OrderCurrency = "cad";
     let watermarkOpacity: number | null = null;
     let studioInfo = {
       businessName: "",
@@ -346,7 +351,7 @@ export async function POST(request: NextRequest) {
           .order("sort_order", { ascending: true }),
         service
           .from("photographers")
-          .select("id,watermark_enabled,watermark_logo_url,watermark_opacity,logo_url,business_name,studio_address,studio_phone,studio_email,default_package_profile_id,is_platform_admin,subscription_status,trial_starts_at,trial_ends_at,created_at,shipping_fee_cents,late_handling_fee_percent")
+          .select("id,watermark_enabled,watermark_logo_url,watermark_opacity,logo_url,business_name,studio_address,studio_phone,studio_email,default_package_profile_id,is_platform_admin,subscription_status,trial_starts_at,trial_ends_at,created_at,shipping_fee_cents,late_handling_fee_percent,billing_currency")
           .eq("id", activeSchool.photographer_id)
           .maybeSingle(),
       ]);
@@ -354,6 +359,16 @@ export async function POST(request: NextRequest) {
       if (packagesResult.error) throw packagesResult.error;
       if (backdropsResult.error) throw backdropsResult.error;
       if (photographerResult.error) throw photographerResult.error;
+      const onlineBackdropPolicy = await readOnlineBackdropPolicy(service, {
+        photographerId: activeSchool.photographer_id,
+        schoolId: activeSchool.id,
+      });
+      onlineBackdropsEnabled = onlineBackdropPolicy.enabled;
+      const resolvedCurrency = resolvePhotographerOrderCurrency(photographerResult.data?.billing_currency);
+      if (!resolvedCurrency) {
+        return NextResponse.json({ ok: false, message: "This studio’s sales currency is not supported. Please contact the photographer." }, { status: 409 });
+      }
+      orderCurrency = resolvedCurrency;
 
       // Defense-in-depth gate: block cancelled photographers at read time even
       // if the Stripe-webhook cleanup hasn't landed yet (webhook is
@@ -385,10 +400,15 @@ export async function POST(request: NextRequest) {
           publicGallerySettings.extras.priceSheetProfileId ||
           photographerDefaultProfileId,
       }).packages;
-      backdropRows = signBackdropRows(
-        (backdropsResult.data ?? []) as BackdropRow[],
-        SIGNED_URL_TTL_PARENTS_PORTAL_SECONDS,
-      );
+      // Catalogue visibility controls new parent selections only. Photo,
+      // cutout and paid-delivery authorization remain independent below.
+      backdropRows = onlineBackdropsEnabled
+        ? signBackdropRows(
+            (backdropsResult.data ?? []) as BackdropRow[],
+            SIGNED_URL_TTL_PARENTS_PORTAL_SECONDS,
+            photographerId,
+          )
+        : [];
 
       const photographer = photographerResult.data;
       if (photographer) {
@@ -398,10 +418,12 @@ export async function POST(request: NextRequest) {
         const watermarkLogoCandidate = signedPrivateMediaReference(
           photographer.watermark_logo_url,
           SIGNED_URL_TTL_PARENTS_PORTAL_SECONDS,
+          photographer.id,
         );
         const studioLogoCandidate = signedPrivateMediaReference(
           photographer.logo_url,
           SIGNED_URL_TTL_PARENTS_PORTAL_SECONDS,
+          photographer.id,
         );
         const resolvedLogoUrl = looksLikeImageAssetUrl(watermarkLogoCandidate)
           ? watermarkLogoCandidate
@@ -488,13 +510,13 @@ export async function POST(request: NextRequest) {
     const signedPrimaryStudent = signedStudentCandidates.find(row => row.id === visiblePrimaryStudent.id) ?? null;
     const favoriteDownloadAccess = await buildSchoolFavoriteDownloadAccess(service, activeSchool, activeStudentCandidates, selectedEmail);
 
-    return NextResponse.json({
+    return grantPortalPinBudget(NextResponse.json({
       ok: true,
-      currentSchool: { ...currentSchool, gallery_settings: publicGallerySettings },
-      schoolRowsForMatch: schoolRowsForMatch.map(row => ({ ...row, gallery_settings: publicGallerySettings })),
+      currentSchool: { ...currentSchool, access_pin: undefined, gallery_settings: publicGallerySettings },
+      schoolRowsForMatch: schoolRowsForMatch.map(row => ({ ...row, access_pin: undefined, gallery_settings: publicGallerySettings })),
       studentCandidates: signedStudentCandidates,
       primaryStudent: signedPrimaryStudent,
-      activeSchool: { ...activeSchool, gallery_settings: publicGallerySettings },
+      activeSchool: { ...activeSchool, access_pin: undefined, gallery_settings: publicGallerySettings },
       activeProject,
       gallerySettings: publicGallerySettings,
       downloadAccess,
@@ -502,6 +524,7 @@ export async function POST(request: NextRequest) {
       composites: presentation.composites,
       packages: packageRows,
       backdrops: backdropRows,
+      onlineBackdropsEnabled,
       nobgUrls: presentation.nobgUrls,
       favoriteDownloadAccess,
       photographerId,
@@ -509,10 +532,11 @@ export async function POST(request: NextRequest) {
       watermarkLogoUrl,
       watermarkOpacity,
       studioInfo,
+      orderCurrency,
       lateOrderPolicy,
       screenshotProtection,
       groupLabel,
-    }, { headers: { "cache-control": "private, no-store" } });
+    }, { headers: { "cache-control": "private, no-store" } }), request, { kind: "school", galleryId: selectedSchoolId, pin: selectedPin, email: selectedEmail });
   } catch (error) {
     console.error("[gallery-context]", error);
     return NextResponse.json(

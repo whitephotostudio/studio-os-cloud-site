@@ -11,6 +11,7 @@ const root = new URL('../', import.meta.url);
 const source = (path) => readFileSync(new URL(path, root), 'utf8');
 const schoolId = '10000000-0000-4000-8000-000000000001';
 const photographerId = '20000000-0000-4000-8000-000000000001';
+const studentIds = { '12345': '40000000-0000-4000-8000-000000000001', '67890': '40000000-0000-4000-8000-000000000002' };
 const retouch = { id: '30000000-0000-4000-8000-000000000001', name: 'Retouching - 1 Image', category: 'specialty', price_cents: 1000, photographer_id: photographerId, active: true };
 const print = { ...retouch, id: '30000000-0000-4000-8000-000000000002', name: '5x7 Print', category: 'print' };
 const digital = { ...print, id: '30000000-0000-4000-8000-000000000003', name: 'Digital image', category: 'digital' };
@@ -21,6 +22,25 @@ const entry = (pkg) => ({ packageId: pkg.id, quantity: 1, slots: [{ label: pkg.n
 const group = (entries, pin = '12345') => ({ schoolId, pin, email: 'parent@example.test', entries });
 const common = { parent: { name: 'Test parent', email: 'parent@example.test' }, delivery: { method: 'pickup' } };
 
+// Exercise the real fee quote/hash on these existing checkout guards while
+// keeping auth, provider requests and production configuration isolated.
+function loadPaymentFees() {
+  const cache = new Map();
+  const pure = new Set(['studio-pricing', 'trial-config', 'subscription-access', 'order-payment-policy', 'order-currency']);
+  function load(file) {
+    if (cache.has(file)) return cache.get(file);
+    const exports = {}; cache.set(file, exports);
+    const code = ts.transpileModule(source(file), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText;
+    new Function('require', 'exports', 'process', 'fetch', code)(name => {
+      if (name.startsWith('@/lib/')) return pure.has(name.slice(6)) ? load(`${name.slice(2)}.ts`) : {};
+      return require(name);
+    }, exports, { env: {} }, () => { throw Error('Provider network is forbidden in retouch checkout fixtures'); });
+    return exports;
+  }
+  return load('lib/payments.ts');
+}
+const paymentFees = loadPaymentFees();
+
 function loader(stubs) {
   const cache = new Map();
   function load(path) {
@@ -29,7 +49,7 @@ function loader(stubs) {
     cache.set(path, exports);
     const js = ts.transpileModule(source(path), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText;
     vm.runInNewContext(js, {
-      exports, URL, Response, Request, console, crypto: globalThis.crypto, Buffer, process,
+      exports, URL, URLSearchParams, Response, Request, console, crypto: globalThis.crypto, Buffer, process,
       require(name) {
         if (name in stubs) return stubs[name];
         if (name.startsWith('@/')) return load(name.slice(2) + '.ts');
@@ -51,6 +71,11 @@ function setup({ storedOrders = [], storedItems = [] } = {}) {
         writes.push({ table: 'order_items', value: args.p_items });
         return { data: args.p_response, error: null };
       }
+      if (name === 'freeze_order_platform_fees') {
+        assert.equal(args.p_photographer_id, photographerId);
+        for (const snapshot of args.p_snapshots) Object.assign(storedOrders.find(order => order.id === snapshot.id), snapshot);
+        return { data: structuredClone(storedOrders), error: null };
+      }
       throw new Error(`Unexpected RPC: ${name}`);
     },
     from(table) {
@@ -70,9 +95,9 @@ function setup({ storedOrders = [], storedItems = [] } = {}) {
         },
         then(resolve, reject) {
           try {
-            let rows = table === 'packages' ? packages : table === 'students' ? ['12345','67890'].map(pin => ({ id: 'student-' + pin, pin, school_id: schoolId, class_id: null }))
+            let rows = table === 'packages' ? packages : table === 'students' ? ['12345','67890'].map(pin => ({ id: studentIds[pin], pin, school_id: schoolId, class_id: null }))
               : table === 'schools' ? [{ id: schoolId, photographer_id: photographerId }]
-              : table === 'photographers' ? [{ id: photographerId, subscription_status: 'active' }]
+              : table === 'photographers' ? [{ id: photographerId, subscription_status: 'active', subscription_plan_code: 'core' }]
               : table === 'orders' ? storedOrders : table === 'order_items' ? storedItems : [];
             if (inserted) rows = [{ id: 'new-order-' + writes.length }];
             else if (updated) rows = [];
@@ -99,6 +124,9 @@ function setup({ storedOrders = [], storedItems = [] } = {}) {
       ParentCutoutPreflightError: class extends Error {},
     },
     '@/lib/payments': {
+      quoteDirectOrderPlatformFees: paymentFees.quoteDirectOrderPlatformFees,
+      directOrderPlatformFeePayload: paymentFees.directOrderPlatformFeePayload,
+      isFreeTrialActive: paymentFees.isFreeTrialActive,
       isStripeBillingActive: () => true, getConnectedAccountId: () => 'acct_test',
       retrieveStripeAccount: async () => ({ details_submitted: true, charges_enabled: true, payouts_enabled: true }),
       syncConnectState: async () => {}, describeConnectStatus: () => ({ readyForPayments: true }),
@@ -166,7 +194,7 @@ test('combined checkout accepts a print and retouching in the same student order
 });
 
 function savedOrder(chosen, id = 'saved-order', groupId = null, legacy = false) {
-  return { id, order_group_id: groupId, school_id: schoolId, student_id: 'test-student', photographer_id: photographerId, package_id: chosen[0].id, package_name: chosen[0].name, cart_snapshot: legacy ? null : chosen.map(pkg => ({ packageId: pkg.id, packageName: pkg.name, quantity: 1 })), subtotal_cents: chosen.length * 1000, total_cents: chosen.length * 1000, tax_cents: 0, currency: 'cad', status: 'payment_pending' };
+  return { id, order_group_id: groupId, school_id: schoolId, student_id: studentIds['12345'], parent_email: 'parent@example.test', photographer_id: photographerId, package_id: chosen[0].id, package_name: chosen[0].name, cart_snapshot: legacy ? null : chosen.map(pkg => ({ packageId: pkg.id, packageName: pkg.name, quantity: 1 })), subtotal_cents: chosen.length * 1000, total_cents: chosen.length * 1000, tax_cents: 0, currency: 'cad', status: 'payment_pending' };
 }
 const savedLines = (chosen, orderId = 'saved-order') => chosen.map(pkg => ({ order_id: orderId, product_name: pkg.name, quantity: 1, unit_price_cents: 1000, line_total_cents: 1000 }));
 

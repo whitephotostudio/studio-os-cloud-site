@@ -10,7 +10,7 @@ const userId='11111111-1111-4111-8111-111111111111';
 const loadSource=path=>readFileSync(new URL(path,root),'utf8');
 function modules(overrides={}) {
   const cache=new Map();
-  const actual=new Set(['lib/payments','lib/subscription-access','lib/subscription-gate','lib/studio-os-app','lib/studio-pricing','lib/trial-config','app/api/studio-os-app/status/route']);
+  const actual=new Set(['lib/payments','lib/subscription-access','lib/subscription-gate','lib/studio-os-app','lib/studio-pricing','lib/trial-config','lib/order-currency','app/api/studio-os-app/status/route']);
   const load=name=>{
     if(name in overrides)return overrides[name];
     if(name.startsWith('node:'))return require(name);

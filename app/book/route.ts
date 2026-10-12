@@ -10,6 +10,9 @@
 // Identical markup/logic to the edge function, with one change: the API base is
 // the absolute Supabase functions URL instead of `location.origin`.
 
+import { randomBytes } from "node:crypto";
+import { contentSecurityPolicy } from "@/lib/content-security-policy";
+
 const html = `<!doctype html>
 <html lang='en'>
 <head>
@@ -356,13 +359,18 @@ input[type=text],input[type=email]{width:100%;padding:12px;border:1px solid #d6d
 </body>
 </html>`;
 
-export const dynamic = "force-static";
+export const dynamic = "force-dynamic";
 
-export async function GET() {
-  return new Response(html, {
+export async function GET(request: Request) {
+  const suppliedNonce = request.headers.get("x-nonce") || "";
+  const nonce = /^[A-Za-z0-9+/=]{16,}$/.test(suppliedNonce)
+    ? suppliedNonce : randomBytes(16).toString("base64");
+  return new Response(html.replace("<script>", `<script nonce="${nonce}">`), {
     headers: {
       "content-type": "text/html; charset=utf-8",
-      "cache-control": "public, max-age=0, must-revalidate",
+      "cache-control": "private, no-store",
+      "referrer-policy": "no-referrer",
+      "content-security-policy": contentSecurityPolicy(nonce, process.env.NODE_ENV !== "production"),
     },
   });
 }

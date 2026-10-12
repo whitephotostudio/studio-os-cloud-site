@@ -164,19 +164,28 @@ export async function verifyNoritsuZip(
       )
         throw Error("Noritsu sheet pixels or DPI are invalid.");
       for (const slot of sheet.slots) {
+        // The desktop manifest stores physical slot coordinates together in
+        // rectanglePixels. Retain support for earlier flat manifests, while
+        // rejecting ambiguous payloads rather than choosing a second geometry.
+        const nested = Object.hasOwn(slot, "rectanglePixels");
+        const rectangle = nested ? slot.rectanglePixels : slot;
         if (
           slot.ownerId !== owner ||
           slot.orderId !== orderId ||
-          !Number.isSafeInteger(slot.x) ||
-          !Number.isSafeInteger(slot.y) ||
-          !Number.isInteger(slot.width) ||
-          !Number.isInteger(slot.height) ||
-          slot.x < 0 ||
-          slot.y < 0 ||
-          slot.width < 1 ||
-          slot.height < 1 ||
-          slot.x + slot.width > info.width! ||
-          slot.y + slot.height > info.height!
+          !rectangle ||
+          typeof rectangle !== "object" ||
+          Array.isArray(rectangle) ||
+          (nested && ["x", "y", "width", "height"].some((key) => Object.hasOwn(slot, key))) ||
+          !Number.isSafeInteger(rectangle.x) ||
+          !Number.isSafeInteger(rectangle.y) ||
+          !Number.isSafeInteger(rectangle.width) ||
+          !Number.isSafeInteger(rectangle.height) ||
+          rectangle.x < 0 ||
+          rectangle.y < 0 ||
+          rectangle.width < 1 ||
+          rectangle.height < 1 ||
+          rectangle.x + rectangle.width > info.width! ||
+          rectangle.y + rectangle.height > info.height!
         )
           throw Error("Invalid Noritsu print rectangle.");
         actualPieces++;

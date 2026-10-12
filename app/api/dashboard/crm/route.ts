@@ -1109,7 +1109,7 @@ export async function POST(request: NextRequest) {
         resource: "location_photo",
         id: String(row.id),
       });
-      return privateJson({ ok: true, photo: crmLocationPhotoPublicRow(row) });
+      return privateJson({ ok: true, photo: crmLocationPhotoPublicRow(row, photographer.id) });
     }
 
     if (body.action === "deleteLocationPhoto") {

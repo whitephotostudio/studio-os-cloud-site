@@ -1,3 +1,4 @@
+import { schoolParentGalleryPath } from "@/lib/school-parent-gallery-link";
 import { setTimeout as delay } from "node:timers/promises";
 import { after } from "next/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -6,7 +7,7 @@ import { buildOrderReceiptEmail, type OrderReceiptPhotographer } from "@/lib/ord
 import { buildDigitalDeliveryEmailForOrder } from "@/lib/digital-delivery";
 import { resendConfigured, resolveReplyTo, sendResendEmail, ResendRequestError, type SendResendEmailInput } from "@/lib/resend";
 
-type FrozenOrder = OrderNotificationOrder & { project_id?: string | null };
+type FrozenOrder = OrderNotificationOrder & { project_id?: string | null; school_id?: string | null };
 type FrozenStudio = OrderNotificationPhotographer & OrderReceiptPhotographer;
 type FrozenContext = { project_title?: string | null; school_name?: string | null; student_name?: string | null; project_pin?: string | null; student_pin?: string | null };
 type PaidEmailRow = {
@@ -34,7 +35,10 @@ async function buildPayload(service: SupabaseClient, row: PaidEmailRow): Promise
     if (prepared.skipped) return null;
     return { ...prepared.payload, timeoutMs: 15000 };
   }
-  const { order, items, photographer, context } = row.snapshot;
+  const { order, items, photographer: frozenPhotographer, context } = row.snapshot;
+  // The outbox row's immutable owner is the capability tenant, including for
+  // historical snapshots that did not carry a photographer.id field.
+  const photographer = { ...frozenPhotographer, id: row.photographer_id };
   if (!order || order.id !== row.order_id) throw new UnsendablePaidEmail("Order snapshot unavailable");
   if (row.kind === "photographer") {
     return { ...buildOrderNotificationEmail({ order, items, photographer, context,
@@ -44,8 +48,10 @@ async function buildPayload(service: SupabaseClient, row: PaidEmailRow): Promise
   }
   let ordersHistoryUrl: string | null = null;
   if (context.student_pin) {
-    const params = new URLSearchParams({ email: recipient, tab: "orders" });
-    ordersHistoryUrl = `https://www.studiooscloud.com/parents/${encodeURIComponent(context.student_pin)}?${params}`;
+    // The database snapshot's student_pin is selected only through the
+    // order's school and photographer joins. Keep that school in the link.
+    const schoolPath = schoolParentGalleryPath({ schoolId: order.school_id, pin: context.student_pin, email: recipient, tab: "orders" });
+    if (schoolPath) ordersHistoryUrl = `https://www.studiooscloud.com${schoolPath}`;
   } else if (context.project_pin && order.project_id) {
     const params = new URLSearchParams({ mode: "event", project: order.project_id, email: recipient, tab: "orders" });
     ordersHistoryUrl = `https://www.studiooscloud.com/parents/${encodeURIComponent(context.project_pin)}?${params}`;

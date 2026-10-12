@@ -11,7 +11,7 @@
 //   - This route is anonymous (no auth required).  Rate-limited internally
 //     by IP and by student.
 //   - We never reveal the raw PIN, only a single-use signed link.
-//   - When door 3 (pre-registration) fails, we ALSO insert a Tier 3 row
+//   - When pre-registration or trusted roster email is missing, insert a Tier 3 row
 //     into pin_recovery_requests so the photographer's dashboard surfaces
 //     the unresolved help request and they can one-click send a token.
 
@@ -21,6 +21,7 @@ import { createDashboardServiceClient } from "@/lib/dashboard-auth";
 import { parseJson } from "@/lib/api-validation";
 import {
   logRecoveryAttempt,
+  pinRecoveryOrigin,
   runRecoveryDoorCheck,
 } from "@/lib/pin-recovery";
 import { buildPinRecoveryEmail } from "@/lib/pin-recovery-email";
@@ -95,12 +96,6 @@ export async function POST(request: NextRequest) {
     return genericResponse();
   }
 
-  // Resolve sender + URL pieces up front (used in both success and fallback paths).
-  const origin =
-    request.headers.get("origin") ||
-    process.env.NEXT_PUBLIC_SITE_URL ||
-    "https://www.studiooscloud.com";
-
   if (!outcome.ok) {
     await logRecoveryAttempt(service, {
       input,
@@ -108,11 +103,9 @@ export async function POST(request: NextRequest) {
       failureReason: outcome.reason,
     });
 
-    // Door 3 (email_not_registered) is the path that should ALSO surface
-    // a Tier 3 photographer-assist queue row, because the parent might be
-    // legitimate and just never pre-registered.  We don't fail loudly to
-    // them — the photographer can resolve from the dashboard.
-    if (outcome.reason === "email_not_registered") {
+    // A school-wide email registration is insufficient when the roster has
+    // no trusted student/email association. Let the photographer verify it.
+    if (outcome.reason === "email_not_registered" || outcome.reason === "photographer_fallback") {
       await tryQueueManualRequest(service, input);
       return genericResponse({
         photographerContact: outcome.photographerContact ?? null,
@@ -139,7 +132,7 @@ export async function POST(request: NextRequest) {
     outcome.student.schoolName || outcome.student.projectTitle || "your gallery";
   const studentName = `${outcome.student.firstName} ${outcome.student.lastName}`.trim();
 
-  const recoveryUrl = `${origin.replace(/\/$/, "")}/api/portal/recovery/claim?token=${encodeURIComponent(outcome.plaintextToken)}`;
+  const recoveryUrl = `${pinRecoveryOrigin()}/api/portal/recovery/claim?token=${encodeURIComponent(outcome.plaintextToken)}`;
 
   const email = buildPinRecoveryEmail({
     studentName,

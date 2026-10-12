@@ -91,7 +91,7 @@ function parseCampaignRow(
   const photoKeys = Array.isArray(payload.photo_keys)
     ? payload.photo_keys
         .map((value) => boundedString(value, 500))
-        .filter((value) => value.startsWith(prefix) && value.endsWith(".jpg"))
+        .filter((value) => value.startsWith(prefix) && /^direction-[1-4]\.jpg$/.test(value.slice(prefix.length)))
         .slice(0, 4)
     : [];
 

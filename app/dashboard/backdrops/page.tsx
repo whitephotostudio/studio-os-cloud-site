@@ -42,6 +42,9 @@ export default function BackdropsPage() {
   const [pgId, setPgId] = useState<string | null>(null);
   const [userEmail, setUserEmail] = useState("");
   const [backdrops, setBackdrops] = useState<BackdropRow[]>([]);
+  const [onlineBackdropsEnabled, setOnlineBackdropsEnabled] = useState<boolean | null>(null);
+  const [savingOnlineDefault, setSavingOnlineDefault] = useState(false);
+  const [onlineDefaultNotice, setOnlineDefaultNotice] = useState("");
   const [activeCat, setActiveCat] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
@@ -86,7 +89,54 @@ export default function BackdropsPage() {
     const { data: pg } = await supabase.from("photographers").select("id").eq("user_id", user.id).maybeSingle();
     if (!pg) { setLoading(false); return; }
     setPgId(pg.id);
-    await load(pg.id);
+    await Promise.all([load(pg.id), loadOnlineDefault()]);
+  }
+
+  async function loadOnlineDefault() {
+    try {
+      const response = await fetch("/api/dashboard/backdrop-settings", { cache: "no-store" });
+      const result = await response.json();
+      if (!response.ok || typeof result.onlineBackdropsEnabled !== "boolean") {
+        throw new Error(result.message || result.error || "Could not load the online background setting.");
+      }
+      setOnlineBackdropsEnabled(result.onlineBackdropsEnabled);
+      setOnlineDefaultNotice("");
+      return true;
+    } catch (error) {
+      setOnlineBackdropsEnabled(null);
+      setOnlineDefaultNotice(error instanceof Error ? error.message : "Could not load the online background setting.");
+      return false;
+    }
+  }
+
+  async function saveOnlineDefault() {
+    if (onlineBackdropsEnabled === null || savingOnlineDefault) return;
+    const next = !onlineBackdropsEnabled;
+    setSavingOnlineDefault(true);
+    setOnlineDefaultNotice("");
+    try {
+      const response = await fetch("/api/dashboard/backdrop-settings", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ onlineBackdropsEnabled: next, expectedOnlineBackdropsEnabled: onlineBackdropsEnabled }),
+      });
+      const result = await response.json();
+      if (response.status === 409) {
+        if (await loadOnlineDefault()) {
+          setOnlineDefaultNotice("Another window changed this setting. The latest value is loaded; choose again if needed.");
+        }
+        return;
+      }
+      if (!response.ok || result.onlineBackdropsEnabled !== next) {
+        throw new Error(result.message || result.error || "Could not save the online background setting.");
+      }
+      setOnlineBackdropsEnabled(result.onlineBackdropsEnabled);
+      setOnlineDefaultNotice(`Saved: studio default ${next ? "On" : "Off"}.`);
+    } catch (error) {
+      setOnlineDefaultNotice(error instanceof Error ? error.message : "Could not save the online background setting.");
+    } finally {
+      setSavingOnlineDefault(false);
+    }
   }
 
   async function load(pid?: string) {
@@ -391,6 +441,26 @@ export default function BackdropsPage() {
               <button onClick={()=>setShowUpload(true)} style={{ display:"flex",alignItems:"center",gap:6,background:"#fff",border:"1.5px solid #ddd",borderRadius:10,padding:"9px 16px",fontSize:13,fontWeight:600,cursor:"pointer",color:"#333" }}><Upload size={15}/> Bulk Upload</button>
               <button onClick={()=>openEditor()} style={{ display:"flex",alignItems:"center",gap:6,background:"#111",color:"#fff",border:"none",borderRadius:10,padding:"9px 18px",fontSize:13,fontWeight:700,cursor:"pointer" }}><Plus size={15}/> Add Single</button>
             </div>
+          </div>
+
+          <div style={{ marginBottom: 20, border: "1px solid #e5e7eb", borderRadius: 14, padding: "16px 18px", background: "#fafafa" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16 }}>
+              <div>
+                <h2 style={{ fontSize: 15, fontWeight: 750, color: "#111", margin: "0 0 5px" }}>Online background changes</h2>
+                <p style={{ fontSize: 13, lineHeight: 1.6, color: "#666", margin: 0 }}>
+                  Studio default for schools using your default setting. Choose On or Off for a specific school in its Gallery Settings → Shopping Cart/Store.
+                </p>
+                <p style={{ fontSize: 12, lineHeight: 1.6, color: "#666", margin: "5px 0 0" }}>Hidden designs stay hidden. Existing photos and paid orders are preserved.</p>
+              </div>
+              <button type="button" role="switch" aria-label="Online background changes by default" aria-checked={onlineBackdropsEnabled === true}
+                disabled={onlineBackdropsEnabled === null || savingOnlineDefault} onClick={() => void saveOnlineDefault()}
+                style={{ flexShrink: 0, minWidth: 88, padding: "10px 16px", border: "none", borderRadius: 999, color: "#fff", fontWeight: 750,
+                  background: onlineBackdropsEnabled ? "#15803d" : "#525252", cursor: onlineBackdropsEnabled === null || savingOnlineDefault ? "wait" : "pointer" }}>
+                {savingOnlineDefault ? "Saving…" : onlineBackdropsEnabled === null ? "Loading…" : onlineBackdropsEnabled ? "On" : "Off"}
+              </button>
+            </div>
+            {onlineDefaultNotice && <p role="status" style={{ fontSize: 13, margin: "10px 0 0", color: "#374151" }}>{onlineDefaultNotice}</p>}
+            {onlineBackdropsEnabled === null && onlineDefaultNotice && <button type="button" onClick={() => void loadOnlineDefault()} style={{ marginTop: 8 }}>Retry setting</button>}
           </div>
 
           {/* Stats — clickable filters */}

@@ -17,9 +17,13 @@ export async function completeConfirmedAccountSetup(
   const payload = await response.json().catch(() => null) as {
     ok?: boolean;
     signedIn?: boolean;
+    mfaRequired?: boolean;
     trialActive?: boolean;
     trialDaysRemaining?: number;
   } | null;
+  if (response.status === 403 && payload?.mfaRequired === true) {
+    throw new Error("Your email is confirmed. Sign in and complete two-step verification to finish setting up your account.");
+  }
   const trialDaysRemaining = payload?.trialDaysRemaining;
   if (!response.ok || payload?.ok !== true || payload.signedIn !== true ||
       typeof payload.trialActive !== "boolean" || typeof trialDaysRemaining !== "number" ||

@@ -5,7 +5,9 @@ import Link from "next/link";
 import { SiteHeader } from "@/components/site-header";
 import { SiteFooter } from "@/components/site-footer";
 import { createClient } from "@/lib/supabase/client";
+import { useAuthFormReady } from "@/lib/use-auth-form-ready";
 import { resolveSignInRedirect } from "@/lib/sign-in-redirect";
+import { authRequestErrorMessage, withAuthRequestTimeout } from "@/lib/auth-request";
 
 type StudioAppSignInStatus = {
   ok?: boolean;
@@ -25,6 +27,7 @@ export const TRANSIENT_SESSION_FLAG = "studio-os-transient-session";
 export const SESSION_STARTED_FLAG = "studio-os-session-started";
 
 export default function SignInPage() {
+  const formReady = useAuthFormReady();
   const supabase = createClient();
 
   const [email, setEmail] = useState("");
@@ -108,14 +111,15 @@ export default function SignInPage() {
 
   async function handleSignIn(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    if (!formReady) return;
     setLoading(true);
     setMessage("");
 
     try {
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email,
+      const { data, error } = await withAuthRequestTimeout(supabase.auth.signInWithPassword({
+        email: email.trim(),
         password,
-      });
+      }), "Sign-in took too long. Please try again.");
 
       if (error) {
         const msg = (error.message ?? "").toLowerCase();
@@ -133,21 +137,32 @@ export default function SignInPage() {
             "The email or password did not match. Try again or use Forgot password.",
           );
         } else {
-          setMessage(error.message);
+          setMessage(authRequestErrorMessage(error, "Sign-in failed. Please try again.", "sign-in"));
         }
         setLoading(false);
         return;
       }
 
-      // Check if MFA verification is required
-      const { data: aalData } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+      if (!data.session?.access_token) {
+        throw new Error("We could not establish your sign-in session. Please try again.");
+      }
+
+      // A provider failure must not be treated as proof that MFA is unnecessary.
+      const { data: aalData, error: aalError } = await withAuthRequestTimeout(
+        supabase.auth.mfa.getAuthenticatorAssuranceLevel(), "Verification took too long. Please try again.",
+      );
+      if (aalError) throw aalError;
+      if (!aalData) throw new Error("We could not check your verification settings. Please try again.");
 
       if (
         aalData &&
         aalData.nextLevel === "aal2" &&
         aalData.currentLevel === "aal1"
       ) {
-        const { data: factorsData } = await supabase.auth.mfa.listFactors();
+        const { data: factorsData, error: factorsError } = await withAuthRequestTimeout(
+          supabase.auth.mfa.listFactors(), "Verification took too long. Please try again.",
+        );
+        if (factorsError) throw factorsError;
         const totpFactor = factorsData?.totp?.find(
           (f) => f.status === "verified",
         );
@@ -158,18 +173,21 @@ export default function SignInPage() {
           setLoading(false);
           return;
         }
+        throw new Error("We could not find your verification method. Please try signing in again.");
       }
 
       persistRememberPreference(email.trim());
       await redirectAfterSignIn(data.session?.access_token ?? null);
     } catch (err) {
-      setMessage(err instanceof Error ? err.message : "Sign-in failed. Please try again.");
+      setMessage(authRequestErrorMessage(err, "Sign-in failed. Please try again.", "sign-in"));
+    } finally {
       setLoading(false);
     }
   }
 
   async function handleMfaVerify(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    if (!formReady) return;
     setMfaVerifying(true);
     setMessage("");
 
@@ -180,34 +198,36 @@ export default function SignInPage() {
       return;
     }
 
-    const { data: challengeData, error: challengeError } =
-      await supabase.auth.mfa.challenge({ factorId: mfaFactorId });
+    try {
+      const { data: challengeData, error: challengeError } = await withAuthRequestTimeout(
+        supabase.auth.mfa.challenge({ factorId: mfaFactorId }), "Verification took too long. Please try again.",
+      );
+      if (challengeError) throw challengeError;
+      if (!challengeData?.id) throw new Error("We could not start verification. Please try again.");
 
-    if (challengeError) {
-      setMessage(challengeError.message);
+      const { error: verifyError } = await withAuthRequestTimeout(supabase.auth.mfa.verify({
+        factorId: mfaFactorId,
+        challengeId: challengeData.id,
+        code,
+      }), "Verification took too long. Please try again.");
+      if (verifyError) {
+        setMessage("We could not verify that code. Please try again.");
+        setMfaCode("");
+        return;
+      }
+
+      const { data: { session }, error: sessionError } = await withAuthRequestTimeout(
+        supabase.auth.getSession(), "Sign-in took too long. Please try again.",
+      );
+      if (sessionError) throw sessionError;
+      if (!session?.access_token) throw new Error("Your session expired. Please sign in again.");
+      persistRememberPreference(email.trim());
+      await redirectAfterSignIn(session.access_token);
+    } catch (error) {
+      setMessage(authRequestErrorMessage(error, "Verification failed. Please try again.", "verification"));
+    } finally {
       setMfaVerifying(false);
-      return;
     }
-
-    const { error: verifyError } = await supabase.auth.mfa.verify({
-      factorId: mfaFactorId,
-      challengeId: challengeData.id,
-      code,
-    });
-
-    if (verifyError) {
-      setMessage("Invalid verification code. Please try again.");
-      setMfaCode("");
-      setMfaVerifying(false);
-      return;
-    }
-
-    // MFA verified — redirect, with Studio OS welcome when eligible.
-    const {
-      data: { session },
-    } = await supabase.auth.getSession();
-    persistRememberPreference(email.trim());
-    await redirectAfterSignIn(session?.access_token ?? null);
   }
 
   async function redirectAfterSignIn(accessToken: string | null) {
@@ -250,15 +270,15 @@ export default function SignInPage() {
     setResendNotice("");
     try {
       const origin = typeof window !== "undefined" ? window.location.origin : "";
-      const { error } = await supabase.auth.resend({
+      const { error } = await withAuthRequestTimeout(supabase.auth.resend({
         type: "signup",
         email: email.trim(),
         options: origin
           ? { emailRedirectTo: `${origin}/auth/callback` }
           : undefined,
-      });
+      }), "Sending verification email took too long. Check your inbox before trying again.");
       if (error) {
-        setResendNotice(error.message);
+        setResendNotice(authRequestErrorMessage(error, "Unable to resend verification email.", "verification email"));
       } else {
         setResendNotice(
           "Verification email sent. Check your inbox (and spam folder) for the confirmation link.",
@@ -266,7 +286,7 @@ export default function SignInPage() {
       }
     } catch (err) {
       setResendNotice(
-        err instanceof Error ? err.message : "Unable to resend verification email.",
+        authRequestErrorMessage(err, "Unable to resend verification email.", "verification email"),
       );
     } finally {
       setResendBusy(false);
@@ -276,6 +296,11 @@ export default function SignInPage() {
   return (
     <div className="sign-motion-page min-h-screen bg-neutral-950 text-neutral-950">
       <SiteHeader />
+      <noscript>
+        <p className="mx-auto max-w-xl px-6 py-4 text-sm text-red-700 bg-white">
+          Enable JavaScript and reload this page to securely use your Studio OS account.
+        </p>
+      </noscript>
 
       <style>{`
         .sign-motion-page {
@@ -562,13 +587,14 @@ export default function SignInPage() {
                     Sign in with your email and password.
                   </p>
 
-                  <form onSubmit={handleSignIn} className="sign-motion-form mt-8 space-y-5">
+                  <form method="post" onSubmit={handleSignIn} className="sign-motion-form mt-8 space-y-5">
                     <div>
-                      <label className="mb-2 block text-sm font-medium text-neutral-700">
+                      <label htmlFor="signin-email" className="mb-2 block text-sm font-medium text-neutral-700">
                         Email
                       </label>
                       <input
                         type="email"
+                        id="signin-email"
                         name="email"
                         autoComplete="username"
                         value={email}
@@ -581,7 +607,7 @@ export default function SignInPage() {
 
                     <div>
                       <div className="mb-2 flex items-center justify-between">
-                        <label className="block text-sm font-medium text-neutral-700">
+                        <label htmlFor="signin-password" className="block text-sm font-medium text-neutral-700">
                           Password
                         </label>
                         <Link
@@ -593,6 +619,7 @@ export default function SignInPage() {
                       </div>
                       <input
                         type="password"
+                        id="signin-password"
                         name="password"
                         autoComplete="current-password"
                         value={password}
@@ -623,7 +650,7 @@ export default function SignInPage() {
 
                     <button
                       type="submit"
-                      disabled={loading}
+                      disabled={!formReady || loading}
                       className="sign-motion-primary w-full rounded-2xl bg-black px-4 py-3 text-sm font-medium text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
                     >
                       {loading ? "Signing in..." : "Sign In"}
@@ -652,12 +679,13 @@ export default function SignInPage() {
                     Enter the 6-digit code from your authenticator app to continue.
                   </p>
 
-                  <form onSubmit={handleMfaVerify} className="sign-motion-form mt-8 space-y-5">
+                  <form method="post" onSubmit={handleMfaVerify} className="sign-motion-form mt-8 space-y-5">
                     <div>
-                      <label className="mb-2 block text-sm font-medium text-neutral-700">
+                      <label htmlFor="signin-mfa-code" className="mb-2 block text-sm font-medium text-neutral-700">
                         Verification code
                       </label>
                       <input
+                        id="signin-mfa-code"
                         ref={codeInputRef}
                         type="text"
                         inputMode="numeric"
@@ -682,7 +710,7 @@ export default function SignInPage() {
 
                     <button
                       type="submit"
-                      disabled={mfaVerifying || mfaCode.length !== 6}
+                      disabled={!formReady || mfaVerifying || mfaCode.length !== 6}
                       className="sign-motion-primary w-full rounded-2xl bg-black px-4 py-3 text-sm font-medium text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
                     >
                       {mfaVerifying ? "Verifying..." : "Verify"}

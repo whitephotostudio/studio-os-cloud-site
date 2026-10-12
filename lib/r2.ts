@@ -7,7 +7,7 @@ import {
   DeleteObjectsCommand,
   ListObjectsV2Command,
 } from "@aws-sdk/client-s3";
-import { r2PresignedGetUrl } from "@/lib/r2-signed-urls";
+import { signedR2MediaUrl } from "@/lib/r2-media-token";
 import { schoolPhotoFamilyForKey } from "@/lib/school-photo-deletions";
 
 function env(name: string) {
@@ -283,7 +283,7 @@ export async function r2DeleteWithVariantsBestEffort(keys: string[]) {
 
 export async function listR2FolderImages(
   prefix: string,
-  options?: { ttlSeconds?: number },
+  options?: { ttlSeconds?: number; photographerId?: string | null },
 ): Promise<R2FolderImage[]> {
   const normalizedPrefix = normalizePrefix(prefix);
   if (!normalizedPrefix) return [];
@@ -314,7 +314,9 @@ export async function listR2FolderImages(
       results.push({
         key,
         name,
-        url: r2PresignedGetUrl(key, ttlSeconds),
+        url: options?.photographerId
+          ? signedR2MediaUrl(key, ttlSeconds, options.photographerId)
+          : `/api/r2/img/${key.split("/").map(encodeURIComponent).join("/")}`,
       });
     }
 

@@ -28,7 +28,7 @@ import { FREE_TRIAL_DAYS } from "@/lib/trial-config";
 const canonicalUrl = "https://www.studiooscloud.com/founding-100";
 const trialHref = "/sign-up?source=founding-100";
 const demoHref =
-  "mailto:galleries@studiooscloud.com?subject=Studio%20OS%20Founding%20100%20Demo&body=I%20would%20like%20a%20short%20Studio%20OS%20Founding%20100%20demo.%0A%0ABusiness%20name%3A%0APhotography%20type%3A%0AMain%20workflow%20challenge%3A";
+  "mailto:hello@studiooscloud.com?subject=Studio%20OS%20Founding%20100%20Demo&body=I%20would%20like%20a%20short%20Studio%20OS%20Founding%20100%20demo.%0A%0ABusiness%20name%3A%0APhotography%20type%3A%0AMain%20workflow%20challenge%3A";
 
 export const metadata: Metadata = {
   title: "Founding 100 Photographer Program",

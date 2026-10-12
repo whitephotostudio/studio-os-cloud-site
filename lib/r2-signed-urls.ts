@@ -154,8 +154,8 @@ export function r2PresignedGetUrl(
 }
 
 /**
- * Generate a short-lived direct-upload URL. Generic grants sign only `host`.
- * Private cutout staging additionally signs Content-Length and Content-Type;
+ * Generate a short-lived direct-upload URL. Every grant binds its validated
+ * Content-Length and Content-Type;
  * a client cannot upload a larger body than its server-validated ticket.
  */
 export function r2PresignedPutUrl(
@@ -173,7 +173,12 @@ export function r2PresignedPutUrl(
       options.contentLength < 1 || options.contentLength > 25 * 1024 * 1024 || !options.contentType || !/^[a-z0-9-]+\/[a-z0-9.+-]+$/.test(options.contentType)) return "";
     return r2PresignedUrl("PUT", key, Math.min(expiresInSeconds, 120), { contentLength: options.contentLength, contentType: options.contentType });
   }
-  return r2PresignedUrl("PUT", key, expiresInSeconds);
+  if (!Number.isSafeInteger(options.contentLength) || !options.contentLength ||
+      options.contentLength < 1 || options.contentLength > 250 * 1024 * 1024 ||
+      !options.contentType || !/^[a-z0-9-]+\/[a-z0-9.+-]+$/.test(options.contentType)) return "";
+  return r2PresignedUrl("PUT", key, expiresInSeconds, {
+    contentLength: options.contentLength, contentType: options.contentType,
+  });
 }
 
 

@@ -4,7 +4,10 @@ import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { SiteHeader } from "@/components/site-header";
 import { SiteFooter } from "@/components/site-footer";
-import { createClient } from "@/lib/supabase/client";
+import { createPasswordRecoveryClient } from "@/lib/supabase/password-recovery-client";
+import { useAuthFormReady } from "@/lib/use-auth-form-ready";
+import { PASSWORD_REQUIREMENTS } from "@/lib/password-policy";
+import type { Session } from "@supabase/supabase-js";
 
 type ResetStage =
   | "verifying-link"
@@ -23,39 +26,6 @@ type RecoveryProof = {
   userId: string;
 };
 
-const SUPABASE_PASSWORD_SYMBOLS =
-  "!@#$%^&*()_+-=[]{};'\\:\"|<>?,./`~";
-
-const PASSWORD_REQUIREMENTS = [
-  {
-    key: "length",
-    label: "At least 8 characters",
-    test: (value: string) => value.length >= 8,
-  },
-  {
-    key: "lower",
-    label: "One lowercase letter",
-    test: (value: string) => /[a-z]/.test(value),
-  },
-  {
-    key: "upper",
-    label: "One uppercase letter",
-    test: (value: string) => /[A-Z]/.test(value),
-  },
-  {
-    key: "number",
-    label: "One number",
-    test: (value: string) => /\d/.test(value),
-  },
-  {
-    key: "symbol",
-    label: "One special character",
-    test: (value: string) =>
-      Array.from(value).some((character) =>
-        SUPABASE_PASSWORD_SYMBOLS.includes(character),
-      ),
-  },
-] as const;
 
 function VisibilityIcon({ visible }: { visible: boolean }) {
   return visible ? (
@@ -94,11 +64,15 @@ function VisibilityIcon({ visible }: { visible: boolean }) {
 }
 
 export default function ResetPasswordPage() {
+  const formReady = useAuthFormReady();
   // Keep one client for the lifetime of this page. Recreating it during a
   // render can lose the one-time PASSWORD_RECOVERY auth event.
-  const [supabase] = useState(() => createClient());
+  const [supabase] = useState(() => createPasswordRecoveryClient());
 
   const recoveryProofRef = useRef<RecoveryProof | null>(null);
+  const recoveryExchangeRef = useRef<
+    ReturnType<typeof supabase.auth.exchangeCodeForSession> | null
+  >(null);
   const [recoveryUserId, setRecoveryUserId] = useState("");
   const [securityCheckVersion, setSecurityCheckVersion] = useState(0);
   const [stage, setStage] = useState<ResetStage>("verifying-link");
@@ -148,18 +122,23 @@ export default function ResetPasswordPage() {
       }
     }, 10000);
 
+    const acceptRecovery = (session: Session) => {
+      if (!active || !session.user?.id) return;
+      window.clearTimeout(timeoutId);
+      recoveryProofRef.current = { userId: session.user.id };
+      setRecoveryUserId(session.user.id);
+      setSecurityCheckVersion((version) => version + 1);
+      setError("");
+      setStage("checking-security");
+    };
+
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((event, session) => {
       if (!active) return;
 
       if (event === "PASSWORD_RECOVERY" && session?.user?.id) {
-        window.clearTimeout(timeoutId);
-        recoveryProofRef.current = { userId: session.user.id };
-        setRecoveryUserId(session.user.id);
-        setSecurityCheckVersion((version) => version + 1);
-        setError("");
-        setStage("checking-security");
+        acceptRecovery(session);
         return;
       }
 
@@ -173,6 +152,49 @@ export default function ResetPasswordPage() {
         );
       }
     });
+
+    // The dedicated implicit client waits for this subscription so a fast
+    // callback cannot consume the one-time recovery event before hydration.
+    async function verifyLink() {
+      const url = new URL(window.location.href);
+      const code = url.searchParams.get("code");
+      if (!code) return supabase.auth.initialize();
+
+      // The SDK's automatic PKCE URL handler drops the recovery marker.
+      // Explicit exchange preserves it; an ordinary sign-in code is never
+      // sufficient proof for this password reset screen.
+      recoveryExchangeRef.current ??= supabase.auth.exchangeCodeForSession(code);
+      const { data, error: exchangeError } =
+        await recoveryExchangeRef.current;
+      if (!active) return { error: null };
+      if (exchangeError) return { error: exchangeError };
+      const redirectType = "redirectType" in data ? data.redirectType : null;
+      if (redirectType !== "PASSWORD_RECOVERY" || !data.session?.user?.id) {
+        return { error: new Error("Password recovery verification required.") };
+      }
+      url.searchParams.delete("code");
+      window.history.replaceState(window.history.state, "", url.toString());
+      acceptRecovery(data.session);
+      return { error: null };
+    }
+
+    void verifyLink()
+      .then(({ error: linkError }) => {
+        if (active && linkError) {
+          window.clearTimeout(timeoutId);
+          invalidateRecovery(
+            "This password reset link could not be verified. Request a new link and try again.",
+          );
+        }
+      })
+      .catch(() => {
+        if (active) {
+          window.clearTimeout(timeoutId);
+          invalidateRecovery(
+            "This password reset link could not be verified. Request a new link and try again.",
+          );
+        }
+      });
 
     return () => {
       active = false;
@@ -267,6 +289,7 @@ export default function ResetPasswordPage() {
 
   async function handleMfaSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    if (!formReady) return;
     if (loading) return;
     setError("");
 
@@ -345,6 +368,7 @@ export default function ResetPasswordPage() {
 
   async function handlePasswordSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    if (!formReady) return;
     if (loading) return;
     setSubmitAttempted(true);
     setError("");
@@ -464,6 +488,11 @@ export default function ResetPasswordPage() {
   return (
     <div className="min-h-screen bg-white text-neutral-950">
       <SiteHeader />
+      <noscript>
+        <p className="mx-auto max-w-xl px-6 py-4 text-sm text-red-700 bg-white">
+          Enable JavaScript and reload this page to securely use your Studio OS account.
+        </p>
+      </noscript>
 
       <main className="mx-auto flex max-w-7xl px-6 py-20">
         <div className="mx-auto w-full max-w-md">
@@ -494,10 +523,10 @@ export default function ResetPasswordPage() {
                   it to sign in to Studio OS Cloud.
                 </p>
                 <Link
-                  href="/dashboard"
+                  href="/sign-in"
                   className="mt-6 inline-block w-full rounded-2xl bg-black px-4 py-3 text-center text-sm font-medium text-white transition hover:opacity-90"
                 >
-                  Go to Dashboard
+                  Back to Sign In
                 </Link>
               </div>
             ) : stage === "invalid" ? (
@@ -542,7 +571,7 @@ export default function ResetPasswordPage() {
                   new password.
                 </p>
 
-                <form onSubmit={handleMfaSubmit} className="mt-8 space-y-5">
+                <form method="post" onSubmit={handleMfaSubmit} className="mt-8 space-y-5">
                   {totpFactors.length > 1 ? (
                     <div>
                       <label
@@ -557,7 +586,7 @@ export default function ResetPasswordPage() {
                         onChange={(event) =>
                           setSelectedFactorId(event.target.value)
                         }
-                        disabled={loading}
+                        disabled={!formReady || loading}
                         className="w-full rounded-2xl border border-neutral-200 px-4 py-3 text-sm outline-none transition focus:border-black"
                       >
                         {totpFactors.map((factor) => (
@@ -589,7 +618,7 @@ export default function ResetPasswordPage() {
                         setMfaCode(event.target.value.replace(/\D/g, "").slice(0, 6))
                       }
                       required
-                      disabled={loading}
+                      disabled={!formReady || loading}
                       className="w-full rounded-2xl border border-neutral-200 px-4 py-3 text-center text-lg tracking-[0.3em] outline-none transition focus:border-black"
                       placeholder="000000"
                     />
@@ -606,7 +635,7 @@ export default function ResetPasswordPage() {
 
                   <button
                     type="submit"
-                    disabled={loading}
+                    disabled={!formReady || loading}
                     className="w-full rounded-2xl bg-black px-4 py-3 text-sm font-medium text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     {loading ? "Verifying..." : "Verify and continue"}
@@ -622,7 +651,7 @@ export default function ResetPasswordPage() {
                   Choose a strong new password for your Studio OS Cloud account.
                 </p>
 
-                <form onSubmit={handlePasswordSubmit} className="mt-8 space-y-5">
+                <form method="post" onSubmit={handlePasswordSubmit} className="mt-8 space-y-5">
                   <div>
                     <label
                       htmlFor="new-password"
@@ -748,7 +777,7 @@ export default function ResetPasswordPage() {
 
                   <button
                     type="submit"
-                    disabled={loading}
+                    disabled={!formReady || loading}
                     className="w-full rounded-2xl bg-black px-4 py-3 text-sm font-medium text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     {loading ? "Updating..." : "Update password"}

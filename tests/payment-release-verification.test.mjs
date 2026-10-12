@@ -20,6 +20,39 @@ test('release checks only read provider state and do not log credentials', async
   assert.ok(!logs.join('').includes(env.STRIPE_SECRET_KEY));
   assert.ok(!logs.join('').includes(env.SUPABASE_SERVICE_ROLE_KEY));
 });
+const feeSchema = {version: '20261007010000', columns_present: true, constraint_present: true,
+  snapshot_guard_present: true, legacy_usage_guard_present: true, atomic_freeze_present: true};
+
+function directFeeVerificationFetcher({status = feeSchema, missingColumns = false} = {}) {
+  const calls = [];
+  return {calls, fetcher: async (target, options) => {
+    calls.push({target, options});
+    assert.equal(options.method, 'GET'); assert.equal(options.body, undefined);
+    if (target.includes('orders?select=id,platform_fee_') && missingColumns) return {ok: false, status: 400};
+    const body = target.includes('rpc/order_platform_fee_schema_status') ? status :
+      target.includes('webhook_endpoints') ? {data: [endpoint], has_more: false} :
+      target.endsWith('/account') ? {id: 'acct_example'} : [];
+    return {ok: true, json: async () => body};
+  }};
+}
+
+test('direct-fee release probes all snapshot columns and actual guards using reads only', async () => {
+  const f = directFeeVerificationFetcher(), logs = [];
+  await verifyPaymentRelease({...env, STUDIO_PAYMENT_RELEASE_VERIFY: '0', STUDIO_ORDER_PLATFORM_FEE_RELEASE_VERIFY: '1'}, f.fetcher, line => logs.push(JSON.parse(line)));
+  assert.ok(f.calls.some(call => call.target.includes('platform_fee_currency,platform_fee_rate_cents,stripe_application_fee_id&limit=0')));
+  assert.ok(f.calls.every(call => !call.target.includes('platform_fee_fx_')), 'nominal local-currency fees need no FX schema');
+  assert.ok(f.calls.some(call => call.target.endsWith('/rpc/order_platform_fee_schema_status')));
+  assert.ok(logs.some(log => log.check === 'direct-order-fee-schema' && log.databaseMutations === 0 && log.financialMutations === 0));
+});
+
+test('missing direct-fee columns or any missing actual schema protection blocks release', async () => {
+  for (const options of [{missingColumns: true}, {status: {...feeSchema, version: 'old'}},
+    ...Object.keys(feeSchema).filter(key => key !== 'version').map(key => ({status: {...feeSchema, [key]: false}}))]) {
+    const f = directFeeVerificationFetcher(options);
+    await assert.rejects(() => verifyPaymentRelease({...env, STUDIO_ORDER_PLATFORM_FEE_RELEASE_VERIFY: '1'}, f.fetcher, () => {}), /Database verification failed|schema protections are missing/);
+    assert.ok(f.calls.every(call => call.options.method === 'GET'));
+  }
+});
 test('missing refund webhook subscriptions block release', async () => {
   await assert.rejects(() => verifyPaymentRelease(env, async (url) => ({ ok: true, json: async () => url.includes('webhook_endpoints') ? { data: [{ ...endpoint, enabled_events: ['checkout.session.completed'] }] } : {} }), () => {}), /missing: payment_intent.succeeded, charge.refunded, refund.updated, refund.failed/);
 });
