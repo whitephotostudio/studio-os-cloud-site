@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { matchesEventCollectionPin } from "@/lib/event-download-scope";
 import { createDashboardServiceClient } from "@/lib/dashboard-auth";
 import { getClientIp, rateLimit } from "@/lib/rate-limit";
-import { validateUuid } from "@/lib/request-validation";
+import { ensureObjectBody, validateUuid } from "@/lib/request-validation";
 
 export const dynamic = "force-dynamic";
 
@@ -164,14 +164,9 @@ async function validateEventAccess(params: {
   };
 }
 
-export async function GET(request: NextRequest) {
+async function readEventFavorites(credentials: { projectId: string; email: string; pin: string }) {
   try {
-    const searchParams = request.nextUrl.searchParams;
-    const access = await validateEventAccess({
-      projectId: searchParams.get("projectId") ?? "",
-      email: searchParams.get("email") ?? "",
-      pin: searchParams.get("pin") ?? "",
-    });
+    const access = await validateEventAccess(credentials);
 
     if (!access.ok) {
       return NextResponse.json(
@@ -218,8 +213,38 @@ export async function GET(request: NextRequest) {
   }
 }
 
+const credentialQueryFields = ["schoolId", "projectId", "eventId", "email", "pin"];
+
+export async function GET(request: NextRequest) {
+  const searchParams = request.nextUrl.searchParams;
+  if (credentialQueryFields.some(field => searchParams.getAll(field).length > 1)) {
+    return NextResponse.json({ ok: false, message: "Invalid gallery access request." }, { status: 400 });
+  }
+  return readEventFavorites({
+    projectId: searchParams.get("projectId") ?? "",
+    email: searchParams.get("email") ?? "",
+    pin: searchParams.get("pin") ?? "",
+  });
+}
+
 export async function POST(request: NextRequest) {
   try {
+    const parsedBody = ensureObjectBody(await request.json().catch(() => null));
+    if (!parsedBody.ok) {
+      return NextResponse.json({ ok: false, message: parsedBody.message }, { status: 400 });
+    }
+    const input = parsedBody.value;
+    if ("operation" in input) {
+      // Reads share GET's authorization and response without charging the
+      // favorite-toggle budget or putting credentials in a request URL.
+      if (input.operation !== "read" || typeof input.projectId !== "string" ||
+          typeof input.email !== "string" || typeof input.pin !== "string" ||
+          credentialQueryFields.some(field => new URL(request.url).searchParams.has(field))) {
+        return NextResponse.json({ ok: false, message: "Invalid gallery access request." }, { status: 400 });
+      }
+      return readEventFavorites({ projectId: input.projectId, email: input.email, pin: input.pin });
+    }
+
     // Cap favorite toggle rate per IP. Each toggle does a DB upsert/delete;
     // without a limit a script could spam the favorites table. 60/min is
     // far above any plausible human browsing rate.
@@ -243,7 +268,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const body = (await request.json().catch(() => ({}))) as {
+    const body = input as {
       projectId?: string;
       email?: string;
       pin?: string;
