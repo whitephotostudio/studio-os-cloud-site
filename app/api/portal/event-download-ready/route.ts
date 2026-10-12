@@ -242,10 +242,12 @@ export async function POST(request: NextRequest) {
         const watermarkLogoCandidate = signedPrivateMediaReference(
           photographerRow.watermark_logo_url,
           SIGNED_URL_TTL_PARENTS_PORTAL_SECONDS,
+          access.project.photographer_id,
         );
         const studioLogoCandidate = signedPrivateMediaReference(
           photographerRow.logo_url,
           SIGNED_URL_TTL_PARENTS_PORTAL_SECONDS,
+          access.project.photographer_id,
         );
         watermarkLogoUrl = looksLikeImageAssetUrl(watermarkLogoCandidate)
           ? watermarkLogoCandidate

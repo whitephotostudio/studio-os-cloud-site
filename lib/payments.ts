@@ -452,11 +452,20 @@ export async function verifyStripeSignature(
   signatureHeader: string,
   secrets: string[],
 ) {
-  const parts = signatureHeader.split(",");
-  const timestamp = parts.find((part) => part.startsWith("t="))?.slice(2);
+  const parts = signatureHeader.split(",").map((part) => part.trim());
+  const timestamps = parts.filter((part) => part.startsWith("t="));
+  const timestamp = timestamps.length === 1 ? timestamps[0].slice(2) : "";
   const signatures = parts.filter((part) => part.startsWith("v1=")).map((part) => part.slice(3));
 
-  if (!timestamp || !signatures.length || !secrets.length) {
+  if (!/^\d+$/.test(timestamp) || !signatures.length || !secrets.length) {
+    return false;
+  }
+
+  // Stripe signs each delivery attempt with a fresh timestamp. Reject captured
+  // requests outside a bounded clock-skew window, even when their HMAC is valid.
+  const timestampSeconds = Number(timestamp);
+  if (!Number.isSafeInteger(timestampSeconds) ||
+      Math.abs(Math.floor(Date.now() / 1000) - timestampSeconds) > 300) {
     return false;
   }
 
@@ -465,8 +474,9 @@ export async function verifyStripeSignature(
   return secrets.some((secret) => {
     const digest = createHmac("sha256", secret).update(signedPayload).digest("hex");
     return signatures.some((value) => {
+      if (!/^[a-f0-9]{64}$/i.test(value)) return false;
       try {
-        return timingSafeEqual(Buffer.from(value), Buffer.from(digest));
+        return timingSafeEqual(Buffer.from(value, "hex"), Buffer.from(digest, "hex"));
       } catch {
         return false;
       }
@@ -1939,6 +1949,7 @@ export async function finalizePaidOrder(
             sku?: string | null;
           }>,
           photographer: {
+            id: (photographer as Record<string, unknown>).id as string,
             business_name: (photographer as Record<string, unknown>).business_name as string,
             studio_email: (photographer as Record<string, unknown>).studio_email as string,
             billing_email: (photographer as Record<string, unknown>).billing_email as string,
@@ -2031,6 +2042,7 @@ export async function finalizePaidOrder(
               sku?: string | null;
             }>,
             photographer: {
+              id: (photographer as Record<string, unknown>).id as string,
               business_name: (photographer as Record<string, unknown>).business_name as string,
               studio_email: (photographer as Record<string, unknown>).studio_email as string,
               studio_phone: (photographer as Record<string, unknown>).studio_phone as string,

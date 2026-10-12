@@ -31,7 +31,7 @@ export async function GET(request: NextRequest) {
     const service = createDashboardServiceClient();
     const { data: order, error: orderError } = await service
       .from("orders")
-      .select("id,school_id,student_id,status,payment_status,paid_at,refund_status,refund_amount_cents,parent_email,customer_email")
+      .select("id,photographer_id,school_id,student_id,status,payment_status,paid_at,refund_status,refund_amount_cents,parent_email,customer_email")
       .eq("id", payload.orderId)
       .maybeSingle();
     if (orderError || !order?.id || !isPaidUploadedDeliveryOrder(order)) {
@@ -69,7 +69,7 @@ export async function GET(request: NextRequest) {
       [clean(student?.first_name), clean(student?.last_name)].filter(Boolean).join(" "),
     );
 
-    return new NextResponse(createUploadedDeliveryZipStream(objectKeys), {
+    return new NextResponse(createUploadedDeliveryZipStream(objectKeys, { service, photographerId: order.photographer_id, allowDeletedResource: true }), {
       status: 200,
       headers: {
         "content-type": "application/zip",

@@ -20,7 +20,7 @@ class FixtureResponse extends Response {
   static json(body, init) { return Response.json(body, init); }
 }
 function fixture({ composite = null, selected = true, throwComposite = false } = {}) {
-  const studio = randomUUID(), photographer = randomUUID(), orderId = randomUUID();
+  const photographer = randomUUID(), studio = photographer, orderId = randomUUID();
   const key = `projects/${randomUUID()}/albums/main/portrait.jpg`;
   const backdrop = { name: 'Blue', image_url: `backdrops/${photographer}/blue.jpg` };
   const item = { product_name: 'Digital photo', quantity: 1, sku: key, ...(selected ? { backdrop } : {}) };
@@ -50,6 +50,10 @@ function fixture({ composite = null, selected = true, throwComposite = false } =
     '@/lib/event-gallery-downloads': { buildArchiveBaseName: (value, fallback) => value || fallback },
     '@/lib/storage-folder': { buildSchoolCandidateFolders: () => [], loadFolderMediaRows: async () => [] },
     '@/lib/r2-signed-urls': { r2KeyFromAnyUrl: value => value || '', r2PresignedGetUrl: value => { calls.push({ signed: value }); return `https://fixture.invalid/${value}`; } },
+    '@/lib/authorized-media': { authorizedMediaUrl: async (actualService, reference, owner) => {
+      assert.equal(actualService, service); assert.equal(reference, key); assert.equal(owner, photographer);
+      calls.push({ authorized: reference, owner }); return `https://fixture.invalid/${reference}`;
+    } },
     '@/lib/private-media-references': { privateMediaKeyFromReference: value => value?.startsWith('projects/') ? value : '',
       signedPrivateMediaReference: value => { calls.push({ signed: value }); return `https://fixture.invalid/${value}`; } },
     '@/lib/resend': { resendConfigured: () => true, resolveReplyTo: value => value || '', sendResendEmail: async value => calls.push({ email: value }) },
@@ -113,10 +117,11 @@ test('ordinary digital photo delivery preserves the original path when no backdr
   globalThis.fetch = async () => new Response('isolated original photo');
   try {
     const entries = [];
-    for await (const entry of f.digital.buildDigitalDeliveryZipEntries(f.files)) entries.push(entry);
+    const context = await f.digital.resolveDigitalDeliveryContext(f.service, f.orderId);
+    for await (const entry of f.digital.buildDigitalDeliveryZipEntries(context.files)) entries.push(entry);
     assert.equal(entries.length, 1); assert.equal(entries[0].name, 'portrait.jpg');
     assert.equal(await new Response(entries[0].stream).text(), 'isolated original photo');
     assert.equal(f.calls.some(call => call.composite), false);
-    assert.equal(f.calls.some(call => call.signed), true);
+    assert.equal(f.calls.some(call => call.authorized && call.owner === f.photographer), true);
   } finally { globalThis.fetch = previousFetch; }
 });

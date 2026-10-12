@@ -1,7 +1,9 @@
 import {
   r2KeyFromAnyUrl,
-  r2PresignedGetUrl,
 } from "@/lib/r2-signed-urls";
+import { privateSupabaseStorageReference } from "@/lib/photo-url";
+import { signedLegacyStorageUrl } from "@/lib/legacy-storage-token";
+import { signedR2MediaUrl } from "@/lib/r2-media-token";
 
 function clean(value: string | null | undefined) {
   return (value ?? "").trim();
@@ -58,7 +60,7 @@ export function privateMediaKeyFromReference(
 
 /**
  * Convert any recognized historical/private R2 reference to its durable key.
- * External HTTPS and intentionally public Supabase references are unchanged.
+ * External HTTPS and Supabase references retain their durable stored form.
  */
 export function durablePrivateMediaReference(
   input: string | null | undefined,
@@ -69,42 +71,49 @@ export function durablePrivateMediaReference(
 }
 
 /**
- * Resolve a recognized R2 reference to a fresh, short-lived direct read.
- * External HTTPS and intentionally public Supabase references are unchanged.
+ * Resolve private R2 or legacy Supabase references to authorized, expiring reads.
+ * Legacy Supabase capabilities require the enclosing workflow tenant.
+ * External HTTPS and intentionally public brand/backdrop assets are unchanged.
  */
 export function signedPrivateMediaReference(
   input: string | null | undefined,
   ttlSeconds: number,
+  photographerId?: string | null,
 ) {
   const raw = clean(input);
   if (!raw) return "";
+  const legacy = privateSupabaseStorageReference(raw);
+  if (legacy) return signedLegacyStorageUrl(legacy, ttlSeconds, photographerId);
   const key = safeR2Key(raw);
   if (!key) return raw;
-  return r2PresignedGetUrl(key, ttlSeconds) || raw;
+  return photographerId
+    ? signedR2MediaUrl(key, ttlSeconds, photographerId)
+    : `/api/r2/img/${key.split("/").map(encodeURIComponent).join("/")}`;
 }
 
 /**
- * Clone JSON-compatible data and refresh every recognized R2 media reference.
+ * Clone JSON-compatible data and refresh recognized private media references.
  * Strict media-key recognition prevents ordinary labels, IDs, or notes from
  * being treated as storage paths.
  */
 export function signPrivateMediaReferencesDeep<T>(
   value: T,
   ttlSeconds: number,
+  photographerId?: string | null,
 ): T {
   if (typeof value === "string") {
-    return signedPrivateMediaReference(value, ttlSeconds) as T;
+    return signedPrivateMediaReference(value, ttlSeconds, photographerId) as T;
   }
   if (Array.isArray(value)) {
     return value.map((item) =>
-      signPrivateMediaReferencesDeep(item, ttlSeconds),
+      signPrivateMediaReferencesDeep(item, ttlSeconds, photographerId),
     ) as T;
   }
   if (value && typeof value === "object") {
     return Object.fromEntries(
       Object.entries(value as Record<string, unknown>).map(([key, item]) => [
         key,
-        signPrivateMediaReferencesDeep(item, ttlSeconds),
+        signPrivateMediaReferencesDeep(item, ttlSeconds, photographerId),
       ]),
     ) as T;
   }
@@ -114,9 +123,10 @@ export function signPrivateMediaReferencesDeep<T>(
 export function signPhotoUrlRows<T extends { photo_url?: string | null }>(
   rows: T[],
   ttlSeconds: number,
+  photographerId?: string | null,
 ) {
   return rows.map((row) => ({
     ...row,
-    photo_url: signedPrivateMediaReference(row.photo_url, ttlSeconds) || null,
+    photo_url: signedPrivateMediaReference(row.photo_url, ttlSeconds, photographerId) || null,
   }));
 }

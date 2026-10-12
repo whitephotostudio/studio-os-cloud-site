@@ -61,6 +61,7 @@ function fixture({ enabled = false, status = 'pre_release', classes = ['Grade 7'
     'next/server': next,
     '@/lib/dashboard-auth': { createDashboardServiceClient: () => service, resolveDashboardAuth: async () => ({ user: owner ? { id: 'owner' } : null, mfaSatisfied: true }) },
     '@/lib/rate-limit': { getClientIp: () => 'local', rateLimit: async () => ({ allowed: true }) },
+    '@/lib/portal-pin-rate-limit': { grantPortalPinBudget: response => response },
     '@/lib/school-registration-classes': { schoolRegistrationClasses: async () => classes },
     '@/lib/require-agreement': { guardAgreement: async () => ({ ok: true }) },
     '@/lib/api-validation': { parseJson: async (req, schema) => { const parsed = schema.safeParse(await req.json()); return parsed.success ? { ok: true, data: parsed.data } : { ok: false, response: Response.json({ ok: false }, { status: 400 }) }; } },

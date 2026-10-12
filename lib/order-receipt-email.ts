@@ -45,6 +45,7 @@ export type OrderReceiptItem = {
 };
 
 export type OrderReceiptPhotographer = {
+  id?: string | null;
   business_name?: string | null;
   studio_email?: string | null;
   studio_phone?: string | null;
@@ -86,10 +87,10 @@ function formatDate(iso: string | null | undefined) {
   });
 }
 
-function emailImageUrl(url: string | null | undefined) {
+function emailImageUrl(url: string | null | undefined, photographerId?: string | null) {
   const raw = clean(url);
   if (!raw) return "";
-  const resolved = signedPrivateMediaReference(raw, 60 * 60 * 24 * 7);
+  const resolved = signedPrivateMediaReference(raw, 60 * 60 * 24 * 7, photographerId);
   return /^https?:\/\//i.test(resolved) &&
     /\.(png|jpe?g|webp|gif|avif)(?:[?#].*)?$/i.test(resolved)
     ? resolved
@@ -124,7 +125,7 @@ export function buildOrderReceiptEmail(input: {
   const subtotalCents = resolveOrderSubtotalCents(order, items);
   const taxCents = order.tax_cents ?? 0;
   const studioName = clean(photographer.business_name) || "Your Studio";
-  const studioLogoUrl = emailImageUrl(photographer.logo_url);
+  const studioLogoUrl = emailImageUrl(photographer.logo_url, photographer.id);
   const orderId = clean(order.id).slice(0, 8).toUpperCase();
   const fullOrderId = clean(order.id);
   const parentName = clean(order.parent_name) || "there";
@@ -146,7 +147,7 @@ export function buildOrderReceiptEmail(input: {
 
   const notePhotos = parseOrderPhotoSelections(order.special_notes);
   const itemPhotoUrl = (item: OrderReceiptItem, index: number) => {
-    return emailImageUrl(item.sku) || emailImageUrl(notePhotos[index]?.url);
+    return emailImageUrl(item.sku, photographer.id) || emailImageUrl(notePhotos[index]?.url, photographer.id);
   };
 
   const itemRowsHtml = visibleItems

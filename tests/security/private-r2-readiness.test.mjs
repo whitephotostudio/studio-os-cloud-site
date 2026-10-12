@@ -23,9 +23,11 @@ const galleryEmailSource = source("lib/event-gallery-email.ts");
 const privateMediaSource = source("lib/private-media-references.ts");
 const schoolDashboardSource = source("app/dashboard/projects/schools/[schoolId]/page.tsx");
 
-test("new R2 uploads persist object keys and folder lists return signed URLs", () => {
+test("new R2 uploads persist object keys and folder lists return owner checked proxy URLs", () => {
   assert.match(r2Source, /return key;/);
-  assert.match(r2Source, /url: r2PresignedGetUrl\(key/);
+  assert.match(r2Source, /signedR2MediaUrl\(key, ttlSeconds, options.photographerId\)/);
+  assert.match(r2Source, /`\/api\/r2\/img\//);
+  assert.doesNotMatch(r2Source, /r2PresignedGetUrl/);
   assert.doesNotMatch(r2Source, /function r2PublicUrl/);
   assert.doesNotMatch(thumbnailSource, /r2PublicUrl/);
   assert.match(thumbnailSource, /const originalReference = storageKey/);
@@ -48,12 +50,10 @@ test("browser references route private backdrops and historical R2 URLs through 
 });
 
 test("authenticated image proxy covers every active owned R2 namespace", () => {
-  for (const namespace of ["backdrops", "projects", "probes", "schools", "photos", "nobg-photos"]) {
-    assert.match(imageProxySource, new RegExp(`firstSegment === ["']${namespace}["']`));
-  }
-  assert.match(imageProxySource, /secondSegment === photographerId/);
-  assert.match(imageProxySource, /ownsProject\(thirdSegment\)/);
-  assert.match(imageProxySource, /ownedSchoolId\(thirdSegment\)/);
+  assert.match(imageProxySource, /await resolveR2MediaOwnership\(service, storagePath, photographerId\)/);
+  assert.match(imageProxySource, /if \(!ownership.owned\)/);
+  assert.match(imageProxySource, /const authorizedSchoolId = ownership.schoolId/);
+  assert.doesNotMatch(imageProxySource, /resolveSchoolNamespace|ownsProject\(/);
   assert.match(imageProxySource, /normalizeR2Key\(rawStoragePath,/);
   assert.doesNotMatch(imageProxySource, /unauthorized path: %s/);
   assert.doesNotMatch(imageProxySource, /^import sharp from ["']sharp["'];/m);
@@ -88,12 +88,12 @@ test("parent portal signs backdrop references and generic downloads reject publi
   for (const enabled of [true, false]) {
     const signedCalls = [];
     const rawRows = [{ image_url: "backdrops/studio/blue.jpg", thumbnail_url: "backdrops/studio/blue-thumb.jpg" }];
-    const resolve = new Function("onlineBackdropsEnabled", "signBackdropRows", "backdropsResult", "SIGNED_URL_TTL_PARENTS_PORTAL_SECONDS", compiled);
-    const rows = resolve(enabled, (rows, ttl) => {
-      signedCalls.push({ rows, ttl });
+    const resolve = new Function("onlineBackdropsEnabled", "signBackdropRows", "backdropsResult", "SIGNED_URL_TTL_PARENTS_PORTAL_SECONDS", "photographerId", compiled);
+    const rows = resolve(enabled, (rows, ttl, photographerId) => {
+      signedCalls.push({ rows, ttl, photographerId });
       return rows.map((row) => ({ image_url: `signed:${row.image_url}`, thumbnail_url: `signed:${row.thumbnail_url}` }));
-    }, { data: rawRows }, 3600);
-    assert.deepEqual(signedCalls, enabled ? [{ rows: rawRows, ttl: 3600 }] : []);
+    }, { data: rawRows }, 3600, "fixture-studio");
+    assert.deepEqual(signedCalls, enabled ? [{ rows: rawRows, ttl: 3600, photographerId: "fixture-studio" }] : []);
     assert.deepEqual(rows, enabled ? [{ image_url: "signed:backdrops/studio/blue.jpg", thumbnail_url: "signed:backdrops/studio/blue-thumb.jpg" }] : []);
   }
   assert.match(schoolAccessSource, /studentCandidates: signedStudentCandidates/);

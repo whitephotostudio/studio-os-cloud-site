@@ -1,6 +1,7 @@
 "use client";
 
 import { formatCalendarDate } from "@/lib/calendar-dates";
+import { legacyStorageProxyUrl, legacyStorageReference, proxiedPhotoUrl } from "@/lib/photo-url";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
@@ -218,13 +219,14 @@ function emptyFavoritesSummary(): FavoritesSummary {
   };
 }
 
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
 const MEDIA_BUCKET = "thumbs";
 
 function publicStorageUrl(path: string | null | undefined) {
   const safePath = clean(path);
-  if (!SUPABASE_URL || !safePath) return "";
-  return `${SUPABASE_URL}/storage/v1/object/public/${MEDIA_BUCKET}/${safePath}`;
+  if (!safePath) return "";
+  if (/^https?:\/\//i.test(safePath)) return proxiedPhotoUrl(safePath);
+  const reference = legacyStorageReference(MEDIA_BUCKET, safePath);
+  return reference ? legacyStorageProxyUrl(reference) : "";
 }
 
 export default function ProjectDetailPage() {

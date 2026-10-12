@@ -173,7 +173,7 @@ test("order notification and receipt emails sign bare durable thumbnail keys", (
     );
     assert.match(
       emailSource,
-      /signedPrivateMediaReference\(raw,\s*60 \* 60 \* 24 \* 7\)/,
+      /signedPrivateMediaReference\(raw,\s*60 \* 60 \* 24 \* 7,\s*photographerId\)/,
     );
   }
 
@@ -187,7 +187,7 @@ test("order notification and receipt emails sign bare durable thumbnail keys", (
   );
   assert.match(
     orderReceiptSource,
-    /return emailImageUrl\(item\.sku\) \|\| emailImageUrl\(notePhotos\[index\]\?\.url\);/,
+    /return emailImageUrl\(item\.sku, photographer\.id\) \|\| emailImageUrl\(notePhotos\[index\]\?\.url, photographer\.id\);/,
   );
   assert.doesNotMatch(orderReceiptSource, /isWebImageUrl\(item\.sku\)/);
 });
@@ -205,7 +205,7 @@ test("dashboard order downloads sign bare durable photo keys before fetching", (
   );
   assert.match(
     downloadPhotoSection,
-    /const resolved = signedPrivateMediaReference\(raw,\s*60 \* 60\);/,
+    /const resolved = signedPrivateMediaReference\(raw,\s*60 \* 60,\s*photographerId\);/,
   );
   assert.doesNotMatch(downloadPhotoSection, /new URL\(raw\)/);
 
@@ -247,11 +247,11 @@ test("gallery, school, and event portal logos refresh private R2 references", ()
   ]) {
     assert.match(
       portalSource,
-      /signedPrivateMediaReference\(\s*photographer\??\.watermark_logo_url,\s*SIGNED_URL_TTL_PARENTS_PORTAL_SECONDS,?\s*\)/,
+      /signedPrivateMediaReference\(\s*photographer\??\.watermark_logo_url,\s*SIGNED_URL_TTL_PARENTS_PORTAL_SECONDS,\s*(?:photographer\.id|gallerySchool\.photographer_id|projectRow\.photographer_id),\s*\)/,
     );
     assert.match(
       portalSource,
-      /signedPrivateMediaReference\(\s*photographer\??\.logo_url,\s*SIGNED_URL_TTL_PARENTS_PORTAL_SECONDS,?\s*\)/,
+      /signedPrivateMediaReference\(\s*photographer\??\.logo_url,\s*SIGNED_URL_TTL_PARENTS_PORTAL_SECONDS,\s*(?:photographer\.id|gallerySchool\.photographer_id|projectRow\.photographer_id),\s*\)/,
     );
     assert.match(
       portalSource,
@@ -267,16 +267,16 @@ test("parent folder media uses the six-hour portal TTL end to end", () => {
   );
   assert.match(
     r2Source,
-    /listR2FolderImages\([\s\S]{0,220}options\?: \{ ttlSeconds\?: number \}[\s\S]{0,220}const ttlSeconds = options\?\.ttlSeconds \?\? 60 \* 60/,
+    /listR2FolderImages\([\s\S]{0,220}options\?: \{ ttlSeconds\?: number; photographerId\?: string \| null \}[\s\S]{0,220}const ttlSeconds = options\?\.ttlSeconds \?\? 60 \* 60/,
   );
-  assert.match(r2Source, /url: r2PresignedGetUrl\(key, ttlSeconds\)/);
+  assert.match(r2Source, /signedR2MediaUrl\(key, ttlSeconds, options\.photographerId\)/);
   assert.match(
     storageFolderSource,
     /loadFolderMediaRows\([\s\S]{0,220}ttlSeconds\?: number/,
   );
   assert.match(
     storageFolderSource,
-    /listR2FolderImages\(folderPath, \{ ttlSeconds: options\?\.ttlSeconds \}\)/,
+    /listR2FolderImages\(folderPath, \{ ttlSeconds: options\?\.ttlSeconds, photographerId: options\?\.photographerId \}\)/,
   );
 
   for (const portalSource of [galleryContextSource, schoolAccessSource]) {

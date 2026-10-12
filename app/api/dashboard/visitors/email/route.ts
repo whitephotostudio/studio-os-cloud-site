@@ -73,6 +73,7 @@ export async function POST(request: NextRequest) {
     const logoUrl = signedPrivateMediaReference(
       clean(pg?.logo_url as string),
       60 * 60 * 24 * 7,
+      clean(pg?.id as string),
     );
     const studioPhone = clean(pg?.studio_phone as string);
     const studioEmail = clean(pg?.studio_email as string) || clean(pg?.billing_email as string) || "";

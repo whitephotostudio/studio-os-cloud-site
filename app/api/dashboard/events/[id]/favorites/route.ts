@@ -229,6 +229,7 @@ export async function GET(
             signedPrivateMediaReference(
               row.cover_photo_url,
               SIGNED_URL_TTL_DASHBOARD_SECONDS,
+              photographerRow.id,
             ) || null,
         },
       ] as const),

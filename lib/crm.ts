@@ -1154,7 +1154,7 @@ export async function loadCrmDashboard(input: {
         || cleanBookingValue(a.created_at).localeCompare(cleanBookingValue(b.created_at))
         || cleanBookingValue(a.id).localeCompare(cleanBookingValue(b.id)),
       )
-      .map((row) => crmLocationPhotoPublicRow(row)),
+      .map((row) => crmLocationPhotoPublicRow(row, input.photographerId)),
     contacts: contactRows.map((row) => crmPublicRow(row)),
     agreements: loadedAgreementRows.map((row) => crmPublicRow(row)),
     bookingCycles: cycleRows.map((row) => crmPublicRow(row)),

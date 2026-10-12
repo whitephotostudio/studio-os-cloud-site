@@ -4,6 +4,7 @@ import { schoolPreviewPresentation, buildSchoolFavoriteDownloadAccess } from "@/
 import { NextRequest, NextResponse } from "next/server";
 import { createDashboardServiceClient } from "@/lib/dashboard-auth";
 import { getClientIp, rateLimit } from "@/lib/rate-limit";
+import { grantPortalPinBudget } from "@/lib/portal-pin-rate-limit";
 import {
   sanitizeEventGallerySettingsForClient,
 } from "@/lib/event-gallery-settings";
@@ -403,6 +404,7 @@ export async function POST(request: NextRequest) {
         ? signBackdropRows(
             (backdropsResult.data ?? []) as BackdropRow[],
             SIGNED_URL_TTL_PARENTS_PORTAL_SECONDS,
+            photographerId,
           )
         : [];
 
@@ -413,10 +415,12 @@ export async function POST(request: NextRequest) {
         const watermarkLogoCandidate = signedPrivateMediaReference(
           photographer.watermark_logo_url,
           SIGNED_URL_TTL_PARENTS_PORTAL_SECONDS,
+          photographer.id,
         );
         const studioLogoCandidate = signedPrivateMediaReference(
           photographer.logo_url,
           SIGNED_URL_TTL_PARENTS_PORTAL_SECONDS,
+          photographer.id,
         );
         const resolvedLogoUrl = looksLikeImageAssetUrl(watermarkLogoCandidate)
           ? watermarkLogoCandidate
@@ -503,13 +507,13 @@ export async function POST(request: NextRequest) {
     const signedPrimaryStudent = signedStudentCandidates.find(row => row.id === visiblePrimaryStudent.id) ?? null;
     const favoriteDownloadAccess = await buildSchoolFavoriteDownloadAccess(service, activeSchool, activeStudentCandidates, selectedEmail);
 
-    return NextResponse.json({
+    return grantPortalPinBudget(NextResponse.json({
       ok: true,
-      currentSchool: { ...currentSchool, gallery_settings: publicGallerySettings },
-      schoolRowsForMatch: schoolRowsForMatch.map(row => ({ ...row, gallery_settings: publicGallerySettings })),
+      currentSchool: { ...currentSchool, access_pin: undefined, gallery_settings: publicGallerySettings },
+      schoolRowsForMatch: schoolRowsForMatch.map(row => ({ ...row, access_pin: undefined, gallery_settings: publicGallerySettings })),
       studentCandidates: signedStudentCandidates,
       primaryStudent: signedPrimaryStudent,
-      activeSchool: { ...activeSchool, gallery_settings: publicGallerySettings },
+      activeSchool: { ...activeSchool, access_pin: undefined, gallery_settings: publicGallerySettings },
       activeProject,
       gallerySettings: publicGallerySettings,
       downloadAccess,
@@ -528,7 +532,7 @@ export async function POST(request: NextRequest) {
       lateOrderPolicy,
       screenshotProtection,
       groupLabel,
-    }, { headers: { "cache-control": "private, no-store" } });
+    }, { headers: { "cache-control": "private, no-store" } }), request, { kind: "school", galleryId: selectedSchoolId, pin: selectedPin, email: selectedEmail });
   } catch (error) {
     console.error("[gallery-context]", error);
     return NextResponse.json(

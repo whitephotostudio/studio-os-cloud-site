@@ -43,6 +43,7 @@ export type OrderNotificationItem = {
 };
 
 export type OrderNotificationPhotographer = {
+  id?: string | null;
   business_name?: string | null;
   studio_email?: string | null;
   billing_email?: string | null;
@@ -87,10 +88,10 @@ function formatDate(iso: string | null | undefined) {
   });
 }
 
-function emailImageUrl(url: string | null | undefined) {
+function emailImageUrl(url: string | null | undefined, photographerId?: string | null) {
   const raw = clean(url);
   if (!raw) return "";
-  const resolved = signedPrivateMediaReference(raw, 60 * 60 * 24 * 7);
+  const resolved = signedPrivateMediaReference(raw, 60 * 60 * 24 * 7, photographerId);
   return /^https?:\/\//i.test(resolved) &&
     /\.(png|jpe?g|webp|gif|avif)(?:[?#].*)?$/i.test(resolved)
     ? resolved
@@ -111,6 +112,7 @@ function fileNameFromUrl(url: string, fallback: string) {
 function resolveOrderedPhotos(
   notes: string | null | undefined,
   items: OrderNotificationItem[],
+  photographerId?: string | null,
 ) {
   const parsed = parseOrderPhotoSelections(notes);
   const rawSources = parsed.length > 0
@@ -125,7 +127,7 @@ function resolveOrderedPhotos(
   const seen = new Set<string>();
   return rawSources
     .map((entry, index) => {
-      const displayUrl = emailImageUrl(entry.url);
+      const displayUrl = emailImageUrl(entry.url, photographerId);
       if (!displayUrl || seen.has(displayUrl)) return null;
       seen.add(displayUrl);
       return {
@@ -163,9 +165,9 @@ export function buildOrderNotificationEmail(input: {
   const buyerEmail = clean(order.customer_email || order.parent_email) || "—";
   const packageName = clean(order.package_name) || "Photo Order";
   const studioName = clean(photographer.business_name) || "Your Studio";
-  const studioLogoUrl = emailImageUrl(photographer.logo_url);
+  const studioLogoUrl = emailImageUrl(photographer.logo_url, photographer.id);
   const orderId = clean(order.id).slice(0, 8).toUpperCase();
-  const orderedPhotos = resolveOrderedPhotos(order.special_notes, items);
+  const orderedPhotos = resolveOrderedPhotos(order.special_notes, items, photographer.id);
   const customerNote = cleanOrderCustomerNote(order.special_notes);
 
   const contextLabel = clean(context.project_title)

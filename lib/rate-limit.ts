@@ -20,12 +20,15 @@ export type RateLimitConfig = {
   limit: number;
   /** Window size in seconds */
   windowSeconds: number;
+  /** Authentication must not proceed without its shared production counter. */
+  failClosed?: boolean;
 };
 
 export type RateLimitResult = {
   allowed: boolean;
   remaining: number;
   resetAt: number;
+  unavailable?: boolean;
 };
 
 // ------------------------------------------------------------------
@@ -64,13 +67,13 @@ function getRedis(): Redis | null {
   if (!cachedRedis) {
     try {
       const { url, token } = upstashCredentials();
-      cachedRedis = new Redis({ url, token });
-    } catch (error) {
+      cachedRedis = new Redis({ url, token, signal: () => AbortSignal.timeout(5000), retry: { retries: 1 } });
+    } catch {
       // Malformed env vars (wrong URL shape, bad token, etc.) would
       // otherwise throw synchronously at first request and 500 the route.
       // Fall back to the in-memory limiter instead of taking the whole
       // handler down.
-      console.warn("[rate-limit] Redis.fromEnv() failed, using in-memory fallback:", error);
+      console.warn("[rate-limit] Shared counter initialization failed.");
       redisInitFailed = true;
       return null;
     }
@@ -101,11 +104,14 @@ function getUpstashLimiter(config: RateLimitConfig): Ratelimit | null {
       prefix: `rl:${config.namespace}`,
       // analytics off — we don't want extra commands against the free tier
       analytics: false,
+      // Disable the library's success-on-timeout behavior. Security-sensitive
+      // callers handle outages explicitly below instead of silently bypassing.
+      timeout: 0,
     });
     ratelimitCache.set(cacheKey, limiter);
     return limiter;
-  } catch (error) {
-    console.warn("[rate-limit] Ratelimit constructor failed, using in-memory fallback:", error);
+  } catch {
+    console.warn("[rate-limit] Shared limiter initialization failed.");
     return null;
   }
 }
@@ -164,11 +170,9 @@ function inMemoryRateLimit(
  * asynchronously if we're talking to Upstash. Either way, callers
  * should `await` this — the signature is stable.
  *
- * If Upstash is unreachable (network hiccup, credentials revoked, etc.),
- * we fail-open: the request is allowed through. This matches the
- * previous behavior where a crashed in-memory map would also allow
- * everything. An attacker can't exploit it without also taking down
- * Upstash, at which point they have bigger problems.
+ * Authentication callers opt into failClosed. A shared-counter outage then
+ * pauses new authentication, while already authorized gallery image reads
+ * retain their separate availability-oriented budgets.
  */
 export async function rateLimit(
   key: string,
@@ -183,16 +187,20 @@ export async function rateLimit(
         remaining: result.remaining,
         resetAt: result.reset,
       };
-    } catch (error) {
-      console.warn("[rate-limit] Upstash check failed, failing open:", error);
+    } catch {
+      console.warn("[rate-limit] Shared counter check failed.");
       return {
-        allowed: true,
-        remaining: config.limit,
+        allowed: !config.failClosed,
+        remaining: config.failClosed ? 0 : config.limit,
         resetAt: Date.now() + config.windowSeconds * 1000,
+        ...(config.failClosed ? { unavailable: true } : {}),
       };
     }
   }
 
+  if (config.failClosed && (process.env.NODE_ENV === "production" || process.env.VERCEL_ENV === "production")) {
+    return { allowed: false, remaining: 0, resetAt: Date.now() + 30_000, unavailable: true };
+  }
   return inMemoryRateLimit(key, config);
 }
 

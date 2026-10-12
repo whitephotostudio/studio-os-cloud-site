@@ -3,8 +3,13 @@ import test from 'node:test';
 import {harness,projectId,albumA,id} from './helpers/event-gallery-harness.mjs';
 const recipient='buyer@example.test',other='alternate@example.test';
 function fixture(){
- const h=harness({overrides:{'@/lib/resend':{},'@/lib/backdrop-composites':{hasBackdropCompositeSelection:()=>false}}});
- const row={id:id(900),project_id:projectId,photographer_id:null,package_name:'All Digital Package',status:'digital_paid',payment_status:'paid',paid_at:'2026-10-01',customer_email:recipient,cart_snapshot:[{packageName:'All Digital Package',purchasedEventScope:{version:1,projectId,collectionIds:[albumA]},slots:[]}]};h.tables.orders.push(row);h.tables.order_items=[];
+ const owner=id(899);
+ const h=harness({overrides:{'@/lib/resend':{},'@/lib/backdrop-composites':{hasBackdropCompositeSelection:()=>false},
+ '@/lib/authorized-media':{authorizedMediaUrl:async(_service,reference,photographerId)=>{
+  assert.equal(photographerId,owner);assert.ok(h.tables.media.some(photo=>photo.storage_path===reference));return `https://fixture.test/native/${reference}`;
+ }}}});
+ h.tables.projects[0].photographer_id=owner;
+ const row={id:id(900),project_id:projectId,photographer_id:owner,package_name:'All Digital Package',status:'digital_paid',payment_status:'paid',paid_at:'2026-10-01',customer_email:recipient,cart_snapshot:[{packageName:'All Digital Package',purchasedEventScope:{version:1,projectId,collectionIds:[albumA]},slots:[]}]};h.tables.orders.push(row);h.tables.order_items=[];
  const helper=h.load('lib/digital-delivery.ts');
  const url=token=>new URL(`https://fixture.test/api/portal/digital-delivery?token=${encodeURIComponent(token)}&format=json`);
  const token=(email=recipient,extra={})=>helper.createDigitalDeliveryToken({v:1,kind:'digital-order-delivery',orderId:row.id,recipientEmail:email,exp:Date.now()+60000,...extra});

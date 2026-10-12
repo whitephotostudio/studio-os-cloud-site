@@ -6,8 +6,7 @@ import { createEventCollectionDownloadGrant, createEventDownloadPolicyGrant, cre
 import type { EventDownloadCollection } from "@/lib/event-download-scope";
 import { normalizeEventGallerySettings } from "@/lib/event-gallery-settings";
 import { validateUuid, validateUuidArray } from "@/lib/request-validation";
-import { privateMediaKeyFromReference } from "@/lib/private-media-references";
-import { buildSignedMediaUrls } from "@/lib/storage-images";
+import { authorizedMediaUrls } from "@/lib/authorized-media";
 import { hasActiveSubscription } from "@/lib/subscription-gate";
 
 type Service = ReturnType<typeof createDashboardServiceClient>;
@@ -193,11 +192,9 @@ export async function imageBytesFromSignedUrl(url: string, options: Parameters<t
   return transformEventImage(await readBoundedImage(url), options);
 }
 
-export async function eventImageBytes(row: EventDeliveryMedia, options: Parameters<typeof transformEventImage>[1]) {
-  // DB row identity is authoritative. Never fetch a caller URL or redirect.
-  const key = privateMediaKeyFromReference(row.storage_path);
-  if (!key) throw new Error("A canonical private image key is required.");
-  const urls = buildSignedMediaUrls({ storagePath: key, previewUrl: privateMediaKeyFromReference(row.preview_url) || null, thumbnailUrl: privateMediaKeyFromReference(row.thumbnail_url) || null });
+export async function eventImageBytes(row: EventDeliveryMedia, options: Parameters<typeof transformEventImage>[1], authorization: { service: Parameters<typeof authorizedMediaUrls>[0]; photographerId: string | null | undefined }) {
+  // The current gallery grants row access; retained namespaces grant byte access.
+  const urls = await authorizedMediaUrls(authorization.service, { storagePath: row.storage_path, previewUrl: row.preview_url, thumbnailUrl: row.thumbnail_url }, authorization.photographerId);
   const candidates = options.resolution === "preview" || options.resolution === "thumbnail" ? [...new Set([options.resolution === "thumbnail" ? urls.thumbnailUrl : urls.previewUrl, urls.originalUrl].filter(Boolean))] : [urls.originalUrl].filter(Boolean);
   for (let index = 0; index < candidates.length; index++) {
     try { return await transformEventImage(await readBoundedImage(candidates[index]), options); }

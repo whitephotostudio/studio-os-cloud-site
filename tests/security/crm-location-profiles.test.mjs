@@ -17,6 +17,7 @@ registerHooks({
   },
 });
 
+process.env.R2_MEDIA_TOKEN_SECRET ||= "fixture-private-media-token-secret";
 process.env.R2_ACCOUNT_ID ||= "test-account";
 process.env.R2_ACCESS_KEY_ID ||= "test-key";
 process.env.R2_SECRET_ACCESS_KEY ||= "test-secret";
@@ -196,27 +197,32 @@ test("photo preparation re-encodes to bounded JPEG and strips input metadata", a
   assert.match(prepared.contentSha256, /^[0-9a-f]{64}$/);
 });
 
-test("CRM dashboard returns only active campuses with signed photo DTOs", () => {
+test("CRM dashboard returns only active campuses with tenant-bound signed photo DTOs", async () => {
+  const owner = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  const { verifyR2MediaToken } = await import("../../lib/r2-media-token.ts");
   assert.match(crm, /loadedLocationRows\.filter\(\(row\) => row\.archived_at == null\)/);
   assert.match(crm, /table: "crm_location_photos"/);
   assert.match(crm, /locationPhotos: locationPhotoRows/);
-  assert.match(crm, /crmLocationPhotoPublicRow\(row\)/);
-  assert.match(photoHelper, /previewUrl: objectKey \? r2PresignedGetUrl\(objectKey, 15 \* 60\) : ""/);
+  assert.match(crm, /crmLocationPhotoPublicRow\(row, input\.photographerId\)/);
+  assert.match(photoHelper, /previewUrl: objectKey \? signedR2MediaUrl\(objectKey, 15 \* 60, photographerId\) : ""/);
   const publicPhoto = crmLocationPhotoPublicRow({
     id: "photo-1",
     photographer_id: "private-tenant",
     client_id: "client-1",
     location_id: "location-1",
-    object_key: "crm-locations/private-tenant/location-1/photo.jpg",
+    object_key: `crm-locations/${owner}/location-1/photo.jpg`,
     filename: "Entrance.jpg",
     audience: "client",
     category: "entrance",
     byte_size: 100,
     sort_order: 0,
-  });
+  }, owner);
   assert.equal("objectKey" in publicPhoto, false);
   assert.equal("photographerId" in publicPhoto, false);
-  assert.match(publicPhoto.previewUrl, /^https:\/\/test-account\.r2\.cloudflarestorage\.com\//);
+  const preview = new URL(publicPhoto.previewUrl);
+  assert.equal(preview.pathname, `/api/r2/img/crm-locations/${owner}/location-1/photo.jpg`);
+  assert.equal(verifyR2MediaToken(preview.searchParams.get("mediaToken"), `crm-locations/${owner}/location-1/photo.jpg`), owner);
+  assert.equal(verifyR2MediaToken(preview.searchParams.get("mediaToken"), `crm-locations/${owner}/location-1/other.jpg`), null);
 });
 
 test("booking detail joins the exact owned event job and exposes only client-safe reuse data", () => {

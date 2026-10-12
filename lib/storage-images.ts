@@ -1,4 +1,7 @@
-import { r2PresignedGetUrl, r2KeyFromAnyUrl } from "./r2-signed-urls";
+import { r2KeyFromAnyUrl } from "./r2-signed-urls";
+import { legacyStorageProxyUrl, privateSupabaseStorageReference } from "@/lib/photo-url";
+import { signedLegacyStorageUrl } from "@/lib/legacy-storage-token";
+import { signedR2MediaUrl } from "@/lib/r2-media-token";
 
 const SUPABASE_URL = (process.env.NEXT_PUBLIC_SUPABASE_URL || "").replace(/\/$/, "");
 const R2_PUBLIC_URL = (
@@ -49,6 +52,8 @@ function browserUrlForStoredReference(
 ) {
   const candidate = clean(value);
   if (!candidate) return "";
+  const legacy = privateSupabaseStorageReference(candidate);
+  if (legacy) return legacyStorageProxyUrl(legacy);
   return isBareMediaKey(candidate)
     ? publicStorageUrl(candidate.split("?")[0].split("#")[0], bucket)
     : candidate;
@@ -80,12 +85,14 @@ export function publicStorageUrl(
 ) {
   const safePath = clean(storagePath);
   if (!safePath) return "";
+  const legacy = privateSupabaseStorageReference(safePath);
+  if (legacy) return legacyStorageProxyUrl(legacy);
   // 2026-04-30 — Route through the auth-gated /api/r2/img redirect
   // endpoint instead of the dead R2 public URL.  The endpoint signs
   // the request server-side and 302s to a short-lived signed URL, so
   // photographers see images on client-rendered pages without ever
   // exposing the R2 secret in the browser bundle.  Server-side render
-  // paths use buildSignedMediaUrls() directly and skip this proxy.
+  // paths use owner-bound workflow capabilities through the same gateway.
   //
   // Studio logos are intentionally public Supabase assets. R2 backdrops use
   // the `backdrops/<photographerId>/...` namespace and must go through the
@@ -260,7 +267,7 @@ export function buildStoredMediaUrls(
  * if storage_path is empty.
  *
  * SERVER-SIDE ONLY.  Never import from a client component — the
- * presigner reads R2 secret env vars.  Galleries should call this
+ * capability signer reads server-only secrets. Galleries should call this
  * inside their server-component data layer or API route, then send
  * the resolved URLs to the client.
  *
@@ -269,17 +276,39 @@ export function buildStoredMediaUrls(
  *   from filename pattern.
  * - Preview key:  `<basename>_preview.jpg`
  * - Thumbnail key: `<basename>_thumbnail.jpg`
- * - Each URL is signed with the supplied TTL.
+ * - Each URL binds the workflow owner and supplied TTL; the gateway checks
+ *   retained namespace ownership before signing native storage access.
  *
  * Empty inputs yield empty strings (graceful fallback for legacy
  * rows that never got a storage_path written).
  */
 export function buildSignedMediaUrls(
   input: StoredMediaInput,
-  options?: { ttlSeconds?: number; deriveDerivatives?: boolean },
+  options?: { ttlSeconds?: number; deriveDerivatives?: boolean; photographerId?: string | null },
 ) {
   const ttl = options?.ttlSeconds ?? SIGNED_URL_TTL_DASHBOARD_SECONDS;
   const deriveDerivatives = options?.deriveDerivatives !== false;
+  const authorizedRead = (key: string) => options?.photographerId
+    ? signedR2MediaUrl(key, ttl, options.photographerId)
+    : `/api/r2/img/${encodeStoragePath(key)}`;
+  const legacyUrl = (value: string | null | undefined) => {
+    const reference = privateSupabaseStorageReference(value);
+    if (!reference) return "";
+    return options?.photographerId
+      ? signedLegacyStorageUrl(reference, ttl, options.photographerId)
+      : legacyStorageProxyUrl(reference);
+  };
+  const legacyOriginal = legacyUrl(input.storagePath);
+  const legacyPreview = legacyUrl(input.previewUrl);
+  const legacyThumbnail = legacyUrl(input.thumbnailUrl);
+  if (legacyOriginal || (!clean(input.storagePath) && (legacyPreview || legacyThumbnail))) {
+    const originalUrl = legacyOriginal || legacyPreview || legacyThumbnail;
+    return {
+      originalUrl,
+      previewUrl: legacyPreview || legacyOriginal || legacyThumbnail,
+      thumbnailUrl: legacyThumbnail || legacyPreview || legacyOriginal,
+    };
+  }
 
   // Prefer storage_path; fall back to extracting key from a stored
   // legacy URL.  Both lead to the same key shape for R2 objects
@@ -294,7 +323,7 @@ export function buildSignedMediaUrls(
   }
 
   if (!deriveDerivatives) {
-    const originalUrl = r2PresignedGetUrl(rawKey, ttl);
+    const originalUrl = authorizedRead(rawKey);
     return {
       originalUrl,
       previewUrl: originalUrl,
@@ -313,8 +342,8 @@ export function buildSignedMediaUrls(
   const thumbnailKey = `${baseNoExt}_thumbnail.jpg`;
 
   return {
-    originalUrl: r2PresignedGetUrl(originalKey, ttl),
-    previewUrl: r2PresignedGetUrl(previewKey, ttl),
-    thumbnailUrl: r2PresignedGetUrl(thumbnailKey, ttl),
+    originalUrl: authorizedRead(originalKey),
+    previewUrl: legacyPreview || authorizedRead(previewKey),
+    thumbnailUrl: legacyThumbnail || authorizedRead(thumbnailKey),
   };
 }

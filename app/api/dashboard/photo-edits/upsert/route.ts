@@ -13,6 +13,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { createClient } from "@supabase/supabase-js";
+import { resolveDashboardAuth } from "@/lib/dashboard-auth";
 
 import { guardAgreement } from "@/lib/require-agreement";
 
@@ -45,18 +46,11 @@ export async function POST(req: NextRequest) {
       { status: 401 },
     );
   }
-  const token = auth.slice(7).trim();
-
-  // Resolve user via the user-token client.
-  const userClient = createClient(url, anonKey, {
-    global: { headers: { Authorization: `Bearer ${token}` } },
-  });
-  const { data: userData, error: userErr } =
-    await userClient.auth.getUser();
-  if (userErr || !userData?.user) {
+  const { user, mfaSatisfied } = await resolveDashboardAuth(req);
+  if (!user) {
     return NextResponse.json(
-      { ok: false, error: "Invalid token" },
-      { status: 401 },
+      { ok: false, error: mfaSatisfied === false ? "Complete two-step verification before syncing photo edits." : "Invalid token" },
+      { status: mfaSatisfied === false ? 403 : 401 },
     );
   }
 
@@ -67,7 +61,7 @@ export async function POST(req: NextRequest) {
   const { data: pgRow } = await service
     .from("photographers")
     .select("id")
-    .eq("user_id", userData.user.id)
+    .eq("user_id", user.id)
     .maybeSingle();
   const photographerId = pgRow?.id as string | undefined;
   if (!photographerId) {
@@ -80,7 +74,7 @@ export async function POST(req: NextRequest) {
   // Agreement gate.
   const guard = await guardAgreement({
     service,
-    userId: userData.user.id,
+    userId: user.id,
   });
   if (!guard.ok) return NextResponse.json(guard.body, { status: guard.status });
 
@@ -88,7 +82,7 @@ export async function POST(req: NextRequest) {
   let body: z.infer<typeof Body>;
   try {
     body = Body.parse(await req.json());
-  } catch (e) {
+  } catch {
     return NextResponse.json(
       { ok: false, error: "Bad request" },
       { status: 400 },

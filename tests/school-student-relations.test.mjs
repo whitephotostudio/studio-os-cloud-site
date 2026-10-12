@@ -31,7 +31,8 @@ for (const path of files) {
       if (relation && new RegExp(`\\b${relation}(?:!|\\s*\\()`).test(selection)) {
         let chain = node;
         while (ts.isPropertyAccessExpression(chain.parent) && ts.isCallExpression(chain.parent.parent)) chain = chain.parent.parent;
-        queries.push({ path, table, relation, selection, chain: chain.getText(file) });
+        const helpers = file.statements.filter(statement => ts.isFunctionDeclaration(statement) && statement.name?.text === 'escapeLikePattern').map(statement => statement.getText(file)).join('\n');
+        queries.push({ path, table, relation, selection, chain: chain.getText(file), helpers });
       }
     }
     ts.forEachChild(node, visit);
@@ -78,7 +79,7 @@ test('school/student embed inventory covers owner workflows and both public scho
   assert.deepEqual(queries.map(query => query.path).sort(), [
     'app/api/dashboard/admin/recovery/route.ts', 'app/api/dashboard/events/route.ts',
     'app/dashboard/admin/recovery-requests/page.tsx', 'app/dashboard/schools/page.tsx',
-    'components/spotlight-search.tsx', 'lib/pin-recovery.ts',
+    'components/spotlight-search.tsx', 'lib/pin-recovery.ts', 'lib/pin-recovery.ts',
     'app/parents/page.tsx', 'app/api/portal/choices/route.ts',
   ].sort());
 });
@@ -87,12 +88,13 @@ for (const query of queries) {
   test(`${query.path}: production query resolves the roster FK and retains the JSON alias`, async () => {
     const { client, requests } = databaseFixture();
     const exports = {};
-    const compiled = ts.transpileModule(`exports.run = async () => await ${query.chain};`, {
+    const compiled = ts.transpileModule(`${query.helpers}\nexports.run = async () => await ${query.chain};`, {
       compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
     }).outputText;
     vm.runInNewContext(compiled, { exports, supabase: client, service: client, sb: client, ctx: { service: client },
       photographerRow: { id: 'owner' }, photographerId: 'owner', body: { studentId: 'owned-student' },
       input: { schoolId: 'owned-school', firstName: 'Maya', lastName: 'Owned' },
+      data: { student_id: 'owned-student' },
       row: { typed_first_name: 'Maya', typed_last_name: 'Owned' },
     });
     const result = await exports.run();
@@ -115,7 +117,10 @@ for (const query of queries) {
       assert.equal(rows[0].students[0].count, 23);
     } else {
       assert.match(query.selection, /schools:schools!students_school_id_fkey!inner\(/);
-      if (query.path === 'lib/pin-recovery.ts') assert.equal(request.searchParams.get('school_id'), 'eq.owned-school');
+      if (query.path === 'lib/pin-recovery.ts') {
+        if (query.chain.includes('data.student_id')) assert.equal(request.searchParams.get('id'), 'eq.owned-student');
+        else assert.equal(request.searchParams.get('school_id'), 'eq.owned-school');
+      }
       if (query.path === 'components/spotlight-search.tsx') assert.equal(request.searchParams.get('schools.photographer_id'), 'eq.owner');
       if (query.path === 'app/api/dashboard/admin/recovery/route.ts') assert.equal(request.searchParams.get('id'), 'eq.owned-student');
     }

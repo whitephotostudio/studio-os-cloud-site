@@ -28,6 +28,7 @@ export type SchoolEmailGallery = {
 };
 
 export type EventEmailPhotographer = {
+  id?: string | null;
   business_name?: string | null;
   studio_email?: string | null;
 };
@@ -191,6 +192,7 @@ export function buildGalleryShareEmail(input: EventEmailContentInput) {
   const coverUrl = signedPrivateMediaReference(
     input.project.cover_photo_url,
     EMAIL_COVER_MEDIA_TTL_SECONDS,
+    input.photographer?.id,
   );
   const textLines = [
     headline,
@@ -311,6 +313,7 @@ export function buildSchoolShareEmail(input: SchoolEmailContentInput) {
   const coverUrl = signedPrivateMediaReference(
     input.school.cover_photo_url,
     EMAIL_COVER_MEDIA_TTL_SECONDS,
+    input.photographer?.id,
   );
   const textLines = [
     headline,

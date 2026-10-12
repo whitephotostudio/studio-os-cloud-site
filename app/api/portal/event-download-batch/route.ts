@@ -270,6 +270,7 @@ async function fetchFirstAvailableStream(
 function preferredDownloadUrls(
   row: Pick<MediaRow, "storage_path" | "preview_url" | "thumbnail_url">,
   resolution: "original" | "large" | "web",
+  photographerId?: string | null,
 ) {
   // 2026-04-30 — Sign with parents-portal TTL so the download path
   // can fetch from R2 directly via SigV4 instead of dead public URLs.
@@ -277,7 +278,7 @@ function preferredDownloadUrls(
     storagePath: row.storage_path,
     previewUrl: row.preview_url,
     thumbnailUrl: row.thumbnail_url,
-  }, { ttlSeconds: SIGNED_URL_TTL_PARENTS_PORTAL_SECONDS });
+  }, { ttlSeconds: SIGNED_URL_TTL_PARENTS_PORTAL_SECONDS, photographerId });
 
   // For "original" we do NOT fall back to preview/thumbnail — the whole point of
   // requesting "original" is to get the full-resolution file. Silent fallback
@@ -479,7 +480,7 @@ async function* buildDownloadZipEntries(options: {
       continue;
     }
 
-    const candidateUrls = preferredDownloadUrls(row, payload.resolution);
+    const candidateUrls = preferredDownloadUrls(row, payload.resolution, payload.photographerId);
     const fallbackName = clean(row.filename) || `${mediaId}.jpg`;
     if (!candidateUrls.length) {
       console.warn(`[event-download-batch] no candidate URLs for media ${mediaId}`);

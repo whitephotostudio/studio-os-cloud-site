@@ -9,7 +9,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { createDashboardServiceClient } from "@/lib/dashboard-auth";
-import { claimRecoveryToken } from "@/lib/pin-recovery";
+import { claimRecoveryToken, pinRecoveryOrigin } from "@/lib/pin-recovery";
 
 export const dynamic = "force-dynamic";
 
@@ -23,26 +23,21 @@ function clientIp(request: NextRequest): string | null {
 }
 
 function buildResultUrl(
-  request: NextRequest,
   status: "ok" | "expired" | "used" | "invalid",
   pin?: string,
   schoolId?: string,
 ): string {
-  const origin =
-    request.nextUrl.origin ||
-    process.env.NEXT_PUBLIC_SITE_URL ||
-    "https://www.studiooscloud.com";
   const params = new URLSearchParams();
   params.set("recovery", status);
   if (pin) params.set("pin", pin);
   if (schoolId) params.set("school", schoolId);
-  return `${origin.replace(/\/$/, "")}/parents?${params.toString()}`;
+  return `${pinRecoveryOrigin()}/parents?${params.toString()}`;
 }
 
 export async function GET(request: NextRequest) {
   const token = request.nextUrl.searchParams.get("token");
   if (!token) {
-    return NextResponse.redirect(buildResultUrl(request, "invalid"));
+    return NextResponse.redirect(buildResultUrl("invalid"));
   }
 
   const service = createDashboardServiceClient();
@@ -62,7 +57,7 @@ export async function GET(request: NextRequest) {
         : result.reason === "already_used"
           ? "used"
           : "invalid";
-    return NextResponse.redirect(buildResultUrl(request, status));
+    return NextResponse.redirect(buildResultUrl(status));
   }
 
   // Resolve the student → school + PIN so we can deep-link the parent into
@@ -75,14 +70,14 @@ export async function GET(request: NextRequest) {
     .maybeSingle();
 
   if (!student) {
-    return NextResponse.redirect(buildResultUrl(request, "invalid"));
+    return NextResponse.redirect(buildResultUrl("invalid"));
   }
 
   const pin = (student.pin as string | null)?.trim() ?? "";
   const schoolId = (student.school_id as string | null) ?? "";
   if (!pin || !schoolId) {
-    return NextResponse.redirect(buildResultUrl(request, "invalid"));
+    return NextResponse.redirect(buildResultUrl("invalid"));
   }
 
-  return NextResponse.redirect(buildResultUrl(request, "ok", pin, schoolId));
+  return NextResponse.redirect(buildResultUrl("ok", pin, schoolId));
 }

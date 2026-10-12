@@ -2,6 +2,7 @@ import { resolvePhotographerOrderCurrency, type OrderCurrency } from "@/lib/orde
 import { hasCalendarBoundaryPassed } from "@/lib/calendar-dates";
 import { NextRequest, NextResponse } from "next/server";
 import { createDashboardServiceClient } from "@/lib/dashboard-auth";
+import { grantPortalPinBudget } from "@/lib/portal-pin-rate-limit";
 import { accessibleEventCollections, eventGalleryDownloadsUsed, EventGallerySizeLimitError, fetchEventGalleryMediaRows, fetchEventProjectCollections, matchesEventCollectionPin } from "@/lib/event-download-scope";
 import {
   normalizeEventGallerySettings,
@@ -467,10 +468,12 @@ export async function POST(request: NextRequest) {
         const watermarkLogoCandidate = signedPrivateMediaReference(
           photographer.watermark_logo_url,
           SIGNED_URL_TTL_PARENTS_PORTAL_SECONDS,
+          projectRow.photographer_id,
         );
         const studioLogoCandidate = signedPrivateMediaReference(
           photographer.logo_url,
           SIGNED_URL_TTL_PARENTS_PORTAL_SECONDS,
+          projectRow.photographer_id,
         );
         const resolvedLogoUrl = looksLikeImageAssetUrl(watermarkLogoCandidate)
           ? watermarkLogoCandidate
@@ -585,7 +588,7 @@ export async function POST(request: NextRequest) {
         }
       : null;
 
-    return NextResponse.json({
+    return grantPortalPinBudget(NextResponse.json({
       ok: true,
       project: projectForClient,
       gallerySettings: publicGallerySettings,
@@ -602,7 +605,7 @@ export async function POST(request: NextRequest) {
       orderCurrency,
       lateOrderPolicy,
       screenshotProtection,
-    }, { headers: { "cache-control": "private, no-store" } });
+    }, { headers: { "cache-control": "private, no-store" } }), request, { kind: "event", galleryId: selectedProjectId, pin: pinValue, email: normalizedEmail });
   } catch (error) {
     if (error instanceof EventGallerySizeLimitError) {
       return NextResponse.json({ ok: false, message: error.message }, { status: 413 });

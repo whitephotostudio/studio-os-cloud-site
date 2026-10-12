@@ -14,6 +14,7 @@ import { parseJson } from "@/lib/api-validation";
 import {
   generatePlaintextToken,
   hashToken,
+  pinRecoveryOrigin,
   TOKEN_TTL_MS,
 } from "@/lib/pin-recovery";
 import { buildPinRecoveryEmail } from "@/lib/pin-recovery-email";
@@ -173,11 +174,7 @@ export async function POST(request: NextRequest) {
   }
 
   // Email the parent.
-  const origin =
-    request.headers.get("origin") ||
-    process.env.NEXT_PUBLIC_SITE_URL ||
-    "https://www.studiooscloud.com";
-  const recoveryUrl = `${origin.replace(/\/$/, "")}/api/portal/recovery/claim?token=${encodeURIComponent(plaintextToken)}`;
+  const recoveryUrl = `${pinRecoveryOrigin()}/api/portal/recovery/claim?token=${encodeURIComponent(plaintextToken)}`;
   const studentName = `${student.first_name ?? ""} ${student.last_name ?? ""}`.trim() || "your child";
   const studioName = ctx.photographer.business_name || "Studio OS Cloud";
   const studioContact = ctx.photographer.studio_email || ctx.photographer.billing_email || null;

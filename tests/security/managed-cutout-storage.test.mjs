@@ -8,14 +8,16 @@ import ts from 'typescript';
 
 const require = createRequire(import.meta.url);
 const sha = bytes => createHash('sha256').update(bytes).digest('hex');
-function load(path, modules = {}, fixtureProcess = process) {
+function load(path, modules = {}, fixtureProcess = process, fixtureFetch = fetch) {
   const exports = {};
   const source = readFileSync(new URL(`../../${path}`, import.meta.url), 'utf8');
   const code = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
-  new Function('require', 'exports', 'process', code)(name => name in modules ? modules[name] : name.startsWith('@/') ? assert.fail(`Missing mock: ${name}`) : require(name), exports, fixtureProcess);
+  new Function('require', 'exports', 'process', 'fetch', code)(name => name in modules ? modules[name] : name.startsWith('@/') ? assert.fail(`Missing mock: ${name}`) : require(name), exports, fixtureProcess, fixtureFetch);
   return exports;
 }
 const security = load('lib/r2-access-security.ts');
+const mediaOwnership = load('lib/r2-media-ownership.ts', { '@/lib/r2-access-security': security });
+const mediaTokens = load('lib/r2-media-token.ts', { '@/lib/r2-access-security': security });
 const ownership = load('lib/upload-ownership.ts', { './r2-access-security': security });
 class FixtureResponse extends Response {
   static json(body, init) { return Response.json(body, init); }
@@ -47,6 +49,10 @@ async function fixture(options = {}) {
       return chain;
     },
     async rpc(name, args) {
+      if (name === 'r2_media_namespace_owner') return { data:
+        (args.p_kind === 'project' && args.p_root === project) ||
+        (args.p_kind === 'photographer' && args.p_root === photographer)
+          ? [{ photographer_id: photographer, school_id: null }] : [], error: null };
       calls.push({ rpc: name, args });
       if (name === 'authorized_credit_cutout_keys') return { data: args.p_photographer_id === photographer
         ? args.p_keys.flatMap(key => bindings.has(key) && options.paid !== false ? [bindings.get(key)] : []) : [], error: null };
@@ -77,6 +83,7 @@ async function fixture(options = {}) {
   const modules = { 'next/server': next, sharp: { default: sharp }, '@/lib/dashboard-auth': authModule, '@/lib/r2': r2,
     '@/lib/r2-signed-urls': signer, '@/lib/credit-cutout-access': access, '@/lib/credit-cutout-staging': staging,
     '@/lib/upload-ownership': ownership, '@/lib/r2-access-security': security,
+    '@/lib/r2-media-ownership': mediaOwnership, '@/lib/r2-media-token': mediaTokens,
     '@/lib/require-agreement': { guardAgreement: async () => ({ ok: true }) }, '@/lib/rate-limit': { rateLimit: async () => ({ allowed: true }) } };
   const upload = load('app/api/dashboard/upload-to-r2/route.ts', modules);
   const gateway = load('app/api/dashboard/r2-access/route.ts', modules);
@@ -102,7 +109,7 @@ test('generic signing and object transforms cannot grant managed or staging cuto
   const stageUrl = signed.r2PresignedPutUrl(stageKey, 600, { allowCutoutStaging: true, contentLength: 50, contentType: 'image/png' });
   assert.equal(new URL(stageUrl).searchParams.get('X-Amz-SignedHeaders'), 'content-length;content-type;host');
   assert.equal(new URL(stageUrl).searchParams.get('X-Amz-Expires'), '120');
-  const storage = load('lib/r2.ts', { '@/lib/r2-signed-urls': signed, '@/lib/school-photo-deletions': { schoolPhotoFamilyForKey: () => null } }, { env: {} });
+  const storage = load('lib/r2.ts', { '@/lib/r2-signed-urls': signed, '@/lib/r2-media-token': mediaTokens, '@/lib/school-photo-deletions': { schoolPhotoFamilyForKey: () => null } }, { env: {} });
   for (const key of ['nobg-photos/school/photo.png', 'credit-staging/studio/photo.png']) {
     await assert.rejects(storage.r2Upload(key, Buffer.from('x'), 'image/png'));
     await assert.rejects(storage.r2Download(key));
@@ -248,7 +255,19 @@ test('portal no-background mapping and backdrop compositions consume only exact 
   assert.equal(map[media.id]?.includes(f.key), true);
   const backdropKey = `backdrops/${f.photographer}/background.jpg`;
   f.objects.set(backdropKey, await sharp({ create: { width: 4, height: 4, channels: 3, background: '#f08020' } }).jpeg().toBuffer());
-  const composites = load('lib/backdrop-composites.ts', f.modules);
+  const references = { privateMediaKeyFromReference: value => security.normalizeR2Key(value, { allowQueryCharacters: true }) || '' };
+  const photoUrl = { privateSupabaseStorageReference: () => null };
+  const authorized = load('lib/authorized-media.ts', { ...f.modules,
+    '@/lib/legacy-storage-access': { legacyStorageOwner: async () => null },
+    '@/lib/photo-url': photoUrl, '@/lib/private-media-references': references,
+  });
+  const composites = load('lib/backdrop-composites.ts', { ...f.modules,
+    '@/lib/authorized-media': authorized, '@/lib/photo-url': photoUrl, '@/lib/private-media-references': references,
+  }, process, async url => {
+    const parsed = new URL(url); assert.equal(parsed.origin, 'https://fixture.invalid');
+    const object = f.objects.get(decodeURIComponent(parsed.pathname.slice(1)));
+    return new Response(object || null, { status: object ? 200 : 404 });
+  });
   const opts = { originalUrlOrKey: sourceKey, backdrop: { image_url: backdropKey }, service: f.service, photographerId: f.photographer };
   const composite = await composites.composeBackdropImage(opts);
   assert.equal(composite.contentType, 'image/jpeg');

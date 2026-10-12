@@ -108,6 +108,7 @@ export function harness({ extras = {}, media, logs = [], collections, repeatPage
     '@/lib/dashboard-auth': { createDashboardServiceClient: () => service },
     '@/lib/rate-limit': { rateLimit: async () => ({ allowed: rateAllowed, resetAt: Date.now()+60000 }), getClientIp: () => 'fixture' },
     '@/lib/storage-images': { SIGNED_URL_TTL_PARENTS_PORTAL_SECONDS: 21600, buildSignedMediaUrls: input => signedUrls ? signedUrls(input) : ({ originalUrl: `https://fixture.test/${input.storagePath}`, previewUrl: null, thumbnailUrl: null }), extractStoragePathFromSupabaseUrl: () => null },
+    '@/lib/authorized-media': { authorizedMediaUrl: async (_service, reference) => `https://fixture.test/${reference}`, authorizedMediaUrls: async (_service, input) => signedUrls ? signedUrls(input) : ({ originalUrl: `https://fixture.test/${input.storagePath}`, previewUrl: null, thumbnailUrl: null }) },
     '@/lib/private-media-references': { signedPrivateMediaReference: value => value, durablePrivateMediaReference: value => value ?? '', privateMediaKeyFromReference: value => typeof value==='string' && !value.includes('://') && !value.startsWith('/api/portal/') ? value : value?.startsWith('https://fixture.test/') ? value.slice('https://fixture.test/'.length).split(/[?#]/)[0] : '', signPhotoUrlRows: rows=>rows },
     '@/lib/package-profile-selection': { filterPackagesForProfile: value => ({packages:value}) },
     '@/lib/subscription-gate': { hasActiveSubscription: row => row?.subscription_status === 'active' },
@@ -136,7 +137,7 @@ export function harness({ extras = {}, media, logs = [], collections, repeatPage
     return {status:response.status,headers:response.headers,body:response.headers.get('content-type')?.includes('json')?await response.json():Buffer.from(await response.arrayBuffer())};
   }, async post(route, payload = body()) {
     const response = await load(route).POST(new Request('https://fixture.test/api', { method: 'POST', body: JSON.stringify(payload), headers: { 'content-type': 'application/json' } }));
-    return { status: response.status, body: await response.json() };
+    return { status: response.status, headers: response.headers, body: await response.json() };
   }, async batch(token, json = false) {
     const response = await load('app/api/portal/event-download-batch/route.ts').GET({ nextUrl: new URL(`https://fixture.test/api?token=${encodeURIComponent(token)}${json ? '&format=json' : ''}`) });
     return { status: response.status, body: response.headers.get('content-type')?.includes('json') ? await response.json() : new Uint8Array(await response.arrayBuffer()) };

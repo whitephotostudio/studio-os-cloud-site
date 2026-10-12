@@ -101,7 +101,7 @@ async function loadLinkedLocationProfile(input: {
   const selectedContact = assignedContacts[0]
     ?? (primaryFallback.length === 1 ? primaryFallback[0] : null);
   const photos = ((photoResult.data ?? []) as Record<string, unknown>[])
-    .map((row) => crmLocationPhotoPublicRow(row))
+    .map((row) => crmLocationPhotoPublicRow(row, input.photographerId))
     .map((photo) => ({
       id: photo.id,
       filename: photo.filename,

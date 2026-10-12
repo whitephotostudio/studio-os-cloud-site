@@ -12,7 +12,8 @@ test("generic signed GET and PUT cannot expose or overwrite a cloud credit outpu
 test("legacy storage proxies reject server output namespace before school compatibility lookups",()=>{
   const image=source("app/api/r2/img/[...path]/route.ts");
   const folder=source("app/api/dashboard/storage-folder/route.ts");
-  assert.ok(image.indexOf("isServerOnlyR2Key(storagePath)")<image.indexOf("resolveSchoolNamespace(firstSegment)"));
+  assert.ok(image.indexOf("await resolveR2MediaOwnership(service, storagePath, photographerId)") >= 0);
+  assert.ok(image.indexOf("isServerOnlyR2Key(storagePath)")<image.indexOf("await resolveR2MediaOwnership(service, storagePath, photographerId)"));
   assert.ok(folder.indexOf("isServerOnlyR2Key(folderPath)")<folder.indexOf("await ownedSchoolId(first)"));
 });
 test("generic transformations and destructive operations cannot copy or consume server credit outputs",()=>{
@@ -34,7 +35,7 @@ test("a generic upload cannot overwrite server output; an explicitly owned gatew
       S3Client:class {send(command){calls.push(command);return Promise.resolve({});}},
       PutObjectCommand:class {constructor(input){this.input=input;}},
     },
-    "@/lib/r2-signed-urls":{r2PresignedGetUrl:()=>""},
+    "@/lib/r2-media-token":{signedR2MediaUrl:()=>""},
     "@/lib/school-photo-deletions":{schoolPhotoFamilyForKey:()=>null},
   };
   const compiled=ts.transpileModule(source("lib/r2.ts"),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;

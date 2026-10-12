@@ -141,7 +141,7 @@ export async function loadFolderMediaRows(
 
   for (const folderPath of uniqueFolders(folderPaths)) {
     const files = filterTombstonedSchoolPhotoAssets(
-      await filterPaidCutoutFiles(await listR2FolderImages(folderPath, { ttlSeconds: options?.ttlSeconds }), {
+      await filterPaidCutoutFiles(await listR2FolderImages(folderPath, { ttlSeconds: options?.ttlSeconds, photographerId: options?.photographerId }), {
         service: options?.service as CreditCutoutService | undefined, photographerId: options?.photographerId, ttlSeconds: options?.ttlSeconds,
       }),
       deletedFamilies,
@@ -187,7 +187,7 @@ export async function loadNoBgUrlMapForMediaRows(
   );
 
   for (const folder of folders) {
-    const files = await filterPaidCutoutFiles(await listR2FolderImages(folder), options);
+    const files = await filterPaidCutoutFiles(await listR2FolderImages(folder, { ttlSeconds: options?.ttlSeconds, photographerId: options?.photographerId }), options);
     for (const file of files) {
       const withoutPrefix = file.key.replace(/^nobg-photos\//i, "");
       const mediaId = expectedPathToMediaId.get(withoutPrefix.toLowerCase());

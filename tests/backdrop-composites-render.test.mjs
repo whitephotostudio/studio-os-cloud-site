@@ -23,8 +23,9 @@ async function fixture(width = 60, height = 100) {
   const foreground = await sharp(pixels, { raw: { width, height, channels: 4 } }).png().toBuffer();
   const background = await sharp({ create: { width: 200, height: 160, channels: 3, background: '#0040ff' } }).jpeg().toBuffer();
   const selections = [];
+  const service = {};
   const exports = {};
-  new Function('require', 'exports', code)(name => {
+  new Function('require', 'exports', 'fetch', code)(name => {
     if (name === '@/lib/credit-cutout-access') return { firstPaidCutoutBytes: async (keys, opts) => {
       selections.push({ keys, opts });
       return foreground;
@@ -33,8 +34,15 @@ async function fixture(width = 60, height = 100) {
       assert.equal(key, 'backdrops/studio/blue.jpg');
       return background;
     } };
+    if (name === '@/lib/dashboard-auth') return { createDashboardServiceClient: () => service };
+    if (name === '@/lib/private-media-references') return { privateMediaKeyFromReference: value => value?.startsWith('backdrops/') ? value : '' };
+    if (name === '@/lib/photo-url') return { privateSupabaseStorageReference: () => null };
+    if (name === '@/lib/authorized-media') return { authorizedMediaUrl: async (actualService, reference, owner) => {
+      assert.equal(actualService, service); assert.equal(reference, 'backdrops/studio/blue.jpg'); assert.equal(owner, 'studio');
+      return 'https://fixture.invalid/native/blue.jpg';
+    } };
     return require(name);
-  }, exports);
+  }, exports, async url => { assert.equal(url, 'https://fixture.invalid/native/blue.jpg'); return new Response(background); });
   async function render(orientation, extra = {}) {
     const result = await exports.composeBackdropImage({
       originalUrlOrKey: 'school/Class/Student/portrait.jpg',

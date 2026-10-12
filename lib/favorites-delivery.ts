@@ -1,6 +1,8 @@
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { buildArchiveBaseName } from "@/lib/event-gallery-downloads";
-import { r2KeyFromAnyUrl, r2PresignedGetUrl } from "@/lib/r2-signed-urls";
+import { r2KeyFromAnyUrl } from "@/lib/r2-signed-urls";
+import { authorizedMediaUrl } from "@/lib/authorized-media";
 import { buildSignedMediaUrls } from "@/lib/storage-images";
 import { resendConfigured, resolveReplyTo, sendResendEmail } from "@/lib/resend";
 import { createZipStream, type ZipStreamEntry } from "@/lib/zip";
@@ -17,9 +19,7 @@ import { createZipStream, type ZipStreamEntry } from "@/lib/zip";
 //
 // SERVER-SIDE ONLY — reads R2 + signing secrets.
 
-type ServiceClient = {
-  from: (table: string) => any;
-};
+type ServiceClient = Pick<SupabaseClient, "from" | "rpc" | "storage">;
 
 type FavoriteRow = {
   media_id: string | null;
@@ -249,13 +249,13 @@ export async function resolveFavoritesDeliveryContext(
         previewUrl: media.preview_url,
         thumbnailUrl: media.thumbnail_url,
       },
-      { ttlSeconds: 60 * 60 },
+      { ttlSeconds: 60 * 60, photographerId: photographerRow?.id },
     );
     photos.push({
       key,
       fileName: clean(media.filename) || fileNameFromKey(key),
       previewUrl: signed.previewUrl || signed.originalUrl || "",
-      originalUrl: signed.originalUrl || "",
+      originalUrl: await authorizedMediaUrl(service, media.storage_path || key, projectRow.photographer_id, 60 * 60),
     });
   }
 
@@ -293,12 +293,11 @@ export function contentDispositionAttachment(fileName: string) {
   return `attachment; filename="${fallback}"; filename*=UTF-8''${encoded}`;
 }
 
-async function fetchR2Stream(key: string) {
-  const url = r2PresignedGetUrl(key, 60 * 60);
-  if (!url) throw new Error(`Could not sign ${key}.`);
+async function fetchR2Stream(url: string) {
+  if (!url) throw new Error("This favorite photo was not authorized.");
   const response = await fetch(url, { cache: "no-store", redirect: "follow" });
   if (!response.ok || !response.body) {
-    throw new Error(`Could not load ${key}: HTTP ${response.status}`);
+    throw new Error(`Could not load this favorite photo: HTTP ${response.status}`);
   }
   return response.body;
 }
@@ -321,7 +320,7 @@ export async function* buildFavoritesZipEntries(
 
   for (const photo of photos) {
     try {
-      const stream = await fetchR2Stream(photo.key);
+      const stream = await fetchR2Stream(photo.originalUrl);
       yield {
         name: uniqueDownloadName(photo.fileName, usedNames),
         stream,

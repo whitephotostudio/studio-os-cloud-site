@@ -32,14 +32,15 @@ export async function GET(request: NextRequest) {
     }
 
     // Check if admin
-    const isAdmin = pg.is_platform_admin || user.email?.toLowerCase() === "harout@me.com";
+    const isAdmin = Boolean(pg.is_platform_admin &&
+      (await resolveDashboardAuth(request, { requireMfaEnrollment: true })).user);
 
     const statusFilter = request.nextUrl.searchParams.get("status") as FeatureRequestStatus | null;
     const requests = await listFeatureRequests(service, statusFilter ? { status: statusFilter } : undefined);
     const votedSet = await listVotesByPhotographer(service, pg.id);
 
     // If admin, fetch author emails for each request
-    let authorEmails: Record<string, string> = {};
+    const authorEmails: Record<string, string> = {};
     if (isAdmin && requests.length > 0) {
       const photographerIds = [...new Set(requests.map((r) => r.photographer_id))];
       const { data: photographers } = await service
@@ -48,7 +49,6 @@ export async function GET(request: NextRequest) {
         .in("id", photographerIds);
 
       if (photographers && photographers.length > 0) {
-        const userIds = photographers.map((p: { user_id: string }) => p.user_id);
         const { data: { users } } = await service.auth.admin.listUsers();
         const userMap = new Map(
           (users ?? []).map((u: { id: string; email?: string }) => [u.id, u.email ?? ""])
@@ -99,9 +99,11 @@ export async function POST(request: NextRequest) {
 
     // Admin update
     if (body.action === "update_status") {
-      const isAdmin = pg.is_platform_admin || user.email?.toLowerCase() === "harout@me.com";
-      if (!isAdmin) {
+      if (!pg.is_platform_admin) {
         return NextResponse.json({ ok: false, message: "Admin access required." }, { status: 403 });
+      }
+      if (!(await resolveDashboardAuth(request, { requireMfaEnrollment: true })).user) {
+        return NextResponse.json({ ok: false, message: "Enable and complete two-step verification before moderating requests." }, { status: 403 });
       }
 
       const updated = await updateFeatureRequestStatus(

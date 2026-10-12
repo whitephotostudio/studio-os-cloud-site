@@ -8,14 +8,24 @@ function source(relativePath) {
 }
 
 const storageImagesSource = source("lib/storage-images.ts");
+const executablePhotoUrlSource = ts.transpileModule(source("lib/photo-url.ts"), {
+  compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
+}).outputText;
+const photoUrlModuleUrl = `data:text/javascript;base64,${Buffer.from(executablePhotoUrlSource).toString("base64")}`;
+const executableLegacyTokenSource = ts.transpileModule(source("lib/legacy-storage-token.ts").replace('from "@/lib/photo-url"', `from "${photoUrlModuleUrl}"`), {
+  compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
+}).outputText;
+const legacyTokenModuleUrl = `data:text/javascript;base64,${Buffer.from(executableLegacyTokenSource).toString("base64")}`;
+const r2SecurityModuleUrl = `data:text/javascript;base64,${Buffer.from(ts.transpileModule(source("lib/r2-access-security.ts"), { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText).toString("base64")}`;
+const r2TokenModuleUrl = `data:text/javascript;base64,${Buffer.from(ts.transpileModule(source("lib/r2-media-token.ts").replace('from "@/lib/r2-access-security"', `from "${r2SecurityModuleUrl}"`), { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText).toString("base64")}`;
 const executableStorageImagesSource = ts.transpileModule(
   storageImagesSource.replace(
-    'import { r2PresignedGetUrl, r2KeyFromAnyUrl } from "./r2-signed-urls";',
+    'import { r2KeyFromAnyUrl } from "./r2-signed-urls";',
     [
       "const r2PresignedGetUrl = () => '';",
       "const r2KeyFromAnyUrl = () => null;",
     ].join("\n"),
-  ),
+  ).replace('from "@/lib/photo-url"', `from "${photoUrlModuleUrl}"`).replace('from "@/lib/legacy-storage-token"', `from "${legacyTokenModuleUrl}"`).replace('from "@/lib/r2-media-token"', `from "${r2TokenModuleUrl}"`),
   {
     compilerOptions: {
       module: ts.ModuleKind.ESNext,

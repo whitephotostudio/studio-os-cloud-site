@@ -11,8 +11,8 @@ import {
 } from "@/lib/storage-folder";
 import {
   r2KeyFromAnyUrl,
-  r2PresignedGetUrl,
 } from "@/lib/r2-signed-urls";
+import { authorizedMediaUrl } from "@/lib/authorized-media";
 import { resendConfigured, resolveReplyTo, sendResendEmail } from "@/lib/resend";
 import { cartSnapshotToOrderItems, type CartSnapshotEntryLike } from "@/lib/order-display";
 import { createZipStream, type ZipStreamEntry } from "@/lib/zip";
@@ -23,7 +23,7 @@ import {
   type BackdropCompositeSelection,
 } from "@/lib/backdrop-composites";
 
-type ServiceClient = Pick<SupabaseClient, "from">;
+type ServiceClient = Pick<SupabaseClient, "from" | "rpc" | "storage">;
 
 type OrderRow = {
   id: string;
@@ -100,6 +100,8 @@ type MediaRow = {
 export type DigitalDeliveryFile = {
   key?: string;
   fileName: string;
+  authorizationReference?: string;
+  authorizedUrl?: string;
   composite?: {
     originalUrlOrKey: string;
     photographerId?: string | null;
@@ -377,6 +379,7 @@ async function resolveDeliveryFiles(params: {
   student: StudentRow | null;
   school: SchoolRow | null;
   project: ProjectRow | null;
+  allowDeletedResource?: boolean;
 }) {
   const files: DigitalDeliveryFile[] = [];
   const snapshotEntries = Array.isArray(params.order.cart_snapshot)
@@ -418,9 +421,10 @@ async function resolveDeliveryFiles(params: {
 
   if (!deliveryItems.length) return [];
 
-  const addGalleryFile = (key: string, fileName: string) => {
+  const addGalleryFile = (key: string, fileName: string, authorizationReference = key) => {
     for (const variant of allDigitalVariants) files.push({
       key,
+      authorizationReference,
       fileName: variant.backdrop ? backdropCompositeFileName(fileName, variant.backdrop) : fileName,
       composite: variant.backdrop ? {
         originalUrlOrKey: key, photographerId: params.order.photographer_id,
@@ -461,7 +465,7 @@ async function resolveDeliveryFiles(params: {
     for (const row of rows) {
       const key = normalizeKey(row.storage_path || row.preview_url || row.thumbnail_url);
       if (!key) continue;
-      addGalleryFile(key, clean(row.filename) || fileNameFromKey(key));
+      addGalleryFile(key, clean(row.filename) || fileNameFromKey(key), clean(row.storage_path) || clean(row.preview_url) || clean(row.thumbnail_url));
     }
   }
 
@@ -476,6 +480,7 @@ async function resolveDeliveryFiles(params: {
     );
     files.push({
       key,
+      authorizationReference: clean(item.sku) || key,
       fileName: backdrop
         ? backdropCompositeFileName(fileNameFromKey(key), backdrop)
         : fileNameFromKey(key),
@@ -490,7 +495,9 @@ async function resolveDeliveryFiles(params: {
     });
   }
 
-  return uniqueFiles(files);
+  const unique = uniqueFiles(files);
+  for (const file of unique) file.authorizedUrl = await authorizedMediaUrl(params.service, file.authorizationReference || file.key || "", params.order.photographer_id, 60 * 60, { allowDeletedResource: params.allowDeletedResource });
+  return unique;
 }
 
 async function resolveBackdropForDelivery(
@@ -550,6 +557,7 @@ export async function resolveDigitalDeliveryContext(
     student,
     school,
     project,
+    allowDeletedResource: options?.requirePaid !== false && isPaidEnough(order),
   });
   if (!files.length) {
     throw new Error("No online high-resolution files were found for this digital order.");
@@ -597,15 +605,14 @@ export function contentDispositionAttachment(fileName: string) {
   return `attachment; filename="${fallback}"; filename*=UTF-8''${encoded}`;
 }
 
-async function fetchR2Stream(key: string) {
-  const url = r2PresignedGetUrl(key, 60 * 60);
-  if (!url) throw new Error(`Could not sign ${key}.`);
+async function fetchR2Stream(url: string) {
+  if (!url) throw new Error("This paid delivery photo was not authorized.");
   const response = await fetch(url, {
     cache: "no-store",
     redirect: "follow",
   });
   if (!response.ok || !response.body) {
-    throw new Error(`Could not load ${key}: HTTP ${response.status}`);
+    throw new Error(`Could not load this paid delivery photo: HTTP ${response.status}`);
   }
   return response.body;
 }
@@ -640,7 +647,7 @@ export async function* buildDigitalDeliveryZipEntries(
     try {
       const stream = composite
         ? uint8ArrayToReadableStream(composite.buffer)
-        : await fetchR2Stream(file.key ?? "");
+        : await fetchR2Stream(file.authorizedUrl ?? "");
       yield {
         name: uniqueDownloadName(file.fileName, usedNames),
         stream,

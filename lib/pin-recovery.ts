@@ -42,6 +42,7 @@ export type DoorFailure =
   | "no_student_match"
   | "email_mismatch"
   | "email_not_registered"
+  | "photographer_fallback"
   | "rate_limited"
   | "internal_error";
 
@@ -100,6 +101,17 @@ export function hashToken(plaintext: string): string {
   return crypto.createHash("sha256").update(plaintext).digest("hex");
 }
 
+export function pinRecoveryOrigin() {
+  // Deployment configuration is trusted; request Origin/Host headers are not.
+  try {
+    const configured = new URL(process.env.NEXT_PUBLIC_SITE_URL || "");
+    if (configured.protocol === "https:" && !configured.username && !configured.password) {
+      return configured.origin;
+    }
+  } catch { /* Missing/invalid configuration uses the canonical production URL. */ }
+  return "https://www.studiooscloud.com";
+}
+
 // ── 5-door check ──────────────────────────────────────────────────────
 
 type ServiceClient = SupabaseClient;
@@ -114,8 +126,8 @@ type ServiceClient = SupabaseClient;
  *   1. Rate limit (by IP + by student per day)
  *   2. Student lookup (firstName + lastName + school OR project)
  *   3. Pre-registration check (email is in pre_release_registrations / pre_release_emails)
- *   4. Strong roster-email match if students.parent_email is populated
- *      (otherwise we accept the pre-registration alone — soft mode)
+ *   4. Require the student's trusted roster email; school-wide registrations
+ *      do not establish an email/student relationship.
  *   5. Token issue (random 32-byte → SHA-256 hash → store row)
  */
 export async function runRecoveryDoorCheck(
@@ -127,11 +139,12 @@ export async function runRecoveryDoorCheck(
     const sinceIso = new Date(
       Date.now() - RATE_LIMIT_PER_IP.windowMs,
     ).toISOString();
-    const { count } = await service
+    const { count, error } = await service
       .from("pin_recovery_attempts")
       .select("id", { count: "exact", head: true })
       .eq("ip_address", input.ipAddress)
       .gte("created_at", sinceIso);
+    if (error) return { ok: false, reason: "internal_error" };
     if ((count ?? 0) >= RATE_LIMIT_PER_IP.attempts) {
       return { ok: false, reason: "rate_limited" };
     }
@@ -148,8 +161,8 @@ export async function runRecoveryDoorCheck(
         "id, first_name, last_name, parent_email, school_id, schools:schools!students_school_id_fkey!inner(id, school_name, photographer_id)",
       )
       .eq("school_id", input.schoolId)
-      .ilike("first_name", input.firstName)
-      .ilike("last_name", input.lastName)
+      .ilike("first_name", escapeLikePattern(input.firstName))
+      .ilike("last_name", escapeLikePattern(input.lastName))
       .limit(1)
       .maybeSingle();
     if (error) return { ok: false, reason: "internal_error" };
@@ -187,11 +200,12 @@ export async function runRecoveryDoorCheck(
 
   // --- Per-student per-day rate limit -------------------------------------
   const dayAgoIso = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-  const { count: studentDayCount } = await service
+  const { count: studentDayCount, error: studentDayError } = await service
     .from("pin_recovery_attempts")
     .select("id", { count: "exact", head: true })
     .eq("student_id", student.id)
     .gte("created_at", dayAgoIso);
+  if (studentDayError) return { ok: false, reason: "internal_error" };
   if ((studentDayCount ?? 0) >= RATE_LIMIT_PER_STUDENT_PER_DAY) {
     return { ok: false, reason: "rate_limited" };
   }
@@ -210,7 +224,7 @@ export async function runRecoveryDoorCheck(
       .from("pre_release_registrations")
       .select("id")
       .eq("school_id", input.schoolId)
-      .ilike("email", input.email)
+      .ilike("email", escapeLikePattern(input.email))
       .limit(1)
       .maybeSingle();
     if (preErr) return { ok: false, reason: "internal_error" };
@@ -226,7 +240,7 @@ export async function runRecoveryDoorCheck(
       .from("pre_release_emails")
       .select("id")
       .eq("project_id", input.projectId)
-      .ilike("email", input.email)
+      .ilike("email", escapeLikePattern(input.email))
       .limit(1)
       .maybeSingle();
     if (!preReg) {
@@ -238,13 +252,14 @@ export async function runRecoveryDoorCheck(
     }
   }
 
-  // --- Door 4: strong roster match (only when parent_email is on file) ----
-  if (student.parentEmail) {
-    if (student.parentEmail.trim().toLowerCase() !== input.email.toLowerCase()) {
-      return { ok: false, reason: "email_mismatch" };
-    }
+  // --- Door 4: require a student-specific trusted email -------------------
+  const rosterEmail = student.parentEmail?.trim().toLowerCase();
+  if (!rosterEmail) {
+    return { ok: false, reason: "photographer_fallback", photographerContact };
   }
-  // If parent_email is null on the roster, we trust door 3 alone (soft mode).
+  if (rosterEmail !== input.email.toLowerCase()) {
+    return { ok: false, reason: "email_mismatch" };
+  }
 
   // --- Door 5: issue token ------------------------------------------------
   if (!photographer) {
@@ -287,7 +302,7 @@ export async function claimRecoveryToken(
   const { data, error } = await service
     .from("pin_recovery_tokens")
     .select(
-      "id, student_id, photographer_id, parent_email, expires_at, used_at",
+      "id, student_id, photographer_id, parent_email, expires_at, used_at, manual_request_id",
     )
     .eq("token_hash", tokenHash)
     .maybeSingle();
@@ -297,30 +312,71 @@ export async function claimRecoveryToken(
   if (data.used_at) return { ok: false, reason: "already_used" };
 
   const expiresAtMs = new Date(data.expires_at as string).getTime();
-  if (Number.isFinite(expiresAtMs) && expiresAtMs < Date.now()) {
+  if (!Number.isFinite(expiresAtMs) || expiresAtMs <= Date.now()) {
     return { ok: false, reason: "expired" };
   }
 
-  // Consume it.
-  const { error: updateErr } = await service
+  // Recheck the student/email association when redeeming, including tokens
+  // issued before strict recovery checks were introduced. A photographer's
+  // explicit approved request can authorize a missing roster email.
+  const { data: student, error: studentError } = await service
+    .from("students")
+    .select("id,parent_email,schools:schools!students_school_id_fkey!inner(photographer_id)")
+    .eq("id", data.student_id)
+    .maybeSingle();
+  if (studentError) return { ok: false, reason: "internal_error" };
+  const school = Array.isArray(student?.schools) ? student.schools[0] : student?.schools;
+  if (!student || school?.photographer_id !== data.photographer_id) {
+    return { ok: false, reason: "not_found" };
+  }
+  if (data.manual_request_id) {
+    const { data: approved, error: approvedError } = await service
+      .from("pin_recovery_requests")
+      .select("id,student_id,photographer_id,parent_email,status")
+      .eq("id", data.manual_request_id)
+      .eq("student_id", data.student_id)
+      .eq("photographer_id", data.photographer_id)
+      .eq("status", "approved")
+      .maybeSingle();
+    if (approvedError) return { ok: false, reason: "internal_error" };
+    if (!approved || approved.parent_email.trim().toLowerCase() !== data.parent_email.trim().toLowerCase()) {
+      return { ok: false, reason: "not_found" };
+    }
+  } else if (!student.parent_email?.trim() || student.parent_email.trim().toLowerCase() !== data.parent_email.trim().toLowerCase()) {
+    return { ok: false, reason: "not_found" };
+  }
+
+  // Consume only an unused, still-valid row. The database evaluates these
+  // predicates atomically so concurrent claims cannot both receive access.
+  const usedAt = new Date().toISOString();
+  const { data: consumed, error: updateErr } = await service
     .from("pin_recovery_tokens")
     .update({
-      used_at: new Date().toISOString(),
+      used_at: usedAt,
       ip_used: args.ipAddress,
       user_agent_used: args.userAgent,
     })
-    .eq("id", data.id);
+    .eq("id", data.id)
+    .is("used_at", null)
+    .gt("expires_at", usedAt)
+    .select("student_id, photographer_id, parent_email")
+    .maybeSingle();
   if (updateErr) return { ok: false, reason: "internal_error" };
+  if (!consumed) return { ok: false, reason: "already_used" };
 
   return {
     ok: true,
-    studentId: data.student_id as string,
-    photographerId: data.photographer_id as string,
-    parentEmail: data.parent_email as string,
+    studentId: consumed.student_id as string,
+    photographerId: consumed.photographer_id as string,
+    parentEmail: consumed.parent_email as string,
   };
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────
+
+function escapeLikePattern(value: string) {
+  return value.replace(/[\\%_]/g, "\\$&");
+}
 
 async function loadPhotographer(
   service: ServiceClient,

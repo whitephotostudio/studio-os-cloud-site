@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { r2PresignedGetUrl } from "@/lib/r2-signed-urls";
+import { signedR2MediaUrl } from "@/lib/r2-media-token";
 
 const BASE64_RE = /^[A-Za-z0-9+/]+={0,2}$/;
 export const CRM_LOCATION_MAX_PHOTOS = 12;
@@ -111,7 +111,7 @@ export async function prepareCrmLocationPhoto(photo: CrmLocationPhotoUploadInput
   }
 }
 
-export function crmLocationPhotoPublicRow(row: Record<string, unknown>) {
+export function crmLocationPhotoPublicRow(row: Record<string, unknown>, photographerId: string) {
   const objectKey = typeof row.object_key === "string" ? row.object_key : "";
   return {
     id: String(row.id ?? ""),
@@ -133,6 +133,6 @@ export function crmLocationPhotoPublicRow(row: Record<string, unknown>) {
     height: typeof row.height === "number" ? row.height : null,
     createdAt: typeof row.created_at === "string" ? row.created_at : "",
     updatedAt: typeof row.updated_at === "string" ? row.updated_at : "",
-    previewUrl: objectKey ? r2PresignedGetUrl(objectKey, 15 * 60) : "",
+    previewUrl: objectKey ? signedR2MediaUrl(objectKey, 15 * 60, photographerId) : "",
   };
 }

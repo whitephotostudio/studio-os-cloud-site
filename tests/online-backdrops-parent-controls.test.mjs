@@ -59,6 +59,7 @@ function galleryFixture({ studioDefault, schoolOverride, catalogActive = true } 
     "@/lib/online-backdrop-policy": policy,
     "@/lib/order-currency": { resolvePhotographerOrderCurrency: () => "cad" },
     "@/lib/rate-limit": { rateLimit: async () => ({ allowed: true }), getClientIp: () => "fixture" },
+    "@/lib/portal-pin-rate-limit": { grantPortalPinBudget: response => response },
     "@/lib/event-gallery-settings": { sanitizeEventGallerySettingsForClient: () => ({ extras: {} }) },
     "@/lib/school-gallery-downloads": { buildSchoolGalleryDownloadAccess: async () => paidDownloadAccess },
     "@/lib/package-profile-selection": { filterPackagesForProfile: (packages) => ({ packages }) },

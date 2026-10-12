@@ -43,7 +43,7 @@ function loader(stubs) {
       exports, URL, URLSearchParams, Response, Request, Buffer, console, crypto: globalThis.crypto,
       // Synthetic credentials exercise the real pure signer/gallery resolver;
       // no runtime/production environment is read and network stays forbidden.
-      process: { env: { R2_ACCOUNT_ID: 'fixture', R2_ACCESS_KEY_ID: 'fixture', R2_SECRET_ACCESS_KEY: 'fixture' } },
+      process: { env: { R2_ACCOUNT_ID: 'fixture', R2_ACCESS_KEY_ID: 'fixture', R2_SECRET_ACCESS_KEY: 'fixture', DOWNLOAD_TOKEN_SECRET: 'synthetic-checkout-authorization-secret' } },
       fetch() { throw new Error('Network is forbidden in isolated checkout tests'); },
       require(name) {
         if (name in stubs) return stubs[name];

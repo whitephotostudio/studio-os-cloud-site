@@ -59,7 +59,8 @@ function loader(stubs) {
     const js = ts.transpileModule(readFileSync(new URL(file, root), 'utf8'), { compilerOptions: {
       target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, esModuleInterop: true,
     } }).outputText;
-    vm.runInNewContext(js, { exports, URL, URLSearchParams, Response, Request, Buffer, crypto: globalThis.crypto, console, process: { env: {} },
+    vm.runInNewContext(js, { exports, URL, URLSearchParams, Response, Request, Buffer, crypto: globalThis.crypto, console,
+      process: { env: { R2_MEDIA_TOKEN_SECRET: 'isolated-saved-order-media-secret' } },
       fetch() { throw new Error('Network forbidden in saved checkout tests'); },
       require(name) {
         if (name in stubs) return stubs[name];

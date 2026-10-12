@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-import { r2PresignedGetUrl } from "@/lib/r2-signed-urls";
+import { authorizedMediaUrl } from "@/lib/authorized-media";
 import { resolveReplyTo, sendResendEmail } from "@/lib/resend";
 import {
   createUploadedDeliveryToken,
@@ -71,22 +71,22 @@ export function uploadedDeliveryContentDisposition(fileName: string) {
   return `attachment; filename="${fallback}"; filename*=UTF-8''${encoded}`;
 }
 
-async function fetchObjectStream(key: string) {
-  const url = r2PresignedGetUrl(key, 15 * 60);
+async function fetchObjectStream(key: string, authorization: { service: Parameters<typeof authorizedMediaUrl>[0]; photographerId: string | null | undefined; allowDeletedResource?: boolean }) {
+  const url = await authorizedMediaUrl(authorization.service, key, authorization.photographerId, 15 * 60, { allowDeletedResource: authorization.allowDeletedResource });
   if (!url) throw new Error("Could not authorize a delivery file.");
   const response = await fetch(url, { cache: "no-store", redirect: "follow" });
   if (!response.ok || !response.body) throw new Error("Could not load a delivery file.");
   return response.body;
 }
 
-async function* uploadedDeliveryEntries(keys: string[]): AsyncGenerator<ZipStreamEntry> {
+async function* uploadedDeliveryEntries(keys: string[], authorization: Parameters<typeof fetchObjectStream>[1]): AsyncGenerator<ZipStreamEntry> {
   const used = new Map<string, number>();
   let skipped = 0;
   for (const key of keys) {
     try {
       yield {
         name: uniqueName(baseNameFromKey(key), used),
-        stream: await fetchObjectStream(key),
+        stream: await fetchObjectStream(key, authorization),
       };
     } catch (error) {
       skipped += 1;
@@ -105,8 +105,8 @@ async function* uploadedDeliveryEntries(keys: string[]): AsyncGenerator<ZipStrea
   }
 }
 
-export function createUploadedDeliveryZipStream(keys: string[]) {
-  return createZipStream(uploadedDeliveryEntries(keys));
+export function createUploadedDeliveryZipStream(keys: string[], authorization: Parameters<typeof fetchObjectStream>[1]) {
+  return createZipStream(uploadedDeliveryEntries(keys, authorization));
 }
 
 export async function sendUploadedDeliveryEmail(input: {
