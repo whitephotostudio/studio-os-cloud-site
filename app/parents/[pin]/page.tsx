@@ -4035,14 +4035,12 @@ export default function ParentGalleryPage() {
             phone: "",
             email: "",
           };
-          const favoritesParams = new URLSearchParams({
-            projectId,
-            email: eventEmail,
-            pin,
-          });
           const favoritesResponse = await fetch(
-            `/api/portal/event-favorites?${favoritesParams.toString()}`,
+            "/api/portal/event-favorites",
             {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ operation: "read", projectId, email: eventEmail, pin }),
               cache: "no-store",
             },
           );
@@ -4264,14 +4262,14 @@ export default function ParentGalleryPage() {
         let schoolFavoritesUnavailable = false;
         let schoolServerFavoriteIds: string[] = [];
         if (favoriteSchoolId && schoolViewerEmail) {
-          const schoolFavoritesParams = new URLSearchParams({
-            schoolId: favoriteSchoolId,
-            email: schoolViewerEmail,
-            pin,
-          });
           const schoolFavoritesResponse = await fetch(
-            `/api/portal/school-favorites?${schoolFavoritesParams.toString()}`,
-            { cache: "no-store" },
+            "/api/portal/school-favorites",
+            {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ operation: "read", schoolId: favoriteSchoolId, email: schoolViewerEmail, pin }),
+              cache: "no-store",
+            },
           );
           const schoolFavoritesPayload = (await schoolFavoritesResponse.json().catch(() => ({}))) as {
             ok?: boolean;

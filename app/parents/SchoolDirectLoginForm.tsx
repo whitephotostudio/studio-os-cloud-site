@@ -1,6 +1,6 @@
 "use client";
 
-import { type CSSProperties, type FormEvent, useState } from "react";
+import { type CSSProperties, type FormEvent, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Check, Mail, School, X } from "lucide-react";
 import SchoolRegistrationClasses from "./SchoolRegistrationClasses";
@@ -46,6 +46,30 @@ export default function SchoolDirectLoginForm({ school }: { school: SchoolRow })
   const [submitting, setSubmitting] = useState(false);
   const [registered, setRegistered] = useState(false);
   const [classNames, setClassNames] = useState<string[]>([]);
+  const [recoveryBanner, setRecoveryBanner] = useState<"ok" | "expired" | "used" | "invalid" | null>(null);
+  const capturedRecoverySchool = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (capturedRecoverySchool.current === school.id) return;
+    capturedRecoverySchool.current = school.id;
+    const params = new URLSearchParams(window.location.search);
+    if (["recovery", "school", "pin"].some(field => params.getAll(field).length > 1)) return;
+    const querySchool = (params.get("school") || "").trim();
+    if (querySchool.toLowerCase() !== school.id.toLowerCase()) return;
+    const status = params.get("recovery");
+    if (status === "expired" || status === "used" || status === "invalid") {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- Browser recovery query is captured after hydration, once per school.
+      setRecoveryBanner(status);
+      return;
+    }
+    if (status !== "ok") return;
+    const recoveredPin = (params.get("pin") || "").trim();
+    if (!recoveredPin) return;
+    // Capture browser query state after hydration. This only pre-fills the
+    // form; submit still requires email and the normal server PIN check.
+    setPin(recoveredPin);
+    setRecoveryBanner("ok");
+  }, [school.id]);
 
   async function registerForRelease() {
     const response = await fetch("/api/portal/pre-release-register", {
@@ -196,6 +220,23 @@ export default function SchoolDirectLoginForm({ school }: { school: SchoolRow })
         <h1 style={{ fontSize: 30, fontWeight: 800, textAlign: "center", margin: "0 0 10px", color: "#111" }}>
           Client Panel
         </h1>
+        {recoveryBanner ? (
+          <div role={recoveryBanner === "ok" ? "status" : "alert"} style={{
+            margin: "0 0 16px", padding: "12px 14px", borderRadius: 12, fontSize: 13,
+            fontWeight: 700, lineHeight: 1.5, textAlign: "center",
+            background: recoveryBanner === "ok" ? "#dcfce7" : "#fff7ed",
+            border: `1px solid ${recoveryBanner === "ok" ? "#86efac" : "#fed7aa"}`,
+            color: recoveryBanner === "ok" ? "#166534" : "#9a3412",
+          }}>
+            {recoveryBanner === "ok"
+              ? "We found your gallery and pre-filled the PIN. Enter your email below to continue."
+              : recoveryBanner === "expired"
+                ? "That recovery link expired. Try the I-lost-the-PIN form again — you’ll get a fresh link."
+                : recoveryBanner === "used"
+                  ? "That recovery link has already been used. If you need another, request a new one."
+                  : "That recovery link isn’t valid. Please request a new one."}
+          </div>
+        ) : null}
         <p style={{ fontSize: 14, color: "#667085", margin: "0 0 28px", lineHeight: 1.7, textAlign: "center" }}>
           {registering
             ? "Enter your email and we'll send you a notification as soon as the photos are ready."
