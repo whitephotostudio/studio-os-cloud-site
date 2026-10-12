@@ -10,9 +10,8 @@
 //   - Photographers with voice_premium_enabled = false  → 403, browser falls back
 //   - Photographers above their voice_monthly_char_limit → 429, browser falls back
 //
-// On any non-admin success we increment voice_chars_used_this_month by the
-// final character count.  When voice_usage_period_start rolls into a new
-// calendar month we reset the counter before incrementing.
+// A service-only database transaction reserves each request's characters.
+// Failed calls release only their own reservation, once, in the same period.
 
 import { NextRequest, NextResponse } from "next/server";
 import {
@@ -20,6 +19,7 @@ import {
   resolveDashboardAuth,
 } from "@/lib/dashboard-auth";
 import { getOrCreatePhotographerByUser } from "@/lib/payments";
+import { releaseVoiceUsage, reserveVoiceUsage, VoiceQuotaUnavailable } from "@/lib/voice-quota";
 
 export const dynamic = "force-dynamic";
 
@@ -31,14 +31,6 @@ type Body = {
   text?: string;
   voice_id?: string;
 };
-
-/** Returns true when `since` falls in a different calendar month than now. */
-function isNewMonth(since: Date, now: Date): boolean {
-  return (
-    since.getUTCFullYear() !== now.getUTCFullYear() ||
-    since.getUTCMonth() !== now.getUTCMonth()
-  );
-}
 
 export async function POST(request: NextRequest) {
   const apiKey = process.env.ELEVENLABS_API_KEY;
@@ -55,7 +47,9 @@ export async function POST(request: NextRequest) {
 
   let body: Body = {};
   try {
-    body = (await request.json()) as Body;
+    const parsed: unknown = await request.json();
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Invalid JSON body.");
+    body = parsed as Body;
   } catch {
     return NextResponse.json(
       { ok: false, message: "Invalid JSON body." },
@@ -87,88 +81,34 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  // Resolve the photographer record so we can check + update voice quota.
+  // The database rechecks current admin/access/limit while holding the row
+  // lock. A stale route-level SELECT must never authorize the paid request.
   const service = createDashboardServiceClient();
   const photographer = await getOrCreatePhotographerByUser(service, user);
-
-  // Refresh the row with the voice columns (the helper above doesn't return them).
-  const { data: voiceRow, error: voiceErr } = await service
-    .from("photographers")
-    .select(
-      "id,is_platform_admin,voice_premium_enabled,voice_monthly_char_limit,voice_chars_used_this_month,voice_usage_period_start",
-    )
-    .eq("id", photographer.id)
-    .maybeSingle();
-
-  if (voiceErr || !voiceRow) {
+  let quota: Awaited<ReturnType<typeof reserveVoiceUsage>>;
+  try {
+    quota = await reserveVoiceUsage(service, photographer.id, charCount);
+  } catch {
     return NextResponse.json(
-      {
-        ok: false,
-        code: "lookup_failed",
-        message: "Could not load voice settings.",
-      },
-      { status: 500 },
+      { ok: false, code: "voice_accounting_unavailable", message: new VoiceQuotaUnavailable().message },
+      { status: 503 },
     );
   }
-
-  const isAdmin = Boolean(voiceRow.is_platform_admin);
-
-  if (!isAdmin) {
-    if (!voiceRow.voice_premium_enabled) {
-      return NextResponse.json(
-        {
-          ok: false,
-          code: "voice_disabled",
-          message:
-            "Premium voice isn't enabled for your account. Contact your administrator to request access.",
-        },
-        { status: 403 },
-      );
-    }
-
-    // Roll the monthly window if we've crossed a calendar month.
-    const periodStart = voiceRow.voice_usage_period_start
-      ? new Date(voiceRow.voice_usage_period_start as string)
-      : new Date();
-    const now = new Date();
-    let usedThisMonth = Number(voiceRow.voice_chars_used_this_month ?? 0);
-    let periodStartIso: string | null = null;
-    if (isNewMonth(periodStart, now)) {
-      usedThisMonth = 0;
-      periodStartIso = now.toISOString();
-    }
-
-    const limit = Number(voiceRow.voice_monthly_char_limit ?? 0);
-    if (limit <= 0 || usedThisMonth + charCount > limit) {
-      return NextResponse.json(
-        {
-          ok: false,
-          code: "voice_limit_reached",
-          message:
-            "You've reached your monthly premium voice limit. Browser voice will be used for the rest of the month.",
-          used_this_month: usedThisMonth,
-          monthly_limit: limit,
-        },
-        { status: 429 },
-      );
-    }
-
-    // Optimistically reserve the budget so two parallel requests don't both
-    // squeak through.  If the upstream call fails we'll roll the counter back.
-    const reservedUsage = usedThisMonth + charCount;
-    const updatePayload: Record<string, unknown> = {
-      voice_chars_used_this_month: reservedUsage,
-    };
-    if (periodStartIso) updatePayload.voice_usage_period_start = periodStartIso;
-    await service
-      .from("photographers")
-      .update(updatePayload)
-      .eq("id", photographer.id);
+  if (quota.status === "disabled") {
+    return NextResponse.json({ ok: false, code: "voice_disabled",
+      message: "Premium voice isn't enabled for your account. Contact your administrator to request access." }, { status: 403 });
   }
+  if (quota.status === "limit") {
+    return NextResponse.json({ ok: false, code: "voice_limit_reached",
+      message: "You've reached your monthly premium voice limit. Browser voice will be used for the rest of the month.",
+      used_this_month: quota.usedThisMonth, monthly_limit: quota.monthlyLimit }, { status: 429 });
+  }
+  const reservationId = quota.status === "reserved" ? quota.reservationId : null;
 
   const modelId = process.env.ELEVENLABS_MODEL || "eleven_multilingual_v2";
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 15_000);
+  let delivered = false;
 
   try {
     const upstream = await fetch(
@@ -196,18 +136,6 @@ export async function POST(request: NextRequest) {
 
     if (!upstream.ok) {
       const errText = await upstream.text().catch(() => "");
-      // Roll back the optimistic usage we charged for non-admins.
-      if (!isAdmin) {
-        await service
-          .from("photographers")
-          .update({
-            voice_chars_used_this_month: Math.max(
-              0,
-              Number(voiceRow.voice_chars_used_this_month ?? 0),
-            ),
-          })
-          .eq("id", photographer.id);
-      }
       return NextResponse.json(
         {
           ok: false,
@@ -219,7 +147,7 @@ export async function POST(request: NextRequest) {
     }
 
     const audio = await upstream.arrayBuffer();
-    return new Response(audio, {
+    const response = new Response(audio, {
       status: 200,
       headers: {
         "Content-Type": "audio/mpeg",
@@ -227,19 +155,9 @@ export async function POST(request: NextRequest) {
         "Cache-Control": "no-store",
       },
     });
+    delivered = true;
+    return response;
   } catch (err) {
-    // Roll back the optimistic usage on network failures too.
-    if (!isAdmin) {
-      await service
-        .from("photographers")
-        .update({
-          voice_chars_used_this_month: Math.max(
-            0,
-            Number(voiceRow.voice_chars_used_this_month ?? 0),
-          ),
-        })
-        .eq("id", photographer.id);
-    }
     return NextResponse.json(
       {
         ok: false,
@@ -255,5 +173,13 @@ export async function POST(request: NextRequest) {
     );
   } finally {
     clearTimeout(timeout);
+    if (!delivered && reservationId) {
+      try { await releaseVoiceUsage(service, photographer.id, reservationId); }
+      catch {
+        // Keep the reservation charged if its release cannot be confirmed.
+        // Never overwrite the counter or expose RPC/customer details in logs.
+        console.error("[tts] Voice reservation release unavailable.");
+      }
+    }
   }
 }
