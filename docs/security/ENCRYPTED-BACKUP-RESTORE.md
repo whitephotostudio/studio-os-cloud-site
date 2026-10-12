@@ -16,6 +16,14 @@ The protected original key is `photo-manifest-private.pem` in the Mac's
 file and its permissions. The photo master key can be recovered from the RSA-wrapped
 `key.enc` inside the photo backup, so retaining this RSA private key is sufficient.
 Preserve a trusted copy of the verification receipts with the private key too.
+For photos, this includes `photo-backup-authenticity-receipt.json` from the
+protected Mac folder. It records the trusted `manifestSha256` and
+`keyEnvelopeSha256` for `manifest.enc` and `key.enc`. The key-envelope digest was
+captured after decrypting it and comparing its master key with the protected
+Mac master key. The USB copy is a convenience copy; a receipt obtained only from
+the same USB drive cannot authenticate that drive's contents. Retain the trusted
+receipt separately with the private key. RSA encryption alone does not establish
+who created a replacement key envelope.
 
 ## What is backed up
 
@@ -62,13 +70,72 @@ The helper refuses plaintext recovery onto `/Volumes`. Extract the resulting
 `.tar.gz` only inside a protected Mac folder. Check the encrypted archive's
 `checkpoint-index.json` against the recovered files before using them.
 
-## Recover photos and return to service
+## Verify and recover selected photos offline
 
 Keep `manifest.enc`, `key.enc`, the `objects` folder and verification files together.
-The reviewed `scripts/security-photo-backup.mjs` code in the security release
-contains the manifest and photo decryption format. Its verifier checks AES-GCM tags,
-byte counts and SHA256s. Restore selected samples to a protected Mac location and
-visually inspect them before planning a full recovery.
+The standalone `security-photo-restore.mjs` helper requires only Node.js 20 or
+later and built-in Node modules. It performs no network requests, provider changes
+or uploads. In a source checkout, run `node scripts/security-photo-restore.mjs`.
+For the USB copy beside `restore-checkpoint.mjs`, use the full path shown below.
+
+Take both digests from the separately retained trusted authenticity receipt.
+Replace the placeholders with its `manifestSha256` and `keyEnvelopeSha256`.
+The backup directory is the photo ID folder containing `manifest.enc`, not the
+parent directory containing the checkpoint archive.
+
+```sh
+node '/Volumes/2026-mini/StudioOS-Security-20261012/security-photo-restore.mjs' verify-samples \
+  --backup-dir '/Volumes/2026-mini/StudioOS-Security-20261012/<PHOTO-BACKUP-ID>' \
+  --manifest-sha256 '<TRUSTED-manifestSha256>' \
+  --wrapped-key-sha256 '<TRUSTED-keyEnvelopeSha256>' \
+  --private-key '/Users/<your-Mac-user>/private-keys/photo-manifest-private.pem'
+```
+
+This verifies the first, middle and last inventory objects, counting each only
+once. It authenticates the manifest, wrapped key, record MAC, object identity,
+AES-GCM tag, byte count and SHA256, then discards decrypted photo bytes in memory.
+Successful JSON reports `ok: true`, `objectsVerified` and `bytesVerified`. It checks
+selected samples, so success does not establish that every other object is intact
+or that an in-progress backup is complete. No original names, URLs or keys appear
+in its output.
+
+To recover one object, create a private folder on the Mac with mode `700`. The
+private-key folder must also have mode `700`, and the key must have mode `600`.
+Use physical paths without symlinked ancestors. Keep the key outside the photo
+backup and off `/Volumes`.
+
+```sh
+mkdir -m 700 '/Users/<your-Mac-user>/StudioOS-Restore'
+
+node '/Volumes/2026-mini/StudioOS-Security-20261012/security-photo-restore.mjs' restore-one \
+  --backup-dir '/Volumes/2026-mini/StudioOS-Security-20261012/<PHOTO-BACKUP-ID>' \
+  --manifest-sha256 '<TRUSTED-manifestSha256>' \
+  --wrapped-key-sha256 '<TRUSTED-keyEnvelopeSha256>' \
+  --private-key '/Users/<your-Mac-user>/private-keys/photo-manifest-private.pem' \
+  --index 0 \
+  --restore-dir '/Users/<your-Mac-user>/StudioOS-Restore' \
+  --output 'recovered-sample.bin'
+```
+
+`--index` is a zero-based position in the encrypted inventory. Have an authorized
+developer identify other desired positions privately when needed. `--output` is
+an owner-chosen filename, with no directory components. The helper never uses an
+original object key as a local path. Choose the extension appropriate to the
+selected original when known; changing the filename does not convert its format.
+
+Recovery refuses existing files, symlinks, non-private destinations, any plaintext
+destination under `/Volumes`, and any destination inside the encrypted backup.
+It streams to a mode `600` private temporary file, verifies the entire object,
+then publishes the chosen filename atomically without overwriting another file.
+Verification failures remove the temporary file and publish no photo. If the
+process or Mac is forcibly stopped, an unverified `.studio-photo-restore-*.partial`
+file can remain in that private folder; delete it rather than treating it as a
+recovered photo. The CLI reports `restoreVerified: true` only for a completed,
+authenticated object. Visually inspect recovered samples before planning a full
+recovery. Keep recovered plaintext under the owner's access controls; folder
+permissions do not establish whether the Mac's disk encryption is enabled.
+
+## Return to service
 
 Have the developer restore into a separate private database and storage bucket
 first. Validate galleries, original/cutout photos, orders, payments and download
