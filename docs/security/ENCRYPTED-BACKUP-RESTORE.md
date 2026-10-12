@@ -48,7 +48,7 @@ Choose the checkpoint filename and matching receipt on the backup drive. Prefer 
 trusted receipt kept with the private key when checking authenticity.
 
 ```sh
-node restore-checkpoint.mjs verify \
+node '/Volumes/2026-mini/StudioOS-Security-20261012/restore-checkpoint.mjs' verify \
   --archive '/Volumes/2026-mini/StudioOS-Security-20261012/checkpoint-<ID>.enc' \
   --private-key '/private/Mac/folder/photo-manifest-private.pem' \
   --receipt '/private/Mac/folder/checkpoint-<ID>.verification.json'
@@ -59,7 +59,7 @@ memory; it writes no plaintext customer data. To recover the archive, use a new
 private Mac directory:
 
 ```sh
-node restore-checkpoint.mjs restore \
+node '/Volumes/2026-mini/StudioOS-Security-20261012/restore-checkpoint.mjs' restore \
   --archive '/Volumes/2026-mini/StudioOS-Security-20261012/checkpoint-<ID>.enc' \
   --private-key '/private/Mac/folder/photo-manifest-private.pem' \
   --receipt '/private/Mac/folder/checkpoint-<ID>.verification.json' \
