@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { generateKeyPairSync, randomBytes, createHash } from 'node:crypto';
+import { generateKeyPairSync, randomBytes, createHash, publicEncrypt, constants } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -12,6 +12,7 @@ import { sealManifest, openManifest, validateManifest, buildManifest, presignGet
 const keys = generateKeyPairSync('rsa', { modulusLength: 2048,
   publicKeyEncoding: { type: 'spki', format: 'pem' }, privateKeyEncoding: { type: 'pkcs8', format: 'pem' } });
 const format = 'studio-security-photo-manifest-v1';
+const receiptFormat = 'studio-security-photo-authenticity-receipt-v1';
 const backupId = 'security_backup_test_20261011';
 const hash = value => createHash('sha256').update(value).digest('hex');
 const config = { accountId: 'account', accessKeyId: 'test-access', secretAccessKey: 'test-secret', bucket: 'photos' };
@@ -114,7 +115,9 @@ test('streamed empty objects verify and truncated source bodies fail closed', as
   const empty = path.join(directory, 'empty.enc');
   const record = await encryptPhotoResponse(new Response(Buffer.alloc(0)), empty, key, aad, 0);
   assert.deepEqual(await verifyEncryptedPhoto(empty, key, aad, record), { bytes: 0, sha256: hash(Buffer.alloc(0)) });
-  await assert.rejects(encryptPhotoResponse(new Response(Buffer.from('short')), path.join(directory, 'short.enc'), key, aad, 6), /SOURCE_SIZE_CHANGED/);
+  const partial = path.join(directory, 'short.enc');
+  await assert.rejects(encryptPhotoResponse(new Response(Buffer.from('short')), partial, key, aad, 6), /SOURCE_SIZE_CHANGED/);
+  assert.equal(await fs.lstat(partial).then(() => true, () => false), false, 'failed encryption removes only its own incomplete file');
 });
 
 test('local backup encrypts every object, verifies restore samples and safely resumes without downloading again', async t => {
@@ -154,13 +157,228 @@ test('local backup encrypts every object, verifies restore samples and safely re
   assert.equal((await fs.readFile(path.join(root, 'key.enc'))).includes(Buffer.from(backupId)), false);
 });
 
+async function receiptFixture(t) {
+  const directory = await temp(t), keyDirectory = path.join(directory, 'mac-keys'), destination = path.join(directory, 'encrypted-drive');
+  await fs.mkdir(keyDirectory, { mode: 0o700 });
+  const privateKeyFile = path.join(keyDirectory, 'private.pem'), manifestFile = path.join(directory, 'manifest.enc');
+  await fs.writeFile(privateKeyFile, keys.privateKey, { mode: 0o600 });
+  const encrypted = sealManifest(manifest(), keys.publicKey); await fs.writeFile(manifestFile, encrypted);
+  const root = path.join(destination, backupId), wrappedFile = path.join(root, 'key.enc');
+  const keyFile = path.join(keyDirectory, `photo-backup-${backupId}.key`);
+  const receiptFile = path.join(keyDirectory, `photo-backup-${backupId}.authenticity-receipt.json`);
+  let reads = 0;
+  const options = { manifestFile, expectedManifestSha256: hash(encrypted), privateKeyFile, keyDirectory, destination,
+    fetcher: async () => { reads += 1; return new Response(Buffer.from('img'), { headers: { etag: 'stable-etag', 'content-length': '3' } }); } };
+  const wrap = key => publicEncrypt({ key: keys.publicKey, padding: constants.RSA_PKCS1_OAEP_PADDING, oaepHash: 'sha256' },
+    Buffer.from(JSON.stringify({ backupId, key: key.toString('base64') })));
+  return { directory, root, wrappedFile, keyFile, receiptFile, keyDirectory, options, wrap, reads: () => reads };
+}
+
+test('writer automatically retains both trusted digests in a private per-backup receipt before downloading photos', async t => {
+  const f = await receiptFixture(t), originalFetcher = f.options.fetcher;
+  f.options.fetcher = async (...args) => {
+    const receipt = JSON.parse(await fs.readFile(f.receiptFile, 'utf8'));
+    assert.deepEqual(receipt, { format: receiptFormat, backupId, manifestSha256: f.options.expectedManifestSha256,
+      keyEnvelopeSha256: hash(await fs.readFile(f.wrappedFile)) });
+    return originalFetcher(...args);
+  };
+  const summary = await downloadBackup(f.options), receiptBytes = await fs.readFile(f.receiptFile);
+  assert.equal((await fs.stat(f.receiptFile)).mode & 0o777, 0o600);
+  assert.equal((await fs.stat(f.receiptFile)).nlink, 1);
+  assert.equal((await fs.readdir(f.root)).some(name => name.includes('authenticity-receipt')), false);
+  for (const value of [keys.privateKey.slice(0, 30), 'student-private', 'private-secret', 'storage.example.test',
+    (await fs.readFile(f.keyFile)).toString('base64')]) assert.equal(receiptBytes.includes(value), false);
+  assert.deepEqual(await downloadBackup(f.options), summary);
+  assert.deepEqual(await fs.readFile(f.receiptFile), receiptBytes, 'resume preserves the existing trusted receipt');
+  assert.equal(f.reads(), 1);
+  await fs.rm(f.keyFile);
+  assert.deepEqual(await downloadBackup(f.options), summary, 'trusted digest permits recovery of a missing protected master key');
+  assert.equal(f.reads(), 1);
+});
+
+test('existing protected master key can establish a receipt for an older backup without replacing its envelope', async t => {
+  const f = await receiptFixture(t); await downloadBackup(f.options);
+  const wrapped = await fs.readFile(f.wrappedFile), protectedKey = await fs.readFile(f.keyFile);
+  await fs.rm(f.receiptFile);
+  await downloadBackup(f.options);
+  assert.deepEqual(await fs.readFile(f.wrappedFile), wrapped);
+  assert.deepEqual(await fs.readFile(f.keyFile), protectedKey);
+  assert.equal(JSON.parse(await fs.readFile(f.receiptFile, 'utf8')).keyEnvelopeSha256, hash(wrapped));
+  assert.equal(f.reads(), 1);
+});
+
+test('unanchored USB-only wrapped keys cannot be adopted as a new trusted master key or receipt', async t => {
+  const f = await receiptFixture(t); await fs.mkdir(f.root, { recursive: true });
+  await fs.writeFile(f.wrappedFile, f.wrap(randomBytes(32)));
+  await assert.rejects(downloadBackup(f.options), /TRUSTED_BACKUP_KEY_REQUIRED/);
+  for (const file of [f.keyFile, f.receiptFile]) assert.equal(await fs.lstat(file).then(() => true, () => false), false);
+  assert.equal(f.reads(), 0);
+});
+
+test('substituted envelope never changes the protected key or authenticates replacement photo records', async t => {
+  const f = await receiptFixture(t); await downloadBackup(f.options);
+  const receipt = await fs.readFile(f.receiptFile), protectedKey = await fs.readFile(f.keyFile);
+  await fs.writeFile(f.wrappedFile, f.wrap(randomBytes(32)));
+  await assert.rejects(downloadBackup(f.options), /TRUSTED_RECEIPT_MISMATCH/);
+  assert.deepEqual(await fs.readFile(f.receiptFile), receipt);
+  assert.deepEqual(await fs.readFile(f.keyFile), protectedKey);
+  await fs.rm(f.receiptFile);
+  await assert.rejects(downloadBackup(f.options), /BACKUP_KEY_MISMATCH/);
+  assert.equal(await fs.lstat(f.receiptFile).then(() => true, () => false), false);
+  assert.equal(f.reads(), 1);
+});
+
+test('inconsistent trusted receipts fail without downloads, overwrites or silent rewrapping', async t => {
+  const f = await receiptFixture(t); await downloadBackup(f.options);
+  const original = await fs.readFile(f.receiptFile), wrapped = await fs.readFile(f.wrappedFile);
+  for (const field of ['format', 'backupId', 'manifestSha256', 'keyEnvelopeSha256']) {
+    const altered = JSON.parse(original); altered[field] = field.endsWith('Sha256') ? '0'.repeat(64) : 'inconsistent_fixture_value';
+    const bytes = Buffer.from(JSON.stringify(altered)); await fs.writeFile(f.receiptFile, bytes);
+    await assert.rejects(downloadBackup(f.options), /TRUSTED_RECEIPT_MISMATCH/);
+    assert.deepEqual(await fs.readFile(f.receiptFile), bytes); assert.deepEqual(await fs.readFile(f.wrappedFile), wrapped);
+  }
+  await fs.writeFile(f.receiptFile, original); await fs.rm(f.wrappedFile);
+  await assert.rejects(downloadBackup(f.options), /TRUSTED_RECEIPT_MISMATCH/);
+  assert.equal(await fs.lstat(f.wrappedFile).then(() => true, () => false), false);
+  assert.equal(f.reads(), 1);
+});
+
+test('receipt refuses symlinks, hard links, nonprivate files and nonprivate key directories', async t => {
+  const f = await receiptFixture(t); await downloadBackup(f.options);
+  const original = await fs.readFile(f.receiptFile), alternate = path.join(f.directory, 'preserved-receipt.json');
+  await fs.rename(f.receiptFile, alternate); await fs.symlink(alternate, f.receiptFile);
+  await assert.rejects(downloadBackup(f.options)); assert.deepEqual(await fs.readFile(alternate), original);
+  await fs.rm(f.receiptFile); await fs.link(alternate, f.receiptFile);
+  await assert.rejects(downloadBackup(f.options), /PRIVATE_KEY_FILE_REQUIRED/);
+  await fs.rm(f.receiptFile); await fs.rename(alternate, f.receiptFile);
+  await fs.chmod(f.receiptFile, 0o644); await assert.rejects(downloadBackup(f.options), /PRIVATE_KEY_FILE_REQUIRED/);
+  assert.equal((await fs.stat(f.receiptFile)).mode & 0o777, 0o644, 'unsafe existing receipts are rejected rather than blessed by chmod');
+  await fs.chmod(f.receiptFile, 0o600); await fs.chmod(f.keyDirectory, 0o755);
+  await assert.rejects(downloadBackup(f.options), /PRIVATE_KEY_DIRECTORY_REQUIRED/);
+  await fs.chmod(f.keyDirectory, 0o700);
+  const alias = path.join(f.directory, 'key-directory-alias'); await fs.symlink(f.keyDirectory, alias);
+  await assert.rejects(downloadBackup({ ...f.options, keyDirectory: alias }), /PRIVATE_KEY_DIRECTORY_REQUIRED/);
+  assert.equal(f.reads(), 1);
+});
+
+test('manifest authentication failure cannot create a trusted receipt or protected master key', async t => {
+  const f = await receiptFixture(t), envelope = JSON.parse(await fs.readFile(f.options.manifestFile, 'utf8'));
+  const tag = Buffer.from(envelope.tag, 'base64'); tag[0] ^= 1; envelope.tag = tag.toString('base64');
+  const encrypted = Buffer.from(JSON.stringify(envelope)); await fs.writeFile(f.options.manifestFile, encrypted);
+  await assert.rejects(downloadBackup({ ...f.options, expectedManifestSha256: hash(encrypted) }));
+  for (const file of [f.keyFile, f.receiptFile]) assert.equal(await fs.lstat(file).then(() => true, () => false), false);
+  assert.equal(f.reads(), 0);
+});
+
+async function outputFixture(t) {
+  const f = await receiptFixture(t); await downloadBackup(f.options);
+  const objectDirectory = path.join(f.root, 'objects');
+  const cipherFile = path.join(objectDirectory, (await fs.readdir(objectDirectory)).find(name => name.endsWith('.enc')));
+  const protectedFiles = [f.options.privateKeyFile, f.keyFile, f.receiptFile];
+  const originals = await Promise.all(protectedFiles.map(file => fs.readFile(file)));
+  const sentinels = originals.map((_bytes, index) => path.join(f.keyDirectory, `preserved-sentinel-${index}`));
+  for (let index = 0; index < sentinels.length; index += 1) await fs.writeFile(sentinels[index], originals[index], { mode: 0o600 });
+  const unchanged = async () => {
+    for (let index = 0; index < originals.length; index += 1) {
+      assert.deepEqual(await fs.readFile(protectedFiles[index]), originals[index]);
+      assert.deepEqual(await fs.readFile(sentinels[index]), originals[index]);
+    }
+    for (const directory of [f.root, objectDirectory]) assert.equal((await fs.readdir(directory)).some(name => name.includes('.partial-')), false);
+  };
+  return { ...f, objectDirectory, cipherFile, recordFile: `${cipherFile}.json`, sentinels, unchanged };
+}
+
+test('each external final output rejects planted symlinks and hard links without changing protected RSA, master key or receipt bytes', async t => {
+  const outputs = ['manifest', 'verification', 'ciphertext', 'record', 'wrapped-key'];
+  for (const [index, output] of outputs.entries()) for (const link of ['symlink', 'hard-link']) {
+    await t.test(`${output} ${link}`, async child => {
+      const f = await outputFixture(child);
+      const files = { manifest: path.join(f.root, 'manifest.enc'), verification: path.join(f.root, 'verification.json'),
+        ciphertext: f.cipherFile, record: f.recordFile, 'wrapped-key': f.wrappedFile };
+      const file = files[output]; await fs.rm(file);
+      if (link === 'symlink') await fs.symlink(f.sentinels[index % 3], file);
+      else await fs.link(f.sentinels[index % 3], file);
+      await assert.rejects(downloadBackup(f.options), /INVALID_BACKUP_OUTPUT/);
+      await f.unchanged(); assert.equal(f.reads(), 1, 'unsafe existing output is rejected before new downloads');
+      assert.equal((await fs.lstat(file)).isSymbolicLink(), link === 'symlink');
+    });
+  }
+});
+
+test('external final outputs reject existing directories and leave no temporary files', async t => {
+  for (const output of ['manifest', 'verification', 'ciphertext', 'record', 'wrapped-key']) {
+    await t.test(output, async child => {
+      const f = await outputFixture(child);
+      const files = { manifest: path.join(f.root, 'manifest.enc'), verification: path.join(f.root, 'verification.json'),
+        ciphertext: f.cipherFile, record: f.recordFile, 'wrapped-key': f.wrappedFile };
+      await fs.rm(files[output]); await fs.mkdir(files[output]);
+      await assert.rejects(downloadBackup(f.options), /INVALID_BACKUP_OUTPUT/);
+      assert.deepEqual(await fs.readdir(files[output]), []); await f.unchanged(); assert.equal(f.reads(), 1);
+    });
+  }
+});
+
+test('legacy predictable record partial links are never opened while ordinary repair and resume still succeed', async t => {
+  for (const link of ['symlink', 'hard-link']) await t.test(link, async child => {
+    const f = await outputFixture(child), legacyPartial = `${f.recordFile}.partial`;
+    if (link === 'symlink') await fs.symlink(f.sentinels[1], legacyPartial);
+    else await fs.link(f.sentinels[1], legacyPartial);
+    await fs.rm(f.cipherFile); await fs.rm(f.recordFile);
+    const summary = await downloadBackup(f.options); assert.equal(summary.ok, true); assert.equal(f.reads(), 2);
+    await f.unchanged(); assert.equal((await fs.lstat(legacyPartial)).isSymbolicLink(), link === 'symlink');
+    assert.deepEqual(await downloadBackup(f.options), summary); assert.equal(f.reads(), 2);
+  });
+});
+
+test('a final record or verification link planted after preflight cannot redirect atomic publication', async t => {
+  for (const output of ['record', 'verification']) await t.test(output, async child => {
+    const f = await outputFixture(child), file = output === 'record' ? f.recordFile : path.join(f.root, 'verification.json');
+    await fs.rm(f.cipherFile); await fs.rm(f.recordFile);
+    const fetcher = f.options.fetcher;
+    f.options.fetcher = async (...args) => {
+      await fs.rm(file, { force: true }); await fs.symlink(f.sentinels[2], file); return fetcher(...args);
+    };
+    await assert.rejects(downloadBackup(f.options), /INVALID_BACKUP_OUTPUT/);
+    await f.unchanged(); assert.equal(f.reads(), 2);
+  });
+});
+
+test('exclusive cipher creation preserves preexisting link targets and removes no file it did not create', async t => {
+  for (const link of ['symlink', 'hard-link']) await t.test(link, async child => {
+    const directory = await temp(child), sentinel = path.join(directory, 'protected-sentinel'), file = path.join(directory, 'cipher.partial');
+    const original = Buffer.from(keys.privateKey); await fs.writeFile(sentinel, original, { mode: 0o600 });
+    if (link === 'symlink') await fs.symlink(sentinel, file); else await fs.link(sentinel, file);
+    await assert.rejects(encryptPhotoResponse(new Response(Buffer.from('img')), file, randomBytes(32), Buffer.from('bound'), 3), error => error.code === 'EEXIST');
+    assert.deepEqual(await fs.readFile(sentinel), original); assert.equal((await fs.lstat(file)).isSymbolicLink(), link === 'symlink');
+  });
+});
+
+test('mid-stream cipher pathname substitution cannot redirect body or GCM-tag writes into a protected file', async t => {
+  for (const link of ['symlink', 'hard-link']) await t.test(link, async child => {
+    const directory = await temp(child), sentinel = path.join(directory, 'protected-sentinel'), file = path.join(directory, 'cipher.partial');
+    const original = Buffer.from(keys.privateKey), source = Buffer.from('synthetic-photo-body');
+    await fs.writeFile(sentinel, original, { mode: 0o600 }); let substituted = false;
+    const stream = new ReadableStream({ async pull(controller) {
+      assert.equal((await fs.lstat(file)).isFile(), true, 'exclusive header has already been created');
+      await fs.rm(file); if (link === 'symlink') await fs.symlink(sentinel, file); else await fs.link(sentinel, file);
+      substituted = true; controller.enqueue(source); controller.close();
+    } }, { highWaterMark: 0 });
+    await assert.rejects(encryptPhotoResponse(new Response(stream, { headers: { 'content-length': String(source.length) } }),
+      file, randomBytes(32), Buffer.from('bound'), source.length), /BACKUP_OUTPUT_CHANGED/);
+    assert.equal(substituted, true); assert.deepEqual(await fs.readFile(sentinel), original);
+    assert.equal(await fs.lstat(file).then(() => true, () => false), false, 'substituted temporary path is cleaned without touching its target');
+  });
+});
+
 test('backup refuses readable private keys, colocated keys and unsafe concurrency', async t => {
   const directory = await temp(t), keyDirectory = path.join(directory, 'keys'), destination = path.join(directory, 'external');
   await fs.mkdir(keyDirectory, { mode: 0o700 });
   const privateKeyFile = path.join(keyDirectory, 'private.pem'), manifestFile = path.join(directory, 'manifest.enc');
   await fs.writeFile(privateKeyFile, keys.privateKey, { mode: 0o644 });
+  await fs.chmod(privateKeyFile, 0o644);
   await fs.writeFile(manifestFile, sealManifest(manifest(), keys.publicKey));
-  const options = { privateKeyFile, manifestFile, expectedManifestSha256: hash(await fs.readFile(manifestFile)), keyDirectory, destination };
+  const options = { privateKeyFile, manifestFile, expectedManifestSha256: hash(await fs.readFile(manifestFile)), keyDirectory, destination,
+    fetcher: async () => { assert.fail('unsafe key setup must never reach source downloads'); } };
   await assert.rejects(downloadBackup(options), /PRIVATE_KEY_FILE_REQUIRED/);
   await fs.chmod(privateKeyFile, 0o600);
   await assert.rejects(downloadBackup({ ...options, keyDirectory: path.join(destination, 'keys') }), /BACKUP_KEYS_MUST_BE_SEPARATE/);

@@ -2,7 +2,7 @@
 // Opt-in, read-only source inventory and encrypted off-site photo backup.
 // Object names, signed URLs, and photo bytes are never written in plaintext.
 import { createHash, createHmac, randomBytes, publicEncrypt, privateDecrypt, createPublicKey, createPrivateKey, constants, createCipheriv, createDecipheriv } from 'node:crypto';
-import { promises as fs, createReadStream, createWriteStream } from 'node:fs';
+import { promises as fs, constants as fileConstants } from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { Readable, Transform, Writable } from 'node:stream';
@@ -13,6 +13,7 @@ import { S3Client, ListObjectsV2Command } from '@aws-sdk/client-s3';
 import { createClient } from '@supabase/supabase-js';
 
 const FORMAT = 'studio-security-photo-manifest-v1';
+const RECEIPT_FORMAT = 'studio-security-photo-authenticity-receipt-v1';
 const MAGIC = Buffer.from('SOSPHB01');
 const OUTPUT_BUCKET = 'studio-os-downloads';
 const MAX_MANIFEST_BYTES = 128 * 1024 * 1024;
@@ -269,10 +270,84 @@ async function privateDirectory(directory) {
   const stat = await fs.lstat(directory);
   if (!stat.isDirectory() || stat.isSymbolicLink() || (stat.mode & 0o077) !== 0 || (process.getuid && stat.uid !== process.getuid())) fail('PRIVATE_KEY_DIRECTORY_REQUIRED');
 }
-async function readPrivateFile(file) {
-  const stat = await fs.lstat(file);
-  if (!stat.isFile() || stat.isSymbolicLink() || (stat.mode & 0o077) !== 0 || (process.getuid && stat.uid !== process.getuid())) fail('PRIVATE_KEY_FILE_REQUIRED');
-  return fs.readFile(file);
+async function readLocalFile(file, { privateFile = false, maximum = 64 * 1024, exactMode } = {}) {
+  const handle = await fs.open(file, fileConstants.O_RDONLY | fileConstants.O_NOFOLLOW | fileConstants.O_NONBLOCK);
+  try {
+    const stat = await handle.stat();
+    if (!stat.isFile() || (privateFile && ((stat.mode & 0o077) !== 0 || stat.nlink !== 1 ||
+      (exactMode !== undefined && (stat.mode & 0o777) !== exactMode) || (process.getuid && stat.uid !== process.getuid())))) fail('PRIVATE_KEY_FILE_REQUIRED');
+    if (stat.size < 1 || stat.size > maximum) fail('INVALID_BACKUP_FILE_SIZE');
+    const data = Buffer.alloc(stat.size); let offset = 0;
+    while (offset < data.length) {
+      const { bytesRead } = await handle.read(data, offset, data.length - offset, offset);
+      if (!bytesRead) fail('BACKUP_FILE_CHANGED');
+      offset += bytesRead;
+    }
+    if ((await handle.stat()).size !== stat.size) fail('BACKUP_FILE_CHANGED');
+    return data;
+  } finally { await handle.close(); }
+}
+const readPrivateFile = (file, options = {}) => readLocalFile(file, { ...options, privateFile: true });
+
+async function readTrustedReceipt(file) {
+  let bytes;
+  try { bytes = await readPrivateFile(file, { maximum: 4096, exactMode: 0o600 }); }
+  catch (error) { if (error.code === 'ENOENT') return; throw error; }
+  let receipt;
+  try { receipt = JSON.parse(bytes.toString('utf8')); } catch { fail('TRUSTED_RECEIPT_MISMATCH'); }
+  if (receipt?.format !== RECEIPT_FORMAT || !safeId(receipt.backupId) ||
+    !/^[a-f0-9]{64}$/.test(receipt.manifestSha256 || '') || !/^[a-f0-9]{64}$/.test(receipt.keyEnvelopeSha256 || '')) fail('TRUSTED_RECEIPT_MISMATCH');
+  return receipt;
+}
+
+function checkTrustedReceipt(receipt, expected) {
+  for (const field of ['format', 'backupId', 'manifestSha256', 'keyEnvelopeSha256']) {
+    if (receipt[field] !== expected[field]) fail('TRUSTED_RECEIPT_MISMATCH');
+  }
+}
+
+async function retainTrustedReceipt(file, expected, keyDirectory) {
+  await privateDirectory(keyDirectory);
+  const existing = await readTrustedReceipt(file);
+  if (existing) { checkTrustedReceipt(existing, expected); return; }
+  const temporary = path.join(keyDirectory, `.photo-backup-receipt-${randomBytes(16).toString('hex')}.partial`);
+  let handle;
+  try {
+    handle = await fs.open(temporary, fileConstants.O_WRONLY | fileConstants.O_CREAT | fileConstants.O_EXCL | fileConstants.O_NOFOLLOW, 0o600);
+    await handle.chmod(0o600); await handle.writeFile(`${JSON.stringify(expected, null, 2)}\n`); await handle.sync();
+    await handle.close(); handle = undefined;
+    // Publish without replacing a receipt created by a competing invocation.
+    try { await fs.link(temporary, file); }
+    catch (error) { if (error.code !== 'EEXIST') throw error; checkTrustedReceipt(await readTrustedReceipt(file), expected); }
+  } finally { await handle?.close(); await fs.rm(temporary, { force: true }); }
+}
+
+async function backupOutput(file) {
+  let stat;
+  try { stat = await fs.lstat(file); } catch (error) { if (error.code === 'ENOENT') return; throw error; }
+  if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1) fail('INVALID_BACKUP_OUTPUT');
+}
+
+async function atomicBackupWrite(file, data) {
+  await backupOutput(file);
+  const temporary = `${file}.partial-${randomBytes(16).toString('hex')}`;
+  let handle;
+  try {
+    handle = await fs.open(temporary, fileConstants.O_WRONLY | fileConstants.O_CREAT | fileConstants.O_EXCL | fileConstants.O_NOFOLLOW, 0o600);
+    await handle.writeFile(data); await handle.sync(); await handle.close(); handle = undefined;
+    await backupOutput(file);
+    // rename replaces a directory entry, never the file referenced by a link.
+    await fs.rename(temporary, file);
+  } finally { await handle?.close(); await fs.rm(temporary, { force: true }); }
+}
+
+async function writeAt(handle, data, position) {
+  let offset = 0;
+  while (offset < data.length) {
+    const { bytesWritten } = await handle.write(data, offset, data.length - offset, position + offset);
+    if (!bytesWritten) fail('BACKUP_WRITE_FAILED');
+    offset += bytesWritten;
+  }
 }
 
 export async function encryptPhotoResponse(response, file, key, aad, expectedSize) {
@@ -281,34 +356,63 @@ export async function encryptPhotoResponse(response, file, key, aad, expectedSiz
   if (length !== null && Number(length) !== expectedSize) fail('SOURCE_SIZE_CHANGED');
   const iv = randomBytes(12), cipher = createCipheriv('aes-256-gcm', key, iv), digest = createHash('sha256');
   cipher.setAAD(aad); let bytes = 0;
-  await fs.writeFile(file, Buffer.concat([MAGIC, iv]), { flag: 'wx', mode: 0o600 });
-  const counter = new Transform({ transform(chunk, _encoding, callback) {
-    bytes += chunk.length;
-    if (bytes > expectedSize) callback(Object.assign(new Error('SOURCE_SIZE_CHANGED'), { code: 'SOURCE_SIZE_CHANGED' }));
-    else { digest.update(chunk); callback(null, chunk); }
-  } });
-  await pipeline(Readable.fromWeb(response.body), counter, cipher, createWriteStream(file, { flags: 'a' }));
-  if (bytes !== expectedSize) fail('SOURCE_SIZE_CHANGED');
-  await fs.appendFile(file, cipher.getAuthTag());
-  const handle = await fs.open(file, 'r+'); try { await handle.sync(); } finally { await handle.close(); }
-  return { bytes, sha256: digest.digest('hex'), encryptedBytes: bytes + MAGIC.length + 12 + 16 };
+  let handle, created = false, complete = false;
+  try {
+    handle = await fs.open(file, fileConstants.O_WRONLY | fileConstants.O_CREAT | fileConstants.O_EXCL | fileConstants.O_NOFOLLOW, 0o600);
+    created = true;
+    const initial = await handle.stat(), header = Buffer.concat([MAGIC, iv]);
+    await writeAt(handle, header, 0); let position = header.length;
+    const counter = new Transform({ transform(chunk, _encoding, callback) {
+      bytes += chunk.length;
+      if (bytes > expectedSize) callback(Object.assign(new Error('SOURCE_SIZE_CHANGED'), { code: 'SOURCE_SIZE_CHANGED' }));
+      else { digest.update(chunk); callback(null, chunk); }
+    } });
+    const sink = new Writable({ write(chunk, _encoding, done) {
+      writeAt(handle, chunk, position).then(() => { position += chunk.length; done(); }, done);
+    } });
+    await pipeline(Readable.fromWeb(response.body), counter, cipher, sink);
+    if (bytes !== expectedSize || position !== header.length + bytes) fail('SOURCE_SIZE_CHANGED');
+    // Keep the exclusive descriptor for the header, body, GCM tag and sync.
+    // A substituted pathname must never redirect an append into another file.
+    await writeAt(handle, cipher.getAuthTag(), header.length + bytes); await handle.sync();
+    const current = await fs.lstat(file), held = await handle.stat();
+    if (!current.isFile() || current.isSymbolicLink() || current.nlink !== 1 || current.dev !== initial.dev ||
+      current.ino !== initial.ino || held.nlink !== 1) fail('BACKUP_OUTPUT_CHANGED');
+    complete = true;
+    return { bytes, sha256: digest.digest('hex'), encryptedBytes: bytes + MAGIC.length + 12 + 16 };
+  } finally {
+    try { await handle?.close(); }
+    finally { if (created && !complete) await fs.rm(file, { force: true }); }
+  }
 }
 
 export async function verifyEncryptedPhoto(file, key, aad, expected) {
-  const stat = await fs.stat(file);
-  if (stat.size !== expected.bytes + MAGIC.length + 12 + 16) fail('BACKUP_SIZE_MISMATCH');
-  const handle = await fs.open(file, 'r'), header = Buffer.alloc(MAGIC.length + 12), tag = Buffer.alloc(16);
-  try { await handle.read(header, 0, header.length, 0); await handle.read(tag, 0, 16, stat.size - 16); }
-  finally { await handle.close(); }
-  if (!header.subarray(0, MAGIC.length).equals(MAGIC)) fail('INVALID_BACKUP_FILE');
-  const decipher = createDecipheriv('aes-256-gcm', key, header.subarray(MAGIC.length)); decipher.setAAD(aad); decipher.setAuthTag(tag);
-  const digest = createHash('sha256'); let bytes = 0;
-  const output = new Writable({ write(chunk, _encoding, callback) { bytes += chunk.length; digest.update(chunk); callback(); } });
-  if (expected.bytes === 0) { decipher.end(); await pipeline(decipher, output); }
-  else await pipeline(createReadStream(file, { start: header.length, end: stat.size - 17 }), decipher, output);
-  const actual = digest.digest('hex');
-  if (bytes !== expected.bytes || actual !== expected.sha256) fail('BACKUP_DIGEST_MISMATCH');
-  return { bytes, sha256: actual };
+  const handle = await fs.open(file, fileConstants.O_RDONLY | fileConstants.O_NOFOLLOW | fileConstants.O_NONBLOCK);
+  try {
+    const stat = await handle.stat(), header = Buffer.alloc(MAGIC.length + 12), tag = Buffer.alloc(16);
+    if (!stat.isFile() || stat.nlink !== 1) fail('INVALID_BACKUP_OUTPUT');
+    if (stat.size !== expected.bytes + MAGIC.length + 12 + 16) fail('BACKUP_SIZE_MISMATCH');
+    if ((await handle.read(header, 0, header.length, 0)).bytesRead !== header.length ||
+      (await handle.read(tag, 0, 16, stat.size - 16)).bytesRead !== 16 || !header.subarray(0, MAGIC.length).equals(MAGIC)) fail('INVALID_BACKUP_FILE');
+    const decipher = createDecipheriv('aes-256-gcm', key, header.subarray(MAGIC.length)); decipher.setAAD(aad); decipher.setAuthTag(tag);
+    const digest = createHash('sha256'); let bytes = 0;
+    const output = new Writable({ write(chunk, _encoding, callback) { bytes += chunk.length; digest.update(chunk); callback(); } });
+    if (expected.bytes === 0) { decipher.end(); await pipeline(decipher, output); }
+    else {
+      const chunks = async function* () {
+        for (let position = header.length; position < stat.size - 16;) {
+          const buffer = Buffer.alloc(Math.min(64 * 1024, stat.size - 16 - position));
+          const { bytesRead } = await handle.read(buffer, 0, buffer.length, position);
+          if (!bytesRead) fail('BACKUP_FILE_CHANGED');
+          position += bytesRead; yield buffer.subarray(0, bytesRead);
+        }
+      };
+      await pipeline(Readable.from(chunks()), decipher, output);
+    }
+    const actual = digest.digest('hex');
+    if (bytes !== expected.bytes || actual !== expected.sha256) fail('BACKUP_DIGEST_MISMATCH');
+    return { bytes, sha256: actual };
+  } finally { await handle.close(); }
 }
 
 export async function downloadBackup({ manifestFile, expectedManifestSha256, privateKeyFile, keyDirectory, destination, concurrency = 6, fetcher = fetch, progress = () => {} }) {
@@ -337,20 +441,32 @@ export async function downloadBackup({ manifestFile, expectedManifestSha256, pri
   if (!objectStat.isDirectory() || objectStat.isSymbolicLink()) fail('INVALID_BACKUP_DIRECTORY');
   const keyFile = path.join(absoluteKeyDirectory, `photo-backup-${manifest.backupId}.key`);
   const wrappedKeyFile = path.join(root, 'key.enc');
-  let masterKey, wrappedKey;
+  const externalManifestFile = path.join(root, 'manifest.enc'), verificationFile = path.join(root, 'verification.json');
+  for (const file of [wrappedKeyFile, externalManifestFile, verificationFile]) await backupOutput(file);
+  const receiptFile = path.join(absoluteKeyDirectory, `photo-backup-${manifest.backupId}.authenticity-receipt.json`);
+  const trustedReceipt = await readTrustedReceipt(receiptFile);
+  let masterKey, wrappedKey, recoveredKey;
+  try { masterKey = await readPrivateFile(keyFile); }
+  catch (error) { if (error.code !== 'ENOENT') throw error; }
   try {
-    wrappedKey = await fs.readFile(wrappedKeyFile);
+    wrappedKey = await readLocalFile(wrappedKeyFile, { maximum: 16 * 1024 });
+  } catch (error) { if (error.code !== 'ENOENT') throw error; }
+  const expectedReceipt = { format: RECEIPT_FORMAT, backupId: manifest.backupId, manifestSha256: sha256(manifestBytes),
+    keyEnvelopeSha256: wrappedKey ? sha256(wrappedKey) : undefined };
+  if (trustedReceipt) checkTrustedReceipt(trustedReceipt, expectedReceipt);
+  if (wrappedKey) {
     const recovered = JSON.parse(privateDecrypt({ key: privateKey, padding: constants.RSA_PKCS1_OAEP_PADDING, oaepHash: 'sha256' }, wrappedKey).toString('utf8'));
     if (recovered.backupId !== manifest.backupId || typeof recovered.key !== 'string') fail('INVALID_BACKUP_KEY');
-    masterKey = Buffer.from(recovered.key, 'base64');
-  } catch (error) { if (error.code !== 'ENOENT') throw error; }
-  try {
-    const localKey = await readPrivateFile(keyFile);
-    if (masterKey && !masterKey.equals(localKey)) fail('BACKUP_KEY_MISMATCH');
-    masterKey = localKey;
-  } catch (error) {
-    if (error.code !== 'ENOENT') throw error;
-    masterKey ||= randomBytes(32);
+    recoveredKey = Buffer.from(recovered.key, 'base64');
+    if (recoveredKey.length !== 32 || recoveredKey.toString('base64') !== recovered.key) fail('INVALID_BACKUP_KEY');
+    if (masterKey && !masterKey.equals(recoveredKey)) fail('BACKUP_KEY_MISMATCH');
+    // Anyone holding the RSA public key can replace key.enc. An existing
+    // protected master key or separately retained receipt must authenticate it
+    // before it can become the source of a new trusted local key/receipt.
+    if (!masterKey && !trustedReceipt) fail('TRUSTED_BACKUP_KEY_REQUIRED');
+  }
+  if (!masterKey) {
+    masterKey = recoveredKey || randomBytes(32);
     await fs.writeFile(keyFile, masterKey, { flag: 'wx', mode: 0o600 });
   }
   if (masterKey.length !== 32) fail('INVALID_BACKUP_KEY');
@@ -359,12 +475,20 @@ export async function downloadBackup({ manifestFile, expectedManifestSha256, pri
       Buffer.from(JSON.stringify({ backupId: manifest.backupId, key: masterKey.toString('base64') })));
     await fs.writeFile(wrappedKeyFile, wrappedKey, { flag: 'wx', mode: 0o600 });
   }
+  // Re-read and authenticate the persisted envelope against the protected key,
+  // including freshly created envelopes, before retaining its digest.
+  wrappedKey = await readLocalFile(wrappedKeyFile, { maximum: 16 * 1024 });
+  const persisted = JSON.parse(privateDecrypt({ key: privateKey, padding: constants.RSA_PKCS1_OAEP_PADDING, oaepHash: 'sha256' }, wrappedKey).toString('utf8'));
+  if (persisted.backupId !== manifest.backupId || persisted.key !== masterKey.toString('base64')) fail('BACKUP_KEY_MISMATCH');
+  expectedReceipt.keyEnvelopeSha256 = sha256(wrappedKey);
+  await retainTrustedReceipt(receiptFile, expectedReceipt, absoluteKeyDirectory);
   const available = await fs.statfs(root), free = available.bavail * available.bsize;
   const completed = new Map(); let remainingBytes = 0;
   for (const object of manifest.objects) {
     const id = objectId(masterKey, object), file = path.join(root, 'objects', `${id}.enc`), recordFile = `${file}.json`;
+    await backupOutput(file); await backupOutput(recordFile);
     try {
-      const record = JSON.parse(await fs.readFile(recordFile, 'utf8'));
+      const record = JSON.parse((await readLocalFile(recordFile, { maximum: 4096 })).toString('utf8'));
       const encoded = JSON.stringify(record.data);
       if (record.mac !== hmac(masterKey, encoded).toString('hex') || record.data.bytes !== object.size || record.data.etag !== object.etag) fail('INVALID_RESUME_RECORD');
       await verifyEncryptedPhoto(file, masterKey, objectAad(manifest.backupId, id, object), record.data);
@@ -372,7 +496,7 @@ export async function downloadBackup({ manifestFile, expectedManifestSha256, pri
     } catch { remainingBytes += object.size + available.bsize * 2 + 128; }
   }
   if (free < remainingBytes + Math.max(GIB, available.blocks * available.bsize * 0.03)) fail('INSUFFICIENT_BACKUP_CAPACITY');
-  await fs.writeFile(path.join(root, 'manifest.enc'), manifestBytes, { mode: 0o600 });
+  await atomicBackupWrite(externalManifestFile, manifestBytes);
   const cancellation = new AbortController();
   let cursor = 0, count = completed.size, bytes = [...completed.values()].reduce((sum, row) => sum + row.bytes, 0), failure;
   const worker = async () => {
@@ -381,7 +505,7 @@ export async function downloadBackup({ manifestFile, expectedManifestSha256, pri
       const index = cursor++; if (index >= manifest.objects.length) return;
       const object = manifest.objects[index], id = objectId(masterKey, object);
       if (completed.has(id)) continue;
-      const file = path.join(root, 'objects', `${id}.enc`), temporary = `${file}.partial-${randomBytes(6).toString('hex')}`;
+      const file = path.join(root, 'objects', `${id}.enc`), temporary = `${file}.partial-${randomBytes(16).toString('hex')}`;
       let record;
       for (let attempt = 0; attempt < 3; attempt += 1) {
         let response;
@@ -389,6 +513,7 @@ export async function downloadBackup({ manifestFile, expectedManifestSha256, pri
           response = await fetcher(object.url, { redirect: 'error', cache: 'no-store', headers: object.etag ? { 'If-Match': `"${cleanEtag(object.etag)}"` } : {}, signal: AbortSignal.any([cancellation.signal, AbortSignal.timeout(20 * 60_000)]) });
           if (object.etag && cleanEtag(response.headers.get('etag')) !== cleanEtag(object.etag)) fail('SOURCE_ETAG_CHANGED');
           record = { ...await encryptPhotoResponse(response, temporary, masterKey, objectAad(manifest.backupId, id, object), object.size), etag: object.etag };
+          await backupOutput(file);
           await fs.rename(temporary, file); break;
         } catch (error) {
           await fs.rm(temporary, { force: true });
@@ -401,9 +526,9 @@ export async function downloadBackup({ manifestFile, expectedManifestSha256, pri
           if (response?.body) { try { await response.body.cancel(); } catch { /* Already consumed/locked by the pipeline. */ } }
         }
       }
-      const encoded = JSON.stringify(record), recordTemp = `${file}.json.partial`;
-      await fs.writeFile(recordTemp, JSON.stringify({ data: record, mac: hmac(masterKey, encoded).toString('hex') }), { mode: 0o600 });
-      await fs.rename(recordTemp, `${file}.json`); completed.set(id, record); count += 1; bytes += record.bytes;
+      const encoded = JSON.stringify(record);
+      await atomicBackupWrite(`${file}.json`, JSON.stringify({ data: record, mac: hmac(masterKey, encoded).toString('hex') }));
+      completed.set(id, record); count += 1; bytes += record.bytes;
       progress({ backupId: manifest.backupId, completed: count, total: manifest.objectCount, bytes });
     }
   };
@@ -420,7 +545,7 @@ export async function downloadBackup({ manifestFile, expectedManifestSha256, pri
     await verifyEncryptedPhoto(path.join(root, 'objects', `${id}.enc`), masterKey, objectAad(manifest.backupId, id, object), completed.get(id));
   }
   const summary = { ok: true, backupId: manifest.backupId, objectCount: count, totalBytes: bytes, restoreSamplesVerified: sampleIndices.length, manifestSha256: sha256(manifestBytes) };
-  await fs.writeFile(path.join(root, 'verification.json'), JSON.stringify(summary, null, 2));
+  await atomicBackupWrite(verificationFile, JSON.stringify(summary, null, 2));
   return summary;
 }
 
