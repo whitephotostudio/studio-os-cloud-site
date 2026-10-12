@@ -1,3 +1,4 @@
+import { decryptCapability, encryptCapability, isEncryptedCapabilityToken, MAX_CAPABILITY_PAYLOAD_BYTES } from "@/lib/encrypted-capability";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { buildArchiveBaseName } from "@/lib/event-gallery-downloads";
@@ -119,44 +120,28 @@ function signingSecret() {
   return secret;
 }
 
-function encodePayload(payload: FavoritesDeliveryTokenPayload) {
-  return Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
-}
-
-function decodePayload(value: string) {
-  return JSON.parse(
-    Buffer.from(value, "base64url").toString("utf8"),
-  ) as FavoritesDeliveryTokenPayload;
-}
-
 function signEncodedPayload(value: string) {
   return createHmac("sha256", signingSecret()).update(value).digest("hex");
 }
 
 export function createFavoritesDeliveryToken(payload: FavoritesDeliveryTokenPayload) {
-  const encoded = encodePayload(payload);
-  return `${encoded}.${signEncodedPayload(encoded)}`;
+  return encryptCapability(payload, { secret: signingSecret(), purpose: "favorites-delivery", maximumPayloadBytes: MAX_CAPABILITY_PAYLOAD_BYTES });
 }
 
 export function verifyFavoritesDeliveryToken(token: string) {
-  const [encoded, signature] = clean(token).split(".");
-  if (!encoded || !signature) throw new Error("Invalid favorites link.");
-  const expected = signEncodedPayload(encoded);
-  const actualBuffer = Buffer.from(signature, "utf8");
-  const expectedBuffer = Buffer.from(expected, "utf8");
-  if (
-    actualBuffer.length !== expectedBuffer.length ||
-    !timingSafeEqual(actualBuffer, expectedBuffer)
-  ) {
-    throw new Error("Invalid favorites link.");
+  const value = clean(token);
+  let payload: FavoritesDeliveryTokenPayload;
+  if (isEncryptedCapabilityToken(value)) {
+    payload = decryptCapability(value, { secret: signingSecret(), purpose: "favorites-delivery", maximumPayloadBytes: MAX_CAPABILITY_PAYLOAD_BYTES }) as FavoritesDeliveryTokenPayload;
+  } else {
+    const [encoded, signature, extra] = value.split(".");
+    if (!encoded || !signature || extra !== undefined || encoded.length > Math.ceil(MAX_CAPABILITY_PAYLOAD_BYTES * 4 / 3)) throw new Error("Invalid favorites link.");
+    const expected = Buffer.from(signEncodedPayload(encoded)), actual = Buffer.from(signature);
+    if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) throw new Error("Invalid favorites link.");
+    payload = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8")) as FavoritesDeliveryTokenPayload;
   }
-  const payload = decodePayload(encoded);
-  if (payload.v !== 1 || payload.kind !== "favorites-delivery") {
-    throw new Error("Unsupported favorites link.");
-  }
-  if (!Number.isFinite(payload.exp) || payload.exp <= Date.now()) {
-    throw new Error("This favorites link has expired.");
-  }
+  if (payload.v !== 1 || payload.kind !== "favorites-delivery") throw new Error("Unsupported favorites link.");
+  if (!Number.isFinite(payload.exp) || payload.exp <= Date.now()) throw new Error("This favorites link has expired.");
   return payload;
 }
 

@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import test from 'node:test';
+import test, { before, after } from 'node:test';
 import ts from 'typescript';
+import { localPinBudgetRedis } from '../helpers/pin-budget-redis.mjs';
 
 const require = createRequire(import.meta.url);
 const schoolId = '11111111-1111-4111-8111-111111111111';
@@ -10,21 +11,24 @@ const studentId = '22222222-2222-4222-8222-222222222222';
 const photographerId = '33333333-3333-4333-8333-333333333333';
 const email = 'parent@example.test';
 
-function load(path, dependencies = {}) {
+function load(path, dependencies = {}, globals = {}) {
   const source = readFileSync(new URL(`../../${path}`, import.meta.url), 'utf8');
   const output = ts.transpileModule(source, {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true },
   }).outputText;
   const exports = {};
-  new Function('require', 'exports', output)(name => {
+  new Function('require', 'exports', ...Object.keys(globals), output)(name => {
     if (name in dependencies) return dependencies[name];
     if (name.startsWith('node:') || name === 'zod') return require(name);
     throw Error(`Unexpected dependency: ${name}`);
-  }, exports);
+  }, exports, ...Object.values(globals));
   return exports;
 }
 
 const recovery = load('lib/pin-recovery.ts');
+let redis, claimFixtureNumber = 0;
+before(async () => { redis = await localPinBudgetRedis(); });
+after(async () => { await redis?.close(); });
 function likePattern(value) {
   let pattern = '^';
   const literal = character => character.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -253,20 +257,113 @@ test('photographer-approved recovery emails also ignore attacker Origin headers'
   assert.equal((await recovery.claimRecoveryToken(f.service, args)).ok, true);
 });
 
-test('recovery claim redirects keep the recovered PIN on the configured origin', async t => {
+function claimFixture({ storeUnavailable = false } = {}) {
+  const f = tokenFixture(), registrations = [], counters = [], laneId = '55555555-5555-4555-8555-555555555555';
+  f.tables.students[0].pin = 'fixture-pin';
+  Object.assign(f.tables.schools[0], { status: 'active', portal_status: 'active', expiration_date: null });
+  f.tables.parent_gallery_sessions = [];
+  f.service.rpc = async (name, args) => {
+    assert.equal(name, 'register_parent_gallery_session'); registrations.push(args);
+    if (storeUnavailable) return { data: null, error: { message: 'Synthetic session-store outage' } };
+    return { error: null, data: { laneId, kind: args.p_kind, galleryId: args.p_gallery_id,
+      photographerId: args.p_photographer_id, viewerEmail: args.p_email,
+      expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString() } };
+  };
+  const ip = `synthetic-recovery-${++claimFixtureNumber}`;
+  class SharedRedis {
+    constructor(config) { assert.equal(config.retry.retries, 0); }
+    async eval(script, keys, args) { counters.push({ keys, args }); return redis.eval(script, keys, args); }
+  }
+  const budget = load('lib/portal-pin-rate-limit.ts', {
+    '@/lib/rate-limit': { getClientIp: () => ip }, '@upstash/redis': { Redis: SharedRedis },
+  }, { process: { env: { NODE_ENV: 'production', EVENT_DOWNLOAD_TOKEN_SECRET: 'synthetic-recovery-secret',
+    UPSTASH_REDIS_REST_URL: 'https://synthetic.invalid', UPSTASH_REDIS_REST_TOKEN: 'synthetic' } } });
+  const dashboard = { createDashboardServiceClient: () => f.service };
+  const access = load('lib/parent-gallery-session-access.ts', {
+    'server-only': {}, '@/lib/dashboard-auth': dashboard,
+    '@/lib/calendar-dates': { hasCalendarBoundaryPassed: () => false },
+    '@/lib/event-gallery-access': { validateEventGalleryAccess: () => { throw Error('Recovery must not select event access'); } },
+  });
+  const sessions = load('lib/parent-gallery-session.ts', {
+    'server-only': {}, '@/lib/dashboard-auth': dashboard,
+    '@/lib/portal-pin-rate-limit': budget, '@/lib/parent-gallery-session-access': access,
+  });
+  const route = load('app/api/portal/recovery/claim/route.ts', {
+    'next/server': { NextResponse: { redirect: url => new Response(null, { status: 307, headers: { location: String(url) } }) } },
+    '@/lib/dashboard-auth': dashboard, '@/lib/pin-recovery': recovery, '@/lib/parent-gallery-session': sessions,
+  });
+  const request = (query = `token=${f.args.plaintextToken}`, origin = 'https://www.studiooscloud.com') => {
+    const value = new Request(`${origin}/api/portal/recovery/claim?${query}`, { headers: { 'x-real-ip': ip, 'user-agent': 'synthetic-fixture' } });
+    value.nextUrl = new URL(value.url); return value;
+  };
+  return { ...f, route, request, registrations, counters, laneId };
+}
+
+test('alternate-host recovery redirects the opaque token to the canonical origin before any consume or session issuance', async t => {
   const previous = process.env.NEXT_PUBLIC_SITE_URL;
   t.after(() => { if (previous === undefined) delete process.env.NEXT_PUBLIC_SITE_URL; else process.env.NEXT_PUBLIC_SITE_URL = previous; });
   process.env.NEXT_PUBLIC_SITE_URL = 'https://www.studiooscloud.com';
-  const f = fixture(); f.tables.students[0].pin = 'fixture-pin';
-  const route = load('app/api/portal/recovery/claim/route.ts', {
-    'next/server': { NextResponse: { redirect: url => Response.redirect(url, 307) } },
-    '@/lib/dashboard-auth': { createDashboardServiceClient: () => f.service },
-    '@/lib/pin-recovery': { pinRecoveryOrigin: recovery.pinRecoveryOrigin, claimRecoveryToken: async () => ({ ok: true, studentId }) },
-  });
-  const request = new Request('https://attacker.example.test/api/portal/recovery/claim?token=fixture');
-  request.nextUrl = new URL(request.url);
-  const response = await route.GET(request);
+  const f = claimFixture();
+  const response = await f.route.GET(f.request(`token=${f.args.plaintextToken}&pin=untrusted&email=untrusted%40example.test`, 'https://attacker.example.test'));
   const destination = new URL(response.headers.get('location'));
   assert.equal(destination.origin, 'https://www.studiooscloud.com');
-  assert.equal(destination.searchParams.get('pin'), 'fixture-pin');
+  assert.equal(destination.pathname, '/api/portal/recovery/claim');
+  assert.deepEqual(Array.from(destination.searchParams), [['token', f.args.plaintextToken]]);
+  assert.equal(f.tables.pin_recovery_tokens[0].used_at, null);
+  assert.deepEqual(f.calls, []); assert.deepEqual(f.registrations, []); assert.deepEqual(f.counters, []);
+  assert.equal(response.headers.get('set-cookie'), null);
+});
+
+test('actual recovery claim issues a private browser cookie and redirects only to its opaque gallery lane', async () => {
+  const f = claimFixture(), response = await f.route.GET(f.request());
+  const destination = new URL(response.headers.get('location'));
+  assert.equal(destination.origin, 'https://www.studiooscloud.com');
+  assert.equal(destination.pathname, `/parents/view/${f.laneId}`);
+  assert.deepEqual(Array.from(destination.searchParams), [['recovery', 'ok']]);
+  for (const privateValue of [f.tables.students[0].pin, email, f.args.plaintextToken]) assert.equal(destination.href.includes(privateValue), false);
+  assert.equal(response.status, 307);
+  assert.equal(response.headers.get('cache-control'), 'private, no-store');
+  assert.equal(response.headers.get('referrer-policy'), 'no-referrer');
+  const cookie = response.headers.get('set-cookie');
+  assert.match(cookie, /__Host-studio_os_parent_session=[A-Za-z0-9_-]{43}; Path=\/; Max-Age=86400; HttpOnly; SameSite=Lax; Secure/);
+  assert.equal(cookie.includes(f.tables.students[0].pin), false); assert.equal(cookie.includes(email), false);
+  assert.equal(f.registrations.length, 1);
+  assert.equal(f.registrations[0].p_photographer_id, photographerId);
+  assert.equal(f.registrations[0].p_gallery_id, schoolId);
+  assert.equal(f.registrations[0].p_pin, f.tables.students[0].pin);
+  assert.equal(f.registrations[0].p_email, email);
+  assert.ok(f.tables.pin_recovery_tokens[0].used_at);
+  assert.equal(await redis.command('GET', f.counters[0].keys[0]), '0', 'successful exact validation refunds its own PIN attempt');
+  const replay = await f.route.GET(f.request());
+  assert.equal(new URL(replay.headers.get('location')).searchParams.get('recovery'), 'used');
+  assert.equal(replay.headers.get('set-cookie'), null); assert.equal(f.registrations.length, 1);
+});
+
+test('invalid, expired, reused and ambiguous recovery tokens never issue a browser credential', async () => {
+  for (const scenario of ['missing', 'duplicate', 'oversize', 'unknown', 'expired', 'used', 'untrusted-roster']) {
+    const f = claimFixture(); let query = `token=${f.args.plaintextToken}`;
+    if (scenario === 'missing') query = '';
+    if (scenario === 'duplicate') query += '&token=other';
+    if (scenario === 'oversize') query = `token=${'x'.repeat(257)}`;
+    if (scenario === 'unknown') query = 'token=unrecognized';
+    if (scenario === 'expired') f.tables.pin_recovery_tokens[0].expires_at = new Date(Date.now() - 1).toISOString();
+    if (scenario === 'used') f.tables.pin_recovery_tokens[0].used_at = new Date().toISOString();
+    if (scenario === 'untrusted-roster') f.tables.students[0].parent_email = 'unrelated@example.test';
+    const response = await f.route.GET(f.request(query));
+    assert.match(new URL(response.headers.get('location')).searchParams.get('recovery'), /^(invalid|expired|used)$/);
+    assert.equal(response.headers.get('set-cookie'), null, scenario);
+    assert.deepEqual(f.registrations, []); assert.deepEqual(f.counters, []);
+    if (['missing', 'duplicate', 'oversize'].includes(scenario)) assert.deepEqual(f.calls, []);
+  }
+});
+
+test('session-store outage after valid recovery grants no cookie and refunds the successful PIN validation', async () => {
+  const f = claimFixture({ storeUnavailable: true }), response = await f.route.GET(f.request());
+  const destination = new URL(response.headers.get('location'));
+  assert.equal(destination.searchParams.get('recovery'), 'invalid');
+  assert.equal(destination.searchParams.get('school'), schoolId);
+  assert.equal(destination.searchParams.has('pin'), false); assert.equal(destination.searchParams.has('email'), false);
+  assert.equal(response.headers.get('set-cookie'), null); assert.equal(f.registrations.length, 1);
+  assert.ok(f.tables.pin_recovery_tokens[0].used_at, 'single-use token remains consumed after the downstream outage');
+  assert.equal(await redis.command('GET', f.counters[0].keys[0]), '0');
 });

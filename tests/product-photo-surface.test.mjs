@@ -7,7 +7,7 @@ import ts from "typescript";
 
 const require = createRequire(import.meta.url);
 const source = readFileSync(new URL("../components/parents/product-photo-surface.tsx", import.meta.url), "utf8");
-const gallery = readFileSync(new URL("../app/parents/[pin]/page.tsx", import.meta.url), "utf8");
+const gallery = readFileSync(new URL("../components/parents/parent-gallery-client.tsx", import.meta.url), "utf8");
 const jsx = (type, props, key) => ({ type, props, key });
 const runtime = { jsx, jsxs: jsx };
 const compile = (text) => ts.transpileModule(text, {

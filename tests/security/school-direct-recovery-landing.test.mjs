@@ -5,6 +5,7 @@ import ts from 'typescript';
 import { harness, id } from '../helpers/event-gallery-harness.mjs';
 
 const schoolId = id(70), studentId = id(71), otherSchool = id(72), recoveredPin = 'synthetic-recovered-pin';
+const laneId = id(73);
 const school = { id: schoolId, school_name: 'Synthetic school', status: 'active', portal_status: 'active',
   expiration_date: null, email_required: true, registration_class_required: false, students: [{ count: 1 }] };
 const read = file => readFileSync(new URL(`../../${file}`, import.meta.url), 'utf8');
@@ -39,19 +40,28 @@ function componentFixture({ search = '', schoolOverrides = {}, fetcher } = {}) {
     },
   };
   const browser = { location: { search } };
+  async function fetchRequest(url, init) {
+    requests.push({ url, init });
+    if (fetcher) return fetcher(url, init);
+    const body = JSON.parse(init.body);
+    if (url === '/api/portal/session') return Response.json({ ok: true, laneId, kind: body.kind,
+      galleryId: body.galleryId, viewerEmail: body.email, galleryUrl: `/parents/view/${laneId}`,
+      expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString() });
+    assert.equal(url, '/api/portal/school-access');
+    return Response.json({ ok: true, schoolId, pin: body.pin });
+  }
+  const sessionClient = load('lib/parent-gallery-session-client.ts', {}, { window: browser, fetch: fetchRequest });
   const dependencies = {
     react, 'react/jsx-runtime': { jsx, jsxs: jsx },
     'next/navigation': { useRouter: () => ({ push: value => navigations.push(value) }) },
     'lucide-react': { Check: 'check', Mail: 'mail', School: 'school', X: 'x' },
     './SchoolRegistrationClasses': { default: 'registration-classes' },
+    '@/lib/parent-gallery-session-client': sessionClient,
   };
   const Form = load('app/parents/SchoolDirectLoginForm.tsx', dependencies, {
     window: browser,
     sessionStorage: { setItem: (...args) => stored.push(args) },
-    fetch: async (url, init) => {
-      requests.push({ url, init });
-      return fetcher ? fetcher(url, init) : Response.json({ ok: true, schoolId, pin: JSON.parse(init.body).pin });
-    },
+    fetch: fetchRequest,
   }).default;
   const props = { school: { ...school, ...schoolOverrides } };
   function render() { cursor = 0; dirty = false; tree = Form(props); }
@@ -84,22 +94,16 @@ function componentFixture({ search = '', schoolOverrides = {}, fetcher } = {}) {
   };
 }
 
-test('known-school claim redirect selects the direct form and captures the PIN/banner after hydration', async () => {
+test('legacy known-school recovery landing retains hydration, email entry and normal validation before private session navigation', async () => {
   const h = harness();
   h.tables.schools.push(school);
   h.tables.students.push({ id: studentId, school_id: schoolId, pin: recoveredPin });
-  const dependencies = {
-    'next/server': { NextResponse: { redirect: value => Response.redirect(value) } },
-    '@/lib/dashboard-auth': { createDashboardServiceClient: () => h.service },
-    '@/lib/pin-recovery': { claimRecoveryToken: async () => ({ ok: true, studentId }), pinRecoveryOrigin: () => 'https://fixture.test' },
-  };
-  const claimRequest = new Request('https://fixture.test/api/portal/recovery/claim?token=synthetic-token');
-  claimRequest.nextUrl = new URL(claimRequest.url);
-  const claimed = await load('app/api/portal/recovery/claim/route.ts', dependencies).GET(claimRequest);
-  const landing = new URL(claimed.headers.get('location'));
+  // New claims use an opaque HttpOnly session. Previously issued landing URLs
+  // remain a prefill only and still require the normal PIN/email validator.
+  const landing = new URL(`https://fixture.test/parents?recovery=ok&school=${schoolId}&pin=${recoveredPin}`);
   const f = componentFixture({ search: landing.search });
   const selected = await load('app/parents/page.tsx', {
-    '@/lib/dashboard-auth': dependencies['@/lib/dashboard-auth'],
+    '@/lib/dashboard-auth': { createDashboardServiceClient: () => h.service },
     './LoginForm': { __esModule: true, default: 'generic-login' },
     './SchoolDirectLoginForm': { __esModule: true, default: f.Form },
     'react/jsx-runtime': { jsx: (type, props) => ({ type, props }) },
@@ -117,10 +121,13 @@ test('known-school claim redirect selects the direct form and captures the PIN/b
   assert.deepEqual(f.requests, []);
   await f.change('email', ' PARENT@example.test ');
   await f.submit();
-  assert.equal(f.requests.length, 1);
+  assert.equal(f.requests.length, 2);
   assert.equal(f.requests[0].url, '/api/portal/school-access');
-  assert.deepEqual(JSON.parse(f.requests[0].init.body), { schoolId, email: 'parent@example.test', pin: recoveredPin, prefetch: true });
-  assert.match(f.navigations[0], new RegExp(`/parents/${recoveredPin}\\?mode=school&school=${schoolId}&email=parent%40example.test`));
+  assert.deepEqual(JSON.parse(f.requests[0].init.body), { schoolId, email: 'parent@example.test', pin: recoveredPin, prefetch: false });
+  assert.equal(f.requests[1].url, '/api/portal/session');
+  assert.deepEqual(JSON.parse(f.requests[1].init.body), { kind: 'school', galleryId: schoolId, pin: recoveredPin, email: 'parent@example.test' });
+  assert.equal(f.requests[1].init.credentials, 'same-origin'); assert.equal(f.requests[1].init.cache, 'no-store');
+  assert.deepEqual(f.navigations, [`/parents/view/${laneId}`]); assert.deepEqual(f.stored, []);
 });
 
 test('ordinary QR entry and malformed/mismatched recovery queries keep PIN/email blank', async () => {

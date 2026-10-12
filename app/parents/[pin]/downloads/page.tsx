@@ -91,6 +91,7 @@ export default function ParentGalleryDownloadsPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const pin = decodeURIComponent(String(params.pin ?? ""));
+  const laneId = String(params.laneId ?? "");
   const manifestId = clean(searchParams.get("manifest"));
 
   const [manifest, setManifest] = useState<EventGalleryDownloadManifest | null>(null);
@@ -121,8 +122,8 @@ export default function ParentGalleryDownloadsPage() {
 
   const backHref = useMemo(() => {
     if (manifest?.returnUrl) return manifest.returnUrl;
-    return `/parents/${encodeURIComponent(pin)}`;
-  }, [manifest?.returnUrl, pin]);
+    return laneId ? `/parents/view/${encodeURIComponent(laneId)}` : `/parents/${encodeURIComponent(pin)}`;
+  }, [manifest?.returnUrl, pin, laneId]);
 
   const headerTitle =
     status === "ready"

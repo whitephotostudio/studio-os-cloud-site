@@ -8,6 +8,7 @@ import * as periods from '../lib/stripe-billing-period.ts';
 import * as orderPolicy from '../lib/order-payment-policy.ts';
 import * as digitalLabels from '../lib/digital-product-label.ts';
 import { creditMaintenanceActive } from '../lib/credit-maintenance.ts';
+import { parentGalleryEntryFixture } from './fixtures/parent-gallery-entry.mjs';
 
 function load(path, dependencies = {}) {
   const compiled = ts.transpileModule(readFileSync(new URL(`../${path}`, import.meta.url), 'utf8'), {
@@ -79,7 +80,8 @@ function fixture(options = {}) {
     '@/lib/stripe-billing-period': periods,
     '@/lib/order-payment-policy': orderPolicy,
     '@/lib/digital-product-label': digitalLabels,
-    '@/lib/school-parent-gallery-link': load('lib/school-parent-gallery-link.ts'),
+    '@/lib/parent-gallery-entry': parentGalleryEntryFixture(),
+    '@/lib/pin-recovery': parentGalleryEntryFixture(),
     '@/lib/order-usage-billing': ledger,
     '@/lib/credit-maintenance': { creditMaintenanceActive },
     '@/lib/subscription-access': { isStripeBillingActive: value => ['active', 'trialing'].includes(value) },
@@ -97,7 +99,8 @@ function fixture(options = {}) {
   const worker = load('lib/paid-order-emails.ts', {
     'node:timers/promises': { setTimeout: async () => {} },
     'next/server': { after: () => assert.fail('The payment fixture schedules work explicitly') },
-    '@/lib/school-parent-gallery-link': load('lib/school-parent-gallery-link.ts'),
+    '@/lib/parent-gallery-entry': parentGalleryEntryFixture(),
+    '@/lib/pin-recovery': parentGalleryEntryFixture(),
     '@/lib/order-notification-email': {}, '@/lib/digital-delivery': {},
     '@/lib/order-receipt-email': { buildOrderReceiptEmail: input => { receiptInputs.push(input); return { subject: 'Receipt', html: 'Fixture', text: 'Fixture' }; } },
     '@/lib/resend': { resendConfigured: () => true, resolveReplyTo: value => value || null,
@@ -136,17 +139,26 @@ test('actual school receipt finalization supplies a complete fresh-browser Order
   const f = fixture({school: true}); await f.finalize(); await f.deliverReceipts();
   assert.equal(f.receiptInputs.length, 1);
   const url = new URL(f.receiptInputs[0].ordersHistoryUrl);
-  assert.equal(url.pathname, '/parents/50123'); assert.equal(url.searchParams.get('mode'), 'school');
-  assert.equal(url.searchParams.get('school'), f.order.school_id); assert.equal(url.searchParams.get('email'), 'buyer@example.invalid');
-  assert.equal(url.searchParams.get('tab'), 'orders');
+  assert.equal(url.origin, 'https://gallery.example.test'); assert.equal(url.pathname, '/api/portal/session/entry');
+  assert.deepEqual([...url.searchParams.keys()], ['token']);
+  const entry = parentGalleryEntryFixture().readParentGalleryEntryToken(url.searchParams.get('token'));
+  assert.equal(entry.kind, 'school'); assert.equal(entry.pin, '50123');
+  assert.equal(entry.galleryId, f.order.school_id); assert.equal(entry.email, 'buyer@example.invalid');
+  assert.equal(entry.photographerId, f.photographer.id); assert.equal(entry.tab, 'orders');
+  assert.equal(url.href.includes('50123'), false); assert.equal(url.href.includes('buyer'), false);
   await f.finalize(); await f.deliverReceipts(); assert.equal(f.receiptInputs.length, 1, 'paid retry does not resend a receipt');
 });
 
-test('event receipt finalization retains its existing project/PIN/email link', async () => {
+test('event receipt finalization preserves exact project/PIN/email scope in an encrypted fresh-browser entry', async () => {
   const f = fixture({event: true}); await f.finalize(); await f.deliverReceipts();
   const url = new URL(f.receiptInputs[0].ordersHistoryUrl);
-  assert.equal(url.pathname, '/parents/EVENTPIN'); assert.equal(url.searchParams.get('mode'), 'event');
-  assert.equal(url.searchParams.get('project'), f.order.project_id); assert.equal(url.searchParams.get('email'), 'buyer@example.invalid');
+  assert.equal(url.origin, 'https://gallery.example.test'); assert.equal(url.pathname, '/api/portal/session/entry');
+  assert.deepEqual([...url.searchParams.keys()], ['token']);
+  const entry = parentGalleryEntryFixture().readParentGalleryEntryToken(url.searchParams.get('token'));
+  assert.equal(entry.kind, 'event'); assert.equal(entry.pin, 'EVENTPIN');
+  assert.equal(entry.galleryId, f.order.project_id); assert.equal(entry.email, 'buyer@example.invalid');
+  assert.equal(entry.photographerId, f.photographer.id); assert.equal(entry.tab, 'orders');
+  assert.equal(url.href.includes('EVENTPIN'), false); assert.equal(url.href.includes('buyer'), false);
   assert.equal(url.searchParams.get('school'), null);
 });
 

@@ -4,6 +4,7 @@ import { createRequire } from 'node:module';
 import test from 'node:test';
 import sharp from 'sharp';
 import ts from 'typescript';
+import * as encryptedCapability from '../lib/encrypted-capability.ts';
 
 const require = createRequire(import.meta.url);
 const code = ts.transpileModule(readFileSync(new URL('../lib/backdrop-composites.ts', import.meta.url), 'utf8'), {
@@ -113,6 +114,7 @@ test('paid landscape delivery produces a real JPEG entry in a complete ZIP witho
   }).outputText;
   const forbidden = () => assert.fail('Landscape delivery must not fetch an original fallback or mutate customer state');
   new Function('require', 'exports', deliveryCode)(name => {
+    if (name === '@/lib/encrypted-capability') return encryptedCapability;
     if (name === '@/lib/backdrop-composites') return { composeBackdropImage: f.composeBackdropImage };
     if (name === '@/lib/zip') return zip;
     if (name.startsWith('@/')) return { r2PresignedGetUrl: forbidden };

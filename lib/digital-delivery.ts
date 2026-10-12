@@ -1,3 +1,4 @@
+import { decryptCapability, encryptCapability, isEncryptedCapabilityToken, PREVIEW_CAPABILITY_PAYLOAD_BYTES } from "@/lib/encrypted-capability";
 import { hasCurrentDigitalPayment } from "@/lib/digital-entitlement-payment";
 import { hasDigitalProductLabel } from "@/lib/digital-product-label";
 import { createHmac, timingSafeEqual } from "node:crypto";
@@ -229,42 +230,28 @@ function signingSecret() {
   return secret;
 }
 
-function encodePayload(payload: DigitalDeliveryTokenPayload) {
-  return Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
-}
-
-function decodePayload(value: string) {
-  return JSON.parse(Buffer.from(value, "base64url").toString("utf8")) as DigitalDeliveryTokenPayload;
-}
-
 function signEncodedPayload(value: string) {
   return createHmac("sha256", signingSecret()).update(value).digest("hex");
 }
 
 export function createDigitalDeliveryToken(payload: DigitalDeliveryTokenPayload) {
-  const encoded = encodePayload(payload);
-  return `${encoded}.${signEncodedPayload(encoded)}`;
+  return encryptCapability(payload, { secret: signingSecret(), purpose: "digital-order-delivery", maximumPayloadBytes: PREVIEW_CAPABILITY_PAYLOAD_BYTES });
 }
 
 export function verifyDigitalDeliveryToken(token: string) {
-  const [encoded, signature, extra] = clean(token).split(".");
-  if (!encoded || !signature || extra || encoded.length > 25000) throw new Error("Invalid digital delivery link.");
-  const expected = signEncodedPayload(encoded);
-  const actualBuffer = Buffer.from(signature, "utf8");
-  const expectedBuffer = Buffer.from(expected, "utf8");
-  if (
-    actualBuffer.length !== expectedBuffer.length ||
-    !timingSafeEqual(actualBuffer, expectedBuffer)
-  ) {
-    throw new Error("Invalid digital delivery link.");
+  const value = clean(token);
+  let payload: DigitalDeliveryTokenPayload;
+  if (isEncryptedCapabilityToken(value)) {
+    payload = decryptCapability(value, { secret: signingSecret(), purpose: "digital-order-delivery", maximumPayloadBytes: PREVIEW_CAPABILITY_PAYLOAD_BYTES }) as DigitalDeliveryTokenPayload;
+  } else {
+    const [encoded, signature, extra] = value.split(".");
+    if (!encoded || !signature || extra !== undefined || encoded.length > 25000) throw new Error("Invalid digital delivery link.");
+    const expected = Buffer.from(signEncodedPayload(encoded)), actual = Buffer.from(signature);
+    if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) throw new Error("Invalid digital delivery link.");
+    payload = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8")) as DigitalDeliveryTokenPayload;
   }
-  const payload = decodePayload(encoded);
-  if (payload.v !== 1 || payload.kind !== "digital-order-delivery") {
-    throw new Error("Unsupported digital delivery link.");
-  }
-  if (!Number.isFinite(payload.exp) || payload.exp <= Date.now()) {
-    throw new Error("This digital delivery link has expired.");
-  }
+  if (payload.v !== 1 || payload.kind !== "digital-order-delivery") throw new Error("Unsupported digital delivery link.");
+  if (!Number.isFinite(payload.exp) || payload.exp <= Date.now()) throw new Error("This digital delivery link has expired.");
   return payload;
 }
 

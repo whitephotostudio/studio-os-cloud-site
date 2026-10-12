@@ -1,0 +1,10 @@
+{
+  "name": "studio-next-eslint-glob",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Scoped Next 16.4 ESLint rootDir glob adapter without the unpatched braces dependency",
+  "main": "index.cjs",
+  "dependencies": {
+    "tinyglobby": "0.2.17"
+  }
+}

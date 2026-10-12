@@ -1,4 +1,5 @@
-import { schoolParentGalleryPath } from "@/lib/school-parent-gallery-link";
+import { createParentGalleryEntryPath, ParentGalleryEntryInputError } from "@/lib/parent-gallery-entry";
+import { pinRecoveryOrigin } from "@/lib/pin-recovery";
 import { setTimeout as delay } from "node:timers/promises";
 import { after } from "next/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -47,14 +48,23 @@ async function buildPayload(service: SupabaseClient, row: PaidEmailRow): Promise
       tags: [{ name: "type", value: "order-notification" }], idempotencyKey: `order-notify-${row.order_id}`, timeoutMs: 15000 };
   }
   let ordersHistoryUrl: string | null = null;
-  if (context.student_pin) {
-    // The database snapshot's student_pin is selected only through the
-    // order's school and photographer joins. Keep that school in the link.
-    const schoolPath = schoolParentGalleryPath({ schoolId: order.school_id, pin: context.student_pin, email: recipient, tab: "orders" });
-    if (schoolPath) ordersHistoryUrl = `https://www.studiooscloud.com${schoolPath}`;
-  } else if (context.project_pin && order.project_id) {
-    const params = new URLSearchParams({ mode: "event", project: order.project_id, email: recipient, tab: "orders" });
-    ordersHistoryUrl = `https://www.studiooscloud.com/parents/${encodeURIComponent(context.project_pin)}?${params}`;
+  try {
+    if (context.student_pin) {
+      // The immutable outbox owner and school stay bound to this student's
+      // credentials. Only authenticated ciphertext reaches the receipt URL.
+      if (order.school_id) ordersHistoryUrl = `${pinRecoveryOrigin()}${createParentGalleryEntryPath({
+        kind: "school", galleryId: order.school_id, photographerId: row.photographer_id,
+        pin: context.student_pin, email: recipient, tab: "orders",
+      })}`;
+    } else if (context.project_pin && order.project_id) {
+      ordersHistoryUrl = `${pinRecoveryOrigin()}${createParentGalleryEntryPath({ kind: "event", galleryId: order.project_id,
+        photographerId: row.photographer_id, pin: context.project_pin, email: recipient, tab: "orders" })}`;
+    }
+  } catch (error) {
+    // Some historical snapshots lack usable gallery context. Their paid
+    // receipt remains deliverable without a gallery CTA. Crypto/configuration
+    // failures still stop preparation and follow the normal retry policy.
+    if (!(error instanceof ParentGalleryEntryInputError)) throw error;
   }
   return { ...buildOrderReceiptEmail({ order, items, photographer, context, ordersHistoryUrl }),
     to: recipient, fromName: photographer.business_name?.trim() || "Studio OS Cloud",

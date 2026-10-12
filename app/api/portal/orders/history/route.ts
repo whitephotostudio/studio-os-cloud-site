@@ -1,3 +1,4 @@
+import { runParentGallerySessionRoute, parentGalleryRateKey } from "@/lib/parent-gallery-session-request";
 import { hasCurrentDigitalPayment } from "@/lib/digital-entitlement-payment";
 import { hasDigitalProductLabel } from "@/lib/digital-product-label";
 import { canonicalPortalOrderReference, canonicalPortalOrderSnapshot } from "@/lib/portal-order-media";
@@ -129,9 +130,12 @@ function rowEmailMatches(row: OrderRow, emailLower: string) {
 }
 
 export async function POST(request: NextRequest) {
+  if (request.headers?.get?.("x-studio-parent-session") === "1" || request.nextUrl?.searchParams?.has("parentLaneId")) {
+    return runParentGallerySessionRoute(request, POST);
+  }
   // 5 fetches per minute per IP; orders history isn't a hot loop.
   try {
-    const ip = getClientIp(request);
+    const ip = (parentGalleryRateKey?.(request) || getClientIp(request));
     const limit = await rateLimit(`portal-orders-history:${ip}`, {
       namespace: "portal-orders-history",
       limit: 5,

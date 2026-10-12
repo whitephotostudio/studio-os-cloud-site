@@ -100,7 +100,7 @@ for (const [kind, path] of [
   });
 }
 
-const page = ast("app/parents/[pin]/page.tsx");
+const page = ast("components/parents/parent-gallery-client.tsx");
 const compactCountLabel = declaration(page, "compactCountLabel");
 const gridMetadata = findOne(page, node => ts.isJsxElement(node) && node.openingElement.tagName.getText(page) === "div"
   && node.children.some(child => ts.isJsxExpression(child) && child.expression && ts.isCallExpression(child.expression)

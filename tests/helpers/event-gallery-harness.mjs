@@ -124,7 +124,7 @@ export function harness({ extras = {}, media, logs = [], collections, repeatPage
     const js = ts.transpileModule(sourceOverrides[file] ?? readFileSync(new URL(file, root), 'utf8'), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, esModuleInterop: true } }).outputText;
     vm.runInNewContext(js, { exports, Response, Request, URL, Buffer, atob, TextDecoder, TextEncoder, ReadableStream, AbortController, AbortSignal, setTimeout, clearTimeout, console, process: { env: { EVENT_DOWNLOAD_TOKEN_SECRET: 'synthetic-test-secret' } },
       fetch: async (url, options) => { fetched.push(url); return fetchImage ? fetchImage(url, options) : new Response(new Uint8Array([1, 2, 3]), { headers: { 'content-type': 'image/jpeg' } }); },
-      require(name) { if (name in stubs) return stubs[name]; if (name.startsWith('@/')) return load(`${name.slice(2)}.ts`); if (name.startsWith('.')) return load(path.posix.normalize(path.posix.join(path.posix.dirname(file), name)) + '.ts'); return require(name); },
+      require(name) { if (name === "server-only") return {}; if (name in stubs) return stubs[name]; if (name.startsWith('@/')) return load(`${name.slice(2)}.ts`); if (name.startsWith('.')) return load(path.posix.normalize(path.posix.join(path.posix.dirname(file), name)) + '.ts'); return require(name); },
     }, { filename: file }); return exports;
   }
   const body = overrides => ({ projectId, email: 'viewer@example.test', pin: 'project-pin', collectionId: albumA, mediaIds: [a, b, locked, foreign], ...overrides });

@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const parentGallerySource = readFileSync(
-  new URL("../app/parents/[pin]/page.tsx", import.meta.url),
+  new URL("../components/parents/parent-gallery-client.tsx", import.meta.url),
   "utf8",
 );
 

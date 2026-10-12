@@ -1,3 +1,4 @@
+import { decryptCapability, encryptCapability, isEncryptedCapabilityToken, PREVIEW_CAPABILITY_PAYLOAD_BYTES } from "@/lib/encrypted-capability";
 import { schoolClassAllowsFreeDownloads } from "@/lib/school-gallery-downloads";
 import { hasCurrentDigitalPayment } from "@/lib/digital-entitlement-payment";
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
@@ -35,15 +36,20 @@ function policyGrant(settings: unknown) { return grant(["school-media-policy", n
 function clean(value: unknown) { return typeof value === "string" ? value.trim() : ""; }
 
 export function createSchoolMediaToken(payload: SchoolMediaToken) {
-  const encoded = Buffer.from(JSON.stringify(payload)).toString("base64url");
-  return `${encoded}.${grant(encoded)}`;
+  return encryptCapability(payload, { secret: secret(), purpose: payload.kind, maximumPayloadBytes: PREVIEW_CAPABILITY_PAYLOAD_BYTES });
 }
 export function verifySchoolMediaToken(token: string, kind: SchoolMediaToken["kind"]) {
-  const [encoded, signature, extra] = token.split(".");
-  if (!encoded || !signature || extra || encoded.length > 25000) throw new Error("Invalid school media token.");
-  const expected = Buffer.from(grant(encoded)), actual = Buffer.from(signature);
-  if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) throw new Error("Invalid school media token.");
-  const payload = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8")) as SchoolMediaToken;
+  let payload: SchoolMediaToken;
+  if (isEncryptedCapabilityToken(token)) {
+    payload = decryptCapability(token, { secret: secret(), purpose: kind, maximumPayloadBytes: PREVIEW_CAPABILITY_PAYLOAD_BYTES }) as SchoolMediaToken;
+  } else {
+    // Existing emailed/saved links retain their original signature and expiry.
+    const [encoded, signature, extra] = token.split(".");
+    if (!encoded || !signature || extra !== undefined || encoded.length > 25000) throw new Error("Invalid school media token.");
+    const expected = Buffer.from(grant(encoded)), actual = Buffer.from(signature);
+    if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) throw new Error("Invalid school media token.");
+    payload = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8")) as SchoolMediaToken;
+  }
   if (payload.v !== 1 || payload.kind !== kind || !Number.isFinite(payload.exp) || payload.exp <= Date.now() || !payload.mediaKey || !payload.studentGrants || !Object.keys(payload.studentGrants).length) throw new Error("Expired school media token.");
   if (payload.legacyStorage && (!legacyStorageReference(payload.legacyStorage.bucket, payload.legacyStorage.key) || payload.legacyStorage.key !== payload.mediaKey)) throw new Error("Invalid legacy school media reference.");
   return payload;

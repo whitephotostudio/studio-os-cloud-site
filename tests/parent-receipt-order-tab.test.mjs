@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import ts from "typescript";
 
-const source = readFileSync(new URL("../app/parents/[pin]/page.tsx", import.meta.url), "utf8");
+const source = readFileSync(new URL("../components/parents/parent-gallery-client.tsx", import.meta.url), "utf8");
 const page = ts.createSourceFile("parent-gallery.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 const matches = [];
 function visit(node) {

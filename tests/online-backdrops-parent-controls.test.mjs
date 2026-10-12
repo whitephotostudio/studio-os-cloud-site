@@ -61,7 +61,8 @@ function galleryFixture({ studioDefault, schoolOverride, catalogActive = true } 
     "@/lib/proof-watermark": proofWatermark,
     "@/lib/order-currency": { resolvePhotographerOrderCurrency: () => "cad" },
     "@/lib/rate-limit": { rateLimit: async () => ({ allowed: true }), getClientIp: () => "fixture" },
-    "@/lib/portal-pin-rate-limit": { grantPortalPinBudget: response => response },
+    "@/lib/portal-pin-rate-limit": { grantPortalPinBudget: async response => response, refundPortalPinAttempt: async () => {} },
+    "@/lib/parent-gallery-session-request": { runParentGallerySessionRoute: () => assert.fail("Legacy backdrop fixture must use explicit valid credentials") },
     "@/lib/event-gallery-settings": { sanitizeEventGallerySettingsForClient: () => ({ extras: {} }) },
     "@/lib/school-gallery-downloads": { buildSchoolGalleryDownloadAccess: async () => paidDownloadAccess },
     "@/lib/package-profile-selection": { filterPackagesForProfile: (packages) => ({ packages }) },
@@ -120,7 +121,7 @@ test("Hide on every catalogue row hides parent options without changing the stud
   assert.deepEqual(context.downloadAccess, paidDownloadAccess);
 });
 
-const page = read("app/parents/[pin]/page.tsx");
+const page = read("components/parents/parent-gallery-client.tsx");
 const ast = ts.createSourceFile("parents.tsx", page, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 function effectContaining(fragment) {
   let callback;

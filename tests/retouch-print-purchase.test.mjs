@@ -100,8 +100,7 @@ function setup({ storedOrders = [], storedItems = [] } = {}) {
               : table === 'photographers' ? [{ id: photographerId, subscription_status: 'active', subscription_plan_code: 'core' }]
               : table === 'orders' ? storedOrders : table === 'order_items' ? storedItems : [];
             if (inserted) rows = [{ id: 'new-order-' + writes.length }];
-            else if (updated) rows = [];
-            else rows = rows.filter(row => filters.every(filter => filter(row)));
+            else { rows = rows.filter(row => filters.every(filter => filter(row))); if (updated) rows.forEach(row => Object.assign(row, updated)); }
             return Promise.resolve({ data: single ? rows[0] ?? null : rows, count: rows.length, error: null }).then(resolve, reject);
           } catch (error) { return Promise.reject(error).then(resolve,reject); }
         },
@@ -112,6 +111,21 @@ function setup({ storedOrders = [], storedItems = [] } = {}) {
   const stubs = {
     'next/server': { NextResponse: { json: (body, init) => Response.json(body, init) } },
     '@/lib/dashboard-auth': { createDashboardServiceClient: () => sb },
+    // These business-rule fixtures start after successful parent auth. The
+    // real browser/order binding and SQL issuers run in parent-checkout-return.test.
+    '@/lib/parent-gallery-session-request': { getParentGalleryRequestScope: () => null,
+      runParentGallerySessionRoute: () => assert.fail('Business fixture must not enter session adapter') },
+    '@/lib/parent-gallery-session': { ParentGallerySessionError: class extends Error {} },
+    '@/lib/parent-checkout-return': {
+      ParentCheckoutReturnError: class extends Error { constructor(status) { super('Saved basket needs review'); this.status = status; } },
+      parentCheckoutPrivateHeaders: { 'Cache-Control': 'private, no-store' },
+      authorizeParentCheckout: async request => ({ request, hasProvenance: true, legacySchool: false,
+        scope: { laneId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', photographerId }, applyCookie: async response => response }),
+      registerParentCheckoutReturn: async () => ({ returnId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb' }),
+      bindParentCheckoutReturn: async () => {},
+      parentCheckoutReturnUrls: origin => ({ successUrl: origin + '/parents/checkout-return/bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb?result=success&session_id={CHECKOUT_SESSION_ID}',
+        cancelUrl: origin + '/parents/checkout-return/bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb?result=cancel' }),
+    },
     '@/lib/event-gallery-access': { validateEventGalleryAccess: async ({ projectId }) => ({ ok: true, projectId, service: sb, project: { photographer_id: photographerId } }) },
     '@/lib/event-gallery-settings': { normalizeEventGallerySettings: () => ({ extras: { shippingEnabled: false, pickupEnabled: true } }) },
     '@/lib/rate-limit': { rateLimit: async () => ({ allowed: true }), getClientIp: () => 'test' },
@@ -227,7 +241,7 @@ test('Stripe checks each persisted sibling order independently', async () => {
   assert.equal(h.payments.length, 0);
 });
 
-const gallerySource = source('app/parents/[pin]/page.tsx');
+const gallerySource = source('components/parents/parent-gallery-client.tsx');
 const galleryAst = ts.createSourceFile('gallery.tsx', gallerySource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 const handlerNames = ['retouchPolicyEntry', 'addRetouchAddonToCart', 'removeCartItem'];
 const handlerSources = [];

@@ -1,3 +1,4 @@
+import { runParentGallerySessionRoute, parentGalleryRateKey } from "@/lib/parent-gallery-session-request";
 import { schoolMediaGrant, buildSchoolFavoriteDownloadAccess, schoolStudentsForMediaKey } from "@/lib/school-portal-media";
 import { NextRequest, NextResponse } from "next/server";
 import { reserveGalleryDownload } from "@/lib/gallery-download-quota";
@@ -142,11 +143,14 @@ async function loadAllowedMediaIdsForPin(params: {
 }
 
 export async function POST(request: NextRequest) {
+  if (request.headers?.get?.("x-studio-parent-session") === "1" || request.nextUrl?.searchParams?.has("parentLaneId")) {
+    return runParentGallerySessionRoute(request, POST);
+  }
   try {
     // Cap per-IP download prep rate. Each call validates access, checks
     // download eligibility, and writes a download row. 20/min is comfortably
     // above any plausible human interaction.
-    const limitResult = await rateLimit(getClientIp(request), {
+    const limitResult = await rateLimit((parentGalleryRateKey?.(request) || getClientIp(request)), {
       namespace: "school-downloads",
       limit: 20,
       windowSeconds: 60,

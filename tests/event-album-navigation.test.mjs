@@ -236,7 +236,7 @@ test("owner-hidden photo counts stay absent from the dropdown", () => {
   assert.doesNotMatch(textOf(tree), /8 photos|2 photos/);
 });
 
-const pageSource = readFileSync(new URL("../app/parents/[pin]/page.tsx", import.meta.url), "utf8");
+const pageSource = readFileSync(new URL("../components/parents/parent-gallery-client.tsx", import.meta.url), "utf8");
 const pageAst = ts.createSourceFile("page.tsx", pageSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 const functions = new Map(), variables = new Map();
 function collect(node) {

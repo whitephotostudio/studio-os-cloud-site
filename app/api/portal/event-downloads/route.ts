@@ -1,3 +1,4 @@
+import { runParentGallerySessionRoute, parentGalleryRateKey } from "@/lib/parent-gallery-session-request";
 import { NextRequest, NextResponse } from "next/server";
 import { reserveGalleryDownload } from "@/lib/gallery-download-quota";
 import { validateEventGalleryAccess } from "@/lib/event-gallery-access";
@@ -23,11 +24,14 @@ function isMissingDownloadsTable(error: unknown) {
 }
 
 export async function POST(request: NextRequest) {
+  if (request.headers?.get?.("x-studio-parent-session") === "1" || request.nextUrl?.searchParams?.has("parentLaneId")) {
+    return runParentGallerySessionRoute(request, POST);
+  }
   try {
     // Cap per-IP download prep rate. Each call validates access, reads orders,
     // reads packages, reads download logs, and writes a download row — an
     // expensive path. 20/min is well above any plausible human interaction.
-    const limitResult = await rateLimit(getClientIp(request), {
+    const limitResult = await rateLimit((parentGalleryRateKey?.(request) || getClientIp(request)), {
       namespace: "event-downloads",
       limit: 20,
       windowSeconds: 60,

@@ -1,3 +1,4 @@
+import { decryptCapability, encryptCapability, isEncryptedCapabilityToken, MAX_CAPABILITY_PAYLOAD_BYTES, PREVIEW_CAPABILITY_PAYLOAD_BYTES } from "@/lib/encrypted-capability";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { EventGalleryDownloadResolution } from "@/lib/event-gallery-downloads";
 import { eventCollectionAccessMode, type EventDownloadCollection } from "@/lib/event-download-scope";
@@ -49,15 +50,6 @@ function resolveSigningSecret() {
   return secret;
 }
 
-function encodePayload(payload: EventGalleryBatchTokenPayload) {
-  return Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
-}
-
-function decodePayload(encodedPayload: string) {
-  const raw = Buffer.from(encodedPayload, "base64url").toString("utf8");
-  return JSON.parse(raw) as EventGalleryBatchTokenPayload;
-}
-
 function signEncodedPayload(encodedPayload: string) {
   return createHmac("sha256", resolveSigningSecret())
     .update(encodedPayload)
@@ -92,52 +84,36 @@ export type EventPreviewTokenPayload = {
 };
 
 export function createEventPreviewToken(payload: EventPreviewTokenPayload) {
-  const encoded = Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
-  return `${encoded}.${signEncodedPayload(encoded)}`;
+  return encryptCapability(payload, { secret: resolveSigningSecret(), purpose: "event-gallery-preview", maximumPayloadBytes: PREVIEW_CAPABILITY_PAYLOAD_BYTES });
+}
+
+function verifyLegacyPayload(token: string, maximumEncodedBytes: number) {
+  const [encoded, signature, extra] = clean(token).split(".");
+  if (!encoded || !signature || extra !== undefined || encoded.length > maximumEncodedBytes) throw new Error("Invalid download token.");
+  const expected = Buffer.from(signEncodedPayload(encoded)), actual = Buffer.from(signature);
+  if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) throw new Error("Invalid download token.");
+  return JSON.parse(Buffer.from(encoded, "base64url").toString("utf8"));
 }
 
 export function verifyEventPreviewToken(token: string): EventPreviewTokenPayload {
-  const parts = clean(token).split(".");
-  if (parts.length !== 2 || parts[0].length > 25000) throw new Error("Invalid preview token.");
-  const [encoded, signature] = parts;
-  const expected = Buffer.from(signEncodedPayload(encoded));
-  const actual = Buffer.from(signature);
-  if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) throw new Error("Invalid preview token.");
-  const payload = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8")) as EventPreviewTokenPayload;
+  const value = clean(token);
+  const payload = (isEncryptedCapabilityToken(value)
+    ? decryptCapability(value, { secret: resolveSigningSecret(), purpose: "event-gallery-preview", maximumPayloadBytes: PREVIEW_CAPABILITY_PAYLOAD_BYTES })
+    : verifyLegacyPayload(value, 25000)) as EventPreviewTokenPayload;
   if (payload.v !== 1 || payload.kind !== "event-gallery-preview" || !Number.isFinite(payload.exp) || payload.exp <= Date.now()) throw new Error("Expired preview token.");
   return payload;
 }
 
 export function createEventGalleryBatchToken(payload: EventGalleryBatchTokenPayload) {
-  const encodedPayload = encodePayload(payload);
-  const signature = signEncodedPayload(encodedPayload);
-  return `${encodedPayload}.${signature}`;
+  return encryptCapability(payload, { secret: resolveSigningSecret(), purpose: "event-gallery-download-batch" });
 }
 
 export function verifyEventGalleryBatchToken(token: string) {
-  const [encodedPayload, signature] = clean(token).split(".");
-  if (!encodedPayload || !signature) {
-    throw new Error("Invalid download token.");
-  }
-
-  const expectedSignature = signEncodedPayload(encodedPayload);
-  const actualBuffer = Buffer.from(signature, "utf8");
-  const expectedBuffer = Buffer.from(expectedSignature, "utf8");
-  if (
-    actualBuffer.length !== expectedBuffer.length ||
-    !timingSafeEqual(actualBuffer, expectedBuffer)
-  ) {
-    throw new Error("Invalid download token.");
-  }
-
-  const payload = decodePayload(encodedPayload);
-  if (payload.v !== 1 || payload.kind !== "event-gallery-download-batch") {
-    throw new Error("Unsupported download token.");
-  }
-
-  if (!Number.isFinite(payload.exp) || payload.exp <= Date.now()) {
-    throw new Error("This download session has expired.");
-  }
-
+  const value = clean(token);
+  const payload = (isEncryptedCapabilityToken(value)
+    ? decryptCapability(value, { secret: resolveSigningSecret(), purpose: "event-gallery-download-batch" })
+    : verifyLegacyPayload(value, Math.ceil(MAX_CAPABILITY_PAYLOAD_BYTES * 4 / 3))) as EventGalleryBatchTokenPayload;
+  if (payload.v !== 1 || payload.kind !== "event-gallery-download-batch") throw new Error("Unsupported download token.");
+  if (!Number.isFinite(payload.exp) || payload.exp <= Date.now()) throw new Error("This download session has expired.");
   return payload;
 }

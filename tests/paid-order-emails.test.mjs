@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import * as crypto from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import vm from 'node:vm';
@@ -11,7 +12,7 @@ const plain = value => JSON.parse(JSON.stringify(value));
 function fixture({ orderCount = 1, kinds = ['receipt'], notes = null } = {}) {
   const f = { now: Date.parse('2026-10-05T02:00:00.000Z'), configured: true,
     rows: [], orders: new Map(), calls: [], accepted: new Map(), rpcs: [], mutations: [], builders: [],
-    digitalBuilds: [], delays: [], deferredWork: [], errors: [], env: { RESEND_API_KEY: 'synthetic-provider-key', CRON_SECRET: 'fixture-cron-secret' },
+    digitalBuilds: [], delays: [], deferredWork: [], errors: [], env: { RESEND_API_KEY: 'synthetic-provider-key', CRON_SECRET: 'fixture-cron-secret', EVENT_DOWNLOAD_TOKEN_SECRET: 'synthetic-entry-secret' },
     worker: null, tokenCount: 0, failSentAck: null, providerBehavior: null, onPrepare: null, onOrderNotesRead: null,
     resendFetch: async () => assert.fail('Unexpected fake Resend HTTP request'), databaseCreations: 0 };
   class ClockDate extends Date {
@@ -28,7 +29,9 @@ function fixture({ orderCount = 1, kinds = ['receipt'], notes = null } = {}) {
     return exports;
   }
   const resend = load('lib/resend.ts');
-  const schoolLinks = load('lib/school-parent-gallery-link.ts');
+  const capability = load('lib/encrypted-capability.ts', { 'node:crypto': crypto }, { Buffer });
+  const entry = load('lib/parent-gallery-entry.ts', { 'server-only': {}, '@/lib/encrypted-capability': capability });
+  const recovery = load('lib/pin-recovery.ts', { 'node:crypto': { default: crypto } });
   for (let index = 0; index < orderCount; index += 1) {
     const order = { id: id(index + 1), photographer_id: id(9000), project_id: id(9001),
       parent_name: `Parent ${index + 1}`, customer_email: `parent-${index + 1}@example.test`, parent_email: `parent-${index + 1}@example.test`,
@@ -125,11 +128,11 @@ function fixture({ orderCount = 1, kinds = ['receipt'], notes = null } = {}) {
     return f.providerBehavior ? f.providerBehavior(payload, f.calls.length) : f.accept(payload);
   };
   f.api = load('lib/paid-order-emails.ts', {
-    '@/lib/school-parent-gallery-link': schoolLinks,
+    '@/lib/parent-gallery-entry': entry, '@/lib/pin-recovery': recovery,
     'node:timers/promises': { setTimeout: async ms => { f.delays.push(ms); f.now += ms; } },
     'next/server': { after: callback => f.deferredWork.push(callback) },
     '@/lib/order-notification-email': { buildOrderNotificationEmail: input => { f.builders.push({ kind: 'photographer', input: plain(input) }); return { subject: 'Photographer order', html: 'Frozen photographer content', text: 'Frozen photographer content' }; } },
-    '@/lib/order-receipt-email': { buildOrderReceiptEmail: input => { f.builders.push({ kind: 'receipt', input: plain(input) }); return { subject: 'Receipt', html: 'Frozen receipt content', text: 'Frozen receipt content' }; } },
+    '@/lib/order-receipt-email': { buildOrderReceiptEmail: input => { f.builders.push({ kind: 'receipt', input: plain(input) }); return { subject: 'Receipt', html: input.ordersHistoryUrl ? `<a href="${input.ordersHistoryUrl}">View my orders</a>` : 'Frozen receipt content', text: input.ordersHistoryUrl || 'Frozen receipt content' }; } },
     '@/lib/digital-delivery': { buildDigitalDeliveryEmailForOrder: async (_service, orderId, options) => {
       f.digitalBuilds.push({ orderId, options: plain(options) });
       if (!options.force && f.orders.get(orderId)?.notes?.includes('Digital delivery link emailed')) return { skipped: true };
@@ -144,7 +147,7 @@ function fixture({ orderCount = 1, kinds = ['receipt'], notes = null } = {}) {
     '@/lib/dashboard-auth': { createDashboardServiceClient: () => { f.databaseCreations += 1; return service; } },
     '@/lib/paid-order-emails': f.api,
   });
-  f.service = service; f.resend = resend; f.deliver = ids => f.api.deliverPaidOrderEmails(service, ids);
+  f.service = service; f.resend = resend; f.entry = entry; f.deliver = ids => f.api.deliverPaidOrderEmails(service, ids);
   f.advanceToRetry = () => { f.now = Math.max(...f.rows.filter(row => row.status === 'pending').map(row => Date.parse(row.next_attempt_at)), f.now); };
   return f;
 }
@@ -171,6 +174,53 @@ test('provider accepted but lost response retries the same bytes and key without
   f.advanceToRetry(); await f.deliver();
   assert.equal(f.rows[0].status, 'sent'); assert.equal(f.calls.length, 2); assert.equal(f.accepted.size, 1);
   assert.deepEqual(f.calls.map(call => call.payload), [original, original]); assert.equal(f.builders.length, 1);
+});
+
+test('new school and event receipts use encrypted entry links bound to the frozen owner and exact gallery credentials', async () => {
+  for (const kind of ['school', 'event']) {
+    const f = fixture(), row = f.rows[0];
+    if (kind === 'school') {
+      row.snapshot.order.school_id = id(9010);
+      row.snapshot.context.student_pin = 'synthetic-school-pin';
+    }
+    assert.equal((await f.deliver()).sent, 1);
+    const url = new URL(f.builders[0].input.ordersHistoryUrl);
+    assert.equal(url.origin, 'https://www.studiooscloud.com');
+    assert.equal(url.pathname, '/api/portal/session/entry');
+    assert.deepEqual(Array.from(url.searchParams.keys()), ['token']);
+    const token = url.searchParams.get('token'); assert.match(token, /^ec1\./);
+    const decoded = f.entry.readParentGalleryEntryToken(token);
+    assert.equal(decoded.kind, kind); assert.equal(decoded.photographerId, row.photographer_id);
+    assert.equal(decoded.galleryId, kind === 'school' ? row.snapshot.order.school_id : row.snapshot.order.project_id);
+    assert.equal(decoded.pin, kind === 'school' ? row.snapshot.context.student_pin : row.snapshot.context.project_pin);
+    assert.equal(decoded.email, row.recipient_email); assert.equal(decoded.tab, 'orders');
+    assert.ok(decoded.expiresAt > f.calls[0].at && decoded.expiresAt <= f.calls[0].at + 7 * 86400000);
+    assert.equal(url.href.includes(decoded.pin), false); assert.equal(url.href.includes(decoded.email), false);
+    assert.equal(f.calls[0].payload.text, url.href);
+  }
+});
+
+test('historical frozen receipt payload keeps its exact provider bytes and idempotency key without generating a new link', async () => {
+  const f = fixture(), row = f.rows[0];
+  const frozen = { to: row.recipient_email, subject: 'Historical receipt', html: 'Historical exact bytes', text: 'Historical exact bytes',
+    idempotencyKey: `order-receipt-${row.order_id}` };
+  row.payload = structuredClone(frozen); row.first_attempt_at = new Date(f.now - 1000).toISOString();
+  // If the worker tried to rebuild this payload, these now-invalid credentials
+  // would fail closed. A provider retry must use the already prepared request.
+  row.snapshot.context.project_pin = null; row.snapshot.order.project_id = null;
+  assert.equal((await f.deliver()).sent, 1);
+  assert.deepEqual(f.calls[0].payload, frozen); assert.deepEqual(f.builders, []);
+});
+
+test('unusable historical gallery context omits only its CTA; missing encryption configuration retries without sending', async () => {
+  const historical = fixture(); historical.rows[0].snapshot.order.project_id = 'historical-invalid-gallery';
+  assert.equal((await historical.deliver()).sent, 1);
+  assert.equal(historical.builders[0].input.ordersHistoryUrl, null);
+  assert.equal(historical.calls[0].payload.text, 'Frozen receipt content');
+  const missingSecret = fixture(); missingSecret.env.EVENT_DOWNLOAD_TOKEN_SECRET = '';
+  assert.deepEqual(plain(await missingSecret.deliver()), { sent: 0, failed: 1, deferred: 0 });
+  assert.deepEqual(missingSecret.calls, []); assert.deepEqual(missingSecret.builders, []);
+  assert.equal(missingSecret.rows[0].payload, null); assert.equal(missingSecret.rows[0].status, 'pending');
 });
 
 for (const acknowledgement of ['before', 'after']) test(`sent acknowledgement failure ${acknowledgement} database commit never creates a duplicate provider delivery`, async () => {

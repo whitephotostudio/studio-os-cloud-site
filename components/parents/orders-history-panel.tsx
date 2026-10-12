@@ -6,6 +6,7 @@
 // a Reorder button that re-hydrates the live cart from `cart_snapshot`
 // and bounces the parent into the checkout flow.
 "use client";
+import { parentPortalFetch as fetch } from "@/lib/parent-gallery-session-client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { formatOrderMoney } from "@/lib/order-money";

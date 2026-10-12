@@ -5,6 +5,7 @@ import { schoolCompositeClassMatches } from "@/lib/school-composite-scope";
 import { fetchEventGalleryMediaRows } from "@/lib/event-download-scope";
 import { canonicalPortalOrderReference } from "@/lib/portal-order-media";
 import { loadSchoolPhotoTombstones, tombstoneFamilySet } from "@/lib/school-photo-deletions";
+import { decryptCapability, isEncryptedCapabilityToken, PREVIEW_CAPABILITY_PAYLOAD_BYTES } from "@/lib/encrypted-capability";
 
 type School = { id: string; photographer_id?: string | null; local_school_id?: string | null };
 type Student = { id: string; school_id?: string | null; photo_url?: string | null; class_name?: string | null; folder_name?: string | null };
@@ -50,7 +51,18 @@ export function schoolOrderPhotoReference(value: string | null | undefined) {
   try {
     const url = new URL(value || "", "https://gallery.invalid");
     if (!/^\/api\/portal\/school-preview\/[a-f0-9]{64}\.jpg$/.test(url.pathname)) return null;
-    const payload = JSON.parse(Buffer.from((url.searchParams.get("token") || "").split(".")[0], "base64url").toString("utf8"));
+    const token = url.searchParams.get("token") || "";
+    // Identity recovery alone may outlive a preview grant. Every resolved key
+    // still passes the current school/student/class allowed set below; delivery
+    // verifiers continue to enforce expiry. Do not import school-portal-media:
+    // it already depends on this module for scoped class composites.
+    const payload = isEncryptedCapabilityToken(token)
+      ? decryptCapability(token, {
+          secret: process.env.EVENT_DOWNLOAD_TOKEN_SECRET || process.env.DOWNLOAD_TOKEN_SECRET || process.env.SUPABASE_SERVICE_ROLE_KEY || "",
+          purpose: "school-gallery-preview", maximumPayloadBytes: PREVIEW_CAPABILITY_PAYLOAD_BYTES,
+        }) as { v: number; kind: string; mediaKey: string }
+      : JSON.parse(Buffer.from(token.split(".")[0], "base64url").toString("utf8"));
+    if (isEncryptedCapabilityToken(token) && payload.v !== 1) return null;
     return payload.kind === "school-gallery-preview" ? canonicalPortalOrderReference(payload.mediaKey) : null;
   } catch { return null; }
 }

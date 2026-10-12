@@ -1,0 +1,115 @@
+{
+  "description": "Synthetic signed v1 fixtures emitted by the pre-encryption issuers. No production credentials or customer data.",
+  "signingSecret": "synthetic-test-secret",
+  "issuerSourceSha256": {
+    "lib/school-portal-media.ts": "c7b9e26c8ba440e7dff9b1dec1a2507c46b363457c393c4be6a51c4b60bfdc7f",
+    "lib/event-gallery-download-tokens.ts": "2e2ed50504c90fcfc1c3884ca3107b34a62eb281a0d40a88c8d06d84055e0f59",
+    "lib/digital-delivery.ts": "38209df61fad07c78cbe21c7e78bfd7a22dd31484056ff9cf7db30ea963726ec",
+    "lib/favorites-delivery.ts": "6b7520be0cf3d227bff2cf841a5b1144497bb2f9448e49709c462ee3a35c397c"
+  },
+  "fixtures": {
+    "school-gallery-preview": {
+      "payload": {
+        "v": 1,
+        "exp": 4102444800000,
+        "kind": "school-gallery-preview",
+        "schoolId": "10000000-0000-4000-8000-000000000001",
+        "photographerId": "10000000-0000-4000-8000-000000000002",
+        "mediaKey": "schools/10000000-0000-4000-8000-000000000001/class/student/photo.jpg",
+        "viewerEmail": "parent-legacy@example.test",
+        "studentGrants": {
+          "10000000-0000-4000-8000-000000000003": "student-hmac"
+        },
+        "schoolGrant": "school-hmac"
+      },
+      "token": "eyJ2IjoxLCJleHAiOjQxMDI0NDQ4MDAwMDAsImtpbmQiOiJzY2hvb2wtZ2FsbGVyeS1wcmV2aWV3Iiwic2Nob29sSWQiOiIxMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCJwaG90b2dyYXBoZXJJZCI6IjEwMDAwMDAwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDAwMiIsIm1lZGlhS2V5Ijoic2Nob29scy8xMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEvY2xhc3Mvc3R1ZGVudC9waG90by5qcGciLCJ2aWV3ZXJFbWFpbCI6InBhcmVudC1sZWdhY3lAZXhhbXBsZS50ZXN0Iiwic3R1ZGVudEdyYW50cyI6eyIxMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDMiOiJzdHVkZW50LWhtYWMifSwic2Nob29sR3JhbnQiOiJzY2hvb2wtaG1hYyJ9.09e73a95e617ee65226de9b32311dced8ea8dde9ac7cf8db6dd1bb46049eefed"
+    },
+    "school-photo-download": {
+      "payload": {
+        "v": 1,
+        "exp": 4102444800000,
+        "kind": "school-photo-download",
+        "schoolId": "10000000-0000-4000-8000-000000000001",
+        "photographerId": "10000000-0000-4000-8000-000000000002",
+        "mediaKey": "schools/10000000-0000-4000-8000-000000000001/class/student/photo.jpg",
+        "viewerEmail": "parent-legacy@example.test",
+        "studentGrants": {
+          "10000000-0000-4000-8000-000000000003": "student-hmac"
+        },
+        "schoolGrant": "school-hmac",
+        "downloadType": "favorites",
+        "policyGrant": "policy-hmac"
+      },
+      "token": "eyJ2IjoxLCJleHAiOjQxMDI0NDQ4MDAwMDAsImtpbmQiOiJzY2hvb2wtcGhvdG8tZG93bmxvYWQiLCJzY2hvb2xJZCI6IjEwMDAwMDAwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDAwMSIsInBob3RvZ3JhcGhlcklkIjoiMTAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDAwMDAyIiwibWVkaWFLZXkiOiJzY2hvb2xzLzEwMDAwMDAwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDAwMS9jbGFzcy9zdHVkZW50L3Bob3RvLmpwZyIsInZpZXdlckVtYWlsIjoicGFyZW50LWxlZ2FjeUBleGFtcGxlLnRlc3QiLCJzdHVkZW50R3JhbnRzIjp7IjEwMDAwMDAwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDAwMyI6InN0dWRlbnQtaG1hYyJ9LCJzY2hvb2xHcmFudCI6InNjaG9vbC1obWFjIiwiZG93bmxvYWRUeXBlIjoiZmF2b3JpdGVzIiwicG9saWN5R3JhbnQiOiJwb2xpY3ktaG1hYyJ9.7f2cc6280a7c614e45f0e1595ab58a329f28ad30e5aea7d955be837fa992fc28"
+    },
+    "event-gallery-preview": {
+      "payload": {
+        "v": 1,
+        "exp": 4102444800000,
+        "kind": "event-gallery-preview",
+        "projectId": "10000000-0000-4000-8000-000000000004",
+        "photographerId": "10000000-0000-4000-8000-000000000002",
+        "viewerEmail": "parent-legacy@example.test",
+        "collectionIds": [
+          "10000000-0000-4000-8000-000000000005"
+        ],
+        "collectionGrants": {
+          "10000000-0000-4000-8000-000000000005": "album-hmac"
+        },
+        "projectAccessGrant": "project-hmac"
+      },
+      "token": "eyJ2IjoxLCJleHAiOjQxMDI0NDQ4MDAwMDAsImtpbmQiOiJldmVudC1nYWxsZXJ5LXByZXZpZXciLCJwcm9qZWN0SWQiOiIxMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDQiLCJwaG90b2dyYXBoZXJJZCI6IjEwMDAwMDAwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDAwMiIsInZpZXdlckVtYWlsIjoicGFyZW50LWxlZ2FjeUBleGFtcGxlLnRlc3QiLCJjb2xsZWN0aW9uSWRzIjpbIjEwMDAwMDAwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDAwNSJdLCJjb2xsZWN0aW9uR3JhbnRzIjp7IjEwMDAwMDAwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDAwNSI6ImFsYnVtLWhtYWMifSwicHJvamVjdEFjY2Vzc0dyYW50IjoicHJvamVjdC1obWFjIn0.c764c48a0c2ef23ed8e24b8a598e63ec0eb62785f5723ddc6fd6855f8d0a7068"
+    },
+    "event-gallery-download-batch": {
+      "payload": {
+        "v": 1,
+        "exp": 4102444800000,
+        "kind": "event-gallery-download-batch",
+        "projectId": "10000000-0000-4000-8000-000000000004",
+        "viewerEmail": "parent-legacy@example.test",
+        "galleryName": "Fixture",
+        "archiveBaseName": "fixture",
+        "resolution": "original",
+        "applyWatermark": false,
+        "includePrintRelease": false,
+        "watermarkText": "PROOF",
+        "watermarkLogoUrl": "",
+        "studioName": "Studio",
+        "studioEmail": "studio@example.test",
+        "fileName": "fixture.zip",
+        "mediaIds": [
+          "10000000-0000-4000-8000-000000000006"
+        ],
+        "collectionIds": [
+          "10000000-0000-4000-8000-000000000005"
+        ],
+        "collectionGrants": {
+          "10000000-0000-4000-8000-000000000005": "album-hmac"
+        },
+        "projectAccessGrant": "project-hmac"
+      },
+      "token": "eyJ2IjoxLCJleHAiOjQxMDI0NDQ4MDAwMDAsImtpbmQiOiJldmVudC1nYWxsZXJ5LWRvd25sb2FkLWJhdGNoIiwicHJvamVjdElkIjoiMTAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDAwMDA0Iiwidmlld2VyRW1haWwiOiJwYXJlbnQtbGVnYWN5QGV4YW1wbGUudGVzdCIsImdhbGxlcnlOYW1lIjoiRml4dHVyZSIsImFyY2hpdmVCYXNlTmFtZSI6ImZpeHR1cmUiLCJyZXNvbHV0aW9uIjoib3JpZ2luYWwiLCJhcHBseVdhdGVybWFyayI6ZmFsc2UsImluY2x1ZGVQcmludFJlbGVhc2UiOmZhbHNlLCJ3YXRlcm1hcmtUZXh0IjoiUFJPT0YiLCJ3YXRlcm1hcmtMb2dvVXJsIjoiIiwic3R1ZGlvTmFtZSI6IlN0dWRpbyIsInN0dWRpb0VtYWlsIjoic3R1ZGlvQGV4YW1wbGUudGVzdCIsImZpbGVOYW1lIjoiZml4dHVyZS56aXAiLCJtZWRpYUlkcyI6WyIxMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDYiXSwiY29sbGVjdGlvbklkcyI6WyIxMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDUiXSwiY29sbGVjdGlvbkdyYW50cyI6eyIxMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDUiOiJhbGJ1bS1obWFjIn0sInByb2plY3RBY2Nlc3NHcmFudCI6InByb2plY3QtaG1hYyJ9.7b8ca8d0685860ab02751da65377b15164774018bd850adcf0d9bea52f8a4ff1"
+    },
+    "digital-order-delivery": {
+      "payload": {
+        "v": 1,
+        "exp": 4102444800000,
+        "kind": "digital-order-delivery",
+        "orderId": "10000000-0000-4000-8000-000000000007",
+        "recipientEmail": "parent-legacy@example.test",
+        "orderAccessGrant": "order-hmac"
+      },
+      "token": "eyJ2IjoxLCJleHAiOjQxMDI0NDQ4MDAwMDAsImtpbmQiOiJkaWdpdGFsLW9yZGVyLWRlbGl2ZXJ5Iiwib3JkZXJJZCI6IjEwMDAwMDAwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDAwNyIsInJlY2lwaWVudEVtYWlsIjoicGFyZW50LWxlZ2FjeUBleGFtcGxlLnRlc3QiLCJvcmRlckFjY2Vzc0dyYW50Ijoib3JkZXItaG1hYyJ9.90519245ad541216a9259f6a4b833bcfcd6f81085ca31662e75a0e6e7443aab8"
+    },
+    "favorites-delivery": {
+      "payload": {
+        "v": 1,
+        "exp": 4102444800000,
+        "kind": "favorites-delivery",
+        "projectId": "10000000-0000-4000-8000-000000000004",
+        "recipientEmail": "parent-legacy@example.test"
+      },
+      "token": "eyJ2IjoxLCJleHAiOjQxMDI0NDQ4MDAwMDAsImtpbmQiOiJmYXZvcml0ZXMtZGVsaXZlcnkiLCJwcm9qZWN0SWQiOiIxMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDQiLCJyZWNpcGllbnRFbWFpbCI6InBhcmVudC1sZWdhY3lAZXhhbXBsZS50ZXN0In0.1159eeb6559741420c31dc9c459c6140b462ff50b2acfe0ee0781c31abcc8014"
+    }
+  }
+}

@@ -2,8 +2,9 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import ts from "typescript";
+import { parentPortalRequest, parentSessionPin } from "../lib/parent-gallery-session-client.ts";
 
-const source = readFileSync(new URL("../app/parents/[pin]/page.tsx", import.meta.url), "utf8");
+const source = readFileSync(new URL("../components/parents/parent-gallery-client.tsx", import.meta.url), "utf8");
 const page = ts.createSourceFile("parent-gallery.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 
 function findFunction(name) {
@@ -53,15 +54,15 @@ const executable = ts.transpileModule([
 ].join("\n"), {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
 }).outputText;
-const serialize = new Function("params", "searchParams", "createdOrderId", "student", "project", "parentEmail", "checkoutReturnLane", executable);
+const serialize = new Function("params", "searchParams", "createdOrderId", "student", "project", "parentEmail", "checkoutReturnLane", "sessionAccess", "parentSessionPin", executable);
 const schoolId = "55555555-5555-4555-8555-555555555555";
 const orderId = "11111111-1111-4111-8111-111111111111";
 
 function payload(url, { buyer = "billing@example.test", student = { school_id: schoolId },
-  project = null, createdOrderId = orderId, checkoutReturnLane = null } = {}) {
+  project = null, createdOrderId = orderId, checkoutReturnLane = null, sessionAccess = null } = {}) {
   const location = new URL(url, "https://gallery.example.test");
   return JSON.parse(serialize({ pin: location.pathname.split("/").at(-1) }, location.searchParams,
-    createdOrderId, student, project, buyer, checkoutReturnLane));
+    createdOrderId, student, project, buyer, checkoutReturnLane, sessionAccess, parentSessionPin));
 }
 
 test("school checkout retains its viewer email separately from editable billing email", () => {
@@ -182,10 +183,10 @@ const confirmationExecutable = ts.transpileModule(`let recoveryTimeout = null;\n
 const makeConfirmation = new Function("checkoutStatus", "sessionId", "placed", "isSchoolMode", "pin", "schoolId",
   "schoolViewerEmail", "schoolCheckoutContextMissing", "router", "fetch", "setConfirmingPayment", "setOrderError",
   "setOrderId", "setParentEmail", "setPlaced", "setDrawerOpen", "active", "schoolCheckoutRecoveryUrl", "window",
-  "AbortController", confirmationExecutable);
+  "AbortController", "sessionAccess", confirmationExecutable);
 
 function confirmationHarness({ context = missing, mode = "school", galleryUrl = returnUrl(), responseOk = true,
-  message, fetchImpl, active = true } = {}) {
+  message, fetchImpl, active = true, sessionAccess = null } = {}) {
   const events = [];
   const timers = new Map();
   let nextTimer = 0;
@@ -199,7 +200,7 @@ function confirmationHarness({ context = missing, mode = "school", galleryUrl = 
   }) };
   const fetch = async (url, options) => {
     assert.equal(url, "/api/stripe/checkout/confirm");
-    assert.deepEqual(JSON.parse(options.body), { sessionId });
+    assert.deepEqual(JSON.parse(options.body), { sessionId, ...(sessionAccess?.checkoutReturnId ? { returnId: sessionAccess.checkoutReturnId } : {}) });
     assert.ok(options.signal instanceof AbortSignal);
     events.push(["fetch", url]);
     return fetchImpl ? fetchImpl(options) : response;
@@ -211,7 +212,7 @@ function confirmationHarness({ context = missing, mode = "school", galleryUrl = 
     (value) => { state.error = value; events.push(["error", value]); },
     (value) => events.push(["orderId", value]), (value) => events.push(["parentEmail", value]),
     (value) => { state.placed = value; events.push(["placed", value]); },
-    (value) => events.push(["drawer", value]), active, schoolCheckoutRecoveryUrl, window, AbortController);
+    (value) => events.push(["drawer", value]), active, schoolCheckoutRecoveryUrl, window, AbortController, sessionAccess);
   return { confirm, events, timers, state };
 }
 
@@ -336,4 +337,30 @@ test("production loading guard suppresses missing-context errors only while succ
   assert.equal(loadingGuard(false, true, "cancel", true), false);
   assert.equal(loadingGuard(false, true, "success", false), false, "Complete school/event context keeps existing render ordering");
   assert.equal(loadingGuard(true, false, null, false), true);
+});
+
+
+const opaqueLane = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+const opaqueReturn = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+test("actual school checkout serialization plus session transport removes viewer credentials while preserving edited receipt email", () => {
+  const access = { laneId: opaqueLane, kind: "school", galleryId: schoolId, viewerEmail: "viewer@example.test" };
+  const body = payload(`/parents/view/${opaqueLane}`, { sessionAccess: access, buyer: "edited-buyer@example.test" });
+  const transported = parentPortalRequest("/api/stripe/checkout", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }, opaqueLane);
+  const sent = JSON.parse(transported.init.body);
+  assert.equal(sent.parentLaneId, opaqueLane); assert.equal(sent.schoolId, schoolId);
+  assert.equal(sent.customerEmail, "edited-buyer@example.test");
+  assert.equal(Object.hasOwn(sent, "pin"), false); assert.equal(Object.hasOwn(sent, "email"), false);
+  assert.equal(new Headers(transported.init.headers).get("x-studio-parent-session"), "1");
+});
+test("actual opaque checkout confirmation stays on its private lane and never reconstructs a credential URL", async () => {
+  const access = { laneId: opaqueLane, kind: "school", galleryId: schoolId, viewerEmail: viewer,
+    checkoutReturnId: opaqueReturn, checkoutSessionId: sessionId, checkoutStatus: "success" };
+  const harness = confirmationHarness({ context: { pin: parentSessionPin(opaqueLane), schoolId, email: viewer }, sessionAccess: access });
+  await harness.confirm();
+  assert.equal(harness.state.placed, true); assert.equal(harness.state.confirming, false);
+  assert.equal(harness.events.some(([name]) => name === "replace"), false);
+  assert.equal(harness.timers.size, 0);
+  const request = parentPortalRequest("/api/stripe/checkout/confirm", { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ sessionId, returnId: access.checkoutReturnId }) }, opaqueLane);
+  assert.deepEqual(JSON.parse(request.init.body), { sessionId, returnId: opaqueReturn, parentLaneId: opaqueLane });
 });

@@ -10,6 +10,7 @@ import * as orderPolicy from '../lib/order-payment-policy.ts';
 import * as maintenance from '../lib/credit-maintenance.ts';
 import { canonicalCheckoutJson } from '../lib/checkout-attempt.ts';
 import { sumStoredOrderTotalsCents } from '../lib/order-checkout-totals.ts';
+import { parentGalleryEntryFixture } from './fixtures/parent-gallery-entry.mjs';
 
 function load(path, modules = {}, fetch = () => assert.fail('Unexpected external provider call')) {
   const compiled = ts.transpileModule(readFileSync(new URL(`../${path}`, import.meta.url), 'utf8'), {
@@ -135,7 +136,8 @@ async function fixture({ failure = null, combined = false, loseProviderResponse 
     '@/lib/order-notification-email': load('lib/order-notification-email.ts', builderModules),
     '@/lib/order-receipt-email': load('lib/order-receipt-email.ts', builderModules),
     '@/lib/digital-delivery': { buildDigitalDeliveryEmailForOrder: () => assert.fail('Print orders must not invoke digital delivery') },
-    '@/lib/resend': resend, '@/lib/school-parent-gallery-link': load('lib/school-parent-gallery-link.ts'),
+    '@/lib/resend': resend, '@/lib/parent-gallery-entry': parentGalleryEntryFixture(),
+    '@/lib/pin-recovery': parentGalleryEntryFixture(),
   });
   const payments = load('lib/payments.ts', {
     'node:crypto': crypto, '@/lib/studio-pricing': pricing, '@/lib/stripe-billing-period': periods,

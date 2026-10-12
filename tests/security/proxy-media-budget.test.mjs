@@ -2,8 +2,9 @@ import assert from 'node:assert/strict';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import test from 'node:test';
+import test, { before, after } from 'node:test';
 import ts from 'typescript';
+import { localPinBudgetRedis } from '../helpers/pin-budget-redis.mjs';
 
 const require = createRequire(import.meta.url);
 globalThis.AsyncLocalStorage ??= AsyncLocalStorage;
@@ -14,6 +15,9 @@ const doesProxyMatch = nextTesting.unstable_doesProxyMatch ?? nextTesting.unstab
 const env = { NODE_ENV: 'production', UPSTASH_REDIS_REST_URL: 'https://fixture.upstash.io',
   UPSTASH_REDIS_REST_TOKEN: 'synthetic-provider-token', DOWNLOAD_TOKEN_SECRET: 'synthetic-private-media-secret',
   NEXT_PUBLIC_SUPABASE_URL: 'https://storage-fixture.supabase.invalid', NEXT_PUBLIC_SITE_URL: 'https://gallery-fixture.invalid' };
+let pinRedis;
+before(async () => { pinRedis = await localPinBudgetRedis(); });
+after(async () => { await pinRedis?.close(); });
 
 function load(path, modules = {}, clock = Date) {
   const exports = {};
@@ -49,10 +53,13 @@ function fixture() {
   // Exercise the real rateLimit implementation with an isolated durable-counter
   // adapter; no production configuration or network is used by this test.
   const limiter = load('lib/rate-limit.ts', { '@upstash/redis': { Redis }, '@upstash/ratelimit': { Ratelimit } }, Clock);
-  const pinBudget = load('lib/portal-pin-rate-limit.ts', { '@/lib/rate-limit': limiter }, Clock);
+  class PinRedis { eval(script, keys, args) { return pinRedis.eval(script, keys, args); } }
+  const pinBudget = load('lib/portal-pin-rate-limit.ts', { '@/lib/rate-limit': limiter,
+    '@upstash/redis': { Redis: PinRedis } }, Clock);
   const csp = load('lib/content-security-policy.ts');
   const proxy = load('proxy.ts', { 'next/server': { NextResponse }, '@/lib/rate-limit': limiter,
-    '@/lib/portal-pin-rate-limit': pinBudget, '@/lib/content-security-policy': csp });
+    '@/lib/portal-pin-rate-limit': pinBudget, '@/lib/content-security-policy': csp,
+    '@/lib/parent-gallery-session': { parentSessionRateBudgetKey: async () => null } });
   const request = (path, { method = 'GET', ip = '192.0.2.10', body } = {}) => new NextRequest(`${env.NEXT_PUBLIC_SITE_URL}${path}`, {
     method, headers: { 'x-forwarded-for': ip, ...(body ? { 'content-type': 'application/json' } : {}) },
     ...(body ? { body: JSON.stringify(body) } : {}),
@@ -124,7 +131,9 @@ test('large media loads do not alter the stricter shared PIN guessing budget', a
   const body = { schoolId: '11111111-1111-4111-8111-111111111111', pin: 'synthetic-guess', email: 'viewer@example.test' };
   for (let i = 0; i < 10; i += 1) assert.equal((await f.proxy(f.request('/api/portal/gallery-context', { method: 'POST', body }))).status, 200);
   assert.equal((await f.proxy(f.request('/api/portal/school-favorites', { method: 'POST', body }))).status, 429);
-  assert.equal(f.counters.get('rl:pin-auth-shared-short:192.0.2.10').count, 11);
+  const shortKeys = (await pinRedis.command('KEYS', 'rl:pin-auth-reservation:v1:*')).filter(key => /:short:/.test(key));
+  assert.equal(shortKeys.length, 1);
+  assert.equal(await pinRedis.command('GET', shortKeys[0]), '10', 'denied guesses cannot grow or evade the atomic window');
 });
 
 test('legacy post-auth media budget permits full galleries and never bypasses capability or ownership checks', async () => {

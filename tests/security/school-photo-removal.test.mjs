@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import test from "node:test";
 import ts from "typescript";
+
+const require = createRequire(import.meta.url);
 
 function source(relativePath) {
   return readFileSync(new URL(`../../${relativePath}`, import.meta.url), "utf8");
@@ -314,7 +317,7 @@ test("all gallery reload paths and direct image reads respect tombstones", () =>
 test("portal routes cannot sign tombstoned representatives or cross school scope", () => {
   assert.match(galleryContextSource, /!isUuid\(selectedSchoolId\)/);
   assert.doesNotMatch(galleryContextSource, /: await studentQuery;/);
-  assert.match(galleryContextSource, /namespace: "pin-auth-school"/);
+  assert.match(galleryContextSource, /await refundPortalPinAttempt\(request, \{ kind: "school", galleryId: selectedSchoolId, pin: selectedPin, email: selectedEmail \}\)/);
   assert.match(galleryContextSource, /looksLikeEmail\(selectedEmail\)/);
   assert.match(galleryContextSource, /hasCalendarBoundaryPassed/);
   assert.match(galleryContextSource, /clearTombstonedSchoolPhotoReferences/);
@@ -340,6 +343,94 @@ test("portal routes cannot sign tombstoned representatives or cross school scope
   );
   assert.doesNotMatch(schoolAccessSource, /\.ilike\("school_name"/);
   assert.doesNotMatch(schoolDownloadsSource, /\.ilike\("school_name"/);
+});
+
+test("actual school revalidation refunds only the exact successful durable failed-PIN reservation", async () => {
+  const schoolId = "10000000-0000-4000-8000-000000000001";
+  const foreignSchoolId = "10000000-0000-4000-8000-000000000002";
+  const student = { id: "child", school_id: schoolId, pin: "12345", first_name: "Synthetic", class_name: "Class" };
+  const school = { id: schoolId, school_name: "Synthetic school", photographer_id: null };
+  const counts = new Map(), reservations = new Map();
+  let successfulRefunds = 0, signed = 0;
+  const compile = (value) => ts.transpileModule(value, { compilerOptions: {
+    module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022,
+  } }).outputText;
+  const execute = (value, dependencies) => {
+    const exports = {};
+    new Function("require", "exports", "process", compile(value))((name) => {
+      if (name in dependencies) return dependencies[name];
+      if (name.startsWith("node:")) return require(name);
+      assert.fail(`Unexpected school authorization fixture import: ${name}`);
+    }, exports, { env: { DOWNLOAD_TOKEN_SECRET: "synthetic-school-photo-reservation-key",
+      UPSTASH_REDIS_REST_URL: "https://redis.invalid", UPSTASH_REDIS_REST_TOKEN: "synthetic" } });
+    return exports;
+  };
+  const budget = execute(source("lib/portal-pin-rate-limit.ts"), {
+    "@/lib/rate-limit": { getClientIp: () => "192.0.2.1" },
+    "@upstash/redis": { Redis: class {
+      async eval(script, keys, args) {
+        if (script.includes("redis.call('INCR'")) {
+          assert.equal(keys.length, 3);
+          counts.set(keys[0], (counts.get(keys[0]) || 0) + 1);
+          counts.set(keys[1], (counts.get(keys[1]) || 0) + 1);
+          reservations.set(keys[2], args[0]);
+          return [1, Date.now()];
+        }
+        assert.match(script, /redis\.call\('DEL', KEYS\[3\]\)/);
+        if (reservations.get(keys[2]) !== args[0]) return 0;
+        reservations.delete(keys[2]); successfulRefunds++;
+        for (const key of keys.slice(0, 2)) counts.set(key, Math.max(0, (counts.get(key) || 0) - 1));
+        return 1;
+      }
+    } },
+  });
+  const service = { from(table) {
+    const filters = []; let single = false;
+    const query = { select() { return query; }, eq(key, value) { filters.push(row => row[key] === value); return query; },
+      maybeSingle() { single = true; return query; }, then(resolve, reject) {
+        const rows = (table === "schools" ? [school] : table === "students" ? [student] : [])
+          .filter(row => filters.every(filter => filter(row)));
+        return Promise.resolve({ data: single ? rows[0] || null : rows, error: null }).then(resolve, reject);
+      } };
+    return query;
+  } };
+  const route = execute(galleryContextSource, {
+    "next/server": { NextResponse: { json: (body, init) => Response.json(body, init) } },
+    "@/lib/parent-gallery-session-request": { runParentGallerySessionRoute: () => assert.fail("Legacy revalidation is required") },
+    "@/lib/dashboard-auth": { createDashboardServiceClient: () => service },
+    "@/lib/portal-pin-rate-limit": budget,
+    "@/lib/order-currency": {}, "@/lib/proof-watermark": {},
+    "@/lib/school-order-media": { loadScopedSchoolCompositeMedia: async () => [] },
+    "@/lib/school-portal-media": { schoolPreviewPresentation: input => { signed++; return {
+      students: input.visibleStudents, media: [], composites: [], nobgUrls: {},
+    }; }, buildSchoolFavoriteDownloadAccess: async () => ({}) },
+    "@/lib/event-gallery-settings": { sanitizeEventGallerySettingsForClient: () => ({ extras: {} }) },
+    "@/lib/school-gallery-downloads": { buildSchoolGalleryDownloadAccess: async () => ({}) },
+    "@/lib/package-profile-selection": {},
+    "@/lib/storage-folder": { buildSchoolCandidateFolders: () => [], loadFolderMediaRows: async () => [], loadNoBgUrlMapForMediaRows: async () => ({}) },
+    "@/lib/subscription-gate": {}, "@/lib/checkout-tax": {}, "@/lib/storage-images": {},
+    "@/lib/backdrop-media-references": {}, "@/lib/online-backdrop-policy": {}, "@/lib/private-media-references": {},
+    "@/lib/calendar-dates": { hasCalendarBoundaryPassed: () => false },
+    "@/lib/r2-access-security": { isUuid: value => /^[a-f0-9-]{36}$/i.test(value) },
+    "@/lib/school-photo-deletions": { loadSchoolPhotoTombstones: async () => [], tombstoneFamilySet: () => new Set(),
+      clearTombstonedSchoolPhotoReferences: rows => rows, clearOutOfScopeSchoolPhotoReferences: rows => rows },
+  });
+  const request = (pin, selectedSchoolId = schoolId) => new Request("https://fixture.invalid/api/portal/gallery-context", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ schoolId: selectedSchoolId, pin, email: "parent@example.test" }),
+  });
+  const good = request(student.pin);
+  assert.equal(await budget.portalPinAttemptLimit(good), null);
+  assert.equal((await route.POST(good)).status, 200);
+  assert.equal(successfulRefunds, 1, "explicit refund and proof-cookie grant cannot refund twice");
+  assert.equal([...counts.values()].reduce((total, value) => total + value, 0), 0);
+  for (const bad of [request("wrong-pin"), request(student.pin, foreignSchoolId)]) {
+    assert.equal(await budget.portalPinAttemptLimit(bad), null);
+    assert.equal((await route.POST(bad)).status, 404);
+  }
+  assert.equal(successfulRefunds, 1, "unknown schools and wrong PINs never refund a failed attempt");
+  assert.equal([...counts.values()].reduce((total, value) => total + value, 0), 4, "both shared failure windows retain both failures");
+  assert.equal(signed, 1, "only current exact school/PIN validation reaches media presentation");
 });
 
 test("migration provides owner-only reads and blocks legacy representative resurrection", () => {

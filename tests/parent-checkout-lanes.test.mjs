@@ -12,7 +12,7 @@ const compile = (source) => ts.transpileModule(source, { compilerOptions: { modu
 const load = (path) => { const exports = {}; new Function('exports', compile(read(path)))(exports); return exports; };
 const cart = load('lib/combine-cart-storage.ts');
 const media = load('lib/event-gallery-media-client.ts');
-const source = read('app/parents/[pin]/page.tsx');
+const source = read('components/parents/parent-gallery-client.tsx');
 const ast = ts.createSourceFile('parents.tsx', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 function declaration(name) {
   let result;
