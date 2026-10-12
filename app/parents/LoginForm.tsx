@@ -1,4 +1,5 @@
 "use client";
+import { beginParentGallerySession } from "@/lib/parent-gallery-session-client";
 // app/parents/LoginForm.tsx
 //
 // ✅ PERF: Extracted from page.tsx so it can be used as a Client Component
@@ -398,16 +399,15 @@ export default function LoginForm({
     }
   }, [initialEventProjects, prefilledEventEmail, prefilledEventId, prefilledMode]);
 
-  // ── PIN-recovery magic-link landing ────────────────────────────────
+  // ── Legacy PIN-recovery landing compatibility ─────────────────────
   //
-  // The /api/portal/recovery/claim endpoint redirects here with
-  // ?recovery=ok&pin=...&school=... after consuming the token.  We use
-  // those params to:
+  // Old bookmarked recovery landings can include
+  // ?recovery=ok&pin=...&school=... . We use those params to:
   //   · auto-select the school in the dropdown
   //   · auto-fill the PIN field
   //   · surface a friendly green banner explaining what just happened
-  // The parent still has to type their email (security: even after the
-  // magic link, we never reveal the PIN without one more parent action).
+  // The parent still has to type their email and pass current PIN validation.
+  // New claims bootstrap a private session and never emit this PIN URL.
   const [recoveryBanner, setRecoveryBanner] = useState<
     "ok" | "expired" | "used" | "invalid" | null
   >(null);
@@ -530,10 +530,8 @@ export default function LoginForm({
           schoolId: selectedSchoolId,
           pin: schoolPin.trim(),
           email: schoolEmail.trim().toLowerCase(),
-          // ✅ PERF: Ask server to also return gallery data in the same
-          // response — gallery page then reads from sessionStorage instead
-          // of making its own separate API call.
-          prefetch: true,
+          // Private gallery context is fetched after the HttpOnly session is issued.
+          prefetch: false,
         }),
       });
 
@@ -567,24 +565,10 @@ export default function LoginForm({
         return;
       }
 
-      // ✅ PERF: Cache prefetched gallery context so the gallery page can
-      // skip its own /api/portal/gallery-context call entirely.
-      if (payload.galleryContext) {
-        try {
-          const cacheKey = `gallery_ctx:${payload.pin}:${payload.schoolId}`;
-          sessionStorage.setItem(
-            cacheKey,
-            JSON.stringify({ ...payload.galleryContext, ts: Date.now() }),
-          );
-        } catch { /* sessionStorage unavailable in some contexts */ }
-      }
-
-      // ✅ PERF: Use router.push (SPA navigation) instead of
-      // window.location.href (full page reload) — avoids re-downloading
-      // the JS bundle and re-running layout code.
-      router.push(
-        `/parents/${encodeURIComponent(payload.pin)}?mode=school&school=${encodeURIComponent(payload.schoolId)}&email=${encodeURIComponent(schoolEmail.trim().toLowerCase())}`,
-      );
+      setSearching(true);
+      const session = await beginParentGallerySession({ kind: "school", galleryId: payload.schoolId,
+        pin: payload.pin, email: schoolEmail.trim().toLowerCase() });
+      router.push(session.galleryUrl);
     } catch (error) {
       setSearching(false);
       setLoginError(error instanceof Error ? error.message : "No gallery was found for that school and PIN.");
@@ -670,10 +654,10 @@ export default function LoginForm({
         return;
       }
 
-      // ✅ PERF: SPA navigation (no full page reload)
-      router.push(
-        `/parents/${encodeURIComponent(payload.pin)}?mode=event&project=${encodeURIComponent(payload.projectId)}&email=${encodeURIComponent(payload.email)}`,
-      );
+      setSearching(true);
+      const session = await beginParentGallerySession({ kind: "event", galleryId: payload.projectId,
+        pin: payload.pin, email: payload.email });
+      router.push(session.galleryUrl);
     } catch (error) {
       setSearching(false);
       setLoginError(error instanceof Error ? error.message : "No event gallery was found for that email and PIN.");

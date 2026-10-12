@@ -1,3 +1,4 @@
+import { runParentGallerySessionRoute, parentGalleryRateKey } from "@/lib/parent-gallery-session-request";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { createDashboardServiceClient } from "@/lib/dashboard-auth";
@@ -135,13 +136,16 @@ async function updateScope(service: Service, ctx: Awaited<ReturnType<typeof cont
 }
 
 export async function POST(request: NextRequest) {
+  if (request.headers?.get?.("x-studio-parent-session") === "1" || request.nextUrl?.searchParams?.has("parentLaneId")) {
+    return runParentGallerySessionRoute(request, POST);
+  }
   let release: (() => Promise<void>) | undefined;
   try {
     const origin = request.headers.get("origin");
     if (origin && origin !== request.nextUrl.origin) {
       return NextResponse.json({ ok: false, message: "Invalid request origin." }, { status: 403 });
     }
-    const limit = await rateLimit(getClientIp(request), { namespace: "portal-order-dismiss", limit: 8, windowSeconds: 60 });
+    const limit = await rateLimit((parentGalleryRateKey?.(request) || getClientIp(request)), { namespace: "portal-order-dismiss", limit: 8, windowSeconds: 60 });
     if (!limit.allowed) return NextResponse.json({ ok: false, message: "Too many requests. Try again shortly." }, { status: 429 });
     const parsed = await parseJson(request, inputSchema);
     if (!parsed.ok) return parsed.response;

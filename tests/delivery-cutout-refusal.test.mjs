@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import test from 'node:test';
 import ts from 'typescript';
+import * as encryptedCapability from '../lib/encrypted-capability.ts';
 
 const require = createRequire(import.meta.url);
 function load(path, modules = {}) {
@@ -42,6 +43,7 @@ function fixture({ composite = null, selected = true, throwComposite = false } =
     hasBackdropCompositeSelection: value => Boolean(value?.image_url), backdropCompositeFileName: () => 'portrait_Blue_backdrop.jpg',
   };
   const modules = {
+    '@/lib/encrypted-capability': encryptedCapability,
     'next/server': { NextResponse: FixtureResponse }, '@/lib/order-display': display,
     '@/lib/digital-entitlement-payment': load('lib/digital-entitlement-payment.ts'),
     '@/lib/digital-product-label': load('lib/digital-product-label.ts'),

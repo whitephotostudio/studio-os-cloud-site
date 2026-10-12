@@ -91,6 +91,10 @@ function fixture(options = {}) {
     throw Error(`Unexpected request ${path}`);
   }
   const dependencies = {
+    '@/lib/parent-gallery-session-request': {
+      parentGalleryRateKey: () => null,
+      runParentGallerySessionRoute: () => assert.fail('Dismissal fixtures must validate their explicit legacy gallery credentials'),
+    },
     'next/server': { NextResponse: { json: (value, init) => Response.json(value, init) } }, zod: require('zod'),
     '@/lib/dashboard-auth': { createDashboardServiceClient: () => service },
     '@/lib/api-validation': { parseJson: async (request, schema) => { const parsed = schema.safeParse(await request.json()); return parsed.success ? { ok: true, data: parsed.data } : { ok: false, response: Response.json({ ok: false }, { status: 400 }) }; } },

@@ -1,0 +1,63 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {promises as fs} from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
+import {createHash,generateKeyPairSync} from 'node:crypto';
+import {spawnSync} from 'node:child_process';
+import {PGlite} from '@electric-sql/pglite';
+import {parseCatalog,projectionType,parseForeignKey,populateMirror,verifyMirror,privatePath,readPrivate,createScratch,receiptShape,selectedIndex,parseArguments,rehearse,SELECTED_MEMBERS} from '../../scripts/security-recovery-rehearsal.mjs';
+import {createCheckpointBackup} from '../../scripts/security-checkpoint-backup.mjs';
+const digest=b=>createHash('sha256').update(b).digest('hex');
+const column=(name,formatted_type='text',not_null=false)=>({name,formatted_type,not_null});
+function fixture({orphan=false,badNumeric=false}={}){
+ const relations=[
+  {schema:'public',name:'parents',kind:'r',columns:[column('id','text',true),column('amount','bigint'),column('precise','numeric')]},
+  {schema:'public',name:'children',kind:'r',columns:[column('id','text',true),column('parent_id')]},
+  {schema:'storage',name:'buckets',kind:'r',columns:[column('id','text',true),column('type','storage.buckettype')]},
+  {schema:'storage',name:'objects',kind:'r',columns:[column('id','text',true),column('bucket_id')]},
+  {schema:'public',name:'snapshot_view',kind:'v',columns:[column('id')]},
+  {schema:'public',name:'sequence_snapshot',kind:'S',columns:[]},
+ ];
+ const constraints=[
+  {schema:'public',relation:'public.children',kind:'f',definition:'FOREIGN KEY (parent_id) REFERENCES public.parents(id) ON DELETE CASCADE'},
+  {schema:'storage',relation:'storage.objects',kind:'f',definition:'FOREIGN KEY (bucket_id) REFERENCES storage.buckets(id)'},
+  {schema:'public',relation:'public.parents',kind:'f',definition:'FOREIGN KEY (id) REFERENCES auth.users(id)'},
+ ];
+ const records=[`[{"id":"parent","amount":${badNumeric?'"invalid"':'9007199254740993'},"precise":12345678901234567890.12345678901234567890}]`,
+  `[{"id":"child","parent_id":"${orphan?'missing':'parent'}"}]`,'[{"id":"bucket","type":"STANDARD"}]','[{"id":"object","bucket_id":"bucket"}]','[{"id":"view-snapshot"}]','[{"last_value":"9007199254740993","is_called":true}]'];
+ const rows=relations.map((rel,i)=>`{"schema_name":${JSON.stringify(rel.schema)},"relation_name":${JSON.stringify(rel.name)},"relation_kind":${JSON.stringify(rel.kind)},"table_name":${JSON.stringify(rel.schema+'.'+rel.name)},"row_count":1,"snapshot_id":"100:100:","captured_at":"2026-10-12T08:00:00Z","records":${records[i]}}`);
+ return{catalog:{relations,constraints,functions:[{definition:'DO NOT EXECUTE ARCHIVED CODE'}],triggers:[{definition:'DO NOT EXECUTE'}]},dataText:'{"rows":['+rows.join(',')+']}'};
+}
+async function temp(t){const dir=await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(),'studio-recovery-test-')));await fs.chmod(dir,0o700);t.after(()=>fs.rm(dir,{recursive:true,force:true}));return dir;}
+async function database(t){const db=new PGlite();t.after(()=>db.close());return db;}
+
+test('raw PostgreSQL JSONB ingestion preserves bigint and high-precision numeric lexemes',async t=>{
+ const db=await database(t),f=fixture();await populateMirror(db,f.catalog,f.dataText);const result=await db.query("SELECT data->>'amount' amount,data->>'precise' precise FROM recovery_records WHERE relation_name='parents'");
+ assert.equal(result.rows[0].amount,'9007199254740993');assert.equal(result.rows[0].precise,'12345678901234567890.12345678901234567890');
+ const proof=await verifyMirror(db,f.catalog);assert.equal(proof.recordsVerified,6);assert.equal(proof.internalForeignKeysChecked,2);assert.equal(proof.externalForeignKeysDeferred,1);assert.equal(proof.managedTypeColumnsMappedToText,1);assert.equal(proof.typedRecordsValidated,5);assert.equal(proof.sourceCanonicalSha256,proof.mirrorCanonicalSha256);assert.equal(proof.fullProviderApplicationDrProven,false);assert.equal(proof.archivedSqlExecuted,false);assert.equal(proof.viewsFunctionsTriggersPoliciesRestored,false);
+});
+test('changed mirror data fails canonical content verification',async t=>{const db=await database(t),f=fixture();await populateMirror(db,f.catalog,f.dataText);await db.exec("UPDATE recovery_records SET data=jsonb_set(data,'{amount}','9007199254740992') WHERE relation_name='parents'");await assert.rejects(()=>verifyMirror(db,f.catalog),/MIRROR_CONTENT_MISMATCH/);});
+test('a preserved orphan row fails actual internal foreign-key consistency',async t=>{const db=await database(t),f=fixture({orphan:true});await populateMirror(db,f.catalog,f.dataText);await assert.rejects(()=>verifyMirror(db,f.catalog),/INTERNAL_FOREIGN_KEY_MISMATCH/);});
+test('primitive type projection executes actual PostgreSQL casts',async t=>{const db=await database(t),f=fixture({badNumeric:true});await populateMirror(db,f.catalog,f.dataText);await assert.rejects(()=>verifyMirror(db,f.catalog));});
+test('missing field/null not-null/unknown column are rejected',async()=>{for(const patch of ['{"id":"parent","amount":1}','{"id":null,"amount":1,"precise":1}','{"id":"parent","amount":1,"precise":1,"extra":0}']){const db=new PGlite(),f=fixture();try{const text=f.dataText.replace(/\[\{"id":"parent"[^\]]+\]/,'['+patch+']');await populateMirror(db,f.catalog,text);await assert.rejects(()=>verifyMirror(db,f.catalog),/COLUMN_COVERAGE_MISMATCH/);}finally{await db.close();}}});
+test('incomplete counts and snapshot drift fail before recovery verification',async()=>{for(const change of [text=>text.replace('"row_count":1','"row_count":2'),text=>text.replace('"snapshot_id":"100:100:"','"snapshot_id":"99:99:"'),text=>text.replace('"records":[{"id":"child"','"records":{"id":"child"')]){const db=new PGlite(),f=fixture();try{await assert.rejects(()=>populateMirror(db,f.catalog,change(f.dataText)));}finally{await db.close();}}});
+test('quoted FK identifiers are parsed as data and composite MATCH FULL is retained',()=>{assert.deepEqual(parseForeignKey({schema:'public',definition:'FOREIGN KEY ("weird""name", second) REFERENCES "public"."target-name"("first", second) MATCH FULL ON DELETE SET NULL'}),{columns:['weird"name','second'],targetSchema:'public',targetName:'target-name',targetColumns:['first','second'],matchFull:true});assert.throws(()=>parseForeignKey({schema:'public',definition:'FOREIGN KEY (a) REFERENCES public.b(id); SELECT dangerous()'}),/UNSUPPORTED_FOREIGN_KEY/);});
+test('type projection rejects SQL injection and unrecorded named types',()=>{for(const value of ['text); SELECT 1; --','public.custom_enum','text COLLATE arbitrary','numeric(10,2);drop table x'])assert.throws(()=>projectionType(value),/UNSUPPORTED_PROJECTION_TYPE/);assert.deepEqual(projectionType('storage.buckettype'),{text:'text',managedTypeMapped:true});});
+test('catalog scope/duplicates/foreign tables are rejected',()=>{const f=fixture(),wrap=c=>JSON.stringify({rows:[{recovery_catalog:c}]});assert.equal(parseCatalog(wrap(f.catalog)).relations.length,6);for(const mutate of [c=>c.relations.push(c.relations[0]),c=>c.relations[0].schema='auth',c=>c.relations[0].kind='f',c=>c.relations[0].columns.push(c.relations[0].columns[0])]){const c=structuredClone(f.catalog);mutate(c);assert.throws(()=>parseCatalog(wrap(c)),/INVALID_CATALOG/);}});
+test('private input/scratch guards reject links, shared files, USB, existing output and repository paths',async t=>{const dir=await temp(t),file=path.join(dir,'data.json');await fs.writeFile(file,'{}',{mode:0o600});assert.equal((await readPrivate(file)).toString(),'{}');await fs.chmod(file,0o644);await assert.rejects(()=>readPrivate(file));await fs.chmod(file,0o600);const link=path.join(dir,'link');await fs.symlink(file,link);await assert.rejects(()=>readPrivate(link));const hard=path.join(dir,'hard');await fs.link(file,hard);await assert.rejects(()=>readPrivate(file));await fs.unlink(hard);await assert.rejects(()=>privatePath('/Volumes/arbitrary'));await createScratch(path.join(dir,'scratch'));await assert.rejects(()=>createScratch(path.join(dir,'scratch')));await assert.rejects(()=>createScratch(path.resolve('forbidden-rehearsal')));});
+test('authenticated index and trusted receipt require exact identity/hash/size and selected paths',()=>{const entries=Object.values(SELECTED_MEMBERS).map(name=>({name,bytes:2,sha256:'1'.repeat(64)}));const receipt=receiptShape({format:'studio-security-checkpoint-v1',checkpointId:'synthetic_checkpoint',fileCount:2,archiveBytes:10,ciphertextBytes:100,archiveSha256:'a'.repeat(64),ciphertextSha256:'b'.repeat(64)});const index={format:receipt.format,checkpointId:receipt.checkpointId,entries};assert.equal(selectedIndex(index,receipt).data.bytes,2);for(const altered of [{...index,checkpointId:'foreign_checkpoint'},{...index,entries:[entries[0],entries[0]]},{...index,entries:[{...entries[0],name:'../unsafe'},entries[1]]},{...index,entries:[{...entries[0],bytes:100*1024**2},entries[1]]}])assert.throws(()=>selectedIndex(altered,receipt));assert.throws(()=>receiptShape({...receipt,archiveBytes:3*1024**3}));});
+test('CLI accepts no production URL or implicit consent and default invocation is inert',()=>{assert.throws(()=>parseArguments(['--database-url','postgres://production']));assert.throws(()=>parseArguments(['--scratch','/private/tmp']));const script=path.resolve('scripts/security-recovery-rehearsal.mjs');const result=spawnSync(process.execPath,[script],{encoding:'utf8'});assert.equal(result.status,0);assert.equal(JSON.parse(result.stdout).skipped,true);});
+test('restore tool identity is checked before private key use or scratch creation',async t=>{const dir=await temp(t),tool=path.join(dir,'wrong.mjs'),scratch=path.join(dir,'not-created');await fs.writeFile(tool,'throw Error("never run")',{mode:0o600});await assert.rejects(()=>rehearse({approval:'approved-offline-only',restoreTool:tool,privateKey:path.join(dir,'missing-key'),scratch}),/RESTORE_TOOL_HASH_MISMATCH/);await assert.rejects(()=>fs.stat(scratch));await assert.rejects(()=>rehearse({}),/EXPLICIT_OFFLINE_APPROVAL_REQUIRED/);});
+test('complete synthetic encrypted archive restores selected authenticated files into a real offline PostgreSQL row mirror',async t=>{
+ const dir=await temp(t),source=path.join(dir,'source'),external=path.join(dir,'external'),keys=generateKeyPairSync('rsa',{modulusLength:2048,publicKeyEncoding:{type:'spki',format:'pem'},privateKeyEncoding:{type:'pkcs8',format:'pem'}});
+ await fs.mkdir(source,{mode:0o700});await fs.mkdir(external,{mode:0o700});const privateKey=path.join(source,'private.pem'),publicKey=path.join(source,'public.b64');await fs.writeFile(privateKey,keys.privateKey,{mode:0o600});await fs.writeFile(publicKey,Buffer.from(keys.publicKey).toString('base64'),{mode:0o600});
+ const f=fixture(),prepared=path.join(source,'prepare-final-recovery-20261012');await fs.mkdir(prepared,{mode:0o700});await fs.writeFile(path.join(prepared,'final-recovery-catalog-private.json'),JSON.stringify({rows:[{recovery_catalog:f.catalog}]}),{mode:0o600});await fs.writeFile(path.join(prepared,'final-data-checkpoint-private.json'),f.dataText,{mode:0o600});
+ for(const [name,content] of Object.entries({'data-checkpoint.json':'{}','security-catalog-before.json':'{}','provider-backups-before.json':'{}','rollback.sql':'-- never execute','source.ts':'// harmless synthetic'}))await fs.writeFile(path.join(source,name),content,{mode:0o600});
+ assert.equal(spawnSync('/usr/bin/tar',['-czf',path.join(source,'cloud-source-synthetic.tar.gz'),'-C',source,'source.ts']).status,0);
+ const checkpointId='synthetic_recovery_20261012';await createCheckpointBackup({sourceDirectory:source,publicKeyB64File:publicKey,privateKeyFile:privateKey,destination:external,checkpointId,copyRestoreTools:false});
+ const result=await rehearse({approval:'approved-offline-only',archive:path.join(external,'checkpoint-'+checkpointId+'.enc'),receipt:path.join(source,'checkpoint-'+checkpointId+'.verification.json'),privateKey,restoreTool:path.resolve('scripts/security-checkpoint-backup.mjs'),scratch:path.join(dir,'customer-rehearsal')});
+ assert.equal(result.ok,true);assert.equal(result.recordsVerified,6);assert.equal(result.authenticatedIndexSelectedFilesVerified,2);assert.equal(result.productionRequests,0);assert.equal(result.archivedSqlExecuted,false);assert.equal(result.plaintextOnUsb,false);assert.equal(result.fullProviderApplicationDrProven,false);assert.equal(result.sourceCanonicalSha256,result.mirrorCanonicalSha256);
+ for(const name of ['data.json','catalog.json','checkpoint-index.json','rehearsal-proof.json'])assert.equal((await fs.stat(path.join(result.scratch,name))).mode&0o777,0o600);
+ assert.equal(digest(await fs.readFile(path.join(result.scratch,'data.json'))),digest(Buffer.from(f.dataText)));
+});

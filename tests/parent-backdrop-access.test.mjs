@@ -4,7 +4,7 @@ import test from "node:test";
 import ts from "typescript";
 
 const helperSource = readFileSync(new URL("../lib/parent-backdrop-access.ts", import.meta.url), "utf8");
-const gallery = readFileSync(new URL("../app/parents/[pin]/page.tsx", import.meta.url), "utf8");
+const gallery = readFileSync(new URL("../components/parents/parent-gallery-client.tsx", import.meta.url), "utf8");
 const compile = (source) => ts.transpileModule(source, {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
 }).outputText;

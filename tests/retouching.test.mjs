@@ -70,7 +70,7 @@ test("both checkout routes preserve validated retouch selections, durable SKUs, 
 });
 
 test("customer notes and photo choices persist across checkout, gallery switching and reorder", () => {
-  const source = readFileSync(new URL("../app/parents/[pin]/page.tsx", import.meta.url), "utf8");
+  const source = readFileSync(new URL("../components/parents/parent-gallery-client.tsx", import.meta.url), "utf8");
   for (const name of ["item", "i", "entry"]) {
     assert.match(source, new RegExp(`retouchSelections: ${name}\\.retouchSelections`));
   }

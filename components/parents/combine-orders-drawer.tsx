@@ -1,4 +1,5 @@
 "use client";
+import { beginParentGallerySession, parentSessionPin, parentPortalFetch } from "@/lib/parent-gallery-session-client";
 
 // CombineOrdersDrawer
 //
@@ -17,8 +18,8 @@
 //     onAddedSibling={(payload) => merge into cart context}
 //   />
 //
-// Tabs 1 + 2 just call the existing /api/portal/gallery-context (school mode)
-// with the typed pin + email, and on success hand the resulting payload
+// Tabs 1 + 2 validate typed credentials into a private browser session, then
+// call the existing school context with its opaque lane. On success hand the payload
 // back to the host so it can splice the new student into the active session.
 // Tab 3 calls /api/portal/recovery/request which returns a generic message
 // regardless of outcome (intentional — anti-enumeration).
@@ -357,14 +358,16 @@ function SiblingTab({
     setSubmitting(true);
     setError("");
     try {
-      const res = await fetch("/api/portal/gallery-context", {
+      const session = await beginParentGallerySession({ kind: "school", galleryId: schoolId,
+        pin: pin.trim(), email: email.trim().toLowerCase() });
+      const res = await parentPortalFetch("/api/portal/gallery-context", {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           schoolId,
-          pin: pin.trim(),
-          email: email.trim().toLowerCase(),
+          pin: parentSessionPin(session.laneId),
+          email: "",
         }),
       });
       const body = (await res.json().catch(() => ({}))) as {
@@ -387,8 +390,8 @@ function SiblingTab({
       const label = `${studentName || "Student"} · ${schoolName}${yearSuffix}`;
       onAdded?.({
         schoolId,
-        pin: pin.trim(),
-        email: email.trim().toLowerCase(),
+        pin: parentSessionPin(session.laneId),
+        email: "",
         label,
       });
       showToast(`✓ ${label} added to your cart`);

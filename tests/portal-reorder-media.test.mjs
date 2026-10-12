@@ -6,7 +6,7 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import ts from "typescript";
 
-const source = readFileSync(new URL("../app/parents/[pin]/page.tsx", import.meta.url), "utf8");
+const source = readFileSync(new URL("../components/parents/parent-gallery-client.tsx", import.meta.url), "utf8");
 const ast = ts.createSourceFile("page.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 const compile = (code) => ts.transpileModule(code, {
   fileName: "reorder.tsx",

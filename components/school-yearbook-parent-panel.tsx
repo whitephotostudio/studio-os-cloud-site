@@ -1,4 +1,5 @@
 "use client";
+import { parentPortalFetch as fetch } from "@/lib/parent-gallery-session-client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { YearbookSelection, YearbookSettings } from "@/lib/school-yearbook";
 

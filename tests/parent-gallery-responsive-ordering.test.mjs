@@ -4,7 +4,7 @@ import test from "node:test";
 import vm from "node:vm";
 import ts from "typescript";
 
-const source = readFileSync(new URL("../app/parents/[pin]/page.tsx", import.meta.url), "utf8");
+const source = readFileSync(new URL("../components/parents/parent-gallery-client.tsx", import.meta.url), "utf8");
 const ast = ts.createSourceFile("parents-page.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 const functions = new Map(), variables = new Map(), styles = [], buttons = [];
 function property(object, name) {

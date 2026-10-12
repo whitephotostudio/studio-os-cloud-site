@@ -21,8 +21,15 @@ jobs:
           node-version: '24'
           cache: npm
       - run: npm ci
-      - run: npm audit --omit=dev --audit-level=moderate
-      - run: npm --prefix mobile audit --omit=dev --audit-level=moderate
+      - name: Install local Redis test executable
+        run: |
+          if ! command -v redis-server >/dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y redis-server
+            sudo systemctl stop redis-server || true
+          fi
+      - run: npm audit --audit-level=moderate
+      - run: npm --prefix mobile audit --audit-level=moderate
       - run: npm test
       - run: npm run build
 

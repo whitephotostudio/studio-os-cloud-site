@@ -1,4 +1,5 @@
 "use client";
+import { beginParentGallerySession } from "@/lib/parent-gallery-session-client";
 
 import { type CSSProperties, type FormEvent, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -133,7 +134,7 @@ export default function SchoolDirectLoginForm({ school }: { school: SchoolRow })
           schoolId: school.id,
           email: email.trim().toLowerCase(),
           pin: pin.trim(),
-          prefetch: true,
+          prefetch: false,
         }),
       });
 
@@ -157,20 +158,10 @@ export default function SchoolDirectLoginForm({ school }: { school: SchoolRow })
         return;
       }
 
-      if (payload.galleryContext) {
-        try {
-          sessionStorage.setItem(
-            `gallery_ctx:${payload.pin}:${payload.schoolId}`,
-            JSON.stringify({ ...payload.galleryContext, ts: Date.now() }),
-          );
-        } catch {
-          // Continue even when private browsing blocks sessionStorage.
-        }
-      }
-
-      router.push(
-        `/parents/${encodeURIComponent(payload.pin)}?mode=school&school=${encodeURIComponent(payload.schoolId)}&email=${encodeURIComponent(email.trim().toLowerCase())}`,
-      );
+      setSubmitting(true);
+      const session = await beginParentGallerySession({ kind: "school", galleryId: payload.schoolId,
+        pin: payload.pin, email: email.trim().toLowerCase() });
+      router.push(session.galleryUrl);
     } catch (err) {
       setSubmitting(false);
       setError(err instanceof Error ? err.message : "Could not reach the gallery service.");

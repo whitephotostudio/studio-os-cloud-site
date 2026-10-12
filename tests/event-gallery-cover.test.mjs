@@ -436,7 +436,7 @@ test("switching a live cover into an owner preview cancels pending photo and foc
   assert.equal(ui.pendingTimers, 0);
 });
 
-const pageSource = readFileSync(new URL("../app/parents/[pin]/page.tsx", import.meta.url), "utf8");
+const pageSource = readFileSync(new URL("../components/parents/parent-gallery-client.tsx", import.meta.url), "utf8");
 const pageAst = ts.createSourceFile("page.tsx", pageSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 const functions = new Map(), variables = new Map(), introEntryArguments = [];
 function collect(node) {

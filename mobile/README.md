@@ -43,7 +43,7 @@ npm run add:ios
 
 # 3. Generate app icons + splash from the Studio OS logo
 #    (source art is already in ./assets — logo.png, splash.png, splash-dark.png)
-npx capacitor-assets generate --ios \
+npm run icons -- \
   --iconBackgroundColor '#ffffff' \
   --iconBackgroundColorDark '#ffffff' \
   --splashBackgroundColor '#ffffff' \
@@ -55,6 +55,11 @@ npm run sync
 # 5. Open the project in Xcode
 npm run open
 ```
+
+The local iOS generator uses patched Sharp, preserving the 1024px icon,
+2732px light/dark splash sizes, source-art precedence and Xcode catalog names.
+It replaces the old `@capacitor/assets` development tool, whose dependency tree
+has unpatched advisories. Native artwork is regenerated only when you run this command.
 
 ### In Xcode
 

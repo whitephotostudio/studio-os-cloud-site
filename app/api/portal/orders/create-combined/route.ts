@@ -1,3 +1,4 @@
+import { runParentGallerySessionRoute, parentGalleryRateKey } from "@/lib/parent-gallery-session-request";
 import { resolveSchoolOrderMediaReferences } from "@/lib/school-order-media";
 import { randomUUID } from "node:crypto";
 import { checkoutAttemptIdentity } from "@/lib/checkout-attempt";
@@ -182,9 +183,12 @@ function isPastDueDate(dueDate: string | null | undefined): boolean {
 // ── Route handler ─────────────────────────────────────────────────────
 
 export async function POST(request: NextRequest) {
+  if (request.headers?.get?.("x-studio-parent-session") === "1" || request.nextUrl?.searchParams?.has("parentLaneId")) {
+    return runParentGallerySessionRoute(request, POST);
+  }
   // Rate limit: a combined order is heavier than a single-order create,
   // but a real parent only does this once or twice.  Keep it tight.
-  const limit = await rateLimit(getClientIp(request), {
+  const limit = await rateLimit((parentGalleryRateKey?.(request) || getClientIp(request)), {
     namespace: "orders-create-combined",
     limit: 6,
     windowSeconds: 60,

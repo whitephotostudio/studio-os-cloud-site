@@ -1,29 +1,37 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import test from 'node:test';
+import { createRequire } from 'node:module';
+import test, { before, after, beforeEach } from 'node:test';
 import vm from 'node:vm';
 import ts from 'typescript';
 import { harness, projectId, a, b, id } from '../helpers/event-gallery-harness.mjs';
+import { localPinBudgetRedis } from '../helpers/pin-budget-redis.mjs';
 
 const schoolId = id(50), studentId = id(51), email = 'viewer@example.test', pin = 'project-pin';
 const credentials = kind => ({ [kind === 'school' ? 'schoolId' : 'projectId']: kind === 'school' ? schoolId : projectId, email, pin });
 const route = kind => `app/api/portal/${kind}-favorites/route.ts`;
 const viewerKey = gallery => createHash('sha256').update(`${gallery}::${email}::${pin}`).digest('hex');
+const require = createRequire(import.meta.url);
+let redis, fixtureNumber = 0;
+before(async () => { redis = await localPinBudgetRedis(); });
+after(async () => { await redis?.close(); });
+beforeEach(async () => {
+  const within = Date.now() % 60000;
+  if (within > 50000) await new Promise(resolve => setTimeout(resolve, 60005 - within));
+});
 
 function fixture({ outage = false, deniedToggle = false, favoriteError = null } = {}) {
-  const limits = [], counters = new Map(), folderReads = [];
+  const limits = [], counters = [], actionCounters = new Map(), folderReads = [], ip = `synthetic-favorites-${++fixtureNumber}`;
   let h;
   h = harness({ overrides: {
     '@/lib/rate-limit': {
-      getClientIp: () => '192.0.2.1',
+      getClientIp: () => ip,
       rateLimit: async (key, config) => {
         limits.push(config);
-        const shared = config.namespace.startsWith('pin-auth-shared-');
-        const bucket = `${key}:${config.namespace}`, count = (counters.get(bucket) || 0) + 1;
-        counters.set(bucket, count);
-        return { allowed: !(shared && outage) && !(deniedToggle && !shared) && count <= config.limit,
-          unavailable: shared && outage, resetAt: Date.now() + config.windowSeconds * 1000 };
+        const bucket = `${key}:${config.namespace}`, count = (actionCounters.get(bucket) || 0) + 1;
+        actionCounters.set(bucket, count);
+        return { allowed: !deniedToggle && count <= config.limit, resetAt: Date.now() + config.windowSeconds * 1000 };
       },
     },
     '@/lib/storage-folder': {
@@ -63,7 +71,24 @@ function fixture({ outage = false, deniedToggle = false, favoriteError = null } 
     }
     return query;
   };
-  const budget = h.load('lib/portal-pin-rate-limit.ts');
+  const budget = {};
+  class SharedRedis {
+    constructor(config) { assert.equal(config.retry.retries, 0); assert.ok(config.signal() instanceof AbortSignal); }
+    async eval(script, keys, args) {
+      counters.push({ keys, args });
+      if (outage) throw Error('Synthetic shared-counter outage');
+      return redis.eval(script, keys, args);
+    }
+  }
+  const compiledBudget = ts.transpileModule(readFileSync(new URL('../../lib/portal-pin-rate-limit.ts', import.meta.url), 'utf8'), {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+  }).outputText;
+  new Function('require', 'exports', 'process', compiledBudget)(name => {
+    if (name === '@upstash/redis') return { Redis: SharedRedis };
+    if (name === '@/lib/rate-limit') return { getClientIp: () => ip };
+    return require(name);
+  }, budget, { env: { NODE_ENV: 'production', EVENT_DOWNLOAD_TOKEN_SECRET: 'synthetic-favorites-secret',
+    UPSTASH_REDIS_REST_URL: 'https://synthetic.invalid', UPSTASH_REDIS_REST_TOKEN: 'synthetic' } });
   function request(kind, method = 'POST', body = { operation: 'read', ...credentials(kind) }, query = '') {
     const url = new URL(`https://fixture.test/api/portal/${kind}-favorites${query}`);
     if (method === 'GET' && !query) for (const [key, value] of Object.entries(credentials(kind))) url.searchParams.set(key, value);
@@ -72,9 +97,9 @@ function fixture({ outage = false, deniedToggle = false, favoriteError = null } 
     value.nextUrl = new URL(value.url);
     return value;
   }
-  const proof = kind => budget.grantPortalPinBudget(new Response(), request(kind), {
+  const proof = async kind => (await budget.grantPortalPinBudget(new Response(), request(kind), {
     kind, galleryId: kind === 'school' ? schoolId : projectId, pin, email,
-  }).headers.get('set-cookie').split(';')[0];
+  })).headers.get('set-cookie').split(';')[0];
   async function invoke(kind, method = 'POST', body, query, { guarded = false, cookie = '' } = {}) {
     const req = request(kind, method, body, query);
     if (cookie) req.headers.set('cookie', cookie);
@@ -83,7 +108,7 @@ function fixture({ outage = false, deniedToggle = false, favoriteError = null } 
       : await h.load(route(kind))[method](req);
     return { status: response.status, body: await response.json(), cookie: response.headers.get('set-cookie') };
   }
-  return { ...h, limits, folderReads, request, proof, invoke };
+  return { ...h, limits, counters, folderReads, request, proof, invoke };
 }
 
 for (const kind of ['school', 'event']) {
@@ -157,29 +182,32 @@ for (const kind of ['school', 'event']) {
     for (const field of ['schoolId', 'projectId', 'eventId', 'pin', 'email']) {
       const query = `?${field}=first&${field}=second`;
       assert.equal((await h.invoke(kind, 'GET', undefined, query)).status, 400);
-      assert.equal((await h.invoke(kind, 'GET', undefined, query, { guarded: true, cookie: h.proof(kind) })).status, 400);
-      assert.equal((await h.invoke(kind, 'POST', undefined, query, { guarded: true, cookie: h.proof(kind) })).status, 400);
+      assert.equal((await h.invoke(kind, 'GET', undefined, query, { guarded: true, cookie: await h.proof(kind) })).status, 400);
+      assert.equal((await h.invoke(kind, 'POST', undefined, query, { guarded: true, cookie: await h.proof(kind) })).status, 400);
     }
     assert.deepEqual(h.queries, []);
     assert.deepEqual(h.writes, []);
   });
 
   test(`${kind}: read POST keeps the shared PIN budget and exact proof exemption`, async () => {
-    const h = fixture(), cookie = h.proof(kind);
+    const h = fixture(), cookie = await h.proof(kind);
     for (let index = 0; index < 150; index++) {
       assert.equal((await h.invoke(kind, 'POST', undefined, '', { guarded: true, cookie })).status, 200);
     }
     assert.deepEqual(h.limits, []);
+    assert.deepEqual(h.counters, [], 'exact proof never consumes the shared failed-PIN budget');
     for (let index = 0; index < 11; index++) {
       const result = await h.invoke(kind, 'POST', { operation: 'read', ...credentials(kind), pin: 'incorrect' }, '', { guarded: true, cookie });
       assert.equal(result.status, index < 10 ? 404 : 429);
     }
-    assert.equal(h.limits.length, 22);
-    assert.equal(h.limits.every(config => config.failClosed === true), true);
+    assert.deepEqual(h.limits, [], 'read actions do not acquire the mutation budget');
+    assert.equal(h.counters.length, 11, 'each unknown scope uses one real atomic Redis script');
+    assert.equal(await redis.command('GET', h.counters[0].keys[0]), '10');
+    assert.equal(await redis.command('GET', h.counters[0].keys[1]), '10');
     const unavailable = fixture({ outage: true });
     assert.equal((await unavailable.invoke(kind, 'POST', undefined, '', { guarded: true })).status, 503);
     assert.deepEqual(unavailable.queries, []);
-    assert.equal((await unavailable.invoke(kind, 'POST', undefined, '', { guarded: true, cookie: unavailable.proof(kind) })).status, 200);
+    assert.equal((await unavailable.invoke(kind, 'POST', undefined, '', { guarded: true, cookie: await unavailable.proof(kind) })).status, 200);
     assert.deepEqual(h.writes, []);
   });
 }
@@ -195,7 +223,7 @@ test('event read POST keeps the approved-email constraint', async () => {
 });
 
 test('actual client favorites fetches send read credentials only in JSON and retain no-store', async () => {
-  const source = readFileSync(new URL('../../app/parents/[pin]/page.tsx', import.meta.url), 'utf8');
+  const source = readFileSync(new URL('../../components/parents/parent-gallery-client.tsx', import.meta.url), 'utf8');
   const file = ts.createSourceFile('page.tsx', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
   for (const [kind, name] of [['event', 'favoritesResponse'], ['school', 'schoolFavoritesResponse']]) {
     let declaration;

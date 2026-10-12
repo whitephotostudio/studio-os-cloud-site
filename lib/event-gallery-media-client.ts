@@ -20,7 +20,12 @@ function durableSchoolPhotoReference(value: string | null | undefined) {
   try {
     const url = new URL(value || "", "https://gallery.invalid");
     if (!/^\/api\/portal\/school-preview\/[a-f0-9]{64}\.jpg$/.test(url.pathname)) return null;
-    const encoded = (url.searchParams.get("token") || "").split(".")[0];
+    const token = url.searchParams.get("token") || "";
+    // Saved sibling carts may not be in the current child's image list. Keep
+    // the opaque selector; the server authenticates it and checks current
+    // student/class media. This never authorizes delivery in the browser.
+    if (/^ec1\.[A-Za-z0-9_-]{16}\.[A-Za-z0-9_-]{1,25000}\.[A-Za-z0-9_-]{22}$/.test(token)) return `${url.pathname}${url.search}`;
+    const encoded = token.split(".")[0];
     const payload = JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(encoded.replace(/-/g, "+").replace(/_/g, "/")), char => char.charCodeAt(0))));
     return payload.kind === "school-gallery-preview" ? safeKey(payload.mediaKey) : null;
   } catch { return null; }

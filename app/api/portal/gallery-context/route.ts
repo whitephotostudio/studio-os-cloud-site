@@ -1,11 +1,11 @@
+import { runParentGallerySessionRoute } from "@/lib/parent-gallery-session-request";
 import { resolvePhotographerOrderCurrency, type OrderCurrency } from "@/lib/order-currency";
 import { normalizeProofWatermarkOpacity } from "@/lib/proof-watermark";
 import { loadScopedSchoolCompositeMedia } from "@/lib/school-order-media";
 import { schoolPreviewPresentation, buildSchoolFavoriteDownloadAccess } from "@/lib/school-portal-media";
 import { NextRequest, NextResponse } from "next/server";
 import { createDashboardServiceClient } from "@/lib/dashboard-auth";
-import { getClientIp, rateLimit } from "@/lib/rate-limit";
-import { grantPortalPinBudget } from "@/lib/portal-pin-rate-limit";
+import { grantPortalPinBudget, refundPortalPinAttempt } from "@/lib/portal-pin-rate-limit";
 import {
   sanitizeEventGallerySettingsForClient,
 } from "@/lib/event-gallery-settings";
@@ -159,27 +159,10 @@ async function loadSchoolCompositeMedia(service: ReturnType<typeof createDashboa
 }
 
 export async function POST(request: NextRequest) {
+  if (request.headers?.get?.("x-studio-parent-session") === "1" || request.nextUrl?.searchParams?.has("parentLaneId")) {
+    return runParentGallerySessionRoute(request, POST);
+  }
   try {
-    const limitResult = await rateLimit(getClientIp(request), {
-      namespace: "pin-auth-school",
-      limit: 8,
-      windowSeconds: 10,
-    });
-    if (!limitResult.allowed) {
-      return NextResponse.json(
-        { ok: false, message: "Too many attempts. Please wait a few seconds and try again." },
-        {
-          status: 429,
-          headers: {
-            "Retry-After": Math.max(
-              1,
-              Math.ceil((limitResult.resetAt - Date.now()) / 1000),
-            ).toString(),
-          },
-        },
-      );
-    }
-
     const { pin, schoolId, email } = (await request.json()) as {
       pin?: string;
       schoolId?: string;
@@ -269,6 +252,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    await refundPortalPinAttempt(request, { kind: "school", galleryId: selectedSchoolId, pin: selectedPin, email: selectedEmail });
     const tombstonedFamilies = tombstoneFamilySet(
       await loadSchoolPhotoTombstones(service, activeSchool.id),
     );

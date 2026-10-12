@@ -6,6 +6,10 @@ import {
   retrieveCheckoutSession,
   type StripeCheckoutSession,
 } from "@/lib/payments";
+import { getParentGalleryRequestScope, runParentGallerySessionRoute } from "@/lib/parent-gallery-session-request";
+import { ParentGallerySessionError } from "@/lib/parent-gallery-session";
+import { hasMappedParentCheckout, resolveParentCheckoutReturn, ParentCheckoutReturnError,
+  parentCheckoutPrivateHeaders } from "@/lib/parent-checkout-return";
 import { schoolCheckoutReturnContext } from "@/lib/school-parent-gallery-link";
 
 export const dynamic = "force-dynamic";
@@ -13,6 +17,7 @@ export const dynamic = "force-dynamic";
 type ConfirmBody = {
   sessionId?: string;
   orderId?: string;
+  returnId?: string;
 };
 
 type OrderRow = {
@@ -88,6 +93,9 @@ async function confirmedGalleryUrl(sb: ReturnType<typeof service>, order: OrderR
 }
 
 export async function POST(req: NextRequest) {
+  if (req.headers.get("x-studio-parent-session") === "1" || new URL(req.url).searchParams.has("parentLaneId")) {
+    return runParentGallerySessionRoute(req, POST);
+  }
   try {
     const body = (await req.json()) as ConfirmBody;
     const sessionId = (body.sessionId ?? "").trim();
@@ -118,6 +126,18 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, message: "Order not found." }, { status: 404 });
     }
 
+    const mappedReturn = await hasMappedParentCheckout(sb, order.id, order.stripe_checkout_session_id);
+    let privateGalleryUrl: string | undefined;
+    if (mappedReturn || body.returnId !== undefined) {
+      const scope = getParentGalleryRequestScope(req);
+      if (!mappedReturn || !scope || !body.returnId || !sessionId) throw new ParentCheckoutReturnError(403);
+      const returned = await resolveParentCheckoutReturn(req, body.returnId, scope.laneId);
+      if (returned.status !== "success" || returned.sessionId !== sessionId || sessionId !== order.stripe_checkout_session_id) {
+        throw new ParentCheckoutReturnError(403);
+      }
+      privateGalleryUrl = `/parents/view/${returned.laneId}?checkout=success&return=${returned.returnId}`;
+    }
+
     const currentStatus = (order.status ?? "").toLowerCase();
     const currentPaymentStatus = (order.payment_status ?? "").toLowerCase();
     const alreadyPaid = (
@@ -125,7 +145,7 @@ export async function POST(req: NextRequest) {
       (currentPaymentStatus === "paid" || currentPaymentStatus === "succeeded" || currentPaymentStatus === "no_payment_required")
     );
     let session: StripeCheckoutSession | null = null;
-    let galleryUrl: string | undefined;
+    let galleryUrl: string | undefined = privateGalleryUrl;
     if (!alreadyPaid || (sessionId && order.school_id)) {
       const { data: photographer, error: photographerError } = await sb
         .from("photographers")
@@ -143,7 +163,7 @@ export async function POST(req: NextRequest) {
       if (session.payment_status !== "paid" && session.payment_status !== "no_payment_required") {
         return NextResponse.json({ ok: false, message: "Payment is not completed yet." }, { status: 400 });
       }
-      if (sessionId) galleryUrl = await confirmedGalleryUrl(sb, order, session);
+      if (sessionId && !mappedReturn) galleryUrl = await confirmedGalleryUrl(sb, order, session);
     }
 
     if (alreadyPaid) {
@@ -160,7 +180,7 @@ export async function POST(req: NextRequest) {
         paymentStatus: currentPaymentStatus,
         status: currentStatus,
         ...(galleryUrl ? { galleryUrl } : {}),
-      });
+      }, { headers: parentCheckoutPrivateHeaders });
     }
     if (!session) throw new Error("Checkout session unavailable.");
 
@@ -176,12 +196,15 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       ok: true,
       orderId: order.id,
-      ...(sessionId ? { customerEmail: session.customer_details?.email || null } : {}),
+      ...(sessionId && !mappedReturn ? { customerEmail: session.customer_details?.email || null } : {}),
       paymentStatus: session.payment_status,
       status: "paid",
       ...(galleryUrl ? { galleryUrl } : {}),
-    });
+    }, { headers: parentCheckoutPrivateHeaders });
   } catch (error) {
+    if (error instanceof ParentCheckoutReturnError || error instanceof ParentGallerySessionError) {
+      return NextResponse.json({ ok: false, message: error.message }, { status: error.status, headers: parentCheckoutPrivateHeaders });
+    }
     console.error("[stripe:checkout:confirm]", error);
     return NextResponse.json(
       { ok: false, message: "Failed to confirm Stripe checkout." },

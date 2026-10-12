@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import ts from "typescript";
 
-const gallerySource = readFileSync(new URL("../app/parents/[pin]/page.tsx", import.meta.url), "utf8");
+const gallerySource = readFileSync(new URL("../components/parents/parent-gallery-client.tsx", import.meta.url), "utf8");
 const galleryAst = ts.createSourceFile("parent-gallery.tsx", gallerySource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 const component = galleryAst.statements.find((statement) =>
   ts.isFunctionDeclaration(statement) && statement.name?.text === "ParentGalleryPage");

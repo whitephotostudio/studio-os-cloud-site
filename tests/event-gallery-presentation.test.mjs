@@ -224,7 +224,7 @@ test("legacy/default intro labels resolve to the current destination while custo
 });
 
 // Evaluate the actual JSX bindings rather than restating the client prop mapping.
-const pageSource = readFileSync(new URL("../app/parents/[pin]/page.tsx", import.meta.url), "utf8");
+const pageSource = readFileSync(new URL("../components/parents/parent-gallery-client.tsx", import.meta.url), "utf8");
 const pageAst = ts.createSourceFile("page.tsx", pageSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 const elements = new Map();
 const toolbarStyles = new Map();

@@ -5,8 +5,7 @@
 //     If the parent closes the tab, that's a clear signal they're done.
 //     Persisting forever would risk stale items resurfacing weeks later
 //     after PINs / prices / archive dates have changed.
-//   · Carries across same-tab navigations (so /parents/<sibA-pin> →
-//     /parents/<sibB-pin> keeps the cart), which is exactly the use case.
+//   · Carries across same-tab sibling gallery navigations.
 //
 // Why per-photographer key (not per-school):
 //   · A parent combining siblings stays inside ONE studio.  Cross-studio
@@ -17,8 +16,9 @@
 // What we persist:
 //   · `lanes` — one entry per student gallery the parent has authed into
 //     this session.  Each lane carries the schoolId + studentId + the
-//     PIN/email used to validate that gallery, plus display labels.
-//     These are the auth tokens the combined-checkout endpoint needs.
+//     opaque browser-session lane reference, plus display labels. The
+//     HttpOnly cookie and server-side lane supply authorization. Legacy
+//     PIN/email entries are upgraded in memory and are never persisted again.
 //   · `items` — cart line items tagged with the lane key they belong to.
 //
 // Anything else (gallery photos, package definitions, backdrops) stays
@@ -42,7 +42,7 @@ export type CombineLane = {
 
 /**
  * One persisted cart item.  Mirrors the shape of CartLineItem in
- * app/parents/[pin]/page.tsx with the addition of `lane*` tags + the
+ * components/parents/parent-gallery-client.tsx with the addition of `lane*` tags + the
  * authoritative entry shape required by /api/portal/orders/create*.
  *
  * We keep this as a flat record (not a class instance) so JSON.stringify
@@ -156,7 +156,17 @@ export function saveCombineCart(cart: CombineCart): void {
   const storage = safeStorage();
   if (!storage || !cart.photographerId) return;
   try {
-    storage.setItem(storageKeyFor(cart.photographerId), JSON.stringify(cart));
+    // Keep products and lane identity, but never persist a reusable PIN/email.
+    // Legacy lanes are upgraded in memory or require re-entry; no item is dropped.
+    const lanes = cart.lanes.map(lane => ({ ...lane,
+      pin: /^session:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(lane.pin) ? lane.pin : "",
+      email: "" }));
+    const items = cart.items.map(item => {
+      const safe = { ...item } as PersistedCartItem & { pin?: string; email?: string; lanePin?: string; laneEmail?: string };
+      delete safe.pin; delete safe.email; delete safe.lanePin; delete safe.laneEmail;
+      return safe;
+    });
+    storage.setItem(storageKeyFor(cart.photographerId), JSON.stringify({ ...cart, lanes, items }));
   } catch {
     // ignore — quota / private mode, never block the UI
   }

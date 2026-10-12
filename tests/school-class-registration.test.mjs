@@ -64,7 +64,7 @@ function fixture({ enabled = false, status = 'pre_release', classes = ['Grade 7'
     '@/lib/dashboard-auth': { createDashboardServiceClient: () => service, resolveDashboardAuth: async () => ({ user: owner ? { id: 'owner' } : null, mfaSatisfied: true }) },
 
     '@/lib/rate-limit': { getClientIp: () => 'local', rateLimit: async () => ({ allowed: true }) },
-    '@/lib/portal-pin-rate-limit': { grantPortalPinBudget: response => response },
+    '@/lib/portal-pin-rate-limit': { grantPortalPinBudget: async response => response, refundPortalPinAttempt: async () => false },
     '@/lib/school-registration-classes': { schoolRegistrationClasses: async () => classes },
     '@/lib/require-agreement': { guardAgreement: async () => ({ ok: true }) },
     '@/lib/api-validation': { parseJson: async (req, schema) => { const parsed = schema.safeParse(await req.json()); return parsed.success ? { ok: true, data: parsed.data } : { ok: false, response: Response.json({ ok: false }, { status: 400 }) }; } },
@@ -329,7 +329,9 @@ test('parent form renders required classes only for enabled schools and keeps PI
     return exports;
   }
   const selector = component('app/parents/SchoolRegistrationClasses.tsx', runtime);
-  const form = component('app/parents/SchoolDirectLoginForm.tsx', { ...runtime, './SchoolRegistrationClasses': selector }).default;
+  const sessionClient = component('lib/parent-gallery-session-client.ts', {});
+  const form = component('app/parents/SchoolDirectLoginForm.tsx', { ...runtime, './SchoolRegistrationClasses': selector,
+    '@/lib/parent-gallery-session-client': sessionClient }).default;
   const school = { id: schoolId, school_name: 'Example School', status: 'pre_release', email_required: true };
   const disabled = renderToStaticMarkup(React.createElement(form, { school }));
   assert.doesNotMatch(disabled, /Select your child/);

@@ -2,7 +2,8 @@ import { NextResponse, type NextRequest } from "next/server";
 import { rateLimit, getClientIp } from "@/lib/rate-limit";
 import { randomBytes } from "node:crypto";
 import { contentSecurityPolicy } from "@/lib/content-security-policy";
-import { portalPinAttemptLimit } from "@/lib/portal-pin-rate-limit";
+import { PORTAL_PIN_RESERVATION_HEADER, portalPinAttemptLimit, portalPinReservationHeader } from "@/lib/portal-pin-rate-limit";
+import { parentSessionRateBudgetKey } from "@/lib/parent-gallery-session";
 
 /** Routes that need strict rate limiting (auth-sensitive) */
 const STRICT_ROUTES = [
@@ -34,13 +35,19 @@ function addSecurityHeaders(response: NextResponse) {
 export async function proxy(request: NextRequest) {
   const ip = getClientIp(request);
   const pathname = request.nextUrl.pathname;
+  const requestHeaders = new Headers(request.headers);
+  // No browser may supply a reservation identity, even on exempt/error paths.
+  requestHeaders.delete(PORTAL_PIN_RESERVATION_HEADER);
 
-  const pinLimit = await portalPinAttemptLimit(request);
+  // Session bootstrap translates galleryId and owns its one shared PIN budget.
+  const pinLimit = pathname === "/api/portal/session" ? null : await portalPinAttemptLimit(request);
   if (pinLimit) {
     const response = NextResponse.json({ ok: false, message: pinLimit.message }, { status: pinLimit.status });
     response.headers.set("Retry-After", String(pinLimit.retryAfter));
     return addSecurityHeaders(response);
   }
+  const reservation = portalPinReservationHeader(request);
+  if (reservation) requestHeaders.set(PORTAL_PIN_RESERVATION_HEADER, reservation);
 
   // Strict rate limiting for auth-sensitive routes (10 requests per minute)
   const isStrict = STRICT_ROUTES.some((route) => pathname.startsWith(route));
@@ -69,7 +76,8 @@ export async function proxy(request: NextRequest) {
   const isPrivateMediaRead = (request.method === "GET" || request.method === "HEAD") &&
     PRIVATE_MEDIA_PREFIXES.some(prefix => pathname.startsWith(prefix) && pathname.length > prefix.length);
   if (pathname.startsWith(API_PREFIX)) {
-    const result = await rateLimit(ip, {
+    const parentBudgetKey = await parentSessionRateBudgetKey(request);
+    const result = await rateLimit(parentBudgetKey || ip, {
       namespace: isPrivateMediaRead ? "private-media-read" : "api",
       limit: isPrivateMediaRead ? 3000 : 100,
       windowSeconds: 60,
@@ -88,7 +96,6 @@ export async function proxy(request: NextRequest) {
   // Add security headers to all responses
   const nonce = randomBytes(16).toString("base64");
   const policy = contentSecurityPolicy(nonce, process.env.NODE_ENV !== "production");
-  const requestHeaders = new Headers(request.headers);
   // Next reads the request policy to nonce its bootstrap/hydration scripts.
   // Always replace caller-supplied values.
   requestHeaders.set("x-nonce", nonce);

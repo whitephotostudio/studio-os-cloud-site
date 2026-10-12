@@ -1,9 +1,10 @@
+import { runParentGallerySessionRoute } from "@/lib/parent-gallery-session-request";
 import { resolvePhotographerOrderCurrency, type OrderCurrency } from "@/lib/order-currency";
 import { normalizeProofWatermarkOpacity, proofWatermarkVersion } from "@/lib/proof-watermark";
 import { hasCalendarBoundaryPassed } from "@/lib/calendar-dates";
 import { NextRequest, NextResponse } from "next/server";
 import { createDashboardServiceClient } from "@/lib/dashboard-auth";
-import { grantPortalPinBudget } from "@/lib/portal-pin-rate-limit";
+import { grantPortalPinBudget, refundPortalPinAttempt } from "@/lib/portal-pin-rate-limit";
 import { accessibleEventCollections, eventGalleryDownloadsUsed, EventGallerySizeLimitError, fetchEventGalleryMediaRows, fetchEventProjectCollections, matchesEventCollectionPin } from "@/lib/event-download-scope";
 import {
   normalizeEventGallerySettings,
@@ -183,6 +184,9 @@ function isMissingVisitorsTable(error: unknown) {
 
 
 export async function POST(request: NextRequest) {
+  if (request.headers?.get?.("x-studio-parent-session") === "1" || request.nextUrl?.searchParams?.has("parentLaneId")) {
+    return runParentGallerySessionRoute(request, POST);
+  }
   try {
     const { projectId, email, pin } = (await request.json()) as {
       projectId?: string;
@@ -292,6 +296,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    await refundPortalPinAttempt(request, { kind: "event", galleryId: selectedProjectId, pin: pinValue, email: normalizedEmail });
     const { error: visitorError } = await service
       .from("event_gallery_visitors")
       .upsert(

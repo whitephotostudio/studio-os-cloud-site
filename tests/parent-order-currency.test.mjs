@@ -94,7 +94,7 @@ const shippingSettings={...defaultSettings,extras:{...defaultSettings.extras,shi
 const navigation={'next/navigation':{useParams:()=>({pin:'student-pin'}),useRouter:()=>({}),useSearchParams:()=>new URLSearchParams({school,email:'viewer@example.test'})}};
 for (const currency of ['eur','gbp','amd','usd']) {
   test(`actual parent basket renders ${currency} subtotal, backdrop, shipping and total`,()=>{
-    const page=initializedPage('app/parents/[pin]/page.tsx',{loading:false,student,schoolName:'Fixture school',photographerId:id(80),orderCurrency:currency,packages:[pkg],cartItems:[item],drawerOpen:true,drawerView:'checkout',gallerySettings:shippingSettings,lateOrderPolicy:{orderDueDate:'2000-01-01',shippingFeeCents:500,lateHandlingFeePercent:0},deliveryMethod:'shipping'},navigation);
+    const page=initializedPage('components/parents/parent-gallery-client.tsx',{loading:false,student,schoolName:'Fixture school',photographerId:id(80),orderCurrency:currency,packages:[pkg],cartItems:[item],drawerOpen:true,drawerView:'checkout',gallerySettings:shippingSettings,lateOrderPolicy:{orderDueDate:'2000-01-01',shippingFeeCents:500,lateHandlingFeePercent:0},deliveryMethod:'shipping'},navigation);
     const html=text(page());
     for(const cents of [2500,300,500,3300])assert.ok(html.includes(formatOrderMoney(cents,currency).replace(/\s+/g,' ')),`missing ${currency} ${cents}: ${html.slice(-2500)}`);
     assert.doesNotMatch(html,/\$25\.00|\$3\.00|\$5\.00|\$33\.00/);
@@ -112,7 +112,7 @@ test('actual order history preserves each saved currency and separates mixed-cur
 
 test('actual gallery product picker and premium backdrop confirmation display studio currency',()=>{
   const premium={id:id(100),name:'Premium backdrop',image_url:'https://fixture.test/backdrop.jpg',thumbnail_url:null,tier:'premium',price_cents:300};
-  const page=initializedPage('app/parents/[pin]/page.tsx',{loading:false,student,schoolName:'Fixture school',photographerId:id(80),orderCurrency:'eur',packages:[pkg],drawerOpen:true,drawerView:'product-select',showPremiumModal:true,premiumTarget:premium},navigation);
+  const page=initializedPage('components/parents/parent-gallery-client.tsx',{loading:false,student,schoolName:'Fixture school',photographerId:id(80),orderCurrency:'eur',packages:[pkg],drawerOpen:true,drawerView:'product-select',showPremiumModal:true,premiumTarget:premium},navigation);
   const html=text(page());
   assert.ok(html.includes('EUR 25.00'),'package price shows the selected studio currency');
   assert.ok(html.includes('Unlock for EUR 3.00'),'premium add-on confirmation shows the same studio currency');

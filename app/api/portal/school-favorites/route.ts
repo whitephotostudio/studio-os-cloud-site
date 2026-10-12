@@ -1,3 +1,4 @@
+import { runParentGallerySessionRoute, parentGalleryRateKey } from "@/lib/parent-gallery-session-request";
 import { createHash } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { createDashboardServiceClient } from "@/lib/dashboard-auth";
@@ -198,6 +199,9 @@ async function readSchoolFavorites(credentials: { schoolId: string; email: strin
 const credentialQueryFields = ["schoolId", "projectId", "eventId", "email", "pin"];
 
 export async function GET(request: NextRequest) {
+  if (request.headers?.get?.("x-studio-parent-session") === "1" || request.nextUrl?.searchParams?.has("parentLaneId")) {
+    return runParentGallerySessionRoute(request, GET);
+  }
   const searchParams = request.nextUrl.searchParams;
   if (credentialQueryFields.some(field => searchParams.getAll(field).length > 1)) {
     return NextResponse.json({ ok: false, message: "Invalid gallery access request." }, { status: 400 });
@@ -210,6 +214,9 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
+  if (request.headers?.get?.("x-studio-parent-session") === "1" || request.nextUrl?.searchParams?.has("parentLaneId")) {
+    return runParentGallerySessionRoute(request, POST);
+  }
   try {
     const parsedBody = ensureObjectBody(await request.json().catch(() => null));
     if (!parsedBody.ok) {
@@ -227,7 +234,7 @@ export async function POST(request: NextRequest) {
       return readSchoolFavorites({ schoolId: input.schoolId, email: input.email, pin: input.pin });
     }
 
-    const limitResult = await rateLimit(getClientIp(request), {
+    const limitResult = await rateLimit((parentGalleryRateKey?.(request) || getClientIp(request)), {
       namespace: "school-favorites",
       limit: 60,
       windowSeconds: 60,

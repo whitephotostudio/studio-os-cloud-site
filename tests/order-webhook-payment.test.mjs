@@ -7,6 +7,7 @@ import * as pricing from '../lib/studio-pricing.ts';
 import * as policy from '../lib/order-payment-policy.ts';
 import * as currency from '../lib/order-currency.ts';
 import * as digitalLabels from '../lib/digital-product-label.ts';
+import {parentGalleryEntryFixture} from './fixtures/parent-gallery-entry.mjs';
 
 const orderA = '10000000-0000-4000-8000-000000000001';
 const orderB = '10000000-0000-4000-8000-000000000002';
@@ -119,7 +120,8 @@ function fixture({combined = false, direct = false, noStoredReferences = false} 
     }, {error() {}, warn() {}, log() {}});
     return exports;
   }
-  dependencies['@/lib/school-parent-gallery-link'] = load('lib/school-parent-gallery-link.ts');
+  dependencies['@/lib/parent-gallery-entry'] = parentGalleryEntryFixture();
+  dependencies['@/lib/pin-recovery'] = dependencies['@/lib/parent-gallery-entry'];
   dependencies['@/lib/paid-order-emails'] = load('lib/paid-order-emails.ts');
   const payments = load('lib/payments.ts');
   dependencies['@/lib/payments'] = {...payments, verifyStripeSignature: async () => true,

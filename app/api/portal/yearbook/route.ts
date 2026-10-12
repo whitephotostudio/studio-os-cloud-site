@@ -1,3 +1,4 @@
+import { runParentGallerySessionRoute, parentGalleryRateKey } from "@/lib/parent-gallery-session-request";
 import { NextRequest, NextResponse } from "next/server";
 import { createDashboardServiceClient } from "@/lib/dashboard-auth";
 import { rateLimit, getClientIp } from "@/lib/rate-limit";
@@ -7,8 +8,11 @@ import { YearbookError, yearbookParentAccess, yearbookPhotos, loadYearbookSettin
 
 export const dynamic = "force-dynamic";
 export async function POST(request: NextRequest) {
+  if (request.headers?.get?.("x-studio-parent-session") === "1" || request.nextUrl?.searchParams?.has("parentLaneId")) {
+    return runParentGallerySessionRoute(request, POST);
+  }
   try {
-    const limit = await rateLimit(getClientIp(request), { namespace: "school-yearbook", limit: 30, windowSeconds: 60 });
+    const limit = await rateLimit((parentGalleryRateKey?.(request) || getClientIp(request)), { namespace: "school-yearbook", limit: 30, windowSeconds: 60 });
     if (!limit.allowed) return NextResponse.json({ ok: false, message: "Please wait before trying again." }, { status: 429, headers: { "Retry-After": "60" } });
     const body = await request.json().catch(() => ({}));
     if (!body || typeof body !== "object" || !["load", "select"].includes(body.action)) throw new YearbookError("Choose a valid action.", 400);

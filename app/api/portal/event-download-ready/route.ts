@@ -1,3 +1,4 @@
+import { runParentGallerySessionRoute, parentGalleryRateKey } from "@/lib/parent-gallery-session-request";
 import { randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { validateEventGalleryAccess } from "@/lib/event-gallery-access";
@@ -56,6 +57,9 @@ function uniqueMediaIds(values: Array<string | null | undefined>) {
 }
 
 export async function POST(request: NextRequest) {
+  if (request.headers?.get?.("x-studio-parent-session") === "1" || request.nextUrl?.searchParams?.has("parentLaneId")) {
+    return runParentGallerySessionRoute(request, POST);
+  }
   try {
     const body = (await request.json().catch(() => ({}))) as {
       projectId?: string;

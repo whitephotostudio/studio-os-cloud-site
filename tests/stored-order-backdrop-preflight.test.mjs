@@ -97,14 +97,14 @@ function setup({ orders = [order()], lockedOrders = orders, originals = [origina
         .map(object_key => ({ object_key, original_sha256: 'a'.repeat(64), cutout_sha256: digest(bytes) })) : [], error: null };
     },
     from(table) {
-      const filters = []; let single = false, range, limit, mutation = false;
+      const filters = []; let single = false, range, limit, mutation = false, changes;
       const q = {
         select(fields) { if (table === 'packages') packageReads.push(fields); return q; }, eq(key, value) { filters.push(row => row[key] === value); return q; },
         in(key, values) { filters.push(row => values.includes(row[key])); return q; },
         gte(key, value) { filters.push(row => row[key] >= value); return q; }, order() { return q; },
         range(from, to) { range = [from, to]; return q; }, limit(value) { limit = value; return q; },
         maybeSingle() { single = true; return q; },
-        update(value) { mutation = true; writes.push({ table, value }); events.push('write'); return q; },
+        update(value) { mutation = true; changes = value; writes.push({ table, value }); events.push('write'); return q; },
         then(resolve, reject) {
           let rows = table === 'orders' ? locked ? lockedOrders : orders
             : table === 'order_items' ? items : table === 'packages' ? packages
@@ -114,7 +114,8 @@ function setup({ orders = [order()], lockedOrders = orders, originals = [origina
             : table === 'projects' ? [{ id: projectId, photographer_id: photographerId, workflow_type: 'event', status: 'active', access_mode: 'pin', access_pin: pin }]
             : table === 'collections' ? [{ id: 'collection-a', project_id: projectId, kind: 'album', slug: pin }, { id: 'collection-b', project_id: projectId, kind: 'album', slug: 'other-pin' }]
             : table === 'media' ? media : [];
-          rows = mutation ? [] : rows.filter(row => filters.every(filter => filter(row)));
+          rows = rows.filter(row => filters.every(filter => filter(row)));
+          if (mutation) rows.forEach(row => Object.assign(row, changes));
           const count = rows.length;
           if (table === 'orders' && !single) rows = rows.slice(0, orderPageCap);
           if (range) rows = rows.slice(range[0], range[1] + 1);
@@ -128,6 +129,21 @@ function setup({ orders = [order()], lockedOrders = orders, originals = [origina
   const load = loader({
     'next/server': { NextResponse: { json: (body, init) => Response.json(body, init) } },
     '@/lib/dashboard-auth': { createDashboardServiceClient: () => sb },
+    // These business-rule fixtures start after successful parent auth. The
+    // real browser/order binding and SQL issuers run in parent-checkout-return.test.
+    '@/lib/parent-gallery-session-request': { getParentGalleryRequestScope: () => null,
+      runParentGallerySessionRoute: () => assert.fail('Business fixture must not enter session adapter') },
+    '@/lib/parent-gallery-session': { ParentGallerySessionError: class extends Error {} },
+    '@/lib/parent-checkout-return': {
+      ParentCheckoutReturnError: class extends Error { constructor(status) { super('Saved basket needs review'); this.status = status; } },
+      parentCheckoutPrivateHeaders: { 'Cache-Control': 'private, no-store' },
+      authorizeParentCheckout: async request => ({ request, hasProvenance: true, legacySchool: false,
+        scope: { laneId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', photographerId }, applyCookie: async response => response }),
+      registerParentCheckoutReturn: async () => ({ returnId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb' }),
+      bindParentCheckoutReturn: async () => {},
+      parentCheckoutReturnUrls: origin => ({ successUrl: origin + '/parents/checkout-return/bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb?result=success&session_id={CHECKOUT_SESSION_ID}',
+        cancelUrl: origin + '/parents/checkout-return/bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb?result=cancel' }),
+    },
     '@/lib/order-payment-lock': { lockOrderPayment: async () => { locked = true; events.push('lock'); return async () => events.push('unlock'); } },
     '@/lib/r2': {
       listR2FolderImages: async prefix => { assetReads.push(prefix); return originals.filter(key => key.startsWith(prefix + '/')).map(key => ({ key, name: key.split('/').at(-1), url: key })); },

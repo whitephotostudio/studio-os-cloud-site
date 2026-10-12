@@ -5,7 +5,10 @@ import { assertStoredOrderBackdropCutouts } from "@/lib/stored-order-backdrop-pr
 import { assertPendingOnlineBackdropOrders, OnlineBackdropsDisabledError } from "@/lib/online-backdrop-policy";
 import { ParentCutoutPreflightError } from "@/lib/parent-cutout-preflight";
 import { retouchPrintPurchaseIssue, type RetouchPrintPackage } from "@/lib/retouching";
-import { schoolCheckoutReturnContext, SchoolCheckoutReturnError } from "@/lib/school-parent-gallery-link";
+import { getParentGalleryRequestScope, runParentGallerySessionRoute } from "@/lib/parent-gallery-session-request";
+import { ParentGallerySessionError } from "@/lib/parent-gallery-session";
+import { authorizeParentCheckout, registerParentCheckoutReturn, bindParentCheckoutReturn,
+  parentCheckoutReturnUrls, ParentCheckoutReturnError, parentCheckoutPrivateHeaders } from "@/lib/parent-checkout-return";
 import {
   createDirectOrderCheckoutSession,
   quoteDirectOrderPlatformFees,
@@ -119,11 +122,17 @@ function baseUrl(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  if (req.headers.get("x-studio-parent-session") === "1" || new URL(req.url).searchParams.has("parentLaneId")) {
+    return runParentGallerySessionRoute(req, POST);
+  }
   let release: (() => Promise<void>) | undefined;
+  let applyCookie = async <T extends { headers: Headers }>(response: T): Promise<T> => response;
+  const respond = (payload: unknown, init?: { status?: number }) => applyCookie(NextResponse.json(payload,
+    { ...init, headers: parentCheckoutPrivateHeaders }));
   try {
     const body = (await req.json()) as CheckoutBody;
     if (!body.orderId) {
-      return NextResponse.json({ ok: false, message: "Missing orderId." }, { status: 400 });
+      return respond({ ok: false, message: "Missing orderId." }, { status: 400 });
     }
 
     const sb = service();
@@ -135,7 +144,7 @@ export async function POST(req: NextRequest) {
 
     if (orderError) throw orderError;
     if (!initialOrder) {
-      return NextResponse.json({ ok: false, message: "Order draft not found." }, { status: 404 });
+      return respond({ ok: false, message: "Order draft not found." }, { status: 404 });
     }
     let order = initialOrder;
 
@@ -154,7 +163,7 @@ export async function POST(req: NextRequest) {
         groupCount == null || checkoutOrders.length !== groupCount ||
         !checkoutOrders.some((member) => member.id === order.id)
       ) {
-        return NextResponse.json(
+        return respond(
           { ok: false, message: "This combined order is incomplete." },
           { status: 400 },
         );
@@ -175,12 +184,12 @@ export async function POST(req: NextRequest) {
         refreshed.some(member => member.order_group_id !== order.order_group_id) ||
         new Set(refreshed.map(member => member.id)).size !== refreshed.length ||
         checkoutOrders.some(member => !refreshed.some(row => row.id === member.id))) {
-      return NextResponse.json({ ok: false, message: "This order changed. Please return to your gallery before paying." }, { status: 409 });
+      return respond({ ok: false, message: "This order changed. Please return to your gallery before paying." }, { status: 409 });
     }
     checkoutOrders = refreshed;
     order = refreshedOrder;
     if (checkoutOrders.some((member) => ["cancelled", "canceled", "cancel_pending", "refunded", "refund_pending"].includes(member.status || "") || ["refunded", "partially_refunded"].includes(member.payment_status || ""))) {
-      return NextResponse.json({ ok: false, message: "This order is closed and cannot be charged again." }, { status: 409 });
+      return respond({ ok: false, message: "This order is closed and cannot be charged again." }, { status: 409 });
     }
 
     if (
@@ -191,11 +200,14 @@ export async function POST(req: NextRequest) {
           ),
       )
     ) {
-      return NextResponse.json(
+      return respond(
         { ok: false, message: "This order has already been paid." },
         { status: 400 },
       );
     }
+
+    const parentAccess = await authorizeParentCheckout(req, sb, checkoutOrders, body, getParentGalleryRequestScope(req));
+    applyCookie = parentAccess.applyCookie;
 
     // Read each saved line once. This also detects legacy premium-background
     // drafts whose exact selections were never saved. All members must pass
@@ -215,10 +227,10 @@ export async function POST(req: NextRequest) {
       ? checkoutOrders[0] ?? order
       : order;
 
-    const hasSavedScope = !!(order.school_id || order.project_id);
-    const effectiveSchoolId = hasSavedScope ? order.school_id : body.schoolId || null;
-    const effectiveProjectId = hasSavedScope ? order.project_id : body.projectId || null;
-    const isEventOrder = order.school_id ? false : order.project_id ? true :
+    const hasSavedScope = !!(checkoutAnchorOrder.school_id || checkoutAnchorOrder.project_id);
+    const effectiveSchoolId = hasSavedScope ? checkoutAnchorOrder.school_id : body.schoolId || null;
+    const effectiveProjectId = hasSavedScope ? checkoutAnchorOrder.project_id : body.projectId || null;
+    const isEventOrder = checkoutAnchorOrder.school_id ? false : checkoutAnchorOrder.project_id ? true :
       (!effectiveSchoolId && !!effectiveProjectId) || body.mode === "event";
 
     let school: SchoolRow | null = null;
@@ -227,7 +239,7 @@ export async function POST(req: NextRequest) {
 
     if (isEventOrder) {
       if (!effectiveProjectId) {
-        return NextResponse.json(
+        return respond(
           { ok: false, message: "This event order is missing a project link." },
           { status: 400 },
         );
@@ -241,7 +253,7 @@ export async function POST(req: NextRequest) {
 
       if (projectError) throw projectError;
       if (!projectRow?.photographer_id) {
-        return NextResponse.json(
+        return respond(
           { ok: false, message: "Photographer record not found for this event." },
           { status: 404 },
         );
@@ -251,7 +263,7 @@ export async function POST(req: NextRequest) {
       photographerId = projectRow.photographer_id;
     } else {
       if (!effectiveSchoolId) {
-        return NextResponse.json(
+        return respond(
           { ok: false, message: "This order is missing a school link." },
           { status: 400 },
         );
@@ -265,7 +277,7 @@ export async function POST(req: NextRequest) {
 
       if (schoolError) throw schoolError;
       if (!schoolRow?.photographer_id) {
-        return NextResponse.json(
+        return respond(
           { ok: false, message: "Photographer record not found for this school." },
           { status: 404 },
         );
@@ -276,7 +288,6 @@ export async function POST(req: NextRequest) {
     }
 
     if (
-      order.order_group_id &&
       checkoutOrders.some(
         (member) =>
           !member.photographer_id || member.photographer_id !== photographerId,
@@ -286,7 +297,7 @@ export async function POST(req: NextRequest) {
         orderId: order.id,
         orderGroupId: order.order_group_id,
       });
-      return NextResponse.json(
+      return respond(
         { ok: false, message: "This combined order is invalid." },
         { status: 400 },
       );
@@ -302,7 +313,7 @@ export async function POST(req: NextRequest) {
 
     if (photographerError) throw photographerError;
     if (!photographer?.id) {
-      return NextResponse.json(
+      return respond(
         { ok: false, message: "Photographer profile not found." },
         { status: 404 },
       );
@@ -311,7 +322,7 @@ export async function POST(req: NextRequest) {
     if (photographer.is_platform_admin && checkoutOrders.some(member =>
       member.platform_fee_collection_method === "connect_application_fee" ||
       Number(member.platform_fee_amount_cents ?? 0) > 0)) {
-      return NextResponse.json(
+      return respond(
         { ok: false, message: "This earlier checkout includes a Studio OS fee. Cancel it and create a new order so the owner exemption can apply." },
         { status: 409 },
       );
@@ -319,7 +330,7 @@ export async function POST(req: NextRequest) {
 
     const freeTrialActive = isFreeTrialActive(photographer);
     if (!photographer.is_platform_admin && !isStripeBillingActive(photographer.subscription_status) && !freeTrialActive) {
-      return NextResponse.json(
+      return respond(
         {
           ok: false,
           message:
@@ -329,14 +340,9 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const schoolReturn = isEventOrder ? null : await schoolCheckoutReturnContext(sb, {
-      orders: checkoutOrders, photographerId: photographer.id, preferredOrderId: order.id,
-      schoolId: body.schoolId, pin: body.pin, email: body.email,
-    });
-
     const stripeAccountId = getConnectedAccountId(photographer);
     if (!stripeAccountId) {
-      return NextResponse.json(
+      return respond(
         { ok: false, message: "This photographer has not connected Stripe yet." },
         { status: 400 },
       );
@@ -354,7 +360,7 @@ export async function POST(req: NextRequest) {
     });
 
     if (!connectStatus.readyForPayments) {
-      return NextResponse.json(
+      return respond(
         { ok: false, message: connectStatus.message },
         { status: 400 },
       );
@@ -362,7 +368,7 @@ export async function POST(req: NextRequest) {
 
     const totalCents = sumStoredOrderTotalsCents(checkoutOrders);
     if (totalCents == null) {
-      return NextResponse.json(
+      return respond(
         { ok: false, message: "This order total is invalid." },
         { status: 400 },
       );
@@ -374,7 +380,7 @@ export async function POST(req: NextRequest) {
     for (const checkoutOrder of checkoutOrders) {
       const orderTotalCents = storedOrderTotalCents(checkoutOrder);
       if (orderTotalCents == null) {
-        return NextResponse.json(
+        return respond(
           { ok: false, message: "This order total is invalid." },
           { status: 400 },
         );
@@ -389,7 +395,7 @@ export async function POST(req: NextRequest) {
         !Number.isSafeInteger(storedSubtotalCents) ||
         storedSubtotalCents <= 0
       ) {
-        return NextResponse.json(
+        return respond(
           { ok: false, message: "This order total is invalid." },
           { status: 400 },
         );
@@ -398,7 +404,7 @@ export async function POST(req: NextRequest) {
       const itemRows = itemsByOrder.get(checkoutOrder.id) ?? [];
 
       if (!itemRows || itemRows.length === 0) {
-        return NextResponse.json(
+        return respond(
           { ok: false, message: "This order has no line items." },
           { status: 400 },
         );
@@ -431,7 +437,7 @@ export async function POST(req: NextRequest) {
             ...itemRows.map((item) => ({ pkg: { name: item.product_name }, quantity: Number(item.quantity) })),
           ];
       const purchaseIssue = retouchPrintPurchaseIssue(purchaseEntries);
-      if (purchaseIssue) return NextResponse.json({ ok: false, message: purchaseIssue }, { status: 400 });
+      if (purchaseIssue) return respond({ ok: false, message: purchaseIssue }, { status: 400 });
 
       const computedCents = sumStoredOrderItemTotalsCents(itemRows);
 
@@ -443,7 +449,7 @@ export async function POST(req: NextRequest) {
           subtotal: storedSubtotalCents,
           computed: computedCents,
         });
-        return NextResponse.json(
+        return respond(
           { ok: false, message: "This order total is invalid." },
           { status: 400 },
         );
@@ -455,7 +461,7 @@ export async function POST(req: NextRequest) {
           tax: taxCents,
           total: orderTotalCents,
         });
-        return NextResponse.json(
+        return respond(
           { ok: false, message: "This order total is invalid." },
           { status: 400 },
         );
@@ -487,7 +493,7 @@ export async function POST(req: NextRequest) {
               orderPackageOwner: packageRow.photographer_id,
               chargePhotographer: photographerId,
             });
-            return NextResponse.json(
+            return respond(
               { ok: false, message: "This order total is invalid." },
               { status: 400 },
             );
@@ -503,7 +509,7 @@ export async function POST(req: NextRequest) {
               stored: storedSubtotalCents,
               packageFloor: authoritativePackageCents,
             });
-            return NextResponse.json(
+            return respond(
               { ok: false, message: "This order total is invalid." },
               { status: 400 },
             );
@@ -518,38 +524,40 @@ export async function POST(req: NextRequest) {
         (member) => clean(member.currency || "cad").toLowerCase() !== currency,
       )
     ) {
-      return NextResponse.json(
+      return respond(
         { ok: false, message: "This combined order has inconsistent currencies." },
         { status: 400 },
       );
     }
-    const origin = baseUrl(req);
-    const baseGalleryUrl = new URL(schoolReturn?.path || `/parents/${encodeURIComponent(body.pin || "")}`, origin);
-
-    if (isEventOrder) {
-      baseGalleryUrl.searchParams.set("mode", "event");
-      if (effectiveProjectId) baseGalleryUrl.searchParams.set("project", effectiveProjectId);
-      if (body.email) baseGalleryUrl.searchParams.set("email", body.email);
-    }
-
-    const successUrl = new URL(baseGalleryUrl.toString());
-    successUrl.searchParams.set("checkout", "success");
-    successUrl.searchParams.set("session_id", "{CHECKOUT_SESSION_ID}");
-
-    const cancelUrl = new URL(baseGalleryUrl.toString());
-    cancelUrl.searchParams.set("checkout", "cancel");
-
     const existingSessionId = checkoutOrders.find((member) => member.stripe_checkout_session_id)?.stripe_checkout_session_id;
     let expiredSessionId: string | null = null;
     if (existingSessionId) {
       const existing = await retrieveCheckoutSession(existingSessionId, stripeAccountId);
+      if (existing.id !== existingSessionId || checkoutOrders.some(member => member.stripe_checkout_session_id !== existingSessionId)) {
+        throw new ParentCheckoutReturnError(409);
+      }
       if (existing.status === "open" && existing.url) {
         await assertPendingOnlineBackdropOrders(sb, checkoutOrders);
-        return NextResponse.json({ ok: true, url: existing.url, sessionId: existing.id });
+        return respond({ ok: true, url: existing.url, sessionId: existing.id });
       }
-      if (existing.status !== "expired") return NextResponse.json({ ok: false, message: "Payment was already submitted. Check your order confirmation before trying again." }, { status: 409 });
+      if (existing.status !== "expired") return respond({ ok: false, message: "Payment was already submitted. Check your order confirmation before trying again." }, { status: 409 });
       expiredSessionId = existing.id;
     }
+
+    // An event PIN does not identify the creator of an old draft. Only an
+    // already-open legacy session may be reused without creation provenance.
+    if (!parentAccess.hasProvenance && !parentAccess.legacySchool) throw new ParentCheckoutReturnError(409);
+    if (!existingSessionId && checkoutOrders.some(member => member.status === "checkout_starting")) {
+      const savedReturn = await sb.from("parent_checkout_returns").select("id")
+        .eq("anchor_order_id", checkoutAnchorOrder.id).eq("attempt_key", "initial").maybeSingle();
+      if (savedReturn.error) throw savedReturn.error;
+      // Changing an ambiguous old Stripe request's URLs would change its
+      // idempotency payload while an unrecorded payment might remain payable.
+      if (!savedReturn.data) throw new ParentCheckoutReturnError(409);
+    }
+    const checkoutReturn = await registerParentCheckoutReturn(sb, parentAccess, checkoutOrders,
+      checkoutAnchorOrder.id, expiredSessionId);
+    const { successUrl, cancelUrl } = parentCheckoutReturnUrls(baseUrl(req), checkoutReturn.returnId);
 
     // Only unpaid attempts reach this gate. Paid-session confirmations and
     // delivery use their saved selections regardless of today's gallery setting.
@@ -622,15 +630,17 @@ export async function POST(req: NextRequest) {
         : school?.school_name
           ? `${school.school_name} gallery order`
           : "Studio OS photo order",
-      successUrl: successUrl.toString(),
-      cancelUrl: cancelUrl.toString(),
+      successUrl,
+      cancelUrl,
       orderGroupId: order.order_group_id,
       previousExpiredSessionId: expiredSessionId,
       platformFee,
-      schoolReturnContext: schoolReturn ? { orderId: schoolReturn.orderId, email: schoolReturn.email } : undefined,
     });
 
-    const { error: updateError } = await sb
+    // Save the exact provider mapping before publishing the session or
+    // updating its orders. A retry cannot switch this handle to another charge.
+    await bindParentCheckoutReturn(sb, parentAccess, checkoutReturn.returnId, session.id);
+    const { data: updatedOrders, error: updateError } = await sb
       .from("orders")
       .update({
         photographer_id: photographer.id,
@@ -641,11 +651,16 @@ export async function POST(req: NextRequest) {
       .in(
         "id",
         checkoutOrders.map((member) => member.id),
-      ).eq("status", "checkout_starting");
+      ).eq("status", "checkout_starting").select("id,stripe_checkout_session_id");
 
     if (updateError) throw updateError;
+    if (!updatedOrders || updatedOrders.length !== checkoutOrders.length ||
+      new Set(updatedOrders.map(member => member.id)).size !== checkoutOrders.length ||
+      checkoutOrders.some(order => !updatedOrders.some(member => member.id === order.id && member.stripe_checkout_session_id === session.id))) {
+      throw new ParentCheckoutReturnError(503);
+    }
 
-    return NextResponse.json({
+    return respond({
       ok: true,
       url: session.url,
       sessionId: session.id,
@@ -654,14 +669,14 @@ export async function POST(req: NextRequest) {
       planCode: photographer.subscription_plan_code,
     });
   } catch (error) {
-    if (error instanceof SchoolCheckoutReturnError) {
-      return NextResponse.json({ ok: false, message: error.message }, { status: 400 });
+    if (error instanceof ParentCheckoutReturnError || error instanceof ParentGallerySessionError) {
+      return respond({ ok: false, message: error.message }, { status: error.status });
     }
     if (error instanceof ParentCutoutPreflightError || error instanceof OnlineBackdropsDisabledError) {
-      return NextResponse.json({ ok: false, message: error.message }, { status: 409 });
+      return respond({ ok: false, message: error.message }, { status: 409 });
     }
     console.error("[stripe:checkout]", error);
-    return NextResponse.json(
+    return respond(
       { ok: false, message: "Failed to create Stripe checkout." },
       { status: 500 },
     );

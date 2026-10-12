@@ -5,6 +5,7 @@ import { createRequire } from 'node:module';
 import { renderToStaticMarkup } from 'react-dom/server';
 import ts from 'typescript';
 import { formatOrderMoney } from '../lib/order-money.ts';
+import { parentPortalFetch, parentSessionPin } from '../lib/parent-gallery-session-client.ts';
 
 const require = createRequire(import.meta.url);
 const compiled = ts.transpileModule(readFileSync(new URL('../components/parents/orders-history-panel.tsx', import.meta.url), 'utf8'), {
@@ -14,7 +15,7 @@ const draft = { id: 'draft', shortId: 'DRAFT', status: 'payment_pending', paidAt
   totalCents: 1050, subtotalCents: 1000, currency: 'cad', cartSnapshot: [{ key: 'photo' }], items: [],
   schoolId: 'school', projectId: null, studentId: 'student', orderGroupId: null, studentName: 'Child', canDiscardCheckout: true };
 const paid = { ...draft, id: 'paid', shortId: 'PAID', status: 'paid', paidAt: '2026-10-08T12:00:00Z' };
-function fixture(rows, extraStates = []) {
+function fixture(rows, extraStates = [], extraProps = {}) {
   const states = [rows, false, null, null, null, false, null, null];
   extraStates.forEach(([index, value]) => { states[index] = value; });
   let cursor = 0;
@@ -22,11 +23,12 @@ function fixture(rows, extraStates = []) {
     useState(initial) { const index = cursor++; if (!(index in states)) states[index] = initial; return [states[index], value => { states[index] = typeof value === 'function' ? value(states[index]) : value; }]; },
     useRef(initial) { const index = cursor++; if (!(index in states)) states[index] = { current: initial }; return states[index]; },
     useMemo(fn) { return fn(); }, useEffect() {},
-  }, 'react/jsx-runtime': require('react/jsx-runtime'), '@/lib/order-money': { formatOrderMoney } };
+  }, 'react/jsx-runtime': require('react/jsx-runtime'), '@/lib/order-money': { formatOrderMoney },
+    '@/lib/parent-gallery-session-client': { parentPortalFetch } };
   const exports = {};
   new Function('require', 'exports', compiled)(name => { if (!dependencies[name]) throw Error(name); return dependencies[name]; }, exports);
   const props = { pin: '1234', email: 'parent@example.test', schoolId: 'school',
-    tone: { text: '#eee', mutedText: '#aaa', accent: '#a00', border: '#444', surface: '#111' }, onReorder() {} };
+    tone: { text: '#eee', mutedText: '#aaa', accent: '#a00', border: '#444', surface: '#111' }, onReorder() {}, ...extraProps };
   const render = () => { cursor = 0; return exports.default(props); };
   return { states, render, markup: () => renderToStaticMarkup(render()) };
 }
@@ -80,6 +82,27 @@ test('deleting the last draft shows success and an empty list', async () => {
   } finally { globalThis.fetch = previousFetch; }
   assert.deepEqual(f.states[0], []); assert.match(f.markup(), /No orders yet/);
   assert.match(f.markup(), /role="status"/); assert.match(f.markup(), /Unfinished checkout deleted/);
+});
+test('private history dismissal uses the actual opaque transport without leaking the viewer credentials', async () => {
+  const laneId = '11111111-1111-4111-8111-111111111111';
+  const f = fixture([draft, paid], [], { pin: parentSessionPin(laneId) });
+  button(f.render(), 'Delete unfinished checkout').props.onClick();
+  let request;
+  const previousFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = async (url, options) => {
+      request = { url, options, body: JSON.parse(options.body) };
+      return Response.json({ ok: true, cancelledOrderIds: ['draft'] });
+    };
+    await button(f.render(), 'Delete & stop reminders').props.onClick();
+  } finally { globalThis.fetch = previousFetch; }
+  assert.equal(request.url, '/api/portal/orders/dismiss');
+  assert.deepEqual(request.body, { orderId: 'draft', schoolId: 'school', confirmed: true, parentLaneId: laneId });
+  assert.equal(new Headers(request.options.headers).get('x-studio-parent-session'), '1');
+  assert.equal(request.options.credentials, 'same-origin');
+  assert.equal(request.options.cache, 'no-store');
+  assert.deepEqual(f.states[0].map(row => row.id), ['paid']);
+  assert.match(f.markup(), /Its reminders have stopped/);
 });
 test('busy confirmation prevents repeat actions, failures keep the checkout reviewable, and cancel is reversible', async () => {
   const busy = fixture([draft], [[4, draft], [5, true]]);

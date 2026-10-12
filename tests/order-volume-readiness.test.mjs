@@ -109,6 +109,11 @@ async function fixture() {
     },
   };
   const load = loader({
+    'server-only': {},
+    '@/lib/parent-gallery-session-request': {
+      parentGalleryRateKey: () => null,
+      runParentGallerySessionRoute: () => assert.fail('Volume fixtures must validate their explicit legacy gallery credentials'),
+    },
     'next/server': { NextResponse: { json: (body, init) => Response.json(body, init) } },
     '@/lib/dashboard-auth': { createDashboardServiceClient: () => sb },
     '@/lib/subscription-gate': { hasActiveSubscription: row => row?.subscription_status === 'active' },

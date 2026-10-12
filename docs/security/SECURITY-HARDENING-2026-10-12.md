@@ -1,5 +1,7 @@
 # Studio OS security hardening — 2026-10-12
 
+This records the earlier production checkpoint. The [parent-session privacy and recovery follow-up](./SECURITY-SESSION-PRIVACY-2026-10-12.md) tracks subsequent work and its release status; the limitations and runtime observations below apply to the earlier checkpoint.
+
 This is a bounded engineering review and implementation record. It is not a penetration-test certificate or a guarantee against compromise. The priority is to close confirmed access-control gaps while preserving existing photos, galleries, paid orders, printed QR labels, and ordinary parent access.
 
 **Website security release: deployed and verified. Photo backup and fresh-inventory delta: complete and checked. Legacy photo storage: private, with authorized delivery verified.** Production runs `51101a332a98c71e83f8ac7c1226ec5b4ac5230a`, including the voice-accounting protections and parent favorites/recovery compatibility fixes. The clean-checkout production guard passed **1,823/1,823 tests**, build, and read-only provider preflights with exit status zero. Deployment `dpl_6B2EEc1fmB8N3wk3ghVf2nEY2Av6` is ready at `https://www.studiooscloud.com`. The external photo backup completed with owning process exit zero. After the fresh inventory and encrypted delta passed, the reviewed privacy cutover was applied; all 22 post-cutover catalog checks passed, anonymous historical public URLs were blocked, and authorized gallery and paid-order reads worked.

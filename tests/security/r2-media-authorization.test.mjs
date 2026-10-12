@@ -5,6 +5,7 @@ import { createRequire } from 'node:module';
 import test from 'node:test';
 import sharp from 'sharp';
 import ts from 'typescript';
+import * as encryptedCapability from '../../lib/encrypted-capability.ts';
 
 const require = createRequire(import.meta.url);
 const env = { R2_ACCOUNT_ID: 'fixture', R2_ACCESS_KEY_ID: 'fixture', R2_SECRET_ACCESS_KEY: 'fixture', R2_BUCKET_NAME: 'fixture',
@@ -14,7 +15,7 @@ function load(file, modules = {}, globals = {}) {
   const code = ts.transpileModule(readFileSync(new URL(`../../${file}`, import.meta.url), 'utf8'), {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true },
   }).outputText;
-  new Function('require', 'exports', 'process', 'fetch', code)(name => modules[name] ?? (name.startsWith('@/') ? assert.fail(`Missing dependency: ${name}`) : require(name)), exports, { env }, globals.fetch);
+  new Function('require', 'exports', 'process', 'fetch', code)(name => name === '@/lib/encrypted-capability' ? encryptedCapability : modules[name] ?? (name.startsWith('@/') ? assert.fail(`Missing dependency: ${name}`) : require(name)), exports, { env }, globals.fetch);
   return exports;
 }
 const [owner, other, project, foreign, school] = [1,2,3,4,5].map(n => `00000000-0000-4000-8000-${String(n).padStart(12,'0')}`);

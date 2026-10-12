@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import test from 'node:test';
 import ts from 'typescript';
+import * as encryptedCapability from '../lib/encrypted-capability.ts';
 
 const compile = file => ts.transpileModule(readFileSync(new URL(`../${file}`, import.meta.url), 'utf8'), {
   compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
@@ -34,6 +35,7 @@ async function resolve(snapshot, orderName = '5x7 Print + All Digital Package', 
   const forbidden = () => { throw new Error('No network, rendering, email or financial writes in file-selection tests'); };
   const authorized = [];
   const modules = {
+    '@/lib/encrypted-capability': encryptedCapability,
     'node:crypto': { createHmac: forbidden, timingSafeEqual: forbidden },
     '@/lib/event-gallery-downloads': { buildArchiveBaseName: () => 'fixture' },
     '@/lib/storage-folder': { buildSchoolCandidateFolders: () => ['school/Class/Student'], loadFolderMediaRows: async () => photos },

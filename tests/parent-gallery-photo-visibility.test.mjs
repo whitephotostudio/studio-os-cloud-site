@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import ts from "typescript";
 
-const source = readFileSync(new URL("../app/parents/[pin]/page.tsx", import.meta.url), "utf8");
+const source = readFileSync(new URL("../components/parents/parent-gallery-client.tsx", import.meta.url), "utf8");
 const parsed = ts.createSourceFile("gallery.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 const compile = (value) => ts.transpileModule(value, {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },

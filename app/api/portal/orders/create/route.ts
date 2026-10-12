@@ -1,3 +1,4 @@
+import { runParentGallerySessionRoute, parentGalleryRateKey } from "@/lib/parent-gallery-session-request";
 import { resolveSchoolOrderMediaReferences } from "@/lib/school-order-media";
 import { resolveEventOrderMediaReferences } from "@/lib/event-order-media";
 import { randomUUID } from "node:crypto";
@@ -522,10 +523,13 @@ function validateEntries(
 }
 
 export async function POST(request: NextRequest) {
+  if (request.headers?.get?.("x-studio-parent-session") === "1" || request.nextUrl?.searchParams?.has("parentLaneId")) {
+    return runParentGallerySessionRoute(request, POST);
+  }
   try {
     // 10 creates per minute per IP. Far above any realistic human
     // checkout rate; tight enough to kill scripts hammering orders.
-    const limitResult = await rateLimit(getClientIp(request), {
+    const limitResult = await rateLimit((parentGalleryRateKey?.(request) || getClientIp(request)), {
       namespace: "orders-create",
       limit: 10,
       windowSeconds: 60,

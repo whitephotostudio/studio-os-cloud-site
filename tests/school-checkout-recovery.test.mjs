@@ -69,6 +69,12 @@ function fixture(options = {}) {
   const route = load('app/api/stripe/checkout/confirm/route.ts', {
     'next/server': {NextResponse: {json: (body, init) => Response.json(body, init)}},
     '@/lib/dashboard-auth': {createDashboardServiceClient: () => service},
+    '@/lib/parent-gallery-session-request':{getParentGalleryRequestScope:()=>options.mappedScope??null,runParentGallerySessionRoute:()=>assert.fail('Direct confirm fixture never adapts')},
+    '@/lib/parent-gallery-session':{ParentGallerySessionError:class extends Error{}},
+    '@/lib/parent-checkout-return':{parentCheckoutPrivateHeaders:{'Cache-Control':'private, no-store'},
+      ParentCheckoutReturnError:class extends Error{constructor(status){super('Reopen gallery');this.status=status;}},
+      hasMappedParentCheckout:async()=>!!options.mapped,
+      resolveParentCheckoutReturn:async(_request,returnId,laneId)=>{assert.equal(returnId,options.returnId);assert.equal(laneId,options.mappedScope.laneId);return{returnId,laneId,status:'success',sessionId};}},
     '@/lib/school-parent-gallery-link': helper,
     '@/lib/payments': {
       getConnectedAccountId: profile => profile.stripe_connected_account_id,
@@ -81,7 +87,7 @@ function fixture(options = {}) {
     },
   });
   return {session, tables, sequence, reads, finalized,
-    invoke: body => route.POST({json: async () => body ?? {sessionId}})};
+    invoke: body => route.POST(new Request('https://fixture.test/api/stripe/checkout/confirm',{method:'POST',headers:{origin:'https://fixture.test','content-type':'application/json'},body:JSON.stringify(body??{sessionId})}))};
 }
 
 function gallery(body) {assert.ok(body.galleryUrl); return new URL(body.galleryUrl, 'https://www.studiooscloud.com');}
@@ -212,4 +218,15 @@ test('foreign group member, incomplete group, moved student and school-owner mis
   }
   const f = fixture({combined: true, incompleteGroup: true}), response = await f.invoke();
   assert.equal(response.status, 500); assert.equal(f.finalized.length, 0);
+});
+
+
+test('new mapped checkout denies sessionId/orderId-only confirmation before provider or finalization',async()=>{
+  for(const body of [{sessionId},{orderId}]){const f=fixture({mapped:true}),response=await f.invoke(body);assert.equal(response.status,403);assert.equal(f.sequence.length,0);assert.equal(f.finalized.length,0);assert.equal((await response.json()).galleryUrl,undefined);}
+});
+test('new mapped checkout returns a clean lane URL and never derives school PIN or viewer email',async()=>{
+  const laneId='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',returnId='bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+  const f=fixture({mapped:true,mappedScope:{laneId},returnId}),response=await f.invoke({sessionId,returnId});assert.equal(response.status,200);
+  const body=await response.json();assert.equal(body.galleryUrl,`/parents/view/${laneId}?checkout=success&return=${returnId}`);assert.equal(body.customerEmail,undefined);
+  assert.ok(!JSON.stringify(body).includes('50123'));assert.equal(f.reads.includes('students'),false);assert.equal(f.finalized.length,1);
 });

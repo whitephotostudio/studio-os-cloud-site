@@ -14,6 +14,7 @@ const studentId = '66666666-6666-4666-8666-666666666666';
 const otherSchoolId = '77777777-7777-4777-8777-777777777777';
 const otherStudentId = '88888888-8888-4888-8888-888888888888';
 const projectId = '99999999-9999-4999-8999-999999999999';
+const laneId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', returnId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', cookieHash = 'a'.repeat(64);
 
 /** The actual POST handler, quote, snapshot payload and Stripe form builder run against isolated dependencies. */
 function fixture(options = {}) {
@@ -51,6 +52,10 @@ function fixture(options = {}) {
     tables.schools.push({id: otherSchoolId, photographer_id: options.foreignReturnSchool ? 'foreign-studio' : photographerId, school_name: 'Other school'});
     tables.students.push({id: otherStudentId, school_id: options.movedStudent ? schoolId : otherSchoolId, pin: 'OTHER456'});
   }
+  tables.parent_order_session_access = options.provenance ? rows.map(member => ({order_id: member.id, token_hash: cookieHash,
+    photographer_id: photographerId, order_group_id: member.order_group_id, school_id:member.school_id, project_id:member.project_id, student_id:member.student_id,lane_ids:[laneId]})) : [];
+  tables.parent_checkout_returns = options.storedSnapshot && !options.ambiguousLegacy ? [{id:returnId, anchor_order_id:primaryId, attempt_key:'initial'}] : [];
+  let authenticatedScope;
   const service = {
     from(table) {
       assert.ok(table in tables, `unexpected table ${table}`);
@@ -77,7 +82,16 @@ function fixture(options = {}) {
       return chain;
     },
     async rpc(name, args) {
-      assert.equal(name, 'freeze_order_platform_fees'); assert.equal(locked, true);
+      assert.equal(locked, true);
+      if (name === 'register_parent_checkout_return') {
+        sequence.push('register-return');
+        assert.deepEqual(args.p_order_ids,[...rows.map(member=>member.id)].sort());
+        const saved={returnId,laneId,sessionId:null,expiresAt:new Date(Date.now()+86400000).toISOString()};
+        tables.parent_checkout_returns=[{id:returnId,anchor_order_id:primaryId,attempt_key:args.p_attempt_key}];
+        return {data:saved,error:null};
+      }
+      if (name === 'bind_parent_checkout_return') {sequence.push('bind-return');assert.equal(args.p_return_id,returnId);assert.equal(args.p_session_id,'cs_created');return{data:null,error:null};}
+      assert.equal(name, 'freeze_order_platform_fees');
       assert.equal(args.p_photographer_id, photographerId);
       sequence.push('freeze'); freezeCalls.push(structuredClone(args));
       assert.ok(rows.every(member => member.status === 'payment_pending'), 'snapshots precede checkout_starting');
@@ -94,6 +108,7 @@ function fixture(options = {}) {
     assert.equal(request.method, 'POST'); assert.equal(locked, true);
     sequence.push('provider-checkout');
     stripeRequests.push({headers: request.headers, params: new URLSearchParams(request.body)});
+    if(options.providerError)throw new Error('Synthetic lost provider response');
     return Response.json({id: 'cs_created', url: 'https://checkout.stripe.invalid/fixture'});
   }
   const pure = new Set(['studio-pricing', 'trial-config', 'subscription-access', 'order-payment-policy', 'order-checkout-totals', 'order-currency', 'school-parent-gallery-link', 'online-backdrop-policy']);
@@ -114,9 +129,22 @@ function fixture(options = {}) {
     return exports;
   }
   const actualPayments = load('lib/payments.ts');
+  class SessionError extends Error {constructor(status,message='Invalid gallery credentials.'){super(message);this.status=status;}}
+  const foundation={ParentGallerySessionError:SessionError,parentSessionCookieBinding:request=>request.headers.get('cookie')?.includes('session_fixture')?cookieHash:null,
+    bootstrapParentGallerySession:async(_request,input)=>{
+      if(!input.pin || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(input.email))throw new SessionError(400);
+      const gallery=tables[input.kind==='school'?'schools':'projects'].find(g=>g.id===input.galleryId);
+      if(!gallery || (input.kind==='school'&&!tables.students.some(st=>st.school_id===input.galleryId&&st.pin===input.pin)))throw new SessionError(403);
+      authenticatedScope={laneId,...input,email:input.email.trim().toLowerCase(),photographerId:gallery.photographer_id,expiresAt:new Date(Date.now()+86400000).toISOString()};
+      return{grant:authenticatedScope,applyCookie:async response=>{response.headers.append('set-cookie','__Host-studio_os_parent_session=session_fixture; Path=/; HttpOnly; Secure');return response;}};
+    },resolveParentGallerySession:async()=>authenticatedScope};
+  const checkoutHelper=load('lib/parent-checkout-return.ts',{'server-only':{},'@/lib/dashboard-auth':{createDashboardServiceClient:()=>service},'@/lib/parent-gallery-session':foundation,
+    '@/lib/payments':actualPayments,'@/lib/order-checkout-totals':load('lib/order-checkout-totals.ts')});
   const dependencies = {
     'next/server': {NextResponse: {json: (value, init) => Response.json(value, init)}},
     '@/lib/dashboard-auth': {createDashboardServiceClient: () => service},
+    '@/lib/parent-gallery-session-request':{getParentGalleryRequestScope:()=>null,runParentGallerySessionRoute:()=>assert.fail('Legacy fixture never selects adapter')},
+    '@/lib/parent-gallery-session':foundation,'@/lib/parent-checkout-return':checkoutHelper,
     '@/lib/order-payment-lock': {lockOrderPayment: async () => {
       assert.equal(locked, false); locked = true; sequence.push('lock');
       return async () => {sequence.push('unlock'); locked = false;};
@@ -138,9 +166,10 @@ function fixture(options = {}) {
     },
   };
   const handler = load('app/api/stripe/checkout/route.ts', dependencies);
-  const invoke = extra => handler.POST({url: 'https://gallery.example.invalid/api/stripe/checkout',
-    json: async () => ({orderId: primaryId, pin: 'PIN123', ...extra})});
-  return {invoke, rows, sequence, quoteInputs, freezeCalls, checkoutInputs, stripeRequests, photographer};
+  const invoke = extra => handler.POST(new Request('https://gallery.example.invalid/api/stripe/checkout', {
+    method:'POST',headers:{origin:'https://gallery.example.invalid','content-type':'application/json'},
+    body:JSON.stringify({orderId:primaryId,pin:'PIN123',email:'viewer@example.invalid',...extra})}));
+  return {invoke, rows, sequence, quoteInputs, freezeCalls, checkoutInputs, stripeRequests, photographer, tables, getScope:()=>authenticatedScope};
 }
 
 test('new App order freezes the actual40c CAD quote before marking or sending Stripe Checkout', async () => {
@@ -239,59 +268,63 @@ test('local-currency checkouts retain the nominal40/35/55 fee without CAD conver
   }
 });
 
-function returnContext(f, which = 'successUrl') {
-  const url = new URL(f.checkoutInputs[0][which]);
-  return {url, pin: decodeURIComponent(url.pathname.slice('/parents/'.length)), school: url.searchParams.get('school'), email: url.searchParams.get('email')};
-}
-
-test('school success and cancel URLs retain viewer email independently of billing email', async () => {
-  const f = fixture(); assert.equal((await f.invoke({schoolId, email: ' Viewer+Child@Example.invalid ', customerEmail: 'billing@example.invalid'})).status, 200);
-  for (const which of ['successUrl', 'cancelUrl']) {
-    const context = returnContext(f, which);
-    assert.equal(context.pin, 'PIN123'); assert.equal(context.school, schoolId);
-    assert.equal(context.email, 'viewer+child@example.invalid'); assert.equal(context.url.searchParams.get('mode'), 'school');
-    assert.equal(context.url.searchParams.get('checkout'), which === 'successUrl' ? 'success' : 'cancel');
+test('new success and cancel URLs contain only an opaque return and no viewer credentials', async()=>{
+  const f=fixture();assert.equal((await f.invoke({schoolId,email:'Viewer+Child@Example.invalid',customerEmail:'billing@example.invalid'})).status,200);
+  for(const [which,result] of [['successUrl','success'],['cancelUrl','cancel']]){
+    const url=new URL(f.checkoutInputs[0][which]);assert.equal(url.pathname,'/parents/checkout-return/'+returnId);
+    assert.equal(url.searchParams.get('result'),result);assert.equal(url.searchParams.get('pin'),null);assert.equal(url.searchParams.get('email'),null);
+    assert.ok(!url.href.includes('PIN123')&&!url.href.includes('Viewer'));
   }
-  assert.equal(f.stripeRequests[0].params.get('metadata[portal_return_order_id]'), primaryId);
-  assert.equal(f.stripeRequests[0].params.get('metadata[portal_return_email]'), 'viewer+child@example.invalid');
+  assert.equal(f.stripeRequests[0].params.get('metadata[portal_return_email]'),null);
+  assert.ok(f.sequence.indexOf('register-return')<f.sequence.indexOf('provider-checkout'));
+  assert.ok(f.sequence.indexOf('bind-return')>f.sequence.indexOf('provider-checkout'));
+  assert.ok(f.sequence.indexOf('bind-return')<f.sequence.indexOf('write:payment_pending'));
 });
 
-test('older school client missing viewer context uses persisted buyer email and current student PIN', async () => {
-  const f = fixture(); assert.equal((await f.invoke({pin: undefined, schoolId: undefined, customerEmail: 'untrusted@example.invalid'})).status, 200);
-  assert.equal(returnContext(f).pin, 'PIN123'); assert.equal(returnContext(f).school, schoolId);
-  assert.equal(returnContext(f).email, 'buyer@example.invalid');
+test('orderId without explicit PIN/email cannot recover saved gallery credentials or create a payment',async()=>{
+  const f=fixture();const before=structuredClone(f.rows);assert.equal((await f.invoke({pin:undefined,email:undefined,customerEmail:'untrusted@example.invalid'})).status,403);
+  assert.equal(f.stripeRequests.length,0);assert.deepEqual(f.rows,before);
 });
 
-test('combined checkout returns to validated current lane when primary is another school', async () => {
-  const f = fixture({combined: true, crossSchool: true});
-  assert.equal((await f.invoke({schoolId: otherSchoolId, pin: 'OTHER456', email: 'viewer@example.invalid'})).status, 200);
-  assert.equal(returnContext(f).school, otherSchoolId); assert.equal(returnContext(f).pin, 'OTHER456');
-  assert.equal(f.stripeRequests[0].params.get('metadata[portal_return_order_id]'), siblingId);
-  assert.equal(f.checkoutInputs[0].orderId, primaryId, 'charge anchor remains unchanged');
+test('combined legacy school checkout binds validated sibling return lane while keeping deterministic charge anchor',async()=>{
+  const f=fixture({combined:true,crossSchool:true});assert.equal((await f.invoke({schoolId:otherSchoolId,pin:'OTHER456',email:'viewer@example.invalid'})).status,200);
+  assert.equal(f.getScope().galleryId,otherSchoolId);assert.equal(f.checkoutInputs[0].orderId,primaryId);
+  assert.equal(new URL(f.checkoutInputs[0].successUrl).pathname,'/parents/checkout-return/'+returnId);
 });
 
-test('split school/PIN, nonmember school, moved student and foreign-owned return school fail before payment writes', async () => {
-  for (const [options, input] of [
-    [{combined: true, crossSchool: true}, {schoolId, pin: 'OTHER456'}],
-    [{combined: true, crossSchool: true}, {schoolId: projectId, pin: 'PIN123'}],
-    [{combined: true, crossSchool: true, movedStudent: true}, {schoolId: otherSchoolId, pin: 'OTHER456'}],
-    [{combined: true, crossSchool: true, foreignReturnSchool: true}, {schoolId: otherSchoolId, pin: 'OTHER456'}],
-    [{}, {schoolId, pin: 'PIN123', email: 'invalid-email'}],
-  ]) {
-    const f = fixture(options), before = structuredClone(f.rows);
-    assert.equal((await f.invoke(input)).status, 400);
-    assert.equal(f.freezeCalls.length, 0); assert.equal(f.checkoutInputs.length, 0); assert.equal(f.stripeRequests.length, 0);
-    assert.deepEqual(f.rows, before); assert.equal(f.sequence.at(-1), 'unlock');
-  }
+test('split school/PIN, missing member, moved student and foreign owner fail before provider or payment writes',async()=>{
+  for(const [options,input] of [
+    [{combined:true,crossSchool:true},{schoolId,pin:'OTHER456'}],
+    [{combined:true,crossSchool:true},{schoolId:projectId,pin:'PIN123'}],
+    [{combined:true,crossSchool:true,movedStudent:true},{schoolId:otherSchoolId,pin:'OTHER456'}],
+    [{combined:true,crossSchool:true,foreignReturnSchool:true},{schoolId:otherSchoolId,pin:'OTHER456'}],
+    [{},{schoolId,pin:'PIN123',email:'invalid-email'}],
+  ]){const f=fixture(options),before=structuredClone(f.rows);const response=await f.invoke(input);assert.ok([400,403].includes(response.status));assert.equal(f.stripeRequests.length,0);assert.deepEqual(f.rows,before);assert.equal(f.sequence.at(-1),'unlock');}
 });
 
-test('event checkout preserves project/PIN/email links without school return metadata', async () => {
-  const f = fixture({event: true}); assert.equal((await f.invoke({mode: 'event', projectId, email: 'event+viewer@example.invalid'})).status, 200);
-  for (const which of ['successUrl', 'cancelUrl']) {
-    const url = new URL(f.checkoutInputs[0][which]);
-    assert.equal(url.pathname, '/parents/PIN123'); assert.equal(url.searchParams.get('mode'), 'event');
-    assert.equal(url.searchParams.get('project'), projectId); assert.equal(url.searchParams.get('email'), 'event+viewer@example.invalid');
-    assert.equal(url.searchParams.get('school'), null);
-  }
-  assert.equal(f.stripeRequests[0].params.get('metadata[portal_return_order_id]'), null);
+test('event checkout with creation provenance uses clean returns; unmapped draft keeps basket and never starts a charge',async()=>{
+  const f=fixture({event:true,provenance:true});assert.equal((await f.invoke({mode:'event',projectId,email:'event+viewer@example.invalid'})).status,200);
+  assert.equal(new URL(f.checkoutInputs[0].successUrl).pathname,'/parents/checkout-return/'+returnId);
+  const legacy=fixture({event:true});const response=await legacy.invoke({mode:'event',projectId,customerEmail:'buyer@example.invalid'});
+  assert.equal(response.status,409);assert.equal(legacy.stripeRequests.length,0);
+});
+
+test('ambiguous legacy checkout marker without durable return cannot change old provider idempotency payload',async()=>{
+  const f=fixture({storedSnapshot:true,ambiguousLegacy:true}),before=structuredClone(f.rows);
+  assert.equal((await f.invoke()).status,409);assert.equal(f.stripeRequests.length,0);assert.deepEqual(f.rows,before);
+});
+
+
+test('lost provider response keeps the browser binding and durable return while the payable attempt marker remains',async()=>{
+ const f=fixture({providerError:true}),response=await f.invoke();assert.equal(response.status,500);
+ assert.match(response.headers.get('set-cookie'),/__Host-studio_os_parent_session=session_fixture/);
+ assert.equal(f.tables.parent_checkout_returns.length,1);assert.equal(f.rows[0].status,'checkout_starting');assert.equal(f.stripeRequests.length,1);
+ assert.equal(f.sequence.includes('bind-return'),false);assert.equal(f.sequence.at(-1),'unlock');
+});
+test('combined retries naming another sibling keep exactly the same provider scope and URL payload',async()=>{
+ const a=fixture({combined:true,crossSchool:true}),b=fixture({combined:true,crossSchool:true});
+ assert.equal((await a.invoke({schoolId:otherSchoolId,pin:'OTHER456'})).status,200);
+ assert.equal((await b.invoke({orderId:siblingId,schoolId:otherSchoolId,pin:'OTHER456'})).status,200);
+ assert.deepEqual([...a.stripeRequests[0].params],[...b.stripeRequests[0].params]);
+ assert.equal(a.stripeRequests[0].headers['Idempotency-Key'],b.stripeRequests[0].headers['Idempotency-Key']);
 });

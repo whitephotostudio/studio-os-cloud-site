@@ -2,8 +2,7 @@ import { matchesEventCollectionPin } from "@/lib/event-download-scope";
 import { hasCalendarBoundaryPassed } from "@/lib/calendar-dates";
 import { NextRequest, NextResponse } from "next/server";
 import { createDashboardServiceClient } from "@/lib/dashboard-auth";
-import { getClientIp, rateLimit } from "@/lib/rate-limit";
-import { grantPortalPinBudget } from "@/lib/portal-pin-rate-limit";
+import { grantPortalPinBudget, refundPortalPinAttempt } from "@/lib/portal-pin-rate-limit";
 
 export const dynamic = "force-dynamic";
 
@@ -64,28 +63,6 @@ function isMissingVisitorsTable(error: unknown) {
 
 export async function POST(request: NextRequest) {
   try {
-    // Rate-limit PIN auth attempts per client IP so an attacker cannot grind
-    // through PINs unnoticed. Window intentionally short so legitimate users
-    // retry quickly; limit is tight because a real user shouldn't need more
-    // than a few attempts in a 10s window.
-    const clientIp = getClientIp(request);
-    const limitResult = await rateLimit(clientIp, {
-      namespace: "pin-auth-event",
-      limit: 8,
-      windowSeconds: 10,
-    });
-    if (!limitResult.allowed) {
-      return NextResponse.json(
-        { ok: false, message: "Too many attempts. Please wait a few seconds and try again." },
-        {
-          status: 429,
-          headers: {
-            "Retry-After": Math.max(1, Math.ceil((limitResult.resetAt - Date.now()) / 1000)).toString(),
-          },
-        },
-      );
-    }
-
     const { eventId, email, pin } = (await request.json()) as {
       eventId?: string;
       email?: string;
@@ -194,6 +171,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    await refundPortalPinAttempt(request, { kind: "event", galleryId: selectedEventId, pin: pinValue, email: normalizedEmail });
     const { error: visitorError } = await service
       .from("event_gallery_visitors")
       .upsert(

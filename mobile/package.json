@@ -7,7 +7,7 @@
     "add:ios": "cap add ios",
     "sync": "cap sync ios",
     "open": "cap open ios",
-    "icons": "capacitor-assets generate --ios",
+    "icons": "node scripts/generate-ios-assets.mjs",
     "doctor": "cap doctor ios"
   },
   "dependencies": {
@@ -20,7 +20,7 @@
     "@capacitor/status-bar": "^8.0.0"
   },
   "devDependencies": {
-    "@capacitor/assets": "^3.0.5",
-    "@capacitor/cli": "8.4.3"
+    "@capacitor/cli": "8.4.3",
+    "sharp": "0.35.5"
   }
 }

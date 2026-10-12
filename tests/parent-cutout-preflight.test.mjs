@@ -103,6 +103,11 @@ function setup({ originals = [original()], paidKeys = originals.map(fullCutout),
     },
   };
   const load = loader({
+    'server-only': {},
+    '@/lib/parent-gallery-session-request': {
+      parentGalleryRateKey: () => null,
+      runParentGallerySessionRoute: () => assert.fail('Cutout fixtures must validate their explicit legacy gallery credentials'),
+    },
     'next/server': { NextResponse: { json: (body, init) => Response.json(body, init) } },
     '@/lib/dashboard-auth': { createDashboardServiceClient: () => sb },
     '@/lib/event-gallery-access': { validateEventGalleryAccess: async () => ({ ok: true, projectId, collectionIds: ['collection-a'], service: sb, project: { photographer_id: photographerId } }) },
