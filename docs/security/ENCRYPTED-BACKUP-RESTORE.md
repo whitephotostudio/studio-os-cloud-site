@@ -14,8 +14,9 @@ the encrypted backup unrecoverable. This manual safekeeping step is still requir
 The protected original key is `photo-manifest-private.pem` in the Mac's
 `StudioOS_Security_Backups/2026-10-11_security_hardening` folder. Preserve the original
 file and its permissions. The photo master key can be recovered from the RSA-wrapped
-`key.enc` inside the photo backup, so retaining this RSA private key is sufficient.
-Preserve a trusted copy of the verification receipts with the private key too.
+`key.enc` inside the photo backup. Authenticated recovery requires this RSA private
+key and separately retained trusted verification receipts. Preserve those receipts
+with the private key in the second secure location.
 For photos, this includes `photo-backup-authenticity-receipt.json` from the
 protected Mac folder. It records the trusted `manifestSha256` and
 `keyEnvelopeSha256` for `manifest.enc` and `key.enc`. The key-envelope digest was
@@ -54,8 +55,10 @@ reported at checkpoint time; the encrypted database checkpoint is the local copy
 
 Use Node.js 20 or later. Unlock the secure private-key location, copy the key into a
 private folder on the Mac, and set that folder to mode `700` and key to mode `600`.
-Choose the checkpoint filename and matching receipt on the backup drive. Prefer the
-trusted receipt kept with the private key when checking authenticity.
+Choose the checkpoint filename on the backup drive and its matching independently
+trusted receipt kept with the private key. A receipt obtained only from the same
+backup drive cannot authenticate that drive's contents: an attacker with the public
+RSA key could replace both the encrypted archive and the USB receipt.
 
 ```sh
 node '/Volumes/2026-mini/StudioOS-Security-20261012/restore-checkpoint.mjs' verify \
@@ -154,5 +157,6 @@ overwrite production while checking a backup. Restoring this local archive does 
 change any online gallery, order, photograph or provider setting.
 
 The seven-day signed download URLs in the encrypted photo inventory are only for
-creating or repairing the backup. Existing encrypted photos can be decrypted with
-the retained RSA private key after those URLs expire.
+creating or repairing the backup. Existing encrypted photos can be authenticated
+and decrypted with the retained RSA private key and trusted receipts after those
+URLs expire.
