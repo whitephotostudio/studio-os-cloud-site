@@ -53,6 +53,26 @@ reported at checkpoint time; the encrypted database checkpoint is the local copy
 
 ## Verify and recover the checkpoint locally
 
+Obtain this guide, the receipts and restoration code from a separately trusted
+source before giving a restore program the private key. An attacker who can
+replace USB files can also replace the program or the instructions beside them.
+Use the reviewed source checkout, or compare the USB tools with these SHA-256
+values from the independently retained Git record. Never obtain the expected
+hashes solely from the drive being checked.
+
+| USB tool | Reviewed SHA-256 |
+| --- | --- |
+| `restore-checkpoint.mjs` | `a8dd408dd5d1d54cf5c4ba9bf7ce6d9a5e3b3493e8226bb927a43d74efb62e00` |
+| `security-photo-restore.mjs` | `1c0b4bbdcceda75392e3d769f5c0551dbd0e4e1e1f2bb4091dbe53851e5e8bc7` |
+
+```sh
+/usr/bin/shasum -a 256 '/Volumes/2026-mini/StudioOS-Security-20261012/restore-checkpoint.mjs'
+/usr/bin/shasum -a 256 '/Volumes/2026-mini/StudioOS-Security-20261012/security-photo-restore.mjs'
+```
+
+Stop if either hash differs. A future reviewed tool version needs its own trusted
+hash; matching these values establishes code identity, not backup completeness.
+
 Use Node.js 20 or later. Unlock the secure private-key location, copy the key into a
 private folder on the Mac, and set that folder to mode `700` and key to mode `600`.
 Choose the checkpoint filename on the backup drive and its matching independently
