@@ -32,8 +32,38 @@ export function createBackupDownloadTransport({ concurrency = 6, ca } = {}) {
   if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 16) fail('INVALID_CONCURRENCY');
   const options = { keepAlive: true, maxSockets: concurrency, maxTotalSockets: concurrency,
     maxFreeSockets: concurrency, scheduling: 'lifo' };
-  const httpAgent = new http.Agent(options);
-  const httpsAgent = new https.Agent({ ...options, maxCachedSessions: concurrency, ...(ca ? { ca } : {}) });
+  const pendingOrigins = agent => Object.entries(agent.requests)
+    .filter(([, requests]) => requests.some(request => !request.destroyed));
+  const makeAgent = (Agent, agentOptions) => {
+    const agent = new Agent(agentOptions), keepSocketAlive = agent.keepSocketAlive.bind(agent);
+    // Node's global socket limit includes idle sockets belonging to other
+    // origins. Its documented keepSocketAlive hook lets a newly freed socket
+    // make room for a queued provider instead of retaining it indefinitely.
+    agent.keepSocketAlive = socket => {
+      const origin = Object.entries(agent.sockets).find(([, sockets]) => sockets.includes(socket))?.[0];
+      if (pendingOrigins(agent).some(([waitingOrigin]) => waitingOrigin !== origin)) return false;
+      return keepSocketAlive(socket);
+    };
+    return agent;
+  };
+  const retireIdleForPendingOrigins = agent => {
+    // Read the documented pool inventories without mutating them. Destroy
+    // only idle sockets, at most one for each live queued request; Node owns
+    // removal and opening the replacement under the same global limit.
+    for (const [origin, requests] of pendingOrigins(agent)) {
+      for (const request of requests) {
+        if (request.destroyed) continue;
+        const idle = Object.entries(agent.freeSockets)
+          .filter(([idleOrigin]) => idleOrigin !== origin)
+          .flatMap(([, sockets]) => sockets).find(socket => !socket.destroyed);
+        if (!idle) break;
+        idle.destroy();
+      }
+    }
+  };
+  const httpAgent = makeAgent(http.Agent, options);
+  const httpsAgent = makeAgent(https.Agent, { ...options, maxCachedSessions: concurrency, ...(ca ? { ca } : {}) });
+  const requests = new Set();
   let closed = false;
   const fetcher = (input, init = {}) => new Promise((resolve, reject) => {
     if (closed) { reject(Object.assign(new Error('BACKUP_TRANSPORT_CLOSED'), { code: 'BACKUP_TRANSPORT_CLOSED' })); return; }
@@ -42,13 +72,16 @@ export function createBackupDownloadTransport({ concurrency = 6, ca } = {}) {
     if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || (init.method && init.method !== 'GET') || init.body != null) {
       reject(Object.assign(new Error('INVALID_SOURCE_REQUEST'), { code: 'INVALID_SOURCE_REQUEST' })); return;
     }
+    const abortError = () => Object.assign(new Error('The operation was aborted', { cause: init.signal?.reason }), { name: 'AbortError', code: 'ABORT_ERR' });
+    if (init.signal?.aborted) { reject(abortError()); return; }
     const headers = Object.fromEntries(new Headers(init.headers));
     // Back up stored bytes verbatim; Node does not transparently decompress.
     headers['accept-encoding'] ||= 'identity';
     const client = url.protocol === 'https:' ? https : http;
+    const agent = url.protocol === 'https:' ? httpsAgent : httpAgent;
     let incoming;
     const request = client.request(url, { method: 'GET', headers,
-      agent: url.protocol === 'https:' ? httpsAgent : httpAgent, signal: init.signal }, response => {
+      agent, signal: init.signal }, response => {
       incoming = response;
       const status = response.statusCode || 0;
       if (status >= 300 && status < 400) {
@@ -72,9 +105,21 @@ export function createBackupDownloadTransport({ concurrency = 6, ca } = {}) {
       if (incoming && !incoming.destroyed) incoming.destroy(error);
       reject(error);
     });
+    // A queued ClientRequest may not emit its abort error until an existing
+    // socket is released. Settle the caller immediately as well as destroying
+    // the request, so the deadline also applies while waiting for the pool.
+    const onAbort = () => {
+      const error = abortError();
+      if (incoming && !incoming.destroyed) incoming.destroy(error);
+      request.destroy(error); reject(error);
+    };
+    init.signal?.addEventListener('abort', onAbort, { once: true });
+    requests.add(request);
+    request.once('close', () => { requests.delete(request); init.signal?.removeEventListener('abort', onAbort); });
+    retireIdleForPendingOrigins(agent);
     request.end();
   });
-  return { fetcher, close() { closed = true; httpAgent.destroy(); httpsAgent.destroy(); } };
+  return { fetcher, close() { closed = true; for (const request of requests) request.destroy(); httpAgent.destroy(); httpsAgent.destroy(); } };
 }
 
 export function presignGet(config, key, now = new Date()) {

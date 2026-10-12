@@ -51,6 +51,46 @@ test('bounded keep-alive pool reuses at most its configured sockets across queue
  for(const concurrency of [0,17,1.5,NaN])assert.throws(()=>createBackupDownloadTransport({concurrency}),/INVALID_CONCURRENCY/);
 });
 
+test('a second HTTPS provider retires idle foreign sockets without waiting for their keep-alive timeout', {timeout:5000}, async t=>{
+ const root=await directory(t),tls=await certificate(t,root);if(!tls)return;
+ const sockets=new Set();let active=0,peak=0;
+ const handler=(_req,res)=>setTimeout(()=>res.end('provider'),10);
+ const first=await server(t,handler,tls),second=await server(t,handler,tls);
+ for(const fixture of [first,second]){
+  fixture.instance.keepAliveTimeout=10000;
+  fixture.instance.on('connection',socket=>{sockets.add(socket);active++;peak=Math.max(peak,active);socket.once('close',()=>active--);});
+ }
+ const client=transport(t,{concurrency:2,ca:tls.cert});
+ await Promise.all(Array.from({length:2},async()=>{const response=await client.fetcher(first.origin);assert.equal(await response.text(),'provider');}));
+ assert.equal(sockets.size,2);await delay(10);
+ const started=Date.now();
+ await Promise.all(Array.from({length:2},async()=>{const response=await client.fetcher(second.origin,{signal:AbortSignal.timeout(1000)});assert.equal(await response.text(),'provider');}));
+ assert.ok(Date.now()-started<1000);assert.ok(sockets.size>=3&&sockets.size<=4);assert.ok(peak<=2);
+});
+
+test('an active origin releases its socket for a queued provider as soon as its body completes', {timeout:3000}, async t=>{
+ let release,secondReads=0;
+ const first=await server(t,(_req,res)=>{res.writeHead(200,{'content-length':'5'});res.write('fi');release=()=>res.end('rst');});
+ first.instance.keepAliveTimeout=10000;
+ const second=await server(t,(_req,res)=>{secondReads++;res.end('second');});
+ const client=transport(t,{concurrency:1}),response=await client.fetcher(first.origin),firstBody=response.text();
+ const queued=client.fetcher(second.origin,{signal:AbortSignal.timeout(1000)});
+ await delay(20);assert.equal(secondReads,0);release();
+ assert.equal(await firstBody,'first');assert.equal(await (await queued).text(),'second');assert.equal(secondReads,1);
+});
+
+test('abort settles a cross-provider queued request while the only socket is still active', {timeout:3000}, async t=>{
+ let release,secondReads=0;
+ const first=await server(t,(_req,res)=>{res.writeHead(200,{'content-length':'5'});res.write('fi');release=()=>res.end('rst');});
+ const second=await server(t,(_req,res)=>{secondReads++;res.end('second');});
+ const client=transport(t,{concurrency:1}),response=await client.fetcher(first.origin),firstBody=response.text();
+ const started=Date.now(),abort=new AbortController(),queued=client.fetcher(second.origin,{signal:abort.signal});
+ setTimeout(()=>abort.abort(),30);
+ await assert.rejects(queued,{name:'AbortError'});assert.ok(Date.now()-started<500);assert.equal(secondReads,0);
+ release();assert.equal(await firstBody,'first');
+ const next=await client.fetcher(second.origin,{signal:AbortSignal.timeout(1000)});assert.equal(await next.text(),'second');assert.equal(secondReads,1);
+});
+
 test('redirects are rejected without fetching their target or retaining a response body',async t=>{
  let targetReads=0;
  const fixture=await server(t,(req,res)=>{if(req.url==='/target'){targetReads++;res.end('forbidden');}else{res.writeHead(302,{location:'/target'});res.end('redirect');}});
