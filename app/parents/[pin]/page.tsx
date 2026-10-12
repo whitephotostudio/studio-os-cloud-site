@@ -47,7 +47,7 @@ import {
   normalizeEventGallerySettings,
   type EventGallerySettings,
 } from "@/lib/event-gallery-settings";
-import { getPackageCategory } from "@/lib/package-categories";
+import { getGalleryPackageCategory, getPackageCategory } from "@/lib/package-categories";
 import { defaultSchoolGalleryDownloadAccess } from "@/lib/school-gallery-downloads";
 import { extractStoragePathFromSupabaseUrl } from "@/lib/storage-images";
 import {
@@ -82,6 +82,9 @@ import { EventGalleryCover } from "@/components/parents/event-gallery-cover";
 import { EventAlbumHero } from "@/components/parents/event-album-hero";
 import { galleryPresentationTone, galleryPresentationAccent, galleryIntroButtonLabel } from "@/lib/event-gallery-presentation";
 import { accessibleEventGalleryImages, buildEventAlbumChoices, eventAlbumChoiceForValue, imagesInEventAlbum, initialEventAlbumSelection } from "@/lib/event-album-navigation";
+
+import { ProofWatermarkOverlay as WatermarkOverlay } from "@/components/parents/proof-watermark-overlay";
+import { normalizeProofWatermarkOpacity } from "@/lib/proof-watermark";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 type StudentRow = {
@@ -218,6 +221,7 @@ type GalleryContextPayload = {
   watermarkEnabled?: boolean;
   watermarkLogoUrl?: string;
   orderCurrency?: OrderCurrency;
+  watermarkOpacity?: number | null;
   studioInfo?: {
     businessName: string;
     logoUrl: string;
@@ -254,6 +258,7 @@ type EventGalleryContextPayload = {
   watermarkEnabled?: boolean;
   watermarkLogoUrl?: string;
   orderCurrency?: OrderCurrency;
+  watermarkOpacity?: number | null;
   studioInfo?: {
     businessName: string;
     logoUrl: string;
@@ -1131,6 +1136,12 @@ function printSizeLabel(name: string): string {
   return s.trim();
 }
 
+function galleryPrintLabel(pkg: PackageRow): string {
+  // Included quantities are part of the configured product name (e.g. two
+  // 5x7 prints or eight wallets), so keep them visible in the Prints grid.
+  return pkg.items?.length ? pkg.name.trim() : printSizeLabel(pkg.name);
+}
+
 // The remaining descriptor after the size/wallet token is stripped (e.g.
 // "Lustre"), shown as a small subtitle under the size.
 function printFinishLabel(name: string): string {
@@ -1811,39 +1822,8 @@ function getCategory(pkg: PackageRow): string {
   return getPackageCategory(pkg);
 }
 
-// A standalone wallet print (e.g. "Wallets (8 Cut) Lustre") is stored under the
-// "package" category because its name carries no NxM size token. For the CLIENT
-// gallery ONLY we surface it as a print size so it joins the size grid. This is
-// display-only: the stored category, the studio dashboard, and wallet
-// fulfilment (one sheet of 8) are untouched — orders still reference the same
-// package id. Bundles like "1-5x7 + 8 Wallets" are excluded (they have items /
-// a "+" / a real size and stay packages).
-function isStandaloneWalletPrint(pkg: PackageRow): boolean {
-  const name = pkg.name ?? "";
-  return (
-    getCategory(pkg) === "package" &&
-    !(pkg.items && pkg.items.length) &&
-    /\bwallets?\b/i.test(name) &&
-    !/\+/.test(name) &&
-    extractPackageSizes(pkg).length === 0
-  );
-}
-
-// A row the base classifier labels "print" but that actually bundles more than
-// one print — it carries package items (e.g. "2-5x7", a two-pack). It belongs
-// in Packages, not the single-size Prints grid. True single prints carry no
-// items, so this never catches a real 5x7/8x10/etc.
-function isGalleryPrintBundle(pkg: PackageRow): boolean {
-  return getCategory(pkg) === "print" && (pkg.items?.length ?? 0) >= 1;
-}
-
-// Category key used for browsing in the client gallery only (never the
-// dashboard or checkout). Identical to getCategory() except: a standalone
-// wallet print joins Prints, and a multi-print pack is pushed to Packages.
 function galleryCategoryKey(pkg: PackageRow): string {
-  if (isStandaloneWalletPrint(pkg)) return "print";
-  if (isGalleryPrintBundle(pkg)) return "package";
-  return getCategory(pkg);
+  return getGalleryPackageCategory(pkg);
 }
 
 function packageSearchText(pkg: PackageRow): string {
@@ -2740,97 +2720,6 @@ function renderPremiumMockup(
 
 // ── Nobg helpers ──────────────────────────────────────────────────────────
 /** Client-side canvas composite: backdrop image + nobg (transparent foreground) */
-/** Repeating watermark overlay — prevents screenshots from being usable */
-function WatermarkOverlay({
-  text,
-  logoUrl,
-  variant = "wall",
-}: {
-  text: string;
-  logoUrl?: string;
-  variant?: "wall" | "viewer";
-}) {
-  const isViewer = variant === "viewer";
-  return (
-    <div
-      style={{
-        position: "absolute",
-        inset: 0,
-        overflow: "hidden",
-        pointerEvents: "none",
-        zIndex: 4,
-        borderRadius: 6,
-      }}
-    >
-      <div
-        style={{
-          position: "absolute",
-          top: isViewer ? "-28%" : "-50%",
-          left: isViewer ? "-28%" : "-50%",
-          width: isViewer ? "156%" : "200%",
-          height: isViewer ? "156%" : "200%",
-          transform: "rotate(-30deg)",
-          display: "flex",
-          flexDirection: "column",
-          gap: isViewer ? (logoUrl ? 96 : 84) : logoUrl ? 64 : 48,
-          justifyContent: "center",
-        }}
-      >
-        {Array.from({ length: isViewer ? 10 : 20 }).map((_, row) => (
-          <div
-            key={row}
-            style={{
-              display: "flex",
-              gap: isViewer ? (logoUrl ? 108 : 92) : logoUrl ? 48 : 32,
-              whiteSpace: "nowrap",
-              paddingLeft: row % 2 === 0 ? 0 : isViewer ? 120 : 80,
-              alignItems: "center",
-            }}
-          >
-            {Array.from({ length: isViewer ? 6 : 12 }).map((_, col) =>
-              logoUrl ? (
-                <img
-                  key={col}
-                  src={logoUrl}
-                  alt=""
-                  draggable={false}
-                  style={{
-                    width: isViewer ? 92 : 60,
-                    height: isViewer ? 92 : 60,
-                    objectFit: "contain",
-                    opacity: isViewer ? 0.16 : 0.22,
-                    userSelect: "none",
-                    pointerEvents: "none",
-                    filter: isViewer
-                      ? "drop-shadow(0 1px 2px rgba(0,0,0,0.14))"
-                      : "drop-shadow(0 0 2px rgba(0,0,0,0.4))",
-                  }}
-                />
-              ) : (
-                <span
-                  key={col}
-                  style={{
-                    fontSize: isViewer ? 21 : 14,
-                    fontWeight: 700,
-                    color: isViewer ? "rgba(255,255,255,0.22)" : "rgba(255,255,255,0.28)",
-                    letterSpacing: "0.12em",
-                    textTransform: "uppercase",
-                    fontFamily: "system-ui, sans-serif",
-                    textShadow: isViewer ? "0 1px 2px rgba(0,0,0,0.18)" : "0 0 4px rgba(0,0,0,0.5)",
-                    WebkitTextStroke: isViewer ? "0.25px rgba(0,0,0,0.08)" : "0.3px rgba(0,0,0,0.15)",
-                  } as React.CSSProperties}
-                >
-                  {text}
-                </span>
-              )
-            )}
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
 function ContainedViewerImage({
   src,
   fallbackSrc,
@@ -2842,6 +2731,7 @@ function ContainedViewerImage({
   watermarkEnabled,
   watermarkText,
   watermarkLogoUrl,
+  watermarkOpacity,
 }: {
   src: string;
   fallbackSrc: string;
@@ -2853,6 +2743,7 @@ function ContainedViewerImage({
   watermarkEnabled?: boolean;
   watermarkText: string;
   watermarkLogoUrl?: string;
+  watermarkOpacity?: number | null;
 }) {
   const frameRef = useRef<HTMLDivElement | null>(null);
   const [imageBounds, setImageBounds] = useState<{ width: number; height: number } | null>(null);
@@ -2961,6 +2852,7 @@ function ContainedViewerImage({
           <WatermarkOverlay
             text={watermarkText}
             logoUrl={watermarkLogoUrl}
+            opacity={watermarkOpacity}
             variant="viewer"
           />
         ) : null}
@@ -2984,6 +2876,7 @@ function CompositeCanvas({
   showWatermark = false,
   watermarkText,
   watermarkLogoUrl,
+  watermarkOpacity,
   watermarkVariant = "viewer",
   backdropBlurPx = 0,
   preserveForegroundAlignment = false,
@@ -3002,6 +2895,7 @@ function CompositeCanvas({
   showWatermark?: boolean;
   watermarkText?: string;
   watermarkLogoUrl?: string;
+  watermarkOpacity?: number | null;
   watermarkVariant?: "wall" | "viewer";
   backdropBlurPx?: number;
   preserveForegroundAlignment?: boolean;
@@ -3177,6 +3071,7 @@ function CompositeCanvas({
         <WatermarkOverlay
           text={watermarkText}
           logoUrl={watermarkLogoUrl}
+          opacity={watermarkOpacity}
           variant={watermarkVariant}
         />
       ) : null}
@@ -3369,6 +3264,7 @@ function BackdropThumbCanvas({
 // ── Styles ─────────────────────────────────────────────────────────────────
 const darkInput: React.CSSProperties = {
   width: "100%",
+  minWidth: 0,
   border: "1px solid #2e2e2e",
   borderRadius: 8,
   padding: "11px 14px",
@@ -3470,6 +3366,11 @@ export default function ParentGalleryPage() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerView, setDrawerView] = useState<DrawerView>("product-select");
   const [activeCategoryKey, setActiveCategoryKey] = useState<string>("package");
+  const drawerContentRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    drawerContentRef.current?.scrollTo({ top: 0 });
+  }, [drawerView, activeCategoryKey]);
 
   // Prints size grid (ShootProof-style). Each size tile carries its own
   // quantity (stored per package id via get/setChosenQty) and its own Buy
@@ -3556,6 +3457,7 @@ export default function ParentGalleryPage() {
   const [premiumTarget, setPremiumTarget] = useState<BackdropRow | null>(null);
   const [watermarkEnabled, setWatermarkEnabled] = useState(true);
   const [watermarkLogoUrl, setWatermarkLogoUrl] = useState<string>("");
+  const [watermarkOpacity, setWatermarkOpacity] = useState<number | null>(null);
   const [photographerId, setPhotographerId] = useState<string | null>(null);
 
   // [Phase 1d block] Combine-cart effects — placed AFTER photographerId,
@@ -4106,6 +4008,7 @@ export default function ParentGalleryPage() {
           };
           const nextWatermarkEnabled = contextPayload.watermarkEnabled !== false;
           const nextWatermarkLogoUrl = contextPayload.watermarkLogoUrl ?? "";
+          const nextWatermarkOpacity = normalizeProofWatermarkOpacity(contextPayload.watermarkOpacity);
           const nextGallerySettings = normalizeEventGallerySettings(
             contextPayload.gallerySettings,
           );
@@ -4212,6 +4115,7 @@ export default function ParentGalleryPage() {
           setPhotographerId(contextPayload.photographerId ?? activeProject?.photographer_id ?? null);
           setWatermarkEnabled(nextWatermarkEnabled);
           setWatermarkLogoUrl(nextWatermarkLogoUrl);
+          setWatermarkOpacity(nextWatermarkOpacity);
           setStudioInfo(nextStudioInfo);
           setOrderCurrency(nextOrderCurrency);
           setLateOrderPolicy(contextPayload.lateOrderPolicy ?? {
@@ -4338,6 +4242,7 @@ export default function ParentGalleryPage() {
           contextPayload.photographerId ?? activeSchool?.photographer_id ?? null;
         const nextWatermarkEnabled = contextPayload.watermarkEnabled !== false;
         const nextWatermarkLogoUrl = contextPayload.watermarkLogoUrl ?? "";
+        const nextWatermarkOpacity = normalizeProofWatermarkOpacity(contextPayload.watermarkOpacity);
         const nextGallerySettings = normalizeEventGallerySettings(
           contextPayload.gallerySettings ?? activeSchool?.gallery_settings,
         );
@@ -4427,6 +4332,7 @@ export default function ParentGalleryPage() {
         setPhotographerId(resolvedPhotographerId);
         setWatermarkEnabled(nextWatermarkEnabled);
         setWatermarkLogoUrl(nextWatermarkLogoUrl);
+        setWatermarkOpacity(nextWatermarkOpacity);
         setStudioInfo(nextStudioInfo);
         setOrderCurrency(nextOrderCurrency);
         setLateOrderPolicy(contextPayload.lateOrderPolicy ?? {
@@ -4700,6 +4606,9 @@ export default function ParentGalleryPage() {
   const viewerPadding = getViewerPadding(gallerySettings);
   const thumbnailSize = getThumbnailSize(gallerySettings);
   const isMobileViewport = useIsMobile();
+  // Keep the photo wall's phone density separate from panels that need room
+  // for both a 620px ordering drawer and a useful photo preview.
+  const isCompactPanelViewport = useIsMobile(1100);
   const slotGridColumns = getSlotGridColumns(gallerySettings, isMobileViewport);
   const photoGridMinWidth = getPhotoGridMinWidth(gallerySettings, isMobileViewport);
   const photoWallColumnWidth = getPhotoWallColumnWidth(gallerySettings);
@@ -6494,7 +6403,7 @@ export default function ParentGalleryPage() {
                 zIndex: 2,
               }}
             />
-            {showProofWatermark ? <WatermarkOverlay text={effectiveWatermarkText} logoUrl={effectiveWatermarkLogoUrl} /> : null}
+            {showProofWatermark ? <WatermarkOverlay text={effectiveWatermarkText} logoUrl={effectiveWatermarkLogoUrl} opacity={watermarkOpacity} /> : null}
             {isEventPhotoWall && (canHoverDownload || canHoverShare || true) ? (
               <div
                 className="event-photo-actions"
@@ -6893,6 +6802,8 @@ export default function ParentGalleryPage() {
 
   function openBuyDrawer() {
     if (orderingDisabled) return;
+    setActiveView("photos");
+    if (!isSchoolMode && eventPhotoStage === "albums") setEventPhotoStage("grid");
     setBackdropPickerOpen(false);
     setDrawerView("product-select");
     setDrawerOpen(true);
@@ -6905,16 +6816,13 @@ export default function ParentGalleryPage() {
   }
 
   // Per-tile "Buy" in the Prints size grid.
-  //  • Quantity 1 → one-tap add the pose currently in the viewer (fast path;
-  //    the pendingPrintAdd effect finalises it and keeps them on the grid).
-  //  • Quantity 2+ → open the pose-assignment screen (the same slot UI packages
-  //    use, with "1 of 3" labels) so the parent can give each copy a different
-  //    pose. They tap "Add to Basket" there. Slots are pre-filled with the
-  //    current pose, so they can also just add as-is.
+  // One configured print or wallet sheet can use the one-tap add. Products
+  // containing multiple prints retain the pose-assignment screen so the parent
+  // can choose each included pose, even when ordering only one product set.
   function buyPrintTile(pkg: PackageRow) {
     if (orderingDisabled) return;
     const qty = getChosenQty(pkg.id);
-    if (qty > 1) {
+    if (qty > 1 || packageConfiguredItemCount(pkg) > 1) {
       selectPackage(pkg, { quantityOverride: qty });
       return;
     }
@@ -7490,6 +7398,8 @@ export default function ParentGalleryPage() {
   }
 
   function openCartCheckout() {
+    setActiveView("photos");
+    if (!isSchoolMode && eventPhotoStage === "albums") setEventPhotoStage("grid");
     setBackdropPickerOpen(false);
     setDrawerOpen(true);
     setDrawerView("checkout");
@@ -9038,6 +8948,9 @@ export default function ParentGalleryPage() {
             display:none;
           }
         }
+        @media (max-width:1099px){
+          .parent-gallery-topbar button { min-width:44px; min-height:44px; }
+        }
       `}</style>
 
       {/* Screenshot protection — per-school / per-event toggles applied
@@ -9181,16 +9094,17 @@ export default function ParentGalleryPage() {
         {/* Top bar */}
         <div
           data-gallery-header
+          className="parent-gallery-topbar"
           style={{
             minHeight: isEventImageStage ? 72 : 52,
             flexShrink: 0,
-            display: isEventLanding ? "none" : isMobileViewport && isEventImageStage ? "grid" : "flex",
-            gridTemplateColumns: isMobileViewport && isEventImageStage ? "minmax(0, 1fr)" : undefined,
-            alignItems: isMobileViewport && isEventImageStage ? "stretch" : "center",
+            display: isEventLanding ? "none" : isCompactPanelViewport && isEventImageStage ? "grid" : "flex",
+            gridTemplateColumns: isCompactPanelViewport && isEventImageStage ? "minmax(0, 1fr)" : undefined,
+            alignItems: isCompactPanelViewport && isEventImageStage ? "stretch" : "center",
             justifyContent: "space-between",
-            gap: isMobileViewport ? 8 : 18,
-            flexWrap: isMobileViewport && isEventImageStage ? undefined : "wrap",
-            padding: isMobileViewport
+            gap: isCompactPanelViewport ? 8 : 18,
+            flexWrap: isCompactPanelViewport && isEventImageStage ? undefined : "wrap",
+            padding: isCompactPanelViewport
               ? isEventImageStage
                 ? "8px 12px 10px"
                 : "0 12px"
@@ -9213,11 +9127,11 @@ export default function ParentGalleryPage() {
               style={{
                 display: "flex",
                 alignItems: "center",
-                gap: isMobileViewport ? 10 : 24,
+                gap: isCompactPanelViewport ? 10 : 24,
                 minWidth: 0,
-                flex: isMobileViewport ? "1 1 100%" : "1 1 540px",
+                flex: isCompactPanelViewport ? "1 1 100%" : "1 1 540px",
                 flexWrap: "wrap",
-                width: isMobileViewport ? "100%" : undefined,
+                width: isCompactPanelViewport ? "100%" : undefined,
               }}
             >
               <button
@@ -9233,12 +9147,12 @@ export default function ParentGalleryPage() {
                   gap: 2,
                 }}
               >
-                <span style={{ fontSize: isMobileViewport ? 21 : 28, lineHeight: 1.05, fontWeight: 500, color: galleryTone.text }}>
+                <span style={{ fontSize: isCompactPanelViewport ? 21 : 28, lineHeight: 1.05, fontWeight: 500, color: galleryTone.text }}>
                   {galleryHeadline}
                 </span>
                 <span
                   style={{
-                    fontSize: isMobileViewport ? 9 : 10,
+                    fontSize: isCompactPanelViewport ? 9 : 10,
                     letterSpacing: "0.18em",
                     textTransform: "uppercase",
                     color: galleryTone.mutedText,
@@ -9249,7 +9163,7 @@ export default function ParentGalleryPage() {
                 </span>
               </button>
 
-              <div style={{ flex: "1 1 240px", width: isMobileViewport ? "100%" : undefined, maxWidth: 360, minWidth: 0 }}>
+              <div style={{ flex: "1 1 240px", width: isCompactPanelViewport ? "100%" : undefined, maxWidth: 360, minWidth: 0 }}>
                 <EventAlbumSwitcher
                   choices={eventAlbumChoices}
                   value={galleryPickerValue}
@@ -9286,11 +9200,11 @@ export default function ParentGalleryPage() {
                   flexShrink: 0,
                   zIndex: 5,
                   pointerEvents: "auto",
-                  order: isMobileViewport ? 99 : undefined,
-                  width: isMobileViewport ? "100%" : undefined,
-                  justifyContent: isMobileViewport ? "center" : undefined,
-                  borderTop: isMobileViewport ? `1px solid ${galleryTone.border}` : undefined,
-                  marginTop: isMobileViewport ? 6 : undefined,
+                  order: isCompactPanelViewport ? 99 : undefined,
+                  width: isCompactPanelViewport ? "100%" : undefined,
+                  justifyContent: isCompactPanelViewport ? "center" : undefined,
+                  borderTop: isCompactPanelViewport ? `1px solid ${galleryTone.border}` : undefined,
+                  marginTop: isCompactPanelViewport ? 6 : undefined,
                 }}
               >
                 {galleryNavTabs.map((tab) => {
@@ -9315,7 +9229,7 @@ export default function ParentGalleryPage() {
                         color: isActive ? galleryTone.text : galleryTone.mutedText,
                         fontSize: 13,
                         fontWeight: 600,
-                        padding: isMobileViewport ? "10px 12px" : "14px 16px",
+                        padding: isCompactPanelViewport ? "10px 12px" : "14px 16px",
                         cursor: "pointer",
                         transition: "color 0.15s",
                         letterSpacing: "0.01em",
@@ -9336,12 +9250,12 @@ export default function ParentGalleryPage() {
             style={{
               display: "flex",
               alignItems: "center",
-              gap: isMobileViewport && isEventImageStage ? 14 : isEventImageStage ? 16 : 10,
+              gap: isCompactPanelViewport && isEventImageStage ? 14 : isEventImageStage ? 16 : 10,
               flexWrap: "wrap",
-              justifyContent: isMobileViewport && isEventImageStage ? "flex-start" : "flex-end",
-              width: isMobileViewport && isEventImageStage ? "100%" : undefined,
-              paddingTop: isMobileViewport && isEventImageStage ? 8 : undefined,
-              borderTop: isMobileViewport && isEventImageStage ? `1px solid ${galleryTone.border}` : undefined,
+              justifyContent: isCompactPanelViewport && isEventImageStage ? "flex-start" : "flex-end",
+              width: isCompactPanelViewport && isEventImageStage ? "100%" : undefined,
+              paddingTop: isCompactPanelViewport && isEventImageStage ? 8 : undefined,
+              borderTop: isCompactPanelViewport && isEventImageStage ? `1px solid ${galleryTone.border}` : undefined,
             }}
           >
             {/* Save-with-Combine pill — always visible in the gallery top
@@ -9356,7 +9270,7 @@ export default function ParentGalleryPage() {
                 color: "#ffffff",
                 border: "none",
                 borderRadius: 999,
-                padding: isMobileViewport ? "8px 13px" : "8px 16px",
+                padding: isCompactPanelViewport ? "8px 13px" : "8px 16px",
                 fontSize: 12,
                 fontWeight: 800,
                 cursor: "pointer",
@@ -9368,7 +9282,7 @@ export default function ParentGalleryPage() {
               }}
             >
               <span aria-hidden style={{ fontSize: 13 }}>✨</span>
-              <span>{isMobileViewport ? "Combine" : "Save with combine"}</span>
+              <span>{isCompactPanelViewport ? "Combine" : "Save with combine"}</span>
             </button>
             {currentGalleryExtras.allowSocialSharing ? (
               <button
@@ -9380,7 +9294,7 @@ export default function ParentGalleryPage() {
                   color: galleryTone.text,
                   border: isEventImageStage ? "none" : `1px solid ${galleryTone.border}`,
                   borderRadius: 999,
-                  padding: isMobileViewport ? "8px 10px" : isEventImageStage ? 0 : "8px 16px",
+                  padding: isCompactPanelViewport ? "8px 10px" : isEventImageStage ? 0 : "8px 16px",
                   fontSize: 12,
                   fontWeight: isEventImageStage ? 500 : 700,
                   cursor: "pointer",
@@ -9390,7 +9304,7 @@ export default function ParentGalleryPage() {
                 }}
               >
                 <Share2 size={14} />
-                {isMobileViewport ? null : galleryCopy.share}
+                {isCompactPanelViewport ? null : galleryCopy.share}
               </button>
             ) : null}
 
@@ -9510,7 +9424,7 @@ export default function ParentGalleryPage() {
                       favorites.size > 0 ? "rgba(220,38,38,0.24)" : galleryTone.border
                     }`,
                 borderRadius: 999,
-                padding: isMobileViewport ? "8px 10px" : isEventImageStage ? 0 : "8px 16px",
+                padding: isCompactPanelViewport ? "8px 10px" : isEventImageStage ? 0 : "8px 16px",
                 fontSize: 12,
                 fontWeight: isEventImageStage ? 500 : 700,
                 cursor: "pointer",
@@ -9521,7 +9435,7 @@ export default function ParentGalleryPage() {
               aria-label={galleryCopy.favorites}
             >
               <Heart size={14} fill={favorites.size > 0 ? "currentColor" : "none"} />
-              {isMobileViewport
+              {isCompactPanelViewport
                 ? favorites.size > 0
                   ? ` (${favorites.size})`
                   : null
@@ -10096,6 +10010,7 @@ export default function ParentGalleryPage() {
                               <WatermarkOverlay
                                 text={effectiveWatermarkText}
                                 logoUrl={effectiveWatermarkLogoUrl}
+                                opacity={watermarkOpacity}
                               />
                             ) : null}
                             <div
@@ -10232,14 +10147,10 @@ export default function ParentGalleryPage() {
           <div
             style={{
               flex: 1,
-              // On mobile, when the backdrop picker OR the order drawer is open,
-              // hide the photo area entirely so the panel can take the full
-              // viewport instead of fighting for space next to a shrunken photo.
-              // (The order drawer is a fixed-width 620px panel on desktop; on a
-              // phone that overflowed the screen — this is the fix for "half the
-              // website they can't see".)
+              // Phones and tablets use the whole available width for an open
+              // panel. Closing it restores the same photo selection and stage.
               display:
-                isMobileViewport && (drawerOpen || backdropPickerOpen)
+                isCompactPanelViewport && (drawerOpen || backdropPickerOpen)
                   ? "none"
                   : "flex",
               flexDirection: "column",
@@ -10784,6 +10695,7 @@ export default function ParentGalleryPage() {
                             showWatermark={showProofWatermark}
                             watermarkText={effectiveWatermarkText}
                             watermarkLogoUrl={effectiveWatermarkLogoUrl}
+                            watermarkOpacity={watermarkOpacity}
                             watermarkVariant="viewer"
                             backdropBlurPx={previewBlurAmount}
                             preserveForegroundAlignment={previewOrientation === "portrait"}
@@ -10884,6 +10796,7 @@ export default function ParentGalleryPage() {
                             watermarkEnabled={showProofWatermark}
                             watermarkText={effectiveWatermarkText}
                             watermarkLogoUrl={effectiveWatermarkLogoUrl}
+                            watermarkOpacity={watermarkOpacity}
                           />
                         </div>
                       </div>
@@ -11248,16 +11161,15 @@ export default function ParentGalleryPage() {
           {/* Right drawer */}
           {drawerOpen && (
             <div
+              role="region"
+              aria-label="Order photos"
               style={{
-                // Desktop: fixed 620px side panel. Mobile/iPad: take the full
-                // screen so clients can actually see and use the whole ordering
-                // flow (mirrors the backdrop picker panel's responsive width).
-                width: isMobileViewport ? "100%" : 620,
+                width: isCompactPanelViewport ? "100%" : 620,
                 maxWidth: "100vw",
                 display: "flex",
                 flexDirection: "column",
                 background: "#1a1a1a",
-                borderLeft: isMobileViewport ? "none" : "1px solid #222",
+                borderLeft: isCompactPanelViewport ? "none" : "1px solid #222",
                 flexShrink: 0,
                 overflow: "hidden",
               }}
@@ -11298,6 +11210,8 @@ export default function ParentGalleryPage() {
                       color: "#aaa",
                       cursor: "pointer",
                       padding: 4,
+                      minWidth: 44,
+                      minHeight: 44,
                       borderRadius: 6,
                       display: "flex",
                       alignItems: "center",
@@ -11335,14 +11249,19 @@ export default function ParentGalleryPage() {
                 <button
                   type="button"
                   onClick={() => setDrawerOpen(false)}
+                  aria-label="Close order panel"
                   style={{
                     background: "transparent",
                     border: "none",
-                    color: "#666",
+                    color: "#aaa",
                     cursor: "pointer",
                     padding: 4,
+                    minWidth: 44,
+                    minHeight: 44,
                     borderRadius: 6,
                     display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
                   }}
                 >
                   <X size={18} />
@@ -11350,7 +11269,7 @@ export default function ParentGalleryPage() {
               </div>
 
               {/* Drawer content */}
-              <div style={{ flex: 1, overflowY: "auto", padding: 18 }}>
+              <div ref={drawerContentRef} style={{ flex: 1, overflowY: "auto", padding: 18 }}>
                 {reorderBackdropReview?.photographerId === photographerId && (
                   <div role="status" style={{ marginBottom: 18, padding: 16, border: "1px solid #d5ac62", borderRadius: 12, background: "#272014", color: "#fff" }}>
                     <h3 style={{ margin: "0 0 8px", fontSize: 16 }}>Review reordered backgrounds</h3>
@@ -11814,7 +11733,7 @@ export default function ParentGalleryPage() {
                       }}
                     >
                       {printGridPackages.map((pkg) => {
-                        const finish = printFinishLabel(pkg.name);
+                        const finish = pkg.items?.length ? "" : printFinishLabel(pkg.name);
                         const tileQty = getChosenQty(pkg.id);
                         const justAdded = justAddedPrintId === pkg.id;
                         const lineCents = pkg.price_cents * Math.max(1, tileQty);
@@ -11847,7 +11766,7 @@ export default function ParentGalleryPage() {
                           >
                             <div>
                               <div style={{ fontSize: 17, fontWeight: 700, color: "#fff" }}>
-                                {printSizeLabel(pkg.name)}
+                                {galleryPrintLabel(pkg)}
                               </div>
                               {finish ? (
                                 <div style={{ fontSize: 11, color: "#8f8f8f", marginTop: 2 }}>
@@ -11876,7 +11795,7 @@ export default function ParentGalleryPage() {
                             >
                               <button
                                 type="button"
-                                aria-label={`Decrease ${printSizeLabel(pkg.name)} quantity`}
+                                aria-label={`Decrease ${galleryPrintLabel(pkg)} quantity`}
                                 onClick={() => setChosenQty(pkg.id, tileQty - 1)}
                                 style={stepStyle}
                               >
@@ -11894,7 +11813,7 @@ export default function ParentGalleryPage() {
                               </span>
                               <button
                                 type="button"
-                                aria-label={`Increase ${printSizeLabel(pkg.name)} quantity`}
+                                aria-label={`Increase ${galleryPrintLabel(pkg)} quantity`}
                                 onClick={() => setChosenQty(pkg.id, tileQty + 1)}
                                 style={stepStyle}
                               >
@@ -12405,11 +12324,15 @@ export default function ParentGalleryPage() {
                             {([
                               {
                                 key: "all" as PackagePhotoFilter,
-                                label: `All Photos (${packageAllAssignableImages.length})`,
+                                label: currentGalleryExtras.hideAlbumPhotoCount
+                                  ? "All Photos"
+                                  : `All Photos (${packageAllAssignableImages.length})`,
                               },
                               {
                                 key: "favorites" as PackagePhotoFilter,
-                                label: `Favorites (${packageFavoriteAssignableImages.length})`,
+                                label: currentGalleryExtras.hideAlbumPhotoCount
+                                  ? "Favorites"
+                                  : `Favorites (${packageFavoriteAssignableImages.length})`,
                               },
                             ]).map((option) => {
                               const isActive = packagePhotoFilter === option.key;
@@ -12964,7 +12887,7 @@ export default function ParentGalleryPage() {
                     )}
 
                     <div>
-                      <label style={labelStyle}>Name</label>
+                      <label htmlFor="checkout-name" style={labelStyle}>Name</label>
                       <div style={{ position: "relative" }}>
                         <User
                           size={13}
@@ -12972,6 +12895,9 @@ export default function ParentGalleryPage() {
                           style={{ position: "absolute", left: 12, top: 12 }}
                         />
                         <input
+                          id="checkout-name"
+                          name="name"
+                          autoComplete="name"
                           value={parentName}
                           onChange={(e) => setParentName(e.target.value)}
                           placeholder="Jane Smith"
@@ -12981,7 +12907,7 @@ export default function ParentGalleryPage() {
                     </div>
 
                     <div>
-                      <label style={labelStyle}>Email *</label>
+                      <label htmlFor="checkout-email" style={labelStyle}>Email *</label>
                       <div style={{ position: "relative" }}>
                         <Mail
                           size={13}
@@ -12989,7 +12915,10 @@ export default function ParentGalleryPage() {
                           style={{ position: "absolute", left: 12, top: 12 }}
                         />
                         <input
+                          id="checkout-email"
+                          name="email"
                           type="email"
+                          autoComplete="email"
                           value={parentEmail}
                           onChange={(e) => setParentEmail(e.target.value)}
                           placeholder="jane@email.com"
@@ -13000,7 +12929,7 @@ export default function ParentGalleryPage() {
                     </div>
 
                     <div>
-                      <label style={labelStyle}>Phone</label>
+                      <label htmlFor="checkout-phone" style={labelStyle}>Phone</label>
                       <div style={{ position: "relative" }}>
                         <Phone
                           size={13}
@@ -13008,6 +12937,10 @@ export default function ParentGalleryPage() {
                           style={{ position: "absolute", left: 12, top: 12 }}
                         />
                         <input
+                          id="checkout-phone"
+                          name="tel"
+                          type="tel"
+                          autoComplete="tel"
                           value={parentPhone}
                           onChange={(e) => setParentPhone(e.target.value)}
                           placeholder="(555) 000-0000"
@@ -13111,7 +13044,7 @@ export default function ParentGalleryPage() {
                           <div
                             style={{
                               display: "grid",
-                              gridTemplateColumns: "1fr 1fr",
+                              gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
                               gap: 8,
                             }}
                           >
@@ -13340,13 +13273,15 @@ export default function ParentGalleryPage() {
           {/* ── Backdrop Picker Panel (school mode only) ─────────────── */}
           {backdropPickerOpen && hasBackdrops && !drawerOpen && (
             <div
+              role="region"
+              aria-label="Choose a backdrop"
               style={{
-                width: isMobileViewport ? "100%" : 520,
+                width: isCompactPanelViewport ? "100%" : 520,
                 maxWidth: "100vw",
                 display: "flex",
                 flexDirection: "column",
                 background: "#111",
-                borderLeft: "1px solid #1e1e1e",
+                borderLeft: isCompactPanelViewport ? "none" : "1px solid #1e1e1e",
                 flexShrink: 0,
                 overflow: "hidden",
               }}
@@ -13376,15 +13311,20 @@ export default function ParentGalleryPage() {
                   <button
                     type="button"
                     onClick={() => setBackdropPickerOpen(false)}
+                    aria-label="Close backdrop picker"
                     style={{
                       background: "transparent",
                       border: "none",
-                      color: "#666",
+                      color: "#aaa",
                       cursor: "pointer",
                       fontSize: 18,
                       padding: 4,
+                      minWidth: 44,
+                      minHeight: 44,
                       lineHeight: 1,
                       display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
                     }}
                   >
                     <X size={18} />

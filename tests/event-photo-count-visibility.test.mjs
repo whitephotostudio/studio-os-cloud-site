@@ -160,3 +160,28 @@ test("the photo viewer total disappears when counts are hidden and returns when 
   assert.equal(shown.type, "div");
   assert.equal(textOf(shown), "3 / 427");
 });
+
+test("package photo filters honor saved count visibility without changing selection or empty favorites", () => {
+  const picker = findOne(page, node => ts.isJsxElement(node)
+    && node.openingElement.tagName.getText(page) === "div"
+    && node.openingElement.attributes.properties.some(attribute => ts.isJsxAttribute(attribute)
+      && attribute.name.getText(page) === "aria-label" && ts.isStringLiteral(attribute.initializer)
+      && attribute.initializer.text === "Filter package photos"), "package photo filters");
+  for (const hideAlbumPhotoCount of [true, false]) for (const favoriteCount of [0, 3]) {
+    const selected = [];
+    const tree = render(picker, {
+      currentGalleryExtras: { hideAlbumPhotoCount },
+      packageAllAssignableImages: Array(60), packageFavoriteAssignableImages: Array(favoriteCount),
+      packagePhotoFilter: "all", setPackagePhotoFilter: next => selected.push(next),
+      Heart: () => null,
+    });
+    const filters = nodes(tree, "button");
+    assert.deepEqual(filters.map(textOf), hideAlbumPhotoCount
+      ? ["All Photos", "Favorites"] : ["All Photos (60)", `Favorites (${favoriteCount})`]);
+    assert.equal(filters[0].props["aria-pressed"], true);
+    assert.equal(filters[1].props.disabled, favoriteCount === 0);
+    filters[0].props.onClick();
+    if (favoriteCount) filters[1].props.onClick();
+    assert.deepEqual(selected, favoriteCount ? ["all", "favorites"] : ["all"]);
+  }
+});

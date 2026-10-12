@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {readFileSync} from 'node:fs';
 import ts from 'typescript';
-function load(path){const exports={};const compiled=ts.transpileModule(readFileSync(new URL('../'+path+'.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;new Function('require','exports',compiled)(name=>{assert.ok(['./r2-access-security','./agreement'].includes(name));return load('lib/'+name.slice(2))},exports);return exports;}
+function load(path){const exports={};const compiled=ts.transpileModule(readFileSync(new URL('../'+path+'.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;new Function('require','exports',compiled)(name=>{if(name.startsWith('@/lib/'))return load(name.slice(2));assert.ok(['./r2-access-security','./agreement'].includes(name));return load('lib/'+name.slice(2))},exports);return exports;}
 const {resolveSignInRedirect}=load('lib/sign-in-redirect');
 const {assertKeyOwnedByPhotographer}=load('lib/upload-ownership');
 test('sign-in preserves download next, explicit redirect and dashboard fallback',()=>{
@@ -16,16 +16,18 @@ test('sign-in rejects off-site, script, malformed and backslash destinations',()
 const owner='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',schoolId='bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 function database(rows,{fail=false}={}){
  const queries=[];
- return {queries,from(table){const filters=[];queries.push({table,filters});const q={select(){return q},eq(k,v){filters.push([k,v]);return q},limit(){return q},maybeSingle(){return run(true)},then(a,b){return run(false).then(a,b)}};
- async function run(single){if(fail)return {data:null,error:new Error('temporary database failure')};
- for(const [k,v] of filters)if(k==='id'&&!/^[0-9a-f-]{36}$/.test(v))throw Error('UUID cast failed');
- const data=rows.filter(row=>filters.every(([k,v])=>row[k]===v));return {data:single?data[0]??null:data,error:null};}
- return q}};
+ return {queries,async rpc(name,args){
+  assert.equal(name,'r2_media_namespace_owner');queries.push({name,args});
+  if(fail)return {data:null,error:new Error('temporary database failure')};
+  if(args.p_kind==='photographer')return {data:args.p_root===owner?[{photographer_id:owner,school_id:null}]:[],error:null};
+  const matches=rows.filter(row=>row.id===args.p_root||(args.p_kind==='school'&&row.local_school_id===args.p_root));
+  return {data:matches.length===1?[{photographer_id:matches[0].photographer_id,school_id:args.p_kind==='school'?matches[0].id:null}]:[],error:null};
+ }};
 }
 test('school uploads accept web and desktop local IDs without UUID cast; prefixed paths also work',async()=>{
  for(const local of ['web_12345','school-local-123'])for(const prefix of ['', 'schools/','photos/','nobg-photos/','nobg-photos/schools/']){
  const db=database([{id:schoolId,local_school_id:local,photographer_id:owner}]);assert.equal((await assertKeyOwnedByPhotographer(db,owner,prefix+local+'/test.jpg')).ok,true);
- assert.ok(db.queries.every(q=>q.filters.every(([k])=>k!=='id')));
+ assert.ok(db.queries.every(q=>q.args.p_kind==='school'&&q.args.p_root===local),'local roots stay text in the ownership RPC');
  }
  assert.equal((await assertKeyOwnedByPhotographer(database([{id:schoolId,local_school_id:'local',photographer_id:owner}]),owner,schoolId+'/test.jpg')).ok,true);
 });
@@ -36,7 +38,7 @@ test('upload paths fail closed for foreign or ambiguous schools, traversal and f
  for(const key of ['../local/test.jpg','/local/test.jpg','local//test.jpg','local,id.eq.any/test.jpg'])assert.equal((await assertKeyOwnedByPhotographer(database([owned]),owner,key)).ok,false);
 });
 test('upload checks distinguish unavailable database from denied ownership; project and backdrop ownership still enforced',async()=>{
- await assert.rejects(()=>assertKeyOwnedByPhotographer(database([],{fail:true}),owner,'local/test.jpg'),/temporary database failure/);
+ await assert.rejects(()=>assertKeyOwnedByPhotographer(database([],{fail:true}),owner,'local/test.jpg'),error=>error.status===503&&!error.message.includes('temporary database failure'));
  const db=database([{id:schoolId,photographer_id:owner}]);assert.equal((await assertKeyOwnedByPhotographer(db,owner,'projects/'+schoolId+'/photo.jpg')).ok,true);
  assert.equal((await assertKeyOwnedByPhotographer(db,'other','projects/'+schoolId+'/photo.jpg')).ok,false);
  assert.equal((await assertKeyOwnedByPhotographer(db,owner,'backdrops/'+owner+'/photo.jpg')).ok,true);

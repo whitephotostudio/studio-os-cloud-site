@@ -26,7 +26,7 @@ function style(opening, state) {
 const header = openingWithAttribute('data-gallery-header');
 const navigation = openingWithAttribute('aria-label', 'Gallery sections');
 const actions = openingWithAttribute('data-gallery-header-actions');
-const base = { isEventImageStage: false, isEventLanding: false, isMobileViewport: false, isLightGallery: false,
+const base = { isEventImageStage: false, isEventLanding: false, isMobileViewport: false, isCompactPanelViewport: false, isLightGallery: false,
   galleryTone: { border: '#222', background: '#000' } };
 
 test('desktop gallery tabs reserve normal layout space and the header can wrap without covering its viewer', () => {
@@ -46,7 +46,7 @@ test('desktop gallery tabs reserve normal layout space and the header can wrap w
 });
 
 test('mobile school tabs retain their dedicated final row and mobile event header retains its grid', () => {
-  const mobile = { ...base, isMobileViewport: true };
+  const mobile = { ...base, isMobileViewport: true, isCompactPanelViewport: true };
   const navigationStyle = style(navigation, mobile);
   assert.equal(navigationStyle.position, 'static');
   assert.equal(navigationStyle.order, 99);

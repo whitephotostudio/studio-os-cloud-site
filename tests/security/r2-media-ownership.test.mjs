@@ -14,6 +14,7 @@ function load(file,overrides={}) {
   return exports;
 }
 const helper=load('lib/r2-media-ownership.ts',{'@/lib/r2-access-security':load('lib/r2-access-security.ts')});
+const uploads=load('lib/upload-ownership.ts',{'@/lib/r2-media-ownership':helper});
 const migration=readFileSync(new URL('supabase/migrations/20261012060000_retain_r2_namespace_owners.sql',root),'utf8');
 const accountMigration=readFileSync(new URL('supabase/migrations/20261012080000_bind_r2_photographer_namespace_accounts.sql',root),'utf8');
 const [owner,other,project,foreignProject,school,foreignSchool,newSchool]=[1,2,3,4,5,6,7].map(x=>`00000000-0000-4000-8000-${String(x).padStart(12,'0')}`);
@@ -51,9 +52,9 @@ test('retained namespace SQL and actual helper authorize legitimate paths and re
       `schools/${school}/photo.jpg`,`photos/${school}/student/photo.jpg`,`nobg-photos/schools/${school}/photo.png`,
       'legacy-school/photo.jpg','nobg-photos/legacy-school/photo.png','thumbs/legacy-school/photo.jpg',
       `${owner}/photo.jpg`,`nobg-photos/${owner}/photo.png`,`thumbs/${owner}/photo.jpg`,
-      `backdrops/${owner}/background.jpg`,`crm-locations/${owner}/location/photo.jpg`];
+      `backdrops/${owner}/background.jpg`,`crm-locations/${owner}/location/photo.jpg`,`booking-email-campaigns/${owner}/campaign/direction-1.jpg`];
     for(const key of owned)assert.equal(await helper.r2MediaOwnedBy(service(db),key,owner),true,key);
-    for(const key of [`projects/${foreignProject}/photo.jpg`,`photos/${foreignSchool}/photo.jpg`,'foreign-school/photo.jpg',`${other}/photo.jpg`,`backdrops/${other}/bg.jpg`,`crm-locations/${other}/location/photo.jpg`]) {
+    for(const key of [`projects/${foreignProject}/photo.jpg`,`photos/${foreignSchool}/photo.jpg`,'foreign-school/photo.jpg',`${other}/photo.jpg`,`backdrops/${other}/bg.jpg`,`crm-locations/${other}/location/photo.jpg`,`booking-email-campaigns/${other}/campaign/direction-1.jpg`]) {
       assert.equal(await helper.r2MediaOwnedBy(service(db),key,owner),false,key);
     }
     for(const key of ['unclaimed/photo.jpg',`projects/${project}`,`../${school}/photo.jpg`,`credits/${owner}/photo.png`,`credit-staging/${owner}/photo.png`,`order-automation/${owner}/photo.png`,'https://foreign.test/photo.jpg']) {
@@ -176,5 +177,40 @@ test('catalog-exact account-binding rollback restores the original helpers and p
     assert.deepEqual((await catalog()).rows,before);
     assert.deepEqual((await db.query('select count(*)::int n from public.r2_namespace_ownership')).rows,rows);
     assert.equal((await db.query("select to_regclass('public.r2_photographer_namespace_ownership') registry")).rows[0].registry,null);
+  }finally{await db.close();}
+});
+
+
+test('reserved CRM and campaign namespaces cannot be claimed by a school alias for reads, uploads or transforms',async()=>{
+  const db=await fixture();
+  try {
+    await db.exec(migration);await db.exec(accountMigration);
+    await db.query('insert into public.schools values($1,$2,$3)',[newSchool,owner,'crm-locations']);
+    await db.query('insert into public.schools values($1,$2,$3)',[project,owner,'booking-email-campaigns']);
+    const own=[`crm-locations/${owner}/location/photo.jpg`,`booking-email-campaigns/${owner}/campaign/direction-1.jpg`,
+      `projects/${project}/albums/main/photo.jpg`,`schools/${school}/Grade A/photo.jpg`,`nobg-photos/projects/${project}/photo.png`];
+    for(const key of own)assert.equal((await uploads.assertKeyOwnedByPhotographer(service(db),owner,key)).ok,true,key);
+    for(const prefix of ['crm-locations','booking-email-campaigns']) {
+      const foreign=`${prefix}/${other}/location/photo.jpg`;
+      assert.equal(await helper.r2MediaOwnedBy(service(db),foreign,owner),false,'school alias cannot authorize foreign bytes');
+      assert.equal((await uploads.assertKeyOwnedByPhotographer(service(db),owner,foreign)).ok,false,'upload/thumbnail readers cannot target foreign bytes');
+      assert.equal((await uploads.assertKeyOwnedByPhotographer(service(db),owner,`${prefix}/not-a-photographer/photo.jpg`)).ok,false);
+    }
+    for(const key of [`credits/${owner}/output.png`,`credit-staging/${owner}/output.png`,`order-automation/${owner}/output.zip`,`downloads/${owner}/app.zip`,`gallery-zips/${owner}/parents.zip`])assert.equal((await uploads.assertKeyOwnedByPhotographer(service(db),owner,key)).ok,false,key);
+  }finally{await db.close();}
+});
+
+
+test('server download and gallery ZIP roots remain unclaimable even with a matching local school alias',async()=>{
+  const db=await fixture();try {
+    await db.exec(migration);await db.exec(accountMigration);
+    await db.query('insert into public.schools values($1,$2,$3)',[newSchool,owner,'downloads']);
+    await db.query('insert into public.schools values($1,$2,$3)',[project,owner,'gallery-zips']);
+    for(const prefix of ['downloads','gallery-zips']) {
+      const key=`${prefix}/foreign-gallery/private.zip`;
+      assert.equal(await helper.r2MediaOwnedBy(service(db),key,owner),false);
+      assert.equal(await helper.r2MediaOwnedBy(service(db),`${prefix}/`,owner,{prefix:true}),false);
+      assert.equal((await uploads.assertKeyOwnedByPhotographer(service(db),owner,key)).ok,false);
+    }
   }finally{await db.close();}
 });

@@ -28,6 +28,7 @@ const privateMedia = load('lib/private-media-references.ts', { '@/lib/r2-signed-
   '@/lib/legacy-storage-token': legacyTokens, '@/lib/r2-media-token': tokens });
 const ownership = load('lib/r2-media-ownership.ts', { '@/lib/r2-access-security': security });
 const legacyAccess = load('lib/legacy-storage-access.ts');
+const proof = load('lib/proof-watermark.ts');
 
 function fixture(options = {}) {
   const signed = [], queried = [], fetched = [];
@@ -132,7 +133,7 @@ test('native byte readers validate exact legacy ownership and retained paid-orde
 test('actual event image byte delivery rejects a forged path before fetching and preserves valid originals', async () => {
   const f=fixture(), bytes=await sharp({create:{width:3,height:4,channels:3,background:'#ddd'}}).jpeg().toBuffer();
   const event=load('lib/event-media-delivery.ts', {
-    '@/lib/calendar-dates':{},'@/lib/digital-entitlement-payment':{}, sharp, '@/lib/dashboard-auth':{}, '@/lib/event-gallery-download-tokens':{},
+    '@/lib/proof-watermark':proof,'@/lib/calendar-dates':{},'@/lib/digital-entitlement-payment':{}, sharp, '@/lib/dashboard-auth':{}, '@/lib/event-gallery-download-tokens':{},
     '@/lib/event-gallery-settings':{},'@/lib/request-validation':{},'@/lib/authorized-media':f.authorized,'@/lib/subscription-gate':{},
   }, {fetch:async url=>{f.fetched.push(url);return new Response(bytes,{headers:{'content-type':'image/jpeg'}});}});
   await assert.rejects(event.eventImageBytes({storage_path:foreignKey},{resolution:'original',watermark:false},{service:f.service,photographerId:owner}),/outside the studio/);
@@ -145,11 +146,11 @@ test('parent school representative previews preserve exact legacy storage instea
   const f=fixture(), bytes=await sharp({create:{width:3,height:4,channels:3,background:'#ddd'}}).jpeg().toBuffer();
   const imageOptions={fetch:async url=>{f.fetched.push(url);return new Response(bytes,{headers:{'content-type':'image/jpeg'}});}};
   const event=load('lib/event-media-delivery.ts', {
-    '@/lib/calendar-dates':{},'@/lib/digital-entitlement-payment':{}, sharp, '@/lib/dashboard-auth':{}, '@/lib/event-gallery-download-tokens':{},
+    '@/lib/proof-watermark':proof,'@/lib/calendar-dates':{},'@/lib/digital-entitlement-payment':{}, sharp, '@/lib/dashboard-auth':{}, '@/lib/event-gallery-download-tokens':{},
     '@/lib/event-gallery-settings':{},'@/lib/request-validation':{},'@/lib/authorized-media':f.authorized,'@/lib/subscription-gate':{},
   },imageOptions);
   const parent=load('lib/school-portal-media.ts',{
-    '@/lib/school-gallery-downloads':{},'@/lib/digital-entitlement-payment':{},'@/lib/dashboard-auth':{},'@/lib/calendar-dates':{},
+    '@/lib/proof-watermark':proof,'@/lib/school-gallery-downloads':{},'@/lib/digital-entitlement-payment':{},'@/lib/dashboard-auth':{},'@/lib/calendar-dates':{},
     '@/lib/event-gallery-settings':{normalizeEventGallerySettings:()=>({extras:{}})},'@/lib/private-media-references':privateMedia,
     '@/lib/photo-url':browser,'@/lib/authorized-media':f.authorized,'@/lib/storage-images':{},'@/lib/subscription-gate':{},
     '@/lib/school-photo-deletions':{},'@/lib/credit-cutout-access':{},'@/lib/school-order-media':{},'@/lib/storage-folder':{},'@/lib/event-media-delivery':event,

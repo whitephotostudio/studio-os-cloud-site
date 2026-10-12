@@ -1,6 +1,14 @@
 {
   "crons": [
     {
+      "path": "/api/cron/paid-order-emails",
+      "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/cron/customer-order-payment-recovery",
+      "schedule": "* * * * *"
+    },
+    {
       "path": "/api/cron/credit-processing-recovery",
       "schedule": "*/5 * * * *"
     },

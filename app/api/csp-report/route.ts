@@ -1,96 +1,72 @@
 import { NextRequest, NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
+const MAX_REPORT_BYTES = 32_768;
+const MAX_REPORTS = 10;
 
-/**
- * CSP violation sink.
- *
- * Browsers POST here whenever they see something blocked by the
- * `Content-Security-Policy-Report-Only` header set in next.config.ts. We log
- * the report to the server console so it shows up in Vercel logs — that's
- * enough to triage unexpected origins (new CDN, leftover dev tool, XSS
- * attempt) before we promote the policy to an enforcing CSP.
- *
- * The legacy `report-uri` directive sends `application/csp-report`. The newer
- * `report-to` directive sends `application/reports+json`. We accept either
- * and never fail the request — the browser is a fire-and-forget client.
- */
-type LegacyCspReport = {
-  "csp-report"?: {
-    "document-uri"?: string;
-    referrer?: string;
-    "violated-directive"?: string;
-    "effective-directive"?: string;
-    "original-policy"?: string;
-    "blocked-uri"?: string;
-    "status-code"?: number;
-    "script-sample"?: string;
-    "source-file"?: string;
-    "line-number"?: number;
-    "column-number"?: number;
+// Gallery URLs may contain PINs and student names. Diagnostics retain origins
+// only; samples, referrers, policy nonces and arbitrary fields stay private.
+function originOnly(value: unknown) {
+  if (typeof value !== "string") return undefined;
+  if (["inline", "eval", "data", "blob", "self"].includes(value)) return value;
+  try {
+    const url = new URL(value);
+    return ["http:", "https:"].includes(url.protocol) ? url.origin : undefined;
+  } catch { return undefined; }
+}
+
+function directiveOnly(value: unknown) {
+  if (typeof value !== "string") return undefined;
+  const directive = value.split(/\s/, 1)[0];
+  return /^[a-z-]{1,64}$/.test(directive) ? directive : undefined;
+}
+
+function reportSummary(report: Record<string, unknown>, format: string) {
+  return {
+    format,
+    documentOrigin: originOnly(report["document-uri"] ?? report.documentURL),
+    blockedOrigin: originOnly(report["blocked-uri"] ?? report.blockedURL),
+    sourceOrigin: originOnly(report["source-file"] ?? report.sourceFile),
+    directive: directiveOnly(report["effective-directive"] ?? report.effectiveDirective ?? report["violated-directive"] ?? report.violatedDirective),
   };
-};
+}
 
-type ModernCspReport = {
-  type?: string;
-  url?: string;
-  body?: {
-    documentURL?: string;
-    referrer?: string;
-    effectiveDirective?: string;
-    violatedDirective?: string;
-    originalPolicy?: string;
-    blockedURL?: string;
-    statusCode?: number;
-    sample?: string;
-    sourceFile?: string;
-    lineNumber?: number;
-    columnNumber?: number;
-  };
-};
+async function boundedBody(request: NextRequest) {
+  if (Number(request.headers.get("content-length")) > MAX_REPORT_BYTES) return null;
+  if (!request.body) return "";
+  const reader = request.body.getReader();
+  const decoder = new TextDecoder();
+  let total = 0;
+  let text = "";
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) return text + decoder.decode();
+      total += value.byteLength;
+      if (total > MAX_REPORT_BYTES) { await reader.cancel(); return null; }
+      text += decoder.decode(value, { stream: true });
+    }
+  } finally { reader.releaseLock(); }
+}
 
+/** Accept enforcing CSP diagnostics without retaining private credentials. */
 export async function POST(request: NextRequest) {
   try {
-    const contentType = request.headers.get("content-type") ?? "";
-    // Both formats are JSON; browsers just vary the media type.
-    const raw = await request.text();
-    if (!raw) return NextResponse.json({ ok: true }, { status: 204 });
-
-    let parsed: LegacyCspReport | ModernCspReport[] | ModernCspReport | null = null;
-    try {
-      parsed = JSON.parse(raw);
-    } catch {
-      console.warn("[csp-report] unparseable body", { contentType, raw: raw.slice(0, 500) });
-      return NextResponse.json({ ok: true }, { status: 204 });
-    }
-
-    const reports: Array<Record<string, unknown>> = [];
-
-    if (Array.isArray(parsed)) {
-      // report-to batch
-      for (const entry of parsed) {
-        if (entry?.body) reports.push({ format: "report-to", ...entry.body });
-      }
-    } else if (parsed && typeof parsed === "object") {
-      const legacy = (parsed as LegacyCspReport)["csp-report"];
-      if (legacy) {
-        reports.push({ format: "report-uri", ...legacy });
-      } else if ((parsed as ModernCspReport).body) {
-        const modern = parsed as ModernCspReport;
-        reports.push({ format: "report-to", ...modern.body });
+    const raw = await boundedBody(request);
+    if (!raw) return new NextResponse(null, { status: 204 });
+    const parsed: unknown = JSON.parse(raw);
+    const entries = (Array.isArray(parsed) ? parsed : [parsed]).slice(0, MAX_REPORTS);
+    for (const entry of entries) {
+      if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
+      const container = entry as Record<string, unknown>;
+      const legacy = container["csp-report"];
+      const body = legacy ?? container.body;
+      if (body && typeof body === "object" && !Array.isArray(body)) {
+        console.warn("[csp-report]", reportSummary(body as Record<string, unknown>, legacy ? "report-uri" : "report-to"));
       }
     }
-
-    for (const report of reports) {
-      console.warn("[csp-report]", report);
-    }
-
-    // 204 No Content is the idiomatic response for report endpoints.
-    return new NextResponse(null, { status: 204 });
-  } catch (error) {
-    console.error("[csp-report]", error);
-    // Never let this surface a 500 to the browser — the browser will just
-    // retry on the next violation and flood logs. Return 204 regardless.
-    return new NextResponse(null, { status: 204 });
+  } catch {
+    // Malformed bodies and network errors must never echo untrusted input.
   }
+  return new NextResponse(null, { status: 204 });
 }

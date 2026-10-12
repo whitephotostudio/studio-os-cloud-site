@@ -16,7 +16,7 @@ export async function GET(request: NextRequest) {
     if (!viewerLimit.allowed) return NextResponse.json({ ok: false, message: "Please wait before loading more previews." }, { status: 429, headers: { "Retry-After": String(Math.max(1, Math.ceil((viewerLimit.resetAt - Date.now()) / 1000))) } });
     const service = createDashboardServiceClient(), access = await authorizeSchoolMediaToken(service, token);
     if (!access) return NextResponse.json({ ok: false, message: "School gallery access changed." }, { status: 403 });
-    const image = await schoolImageBytes(service, token, true, request.nextUrl.searchParams.get("size") === "thumbnail", access.watermarkEnabled);
+    const image = await schoolImageBytes(service, token, true, request.nextUrl.searchParams.get("size") === "thumbnail", access.watermarkEnabled, access.watermarkOpacity);
     return new NextResponse(new Uint8Array(image.buffer), { headers: { "content-type": image.contentType, "cache-control": "private, no-store", "x-content-type-options": "nosniff" } });
   } catch { return NextResponse.json({ ok: false, message: "Preview unavailable. Please retry or contact the photographer." }, { status: 503 }); }
 }

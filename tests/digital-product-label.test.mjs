@@ -59,7 +59,7 @@ for (const label of ['Digital Image', 'Download photo', 'JPEG file', 'USB images
 }
 
 function notificationFixture(productName, packageName = 'Portrait package') {
-  const deliveryCalls = [], emails = [], errors = [], writes = [];
+  const scheduled = [], emails = [], errors = [], writes = [];
   const order = { id: 'fixture-order', photographer_id: 'studio', package_name: packageName, status: 'payment_pending',
     payment_status: 'pending', paid_at: null, notes: '', customer_email: 'buyer@example.test', total_cents: 1200, currency: 'cad' };
   const item = { product_name: productName, quantity: 1, sku: 'fixture/a.jpg' };
@@ -79,7 +79,12 @@ function notificationFixture(productName, packageName = 'Portrait package') {
     '@/lib/order-notification-email': { buildOrderNotificationEmail: () => emailBody },
     '@/lib/order-receipt-email': { buildOrderReceiptEmail: () => emailBody },
     '@/lib/order-push': { sendNewOrderPush: async () => {} },
-    '@/lib/digital-delivery': { sendDigitalDeliveryEmailForOrder: async (_service, orderId) => deliveryCalls.push(orderId) },
+    '@/lib/digital-delivery': { sendDigitalDeliveryEmailForOrder: async () => assert.fail('Payment finalization must leave digital sending to the outbox worker') },
+    '@/lib/paid-order-emails': { schedulePaidOrderEmails: async (queuedService, orderId) => {
+      assert.equal(queuedService, service); assert.equal(orderId, order.id);
+      assert.ok(order.paid_at && order.payment_status === 'paid', 'Scheduling follows the committed paid transition');
+      scheduled.push(orderId);
+    } },
   };
   function load(file) {
     const exports = {};
@@ -93,18 +98,37 @@ function notificationFixture(productName, packageName = 'Portrait package') {
     }, exports, { error: (...args) => errors.push(args), log() {}, warn() {} }, () => assert.fail('No provider or real email calls'));
     return exports;
   }
-  return { service, deliveryCalls, emails, errors, writes, payments: load('lib/payments.ts') };
+  return { service, scheduled, order, item, emails, errors, writes, payments: load('lib/payments.ts') };
+}
+
+async function assertDeferredNotificationAndEligibility(f, expectedDigitalFiles) {
+  assert.deepEqual(f.scheduled, ['fixture-order'], 'The exact paid order queues one durable notification dispatch');
+  assert.equal(f.emails.length, 0, 'Payment completion does not synchronously send receipts or wait for the provider');
+  assert.deepEqual(f.errors, []);
+  // The SQL outbox/integration suites verify the two ordinary email jobs.
+  // Here use the actual delivery resolver, not a mock label classifier, to
+  // retain the purchased-original eligibility boundary after deferring sends.
+  const h = harness({ overrides: deliveryStubs });
+  const order = paidOrder(f.order.package_name, f.item.product_name);
+  order.status = f.order.status;
+  h.tables.orders.push(order);
+  h.tables.order_items = order.order_items;
+  const resolution = h.load('lib/digital-delivery.ts').resolveDigitalDeliveryContext(h.service, order.id);
+  if (expectedDigitalFiles) {
+    const context = await resolution;
+    assert.deepEqual(Array.from(context.files, file => file.key), ['fixture/a.jpg']);
+  } else await assert.rejects(resolution, /No online high-resolution files/);
+  assert.equal(h.fetched.length, 0);
+  assert.equal(h.writes.length, 0, 'Eligibility verification cannot change the paid order');
 }
 
 for (const [label, expected] of [['Profile portrait prints', 0], ['Digitalis flower print', 0], ['Digital portrait', 1], ['All Files', 1], ['8x10 + digital file', 1], ['Digital retouching service', 0]]) {
-  test(`payment notification for ${label} schedules ${expected} digital deliveries`, async () => {
+  test(`payment for ${label} defers notifications and preserves ${expected} digital original eligibility`, async () => {
     const f = notificationFixture(label);
     const result = await f.payments.finalizePaidOrder(f.service, { orderId: 'fixture-order', paymentStatus: 'paid', note: 'fixture verified payment' });
     assert.equal(result.status, 'paid');
     assert.equal(f.writes.length, 1);
-    assert.equal(f.deliveryCalls.length, expected);
-    assert.equal(f.emails.length, 2, 'normal buyer receipt and photographer notice are preserved');
-    assert.deepEqual(f.errors, []);
+    await assertDeferredNotificationAndEligibility(f, expected);
   });
 }
 
@@ -112,18 +136,14 @@ test('a Digitalis print package cannot gain the digital_paid status that would b
   const f = notificationFixture('8x10 Lustre', 'Digitalis flower print');
   const result = await f.payments.finalizePaidOrder(f.service, { orderId: 'fixture-order', paymentStatus: 'paid', note: 'fixture verified payment' });
   assert.equal(result.status, 'paid');
-  assert.equal(f.deliveryCalls.length, 0);
-  assert.equal(f.emails.length, 2);
-  assert.deepEqual(f.errors, []);
+  await assertDeferredNotificationAndEligibility(f, 0);
 });
 
-test('a genuine digital package keeps its paid status and delivery when its component has a plain portrait label', async () => {
+test('a genuine digital package keeps its paid status and deferred delivery when its component has a plain portrait label', async () => {
   const f = notificationFixture('Selected portrait', 'Digital portrait package');
   const result = await f.payments.finalizePaidOrder(f.service, { orderId: 'fixture-order', paymentStatus: 'paid', note: 'fixture verified payment' });
   assert.equal(result.status, 'digital_paid');
-  assert.equal(f.deliveryCalls.length, 1);
-  assert.equal(f.emails.length, 2);
-  assert.deepEqual(f.errors, []);
+  await assertDeferredNotificationAndEligibility(f, 1);
 });
 
 test('a mixed paid package delivers its purchased digital component without granting the print original', async () => {

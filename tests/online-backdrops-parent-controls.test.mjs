@@ -15,6 +15,7 @@ const load = (file, require = () => { throw Error("Unexpected import"); }) => {
 };
 const policy = load("lib/online-backdrop-policy.ts");
 const access = load("lib/parent-backdrop-access.ts");
+const proofWatermark = load("lib/proof-watermark.ts");
 const schoolId = "10000000-0000-4000-8000-000000000001";
 const photographerId = "20000000-0000-4000-8000-000000000001";
 const portraits = Array.from({ length: 8 }, (_, index) => ({
@@ -31,7 +32,7 @@ function galleryFixture({ studioDefault, schoolOverride, catalogActive = true } 
   const student = { id: "child", school_id: schoolId, pin: "12345", first_name: "Synthetic", class_name: "Class", photo_url: "/original.jpg" };
   const school = { id: schoolId, school_name: "Synthetic school", photographer_id: photographerId,
     online_backdrops_override: schoolOverride, gallery_settings: {} };
-  const photographer = { id: photographerId, online_backdrops_enabled: studioDefault, billing_currency: "cad" };
+  const photographer = { id: photographerId, online_backdrops_enabled: studioDefault, billing_currency: "cad", watermark_opacity: 0.35 };
   const service = {
     from(table) {
       const filters = []; let single = false;
@@ -57,6 +58,7 @@ function galleryFixture({ studioDefault, schoolOverride, catalogActive = true } 
     "next/server": { NextResponse: { json: (body, init) => Response.json(body, init) } },
     "@/lib/dashboard-auth": { createDashboardServiceClient: () => service },
     "@/lib/online-backdrop-policy": policy,
+    "@/lib/proof-watermark": proofWatermark,
     "@/lib/order-currency": { resolvePhotographerOrderCurrency: () => "cad" },
     "@/lib/rate-limit": { rateLimit: async () => ({ allowed: true }), getClientIp: () => "fixture" },
     "@/lib/portal-pin-rate-limit": { grantPortalPinBudget: response => response },
@@ -96,6 +98,7 @@ test("real parent context applies school overrides and preserves eight photos, c
     const fixture = galleryFixture({ studioDefault, schoolOverride });
     const context = await fixture.get();
     assert.equal(context.onlineBackdropsEnabled, enabled);
+    assert.equal(context.watermarkOpacity, proofWatermark.normalizeProofWatermarkOpacity(0.35), "Merged watermark setting is independent from catalogue visibility");
     assert.equal(context.backdrops.length, enabled ? 1 : 0);
     assert.equal(fixture.signedCatalogs.length, enabled ? 1 : 0);
     assert.deepEqual(context.media.map((row) => row.id), portraits.map((row) => row.id));

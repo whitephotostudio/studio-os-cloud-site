@@ -24,7 +24,7 @@ export async function resolveR2MediaOwnership(
   const segments = key.replace(/\/$/, "").split("/"), [first, second] = segments;
   let scope = scopeForR2Key(key, { prefix: options.prefix });
   let allowPhotographerRoot = false;
-  if (first === "crm-locations") scope = { kind: "photographer", id: second };
+  if (first === "crm-locations" || first === "booking-email-campaigns") scope = { kind: "photographer", id: second };
   else if (first === "thumbs") { scope = { kind: "school", id: second }; allowPhotographerRoot = true; }
   else if (first === "nobg-photos" && second !== "schools" && second !== "projects") allowPhotographerRoot = true;
   else if (!["projects", "probes", "schools", "photos", "nobg-photos", "backdrops"].includes(first)) allowPhotographerRoot = true;
@@ -32,7 +32,7 @@ export async function resolveR2MediaOwnership(
   // A resource prefix is not an object. The nested no-background namespaces
   // need one additional segment for their project/school identifier.
   const resourceSegments = first === "nobg-photos" && ["schools", "projects"].includes(second) ? 3
-    : ["projects", "probes", "schools", "photos", "backdrops", "thumbs", "nobg-photos", "crm-locations"].includes(first) ? 2 : 1;
+    : ["projects", "probes", "schools", "photos", "backdrops", "thumbs", "nobg-photos", "crm-locations", "booking-email-campaigns"].includes(first) ? 2 : 1;
   if (segments.length < resourceSegments || (!options.prefix && segments.length === resourceSegments)) return denied;
   // Legacy UUID roots can denote a school or a photographer. A school alias
   // may never redirect another photographer's established object namespace.

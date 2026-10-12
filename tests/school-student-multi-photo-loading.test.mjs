@@ -138,14 +138,9 @@ for (const [galleryKind, gallerySource, personName] of [
 }
 
 test("student folder listing accepts legacy and namespaced school roots", () => {
-  assert.match(storageFolderRouteSource, /import \{[^}]*\bisUuid\b[^}]*\}/);
-  assert.match(storageFolderRouteSource, /async function ownedSchoolId/);
-  assert.match(
-    storageFolderRouteSource,
-    /first === "schools" \|\| first === "photos"/,
-  );
-  assert.match(storageFolderRouteSource, /await ownedSchoolId\(second\)/);
-  assert.match(storageFolderRouteSource, /await ownedSchoolId\(first\)/);
+  assert.match(storageFolderRouteSource, /resolveR2MediaOwnership\(service, folderPath, photographerId, \{ prefix: true \}\)/);
+  assert.match(storageFolderRouteSource, /allowed: ownership.owned, schoolId: ownership.schoolId/);
+  assert.doesNotMatch(storageFolderRouteSource, /ownedSchoolId|local_school_id/);
   assert.match(storageFolderRouteSource, /filterTombstonedSchoolPhotoAssets/);
   assert.doesNotMatch(storageFolderRouteSource, /\.or\(`id\.eq\./);
 });

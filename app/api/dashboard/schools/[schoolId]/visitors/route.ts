@@ -13,6 +13,9 @@ import {
   SIGNED_URL_TTL_DASHBOARD_SECONDS,
 } from "@/lib/storage-images";
 
+import { buildSchoolVisitorAudience, loadSchoolVisitorData } from "@/lib/school-visitor-audience";
+import { visitorEmail } from "@/lib/school-visitor-filters";
+
 export const dynamic = "force-dynamic";
 
 const VisitorPatchBodySchema = z.object({
@@ -50,15 +53,6 @@ function mediaIdsFromRaw(value: unknown) {
         .map((entry) => (typeof entry === "string" ? entry.trim() : ""))
         .filter(Boolean)
     : [];
-}
-
-function isMissingTable(error: unknown) {
-  return (
-    !!error &&
-    typeof error === "object" &&
-    "code" in error &&
-    (error as { code?: string }).code === "42P01"
-  );
 }
 
 function looksLikeUuid(value: string) {
@@ -149,28 +143,11 @@ export async function GET(
     return NextResponse.json({ error: "School not found" }, { status: 404 });
   }
 
-  // Fetch visitors
-  const { data: visitors } = await service
-    .from("school_gallery_visitors")
-    .select("*")
-    .eq("school_id", schoolId)
-    .order("last_opened_at", { ascending: false });
-
-  // Fetch downloads for this school
-  const { data: downloads } = await service
-    .from("school_gallery_downloads")
-    .select("*")
-    .eq("school_id", schoolId)
-    .order("created_at", { ascending: false });
-
-  const { data: favorites, error: favoritesError } = await service
-    .from("school_gallery_favorites")
-    .select("*")
-    .eq("school_id", schoolId)
-    .order("created_at", { ascending: false });
-  if (favoritesError && !isMissingTable(favoritesError)) {
-    throw favoritesError;
-  }
+  // Fail the report if any audience source cannot be read. A missing order
+  // page must never make a purchasing family eligible for a reminder.
+  const data = await loadSchoolVisitorData(service, schoolId);
+  const { downloads, favorites } = data;
+  const audience = buildSchoolVisitorAudience(data);
 
   const downloadedMediaIds = Array.from(
     new Set(
@@ -181,7 +158,7 @@ export async function GET(
   );
   const favoriteMediaIds = Array.from(
     new Set(
-      ((favoritesError ? [] : favorites) ?? [])
+      (favorites ?? [])
         .map((f: Record<string, unknown>) => clean(f.media_id as string | null))
         .filter(Boolean),
     ),
@@ -219,39 +196,9 @@ export async function GET(
     ] as const),
   );
 
-  // Fetch orders for this school
-  const { data: orders } = await service
-    .from("orders")
-    .select(`
-      id, status, total_cents, subtotal_cents, tax_cents, currency,
-      created_at, parent_email, customer_email, customer_name, parent_name,
-      package_name, cart_snapshot, special_notes,
-      student:students(first_name, last_name, class_name),
-      items:order_items(id, product_name, quantity, price, unit_price_cents, line_total_cents, sku)
-    `)
-    .eq("school_id", schoolId)
-    .order("created_at", { ascending: false });
-
-  // ✅ Also fetch pre-release email registrations so the photographer can
-  // see (and contact) parents who registered before the gallery went live.
-  // Without this, pre-release signups were saved silently and never surfaced
-  // in the admin UI, which made the "notify me when ready" flow feel broken.
-  const { data: preReleaseRegs } = await service
-    .from("pre_release_registrations")
-    .select("id, email, created_at")
-    .eq("school_id", schoolId)
-    .order("created_at", { ascending: false });
-
-  // Build enriched visitor list
-  const visitorList = (visitors ?? []).map((v: Record<string, unknown>) => {
-    const email = (v.viewer_email as string || "").toLowerCase();
-
-    // Find orders by this visitor
-    const visitorOrders = (orders ?? []).filter((o: Record<string, unknown>) => {
-      const pe = (o.parent_email as string || "").toLowerCase();
-      const ce = (o.customer_email as string || "").toLowerCase();
-      return pe === email || ce === email;
-    }).map((o: Record<string, unknown>) => ({
+  const visitorList = audience.map((v) => {
+    const email = v.email;
+    const visitorOrders = v.rawOrders.map((o: Record<string, unknown>) => ({
       id: o.id,
       status: o.status,
       totalCents: o.total_cents,
@@ -285,7 +232,7 @@ export async function GET(
 
     // Find downloads by this visitor
     const visitorDownloads = (downloads ?? []).filter((d: Record<string, unknown>) =>
-      (d.viewer_email as string || "").toLowerCase() === email
+      visitorEmail(d.viewer_email) === email
     ).map((d: Record<string, unknown>) => {
       const mediaIds = mediaIdsFromRaw(d.media_ids);
       return {
@@ -300,9 +247,9 @@ export async function GET(
       };
     });
 
-    const visitorFavorites = ((favoritesError ? [] : favorites) ?? [])
+    const visitorFavorites = (favorites ?? [])
       .filter((f: Record<string, unknown>) =>
-        (f.viewer_email as string || "").toLowerCase() === email
+        visitorEmail(f.viewer_email) === email
       )
       .map((f: Record<string, unknown>) => {
         const mediaId = clean(f.media_id as string | null);
@@ -316,118 +263,40 @@ export async function GET(
 
     return {
       id: (v.id as string) ?? "",
-      // ✅ Coerce to string up front. `v` is typed Record<string, unknown>
-      // so without this the downstream `.toLowerCase()` calls below fail
-      // TypeScript compilation on Vercel ("Property 'toLowerCase' does not
-      // exist on type '{}'").
-      email: typeof v.viewer_email === "string" ? v.viewer_email : "",
-      firstVisit: typeof v.created_at === "string" ? v.created_at : "",
-      lastVisit: typeof v.last_opened_at === "string" ? v.last_opened_at : "",
+      email: v.email,
+      firstVisit: v.firstVisit,
+      lastVisit: v.lastVisit,
       orders: visitorOrders,
       downloads: visitorDownloads,
       favorites: visitorFavorites,
       orderCount: visitorOrders.length,
       downloadCount: visitorDownloads.reduce((sum, d) => sum + (Number(d.downloadCount) || 0), 0 as number),
       favoriteCount: visitorFavorites.length,
-      preRelease: false as boolean,
+      preRelease: v.preRelease,
+      alsoPreRelease: v.alsoPreRelease,
+      registrationClasses: v.registrationClasses,
+      classNames: v.classNames,
+      studentNames: v.studentNames,
+      hasPaidOrder: v.hasPaidOrder,
+      hasDigitalPurchase: v.hasDigitalPurchase,
     };
   });
 
-  // Append pre-release registrants that don't already appear as real
-  // visitors. If the same email shows up in both tables (parent registered
-  // pre-release AND later opened the gallery), we keep the visitor row and
-  // flag it with `alsoPreRelease: true` so the UI can show both badges.
-  const existingEmails = new Set(
-    visitorList.map((row) => (row.email ?? "").toLowerCase()),
-  );
-  const existingByEmail = new Map(
-    visitorList.map((row) => [(row.email ?? "").toLowerCase(), row]),
-  );
-  const preReleaseOnly = ((preReleaseRegs ?? []) as Array<{ id: string; email: string | null; created_at: string | null }>)
-    .map((row) => ({
-      id: `pre_${row.id}`,
-      email: row.email ?? "",
-      firstVisit: row.created_at ?? "",
-      lastVisit: row.created_at ?? "",
-      orders: [] as VisitorOrder[],
-      downloads: [] as VisitorDownload[],
-      favorites: [] as VisitorFavorite[],
-      orderCount: 0,
-      downloadCount: 0,
-      favoriteCount: 0,
-      preRelease: true as boolean,
-    }))
-    .filter((row) => {
-      const key = row.email.toLowerCase();
-      if (!key) return false;
-      if (existingEmails.has(key)) {
-        // Flag the existing visitor entry as also-pre-release so the UI
-        // can render a small "Pre-release" chip next to their name.
-        const existing = existingByEmail.get(key);
-        if (existing) (existing as { alsoPreRelease?: boolean }).alsoPreRelease = true;
-        return false;
-      }
-      return true;
-    });
-
-  const combined = [...visitorList, ...preReleaseOnly];
+  const combined = visitorList;
 
   return NextResponse.json({
     schoolName: school.school_name,
     visitors: combined,
     totalVisitors: combined.length,
-    totalOrders: (orders ?? []).length,
-    preReleaseCount: preReleaseOnly.length,
+    totalOrders: data.orders.length,
+    preReleaseCount: combined.filter(visitor => visitor.preRelease).length,
   });
 }
-
-type VisitorOrder = {
-  id: string;
-  status: string;
-  totalCents: number;
-  subtotalCents?: number | null;
-  taxCents?: number | null;
-  currency?: string | null;
-  packageName?: string | null;
-  customerName?: string | null;
-  parentName?: string | null;
-  cartSnapshot?: unknown;
-  items?: VisitorOrderItem[];
-  createdAt: string;
-  studentName: string;
-  className: string;
-};
-
-type VisitorOrderItem = {
-  id: string | null;
-  productName: string;
-  quantity: number;
-  price: number | null;
-  unitPriceCents: number | null;
-  lineTotalCents: number | null;
-  sku: string | null;
-};
-
-type VisitorDownload = {
-  id: string;
-  downloadType: string;
-  downloadCount: number;
-  mediaIds: string[];
-  media: DownloadMediaPreview[];
-  createdAt: string;
-};
 
 type DownloadMediaPreview = {
   id: string;
   thumbnailUrl: string | null;
   filename: string | null;
-};
-
-type VisitorFavorite = {
-  id: string;
-  mediaId: string;
-  media: DownloadMediaPreview;
-  createdAt: string;
 };
 
 /**
@@ -474,6 +343,9 @@ export async function PATCH(
   if (!parsed.ok) return parsed.response;
   const { visitorId, newEmail } = parsed.data;
 
+  if (visitorId.startsWith("order_")) {
+    return NextResponse.json({ error: "Order contact details must be reviewed from the order." }, { status: 400 });
+  }
   const normalizedEmail = newEmail.trim().toLowerCase();
 
   // ✅ Pre-release registrant IDs are returned from GET prefixed with `pre_`

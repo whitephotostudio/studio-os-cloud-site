@@ -18,7 +18,7 @@ function load(path, modules = {}, fixtureProcess = process, fixtureFetch = fetch
 const security = load('lib/r2-access-security.ts');
 const mediaOwnership = load('lib/r2-media-ownership.ts', { '@/lib/r2-access-security': security });
 const mediaTokens = load('lib/r2-media-token.ts', { '@/lib/r2-access-security': security });
-const ownership = load('lib/upload-ownership.ts', { './r2-access-security': security });
+const ownership = load('lib/upload-ownership.ts', { '@/lib/r2-media-ownership': mediaOwnership });
 class FixtureResponse extends Response {
   static json(body, init) { return Response.json(body, init); }
   static redirect(url, init) { return new Response(null, { status: typeof init === 'number' ? init : init?.status ?? 307, headers: { location: url } }); }

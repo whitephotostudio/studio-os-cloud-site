@@ -70,25 +70,26 @@ function Toggle({ checked, onChange, disabled = false, label }: { checked: boole
       aria-label={label}
       disabled={disabled}
       onClick={() => { if (!disabled) onChange(!checked); }}
-      className={cx(
-        "relative inline-flex h-7 w-12 shrink-0 items-center rounded-full border transition",
-        checked ? "border-neutral-950 bg-neutral-950" : "border-neutral-300 bg-neutral-200",
-        disabled && "cursor-not-allowed opacity-50"
-      )}
+      className={cx("relative inline-flex min-h-11 w-12 shrink-0 items-center", disabled && "cursor-not-allowed opacity-50")}
     >
-      <span
-        className={cx(
-          "inline-block h-5 w-5 rounded-full bg-white shadow transition",
-          checked ? "translate-x-6" : "translate-x-1"
-        )}
-      />
+      <span className={cx(
+        "inline-flex h-7 w-12 items-center rounded-full border transition",
+        checked ? "border-neutral-950 bg-neutral-950" : "border-neutral-300 bg-neutral-200",
+      )}>
+        <span
+          className={cx(
+            "inline-block h-5 w-5 rounded-full bg-white shadow transition",
+            checked ? "translate-x-6" : "translate-x-1"
+          )}
+        />
+      </span>
     </button>
   );
 }
 
 function Card({ title, children, description }: { title: string; description?: string; children: React.ReactNode }) {
   return (
-    <div className="rounded-[24px] border border-neutral-200 bg-white p-6 shadow-[0_8px_28px_rgba(0,0,0,0.05)]">
+    <div className="@container/settings-card min-w-0 rounded-[24px] border border-neutral-200 bg-white p-4 lg:p-6 shadow-[0_8px_28px_rgba(0,0,0,0.05)]">
       <h3 className="text-[15px] font-semibold text-neutral-900">{title}</h3>
       {description ? <p className="mt-1 text-sm text-neutral-600">{description}</p> : null}
       <div className="mt-5 space-y-5">{children}</div>
@@ -98,7 +99,7 @@ function Card({ title, children, description }: { title: string; description?: s
 
 function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return (
-    <label className="block">
+    <label className="block min-w-0 break-words">
       <div className="text-[13px] font-semibold text-neutral-800">{label}</div>
       <div className="mt-2">{children}</div>
       {hint ? <div className="mt-2 text-sm text-neutral-600">{hint}</div> : null}
@@ -120,8 +121,8 @@ function ToggleRow({
   disabled?: boolean;
 }) {
   return (
-    <div className="flex items-start justify-between gap-4 rounded-2xl border border-neutral-200 bg-neutral-50 px-4 py-4">
-      <div>
+    <div className="flex min-w-0 items-start justify-between gap-3 rounded-2xl border border-neutral-200 bg-neutral-50 px-3 py-3 sm:px-4 sm:py-4">
+      <div className="min-w-0 break-words">
         <div className="text-[15px] font-semibold text-neutral-900">{title}</div>
         {description ? <div className="mt-1 text-sm text-neutral-600">{description}</div> : null}
       </div>
@@ -143,7 +144,7 @@ function VisualChoiceGrid<T extends string>({
   value,
   options,
   onChange,
-  columns = "md:grid-cols-3",
+  columns = "@min-[440px]/settings-card:grid-cols-2 @min-[680px]/settings-card:grid-cols-3",
 }: {
   title: string;
   hint?: string;
@@ -165,7 +166,7 @@ function VisualChoiceGrid<T extends string>({
               type="button"
               onClick={() => onChange(option.value)}
               className={cx(
-                "rounded-[20px] border p-3 text-left transition",
+                "min-w-0 rounded-[20px] border p-3 text-left transition",
                 active
                   ? "border-neutral-950 bg-neutral-950 text-white shadow-[0_10px_28px_rgba(0,0,0,0.18)]"
                   : "border-neutral-200 bg-white text-neutral-900 hover:border-neutral-300",
@@ -180,7 +181,7 @@ function VisualChoiceGrid<T extends string>({
                 {option.preview}
               </div>
               <div className="mt-3 flex items-start justify-between gap-3">
-                <div>
+                <div className="min-w-0 break-words">
                   <div className={cx("text-[14px] font-semibold", active ? "text-white" : "text-neutral-900")}>
                     {option.label}
                   </div>
@@ -357,11 +358,11 @@ function FontDropdown({
       <button
         type="button"
         onClick={() => setOpen(!open)}
-        className="flex w-full items-center justify-between rounded-2xl border border-neutral-200 bg-white px-5 py-4 text-left transition hover:border-neutral-300"
+        className="flex w-full min-w-0 items-center justify-between gap-3 rounded-2xl border border-neutral-200 bg-white px-4 py-4 text-left transition hover:border-neutral-300"
       >
-        <div className="flex items-center gap-4">
+        <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2">
           <span
-            className="text-[26px] leading-none text-neutral-800"
+            className="min-w-0 break-words text-[24px] leading-none text-neutral-800"
             style={{ fontFamily: galleryFontFamily(value) }}
           >
             {galleryFontLabel(value)}
@@ -386,14 +387,14 @@ function FontDropdown({
                 type="button"
                 onClick={() => { onChange(font.value); setOpen(false); }}
                 className={cx(
-                  "flex w-full items-center justify-between px-5 py-3.5 text-left transition border-b border-neutral-100 last:border-0",
+                  "flex w-full min-w-0 flex-wrap items-center justify-between gap-x-3 gap-y-2 px-4 py-3.5 text-left transition border-b border-neutral-100 last:border-0",
                   active
                     ? "bg-neutral-950 text-white"
                     : "hover:bg-neutral-50",
                 )}
               >
                 <span
-                  className={cx("text-[22px] leading-none", active ? "text-white" : "text-neutral-800")}
+                  className={cx("min-w-0 break-words text-[22px] leading-none", active ? "text-white" : "text-neutral-800")}
                   style={{ fontFamily: galleryFontFamily(font.value) }}
                 >
                   {galleryFontLabel(font.value)}
@@ -494,6 +495,8 @@ export default function ProjectSettingsPage() {
   const projectId = String(params.id ?? "");
 
   const [activeSection, setActiveSection] = useState<SectionKey>("general");
+  const [nameFocusRequested, setNameFocusRequested] = useState(false);
+  const projectNameInputRef = useRef<HTMLInputElement>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [project, setProject] = useState<ProjectRow | null>(null);
@@ -526,6 +529,13 @@ export default function ProjectSettingsPage() {
   const [share, setShare] = useState<EventGalleryShareSettings>(defaultEventGalleryShareSettings);
 
   const storageKey = `studioos_project_settings_${projectId}`;
+
+  useEffect(() => {
+    if (activeSection === "general" && !loading && nameFocusRequested) {
+      projectNameInputRef.current?.focus();
+      setNameFocusRequested(false);
+    }
+  }, [activeSection, loading, nameFocusRequested]);
 
   useEffect(() => {
     void loadAll();
@@ -1082,46 +1092,46 @@ export default function ProjectSettingsPage() {
   ];
 
   return (
-    <div className="min-h-screen bg-[#f5f5f5] px-4 py-6 md:px-8">
-      <div className="mx-auto max-w-[1500px]">
+    <div className="min-h-screen min-w-0 bg-[#f5f5f5] px-3 py-4 sm:px-4 sm:py-6 xl:px-8">
+      <div className="@container/settings-page mx-auto w-full min-w-0 max-w-[1500px]">
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-3">
-            <Link href={`/dashboard/projects/${projectId}`} className="inline-flex items-center gap-2 text-sm font-semibold text-neutral-600 hover:text-neutral-900">
+            <Link href={`/dashboard/projects/${projectId}`} className="inline-flex min-h-11 items-center gap-2 text-sm font-semibold text-neutral-600 hover:text-neutral-900">
               <ArrowLeft size={16} />
               Back to Event
             </Link>
           </div>
-          <div className="flex flex-wrap items-center gap-3">
-            {saveNotice ? <span className="inline-flex items-center gap-2 rounded-full bg-green-50 px-3 py-2 text-sm font-semibold text-green-700"><Check size={16} />{saveNotice}</span> : null}
-            <button onClick={() => router.push(`/dashboard/projects/${projectId}`)} className="rounded-2xl border border-neutral-300 bg-white px-5 py-2.5 text-sm font-semibold text-neutral-900 transition hover:border-neutral-500">Cancel</button>
-            <button type="button" disabled title="Presets cannot be applied yet. Existing saved presets are kept." className="cursor-not-allowed rounded-2xl px-5 py-2.5 text-sm font-semibold text-neutral-400">Presets unavailable</button>
-            <button onClick={saveAll} disabled={saving} className="rounded-2xl bg-neutral-950 px-5 py-2.5 text-sm font-semibold text-white shadow-[0_10px_20px_rgba(0,0,0,0.16)] transition hover:bg-[#991b1b] disabled:opacity-60">{saving ? "Saving..." : "Save"}</button>
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            {saveNotice ? <span className="inline-flex max-w-full items-center gap-2 rounded-2xl bg-green-50 px-3 py-2 text-sm font-semibold text-green-700"><Check size={16} />{saveNotice}</span> : null}
+            <button onClick={() => router.push(`/dashboard/projects/${projectId}`)} className="min-h-11 rounded-2xl border border-neutral-300 bg-white px-4 py-2.5 text-sm font-semibold text-neutral-900 transition hover:border-neutral-500">Cancel</button>
+            <button type="button" disabled title="Presets cannot be applied yet. Existing saved presets are kept." className="min-h-11 cursor-not-allowed rounded-2xl px-3 py-2.5 text-sm font-semibold text-neutral-400">Presets unavailable</button>
+            <button onClick={saveAll} disabled={saving} className="min-h-11 rounded-2xl bg-neutral-950 px-5 py-2.5 text-sm font-semibold text-white shadow-[0_10px_20px_rgba(0,0,0,0.16)] transition hover:bg-[#991b1b] disabled:opacity-60">{saving ? "Saving..." : "Save"}</button>
           </div>
         </div>
 
         <div className="overflow-hidden rounded-[30px] border border-neutral-200 bg-white shadow-[0_12px_40px_rgba(0,0,0,0.06)]">
-          <div className="border-b border-neutral-200 px-6 py-5 md:px-8">
+          <div className="border-b border-neutral-200 px-4 py-4 lg:px-6 lg:py-5">
             <div className="flex flex-wrap items-center gap-3">
-              <h1 className="text-3xl font-bold tracking-[-0.03em] text-neutral-800">{projectName || "Event Settings"}</h1>
-              <button className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-neutral-200 text-neutral-600 hover:text-neutral-900">
+              <h1 className="min-w-0 break-words text-2xl font-bold tracking-[-0.03em] text-neutral-800 sm:text-3xl">{projectName || "Event Settings"}</h1>
+              <button type="button" aria-label="Edit project name" onClick={() => { setActiveSection("general"); setNameFocusRequested(true); }} className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-neutral-200 text-neutral-600 hover:text-neutral-900">
                 <Pencil size={14} />
               </button>
             </div>
           </div>
 
-          <div className="grid min-h-[820px] grid-cols-1 md:grid-cols-[300px_minmax(0,1fr)]">
-            <aside className="border-r border-neutral-200 bg-[#fafafa]">
-              <div className="grid grid-cols-2 gap-3 border-b border-neutral-200 px-5 py-5">
-                <button className="rounded-[18px] border border-[#7f1d1d] bg-neutral-950 px-4 py-5 text-center text-sm font-bold text-white shadow-[0_12px_24px_rgba(0,0,0,0.14)]">
-                  <Settings2 className="mx-auto mb-2" size={26} />
+          <div className="grid min-h-[820px] min-w-0 grid-cols-1 @min-[1080px]/settings-page:grid-cols-[260px_minmax(0,1fr)]">
+            <aside className="min-w-0 border-b border-neutral-200 bg-[#fafafa] @min-[1080px]/settings-page:border-b-0 @min-[1080px]/settings-page:border-r">
+              <div className="grid grid-cols-2 gap-2 border-b border-neutral-200 p-3 @min-[1080px]/settings-page:px-4 @min-[1080px]/settings-page:py-5">
+                <button className="flex min-h-11 items-center justify-center gap-2 rounded-[18px] border border-[#7f1d1d] bg-neutral-950 px-3 py-3 text-center text-sm font-bold @min-[1080px]/settings-page:flex-col @min-[1080px]/settings-page:py-5 text-white shadow-[0_12px_24px_rgba(0,0,0,0.14)]">
+                  <Settings2 className="shrink-0" size={22} />
                   Settings
                 </button>
-                <button onClick={() => router.push(`/dashboard/projects/${projectId}`)} className="rounded-[18px] px-4 py-5 text-center text-sm font-bold text-neutral-900 hover:bg-neutral-100">
-                  <ImageIcon className="mx-auto mb-2" size={26} />
+                <button onClick={() => router.push(`/dashboard/projects/${projectId}`)} className="flex min-h-11 items-center justify-center gap-2 rounded-[18px] px-3 py-3 text-center text-sm font-bold text-neutral-900 hover:bg-neutral-100 @min-[1080px]/settings-page:flex-col @min-[1080px]/settings-page:py-5">
+                  <ImageIcon className="shrink-0" size={22} />
                   Cover
                 </button>
               </div>
-              <nav className="space-y-1 p-4">
+              <nav aria-label="Project settings" className="grid grid-cols-2 gap-2 p-3 @min-[600px]/settings-page:grid-cols-3 @min-[1080px]/settings-page:flex @min-[1080px]/settings-page:flex-col @min-[1080px]/settings-page:p-4">
                 {sections.map((section) => {
                   const Icon = section.icon;
                   const active = activeSection === section.key;
@@ -1129,42 +1139,43 @@ export default function ProjectSettingsPage() {
                     <button
                       key={section.key}
                       onClick={() => setActiveSection(section.key)}
+                      aria-current={active ? "page" : undefined}
                       className={cx(
-                        "flex w-full items-center gap-3 rounded-[16px] px-4 py-3 text-left text-[15px] font-semibold transition",
+                        "flex min-h-11 w-full min-w-0 items-center gap-2 rounded-[16px] px-3 py-3 text-left text-[13px] font-semibold transition @min-[1080px]/settings-page:text-[15px]",
                         active
                           ? "bg-neutral-950 text-white shadow-[0_10px_22px_rgba(0,0,0,0.14)]"
                           : "text-neutral-900 hover:bg-neutral-100"
                       )}
                     >
-                      <Icon size={18} />
-                      {section.label}
+                      <Icon className="shrink-0" size={18} />
+                      <span className="min-w-0 break-words">{section.label}</span>
                     </button>
                   );
                 })}
               </nav>
             </aside>
 
-            <main className="bg-white p-6 md:p-8">
+            <main className="min-w-0 bg-white p-3 sm:p-4 lg:p-6">
               {activeSection === "general" && (
                 <div className="space-y-6">
                   <Card title="General">
-                    <div className="grid gap-5 md:grid-cols-2">
+                    <div className="grid gap-5 @min-[520px]/settings-card:grid-cols-2">
                       <Field label="Shoot / Event Date" hint="The session date shown in the client gallery">
-                        <input type="date" value={shootDate} onChange={(e) => setShootDate(e.target.value)} className="w-full rounded-xl border border-neutral-200 bg-white px-4 py-3 text-sm text-neutral-800 placeholder:text-neutral-400" />
+                        <input type="date" value={shootDate} onChange={(e) => setShootDate(e.target.value)} className="w-full min-w-0 max-w-full rounded-xl border border-neutral-200 bg-white px-4 py-3 text-sm text-neutral-800 placeholder:text-neutral-400" />
                       </Field>
                       <Field label="Project/Event Name">
-                        <input value={projectName} onChange={(e) => setProjectName(e.target.value)} className="w-full rounded-xl border border-neutral-200 bg-white px-4 py-3 text-sm text-neutral-800 placeholder:text-neutral-400" />
+                        <input id="event-project-name" ref={projectNameInputRef} value={projectName} onChange={(e) => setProjectName(e.target.value)} className="w-full min-w-0 max-w-full rounded-xl border border-neutral-200 bg-white px-4 py-3 text-sm text-neutral-800 placeholder:text-neutral-400" />
                       </Field>
                       <Field label="Order Due Date" hint="Optional date on which client orders are due">
-                        <input type="date" value={orderDueDate} onChange={(e) => setOrderDueDate(e.target.value)} className="w-full rounded-xl border border-neutral-200 bg-white px-4 py-3 text-sm text-neutral-800 placeholder:text-neutral-400" />
+                        <input type="date" value={orderDueDate} onChange={(e) => setOrderDueDate(e.target.value)} className="w-full min-w-0 max-w-full rounded-xl border border-neutral-200 bg-white px-4 py-3 text-sm text-neutral-800 placeholder:text-neutral-400" />
                       </Field>
                       <Field label="Gallery Expiration Date" hint="Optional date the gallery becomes inactive">
-                        <input type="date" value={expirationDate} onChange={(e) => setExpirationDate(e.target.value)} className="w-full rounded-xl border border-neutral-200 bg-white px-4 py-3 text-sm text-neutral-800 placeholder:text-neutral-400" />
+                        <input type="date" value={expirationDate} onChange={(e) => setExpirationDate(e.target.value)} className="w-full min-w-0 max-w-full rounded-xl border border-neutral-200 bg-white px-4 py-3 text-sm text-neutral-800 placeholder:text-neutral-400" />
                       </Field>
                     </div>
                     <Field label="Gallery Language" hint="Choose the language for your gallery interface">
                       <div className="relative max-w-md">
-                        <select value={galleryLanguage} onChange={(e) => setGalleryLanguage(e.target.value)} className="w-full appearance-none rounded-xl border border-neutral-200 bg-white px-4 py-3 pr-10 text-sm text-neutral-700">
+                        <select value={galleryLanguage} onChange={(e) => setGalleryLanguage(e.target.value)} className="w-full min-w-0 max-w-full appearance-none rounded-xl border border-neutral-200 bg-white px-4 py-3 pr-10 text-sm text-neutral-700">
                           <option>English (US)</option>
                           <option>English (CA)</option>
                           <option>French</option>
@@ -1174,7 +1185,7 @@ export default function ProjectSettingsPage() {
                     </Field>
                     <ToggleRow title="Allow Social Sharing" description="Show a social share message on the gallery" checked={extras.allowSocialSharing} onChange={(next) => setExtra("allowSocialSharing", next)} />
                     {extras.allowSocialSharing ? (
-                      <textarea value={extras.socialShareMessage} onChange={(e) => setExtra("socialShareMessage", e.target.value)} className="min-h-[110px] w-full rounded-xl border border-neutral-200 bg-white px-4 py-3 text-sm text-neutral-800 placeholder:text-neutral-400" placeholder="Check out the photos from this gallery!" />
+                      <textarea value={extras.socialShareMessage} onChange={(e) => setExtra("socialShareMessage", e.target.value)} className="min-w-0 max-w-full min-h-[110px] w-full rounded-xl border border-neutral-200 bg-white px-4 py-3 text-sm text-neutral-800 placeholder:text-neutral-400" placeholder="Check out the photos from this gallery!" />
                     ) : null}
                     <ToggleRow title="Allow Black & White Preview" description="Let clients preview photos in black and white. Downloads and ordered files retain their original appearance." checked={extras.allowBlackWhiteFiltering} onChange={(next) => setExtra("allowBlackWhiteFiltering", next)} />
                   </Card>
@@ -1188,7 +1199,7 @@ export default function ProjectSettingsPage() {
 
                   {/* Style */}
                   <Card title="Style" description="Set the theme, colors, and type used by your welcome screen and client gallery.">
-                    <div className="grid gap-6 lg:grid-cols-2">
+                    <div className="grid gap-6 @min-[560px]/settings-card:grid-cols-2">
                       <BackgroundModePicker
                         value={branding.backgroundMode}
                         onChange={(next) => setBrandingField("backgroundMode", next)}
@@ -1199,14 +1210,14 @@ export default function ProjectSettingsPage() {
                       />
                     </div>
 
-                    <div className="mt-2 grid gap-5 sm:grid-cols-3">
+                    <div className="mt-2 grid gap-5 @min-[620px]/settings-card:grid-cols-3">
                       <div>
                         <div className="mb-2 text-[13px] font-semibold text-neutral-800">Theme</div>
                         <div className="relative">
                           <select
                             value={branding.themePreset}
                             onChange={(e) => setBrandingField("themePreset", e.target.value as EventGalleryBrandingSettings["themePreset"])}
-                            className="w-full appearance-none rounded-2xl border border-neutral-200 bg-white px-4 py-3.5 pr-10 text-sm text-neutral-800"
+                            className="w-full min-w-0 max-w-full appearance-none rounded-2xl border border-neutral-200 bg-white px-4 py-3.5 pr-10 text-sm text-neutral-800"
                           >
                             {themeOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
                           </select>
@@ -1219,7 +1230,7 @@ export default function ProjectSettingsPage() {
                           <select
                             value={branding.tone}
                             onChange={(e) => setBrandingField("tone", e.target.value as EventGalleryBrandingSettings["tone"])}
-                            className="w-full appearance-none rounded-2xl border border-neutral-200 bg-white px-4 py-3.5 pr-10 text-sm text-neutral-800"
+                            className="w-full min-w-0 max-w-full appearance-none rounded-2xl border border-neutral-200 bg-white px-4 py-3.5 pr-10 text-sm text-neutral-800"
                           >
                             {toneOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
                           </select>
@@ -1232,7 +1243,7 @@ export default function ProjectSettingsPage() {
                           <select
                             value={branding.accentColor}
                             onChange={(e) => setBrandingField("accentColor", e.target.value as EventGalleryBrandingSettings["accentColor"])}
-                            className="w-full appearance-none rounded-2xl border border-neutral-200 bg-white px-4 py-3.5 pr-10 text-sm text-neutral-800"
+                            className="w-full min-w-0 max-w-full appearance-none rounded-2xl border border-neutral-200 bg-white px-4 py-3.5 pr-10 text-sm text-neutral-800"
                           >
                             {accentOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
                           </select>
@@ -1269,14 +1280,14 @@ export default function ProjectSettingsPage() {
                       onChange={(next) => setBrandingField("showHeroHeader", next)}
                     />
                     {branding.showHeroHeader && (
-                      <div className="grid gap-5 sm:grid-cols-2">
+                      <div className="grid gap-5 @min-[520px]/settings-card:grid-cols-2">
                         <div>
                           <div className="mb-2 text-[13px] font-semibold text-neutral-800">Text Alignment</div>
                           <div className="relative">
                             <select
                               value={branding.heroTextAlign}
                               onChange={(e) => setBrandingField("heroTextAlign", e.target.value as EventGalleryBrandingSettings["heroTextAlign"])}
-                              className="w-full appearance-none rounded-2xl border border-neutral-200 bg-white px-4 py-3.5 pr-10 text-sm text-neutral-800"
+                              className="w-full min-w-0 max-w-full appearance-none rounded-2xl border border-neutral-200 bg-white px-4 py-3.5 pr-10 text-sm text-neutral-800"
                             >
                               {heroTextAlignOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
                             </select>
@@ -1289,7 +1300,7 @@ export default function ProjectSettingsPage() {
                             <select
                               value={branding.heroOverlayStrength}
                               onChange={(e) => setBrandingField("heroOverlayStrength", e.target.value as EventGalleryBrandingSettings["heroOverlayStrength"])}
-                              className="w-full appearance-none rounded-2xl border border-neutral-200 bg-white px-4 py-3.5 pr-10 text-sm text-neutral-800"
+                              className="w-full min-w-0 max-w-full appearance-none rounded-2xl border border-neutral-200 bg-white px-4 py-3.5 pr-10 text-sm text-neutral-800"
                             >
                               {heroOverlayOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
                             </select>
@@ -1316,7 +1327,7 @@ export default function ProjectSettingsPage() {
                             <select
                               value={branding.introLayout}
                               onChange={(e) => setBrandingField("introLayout", e.target.value as EventGalleryBrandingSettings["introLayout"])}
-                              className="w-full appearance-none rounded-2xl border border-neutral-200 bg-white px-4 py-3.5 pr-10 text-sm text-neutral-800"
+                              className="w-full min-w-0 max-w-full appearance-none rounded-2xl border border-neutral-200 bg-white px-4 py-3.5 pr-10 text-sm text-neutral-800"
                             >
                               {introLayoutOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
                             </select>
@@ -1327,7 +1338,7 @@ export default function ProjectSettingsPage() {
                           <input
                             value={branding.introHeadline}
                             onChange={(e) => setBrandingField("introHeadline", e.target.value)}
-                            className="w-full rounded-xl border border-neutral-200 bg-white px-4 py-3 text-sm text-neutral-800 placeholder:text-neutral-400"
+                            className="w-full min-w-0 max-w-full rounded-xl border border-neutral-200 bg-white px-4 py-3 text-sm text-neutral-800 placeholder:text-neutral-400"
                             placeholder="A private gallery for your event"
                           />
                         </Field>
@@ -1335,7 +1346,7 @@ export default function ProjectSettingsPage() {
                           <textarea
                             value={branding.introMessage}
                             onChange={(e) => setBrandingField("introMessage", e.target.value)}
-                            className="min-h-[90px] w-full rounded-xl border border-neutral-200 bg-white px-4 py-3 text-sm text-neutral-800 placeholder:text-neutral-400"
+                            className="min-w-0 max-w-full min-h-[90px] w-full rounded-xl border border-neutral-200 bg-white px-4 py-3 text-sm text-neutral-800 placeholder:text-neutral-400"
                             placeholder="Welcome message or ordering notes."
                           />
                         </Field>
@@ -1343,7 +1354,7 @@ export default function ProjectSettingsPage() {
                           <input
                             value={branding.introCtaLabel.trim() === "Enter Gallery" ? "" : branding.introCtaLabel}
                             onChange={(e) => setBrandingField("introCtaLabel", e.target.value)}
-                            className="w-full max-w-xs rounded-xl border border-neutral-200 bg-white px-4 py-3 text-sm text-neutral-800 placeholder:text-neutral-400"
+                            className="w-full min-w-0 max-w-xs rounded-xl border border-neutral-200 bg-white px-4 py-3 text-sm text-neutral-800 placeholder:text-neutral-400"
                             placeholder="View albums"
                           />
                         </Field>
@@ -1377,16 +1388,16 @@ export default function ProjectSettingsPage() {
                           <textarea
                             value={branding.marketingBannerText}
                             onChange={(e) => setBrandingField("marketingBannerText", e.target.value)}
-                            className="min-h-[80px] w-full rounded-xl border border-neutral-200 bg-white px-4 py-3 text-sm text-neutral-800 placeholder:text-neutral-400"
+                            className="min-w-0 max-w-full min-h-[80px] w-full rounded-xl border border-neutral-200 bg-white px-4 py-3 text-sm text-neutral-800 placeholder:text-neutral-400"
                             placeholder="Complimentary shipping on framed prints through Sunday."
                           />
                         </Field>
-                        <div className="grid gap-4 md:grid-cols-2">
+                        <div className="grid gap-4 @min-[520px]/settings-card:grid-cols-2">
                           <Field label="Link Label">
                             <input
                               value={branding.marketingBannerLinkLabel}
                               onChange={(e) => setBrandingField("marketingBannerLinkLabel", e.target.value)}
-                              className="w-full rounded-xl border border-neutral-200 bg-white px-4 py-3 text-sm text-neutral-800 placeholder:text-neutral-400"
+                              className="w-full min-w-0 max-w-full rounded-xl border border-neutral-200 bg-white px-4 py-3 text-sm text-neutral-800 placeholder:text-neutral-400"
                               placeholder="View Offer"
                             />
                           </Field>
@@ -1394,7 +1405,7 @@ export default function ProjectSettingsPage() {
                             <input
                               value={branding.marketingBannerLinkUrl}
                               onChange={(e) => setBrandingField("marketingBannerLinkUrl", e.target.value)}
-                              className="w-full rounded-xl border border-neutral-200 bg-white px-4 py-3 text-sm text-neutral-800 placeholder:text-neutral-400"
+                              className="w-full min-w-0 max-w-full rounded-xl border border-neutral-200 bg-white px-4 py-3 text-sm text-neutral-800 placeholder:text-neutral-400"
                               placeholder="https://example.com"
                             />
                           </Field>
@@ -1448,7 +1459,7 @@ export default function ProjectSettingsPage() {
                       </div>
                     </div>
 
-                    {projectAccessMode === "pin" ? <input value={projectPin} onChange={(e) => setProjectPin(e.target.value)} className="max-w-md rounded-xl border border-neutral-200 bg-white px-4 py-3 text-sm text-neutral-800 placeholder:text-neutral-400" placeholder="Project PIN" /> : null}
+                    {projectAccessMode === "pin" ? <input value={projectPin} onChange={(e) => setProjectPin(e.target.value)} className="w-full min-w-0 max-w-md rounded-xl border border-neutral-200 bg-white px-4 py-3 text-sm text-neutral-800 placeholder:text-neutral-400" placeholder="Project PIN" /> : null}
                     <ToggleRow title="Email required" description="Require visitors to enter their email address to view the gallery" checked={emailRequired} onChange={setEmailRequired} />
 
                     <div>
@@ -1479,7 +1490,7 @@ export default function ProjectSettingsPage() {
                     </div>
                     <Field label="Additional Email Capture (not available)" hint="Use Email required above for current gallery access. This additional capture option is not available yet; saved preferences are kept.">
                       <div className="relative max-w-md">
-                        <select disabled value={extras.emailCaptureMode} className="w-full appearance-none rounded-xl border border-neutral-200 bg-neutral-50 px-4 py-3 pr-10 text-sm text-neutral-500 disabled:cursor-not-allowed">
+                        <select disabled value={extras.emailCaptureMode} className="w-full min-w-0 max-w-full appearance-none rounded-xl border border-neutral-200 bg-neutral-50 px-4 py-3 pr-10 text-sm text-neutral-500 disabled:cursor-not-allowed">
                           <option value="off">Off</option>
                           <option value="optional">Optional capture</option>
                           <option value="required">Required before entry</option>
@@ -1494,15 +1505,10 @@ export default function ProjectSettingsPage() {
               {activeSection === "free-digital" && (
                 <div className="space-y-6">
                   <Card title="Free Digitals/Downloads" description="Rules allow you to customize who gets to download photos for free.">
-                    <div className="overflow-hidden rounded-2xl border border-neutral-200">
-                      <div className="grid grid-cols-[1.5fr_1fr_1fr_1fr] bg-neutral-50 px-5 py-3 text-xs font-semibold uppercase tracking-[0.12em] text-neutral-600">
-                        <div>Rule Name</div>
-                        <div>Level</div>
-                        <div>Downloads</div>
-                        <div>Resolution</div>
-                      </div>
-                      <div className="grid grid-cols-[1.5fr_1fr_1fr_1fr] px-5 py-4 text-sm text-neutral-800">
-                        <div>
+                    <dl className="grid min-w-0 gap-4 rounded-2xl border border-neutral-200 bg-neutral-50 p-4 @min-[300px]/settings-card:grid-cols-2 @min-[640px]/settings-card:grid-cols-[1.5fr_1fr_1fr_1fr]">
+                      <div className="min-w-0">
+                        <dt className="text-xs font-semibold uppercase tracking-[0.08em] text-neutral-600">Rule Name</dt>
+                        <dd className="mt-2 break-words text-sm text-neutral-800">
                           {extras.freeDigitalRuleEnabled
                             ? extras.freeDigitalAudience === "person"
                               ? extras.freeDigitalTargetName ||
@@ -1510,32 +1516,41 @@ export default function ProjectSettingsPage() {
                                 "Specific person"
                               : "Free download rule"
                             : "No active rule"}
-                        </div>
-                        <div>{extras.freeDigitalAudience === "gallery" ? "Gallery" : extras.freeDigitalAudience === "album" ? "Album" : "Person"}</div>
-                        <div>{extras.freeDigitalDownloadLimit === "unlimited" ? "Unlimited" : extras.freeDigitalDownloadLimit}</div>
-                        <div>{extras.freeDigitalResolution === "original" ? "Original" : extras.freeDigitalResolution === "large" ? "Large" : "Web"}</div>
+                        </dd>
                       </div>
-                    </div>
+                      <div className="min-w-0">
+                        <dt className="text-xs font-semibold uppercase tracking-[0.08em] text-neutral-600">Level</dt>
+                        <dd className="mt-2 text-sm text-neutral-800">{extras.freeDigitalAudience === "gallery" ? "Gallery" : extras.freeDigitalAudience === "album" ? "Album" : "Person"}</dd>
+                      </div>
+                      <div className="min-w-0">
+                        <dt className="text-xs font-semibold uppercase tracking-[0.08em] text-neutral-600">Downloads</dt>
+                        <dd className="mt-2 text-sm text-neutral-800">{extras.freeDigitalDownloadLimit === "unlimited" ? "Unlimited" : extras.freeDigitalDownloadLimit}</dd>
+                      </div>
+                      <div className="min-w-0">
+                        <dt className="text-xs font-semibold uppercase tracking-[0.08em] text-neutral-600">Resolution</dt>
+                        <dd className="mt-2 text-sm text-neutral-800">{extras.freeDigitalResolution === "original" ? "Original" : extras.freeDigitalResolution === "large" ? "Large" : "Web"}</dd>
+                      </div>
+                    </dl>
 
                     <ToggleRow title="Enable free digital rule" description="Create a downloadable rule for this gallery or album." checked={extras.freeDigitalRuleEnabled} onChange={(next) => setExtra("freeDigitalRuleEnabled", next)} />
                     {extras.freeDigitalRuleEnabled ? (
-                      <div className="grid gap-4 md:grid-cols-2">
+                      <div className="grid gap-4 @min-[520px]/settings-card:grid-cols-2">
                         <Field label="Who should be able to download photos for free?" hint="The album option applies when a client opens an album. It does not select or restrict the rule to one named album.">
-                          <select value={extras.freeDigitalAudience} onChange={(e) => setExtra("freeDigitalAudience", e.target.value as EventGalleryExtraSettings["freeDigitalAudience"])} className="w-full rounded-xl border border-neutral-200 bg-white px-4 py-3 text-sm text-neutral-800 placeholder:text-neutral-400">
+                          <select value={extras.freeDigitalAudience} onChange={(e) => setExtra("freeDigitalAudience", e.target.value as EventGalleryExtraSettings["freeDigitalAudience"])} className="w-full min-w-0 max-w-full rounded-xl border border-neutral-200 bg-white px-4 py-3 text-sm text-neutral-800 placeholder:text-neutral-400">
                             <option value="gallery">All visitors to this gallery</option>
                             <option value="album">Visitors viewing an album</option>
                             <option value="person">One specific person</option>
                           </select>
                         </Field>
                         <Field label="What size files should be delivered?">
-                          <select value={extras.freeDigitalResolution} onChange={(e) => setExtra("freeDigitalResolution", e.target.value as EventGalleryExtraSettings["freeDigitalResolution"])} className="w-full rounded-xl border border-neutral-200 bg-white px-4 py-3 text-sm text-neutral-800 placeholder:text-neutral-400">
+                          <select value={extras.freeDigitalResolution} onChange={(e) => setExtra("freeDigitalResolution", e.target.value as EventGalleryExtraSettings["freeDigitalResolution"])} className="w-full min-w-0 max-w-full rounded-xl border border-neutral-200 bg-white px-4 py-3 text-sm text-neutral-800 placeholder:text-neutral-400">
                             <option value="original">Original</option>
                             <option value="large">Large</option>
                             <option value="web">Web</option>
                           </select>
                         </Field>
                         <Field label="How many photos can each visitor download?">
-                          <select value={extras.freeDigitalDownloadLimit} onChange={(e) => setExtra("freeDigitalDownloadLimit", e.target.value as EventGalleryExtraSettings["freeDigitalDownloadLimit"])} className="w-full rounded-xl border border-neutral-200 bg-white px-4 py-3 text-sm text-neutral-800 placeholder:text-neutral-400">
+                          <select value={extras.freeDigitalDownloadLimit} onChange={(e) => setExtra("freeDigitalDownloadLimit", e.target.value as EventGalleryExtraSettings["freeDigitalDownloadLimit"])} className="w-full min-w-0 max-w-full rounded-xl border border-neutral-200 bg-white px-4 py-3 text-sm text-neutral-800 placeholder:text-neutral-400">
                             <option value="unlimited">Unlimited</option>
                             <option value="10">10</option>
                             <option value="5">5</option>
@@ -1550,7 +1565,7 @@ export default function ProjectSettingsPage() {
                                 onChange={(e) =>
                                   setExtra("freeDigitalTargetName", e.target.value)
                                 }
-                                className="w-full rounded-xl border border-neutral-200 bg-white px-4 py-3 text-sm text-neutral-800 placeholder:text-neutral-400"
+                                className="w-full min-w-0 max-w-full rounded-xl border border-neutral-200 bg-white px-4 py-3 text-sm text-neutral-800 placeholder:text-neutral-400"
                                 placeholder="Ex. Harout"
                               />
                             </Field>
@@ -1561,7 +1576,7 @@ export default function ProjectSettingsPage() {
                                 onChange={(e) =>
                                   setExtra("freeDigitalTargetEmail", e.target.value)
                                 }
-                                className="w-full rounded-xl border border-neutral-200 bg-white px-4 py-3 text-sm text-neutral-800 placeholder:text-neutral-400"
+                                className="w-full min-w-0 max-w-full rounded-xl border border-neutral-200 bg-white px-4 py-3 text-sm text-neutral-800 placeholder:text-neutral-400"
                                 placeholder="name@example.com"
                               />
                               <datalist id="free-digital-person-choices">
@@ -1604,7 +1619,7 @@ export default function ProjectSettingsPage() {
                             <input
                               value={extras.downloadPin}
                               onChange={(e) => setExtra("downloadPin", e.target.value)}
-                              className="max-w-md rounded-xl border border-neutral-200 bg-white px-4 py-3 text-sm text-neutral-800 placeholder:text-neutral-400"
+                              className="w-full min-w-0 max-w-md rounded-xl border border-neutral-200 bg-white px-4 py-3 text-sm text-neutral-800 placeholder:text-neutral-400"
                               placeholder="Set a download PIN"
                             />
                           </Field>
@@ -1631,7 +1646,7 @@ export default function ProjectSettingsPage() {
                   <Card title="Shopping Cart/Store" description="Allow clients to place orders in the gallery.">
                     <Field label="Price Sheet">
                       <div className="relative max-w-md">
-                        <select value={packageProfileId} onChange={(e) => setPackageProfileId(e.target.value)} className="w-full appearance-none rounded-xl border border-neutral-200 bg-white px-4 py-3 pr-10 text-sm text-neutral-700">
+                        <select value={packageProfileId} onChange={(e) => setPackageProfileId(e.target.value)} className="w-full min-w-0 max-w-full appearance-none rounded-xl border border-neutral-200 bg-white px-4 py-3 pr-10 text-sm text-neutral-700">
                           <option value="">Choose price sheet</option>
                           {packageProfiles.map((profile) => (
                             <option key={profile.id} value={profile.id}>{profile.profile_name || profile.name || profile.id}</option>
@@ -1650,7 +1665,7 @@ export default function ProjectSettingsPage() {
                       ) : null}
                     </Field>
                     <Field label="Minimum Order Amount (optional)" hint="Set a minimum order amount for this gallery">
-                      <input value={extras.minimumOrderAmount} onChange={(e) => setExtra("minimumOrderAmount", e.target.value)} className="max-w-md rounded-xl border border-neutral-200 bg-white px-4 py-3 text-sm text-neutral-800 placeholder:text-neutral-400" placeholder="ex. $20.00" />
+                      <input value={extras.minimumOrderAmount} onChange={(e) => setExtra("minimumOrderAmount", e.target.value)} className="w-full min-w-0 max-w-md rounded-xl border border-neutral-200 bg-white px-4 py-3 text-sm text-neutral-800 placeholder:text-neutral-400" placeholder="ex. $20.00" />
                     </Field>
                     <ToggleRow title="Allow Cropping" description="Client crop selection is not available yet. Your saved preference is kept." disabled checked={extras.allowCropping} onChange={(next) => setExtra("allowCropping", next)} />
                     <ToggleRow title="Enable Store" description="Allow your clients to shop by product first" checked={extras.enableStore} onChange={(next) => setExtra("enableStore", next)} />
@@ -1658,15 +1673,15 @@ export default function ProjectSettingsPage() {
                     <ToggleRow title="Enable Pickup" description="When Shipping is on, allow clients to choose Pickup too. When Shipping is off, Pickup remains the delivery method." checked={extras.pickupEnabled} onChange={(next) => setExtra("pickupEnabled", next)} />
                     <ToggleRow title="Use Special Pickup Location" description="Show a studio or custom pickup address instead of the default event pickup." checked={extras.pickupLocationEnabled} onChange={(next) => setExtra("pickupLocationEnabled", next)} />
                     {extras.pickupLocationEnabled ? (
-                      <div className="grid gap-4 md:grid-cols-2">
+                      <div className="grid gap-4 @min-[520px]/settings-card:grid-cols-2">
                         <Field label="Pickup Location Name">
-                          <input value={extras.pickupLocationName} onChange={(e) => setExtra("pickupLocationName", e.target.value)} className="w-full rounded-xl border border-neutral-200 bg-white px-4 py-3 text-sm text-neutral-800 placeholder:text-neutral-400" placeholder="Studio pickup" />
+                          <input value={extras.pickupLocationName} onChange={(e) => setExtra("pickupLocationName", e.target.value)} className="w-full min-w-0 max-w-full rounded-xl border border-neutral-200 bg-white px-4 py-3 text-sm text-neutral-800 placeholder:text-neutral-400" placeholder="Studio pickup" />
                         </Field>
                         <Field label="Pickup Address">
-                          <input value={extras.pickupLocationAddress} onChange={(e) => setExtra("pickupLocationAddress", e.target.value)} className="w-full rounded-xl border border-neutral-200 bg-white px-4 py-3 text-sm text-neutral-800 placeholder:text-neutral-400" placeholder="123 Main St" />
+                          <input value={extras.pickupLocationAddress} onChange={(e) => setExtra("pickupLocationAddress", e.target.value)} className="w-full min-w-0 max-w-full rounded-xl border border-neutral-200 bg-white px-4 py-3 text-sm text-neutral-800 placeholder:text-neutral-400" placeholder="123 Main St" />
                         </Field>
                         <Field label="Pickup Instructions">
-                          <textarea value={extras.pickupLocationInstructions} onChange={(e) => setExtra("pickupLocationInstructions", e.target.value)} className="min-h-[96px] w-full rounded-xl border border-neutral-200 bg-white px-4 py-3 text-sm text-neutral-800 placeholder:text-neutral-400 md:col-span-2" placeholder="Pickup hours, door code, or notes for parents" />
+                          <textarea value={extras.pickupLocationInstructions} onChange={(e) => setExtra("pickupLocationInstructions", e.target.value)} className="min-w-0 max-w-full min-h-[96px] w-full rounded-xl border border-neutral-200 bg-white px-4 py-3 text-sm text-neutral-800 placeholder:text-neutral-400" placeholder="Pickup hours, door code, or notes for parents" />
                         </Field>
                       </div>
                     ) : null}
@@ -1690,7 +1705,7 @@ export default function ProjectSettingsPage() {
                     <ToggleRow title="Set Project/Event Cover automatically" description="Supported desktop uploads and school sync fill an empty project cover. Existing chosen covers are kept; Manual only disables automatic selection." checked={extras.autoChooseProjectCover} onChange={(next) => setExtra("autoChooseProjectCover", next)} />
                     <Field label="Automatic cover source">
                       <div className="relative max-w-md">
-                        <select value={extras.coverSource} onChange={(e) => setExtra("coverSource", e.target.value as EventGalleryExtraSettings["coverSource"])} className="w-full appearance-none rounded-xl border border-neutral-200 bg-white px-4 py-3 pr-10 text-sm text-neutral-700">
+                        <select value={extras.coverSource} onChange={(e) => setExtra("coverSource", e.target.value as EventGalleryExtraSettings["coverSource"])} className="w-full min-w-0 max-w-full appearance-none rounded-xl border border-neutral-200 bg-white px-4 py-3 pr-10 text-sm text-neutral-700">
                           <option value="first_valid">First valid photo</option>
                           <option value="newest">Newest photo</option>
                           <option value="oldest">Oldest photo</option>
@@ -1700,7 +1715,7 @@ export default function ProjectSettingsPage() {
                       </div>
                     </Field>
                     <Field label="Internal Notes">
-                      <textarea value={internalNotes} onChange={(e) => setInternalNotes(e.target.value)} className="min-h-[120px] w-full rounded-xl border border-neutral-200 bg-white px-4 py-3 text-sm text-neutral-800 placeholder:text-neutral-400" placeholder="Private notes for studio workflow" />
+                      <textarea value={internalNotes} onChange={(e) => setInternalNotes(e.target.value)} className="min-w-0 max-w-full min-h-[120px] w-full rounded-xl border border-neutral-200 bg-white px-4 py-3 text-sm text-neutral-800 placeholder:text-neutral-400" placeholder="Private notes for studio workflow" />
                     </Field>
                   </Card>
 
@@ -1714,7 +1729,7 @@ export default function ProjectSettingsPage() {
                     />
                     <Field label="Guest Identification Mode (not available)" hint="QR and barcode guest matching are not available yet. Your saved selection is kept.">
                       <div className="relative max-w-md">
-                        <select disabled value={extras.guestIdentificationMode} className="w-full appearance-none rounded-xl border border-neutral-200 bg-neutral-50 px-4 py-3 pr-10 text-sm text-neutral-500 disabled:cursor-not-allowed">
+                        <select disabled value={extras.guestIdentificationMode} className="w-full min-w-0 max-w-full appearance-none rounded-xl border border-neutral-200 bg-neutral-50 px-4 py-3 pr-10 text-sm text-neutral-500 disabled:cursor-not-allowed">
                           <option value="none">Standard event access</option>
                           <option value="qr">QR guest identification</option>
                           <option value="barcode">Barcode guest identification</option>
@@ -1739,14 +1754,14 @@ export default function ProjectSettingsPage() {
                   </Card>
 
                   <Card title="Cover shortcuts" description="Quick links to cover selection tools for this project and its albums.">
-                    <div className="grid gap-4 md:grid-cols-2">
-                      <Link href={`/dashboard/projects/${projectId}`} className="flex items-center justify-between rounded-2xl border border-neutral-200 px-4 py-4 text-sm font-semibold text-neutral-900 hover:bg-neutral-50">
-                        <div className="flex items-center gap-3"><ImageIcon size={18} />Choose project cover</div>
-                        <ArrowLeft className="rotate-180" size={16} />
+                    <div className="grid gap-4 @min-[520px]/settings-card:grid-cols-2">
+                      <Link href={`/dashboard/projects/${projectId}`} className="flex min-w-0 items-center justify-between gap-3 rounded-2xl border border-neutral-200 px-4 py-4 text-sm font-semibold text-neutral-900 hover:bg-neutral-50">
+                        <div className="flex min-w-0 items-center gap-2"><ImageIcon className="shrink-0" size={18} /><span className="min-w-0 break-words">Choose project cover</span></div>
+                        <ArrowLeft className="shrink-0 rotate-180" size={16} />
                       </Link>
-                      <Link href={`/dashboard/projects/${projectId}`} className="flex items-center justify-between rounded-2xl border border-neutral-200 px-4 py-4 text-sm font-semibold text-neutral-900 hover:bg-neutral-50">
-                        <div className="flex items-center gap-3"><FolderOpen size={18} />Open album manager</div>
-                        <ArrowLeft className="rotate-180" size={16} />
+                      <Link href={`/dashboard/projects/${projectId}`} className="flex min-w-0 items-center justify-between gap-3 rounded-2xl border border-neutral-200 px-4 py-4 text-sm font-semibold text-neutral-900 hover:bg-neutral-50">
+                        <div className="flex min-w-0 items-center gap-2"><FolderOpen className="shrink-0" size={18} /><span className="min-w-0 break-words">Open album manager</span></div>
+                        <ArrowLeft className="shrink-0 rotate-180" size={16} />
                       </Link>
                     </div>
                   </Card>

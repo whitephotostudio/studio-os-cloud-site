@@ -30,6 +30,8 @@ import { createClient } from "@/lib/supabase/client";
 import type { BillingInterval } from "@/lib/studio-pricing";
 import { ORDER_FEE_BILLING, ORDER_FEE_PURPOSE } from "@/lib/order-fee-display";
 import { WhatsNewDot, useIsFeatureNew } from "@/components/whats-new-dot";
+import { ProofWatermarkOverlay } from "@/components/parents/proof-watermark-overlay";
+import { normalizeProofWatermarkOpacity, proofWatermarkOpacity } from "@/lib/proof-watermark";
 
 type StripeStatus = {
   ok: boolean;
@@ -361,6 +363,10 @@ export default function SettingsPage() {
   // New profile fields
   const [watermarkEnabled, setWatermarkEnabled] = useState(true);
   const [watermarkLogoUrl, setWatermarkLogoUrl] = useState("");
+  const [watermarkOpacity, setWatermarkOpacity] = useState<number | null>(null);
+  const [watermarkOpacityLoaded, setWatermarkOpacityLoaded] = useState(false);
+  const [watermarkOpacityChanged, setWatermarkOpacityChanged] = useState(false);
+  const [savingWatermark, setSavingWatermark] = useState(false);
   const [studioAddress, setStudioAddress] = useState("");
   const [studioPhone, setStudioPhone] = useState("");
   const [studioEmail, setStudioEmail] = useState("");
@@ -492,6 +498,7 @@ export default function SettingsPage() {
 
   const loadStatus = useCallback(async () => {
     setLoading(true);
+    setWatermarkOpacityLoaded(false);
     setError(null);
     setNotice(null);
     setStudioAppError(null);
@@ -508,7 +515,7 @@ export default function SettingsPage() {
 
       // Fetch Stripe status and Studio App status in parallel
       const authHeaders: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
-      const [res, studioAppRes] = await Promise.all([
+      const [res, studioAppRes, watermarkRes] = await Promise.all([
         fetch("/api/stripe/status", {
           method: "GET",
           headers: authHeaders,
@@ -517,6 +524,11 @@ export default function SettingsPage() {
         }),
         fetch("/api/studio-os-app/status", {
           method: "GET",
+          headers: authHeaders,
+          credentials: "include",
+          cache: "no-store",
+        }).catch(() => null),
+        fetch("/api/dashboard/watermark-settings", {
           headers: authHeaders,
           credentials: "include",
           cache: "no-store",
@@ -553,6 +565,14 @@ export default function SettingsPage() {
       // New profile fields
       setWatermarkEnabled(json.watermarkEnabled !== false);
       setWatermarkLogoUrl(json.watermarkLogoUrl || "");
+      if (watermarkRes?.ok) {
+        const preferences = await watermarkRes.json();
+        setWatermarkOpacity(normalizeProofWatermarkOpacity(preferences.opacity));
+        setWatermarkOpacityLoaded(true);
+        setWatermarkOpacityChanged(false);
+      } else {
+        setWatermarkOpacityLoaded(false);
+      }
       setStudioAddress(json.studioAddress || "");
       setStudioPhone(json.studioPhone || "");
       setStudioEmail(json.studioEmail || "");
@@ -892,11 +912,43 @@ export default function SettingsPage() {
 
       setPhotographerId(nextPhotographerId);
       setStudioId(nextStudioId);
+      if (watermarkOpacityChanged) {
+        await persistWatermarkSettings(session?.access_token ?? null);
+      }
       setNotice("Settings saved.");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Unable to save settings.");
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function persistWatermarkSettings(token: string | null) {
+    if (!watermarkOpacityLoaded) throw new Error("Reload settings before saving your watermark.");
+    const response = await fetch("/api/dashboard/watermark-settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      credentials: "include",
+      body: JSON.stringify({ opacity: watermarkOpacity, enabled: watermarkEnabled, logoUrl: watermarkLogoUrl }),
+    });
+    const result = await response.json();
+    if (!response.ok || !result.ok) throw new Error(result.message || "Unable to save watermark settings.");
+    setWatermarkOpacity(normalizeProofWatermarkOpacity(result.opacity));
+    setWatermarkOpacityChanged(false);
+  }
+
+  async function saveWatermark() {
+    setSavingWatermark(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      await persistWatermarkSettings(session?.access_token ?? null);
+      setNotice("Watermark saved. Reopen the gallery to see the updated proofs.");
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Unable to save watermark settings.");
+    } finally {
+      setSavingWatermark(false);
     }
   }
 
@@ -1359,7 +1411,7 @@ export default function SettingsPage() {
 
             <button
               onClick={saveBranding}
-              disabled={saving}
+              disabled={saving || savingWatermark}
               style={{
                 marginTop: 16,
                 border: "1px solid #0f172a",
@@ -1501,7 +1553,7 @@ export default function SettingsPage() {
               <button
                 type="button"
                 onClick={saveBranding}
-                disabled={saving}
+                disabled={saving || savingWatermark}
                 style={{
                   borderRadius: 12,
                   background: saving ? "#94a3b8" : "#0f172a",
@@ -1610,7 +1662,7 @@ export default function SettingsPage() {
               <button
                 type="button"
                 onClick={saveBranding}
-                disabled={saving}
+                disabled={saving || savingWatermark}
                 style={{
                   borderRadius: 12,
                   background: saving ? "#94a3b8" : "#0f172a",
@@ -1649,6 +1701,7 @@ export default function SettingsPage() {
               <button
                 type="button"
                 onClick={() => setWatermarkEnabled(!watermarkEnabled)}
+                disabled={saving || savingWatermark}
                 style={{
                   width: 52,
                   height: 28,
@@ -1709,7 +1762,7 @@ export default function SettingsPage() {
                   <button
                     type="button"
                     onClick={() => logoInputRef.current?.click()}
-                    disabled={uploadingLogo}
+                    disabled={uploadingLogo || saving || savingWatermark}
                     style={{
                       border: "1px solid #d6dfef",
                       borderRadius: 14,
@@ -1732,8 +1785,36 @@ export default function SettingsPage() {
               </div>
             </div>
 
+            <div style={{ marginTop: 20 }}>
+              <label htmlFor="watermark-opacity" style={{ display: "flex", justifyContent: "space-between", gap: 12, fontSize: 13, fontWeight: 700, color: "#475569" }}>
+                <span>Watermark opacity</span>
+                <span>{Math.round(proofWatermarkOpacity(watermarkOpacity, (watermarkLogoUrl || logoUrl) ? 0.16 : 0.22) * 100)}%{watermarkOpacity === null ? " · current default" : ""}</span>
+              </label>
+              <input
+                id="watermark-opacity" type="range" min={0} max={100} step={1}
+                value={Math.round(proofWatermarkOpacity(watermarkOpacity, (watermarkLogoUrl || logoUrl) ? 0.16 : 0.22) * 100)}
+                disabled={!watermarkOpacityLoaded || savingWatermark || saving}
+                onChange={(event) => { setWatermarkOpacity(Number(event.target.value) / 100); setWatermarkOpacityChanged(true); }}
+                aria-valuetext={`${Math.round(proofWatermarkOpacity(watermarkOpacity, (watermarkLogoUrl || logoUrl) ? 0.16 : 0.22) * 100)} percent`}
+                style={{ width: "100%", marginTop: 10, accentColor: "#d97706" }}
+              />
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "#64748b" }}><span>Subtle</span><span>Strong</span></div>
+              {!watermarkOpacityLoaded ? <div style={{ marginTop: 8, fontSize: 12, color: "#b45309" }}>Watermark settings could not be loaded. Refresh this page to try again.</div> : null}
+              <div style={{ position: "relative", height: 260, marginTop: 14, overflow: "hidden", borderRadius: 14, background: "#475569" }}>
+                <img src="/marketing/portrait-gallery-01.png" alt="Example gallery portrait" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                {watermarkEnabled ? <ProofWatermarkOverlay text={businessName || "PROOF"} logoUrl={watermarkLogoUrl || logoUrl} opacity={watermarkOpacity} variant="viewer" /> : null}
+              </div>
+              <div style={{ marginTop: 7, fontSize: 12, color: "#64748b" }}>Live proof preview. Originals and paid downloads stay unchanged.</div>
+              <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 14 }}>
+                <button type="button" onClick={saveWatermark} disabled={!watermarkOpacityLoaded || savingWatermark || saving} style={{ border: "none", borderRadius: 12, padding: "10px 16px", background: "#0f172a", color: "#fff", fontWeight: 700, cursor: savingWatermark ? "wait" : "pointer", opacity: !watermarkOpacityLoaded || savingWatermark || saving ? 0.6 : 1 }}>
+                  {savingWatermark ? "Saving…" : "Save watermark"}
+                </button>
+                <button type="button" onClick={() => { setWatermarkOpacity(null); setWatermarkOpacityChanged(true); }} disabled={!watermarkOpacityLoaded || savingWatermark || saving} style={{ border: "none", background: "transparent", color: "#64748b", fontSize: 12, cursor: "pointer" }}>Use current defaults</button>
+              </div>
+            </div>
+
             <div style={{ fontSize: 13, color: "#64748b", lineHeight: 1.7, marginTop: 8, padding: "12px 14px", background: "#fffbeb", borderRadius: 14, border: "1px solid #fef3c7" }}>
-              When enabled, your logo renders as a repeating diagonal watermark over every proof photo in the parent gallery. If no logo is uploaded, the school name is used instead.
+              When enabled, your logo renders as a repeating diagonal watermark over every proof photo in the parent gallery. If no logo is uploaded, your studio or gallery name is used instead.
             </div>
           </div>
 

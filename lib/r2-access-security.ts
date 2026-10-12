@@ -6,7 +6,7 @@ export type R2ResourceScope =
   | { kind: "school"; id: string };
 
 export function isServerOnlyR2Key(key: string) {
-  return ["credits", "credit-staging", "order-automation"].includes(key.split("/").filter(Boolean)[0]);
+  return ["credits", "credit-staging", "order-automation", "downloads", "gallery-zips"].includes(key.split("/").filter(Boolean)[0]);
 }
 
 function clean(value: string | null | undefined) {
