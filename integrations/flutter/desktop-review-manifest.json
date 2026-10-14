@@ -1,0 +1,146 @@
+{
+  "root": "/Users/harout/Downloads/Projects/studio-os-order-automation-v2-20260930",
+  "files": [
+    {
+      "path": "lib/screens/home_screen.dart",
+      "status": "modified",
+      "beforeSha256": "f421687144d6c01d501209a58c7036aa120f4d7bf6c15987c6d4a99d44c05da5",
+      "afterSha256": "85240d51385117990f22de4b68d8ae2ec580810f66a44cc50795037601feb989"
+    },
+    {
+      "path": "lib/screens/orders_screen.dart",
+      "status": "modified",
+      "beforeSha256": "3ec8920691b2358363e2f843ce585171e2454689fd5c976514672e008780e3c6",
+      "afterSha256": "84cce1b7515d1432333470e8071255e9746ea7b145fcd75ebf7ae056afed5ece"
+    },
+    {
+      "path": "lib/services/supabase_sync.dart",
+      "status": "modified",
+      "beforeSha256": "1039b07ddb20bda75136bdaf0c7824d6321efac6495f52b7f71614009b1bc99c",
+      "afterSha256": "f249ee2d5cba91e6cb5d4d25521bef20266ab9e5e2bc410a644f9379e23d98be"
+    },
+    {
+      "path": "lib/services/order_auto_match_service.dart",
+      "status": "modified",
+      "beforeSha256": "1b9408ccb019e559710dfd3b633a94dce899c1101384853c838bc7c612d8760d",
+      "afterSha256": "ab67e2d7fb09a562ca2b5b9f9f9804e83053197d69a90d68a0d43f2e52419a60"
+    },
+    {
+      "path": "lib/services/package_sync_service.dart",
+      "status": "modified",
+      "beforeSha256": "fe4f7069dc5c344ee9b8e0ff08f371a62031031980494d8b32cd5fdafc4cb9aa",
+      "afterSha256": "2a56844d0e5e8b34eac4a813ebda3e76591af9ecdf27045348e58f02f973487b"
+    },
+    {
+      "path": "lib/models/collage_template.dart",
+      "status": "added",
+      "beforeSha256": null,
+      "afterSha256": "91a1870eb6a4fde6a0d8c24ffbdfccf0db3f21d1cd84a2ce2fd00f0d9e4b2893"
+    },
+    {
+      "path": "lib/storage/collage_store.dart",
+      "status": "added",
+      "beforeSha256": null,
+      "afterSha256": "4ff84017b4ef4fad29097ba83845b5a2c87132132bd4eac9e82eed65043c89dd"
+    },
+    {
+      "path": "lib/services/collage_renderer.dart",
+      "status": "added",
+      "beforeSha256": null,
+      "afterSha256": "cf4bd2831c7ca1d44aacc2222191cb491f481ecf43f0167509360dd574cda3d0"
+    },
+    {
+      "path": "lib/services/collage_cloud_service.dart",
+      "status": "added",
+      "beforeSha256": null,
+      "afterSha256": "718e1cf0e3154559ea2b17b42b8bf3715738b78d610fcb831c37678ac9ab9113"
+    },
+    {
+      "path": "lib/services/collage_production_service.dart",
+      "status": "added",
+      "beforeSha256": null,
+      "afterSha256": "c43ca62ae733bdcb4b4ab76447e65d1821f06cbb8b14ad135bd4f18570fd251e"
+    },
+    {
+      "path": "lib/screens/collages_screen.dart",
+      "status": "added",
+      "beforeSha256": null,
+      "afterSha256": "45ad042d2603b3171dd5d3838bde698737694de56735ca957759c3e8e7d650b7"
+    },
+    {
+      "path": "docs/collage-desktop-preview.md",
+      "status": "added",
+      "beforeSha256": null,
+      "afterSha256": "9e6703a9e50ca1c54fa966df65531e7f7101a2901f67bad23d0a1f6ab0b4f7af"
+    },
+    {
+      "path": "test/collage_template_test.dart",
+      "status": "added",
+      "beforeSha256": null,
+      "afterSha256": "43905431600818d29e698f93b22d44a6b867f3a715b5f0d523c1e74fade20c5a"
+    },
+    {
+      "path": "test/collage_store_test.dart",
+      "status": "added",
+      "beforeSha256": null,
+      "afterSha256": "a2ac866d4be266ee596178f9810bb688fb92cbc59aac48462cbf7657ddce82a1"
+    },
+    {
+      "path": "test/collage_order_safety_test.dart",
+      "status": "added",
+      "beforeSha256": null,
+      "afterSha256": "caaddd20b02c4d707f0ea924b88c242bee02f9702a10ecdc8d156a70131b3194"
+    },
+    {
+      "path": "test/collage_renderer_test.dart",
+      "status": "added",
+      "beforeSha256": null,
+      "afterSha256": "c6d0fe18dfe963f0344e2cba34b17f218dc235d2bead43a2b30b6ef0cb8af4a0"
+    },
+    {
+      "path": "test/collage_cloud_service_test.dart",
+      "status": "added",
+      "beforeSha256": null,
+      "afterSha256": "98f2aee8d1d1412546413b9b25cdd239dbe9ccecc7b4eea47f1a92d05be89571"
+    },
+    {
+      "path": "test/collages_screen_test.dart",
+      "status": "added",
+      "beforeSha256": null,
+      "afterSha256": "e7b1bbdb98238b6e8565aef0222b5f6e02fdb69506025d993481cf58c7d54324"
+    },
+    {
+      "path": "test/collage_production_service_test.dart",
+      "status": "added",
+      "beforeSha256": null,
+      "afterSha256": "e756665c67c04f35512f7bf5c56b8234c67000c50db477d91fbca9b88f42c015"
+    },
+    {
+      "path": "test/collage_catalog_sync_test.dart",
+      "status": "added",
+      "beforeSha256": null,
+      "afterSha256": "73bb30c1605d475718c5b20275ca0eaad1da24be7bed7c06bbbfd91d91d1a247"
+    }
+  ],
+  "evidence": [
+    "preview/collages-native-graduation.png"
+  ],
+  "validation": {
+    "testsPassed": 1887,
+    "testsSkipped": 3,
+    "finalFullSuite": "passed",
+    "testArgs": "--no-pub --dart-define=STUDIO_OS_EDITION=live-v2 --concurrency=2",
+    "fullSuiteLog": "/tmp/studio-os-collage-desktop-full-tests-final-frozen.txt",
+    "wholeLibraryAndEightNewTestFilesAnalysis": "No issues found",
+    "focusedCollageTestsPassed": 30,
+    "focusedCatalogAndRelatedTestsPassed": 33,
+    "installedOrLiveWorkflowVerified": false
+  },
+  "patchSha256": "8146b35450f0bb5ea967f97ba17fdb6c74c2c0f5cbecb4ea90b2648b15915a48",
+  "review": {
+    "baselineCommit": "d6934fcf237380a5f10459870d5f4be4cd9f10ad",
+    "implementationCommit": "86c48df8b943eb8d8c0190eaae6d7d064c105028",
+    "patchSha256": "41913cde82f90e886329552d2020d2bffbc6143adf2f018865a8905f0ae917c5",
+    "appliedToCapturedBaselineAndAllHashesVerified": true
+  }
+}
