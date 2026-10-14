@@ -27,6 +27,7 @@ create table public.collage_template_galleries (
   photographer_id uuid not null,
   school_id uuid references public.schools(id),
   project_id uuid references public.projects(id),
+  revoked_at timestamptz,
   foreign key(version_id, photographer_id) references public.collage_template_versions(id, photographer_id),
   check ((school_id is null) <> (project_id is null))
 );
@@ -46,8 +47,29 @@ create function public.keep_collage_version_immutable() returns trigger language
 begin raise exception 'Collage versions and gallery grants are immutable. Save a new version.' using errcode = '42501'; end;
 $$;
 create trigger collage_versions_immutable before update or delete on public.collage_template_versions for each row execute function public.keep_collage_version_immutable();
-create trigger collage_grants_immutable before update or delete on public.collage_template_galleries for each row execute function public.keep_collage_version_immutable();
 revoke all on function public.keep_collage_version_immutable() from public, anon, authenticated, service_role;
+create function public.keep_collage_gallery_grant_immutable() returns trigger language plpgsql set search_path = '' as $$
+begin
+  if tg_op = 'UPDATE' and old.revoked_at is null and new.revoked_at is not null
+    and new.version_id is not distinct from old.version_id and new.photographer_id is not distinct from old.photographer_id
+    and new.school_id is not distinct from old.school_id and new.project_id is not distinct from old.project_id then return new; end if;
+  raise exception 'Collage gallery grants are immutable except for one-way withdrawal.' using errcode = '42501';
+end;
+$$;
+create trigger collage_grants_immutable before update or delete on public.collage_template_galleries for each row execute function public.keep_collage_gallery_grant_immutable();
+revoke all on function public.keep_collage_gallery_grant_immutable() from public, anon, authenticated, service_role;
+create function public.withdraw_collage_gallery_access(p_version_id uuid, p_photographer_id uuid) returns integer language plpgsql security definer set search_path = '' as $$
+declare withdrawn integer;
+begin
+  perform 1 from public.collage_template_versions where id = p_version_id and photographer_id = p_photographer_id for update;
+  if not found then raise exception 'Collage version belongs to another studio' using errcode = '42501'; end if;
+  update public.collage_template_galleries set revoked_at = now() where version_id = p_version_id and photographer_id = p_photographer_id and revoked_at is null;
+  get diagnostics withdrawn = row_count;
+  return withdrawn;
+end;
+$$;
+revoke all on function public.withdraw_collage_gallery_access(uuid,uuid) from public, anon, authenticated;
+grant execute on function public.withdraw_collage_gallery_access(uuid,uuid) to service_role;
 
 create function public.save_collage_template_version(p_template_id uuid, p_photographer_id uuid, p_name text,
   p_design jsonb, p_artwork_key text, p_content_hash text, p_published boolean, p_school_ids uuid[], p_project_ids uuid[])

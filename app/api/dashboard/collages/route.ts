@@ -17,7 +17,15 @@ export async function GET(request: NextRequest) {
     const { service, photographerId } = await collageDashboardAccess(request);
     const result = await service.from("collage_template_versions").select(collageVersionFields).eq("photographer_id", photographerId).order("created_at", { ascending: false }).limit(500);
     if (result.error) throw result.error;
-    return NextResponse.json({ ok: true, preview: true, versions: (result.data as CollageVersionRow[]).map(storedCollageVersion) }, { headers: { "Cache-Control": "private, no-store" } });
+    const availableCounts = new Map<string, number>();
+    for (let offset = 0; offset < 100_000; offset += 1000) {
+      const grants = await service.from("collage_template_galleries").select("version_id").eq("photographer_id", photographerId).is("revoked_at", null).order("version_id").order("school_id").order("project_id").range(offset, offset + 999);
+      if (grants.error) throw grants.error;
+      for (const grant of grants.data ?? []) availableCounts.set(grant.version_id, (availableCounts.get(grant.version_id) ?? 0) + 1);
+      if ((grants.data?.length ?? 0) < 1000) break;
+      if (offset === 99_000) throw new CollageAccessError("Too many gallery assignments to list safely.", 409);
+    }
+    return NextResponse.json({ ok: true, preview: true, versions: (result.data as CollageVersionRow[]).map(row => ({ ...storedCollageVersion(row), availableGalleryCount: availableCounts.get(row.id) ?? 0 })) }, { headers: { "Cache-Control": "private, no-store" } });
   } catch (error) { return failure(error); }
 }
 export async function POST(request: NextRequest) {

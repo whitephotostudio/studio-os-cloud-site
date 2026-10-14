@@ -173,3 +173,40 @@ test("owner recipe review denies foreign orders and recipes, tolerates only abse
   const h = orderRecipeHarness({ missingColumn: true }), response = await h.route.GET(h.request);
   assert.equal(response.status, 200); assert.deepEqual((await response.json()).prints, []);
 });
+
+test("parent catalogue returns partial permitted metadata without artwork reads; artwork loads require one strictly authorized version", async () => {
+  let artworkReads = 0;
+  const artVersion = { ...version, artworkKey: `order-automation/${owner}/collages/artwork/${"a".repeat(64)}.png` };
+  const route = moduleAt("app/api/portal/collages/route", {
+    "@/lib/dashboard-auth": { createDashboardServiceClient: () => ({}) },
+    "@/lib/parent-gallery-session": { ParentGallerySessionError: SessionError, async resolveParentGallerySession() { return { laneId: itemId, kind: "school", photographerId: owner, galleryId: orderId }; }, assertParentSessionScope() {} },
+    "@/lib/collage-server": { ...core,
+      async resolveCollageCatalogueVersions(_service, _owner, _scope, ids) { return { versions: new Map(ids.includes(versionId) ? [[versionId, artVersion]] : []), unavailableVersionIds: ids.filter(id => id !== versionId) }; },
+      async resolveCollageVersions(_service, _owner, _scope, ids) { if (ids.some(id => id !== versionId)) throw new core.CollageAccessError("Unavailable", 403); return new Map([[versionId, artVersion]]); },
+      async collageVersionForPreview(version) { artworkReads++; return { ...version, design: { ...version.design, overlay: "data:image/png;base64,YXJ0" } }; },
+    },
+  });
+  const request = (ids, artwork = false) => new NextRequest(`https://example.test/api/portal/collages?parentLaneId=${itemId}&versionIds=${ids.join(",")}${artwork ? "&artwork=1" : ""}`);
+  const response = await route.GET(request([versionId, other])); assert.equal(response.status, 200);
+  const payload = await response.json(); assert.deepEqual(payload.unavailableVersionIds, [other]); assert.equal(payload.versions.length, 1);
+  assert.equal(payload.versions[0].design.overlay, null); assert.equal(payload.versions[0].hasArtwork, true); assert.equal(artworkReads, 0);
+  assert.equal((await route.GET(request([versionId, other], true))).status, 400); assert.equal(artworkReads, 0);
+  assert.equal((await route.GET(request([other], true))).status, 403); assert.equal(artworkReads, 0);
+  const artResponse = await route.GET(request([versionId], true)); assert.equal(artResponse.status, 200); assert.equal(artworkReads, 1);
+  assert.match((await artResponse.json()).versions[0].design.overlay, /^data:image\/png/);
+});
+test("gallery withdrawal authenticates the owner and binds its service-only RPC without altering paid recipes", async () => {
+  for (const denied of [false, true]) {
+    let calls = 0;
+    const route = moduleAt("app/api/dashboard/collages/[versionId]/withdraw/route", {
+      "@/lib/collage-server": { ...core, async collageDashboardAccess(_request, mutate) { assert.equal(mutate, true); return { photographerId: owner, user: { id: other }, service: { async rpc(name, args) {
+        calls++; assert.equal(name, "withdraw_collage_gallery_access"); assert.deepEqual(args, { p_version_id: versionId, p_photographer_id: owner });
+        return denied ? { data: null, error: { code: "42501" } } : { data: 2, error: null };
+      } } }; } },
+      "@/lib/rate-limit": { async rateLimit() { return { allowed: true }; } },
+    });
+    const response = await route.POST(new NextRequest(`https://example.test/api/dashboard/collages/${versionId}/withdraw`, { method: "POST" }), { params: Promise.resolve({ versionId }) });
+    assert.equal(response.status, denied ? 404 : 200); assert.equal(calls, 1);
+    if (!denied) assert.equal((await response.json()).revokedCount, 2);
+  }
+});

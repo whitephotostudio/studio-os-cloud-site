@@ -81,9 +81,7 @@ export function validateCollageVersionAccess(rows: CollageVersionRow[], photogra
   return result;
 }
 
-/** Called only after authenticating the parent's actual gallery scope. */
-export async function resolveCollageVersions(service: SupabaseClient, photographerId: string, scope: CollageGalleryScope, versionIds: string[]) {
-  if (!versionIds.length) return new Map<string, StoredCollageVersion>();
+async function loadCollageVersionAccess(service: SupabaseClient, photographerId: string, scope: CollageGalleryScope, versionIds: string[]) {
   if (!!scope.schoolId === !!scope.projectId || !COLLAGE_UUID.test(scope.schoolId || scope.projectId || "") || versionIds.length > 20 || versionIds.some(id => !COLLAGE_UUID.test(id))) throw new CollageAccessError("Invalid collage gallery scope.");
   const gallery = await service.from(scope.schoolId ? "schools" : "projects").select("id").eq("id", scope.schoolId || scope.projectId!).eq("photographer_id", photographerId).maybeSingle();
   if (gallery.error) throw gallery.error;
@@ -91,11 +89,28 @@ export async function resolveCollageVersions(service: SupabaseClient, photograph
   const ids = [...new Set(versionIds)];
   const [versions, grants] = await Promise.all([
     service.from("collage_template_versions").select(collageVersionFields).eq("photographer_id", photographerId).in("id", ids),
-    service.from("collage_template_galleries").select("version_id").eq("photographer_id", photographerId).eq(scope.schoolId ? "school_id" : "project_id", scope.schoolId || scope.projectId!).in("version_id", ids),
+    service.from("collage_template_galleries").select("version_id").eq("photographer_id", photographerId).eq(scope.schoolId ? "school_id" : "project_id", scope.schoolId || scope.projectId!).in("version_id", ids).is("revoked_at", null),
   ]);
   if (versions.error) throw versions.error;
   if (grants.error) throw grants.error;
-  return validateCollageVersionAccess((versions.data ?? []) as CollageVersionRow[], photographerId, ids, (grants.data ?? []).map(row => row.version_id));
+  return { rows: (versions.data ?? []) as CollageVersionRow[], assigned: (grants.data ?? []).map(row => row.version_id), ids };
+}
+/** Called only after authenticating the parent's actual gallery scope. */
+export async function resolveCollageVersions(service: SupabaseClient, photographerId: string, scope: CollageGalleryScope, versionIds: string[]) {
+  if (!versionIds.length) return new Map<string, StoredCollageVersion>();
+  const loaded = await loadCollageVersionAccess(service, photographerId, scope, versionIds);
+  return validateCollageVersionAccess(loaded.rows, photographerId, loaded.ids, loaded.assigned);
+}
+/** Catalogue discovery omits unavailable products without exposing their owners or designs. */
+export async function resolveCollageCatalogueVersions(service: SupabaseClient, photographerId: string, scope: CollageGalleryScope, versionIds: string[]) {
+  if (!versionIds.length) return { versions: new Map<string, StoredCollageVersion>(), unavailableVersionIds: [] as string[] };
+  const loaded = await loadCollageVersionAccess(service, photographerId, scope, versionIds);
+  const versions = new Map<string, StoredCollageVersion>(), unavailableVersionIds: string[] = [];
+  for (const id of loaded.ids) {
+    try { versions.set(id, validateCollageVersionAccess(loaded.rows, photographerId, [id], loaded.assigned).get(id)!); }
+    catch (error) { if (!(error instanceof CollageAccessError)) throw error; unavailableVersionIds.push(id); }
+  }
+  return { versions, unavailableVersionIds };
 }
 
 export async function readCollageArtwork(version: Pick<StoredCollageVersion, "photographerId" | "artworkKey">) {
