@@ -12,6 +12,9 @@ import { authorizeParentCheckout, registerParentCheckoutReturn, bindParentChecko
 import {
   createDirectOrderCheckoutSession,
   quoteDirectOrderPlatformFees,
+  resolveDirectOrderFeeScopes,
+  resolveDirectOrderPricingPolicy,
+  OrderFeeClassificationError,
   directOrderPlatformFeePayload,
   describeConnectStatus,
   getConnectedAccountId,
@@ -93,6 +96,9 @@ type PhotographerRow = {
   stripe_connect_payouts_enabled: boolean | null;
   subscription_status: string | null;
   subscription_plan_code: string | null;
+  stripe_subscription_id: string | null;
+  stripe_platform_customer_id: string | null;
+  order_usage_rate_cents: number | null;
   is_platform_admin: boolean | null;
   created_at: string | null;
   trial_starts_at: string | null;
@@ -306,7 +312,7 @@ export async function POST(req: NextRequest) {
     const { data: photographer, error: photographerError } = await sb
       .from("photographers")
       .select(
-        "id,business_name,stripe_account_id,stripe_connected_account_id,stripe_connect_onboarding_complete,stripe_connect_charges_enabled,stripe_connect_payouts_enabled,subscription_status,subscription_plan_code,is_platform_admin,created_at,trial_starts_at,trial_ends_at",
+        "id,business_name,stripe_account_id,stripe_connected_account_id,stripe_connect_onboarding_complete,stripe_connect_charges_enabled,stripe_connect_payouts_enabled,subscription_status,subscription_plan_code,stripe_subscription_id,stripe_platform_customer_id,order_usage_rate_cents,is_platform_admin,created_at,trial_starts_at,trial_ends_at",
       )
       .eq("id", photographerId)
       .maybeSingle<PhotographerRow>();
@@ -573,14 +579,19 @@ export async function POST(req: NextRequest) {
       member.stripe_checkout_session_id || member.stripe_payment_intent_id ||
       member.paid_at || member.counted_for_monthly_usage || member.status === "checkout_starting");
     if (frozenCount === 0 && !legacyAttempt) {
+      const pricingPolicy = await resolveDirectOrderPricingPolicy(photographer, freeTrialActive);
+      const feeScopes = pricingPolicy.pricingProfile === "gallery_v2" &&
+          !photographer.is_platform_admin && pricingPolicy.planCode !== "starter"
+        ? await resolveDirectOrderFeeScopes(sb, photographer.id, checkoutOrders.filter(member =>
+            member.is_test !== true && storedOrderTotalCents(member)! > 0))
+        : new Map();
       const quote = await quoteDirectOrderPlatformFees({
-        planCode: freeTrialActive ? "studio" : photographer.subscription_plan_code,
-        subscriptionStatus: photographer.subscription_status,
-        freeTrialActive,
+        ...pricingPolicy,
         isPlatformAdmin: Boolean(photographer.is_platform_admin),
         currency,
         orders: checkoutOrders.map(member => ({
           id: member.id, totalCents: storedOrderTotalCents(member)!, isTest: Boolean(member.is_test),
+          feeScope: feeScopes.get(member.id),
         })),
       });
       const snapshots = quote.orders.map(member => ({
@@ -672,7 +683,7 @@ export async function POST(req: NextRequest) {
     if (error instanceof ParentCheckoutReturnError || error instanceof ParentGallerySessionError) {
       return respond({ ok: false, message: error.message }, { status: error.status });
     }
-    if (error instanceof ParentCutoutPreflightError || error instanceof OnlineBackdropsDisabledError) {
+    if (error instanceof ParentCutoutPreflightError || error instanceof OnlineBackdropsDisabledError || error instanceof OrderFeeClassificationError) {
       return respond({ ok: false, message: error.message }, { status: 409 });
     }
     console.error("[stripe:checkout]", error);

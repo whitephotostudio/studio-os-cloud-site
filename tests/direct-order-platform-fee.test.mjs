@@ -346,3 +346,21 @@ test('legacy full and direct partial refunds retain their previous customer-refu
   assert.equal(partial.legacyWaivers, 0);
   assert.ok([...legacy.calls, ...partial.calls].every(call => call.method === 'GET'));
 });
+
+test('trusted new fee profile prices mixed production/gallery/test orders individually without monthly duplicates', async context => {
+  const f=fixture(context);
+  const quote=await f.api.quoteDirectOrderPlatformFees({pricingProfile:'gallery_v2',planCode:'studio',
+    subscriptionStatus:'active',isPlatformAdmin:false,currency:'cad',orders:[
+      {id:'school-a',totalCents:1000,feeScope:'production'},
+      {id:'gallery-a',totalCents:2000,feeScope:'gallery'},
+      {id:'school-b',totalCents:1500,feeScope:'production'},
+      {id:'test-a',totalCents:1000,isTest:true},
+      {id:'free-a',totalCents:0},
+    ]});
+  assert.equal(quote.amountCents,90);
+  assert.deepEqual(quote.orders.map(order=>[order.amountCents,order.collectionMethod]),
+    [[45,'connect_application_fee'],[0,'waived'],[45,'connect_application_fee'],[0,'waived'],[0,'waived']]);
+  await assert.rejects(f.api.quoteDirectOrderPlatformFees({pricingProfile:'gallery_v2',planCode:'core',
+    subscriptionStatus:'active',isPlatformAdmin:false,currency:'cad',orders:[{id:'unknown',totalCents:1000}]}),/saved workflow/);
+  assert.equal(f.calls.length,0);
+});

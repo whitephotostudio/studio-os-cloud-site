@@ -9,6 +9,42 @@
 
 import { homeFaqItems } from "@/lib/marketing-faq";
 import { useCspNonce } from "@/components/csp-nonce";
+import type { PricingCatalogSnapshot, PlanCode } from "@/lib/studio-pricing";
+import { getOrderFeeDisclosure } from "@/lib/order-fee-display";
+
+const planCodes: PlanCode[] = ["starter", "core", "studio"];
+const legacyOfferDescriptions = {
+  starter: "Premium online galleries, client ordering, digital delivery, and private client access in the cloud.",
+  core: "Connected desktop and cloud workflow with capture control, Projects, AI background tools, and online galleries.",
+  studio: "Multi-photographer plan with advanced structured workflow tools for studios and high-volume teams.",
+};
+
+function catalogOffers(catalog: PricingCatalogSnapshot, application = false) {
+  return planCodes.map((code) => {
+    const plan = catalog.plans[code];
+    const price = (plan.priceCents / 100).toFixed(2);
+    const fee = getOrderFeeDisclosure(plan, catalog.pricingProfile);
+    return {
+      "@type": "Offer",
+      name: plan.publicName,
+      price,
+      priceCurrency: "CAD",
+      ...(catalog.pricingProfile === "legacy" && application ? { priceValidUntil: "2027-12-31" } : {}),
+      description: catalog.pricingProfile === "gallery_v2"
+        ? `${plan.description} ${fee.fee}. Stripe processing fees are additional. ${catalog.galleryStoragePolicy === "unlimited_jpeg"
+          ? "Unlimited finished JPEG client gallery hosting while subscribed, up to 50 MB per photo; RAW files, videos and general-purpose backups are excluded."
+          : "Photo gallery hosting included."}`
+        : legacyOfferDescriptions[code],
+      url: "https://www.studiooscloud.com/pricing",
+      priceSpecification: {
+        "@type": "UnitPriceSpecification",
+        price,
+        priceCurrency: "CAD",
+        billingDuration: "P1M",
+      },
+    };
+  });
+}
 
 type JsonLdProps = {
   data: Record<string, unknown>;
@@ -52,7 +88,7 @@ export function OrganizationJsonLd() {
 }
 
 /** SoftwareApplication schema - used on the homepage and Studio OS page */
-export function SoftwareApplicationJsonLd() {
+export function SoftwareApplicationJsonLd({ catalog }: { catalog: PricingCatalogSnapshot }) {
   return (
     <JsonLd
       data={{
@@ -69,38 +105,7 @@ export function SoftwareApplicationJsonLd() {
         provider: {
           "@id": "https://www.studiooscloud.com/#organization",
         },
-        offers: [
-          {
-            "@type": "Offer",
-            name: "Web Gallery Plan",
-            price: "49.00",
-            priceCurrency: "CAD",
-            priceValidUntil: "2027-12-31",
-            description:
-              "Premium online galleries, client ordering, digital delivery, and private client access in the cloud.",
-            url: "https://www.studiooscloud.com/pricing",
-          },
-          {
-            "@type": "Offer",
-            name: "App Plan",
-            price: "99.00",
-            priceCurrency: "CAD",
-            priceValidUntil: "2027-12-31",
-            description:
-              "Connected desktop and cloud workflow with capture control, Projects, AI background tools, and online galleries.",
-            url: "https://www.studiooscloud.com/pricing",
-          },
-          {
-            "@type": "Offer",
-            name: "Studio Plan",
-            price: "199.00",
-            priceCurrency: "CAD",
-            priceValidUntil: "2027-12-31",
-            description:
-              "Multi-photographer plan with advanced structured workflow tools for studios and high-volume teams.",
-            url: "https://www.studiooscloud.com/pricing",
-          },
-        ],
+        offers: catalogOffers(catalog, true),
         featureList: [
           "Online school and event booking",
           "Automatic booking-to-student-roster workflow",
@@ -130,7 +135,8 @@ export function SoftwareApplicationJsonLd() {
 }
 
 /** Product pricing schema - used on the pricing page */
-export function PricingJsonLd() {
+export function PricingJsonLd({ catalog }: { catalog: PricingCatalogSnapshot }) {
+  const prices = planCodes.map((code) => catalog.plans[code].priceCents);
   return (
     <JsonLd
       data={{
@@ -150,48 +156,11 @@ export function PricingJsonLd() {
         },
         offers: {
           "@type": "AggregateOffer",
-          lowPrice: "49.00",
-          highPrice: "199.00",
+          lowPrice: (Math.min(...prices) / 100).toFixed(2),
+          highPrice: (Math.max(...prices) / 100).toFixed(2),
           priceCurrency: "CAD",
-          offerCount: 3,
-          offers: [
-            {
-              "@type": "Offer",
-              name: "Web Gallery Plan",
-              price: "49.00",
-              priceCurrency: "CAD",
-              priceSpecification: {
-                "@type": "UnitPriceSpecification",
-                price: "49.00",
-                priceCurrency: "CAD",
-                billingDuration: "P1M",
-              },
-            },
-            {
-              "@type": "Offer",
-              name: "App Plan",
-              price: "99.00",
-              priceCurrency: "CAD",
-              priceSpecification: {
-                "@type": "UnitPriceSpecification",
-                price: "99.00",
-                priceCurrency: "CAD",
-                billingDuration: "P1M",
-              },
-            },
-            {
-              "@type": "Offer",
-              name: "Studio Plan",
-              price: "199.00",
-              priceCurrency: "CAD",
-              priceSpecification: {
-                "@type": "UnitPriceSpecification",
-                price: "199.00",
-                priceCurrency: "CAD",
-                billingDuration: "P1M",
-              },
-            },
-          ],
+          offerCount: planCodes.length,
+          offers: catalogOffers(catalog),
         },
       }}
     />

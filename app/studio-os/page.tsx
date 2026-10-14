@@ -3,6 +3,7 @@ import Link from "next/link";
 
 import { SiteHeader } from "../../components/site-header";
 import { BreadcrumbJsonLd, SoftwareApplicationJsonLd } from "@/components/json-ld";
+import { getPricingCatalogSnapshot } from "@/lib/studio-pricing";
 import { Reveal } from "@/components/reveal";
 import { StudioPanelShowcase } from "@/components/studio-panel-showcase";
 import { VisualSlot } from "@/components/visual-slot";
@@ -91,7 +92,7 @@ export default function StudioOSPage() {
 
   return (
     <div className="min-h-screen bg-white text-neutral-900">
-      <SoftwareApplicationJsonLd />
+      <SoftwareApplicationJsonLd catalog={getPricingCatalogSnapshot()} />
       <BreadcrumbJsonLd
         items={[
           { name: "Home", item: "https://www.studiooscloud.com" },

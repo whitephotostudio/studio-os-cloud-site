@@ -4,7 +4,7 @@ import {readFileSync} from 'node:fs';
 import ts from 'typescript';
 import {AuthRetryableFetchError} from '@supabase/supabase-js';
 
-function pageHarness(path, {auth = {}, blockedStorage = false, search = ''} = {}) {
+function pageHarness(path, {auth = {}, blockedStorage = false, search = '', env = {}} = {}) {
   const slots = [], effects = [], requests = [], timers = new Map();
   let hook = 0, dirty = false, tree, nextTimer = 1;
   const jsx = (type, props) => ({type, props});
@@ -27,8 +27,9 @@ function pageHarness(path, {auth = {}, blockedStorage = false, search = ''} = {}
     },
   };
   const storage = {getItem() {if (blockedStorage) throw Error('Storage is disabled'); return null;}, setItem() {}, removeItem() {}};
+  const routePath = path === 'components/sign-up-client.tsx' ? '/sign-up' : '/' + path.split('/')[1];
   const browser = {
-    location: {href: 'https://example.invalid/' + path.split('/')[1], origin: 'https://example.invalid', pathname: '/' + path.split('/')[1], search},
+    location: {href: 'https://example.invalid' + routePath, origin: 'https://example.invalid', pathname: routePath, search},
     localStorage: storage, sessionStorage: storage,
     requestAnimationFrame(fn) {fn(); return 1;}, cancelAnimationFrame() {},
   };
@@ -64,14 +65,17 @@ function pageHarness(path, {auth = {}, blockedStorage = false, search = ''} = {}
     const compiled = ts.transpileModule(readFileSync(new URL('../' + file, import.meta.url), 'utf8'), {
       compilerOptions: {module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX},
     }).outputText;
-    new Function('require', 'exports', ...Object.keys(globals), compiled)(name => {
+    new Function('require', 'exports', 'process', ...Object.keys(globals), compiled)(name => {
       if (name in overrides) return overrides[name];
       assert.ok(name.startsWith('@/lib/'), name); return load(name.slice(2) + '.ts');
-    }, exports, ...Object.values(globals));
+    }, exports, {env}, ...Object.values(globals));
     return exports;
   }
   const {default: Page} = load(path);
-  function render() {dirty = false; hook = 0; tree = Page(); while (effects.length) effects.shift()();}
+  const props = path === 'components/sign-up-client.tsx'
+    ? {catalog: load('lib/studio-pricing.ts').getPricingCatalogSnapshot()}
+    : {};
+  function render() {dirty = false; hook = 0; tree = Page(props); while (effects.length) effects.shift()();}
   function nodes(node) {
     if (node == null || typeof node === 'boolean') return [];
     if (Array.isArray(node)) return node.flatMap(value => nodes(value));
@@ -94,7 +98,7 @@ function pageHarness(path, {auth = {}, blockedStorage = false, search = ''} = {}
 }
 
 test('signup network exceptions leave a usable retry form instead of a permanent busy button', async () => {
-  const h = pageHarness('app/sign-up/page.tsx', {auth: {signUp: async () => {throw Error('Network connection lost');}}});
+  const h = pageHarness('components/sign-up-client.tsx', {auth: {signUp: async () => {throw Error('Network connection lost');}}});
   await h.flush(); if (h.browser.location.pathname === '/sign-up') await h.change(props => props.autoComplete === 'new-password', 'ValidPass1!'); await h.submit();
   assert.match(h.text(), /could not reach the sign-up service.*Check your connection/);
   assert.equal(h.submitButton().props.disabled, false);
@@ -102,7 +106,7 @@ test('signup network exceptions leave a usable retry form instead of a permanent
 });
 
 test('auth forms stay disabled until their client effect enables managed submission', async () => {
-  for (const path of ['app/sign-up/page.tsx', 'app/sign-in/page.tsx', 'app/forgot-password/page.tsx']) {
+  for (const path of ['components/sign-up-client.tsx', 'app/sign-in/page.tsx', 'app/forgot-password/page.tsx']) {
     const h = pageHarness(path);
     assert.equal(h.submitButton().props.disabled, true, path);
     await h.flush();
@@ -112,7 +116,7 @@ test('auth forms stay disabled until their client effect enables managed submiss
 
 test('Supabase returned retryable fetch errors receive connection guidance, including cross-realm errors', async () => {
   for (const error of [new AuthRetryableFetchError('Failed to fetch', 0), {name: 'AuthRetryableFetchError', message: 'Failed to fetch', status: 0}]) {
-    const h = pageHarness('app/sign-up/page.tsx', {auth: {signUp: async () => ({data: {user: null, session: null}, error})}});
+    const h = pageHarness('components/sign-up-client.tsx', {auth: {signUp: async () => ({data: {user: null, session: null}, error})}});
     await h.flush(); await h.change(props => props.autoComplete === 'new-password', 'ValidPass1!'); await h.submit();
     assert.match(h.text(), /could not reach the sign-up service.*Check your connection/);
     assert.doesNotMatch(h.text(), /Failed to fetch/);
@@ -121,7 +125,7 @@ test('Supabase returned retryable fetch errors receive connection guidance, incl
 });
 
 test('disabled browser storage cannot break successful signup or suppress its confirmation instructions', async () => {
-  const h = pageHarness('app/sign-up/page.tsx', {blockedStorage: true});
+  const h = pageHarness('components/sign-up-client.tsx', {blockedStorage: true});
   await h.flush(); if (h.browser.location.pathname === '/sign-up') await h.change(props => props.autoComplete === 'new-password', 'ValidPass1!'); await h.submit();
   assert.match(h.text(), /Account created/);
   assert.match(h.text(), /Check your email/);
@@ -130,7 +134,7 @@ test('disabled browser storage cannot break successful signup or suppress its co
 });
 
 test('signup does not claim account creation when the auth provider returns no account', async () => {
-  const h = pageHarness('app/sign-up/page.tsx', {auth: {signUp: async () => ({data: {user: null, session: null}, error: null})}});
+  const h = pageHarness('components/sign-up-client.tsx', {auth: {signUp: async () => ({data: {user: null, session: null}, error: null})}});
   await h.flush(); if (h.browser.location.pathname === '/sign-up') await h.change(props => props.autoComplete === 'new-password', 'ValidPass1!'); await h.submit();
   assert.doesNotMatch(h.text(), /Account created/);
   assert.equal(h.submitButton().props.disabled, false);
@@ -170,7 +174,7 @@ test('a successful password response without a session does not claim sign-in or
 });
 
 test('signup auth timeouts restore the form and explain how to avoid repeating an uncertain registration', async () => {
-  const h = pageHarness('app/sign-up/page.tsx', {auth: {signUp: () => new Promise(() => {})}});
+  const h = pageHarness('components/sign-up-client.tsx', {auth: {signUp: () => new Promise(() => {})}});
   await h.flush(); await h.change(props => props.autoComplete === 'new-password', 'ValidPass1!'); const submitted = h.submit(); await h.flush();
   assert.equal(h.submitButton().props.disabled, true);
   h.runTimers(15000); await submitted;
@@ -195,7 +199,7 @@ test('MFA verification timeouts restore the current code form without redirectin
 });
 
 test('every signup field and sign-in credential has an associated accessible label', async () => {
-  for (const path of ['app/sign-up/page.tsx', 'app/sign-in/page.tsx', 'app/forgot-password/page.tsx']) {
+  for (const path of ['components/sign-up-client.tsx', 'app/sign-in/page.tsx', 'app/forgot-password/page.tsx']) {
     const h = pageHarness(path); await h.flush();
     for (const input of h.fields().filter(node => node.props.type !== 'checkbox')) {
       assert.ok(input.props.id, `${path}: ${input.props.name}`);
@@ -206,10 +210,17 @@ test('every signup field and sign-in credential has an associated accessible lab
 
 test('signup explains the existing password policy before making a rejected registration request', async () => {
   let authCalls = 0;
-  const h = pageHarness('app/sign-up/page.tsx', {auth: {signUp: async () => {authCalls++; throw Error('Must not call auth');}}});
+  const h = pageHarness('components/sign-up-client.tsx', {auth: {signUp: async () => {authCalls++; throw Error('Must not call auth');}}});
   await h.flush(); await h.change(props => props.autoComplete === 'new-password', 'short'); await h.submit();
   assert.match(h.text(), /password needs: at least 8 characters, one uppercase letter, one number, one special character/);
   assert.equal(authCalls, 0); assert.equal(h.submitButton().props.disabled, false);
+});
+
+test('signup trial disclosure retains the existing fee when paid Gallery pricing launches', async () => {
+  const h = pageHarness('components/sign-up-client.tsx', {env: {STUDIO_GALLERY_PRICING_V2_ENABLED: '1'}});
+  await h.flush();
+  assert.match(h.text(), /Paid sales during the trial have a \$0\.35 Studio OS fee per order/);
+  assert.doesNotMatch(h.text(), /0\.45|ordinary gallery sales have no platform order fee|Unlimited|50 ?MB/i);
 });
 
 test('verification-email timeouts keep the recovery action usable without claiming delivery', async () => {

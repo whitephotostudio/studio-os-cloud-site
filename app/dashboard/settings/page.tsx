@@ -27,8 +27,8 @@ import {
   WalletCards,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
-import type { BillingInterval } from "@/lib/studio-pricing";
-import { ORDER_FEE_BILLING, ORDER_FEE_PURPOSE } from "@/lib/order-fee-display";
+import type { BillingInterval, GalleryStoragePolicy, OrderFeeScope, PricingProfile } from "@/lib/studio-pricing";
+import { getOrderFeeCopy } from "@/lib/order-fee-display";
 import { WhatsNewDot, useIsFeatureNew } from "@/components/whats-new-dot";
 import { ProofWatermarkOverlay } from "@/components/parents/proof-watermark-overlay";
 import { normalizeProofWatermarkOpacity, proofWatermarkOpacity } from "@/lib/proof-watermark";
@@ -98,19 +98,26 @@ type StripeStatus = {
   }>;
   billingCatalog: {
     currency?: string;
+    pricingProfile?: PricingProfile;
+    galleryStoragePolicy?: GalleryStoragePolicy;
     plans: Array<{
       code: string;
       label: string;
+      publicName?: string;
       priceCents: number;
       annualPriceCents: number;
       description: string;
       usageFeeApplies: boolean;
       usageRateCents: number;
+      orderFeeScope?: OrderFeeScope;
+      annualSavingsCents?: number;
+      annualSavingsPercent?: number;
+      galleryStoragePolicy?: GalleryStoragePolicy;
       includedDesktopKeys: number;
       includedCredits: number;
       websiteLogoIncluded: boolean;
     }>;
-    annualDiscountPercent: number;
+    annualDiscountPercent: number | null;
     extraDesktopKeyMonthlyCents: number;
     extraDesktopKeyAnnualCents: number;
     orderUsageRateCents: number;
@@ -1213,6 +1220,8 @@ export default function SettingsPage() {
     billingCatalog.plans.find((plan) => plan.code === (subscriptionPlanCode || desiredPlanCode)) ||
     billingCatalog.plans[0];
   const platformBillingCurrency = billingCatalog.currency || "cad";
+  const newGalleryPricing = billingCatalog.pricingProfile === "gallery_v2";
+  const orderFeeCopy = getOrderFeeCopy(newGalleryPricing ? "gallery_v2" : "legacy");
   const selectedExtraKeyPrice =
     desiredBillingInterval === "year"
       ? billingCatalog.extraDesktopKeyAnnualCents
@@ -1286,7 +1295,7 @@ export default function SettingsPage() {
             Branding + Billing + Stripe Connect
           </h1>
           <p style={{ marginTop: 12, maxWidth: 840, fontSize: 18, lineHeight: 1.7, color: "#64748b" }}>
-            Photographer sales route through the photographer’s own connected Stripe account. Studio OS order fees are deducted from each paid sale.
+            Photographer sales route through the photographer’s own connected Stripe account. {newGalleryPricing ? "Ordinary gallery sales have no platform order fee; qualifying school production fees are deducted from the sale." : "Studio OS order fees are deducted from each paid sale."}
             Plans, extra desktop keys, and background credits are billed separately through platform billing.
           </p>
         </div>
@@ -2014,7 +2023,7 @@ export default function SettingsPage() {
                   >
                     {intervalLabel(interval)}
                     {interval === "year"
-                      ? ` · Save ${billingCatalog.annualDiscountPercent}%`
+                      ? newGalleryPricing ? " · Savings vary by plan" : ` · Save ${billingCatalog.annualDiscountPercent}%`
                       : ""}
                   </button>
                 );
@@ -2025,6 +2034,7 @@ export default function SettingsPage() {
               {billingCatalog.plans.map((plan) => {
                 const selected = desiredPlanCode === plan.code;
                 const current =
+                  !newGalleryPricing &&
                   subscriptionPlanCode === plan.code &&
                   subscriptionBillingInterval === desiredBillingInterval;
                 const activePrice =
@@ -2047,7 +2057,7 @@ export default function SettingsPage() {
                   >
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
                       <div style={{ fontSize: 18, fontWeight: 900, color: "#0f172a" }}>
-                        {planDisplayLabel(plan.code) || plan.label}
+                        {newGalleryPricing ? plan.publicName || plan.label : planDisplayLabel(plan.code) || plan.label}
                       </div>
                       {current ? <CheckCircle2 size={18} color="#2563eb" /> : null}
                     </div>
@@ -2057,6 +2067,7 @@ export default function SettingsPage() {
                     <div style={{ marginTop: 4, fontSize: 12, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: "#64748b" }}>
                       {desiredBillingInterval === "year" ? "Annual prepaid" : "Monthly"}
                     </div>
+                    {newGalleryPricing && desiredBillingInterval === "year" && <div style={{ marginTop: 4, color: "#15803d", fontSize: 12 }}>Save {plan.annualSavingsPercent}% compared with monthly billing.</div>}
                     <div style={{ marginTop: 10, color: "#64748b", lineHeight: 1.6, fontSize: 14 }}>
                       {plan.description}
                     </div>
@@ -2069,8 +2080,14 @@ export default function SettingsPage() {
                             : "Custom website logo + studio branding included."}
                       </div>
                       {plan.code !== "starter" ? <div style={{ marginTop: 4 }}>Background credits sold separately.</div> : null}
+                      {newGalleryPricing && <div style={{ marginTop: 4 }}>{billingCatalog.galleryStoragePolicy === "unlimited_jpeg" ? "Unlimited JPEG gallery photos. RAW backup is excluded." : "Photo gallery hosting included."}</div>}
                       <div data-order-fee style={{ marginTop: 10, color: "#64748b", lineHeight: 1.6, fontSize: 13, fontWeight: 400 }}>
-                        <div>{(plan.usageRateCents / 100).toFixed(2)} per paid order in your sales currency · deducted from each sale.</div>
+                        <div>{newGalleryPricing
+                          ? plan.orderFeeScope === "production_orders"
+                            ? `${formatMoney(plan.usageRateCents, billingCurrency)} per qualifying school production order · deducted from each qualifying sale.`
+                            : "No platform fee on ordinary gallery sales."
+                          : `${(plan.usageRateCents / 100).toFixed(2)} per paid order in your sales currency · deducted from each sale.`}</div>
+                        {newGalleryPricing && plan.orderFeeScope === "production_orders" && <div>Ordinary gallery sales have no platform fee.</div>}
                         <div>Stripe processing fees are additional.</div>
                       </div>
                     </div>
@@ -2080,9 +2097,10 @@ export default function SettingsPage() {
             </div>
 
             <div style={{ marginTop: 16, padding: "14px 16px", borderRadius: 14, background: "#f8fafc", border: "1px solid #e2e8f0", color: "#475569", lineHeight: 1.7, fontSize: 13 }}>
-              <div style={{ fontWeight: 800, color: "#0f172a" }}>Flat fees on paid orders</div>
-              <div style={{ marginTop: 4 }}>{ORDER_FEE_PURPOSE}</div>
-              <div style={{ marginTop: 4 }}>{ORDER_FEE_BILLING}</div>
+              <div style={{ fontWeight: 800, color: "#0f172a" }}>{newGalleryPricing ? "Gallery sales and school production fees" : "Flat fees on paid orders"}</div>
+              <div style={{ marginTop: 4 }}>{orderFeeCopy.purpose}</div>
+              <div style={{ marginTop: 4 }}>{orderFeeCopy.billing}</div>
+              {newGalleryPricing && <div style={{ marginTop: 4 }}>These are prices for new subscriptions and approved plan changes. Existing subscriptions keep their current Stripe prices.</div>}
             </div>
 
             <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 16, marginTop: 18, alignItems: "end" }}>
@@ -2232,7 +2250,7 @@ export default function SettingsPage() {
                   </div>
                 ) : <div style={{ marginTop: 10, display: "grid", gap: 8, color: "#334155" }}>
                   {subscriptionPlanCode && <>
-                    <div>Legacy usage rate: <strong>{formatMoney(orderUsageRateCents, platformBillingCurrency)} per paid order</strong></div>
+                    {(!newGalleryPricing || orderUsageRateCents > 0) ? <div>Legacy usage rate: <strong>{formatMoney(orderUsageRateCents, platformBillingCurrency)} per paid order</strong></div> : <div>Subscription-billed order fees are disabled. Historical fee credits remain listed below.</div>}
                     <div>Billable paid orders: <strong>{studioUsage.billableOrders}</strong></div>
                     <div>Already reported to Stripe: <strong>{studioUsage.countedOrders}</strong></div>
                     <div>Pending report sync: <strong>{studioUsage.unreportedOrders}</strong></div>
@@ -2689,8 +2707,8 @@ export default function SettingsPage() {
 
             {/* ── Plan comparison grid ────────────────────────────────────
                 Replaces a dense bullet list of pricing rules with a clean
-                3-column grid. Each column shows monthly + yearly (with
-                10% annual savings already calculated), what the plan
+                3-column grid. Each column shows catalog monthly + yearly
+                prices and savings, what the plan
                 includes for the desktop app, and how many photography
                 keys are bundled. The bottom note carries the upgrade
                 rule that doesn't fit cleanly inside a column. */}
@@ -2714,36 +2732,17 @@ export default function SettingsPage() {
                   gap: 10,
                 }}
               >
-                <PlanCompareCard
-                  name="Web Gallery"
-                  monthly={49}
-                  yearly={Math.round(49 * 12 * 0.9)}
-                  yearlySavings="Save ~10%"
-                  appAccess={false}
-                  keysIncluded={0}
-                  extras={null}
-                  highlight={false}
-                />
-                <PlanCompareCard
-                  name="App Plan"
-                  monthly={99}
-                  yearly={Math.round(99 * 12 * 0.9)}
-                  yearlySavings="Save ~10%"
-                  appAccess
-                  keysIncluded={1}
-                  extras="Upgrade to Studio for a 2nd key"
-                  highlight={false}
-                />
-                <PlanCompareCard
-                  name="Studio"
-                  monthly={199}
-                  yearly={Math.round(199 * 12 * 0.9)}
-                  yearlySavings="Save ~10%"
-                  appAccess
-                  keysIncluded={2}
-                  extras="$55 each extra key"
-                  highlight
-                />
+                {billingCatalog.plans.map(plan => <PlanCompareCard
+                  key={plan.code}
+                  name={newGalleryPricing ? plan.publicName || plan.label : planDisplayLabel(plan.code) || plan.label}
+                  monthly={plan.priceCents / 100}
+                  yearly={plan.annualPriceCents / 100}
+                  yearlySavings={`Save ${plan.annualSavingsPercent ?? billingCatalog.annualDiscountPercent}%`}
+                  appAccess={plan.includedDesktopKeys > 0}
+                  keysIncluded={plan.includedDesktopKeys}
+                  extras={plan.code === "core" ? "Upgrade to Studio for a 2nd key" : plan.code === "studio" ? `${formatMoney(billingCatalog.extraDesktopKeyMonthlyCents, platformBillingCurrency)} each extra key per month` : null}
+                  highlight={plan.code === "studio"}
+                />)}
               </div>
               <div
                 style={{
@@ -2754,9 +2753,8 @@ export default function SettingsPage() {
                   lineHeight: 1.55,
                 }}
               >
-                Yearly billing applies the 10% discount automatically at
-                checkout. Photography Keys are bundled with App Plan and
-                Studio subscriptions; extra keys are Studio-only.
+                {newGalleryPricing ? "Gallery annual billing saves 15.4%; Core and Studio save 10%. " : `Yearly billing applies the ${billingCatalog.annualDiscountPercent}% discount automatically at checkout. `}
+                Photography Keys are bundled with {newGalleryPricing ? "Core" : "App Plan"} and Studio subscriptions; extra keys are Studio-only.
               </div>
             </div>
 
@@ -2959,7 +2957,7 @@ export default function SettingsPage() {
               </label>
 
               <div style={{ marginTop: 12, color: "#64748b", lineHeight: 1.7 }}>
-                Beta access only matters when the release state is <strong>hidden</strong> or <strong>beta</strong>. Plan rules still apply: $49 never gets app access, $99 gets 1 key, and $199 gets 2 keys plus optional $55 extras.
+                Beta access only matters when the release state is <strong>hidden</strong> or <strong>beta</strong>. Plan rules still apply: Gallery is web-only, Core includes 1 key, and Studio includes 2 keys plus optional extra keys.
               </div>
 
               <button
@@ -3942,7 +3940,7 @@ function NumberField({
 
 /**
  * Plan-comparison card used in the Studio OS App rollout sidebar.  Shows
- * monthly + yearly pricing with the 10% annual savings, app access flag,
+ * exact catalog monthly + yearly pricing and savings, app access flag,
  * and key allowance.  When `highlight` is true the card carries the
  * "most popular" pill — set on the Studio plan by convention.
  */
@@ -4001,11 +3999,11 @@ function PlanCompareCard({
       <div style={{ fontSize: 14, fontWeight: 900, color: "#0f172a" }}>{name}</div>
       <div>
         <div style={{ fontSize: 22, fontWeight: 900, color: "#0f172a", lineHeight: 1.1 }}>
-          ${monthly}
+          {formatMoney(Math.round(monthly * 100), "cad")}
           <span style={{ fontSize: 12, fontWeight: 700, color: "#64748b", marginLeft: 4 }}>/mo</span>
         </div>
         <div style={{ marginTop: 4, fontSize: 12, fontWeight: 700, color: "#15803d" }}>
-          ${yearly}/yr · {yearlySavings}
+          {formatMoney(Math.round(yearly * 100), "cad")}/yr · {yearlySavings}
         </div>
       </div>
       <div style={{ height: 1, background: "#e5e7eb", margin: "4px 0" }} />

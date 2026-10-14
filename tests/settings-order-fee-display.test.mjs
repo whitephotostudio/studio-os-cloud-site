@@ -144,3 +144,58 @@ test('legacy refund-only follow-up remains visible even without a current subscr
   const panel = text(markedDiv(html, 'data-order-usage'));
   assert.ok(panel.includes('$0.25 in refunded order fee credits queued this cycle.'));
 });
+
+function galleryCatalog() {
+  const exports = {};
+  const source = ts.transpileModule(readFileSync(new URL('../lib/studio-pricing.ts', import.meta.url), 'utf8'),
+    {compilerOptions: {module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022}}).outputText;
+  new Function('exports', 'process', source)(exports, {env: {STUDIO_GALLERY_PRICING_V2_ENABLED: '1'}});
+  const snapshot = exports.getPricingCatalogSnapshot();
+  return {...snapshot, plans: Object.values(snapshot.plans), orderUsageRateCents: 0, creditPacks: []};
+}
+
+test('enabled settings show exact new prices, plan-specific annual savings and scoped production fees', () => {
+  for (const desiredBillingInterval of ['month', 'year']) {
+    const html = settingsHtml({billingCatalog: galleryCatalog(), desiredBillingInterval, orderUsageRateCents: 0});
+    const rendered = text(html);
+    assert.ok(rendered.includes('$59.00'), 'comparison sidebar derives monthly Gallery price from the server catalog');
+    for (const amount of ['$599.00', '$1,069.20', '$2,149.20']) assert.ok(rendered.includes(amount), 'exact annual amount is preserved');
+    assert.ok(rendered.includes('Save 15.4%'));
+    assert.ok(rendered.includes('0.45 per qualifying school production order · deducted from each qualifying sale.'));
+    assert.ok(rendered.includes('No platform fee on ordinary gallery sales.'));
+    assert.ok(rendered.includes('Photo gallery hosting included.'));
+    assert.doesNotMatch(rendered, /Unlimited JPEG|50 ?MB/i);
+    assert.ok(rendered.includes('Existing subscriptions keep their current Stripe prices.'));
+    assert.doesNotMatch(rendered, /Save null%|\$529|0\.00 per paid order|0\.40 per paid order|0\.35 per paid order/);
+  }
+});
+
+test('production fees use the sales currency while subscription prices remain CAD', () => {
+  for (const billingCurrency of ['usd', 'eur']) {
+    const html = settingsHtml({billingCatalog: galleryCatalog(), billingCurrency, desiredBillingInterval: 'year', orderUsageRateCents: 0});
+    const cards = [...html.matchAll(/<button\b[^>]*>[\s\S]*?<\/button>/g)].map(match => match[0]).filter(card => card.includes('data-order-fee'));
+    const salesFee = new Intl.NumberFormat('en-CA', {style: 'currency', currency: billingCurrency.toUpperCase()}).format(0.45);
+    const cadAnnual = new Intl.NumberFormat('en-CA', {style: 'currency', currency: 'CAD'}).format(1069.20);
+    assert.ok(text(cards[1]).includes(cadAnnual), 'subscription still uses the CAD catalog');
+    for (const card of cards.slice(1)) {
+      const fee = text(markedDiv(card, 'data-order-fee'));
+      assert.ok(fee.includes(`${salesFee} per qualifying school production order`));
+      assert.doesNotMatch(fee, /^(?:CA)?\$0\.45 per qualifying school production order/);
+    }
+  }
+});
+
+test('new pricing preserves real legacy rates and does not present a disabled meter as a zero prospective fee', () => {
+  const billingCatalog = galleryCatalog();
+  for (const orderUsageRateCents of [0, 25]) {
+    const html = settingsHtml({billingCatalog, subscriptionPlanCode: 'core', orderUsageRateCents,
+      studioUsage: {billableOrders: 0, countedOrders: 0, unreportedOrders: 0, estimatedChargeCents: 0, refundCreditCents: 25}});
+    const panel = text(markedDiv(html, 'data-order-usage'));
+    if (orderUsageRateCents === 0) {
+      assert.ok(panel.includes('Subscription-billed order fees are disabled.'));
+      assert.doesNotMatch(panel, /Legacy usage rate: \$0\.00/);
+    } else assert.ok(panel.includes('Legacy usage rate: $0.25 per paid order'));
+    assert.ok(panel.includes('$0.25 in refunded order fee credits queued this cycle.'));
+    assert.ok(text(html).includes('0.45 per qualifying school production order'));
+  }
+});

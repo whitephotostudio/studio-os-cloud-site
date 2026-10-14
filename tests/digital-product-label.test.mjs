@@ -74,6 +74,8 @@ function notificationFixture(productName, packageName = 'Portrait package') {
   } };
   const emailBody = { subject: 'fixture', html: 'fixture', text: 'fixture' };
   const modules = {
+    // This fixture exercises the unchanged legacy payment notification path.
+    '@/lib/studio-pricing': { isGalleryPricingV2Enabled: () => false },
     '@/lib/credit-maintenance': { creditMaintenanceActive: () => true },
     '@/lib/resend': { resendConfigured: () => true, resolveReplyTo: value => value, sendResendEmail: async value => emails.push(value) },
     '@/lib/order-notification-email': { buildOrderNotificationEmail: () => emailBody },

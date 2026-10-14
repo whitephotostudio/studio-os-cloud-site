@@ -17,7 +17,7 @@ const ledgerCompiled = ts.transpileModule(readFileSync(new URL('../lib/order-usa
 const ledger = {};
 new Function('require', 'exports', ledgerCompiled)(name => name === 'node:crypto' ? { randomUUID } : {}, ledger);
 
-function fixture({ annual = false, missingUsage = false, planCode = 'core', usageRate } = {}) {
+function fixture({ annual = false, missingUsage = false, planCode = 'core', usageRate, pricingV2 = false } = {}) {
   const calls = [];
   const currentUsageRate = usageRate ?? (missingUsage ? pricing.PLAN_DEFS[planCode].usageRateCents : planCode === 'studio' ? 25 : 35);
   const tables = {
@@ -110,7 +110,7 @@ function fixture({ annual = false, missingUsage = false, planCode = 'core', usag
     return { ok: true, text: async () => JSON.stringify(result) };
   };
   const dependencies = {
-    '@/lib/studio-pricing': pricing,
+    '@/lib/studio-pricing': {...pricing,isGalleryPricingV2Enabled:()=>pricingV2},
     '@/lib/stripe-billing-period': periods,
     '@/lib/order-usage-billing': ledger,
     '@/lib/order-payment-policy': orderPolicy,
@@ -358,4 +358,34 @@ test('invoice subscription references support Basil parent and earlier webhook s
   assert.equal(periods.stripeInvoiceSubscriptionId({ parent: { type: 'subscription_details', subscription_details: { subscription: { id: 'sub_expanded' } } } }), 'sub_expanded');
   assert.equal(periods.stripeInvoiceSubscriptionId({ subscription: 'sub_legacy' }), 'sub_legacy');
   assert.equal(periods.stripeInvoiceSubscriptionId({ parent: { type: 'quote_details' } }), null);
+});
+
+test('new direct-fee subscription keeps old pending ledger but never stages fresh unsnapshotted monthly fees', async () => {
+  const f=fixture({pricingV2:true});
+  const base=f.subscription.items.data.find(item=>item.id==='si_base');
+  base.price.lookup_key='studio-os-core-monthly-gallery-v2';
+  f.tables.order_usage_fees.push({order_id:'paid',photographer_id:'studio',stripe_customer_id:'cus_owner',
+    event_name:'studio_os_core_order_usage',event_identifier:'studio-os-usage-order-paid',
+    usage_timestamp:Date.parse('2026-09-20T10:00:00Z')/1000,amount_cents:35,currency:'cad',
+    billing_period:'2026-09',report_status:'pending',report_first_attempt_at:null,
+    refund_status:'none',refund_requested_at:null,refund_strategy:null,refund_first_attempt_at:null});
+  await f.exports.syncSubscriptionStateFromStripe(f.service,f.tables.photographers[0],f.subscription);
+  assert.equal(f.tables.order_usage_fees.length,1,'no newly paid manual/gallery rows acquire an old meter fee');
+  assert.equal(f.tables.order_usage_fees[0].report_status,'reported');
+  assert.equal(f.calls.filter(call=>call.path==='billing/meter_events').length,1,'old pending fee still completes');
+  assert.equal(f.subscription.items.data.find(item=>item.id==='si_usage').price.unit_amount,35);
+  await f.exports.syncSubscriptionStateFromStripe(f.service,f.tables.photographers[0],f.subscription);
+  assert.equal(f.calls.filter(call=>call.path==='billing/meter_events').length,1);
+});
+
+test('active new price never acquires a monthly usage meter and missing old usage rejects new catalog repair', async () => {
+  const fresh=fixture({pricingV2:true,missingUsage:true});
+  fresh.subscription.items.data[0].price.lookup_key='studio-os-core-monthly-gallery-v2';
+  await fresh.exports.syncSubscriptionStateFromStripe(fresh.service,fresh.tables.photographers[0],fresh.subscription);
+  assert.equal(fresh.tables.photographers[0].stripe_subscription_item_usage_id,null);
+  assert.equal(fresh.tables.photographers[0].order_usage_rate_cents,0);
+  assert.equal(fresh.calls.length,0);
+  const old=fixture({pricingV2:true,missingUsage:true});
+  await assert.rejects(old.exports.syncSubscriptionStateFromStripe(old.service,old.tables.photographers[0],old.subscription),/legacy subscription.*missing usage.*verification/);
+  assert.equal(old.calls.length,0,'unknown old billing must not mutate Stripe at new public rates');
 });
