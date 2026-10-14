@@ -1,5 +1,6 @@
 "use client";
 
+import { PhotographerCollageOrder } from "@/components/collages/photographer-collage-order";
 import { OrderPaymentControls } from "@/components/order-payment-controls";
 
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
@@ -3633,6 +3634,8 @@ function OrdersPageContent() {
                   </div>
                 );
               })()}
+
+              {selectedDetailOrders.filter(order => cartSnapshotToOrderItems(order.cart_snapshot).some(item => item.collage_snapshot)).map(order => <PhotographerCollageOrder key={order.id} orderId={order.id} />)}
 
               {/* ── Package info ── */}
               <div style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "baseline", marginBottom: 4 }}>

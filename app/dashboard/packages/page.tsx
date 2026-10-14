@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { getPackageCategory, type PackageCategory } from "@/lib/package-categories";
+import type { CollageGalleryVersion } from "@/lib/collage-client";
 import { Logo } from "@/components/logo";
 import {
   LogOut, Plus, ArrowLeft, Pencil, Trash2, Package, Printer,
@@ -15,9 +16,10 @@ import {
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 type PackageItem =
-  | { name?: string; qty?: number | string; type?: string; size?: string; finish?: string; composite?: boolean | null }
+  | { name?: string; qty?: number | string; type?: string; size?: string; finish?: string; composite?: boolean | null; collage?: { templateVersionId: string } | null }
   | string;
-type PackageItemLike = PackageItem | { name: string; qty: number; composite?: boolean };
+type EditablePackageItem = { name: string; qty: number; composite?: boolean; size?: string; type?: string; collage?: { templateVersionId: string } | null };
+type PackageItemLike = PackageItem | EditablePackageItem;
 
 type Pkg = {
   id: string;
@@ -323,10 +325,12 @@ export default function PackagesPage() {
   const [editPrice, setEditPrice]     = useState("");
   const [editDesc, setEditDesc]       = useState("");
   const [editCategory, setEditCategory] = useState("");
-  const [editItems, setEditItems]     = useState<{ name: string; qty: number; composite?: boolean }[]>([]);
+  const [editItems, setEditItems]     = useState<EditablePackageItem[]>([]);
   const [editActive, setEditActive]   = useState(true);
   const [editSizePreset, setEditSizePreset] = useState("custom");
   const [saving, setSaving]           = useState(false);
+
+  const [collageVersions, setCollageVersions] = useState<(CollageGalleryVersion & { published: boolean; availableGalleryCount?: number })[]>([]);
 
   // Drag-to-reorder
   const [dragIdx, setDragIdx]     = useState<number | null>(null);
@@ -552,6 +556,9 @@ export default function PackagesPage() {
 
   function openEdit(pkg: Pkg) {
     setEditingPkg(pkg);
+    void fetch("/api/dashboard/collages", { cache: "no-store" }).then(async r => {
+      if (r.ok) { const payload = await r.json(); setCollageVersions(payload.versions ?? []); }
+    }).catch(() => { /* Existing products remain editable while preview storage is unavailable. */ });
     setEditName(pkg.name);
     setEditSizePreset(matchSizePreset(pkg.name));
     setEditPrice((pkg.price_cents / 100).toFixed(2));
@@ -560,7 +567,7 @@ export default function PackagesPage() {
     setEditActive(pkg.active);
     const items = (pkg.items ?? []).map(item => {
       if (typeof item === "string") return { name: item, qty: 1, composite: false };
-      return { name: item.name?.trim() || "", qty: parseInt(String(item.qty ?? 1)) || 1, composite: !!item.composite };
+      return { ...item, name: item.name?.trim() || "", qty: parseInt(String(item.qty ?? 1)) || 1, composite: !!item.composite };
     });
     const inferredItems = packageItemsHaveNames(items)
       ? items
@@ -571,7 +578,7 @@ export default function PackagesPage() {
   async function saveEdit() {
     if (!editingPkg) return;
     setSaving(true);
-    const sourceItems = packageItemsHaveNames(editItems)
+    const sourceItems: EditablePackageItem[] = packageItemsHaveNames(editItems)
       ? editItems
       : inferPackageItemsFromText(editName, editDesc);
     const validItems = sourceItems.filter(i => i.name.trim());
@@ -584,7 +591,7 @@ export default function PackagesPage() {
       price_cents: Math.round(parseFloat(editPrice) * 100),
       category:    editCategory,
       active:      editActive,
-      items:       validItems.map(i => ({ name: i.name.trim(), qty: i.qty, ...(i.composite ? { composite: true } : {}) })),
+      items:       validItems.map(i => ({ ...i, name: i.name.trim(), qty: i.qty, ...(i.collage ? { composite: false, collage: { templateVersionId: i.collage.templateVersionId } } : {}) })),
     }).eq("id", editingPkg.id);
     setSaving(false);
     setEditingPkg(null);
@@ -1592,6 +1599,7 @@ export default function PackagesPage() {
                 </div>
                 <div style={{ background: "#f8fafc", border: "1px solid #e5e7eb", borderRadius: 10, padding: "10px 12px", marginBottom: 12, fontSize: 12, color: "#475569", lineHeight: 1.45 }}>
                   {packageSetSummary(editItems)}
+                  <p style={{ marginBottom: 0 }}>Collage openings belong to one print. Each included copy has its own photo selection. <Link href="/dashboard/collages">Create a gallery version in Collage Studio</Link>. Collage checkout stays a preview until enabled after production verification.</p>
                 </div>
                 {editItems.map((item, i) => {
                   const isCompositeItem = !!item.composite;
@@ -1605,8 +1613,26 @@ export default function PackagesPage() {
                         AUTO
                       </span>
                     )}
-                    <div style={{ flex: 1, display: "flex", gap: 8 }}>
+                    <div style={{ flex: 1, display: "flex", flexWrap: "wrap", gap: 8, minWidth: 0 }}>
                       <select
+                        aria-label={`Design for item ${i + 1}`}
+                        value={item.collage?.templateVersionId ?? ""}
+                        onChange={e => {
+                          const version = collageVersions.find(v => v.id === e.target.value);
+                          const n = [...editItems];
+                          n[i] = version
+                            ? { ...item, name: `${version.design.widthInches}×${version.design.heightInches} ${version.design.name}`, size: `${version.design.widthInches}x${version.design.heightInches}`, type: "print", composite: false, collage: { templateVersionId: version.id } }
+                            : { ...item, collage: null, size: undefined };
+                          setEditItems(n);
+                        }}
+                        style={{ width: "100%", minWidth: 0, padding: 8, border: "1px solid #d9dfe8", borderRadius: 8, background: "white", color: "#172033" }}
+                      >
+                        <option value="">Ordinary print / class composite</option>
+                        {item.collage && !collageVersions.some(v => v.id === item.collage?.templateVersionId && v.published && (v.availableGalleryCount ?? 0) > 0) && <option value={item.collage.templateVersionId}>Saved collage version (unavailable)</option>}
+                        {collageVersions.filter(v => v.published && (v.availableGalleryCount ?? 0) > 0).map(v => <option key={v.id} value={v.id}>Collage: {v.design.name} · v{v.versionNumber} · {v.design.widthInches}×{v.design.heightInches}</option>)}
+                      </select>
+                      <select
+                        disabled={!!item.collage}
                         value={sizeValue}
                         onChange={e => {
                           const n = [...editItems];
@@ -1614,11 +1640,11 @@ export default function PackagesPage() {
                           const compositeMatch = COMPOSITE_SIZES.find(s => s.value === val);
                           const printMatch = PRINT_SIZES.find(s => s.value === val);
                           if (compositeMatch) {
-                            n[i] = { ...n[i], name: compositeMatch.label, composite: true };
+                            n[i] = { ...n[i], name: compositeMatch.label, composite: true, collage: null };
                           } else if (printMatch && printMatch.value !== "custom") {
-                            n[i] = { ...n[i], name: printMatch.label, composite: false };
+                            n[i] = { ...n[i], name: printMatch.label, composite: false, collage: null };
                           } else {
-                            n[i] = { ...n[i], composite: false };
+                            n[i] = { ...n[i], composite: false, collage: null };
                           }
                           setEditItems(n);
                         }}

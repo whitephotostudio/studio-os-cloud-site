@@ -52,3 +52,14 @@
 .studio .primary { background: #172033; color: #fff; border-color: #172033; flex-shrink: 0; }
 @media (max-width: 1100px) { .workspace { grid-template-columns: 270px minmax(0, 1fr); gap: 14px; } .panel, .previewPanel { padding: 16px; } .captionFields { grid-template-columns: 1fr; gap: 0; } .exportRow { flex-wrap: wrap; } }
 @media (max-width: 760px) { .workspace { grid-template-columns: 1fr; } .previewPanel { grid-row: 1; } .studio { padding: 16px; } .header { gap: 8px; } .header h1 { font-size: 26px; } .captionFields { grid-template-columns: 1fr; } }
+
+.parentPicker { color: #e2e8f0; min-width: 0; }
+.parentPicker .help { color: #a9b8cd; }
+.parentPicker .paper { max-width: 520px; }
+.parentPicker .photoList { grid-template-columns: repeat(auto-fill, minmax(80px, 1fr)); max-height: 290px; overflow: auto; }
+.parentPicker .photoList img { height: 90px; }
+.parentPicker label { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; font-size: 12px; }
+.parentPicker input, .parentPicker select { min-width: 0; width: 100%; padding: 8px; box-sizing: border-box; background: white; color: #172033; border: 1px solid #d9dfe8; border-radius: 6px; }
+.parentPicker button { border: 1px solid #64748b; border-radius: 6px; background: white; color: #172033; cursor: pointer; }
+.parentPicker button:focus-visible { outline: 3px solid #4ade80; }
+.parentPicker .slots button { background: transparent; border-radius: 0; }

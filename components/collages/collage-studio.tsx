@@ -8,6 +8,8 @@ import Link from "next/link";
 import { collagePreset, parseCollageTemplate, collageResolution, COLLAGE_DPI, MAX_TEMPLATE_BYTES,
   type CollageTemplate, type CollagePhoto, type CollagePlacement } from "@/lib/collage-template";
 import { loadCollageImage, renderCollage } from "@/lib/collage-render";
+import { CloudCollageLibrary } from "./cloud-collage-library";
+import { collageTrimPercent } from "@/lib/collage-client";
 import styles from "./collage-studio.module.css";
 
 function download(blob: Blob, filename: string) {
@@ -46,8 +48,8 @@ export function CollageStudio() {
   const preview = useRef<HTMLDivElement>(null);
   const photoUrls = useRef<string[]>([]);
   const active = template.slots.find(s => s.id === selectedSlot) ?? template.slots[0];
-  const placement = placements[active.id];
-  const complete = template.slots.every(s => !!placements[s.id]);
+  const placement = Object.hasOwn(placements, active.id) ? placements[active.id] : undefined;
+  const complete = template.slots.every(s => Object.hasOwn(placements, s.id));
 
   useEffect(() => () => photoUrls.current.forEach(url => URL.revokeObjectURL(url)), []);
   useEffect(() => {
@@ -132,7 +134,8 @@ export function CollageStudio() {
       const canvas = await renderCollage(design, placements, [name, school, year], design.widthInches * COLLAGE_DPI);
       const blob = await new Promise<Blob>((resolve, reject) => canvas.toBlob(b => b ? resolve(b) : reject(Error("Could not export this print.")), "image/png"));
       download(blob, `${fileStem(design.name)}-${design.widthInches}x${design.heightInches}-${COLLAGE_DPI}ppi.png`);
-      setNotice(`Print downloaded: ${canvas.width} × ${canvas.height} pixels. Set the lab print size to ${design.widthInches} × ${design.heightInches} inches.`);
+      const bleed = design.bleedInches ?? 0;
+      setNotice(`Print downloaded: ${canvas.width} × ${canvas.height} pixels. Trim ${design.widthInches} × ${design.heightInches} inches; full image ${design.widthInches + 2 * bleed} × ${design.heightInches + 2 * bleed} inches, including ${bleed}-inch bleed. Give the lab both dimensions.`);
     } catch (e) { setError(message(e)); }
     finally { setBusy(false); }
   }
@@ -145,9 +148,10 @@ export function CollageStudio() {
         <button disabled={busy} onClick={saveTemplate}>Download template</button>
       </div>
     </header>
-    <div className={styles.banner}>Design workspace · Templates download to your computer. Parent galleries, sales and order fulfilment are not connected yet. Download your template before leaving this page.</div>
+    <div className={styles.banner}>Preview workspace · Save private, versioned templates or download JSON. Gallery selection and production integration are under review; purchasing stays disabled by default.</div>
     {(error || renderError) && <p role="alert" className={styles.error}>{error || renderError}</p>}
     {notice && <p role="status" className={styles.notice}>{notice}</p>}
+    <CloudCollageLibrary design={template} onLoad={next => { setTemplate(next); setPlacements({}); setSelectedSlot(next.slots[0].id); }} onMessage={(text, failed) => { setError(failed ? text : ""); setNotice(failed ? "" : text); }} />
     <div className={styles.workspace}>
       <aside className={styles.panel}>
         <div className={styles.tabs} role="group" aria-label="Editor mode">
@@ -162,6 +166,10 @@ export function CollageStudio() {
             <label>Width (inches)<input type="number" min={4} max={30} step={.5} value={template.widthInches} onChange={e => setTemplate(t => ({ ...t, widthInches: Number(e.target.value) }))} /></label>
             <label>Height (inches)<input type="number" min={4} max={30} step={.5} value={template.heightInches} onChange={e => setTemplate(t => ({ ...t, heightInches: Number(e.target.value) }))} /></label>
           </div>
+          <div className={styles.pair}>
+            <label>Bleed (inches)<input type="number" min={0} max={.5} step={.025} value={template.bleedInches ?? 0} onChange={e => setTemplate(t => ({ ...t, bleedInches: Number(e.target.value) }))} /></label>
+            <label>Safe inset (inches)<input type="number" min={0} max={.5} step={.025} value={template.safeInsetInches ?? .125} onChange={e => setTemplate(t => ({ ...t, safeInsetInches: Number(e.target.value) }))} /></label>
+          </div>
           <div className={styles.pair}><label>Paper colour<input type="color" value={template.background} onChange={e => setTemplate(t => ({ ...t, background: e.target.value }))} /></label><label>Text colour<input type="color" value={template.ink} onChange={e => setTemplate(t => ({ ...t, ink: e.target.value }))} /></label></div>
           <h2>Artwork and borders</h2>
           <p className={styles.help}>Upload a transparent PNG with openings for the photos. Include your borders, school logo and decoration in this artwork. A photographed sample is a reference; its existing portraits will not be removed automatically.</p>
@@ -171,6 +179,10 @@ export function CollageStudio() {
           <label>Selected space<select value={active.id} onChange={e => setSelectedSlot(e.target.value)}>{template.slots.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}</select></label>
           <label>Space label<input maxLength={80} value={active.label} onChange={e => updateSlot({ label: e.target.value })} /></label>
           <div className={styles.pair}>{(["x", "y", "width", "height"] as const).map(key => <label key={key}>{({ x: "Left", y: "Top", width: "Width", height: "Height" })[key]} (%)<input type="number" min={key === "width" || key === "height" ? 2 : 0} max={100} step={.5} value={Math.round(active[key] * 1000) / 10} onChange={e => updateSlot({ [key]: Number(e.target.value) / 100 })} /></label>)}</div>
+          <div className={styles.pair}>
+            <label>Space border colour<input type="color" value={active.border?.color ?? "#172033"} onChange={e => updateSlot({ border: { color: e.target.value, widthInches: active.border?.widthInches ?? .025 } })} /></label>
+            <label>Border (inches)<input type="number" min={0} max={.25} step={.005} value={active.border?.widthInches ?? 0} onChange={e => updateSlot({ border: { color: active.border?.color ?? "#172033", widthInches: Number(e.target.value) } })} /></label>
+          </div>
           <div className={styles.actions}><button disabled={template.slots.length >= 8} onClick={() => {
             const id = `photo_${crypto.randomUUID()}`;
             setTemplate(t => ({ ...t, slots: [...t.slots, { id, label: `Photo ${t.slots.length + 1}`, x: .1, y: .1, width: .3, height: .4 }] })); setSelectedSlot(id);
@@ -187,7 +199,7 @@ export function CollageStudio() {
           <p className={styles.help}>Test photos stay in this page and are not uploaded or saved in the template.</p>
           <div className={styles.photoList}>{photos.map(photo => <button key={photo.url} aria-label={`Assign ${photo.filename} to ${active.label}`} aria-pressed={placement?.photo.url === photo.url} onClick={() => {
             setPlacements(p => ({ ...p, [active.id]: { photo, zoom: 1, x: .5, y: .5 } }));
-            const next = template.slots.find(s => s.id !== active.id && !placements[s.id]);
+            const next = template.slots.find(s => s.id !== active.id && !Object.hasOwn(placements, s.id));
             if (next) setSelectedSlot(next.id);
           }}><img src={photo.url} alt={photo.filename} /><span>{photo.filename}</span></button>)}</div>
           {placement && <><h2>Crop: {active.label}</h2>{(["zoom", "x", "y"] as const).map(key => <label key={key}>{({ zoom: "Zoom", x: "Horizontal position", y: "Vertical position" })[key]}<input type="range" min={key === "zoom" ? 1 : 0} max={key === "zoom" ? 3 : 1} step={.01} value={placement[key]} onChange={e => updatePlacement({ [key]: Number(e.target.value) })} /></label>)}<button onClick={() => setPlacements(p => { const next = { ...p }; delete next[active.id]; return next; })}>Clear selected photo</button></>}
@@ -197,16 +209,16 @@ export function CollageStudio() {
         <div className={styles.previewHeading}><h2>{mode === "design" ? "Live design" : "Parent selection preview"}</h2><span>{template.widthInches} × {template.heightInches} in</span></div>
         <div className={styles.paper}>
           <div ref={preview} className={styles.canvas} />
-          <div className={styles.slots}>{template.slots.map(s => <button key={s.id} aria-label={`Select ${s.label}`} aria-pressed={active.id === s.id} className={active.id === s.id ? styles.activeSlot : styles.slot} style={{ left: `${s.x * 100}%`, top: `${s.y * 100}%`, width: `${s.width * 100}%`, height: `${s.height * 100}%` }} onClick={() => setSelectedSlot(s.id)}><span>{s.label}{placements[s.id] ? " ✓" : ""}</span></button>)}</div>
+          <div className={styles.slots} style={collageTrimPercent(template)}>{template.slots.map(s => <button key={s.id} aria-label={`Select ${s.label}`} aria-pressed={active.id === s.id} className={active.id === s.id ? styles.activeSlot : styles.slot} style={{ left: `${s.x * 100}%`, top: `${s.y * 100}%`, width: `${s.width * 100}%`, height: `${s.height * 100}%` }} onClick={() => setSelectedSlot(s.id)}><span>{s.label}{Object.hasOwn(placements, s.id) ? " ✓" : ""}</span></button>)}</div>
         </div>
         <div className={styles.captionFields}><label>Student name<input maxLength={100} placeholder="Student name" value={name} onChange={e => setName(e.target.value)} /></label><label>School / occasion<input maxLength={100} placeholder="School or occasion" value={school} onChange={e => setSchool(e.target.value)} /></label><label>Year / class<input maxLength={100} placeholder="Class of 2026" value={year} onChange={e => setYear(e.target.value)} /></label></div>
         <ul className={styles.checklist}>{template.slots.map(s => {
-          const p = placements[s.id];
+          const p = Object.hasOwn(placements, s.id) ? placements[s.id] : undefined;
           let dpi: number | null = null;
           try { if (p) dpi = collageResolution(template, s, p); } catch { /* Invalid geometry is reported above. */ }
           return <li key={s.id}><span>{s.label}: {p?.photo.filename ?? "Choose a photo"}</span>{dpi !== null && <span className={dpi < 200 ? styles.warning : ""}>{dpi} ppi{dpi < 200 ? " · Low resolution" : ""}</span>}</li>;
         })}</ul>
-        <div className={styles.exportRow}><p className={styles.help}>PNG output at 300 pixels per inch. Check the crop and your lab’s trim requirements before printing.</p><button className={styles.primary} disabled={busy || !complete || !!renderError} onClick={() => void exportPrint()}>{busy ? "Working…" : "Download print PNG"}</button></div>
+        <div className={styles.exportRow}><p className={styles.help}>PNG at 300 pixels per inch. Width and height are the trimmed print; bleed is added outside it. Artwork covers trim. Keep captions and logos inside the safe inset and confirm the lab’s requirements.</p><button className={styles.primary} disabled={busy || !complete || !!renderError} onClick={() => void exportPrint()}>{busy ? "Working…" : "Download print PNG"}</button></div>
       </section>
     </div>
   </main>;

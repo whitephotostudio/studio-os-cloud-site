@@ -1,3 +1,4 @@
+import type { CollageSelection } from "./collage-selection";
 // Cross-gallery cart persistence for the parents-portal combine flow.
 //
 // Why sessionStorage (not localStorage):
@@ -73,6 +74,8 @@ export type PersistedCartItem = {
   slots: Array<{
     label: string;
     assignedImageUrl: string | null;
+    collage?: CollageSelection;
+    composite?: boolean;
   }>;
   backdrop: {
     id: string;

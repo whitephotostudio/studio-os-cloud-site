@@ -30,6 +30,7 @@ export type ParsedPackageSlotLabel = {
 export type CartSnapshotSlotLike = {
   label?: string | null;
   assignedImageUrl?: string | null;
+  collage?: unknown;
 };
 
 export type CartSnapshotBackdropLike = {
@@ -67,6 +68,7 @@ export type CartSnapshotItem = {
   product_name: string;
   quantity: number;
   sku: string | null;
+  collage_snapshot?: unknown;
   backdrop?: CartSnapshotBackdropLike | null;
   orientation?: "portrait" | "landscape";
 };
@@ -248,8 +250,9 @@ export function cartSnapshotToOrderItems(
         items.push({
           product_name: clean(slot?.label) || clean(entry?.packageName) || "Item",
           quantity: 1,
-          sku: clean(slot?.assignedImageUrl) || null,
-          backdrop,
+          sku: slot?.collage ? null : clean(slot?.assignedImageUrl) || null,
+          ...(slot?.collage ? { collage_snapshot: slot.collage } : {}),
+          backdrop: slot?.collage ? null : backdrop,
           orientation,
         });
       }

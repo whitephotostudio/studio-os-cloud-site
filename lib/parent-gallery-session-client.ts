@@ -84,7 +84,7 @@ export function parentPortalRequest(input: RequestInfo | URL, init?: RequestInit
   const url = new URL(input, "https://parent-session.invalid");
   const credentialRoutes = new Set(["gallery-context", "event-gallery-context", "event-favorites", "school-favorites",
     "school-downloads", "event-downloads", "event-download-ready", "yearbook", "orders/create", "orders/create-combined",
-    "orders/history", "orders/dismiss"].map(route => `/api/portal/${route}`));
+    "orders/history", "orders/dismiss", "collages", "collages/preview"].map(route => `/api/portal/${route}`));
   if (!credentialRoutes.has(url.pathname) && !["/api/stripe/checkout", "/api/stripe/checkout/confirm"].includes(url.pathname)) return { input, init };
   let changed = false;
   let nextInit = init ? { ...init } : {};
