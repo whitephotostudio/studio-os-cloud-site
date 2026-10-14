@@ -1,3 +1,5 @@
+import { CollageCheckoutError, resolveCollageCheckout, type CollageCheckoutSlot, type CollageOrderSnapshot, type CollagePackageItem } from "@/lib/collage-checkout";
+import { parseCollageSelection } from "@/lib/collage-selection";
 import { runParentGallerySessionRoute, parentGalleryRateKey } from "@/lib/parent-gallery-session-request";
 import { resolveSchoolOrderMediaReferences } from "@/lib/school-order-media";
 import { resolveEventOrderMediaReferences } from "@/lib/event-order-media";
@@ -66,7 +68,7 @@ const MIN_BACKDROP_BLUR_PX = 4;
 const MAX_BACKDROP_BLUR_PX = 24;
 const DEFAULT_BACKDROP_BLUR_PX = 4;
 
-type SlotPayload = { label: string; assignedImageUrl: string | null };
+type SlotPayload = CollageCheckoutSlot;
 type DigitalSelectionPayload = {
   mediaId: string;
   url: string | null;
@@ -132,7 +134,7 @@ type PackageRow = {
   price_cents: number | null;
   photographer_id: string | null;
   category: string | null;
-  items?: Array<string | { qty?: number | string | null; name?: string | null; type?: string | null; size?: string | null; finish?: string | null }> | null;
+  items?: CollagePackageItem[] | null;
   active: boolean | null;
   is_retouch_addon?: boolean | null;
 };
@@ -180,6 +182,7 @@ type OrderItemInsert = {
   unit_price_cents: number;
   line_total_cents: number;
   sku: string | null;
+  collage_snapshot?: CollageOrderSnapshot;
 };
 
 function clean(value: string | null | undefined) {
@@ -304,7 +307,12 @@ function validateSlots(
     } else if (rawImage !== undefined && rawImage !== null) {
       return { ok: false, message: `A ${field} image URL must be a string.` };
     }
-    out.push({ label: label || "Item", assignedImageUrl });
+    try {
+      out.push({ label: label || "Item", assignedImageUrl,
+        ...(slot.collage != null ? { collage: parseCollageSelection(slot.collage) } : {}) });
+    } catch (error) {
+      return { ok: false, message: error instanceof Error ? error.message : "Invalid collage selection." };
+    }
   }
   return { ok: true, value: out };
 }
@@ -831,6 +839,11 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    await resolveCollageCheckout(sb, photographerId,
+      mode === "school" ? { schoolId: schoolId!, studentId: student!.id }
+        : { projectId: purchasedEventScope!.projectId, collectionIds: purchasedEventScope!.collectionIds },
+      entries, (id) => packageMap.get(id)!);
+
     const purchaseIssue = retouchPrintPurchaseIssue(entries.map((entry) => ({
       pkg: packageMap.get(entry.packageId)!, quantity: entry.quantity,
     })));
@@ -1286,7 +1299,8 @@ export async function POST(request: NextRequest) {
             price: perSlot / 100,
             unit_price_cents: perSlot,
             line_total_cents: perSlot,
-            sku: slot.assignedImageUrl ?? null,
+            sku: slot.collage ? null : slot.assignedImageUrl ?? null,
+            ...(slot.collage ? { collage_snapshot: slot.collage as CollageOrderSnapshot } : {}),
           });
         });
       } else {
@@ -1359,6 +1373,7 @@ export async function POST(request: NextRequest) {
     if (persistError) throw persistError;
     return NextResponse.json(result);
   } catch (error) {
+    if (error instanceof CollageCheckoutError) return NextResponse.json({ ok: false, message: error.message }, { status: 409 });
     if (error instanceof ParentCutoutPreflightError || error instanceof OnlineBackdropsDisabledError) return NextResponse.json({ ok: false, message: error.message }, { status: 409 });
     console.error("[portal:orders:create]", error);
     return NextResponse.json(

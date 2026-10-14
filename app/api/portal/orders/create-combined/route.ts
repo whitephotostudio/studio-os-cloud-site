@@ -1,3 +1,5 @@
+import { CollageCheckoutError, resolveCollageCheckout, type CollageCheckoutSlot, type CollageOrderSnapshot, type CollagePackageItem } from "@/lib/collage-checkout";
+import { parseCollageSelection } from "@/lib/collage-selection";
 import { runParentGallerySessionRoute, parentGalleryRateKey } from "@/lib/parent-gallery-session-request";
 import { resolveSchoolOrderMediaReferences } from "@/lib/school-order-media";
 import { randomUUID } from "node:crypto";
@@ -83,14 +85,25 @@ const DEFAULT_BACKDROP_BLUR_PX = 4;
 
 // ── Zod schemas ───────────────────────────────────────────────────────
 
+const CollageSelectionSchema = z.unknown().transform((raw, ctx) => {
+  if (raw === undefined || raw === null) return undefined;
+  try { return parseCollageSelection(raw); }
+  catch (error) {
+    ctx.addIssue({ code: "custom", message: error instanceof Error ? error.message : "Invalid collage selection." });
+    return z.NEVER;
+  }
+});
+
 const SlotSchema = z.object({
   label: z.string().trim().max(MAX_LABEL_LENGTH).optional().default("Item"),
+  collage: CollageSelectionSchema.optional(),
   assignedImageUrl: z
     .string()
     .trim()
     .max(MAX_IMAGE_URL_LENGTH)
     .nullable()
-    .optional(),
+    .optional()
+    .default(null),
 });
 
 const BackdropSchema = z
@@ -404,7 +417,7 @@ export async function POST(request: NextRequest) {
       price_cents: number | null;
       photographer_id: string | null;
       category: string | null;
-      items?: Array<string | { qty?: number | string | null; name?: string | null; type?: string | null; size?: string | null; finish?: string | null }> | null;
+      items?: CollagePackageItem[] | null;
       active: boolean | null;
       is_retouch_addon?: boolean | null;
     }>();
@@ -492,7 +505,7 @@ export async function POST(request: NextRequest) {
       compositeTitle: string | null;
       isDigital: boolean;
       retouchSelections: RetouchSelection[];
-      slots: { label: string; assignedImageUrl: string | null }[];
+      slots: CollageCheckoutSlot[];
       selectedImageUrl: string | null;
       backdrop: {
         id: string;
@@ -510,6 +523,9 @@ export async function POST(request: NextRequest) {
     const resolvedEntries: ResolvedEntry[] = [];
 
     for (const grp of resolvedGroups) {
+      await resolveCollageCheckout(sb, grp.photographerId, { schoolId: grp.schoolId, studentId: grp.studentId },
+        grp.input.entries,
+        (id) => packageMap.get(id)!);
       for (const entry of grp.input.entries) {
         const pkg = packageMap.get(entry.packageId)!;
         const retouchSelections = entry.retouchSelections.map((selection) => ({
@@ -573,6 +589,7 @@ export async function POST(request: NextRequest) {
           isDigital: !isRetouchPackage(pkg) && isDigitalCategory(pkg.category, pkg.name),
           retouchSelections,
           slots: (entry.slots ?? []).map((s) => ({
+            ...(s.collage ? { collage: s.collage } : {}),
             label: clean(s.label) || "Item",
             assignedImageUrl: s.assignedImageUrl
               ? durablePrivateMediaReference(s.assignedImageUrl)
@@ -844,6 +861,7 @@ export async function POST(request: NextRequest) {
         unit_price_cents: number;
         line_total_cents: number;
         sku: string | null;
+        collage_snapshot?: CollageOrderSnapshot;
       };
       const itemsToInsert: ItemInsert[] = [];
       for (const entry of groupEntries) {
@@ -885,7 +903,8 @@ export async function POST(request: NextRequest) {
               price: perSlot / 100,
               unit_price_cents: perSlot,
               line_total_cents: perSlot,
-              sku: slot.assignedImageUrl ?? null,
+              sku: slot.collage ? null : slot.assignedImageUrl ?? null,
+              ...(slot.collage ? { collage_snapshot: slot.collage as CollageOrderSnapshot } : {}),
             });
           });
         } else {
@@ -996,6 +1015,7 @@ export async function POST(request: NextRequest) {
     if (persistError) throw persistError;
     return NextResponse.json(result);
   } catch (error) {
+    if (error instanceof CollageCheckoutError) return NextResponse.json({ ok: false, message: error.message }, { status: 409 });
     if (error instanceof ParentCutoutPreflightError || error instanceof OnlineBackdropsDisabledError) return NextResponse.json({ ok: false, message: error.message }, { status: 409 });
     console.error("[portal:orders:create-combined]", error);
     return NextResponse.json(

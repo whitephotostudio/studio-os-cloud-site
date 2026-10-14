@@ -214,6 +214,12 @@ export async function POST(req: NextRequest) {
 
     const parentAccess = await authorizeParentCheckout(req, sb, checkoutOrders, body, getParentGalleryRequestScope(req));
     applyCookie = parentAccess.applyCookie;
+    if (process.env.STUDIO_OS_COLLAGE_CHECKOUT_ENABLED !== "1" && checkoutOrders.some(member =>
+      Array.isArray(member.cart_snapshot) && member.cart_snapshot.some(entry =>
+        entry && typeof entry === "object" && Array.isArray(entry.slots) && entry.slots.some((slot: unknown) =>
+          slot && typeof slot === "object" && "collage" in slot && slot.collage != null)))) {
+      return respond({ ok: false, message: "Collages are a preview. Purchasing will be available after production integration is verified." }, { status: 409 });
+    }
 
     // Read each saved line once. This also detects legacy premium-background
     // drafts whose exact selections were never saved. All members must pass
