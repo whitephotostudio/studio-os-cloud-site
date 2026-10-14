@@ -410,7 +410,7 @@ export function useSpotlight(term: string, enabled: boolean) {
         if (matchedStudentIds.length > 0) {
           const orderRequests = [];
           // Keep large student searches below URL limits when finding orders.
-          for (let offset = 0; offset < matchedStudentIds.length; offset += 200) {
+          for (let offset = 0; offset < matchedStudentIds.length; offset += 100) {
             orderRequests.push(
               supabase
                 .from("orders")
@@ -418,13 +418,15 @@ export function useSpotlight(term: string, enabled: boolean) {
                   "id, package_name, total_cents, total_amount, currency, student_id, created_at, school:schools(school_name)",
                 )
                 .eq("photographer_id", photographerId)
-                .in("student_id", matchedStudentIds.slice(offset, offset + 200))
+                .in("student_id", matchedStudentIds.slice(offset, offset + 100))
                 .order("created_at", { ascending: false })
                 .limit(8),
             );
           }
           const orderResults = await Promise.all(orderRequests);
           if (cancelled) return;
+          const failedOrders = orderResults.find((result) => result.error);
+          if (failedOrders?.error) throw new Error(failedOrders.error.message);
           const studentOrders = orderResults.flatMap((result) => result.data ?? [])
             .sort((a, b) => clean(b.created_at).localeCompare(clean(a.created_at)))
             .slice(0, 8);

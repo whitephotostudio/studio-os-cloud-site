@@ -4,6 +4,7 @@ import test from 'node:test';
 import vm from 'node:vm';
 import ts from 'typescript';
 import { createClient } from '@supabase/supabase-js';
+import { studentSearchFilter } from '../lib/student-search.ts';
 
 const root = new URL('../', import.meta.url);
 const files = ['app', 'lib', 'components'].flatMap(directory =>
@@ -11,6 +12,7 @@ const files = ['app', 'lib', 'components'].flatMap(directory =>
     .filter(path => /\.tsx?$/.test(path))
     .map(path => `${directory}/${path.replaceAll('\\', '/')}`));
 const queries = [];
+const assistantExecutorPath = 'lib/studio-assistant/server/executor.ts';
 const publicChoiceQueries = new Set(['app/parents/page.tsx', 'app/api/portal/choices/route.ts']);
 for (const path of files) {
   const source = readFileSync(new URL(path, root), 'utf8');
@@ -30,10 +32,11 @@ for (const path of files) {
       const relation = table === 'schools' ? 'students' : table === 'students' ? 'schools' : null;
       const selection = node.arguments[0].text;
       if (relation && new RegExp(`\\b${relation}(?:!|\\s*\\()`).test(selection)) {
+        const alias = new RegExp(`\\b([a-z_]+):${relation}!`).exec(selection)?.[1] ?? relation;
         let chain = node;
         while (ts.isPropertyAccessExpression(chain.parent) && ts.isCallExpression(chain.parent.parent)) chain = chain.parent.parent;
         const helpers = file.statements.filter(statement => ts.isFunctionDeclaration(statement) && statement.name?.text === 'escapeLikePattern').map(statement => statement.getText(file)).join('\n');
-        queries.push({ path, table, relation, selection, chain: chain.getText(file), helpers });
+        queries.push({ path, table, relation, alias, selection, chain: chain.getText(file), helpers });
       }
     }
     ts.forEachChild(node, visit);
@@ -50,8 +53,9 @@ function databaseFixture() {
     const url = new URL(input), table = url.pathname.split('/').pop();
     const relation = table === 'schools' ? 'students' : 'schools';
     const selection = url.searchParams.get('select') ?? '';
+    const alias = new RegExp(`\\b([a-z_]+):${relation}!`).exec(selection)?.[1] ?? relation;
     requests.push(url);
-    if (!selection.includes(`${relation}:${relation}!students_school_id_fkey`)) {
+    if (!selection.includes(`${alias}:${relation}!students_school_id_fkey`)) {
       return Response.json({ code: 'PGRST201', details: [{ relationship: 'students_school_id_fkey' }, { relationship: 'school_yearbook_selections' }],
         hint: `Use ${relation}!students_school_id_fkey`, message: 'More than one relationship was found' }, { status: 300 });
     }
@@ -59,13 +63,13 @@ function databaseFixture() {
       { id: 'owned-school', photographer_id: 'owner', students: [{ count: 23 }] },
       { id: 'private-school', photographer_id: 'other', students: [{ count: 97 }] },
     ] : [
-      { id: 'owned-student', school_id: 'owned-school', first_name: 'Maya', last_name: 'Owned', schools: { id: 'owned-school', photographer_id: 'owner', school_name: 'Owned school' } },
-      { id: 'private-student', school_id: 'private-school', first_name: 'Maya', last_name: 'Private', schools: { id: 'private-school', photographer_id: 'other', school_name: 'Private school' } },
+      { id: 'owned-student', school_id: 'owned-school', first_name: 'Maya', last_name: 'Owned', [alias]: { id: 'owned-school', photographer_id: 'owner', school_name: 'Owned school' } },
+      { id: 'private-student', school_id: 'private-school', first_name: 'Maya', last_name: 'Private', [alias]: { id: 'private-school', photographer_id: 'other', school_name: 'Private school' } },
     ];
     for (const [field, value] of url.searchParams) {
       if (!value.startsWith('eq.')) continue;
       const expected = value.slice(3);
-      rows = rows.filter(row => (field === 'schools.photographer_id' ? row.schools?.photographer_id : row[field]) === expected);
+      rows = rows.filter(row => (field === `${alias}.photographer_id` ? row[alias]?.photographer_id : row[field]) === expected);
     }
     const accept = new Headers(options.headers).get('accept') ?? '';
     return Response.json(accept.includes('vnd.pgrst.object') ? rows[0] ?? null : rows);
@@ -81,6 +85,7 @@ test('school/student embed inventory covers owner workflows and both public scho
     'app/api/dashboard/admin/recovery/route.ts', 'app/api/dashboard/events/route.ts',
     'app/dashboard/admin/recovery-requests/page.tsx', 'app/dashboard/schools/page.tsx',
     'components/spotlight-search.tsx', 'lib/pin-recovery.ts', 'lib/pin-recovery.ts',
+    assistantExecutorPath,
     'app/parents/page.tsx', 'app/api/portal/choices/route.ts',
   ].sort());
 });
@@ -92,18 +97,20 @@ for (const query of queries) {
     const compiled = ts.transpileModule(`${query.helpers}\nexports.run = async () => await ${query.chain};`, {
       compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
     }).outputText;
-    vm.runInNewContext(compiled, { exports, supabase: client, service: client, sb: client, ctx: { service: client },
+    vm.runInNewContext(compiled, { exports, supabase: client, service: client, sb: client, ctx: { service: client, photographerId: 'owner' },
       photographerRow: { id: 'owner' }, photographerId: 'owner', body: { studentId: 'owned-student' },
       input: { schoolId: 'owned-school', firstName: 'Maya', lastName: 'Owned' },
       data: { student_id: 'owned-student' },
       row: { typed_first_name: 'Maya', typed_last_name: 'Owned' },
+      filter: studentSearchFilter('Maya Owned', ['first_name', 'last_name']), from: 0, to: 199,
     });
     const result = await exports.run();
     assert.equal(result.error, null);
     assert.equal(result.status, 200);
     const rows = Array.isArray(result.data) ? result.data : [result.data];
     assert.ok(rows.length);
-    assert.ok(rows.every(row => query.relation in row));
+    assert.equal(query.alias, query.path === assistantExecutorPath ? 'school' : query.relation);
+    assert.ok(rows.every(row => query.alias in row));
     const request = requests[0];
     if (query.table === 'schools') {
       if (publicChoiceQueries.has(query.path)) {
@@ -117,17 +124,26 @@ for (const query of queries) {
       }
       assert.equal(rows[0].students[0].count, 23);
     } else {
-      assert.match(query.selection, /schools:schools!students_school_id_fkey!inner\(/);
+      assert.ok(query.selection.includes(`${query.alias}:schools!students_school_id_fkey!inner(`));
       if (query.path === 'lib/pin-recovery.ts') {
         if (query.chain.includes('data.student_id')) assert.equal(request.searchParams.get('id'), 'eq.owned-student');
         else assert.equal(request.searchParams.get('school_id'), 'eq.owned-school');
       }
       if (query.path === 'components/spotlight-search.tsx') assert.equal(request.searchParams.get('schools.photographer_id'), 'eq.owner');
+      if (query.path === assistantExecutorPath) {
+        assert.equal(request.searchParams.get('school.photographer_id'), 'eq.owner');
+        assert.deepEqual(rows.map(row => row.id), ['owned-student']);
+        assert.equal(rows[0].school.school_name, 'Owned school');
+        assert.equal(request.searchParams.get('or'), `(${studentSearchFilter('Maya Owned', ['first_name', 'last_name'])})`);
+        assert.equal(request.searchParams.get('order'), 'id.asc');
+        assert.equal(request.searchParams.get('offset'), '0');
+        assert.equal(request.searchParams.get('limit'), '200');
+      }
       if (query.path === 'app/api/dashboard/admin/recovery/route.ts') assert.equal(request.searchParams.get('id'), 'eq.owned-student');
     }
     // The same production query with the old embed demonstrably hits the
     // ambiguity, rather than allowing a mock to accept every selection.
-    const old = query.selection.replace(`${query.relation}:${query.relation}!students_school_id_fkey`, query.relation);
+    const old = query.selection.replace(`${query.alias}:${query.relation}!students_school_id_fkey`, query.relation);
     const rejected = await client.from(query.table).select(old).limit(0);
     assert.equal(rejected.status, 300);
     assert.equal(rejected.error.code, 'PGRST201');

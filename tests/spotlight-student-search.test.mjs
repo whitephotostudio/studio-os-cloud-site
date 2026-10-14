@@ -238,7 +238,7 @@ test('all matching students survive the old eight-result cap and multiple databa
   assert.ok(pages.every(q => q.limit === Infinity));
   assert.ok(pages.every(q => q.orders.map(order => order.field).join(',') === 'first_name,last_name,id'));
   const linkedOrderQueries = app.queries.filter(q => q.table === 'orders' && q.filters.some(f => f.kind === 'in'));
-  assert.deepEqual(linkedOrderQueries.map(q => q.filters.find(f => f.kind === 'in').values.length), [200, 7]);
+  assert.deepEqual(linkedOrderQueries.map(q => q.filters.find(f => f.kind === 'in').values.length), [100, 100, 7]);
   app.unmount();
 });
 
@@ -277,6 +277,31 @@ test('a later student-page failure reports a search error instead of publishing 
   assert.equal(app.result.loading, false);
   assert.equal(app.result.hits.length, 0);
   assert.equal(app.queries.filter(q => q.table === 'students').length, 2);
+  app.unmount();
+});
+
+test('a later linked-order chunk failure reports an error instead of presenting incomplete search results', async () => {
+  const rows = Array.from({ length: 101 }, (_, i) => student(`student-${String(i).padStart(3, '0')}`, 'Harout', 'Sarkis'));
+  const app = spotlightHarness({
+    students: rows,
+    orders: q => {
+      const linked = q.filters.find(filter => filter.kind === 'in');
+      if (!linked) return [];
+      if (linked.values.includes('student-100')) {
+        return { data: null, error: { message: 'Later linked-order request failed' } };
+      }
+      return [{
+        id: 'earlier-order', student_id: 'student-000', photographer_id: 'owner',
+        package_name: 'Print', created_at: '2026-10-13', school: { school_name: 'ARS' },
+      }];
+    },
+  });
+  await app.search('Harout Sarkis');
+  const linkedQueries = app.queries.filter(q => q.table === 'orders' && q.filters.some(filter => filter.kind === 'in'));
+  assert.deepEqual(linkedQueries.map(q => q.filters.find(filter => filter.kind === 'in').values.length), [100, 1]);
+  assert.equal(app.result.error, 'Search could not load. Please try again.');
+  assert.equal(app.result.loading, false);
+  assert.equal(app.result.hits.length, 0);
   app.unmount();
 });
 
