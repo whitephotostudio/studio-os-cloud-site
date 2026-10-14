@@ -151,6 +151,9 @@ function setup({ orders = [order()], lockedOrders = orders, originals = [origina
     },
     '@/lib/payments': {
       quoteDirectOrderPlatformFees: paymentFees.quoteDirectOrderPlatformFees,
+      resolveDirectOrderPricingPolicy: paymentFees.resolveDirectOrderPricingPolicy,
+      resolveDirectOrderFeeScopes: paymentFees.resolveDirectOrderFeeScopes,
+      OrderFeeClassificationError: paymentFees.OrderFeeClassificationError,
       directOrderPlatformFeePayload: paymentFees.directOrderPlatformFeePayload,
       isFreeTrialActive: paymentFees.isFreeTrialActive,
       isStripeBillingActive: () => true, getConnectedAccountId: () => 'acct_studio',

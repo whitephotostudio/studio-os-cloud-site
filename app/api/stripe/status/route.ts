@@ -6,14 +6,10 @@ import {
   resolveDashboardAuth,
 } from "@/lib/dashboard-auth";
 import {
-  ANNUAL_DISCOUNT_PERCENT,
   CREDIT_PACK_DEFS,
   DEFAULT_BILLING_CURRENCY,
-  EXTRA_DESKTOP_KEY_ANNUAL_CENTS,
-  EXTRA_DESKTOP_KEY_MONTHLY_CENTS,
   FREE_TRIAL_DAYS,
   ORDER_USAGE_RATE_CENTS,
-  PLAN_DEFS,
   describeConnectStatus,
   ensureCreditPackageCatalog,
   getConnectedAccountId,
@@ -33,8 +29,10 @@ import {
   syncSubscriptionStateFromStripe,
 } from "@/lib/payments";
 import { verifiedConnectCountry } from "@/lib/stripe-connect-country";
+import { getPricingCatalogSnapshot } from "@/lib/studio-pricing";
 
 export const dynamic = "force-dynamic";
+const pricingCatalog = getPricingCatalogSnapshot();
 
 const EMPTY_PROFILE = {
   ok: false,
@@ -92,11 +90,9 @@ const EMPTY_PROFILE = {
   trialDaysRemaining: 0,
   freeTrialDays: FREE_TRIAL_DAYS,
   billingCatalog: {
+    ...pricingCatalog,
     currency: DEFAULT_BILLING_CURRENCY,
-    annualDiscountPercent: ANNUAL_DISCOUNT_PERCENT,
-    plans: Object.values(PLAN_DEFS),
-    extraDesktopKeyMonthlyCents: EXTRA_DESKTOP_KEY_MONTHLY_CENTS,
-    extraDesktopKeyAnnualCents: EXTRA_DESKTOP_KEY_ANNUAL_CENTS,
+    plans: Object.values(pricingCatalog.plans),
     orderUsageRateCents: ORDER_USAGE_RATE_CENTS,
     creditPacks: Object.values(CREDIT_PACK_DEFS),
   },
@@ -275,11 +271,9 @@ export async function GET(request: NextRequest) {
       studioUsage: usageSummary,
       recentInvoices,
       billingCatalog: {
+        ...pricingCatalog,
         currency: DEFAULT_BILLING_CURRENCY,
-        annualDiscountPercent: ANNUAL_DISCOUNT_PERCENT,
-        plans: Object.values(PLAN_DEFS),
-        extraDesktopKeyMonthlyCents: EXTRA_DESKTOP_KEY_MONTHLY_CENTS,
-        extraDesktopKeyAnnualCents: EXTRA_DESKTOP_KEY_ANNUAL_CENTS,
+        plans: Object.values(pricingCatalog.plans),
         orderUsageRateCents: ORDER_USAGE_RATE_CENTS,
         creditPacks,
       },

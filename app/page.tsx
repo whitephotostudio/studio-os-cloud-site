@@ -16,11 +16,12 @@ import { UseCasesSection } from "../components/marketing/UseCasesSection";
 import { WorkflowStrip } from "../components/marketing/WorkflowStrip";
 import { TrustSection } from "../components/marketing/TrustSection";
 import { FaqJsonLd, SoftwareApplicationJsonLd } from "@/components/json-ld";
+import { getPricingCatalogSnapshot } from "@/lib/studio-pricing";
 
 export default function HomePage() {
   return (
     <div className="flex min-h-screen flex-col bg-white text-neutral-950">
-      <SoftwareApplicationJsonLd />
+      <SoftwareApplicationJsonLd catalog={getPricingCatalogSnapshot()} />
       <FaqJsonLd />
       <SiteHeader />
       <main className="flex-1 overflow-hidden">

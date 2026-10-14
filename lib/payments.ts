@@ -17,6 +17,8 @@ import {
   EXTRA_DESKTOP_KEY_ANNUAL_CENTS,
   EXTRA_DESKTOP_KEY_MONTHLY_CENTS,
   PLAN_DEFS,
+  isGalleryPricingV2Enabled,
+  getPlanDefinitions,
   normalizeBillingInterval,
   normalizeCreditPackCode,
   normalizePlanCode,
@@ -25,6 +27,7 @@ import {
   type CreditPackDefinition,
   type PlanCode,
   type PlanDefinition,
+  type PricingProfile,
 } from "@/lib/studio-pricing";
 import { FREE_TRIAL_DAYS } from "@/lib/trial-config";
 import { resolveStripeBillingPeriod } from "@/lib/stripe-billing-period";
@@ -153,6 +156,7 @@ type StripePrice = {
   product: string | StripeProduct;
   recurring?: {
     interval: string;
+    interval_count?: number | null;
     usage_type?: string | null;
     meter?: string | null;
   } | null;
@@ -270,7 +274,7 @@ type CatalogEntry = {
 export type StripeCatalog = {
   planPrices: Record<PlanCode, Record<BillingInterval, string>>;
   extraDesktopKeyPriceIds: Record<BillingInterval, string>;
-  usagePriceIds: Record<PlanCode, string>;
+  usagePriceIds: Record<PlanCode, string | null>;
   creditPackPriceIds: Record<CreditPackCode, string>;
 };
 
@@ -296,7 +300,7 @@ const STRIPE_API_VERSION = env("STRIPE_API_VERSION", "2025-06-30.basil");
 
 export const ORDER_USAGE_RATE_CENTS = DEFAULT_ORDER_USAGE_RATE_CENTS;
 
-const PLAN_LOOKUP_KEYS: Record<PlanCode, Record<BillingInterval, string>> = {
+const LEGACY_PLAN_LOOKUP_KEYS: Record<PlanCode, Record<BillingInterval, string>> = {
   starter: {
     month: "studio-os-starter-monthly-v2",
     year: "studio-os-starter-annual-v2",
@@ -311,6 +315,14 @@ const PLAN_LOOKUP_KEYS: Record<PlanCode, Record<BillingInterval, string>> = {
   },
 };
 
+// Separate keys keep old Stripe prices identifiable. Transferring an existing
+// key to a new offer would erase it from the original subscription's price.
+const GALLERY_PLAN_LOOKUP_KEYS: Record<PlanCode, Record<BillingInterval, string>> = {
+  starter: { month: "studio-os-starter-monthly-gallery-v2", year: "studio-os-starter-annual-gallery-v2" },
+  core: { month: "studio-os-core-monthly-gallery-v2", year: "studio-os-core-annual-gallery-v2" },
+  studio: { month: "studio-os-studio-monthly-gallery-v2", year: "studio-os-studio-annual-gallery-v2" },
+};
+const PLAN_LOOKUP_KEYS = isGalleryPricingV2Enabled() ? GALLERY_PLAN_LOOKUP_KEYS : LEGACY_PLAN_LOOKUP_KEYS;
 
 const ORDER_USAGE_METER_EVENT_NAMES: Record<PlanCode, string> = {
   starter: "studio_os_starter_order_usage",
@@ -758,7 +770,9 @@ async function ensureCatalogEntry(entry: CatalogEntry) {
   });
 
   const existingPrice = existing.data[0];
-  const recurringUsageType = existingPrice?.recurring?.usage_type ?? null;
+  const recurringUsageType = existingPrice?.recurring?.usage_type ??
+    (existingPrice?.recurring?.interval ? "licensed" : null);
+  const expectedUsageType = entry.usageType ?? (entry.interval ? "licensed" : null);
   const recurringMeter = existingPrice?.recurring?.meter ?? null;
 
   if (
@@ -766,7 +780,8 @@ async function ensureCatalogEntry(entry: CatalogEntry) {
     existingPrice.unit_amount === entry.unitAmount &&
     existingPrice.currency.toLowerCase() === entry.currency &&
     (existingPrice.recurring?.interval ?? null) === (entry.interval ?? null) &&
-    recurringUsageType === (entry.usageType ?? null) &&
+    (!entry.interval || (existingPrice.recurring?.interval_count ?? 1) === 1) &&
+    recurringUsageType === expectedUsageType &&
     recurringMeter === meterId
   ) {
     return existingPrice.id;
@@ -823,6 +838,9 @@ function orderUsageDescription(rateCents: number) {
 export async function ensureStripeCatalog() {
   if (!catalogPromise) {
     catalogPromise = (async () => {
+      if (isGalleryPricingV2Enabled() && DEFAULT_BILLING_CURRENCY !== "cad") {
+        throw new Error("The new gallery pricing catalog requires CAD billing.");
+      }
       // Verify every existing order meter before any product, price or meter
       // mutation, including the earlier base-plan catalog entries.
       const existingMeters = await readBillingMeters();
@@ -833,8 +851,8 @@ export async function ensureStripeCatalog() {
         starter: {
           month: await ensureCatalogEntry({
             code: "starter_month",
-            name: "Starter Monthly",
-            description: "Studio OS Starter monthly subscription",
+            name: isGalleryPricingV2Enabled() ? "Gallery Monthly" : "Starter Monthly",
+            description: isGalleryPricingV2Enabled() ? "Studio OS Gallery monthly subscription" : "Studio OS Starter monthly subscription",
             currency: DEFAULT_BILLING_CURRENCY,
             unitAmount: PLAN_DEFS.starter.priceCents,
             interval: "month",
@@ -842,8 +860,8 @@ export async function ensureStripeCatalog() {
           }),
           year: await ensureCatalogEntry({
             code: "starter_year",
-            name: "Starter Annual",
-            description: "Studio OS Starter annual subscription paid in advance",
+            name: isGalleryPricingV2Enabled() ? "Gallery Annual" : "Starter Annual",
+            description: isGalleryPricingV2Enabled() ? "Studio OS Gallery annual subscription paid in advance" : "Studio OS Starter annual subscription paid in advance",
             currency: DEFAULT_BILLING_CURRENCY,
             unitAmount: PLAN_DEFS.starter.annualPriceCents,
             interval: "year",
@@ -913,7 +931,12 @@ export async function ensureStripeCatalog() {
         }),
       } satisfies Record<BillingInterval, string>;
 
-      const usagePriceIds = {
+      // New gallery subscriptions collect qualifying production fees directly
+      // at checkout. Do not create or attach a monthly usage meter to them.
+      // Existing legacy usage items remain identifiable and unchanged.
+      const usagePriceIds = isGalleryPricingV2Enabled() ? {
+        starter: null, core: null, studio: null,
+      } : {
         starter: await ensureCatalogEntry({
           code: "starter_usage",
           name: "Starter Order Usage",
@@ -947,7 +970,7 @@ export async function ensureStripeCatalog() {
           meterEventName: ORDER_USAGE_METER_EVENT_NAMES.studio,
           lookupKey: ORDER_USAGE_LOOKUP_KEYS.studio,
         }),
-      } satisfies Record<PlanCode, string>;
+      } satisfies Record<PlanCode, string | null>;
 
       const creditPackPriceIds = {
         background_credits_250: await ensureCatalogEntry({
@@ -1097,14 +1120,18 @@ function getLookupKey(price: StripePrice | null | undefined) {
 }
 
 function resolveBillingIntervalFromLookupKey(lookupKey: string) {
-  for (const [planCode, intervals] of Object.entries(PLAN_LOOKUP_KEYS) as Array<
-    [PlanCode, Record<BillingInterval, string>]
-  >) {
-    for (const [interval, value] of Object.entries(intervals) as Array<
-      [BillingInterval, string]
+  for (const [pricingProfile, lookups] of [
+    ["legacy", LEGACY_PLAN_LOOKUP_KEYS], ["gallery_v2", GALLERY_PLAN_LOOKUP_KEYS],
+  ] as const) {
+    for (const [planCode, intervals] of Object.entries(lookups) as Array<
+      [PlanCode, Record<BillingInterval, string>]
     >) {
-      if (lookupKey === value) {
-        return { planCode, interval };
+      for (const [interval, value] of Object.entries(intervals) as Array<
+        [BillingInterval, string]
+      >) {
+        if (lookupKey === value) {
+          return { planCode, interval, pricingProfile };
+        }
       }
     }
   }
@@ -1199,13 +1226,15 @@ export async function createPlanCheckoutSession(input: {
   params.set("metadata[billing_interval]", input.billingInterval);
   params.set("metadata[photographer_id]", input.photographerId);
   params.set("metadata[user_id]", input.userId);
+  params.set("metadata[pricing_profile]", isGalleryPricingV2Enabled() ? "gallery_v2" : "legacy");
   params.set("subscription_data[metadata][plan_code]", input.planCode);
   params.set("subscription_data[metadata][billing_interval]", input.billingInterval);
   params.set("subscription_data[metadata][photographer_id]", input.photographerId);
   params.set("subscription_data[metadata][user_id]", input.userId);
+  params.set("subscription_data[metadata][pricing_profile]", isGalleryPricingV2Enabled() ? "gallery_v2" : "legacy");
   // Checkout cannot combine annual and monthly items. The monthly usage item
   // is attached after payment to this flexible annual subscription.
-  if (input.billingInterval === "year") {
+  if (input.billingInterval === "year" && !isGalleryPricingV2Enabled()) {
     params.set("subscription_data[billing_mode][type]", "flexible");
   }
   params.set("line_items[0][price]", catalog.planPrices[input.planCode][input.billingInterval]);
@@ -1336,7 +1365,7 @@ export async function updateStripeSubscriptionConfiguration(input: {
     await deleteStripeSubscriptionItem(extraDesktopItem.id);
   }
 
-  if (usageItem) {
+  if (usageItem && targetUsagePriceId) {
     params.set(`items[${itemIndex}][id]`, usageItem.id);
     params.set(`items[${itemIndex}][price]`, targetUsagePriceId);
     itemIndex += 1;
@@ -1346,6 +1375,7 @@ export async function updateStripeSubscriptionConfiguration(input: {
   params.set("metadata[billing_interval]", input.billingInterval);
   params.set("metadata[photographer_id]", input.photographerId);
   params.set("metadata[extra_desktop_keys]", String(input.extraDesktopKeys));
+  params.set("metadata[pricing_profile]", isGalleryPricingV2Enabled() ? "gallery_v2" : "legacy");
   params.set("proration_behavior", "create_prorations");
 
   await stripeRequest<StripeSubscription>(`subscriptions/${subscription.id}`, {
@@ -1353,7 +1383,7 @@ export async function updateStripeSubscriptionConfiguration(input: {
     body: params,
   });
 
-  if (!usageItem) {
+  if (!usageItem && targetUsagePriceId) {
     await createStripeSubscriptionItem(subscription.id, targetUsagePriceId);
   }
 
@@ -1469,12 +1499,20 @@ export async function syncSubscriptionStateFromStripe(
 ) {
   let subscription = subscriptionInput;
   const planCode = resolvePlanCodeFromSubscription(subscription);
-  const { usageItem } = findSubscriptionItems(subscription);
+  const { baseItem, usageItem } = findSubscriptionItems(subscription);
+  const gallerySubscription = resolveBillingIntervalFromLookupKey(getLookupKey(baseItem?.price))?.pricingProfile === "gallery_v2";
 
-  if (planCode && !usageItem && isStripeBillingActive(subscription.status)) {
+  if (planCode && !usageItem && !gallerySubscription && isStripeBillingActive(subscription.status)) {
+    if (isGalleryPricingV2Enabled()) {
+      throw new Error("This legacy subscription's missing usage item needs verification before billing can be repaired.");
+    }
     const catalog = await ensureStripeCatalog();
+    const usagePriceId = catalog.usagePriceIds[planCode];
+    if (!usagePriceId) {
+      throw new Error("This legacy subscription's missing usage item needs verification before billing can be repaired.");
+    }
     subscription = await ensureMixedIntervalBilling(subscription, resolveSubscriptionBillingInterval(subscription));
-    await createStripeSubscriptionItem(subscription.id, catalog.usagePriceIds[planCode]);
+    await createStripeSubscriptionItem(subscription.id, usagePriceId);
     subscription = await retrieveStripeSubscription(subscription.id);
   }
 
@@ -1488,11 +1526,17 @@ export async function syncSubscriptionStateFromStripe(
     photographer.billing_currency ||
     DEFAULT_BILLING_CURRENCY;
   const existingUsageRate = refreshedItems.usageItem?.price.unit_amount;
+  const validExistingUsageRate = typeof existingUsageRate === "number" && Number.isInteger(existingUsageRate) && existingUsageRate >= 0;
+  const savedLegacyRate = photographer.order_usage_rate_cents;
+  if (isGalleryPricingV2Enabled() && !gallerySubscription && !validExistingUsageRate &&
+      !(typeof savedLegacyRate === "number" && Number.isInteger(savedLegacyRate) && savedLegacyRate >= 0)) {
+    throw new Error("This legacy subscription's saved usage rate needs verification before billing can be synchronized.");
+  }
   // Existing subscriptions retain their Stripe price until an explicit plan
   // change. Mirror that actual rate rather than a newer catalog default.
   const nextUsageRate =
-    typeof existingUsageRate === "number" && Number.isInteger(existingUsageRate) && existingUsageRate >= 0
-      ? existingUsageRate
+    validExistingUsageRate ? existingUsageRate!
+      : gallerySubscription ? 0 : isGalleryPricingV2Enabled() ? savedLegacyRate!
       : refreshedPlanCode ? PLAN_DEFS[refreshedPlanCode].usageRateCents : ORDER_USAGE_RATE_CENTS;
 
   const updates = {
@@ -1536,7 +1580,8 @@ export async function syncSubscriptionStateFromStripe(
   if (refreshedPlanCode && isStripeBillingActive(subscription.status)) {
     await grantIncludedPlanCredits(service, refreshedPhotographer);
     await syncOutstandingStudioUsage(service, refreshedPhotographer,
-      resolveStripeBillingPeriod(subscription, refreshedItems.usageItem), refreshedItems.usageItem);
+      resolveStripeBillingPeriod(subscription, refreshedItems.usageItem), refreshedItems.usageItem,
+      gallerySubscription ? "gallery_v2" : "legacy");
   }
 
   await syncPhotographyKeysByPhotographerId(service, refreshedPhotographer.id);
@@ -1562,6 +1607,7 @@ async function syncOutstandingStudioUsage(
   photographer: PhotographerBillingRow,
   usagePeriod?: { start: string | null; end: string | null },
   usageItem?: StripeSubscriptionItem | null,
+  pricingProfile?: PricingProfile,
 ) {
   if (
     photographer.is_platform_admin ||
@@ -1576,6 +1622,8 @@ async function syncOutstandingStudioUsage(
     const subscription = await retrieveStripeSubscription(photographer.stripe_subscription_id);
     usageItem = findSubscriptionItems(subscription).usageItem;
     usagePeriod = resolveStripeBillingPeriod(subscription, usageItem);
+    const { baseItem } = findSubscriptionItems(subscription);
+    pricingProfile = resolveBillingIntervalFromLookupKey(getLookupKey(baseItem?.price))?.pricingProfile;
   }
   const periodStart = usagePeriod?.start ?? photographer.subscription_current_period_start;
   const periodEnd = usagePeriod?.end ?? photographer.subscription_current_period_end;
@@ -1592,6 +1640,7 @@ async function syncOutstandingStudioUsage(
     amountCents: usageItem?.price.unit_amount ?? photographer.order_usage_rate_cents ?? PLAN_DEFS[planCode].usageRateCents,
     currency: usageItem?.price.currency ?? photographer.billing_currency ?? DEFAULT_BILLING_CURRENCY,
     periodStart, periodEnd, billingPeriod: billingPeriodKey,
+    stageNewFees: pricingProfile !== "gallery_v2",
   }, stripeRequest);
 }
 
@@ -2104,6 +2153,144 @@ export type DirectOrderPlatformFee = {
 export const DIRECT_ORDER_FEE_CURRENCIES = SUPPORTED_ORDER_CURRENCIES;
 const directOrderFeeCurrencies = new Set<string>(DIRECT_ORDER_FEE_CURRENCIES);
 
+export type DirectOrderFeeScope = "production" | "gallery";
+
+export class OrderFeeClassificationError extends Error {
+  constructor() {
+    super("This order's saved workflow needs verification before payment can start.");
+    this.name = "OrderFeeClassificationError";
+  }
+}
+
+export type DirectOrderPricingPolicy = {
+  pricingProfile: PricingProfile;
+  planCode: PlanCode | null;
+  subscriptionStatus: string | null;
+  freeTrialActive: boolean;
+  legacyFeeRateCents?: number;
+};
+
+/** The website offer cannot reprice an existing merchant. Verify paid plans
+ * from their saved platform subscription, and grant the new trial only to
+ * studios created after the exact private release cutoff. */
+export async function resolveDirectOrderPricingPolicy(photographer: {
+  id: string;
+  stripe_subscription_id?: string | null;
+  stripe_platform_customer_id?: string | null;
+  subscription_plan_code: string | null;
+  subscription_status: string | null;
+  order_usage_rate_cents?: number | null;
+  is_platform_admin?: boolean | null;
+  created_at?: string | null;
+}, freeTrialActive: boolean): Promise<DirectOrderPricingPolicy> {
+  const legacy: DirectOrderPricingPolicy = {
+    pricingProfile: "legacy",
+    planCode: freeTrialActive ? "studio" : normalizePlanCode(photographer.subscription_plan_code),
+    subscriptionStatus: photographer.subscription_status,
+    freeTrialActive,
+  };
+  if (photographer.is_platform_admin) return legacy;
+  if (!photographer.stripe_subscription_id) {
+    const cutoff = process.env.STUDIO_GALLERY_PRICING_V2_LAUNCH_AT?.trim() ?? "";
+    const cutoffTime = Date.parse(cutoff);
+    const createdTime = Date.parse(photographer.created_at ?? "");
+    const exactCutoff = Number.isFinite(cutoffTime) && new Date(cutoffTime).toISOString() === cutoff;
+    if (freeTrialActive && isGalleryPricingV2Enabled() && exactCutoff &&
+        Number.isFinite(createdTime) && createdTime >= cutoffTime) {
+      return { ...legacy, pricingProfile: "gallery_v2" };
+    }
+    return legacy;
+  }
+
+  const subscription = await retrieveStripeSubscription(photographer.stripe_subscription_id);
+  const baseItems = subscription.items.data.filter(item =>
+    resolveBillingIntervalFromLookupKey(getLookupKey(item.price)));
+  if (subscription.id !== photographer.stripe_subscription_id || baseItems.length !== 1 ||
+      !photographer.stripe_platform_customer_id || subscription.customer !== photographer.stripe_platform_customer_id) {
+    throw new OrderFeeClassificationError();
+  }
+  const baseItem = baseItems[0];
+  const resolved = resolveBillingIntervalFromLookupKey(getLookupKey(baseItem.price))!;
+  const metadata = subscription.metadata ?? {};
+  if ((metadata.photographer_id && metadata.photographer_id !== photographer.id) ||
+      (metadata.plan_code && metadata.plan_code !== resolved.planCode) ||
+      (metadata.billing_interval && metadata.billing_interval !== resolved.interval) ||
+      (metadata.pricing_profile && metadata.pricing_profile !== resolved.pricingProfile)) {
+    throw new OrderFeeClassificationError();
+  }
+  if (resolved.pricingProfile === "gallery_v2") {
+    const plan = getPlanDefinitions("gallery_v2")[resolved.planCode];
+    const amount = resolved.interval === "year" ? plan.annualPriceCents : plan.priceCents;
+    if (metadata.photographer_id !== photographer.id || metadata.pricing_profile !== "gallery_v2" ||
+        baseItem.price.currency.toLowerCase() !== "cad" || baseItem.price.unit_amount !== amount ||
+        baseItem.price.recurring?.interval !== resolved.interval || (baseItem.quantity ?? 1) !== 1) {
+      throw new OrderFeeClassificationError();
+    }
+    return { pricingProfile: "gallery_v2", planCode: resolved.planCode,
+      subscriptionStatus: subscription.status, freeTrialActive: false };
+  }
+  const { usageItem } = findSubscriptionItems(subscription);
+  const rate = usageItem?.price.unit_amount ?? photographer.order_usage_rate_cents;
+  if (typeof rate !== "number" || !Number.isSafeInteger(rate) || rate < 0) {
+    throw new OrderFeeClassificationError();
+  }
+  return { pricingProfile: "legacy", planCode: resolved.planCode,
+    subscriptionStatus: subscription.status, freeTrialActive: false, legacyFeeRateCents: rate };
+}
+
+/** Resolve new fee-bearing candidates from saved links, never checkout JSON.
+ * Existing fee snapshots must bypass this lookup: changing a project later
+ * cannot reclassify a payable checkout or its eventual refund. */
+export async function resolveDirectOrderFeeScopes(
+  service: ServiceClient,
+  photographerId: string,
+  orders: Array<{ id: string; photographer_id: string | null; school_id: string | null; project_id: string | null }>,
+): Promise<Map<string, DirectOrderFeeScope>> {
+  const scopes = new Map<string, DirectOrderFeeScope>();
+  const schools = new Set<string>();
+  const projects = new Map<string, DirectOrderFeeScope>();
+  if (!photographerId || new Set(orders.map(order => order.id)).size !== orders.length) {
+    throw new OrderFeeClassificationError();
+  }
+  for (const order of orders) {
+    // Server-created gallery/production drafts use exactly one owned link.
+    // A request's mode/projectId cannot fill in or override a missing link.
+    if (!order.id || order.photographer_id !== photographerId ||
+        Boolean(order.school_id) === Boolean(order.project_id)) {
+      throw new OrderFeeClassificationError();
+    }
+    if (order.school_id) {
+      if (!schools.has(order.school_id)) {
+        const school = await service.from("schools").select("id,photographer_id")
+          .eq("id", order.school_id).maybeSingle();
+        if (school.error) throw school.error;
+        if (school.data?.id !== order.school_id || school.data.photographer_id !== photographerId) {
+          throw new OrderFeeClassificationError();
+        }
+        schools.add(order.school_id);
+      }
+      scopes.set(order.id, "production");
+      continue;
+    }
+    const projectId = order.project_id!;
+    if (!projects.has(projectId)) {
+      const project = await service.from("projects").select("id,photographer_id,workflow_type,linked_school_id")
+        .eq("id", projectId).maybeSingle();
+      if (project.error) throw project.error;
+      if (project.data?.id !== projectId || project.data.photographer_id !== photographerId) {
+        throw new OrderFeeClassificationError();
+      }
+      const workflow = typeof project.data.workflow_type === "string"
+        ? project.data.workflow_type.trim().toLowerCase() : "";
+      if (workflow === "event" && !project.data.linked_school_id) projects.set(projectId, "gallery");
+      else if (workflow === "school" || workflow === "sports") projects.set(projectId, "production");
+      else throw new OrderFeeClassificationError();
+    }
+    scopes.set(order.id, projects.get(projectId)!);
+  }
+  return scopes;
+}
+
 /** Quote new checkout fees from trusted persisted orders and the studio plan. */
 export async function quoteDirectOrderPlatformFees(input: {
   planCode: string | null;
@@ -2111,7 +2298,12 @@ export async function quoteDirectOrderPlatformFees(input: {
   isPlatformAdmin: boolean;
   freeTrialActive?: boolean;
   currency: string;
-  orders: Array<{ id: string; totalCents: number; isTest?: boolean | null }>;
+  /** Resolved from the saved subscription's provider price, never checkout JSON. */
+  pricingProfile?: PricingProfile;
+  legacyFeeRateCents?: number;
+  orders: Array<{ id: string; totalCents: number; isTest?: boolean | null;
+    /** Server-resolved persisted workflow only. */
+    feeScope?: DirectOrderFeeScope }>;
 }) {
   const currency = input.currency.trim().toLowerCase();
   if (!directOrderFeeCurrencies.has(currency)) throw new Error("This checkout currency does not support the configured order service fee.");
@@ -2124,8 +2316,20 @@ export async function quoteDirectOrderPlatformFees(input: {
   if (!input.isPlatformAdmin && (!planCode || (!isStripeBillingActive(input.subscriptionStatus) && !input.freeTrialActive))) {
     throw new Error("This studio needs an active subscription before accepting payment.");
   }
-  const billableOrders = input.orders.filter((order) => !input.isPlatformAdmin && order.isTest !== true && order.totalCents > 0);
-  const rateCents = billableOrders.length && planCode ? PLAN_DEFS[planCode].usageRateCents : 0;
+  const eligibleOrders = input.orders.filter((order) => !input.isPlatformAdmin && order.isTest !== true && order.totalCents > 0);
+  const newPricing = input.pricingProfile === "gallery_v2";
+  if (newPricing && planCode !== "starter" && eligibleOrders.some(order =>
+    order.feeScope !== "gallery" && order.feeScope !== "production")) {
+    throw new OrderFeeClassificationError();
+  }
+  const billableOrders = newPricing
+    ? eligibleOrders.filter(order => planCode !== "starter" && order.feeScope === "production")
+    : eligibleOrders;
+  // Subscription billing is CAD, but existing merchants may sell in any
+  // supported two-decimal sales currency. The flat fee uses its minor units.
+  const rateCents = billableOrders.length && planCode
+    ? newPricing ? 45 : input.legacyFeeRateCents ?? getPlanDefinitions("legacy")[planCode].usageRateCents
+    : 0;
   if (!Number.isSafeInteger(rateCents) || rateCents < 0) throw new Error("Could not verify the order service fee.");
   const amountCents = rateCents * billableOrders.length;
   const totalCents = input.orders.reduce((sum, order) => sum + order.totalCents, 0);

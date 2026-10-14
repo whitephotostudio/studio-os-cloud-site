@@ -15,17 +15,12 @@ import {
   Wand2,
   X,
 } from "lucide-react";
-import {
-  ANNUAL_DISCOUNT_PERCENT,
-  PLAN_DEFS,
-  getPlanPriceCents,
-  type BillingInterval,
-  type PlanCode,
-} from "@/lib/studio-pricing";
-import { formatOrderFeeMoney, ORDER_FEE_BILLING, ORDER_FEE_PURPOSE } from "@/lib/order-fee-display";
+import type { BillingInterval, PlanCode, PricingCatalogSnapshot } from "@/lib/studio-pricing";
+import { getOrderFeeCopy, getOrderFeeDisclosure } from "@/lib/order-fee-display";
 
 type PricingShowcaseProps = {
   variant?: "home" | "page";
+  catalog: PricingCatalogSnapshot;
 };
 
 type PlanCard = {
@@ -35,7 +30,6 @@ type PlanCard = {
   eyebrow: string;
   badge?: string;
   summary: string;
-  usageFee: string;
   ctaLabel: string;
   heroNote: string;
   included: string[];
@@ -66,7 +60,6 @@ const homePlans: PlanCard[] = [
     eyebrow: "For online delivery",
     summary:
       "A clean web-only plan for photographers who want polished galleries, online viewing, delivery, and ordering without the Studio OS app.",
-    usageFee: `${formatOrderFeeMoney(PLAN_DEFS.starter.usageRateCents)} per paid order`,
     ctaLabel: "Get Started",
     heroNote: "Online gallery tools only",
     included: [
@@ -91,7 +84,6 @@ const homePlans: PlanCard[] = [
     badge: "Most Popular",
     summary:
       "Built for school and studio photographers who want the Studio OS app, faster production, and new upsell opportunities without jumping to the largest plan.",
-    usageFee: `${formatOrderFeeMoney(PLAN_DEFS.core.usageRateCents)} per paid order`,
     ctaLabel: "Choose Plan",
     heroNote: "1 Photography Key included",
     included: [
@@ -119,7 +111,6 @@ const homePlans: PlanCard[] = [
     badge: "Best for Growing Studios",
     summary:
       "Full Studio OS workflow with more room to scale, advanced school-day tools, and the only plan that can grow beyond the included keys.",
-    usageFee: `${formatOrderFeeMoney(PLAN_DEFS.studio.usageRateCents)} per paid order`,
     ctaLabel: "Upgrade to Studio",
     heroNote: "2 Photography Keys included",
     included: [
@@ -150,7 +141,6 @@ const pagePlans: PlanCard[] = [
     eyebrow: "For photographers getting started",
     summary:
       "For photographers getting started or using basic galleries.",
-    usageFee: `${formatOrderFeeMoney(PLAN_DEFS.starter.usageRateCents)} per paid order`,
     ctaLabel: "Start Free Trial",
     heroNote: "Basic gallery delivery",
     included: [
@@ -176,7 +166,6 @@ const pagePlans: PlanCard[] = [
     badge: "Most Popular",
     summary:
       "For photographers who want full workflow, client ordering, and production tools in one system.",
-    usageFee: `${formatOrderFeeMoney(PLAN_DEFS.core.usageRateCents)} per paid order`,
     ctaLabel: "Start Free Trial",
     heroNote: "1 Photography Key included",
     included: [
@@ -197,7 +186,6 @@ const pagePlans: PlanCard[] = [
     eyebrow: "For scaling teams and advanced workflows",
     summary:
       "For studios scaling volume, teams, and advanced workflows.",
-    usageFee: `${formatOrderFeeMoney(PLAN_DEFS.studio.usageRateCents)} per paid order`,
     ctaLabel: "Start Free Trial",
     heroNote: "2 Photography Keys included",
     included: [
@@ -326,21 +314,14 @@ const comparisonRows: ComparisonRow[] = [
       studio: { label: "Sold separately", note: "Purchase monthly credit packs as needed. Unused credits do not carry over to the next month." },
     },
   },
-  {
-    label: "Platform Usage Billing",
-    values: {
-      starter: { label: `${formatOrderFeeMoney(PLAN_DEFS.starter.usageRateCents)} per paid order` },
-      core: { label: `${formatOrderFeeMoney(PLAN_DEFS.core.usageRateCents)} per paid order` },
-      studio: { label: `${formatOrderFeeMoney(PLAN_DEFS.studio.usageRateCents)} per paid order` },
-    },
-  },
 ];
 
-function formatMoney(cents: number) {
+function formatMoney(cents: number, exact = false) {
   return new Intl.NumberFormat("en-CA", {
     style: "currency",
     currency: "CAD",
-    maximumFractionDigits: 0,
+    minimumFractionDigits: exact ? 2 : 0,
+    maximumFractionDigits: exact ? 2 : 0,
   }).format(cents / 100);
 }
 
@@ -380,10 +361,41 @@ function renderComparisonValue(value: ComparisonValue) {
   );
 }
 
-export function PricingShowcase({ variant = "home" }: PricingShowcaseProps) {
+export function PricingShowcase({ variant = "home", catalog }: PricingShowcaseProps) {
   const [billingInterval, setBillingInterval] = useState<BillingInterval>("month");
   const showFullPage = variant === "page";
-  const pricingPlans = showFullPage ? pagePlans : homePlans;
+  const newOffer = catalog.pricingProfile === "gallery_v2";
+  const unlimited = catalog.galleryStoragePolicy === "unlimited_jpeg";
+  const orderFeeCopy = getOrderFeeCopy(catalog.pricingProfile);
+  const pricingPlans = (showFullPage ? pagePlans : homePlans).map((plan) => {
+    if (!newOffer) return plan;
+    return {
+      ...plan,
+      name: catalog.plans[plan.code].publicName,
+      summary: plan.code === "starter" ? catalog.plans.starter.description : plan.summary,
+      heroNote: plan.code === "starter"
+        ? unlimited ? "Unlimited JPEG client galleries" : "Photo gallery hosting included"
+        : plan.heroNote,
+      included: [unlimited ? "Unlimited JPEG photo galleries" : "Photo gallery hosting included", ...plan.included.map((item) =>
+        item === "Everything in Web Gallery" || item === "Everything in Starter" ? "Everything in Gallery" :
+        item === "Everything in the App Plan" ? "Everything in Core" : item)],
+      excluded: unlimited ? [...(plan.excluded ?? []), "RAW, video and general-purpose backup storage"] : plan.excluded,
+    };
+  });
+  const pricingComparisonRows: ComparisonRow[] = [
+    ...(newOffer ? [{ label: unlimited ? "Unlimited JPEG Client Gallery Storage" : "Photo Gallery Hosting", values: { starter: true, core: true, studio: true } }] : []),
+    ...comparisonRows,
+    {
+      label: newOffer ? "School Production Order Fee" : "Platform Usage Billing",
+      values: {
+        starter: { label: getOrderFeeDisclosure(catalog.plans.starter, catalog.pricingProfile).fee },
+        core: { label: getOrderFeeDisclosure(catalog.plans.core, catalog.pricingProfile).fee },
+        studio: { label: getOrderFeeDisclosure(catalog.plans.studio, catalog.pricingProfile).fee },
+      },
+    },
+  ];
+  const priceFor = (code: PlanCode, interval: BillingInterval) => interval === "year"
+    ? catalog.plans[code].annualPriceCents : catalog.plans[code].priceCents;
   const previewHref = "/studio-os";
   const introEyebrow = showFullPage
     ? "Pricing"
@@ -399,9 +411,9 @@ export function PricingShowcase({ variant = "home" }: PricingShowcaseProps) {
     : null;
   const introHighlights = showFullPage
     ? [
-        "Starter for basic galleries",
+        newOffer ? "Gallery for online delivery and sales" : "Starter for basic galleries",
         "Core for full workflow and ordering",
-        "Pro for scaling teams and advanced production",
+        newOffer ? "Studio for scaling teams and advanced production" : "Pro for scaling teams and advanced production",
       ]
     : [
         "Faster capture and organization",
@@ -587,8 +599,9 @@ export function PricingShowcase({ variant = "home" }: PricingShowcaseProps) {
             <div>
               <div className="text-sm font-semibold text-neutral-950">Choose monthly or annual billing</div>
               <div className="mt-1 text-sm leading-6 text-neutral-500">
-                Annual billing is paid in advance and saves {ANNUAL_DISCOUNT_PERCENT}% on the base
-                subscription.
+                {newOffer
+                  ? "Annual billing is paid in advance. Gallery saves C$109 a year; Core and Studio save 10% compared with monthly billing."
+                  : <>Annual billing is paid in advance and saves {catalog.annualDiscountPercent}% on the base subscription.</>}
               </div>
             </div>
 
@@ -615,7 +628,8 @@ export function PricingShowcase({ variant = "home" }: PricingShowcaseProps) {
 
           <div className="mt-8 grid gap-6 lg:grid-cols-3">
             {pricingPlans.map((plan) => {
-              const activePrice = getPlanPriceCents(plan.code, billingInterval);
+              const activePrice = priceFor(plan.code, billingInterval);
+              const feeDisclosure = getOrderFeeDisclosure(catalog.plans[plan.code], catalog.pricingProfile);
               const isFeatured = plan.code === "core";
               const annual = billingInterval === "year";
               const Icon = plan.icon;
@@ -666,7 +680,7 @@ export function PricingShowcase({ variant = "home" }: PricingShowcaseProps) {
 
                     <div className="mt-6 flex items-end gap-2">
                       <div className="text-5xl font-semibold tracking-tight">
-                        {formatMoney(activePrice)}
+                        {formatMoney(activePrice, newOffer)}
                       </div>
                       <div className={isFeatured ? "pb-2 text-sm font-medium text-neutral-300" : "pb-2 text-sm font-medium text-neutral-500"}>
                         /{annual ? "year" : "month"}
@@ -732,10 +746,10 @@ export function PricingShowcase({ variant = "home" }: PricingShowcaseProps) {
 
                       <div data-order-fee className="mt-4">
                         <p className={isFeatured ? "text-[13px] leading-6 text-neutral-300" : "text-[13px] leading-6 text-neutral-600"}>
-                          {plan.usageFee} · deducted from each sale
+                          {feeDisclosure.fee}{feeDisclosure.collection ? ` · ${feeDisclosure.collection}` : ""}
                         </p>
                         <p className={isFeatured ? "text-[13px] leading-6 text-neutral-300" : "text-[13px] leading-6 text-neutral-600"}>
-                          Charged in your sales currency. Stripe processing fees are additional.
+                          {feeDisclosure.processing}
                         </p>
                       </div>
 
@@ -758,9 +772,12 @@ export function PricingShowcase({ variant = "home" }: PricingShowcaseProps) {
           </div>
 
           <div className="mt-6 rounded-2xl border border-neutral-200 bg-neutral-50 px-6 py-5 text-sm leading-7 text-neutral-600">
-            <div className="font-semibold text-neutral-950">Flat fees on paid orders</div>
-            <p className="mt-2">{ORDER_FEE_PURPOSE}</p>
-            <p className="mt-2">{ORDER_FEE_BILLING}</p>
+            <div className="font-semibold text-neutral-950">{newOffer ? "Gallery sales and school production fees" : "Flat fees on paid orders"}</div>
+            <p className="mt-2">{orderFeeCopy.purpose}</p>
+            <p className="mt-2">{orderFeeCopy.billing}</p>
+            {unlimited ? (
+              <p className="mt-2">Unlimited storage covers finished JPEG photos in client galleries while your subscription is active, up to 50 MB per photo. RAW files, video, general-purpose backups and archival storage are excluded.</p>
+            ) : null}
           </div>
 
           {showFullPage ? (
@@ -872,14 +889,14 @@ export function PricingShowcase({ variant = "home" }: PricingShowcaseProps) {
                           >
                             <div className="text-sm font-semibold text-neutral-950">{plan.name}</div>
                             <div className="mt-1 text-sm text-neutral-500">
-                              {formatMoney(getPlanPriceCents(plan.code, "month"))}/month
+                              {formatMoney(priceFor(plan.code, "month"), newOffer)}/month
                             </div>
                           </th>
                         ))}
                       </tr>
                     </thead>
                     <tbody>
-                      {comparisonRows.map((row, rowIndex) => (
+                      {pricingComparisonRows.map((row, rowIndex) => (
                         <tr key={row.label} className={rowIndex % 2 === 0 ? "bg-white" : "bg-neutral-50/60"}>
                           <td className="border-b border-neutral-200 px-5 py-4 align-top text-sm font-medium text-neutral-950">
                             {row.label}

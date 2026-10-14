@@ -73,6 +73,7 @@ test('paused billing status preserves authentication and returns a retry before 
       'next/server': { NextResponse: { json: (body, options) => Response.json(body, options) } },
       '@/lib/credit-maintenance': { creditMaintenanceActive },
       '@/lib/payments': { ...pricing, DEFAULT_BILLING_CURRENCY: 'cad', FREE_TRIAL_DAYS: 14, ORDER_USAGE_RATE_CENTS: 35 },
+      '@/lib/studio-pricing': pricing,
       '@/lib/dashboard-auth': {
         resolveDashboardAuth: async () => ({ user: signedIn ? { id: 'new-account' } : null }),
         createDashboardServiceClient: () => { serviceCreates++; throw Error('order_usage_fees schema has not been installed'); },

@@ -34,12 +34,15 @@ function serverHtml(path, {signinMfa = false, resetStage} = {}) {
     }, exports);
     return exports;
   }
-  return renderToStaticMarkup(React.createElement(load(path).default));
+  const props = path === 'components/sign-up-client.tsx'
+    ? {catalog: load('lib/studio-pricing.ts').getPricingCatalogSnapshot()}
+    : {};
+  return renderToStaticMarkup(React.createElement(load(path).default, props));
 }
 
 test('server-rendered signup/sign-in/reset requests cannot submit credentials through native GET', () => {
   const cases = [
-    ['app/sign-up/page.tsx', {}, 'Start Free Trial'],
+    ['components/sign-up-client.tsx', {}, 'Start Free Trial'],
     ['app/sign-in/page.tsx', {}, 'Sign In'],
     ['app/sign-in/page.tsx', {signinMfa: true}, 'Two-factor authentication'],
     ['app/forgot-password/page.tsx', {}, 'Send Reset Link'],

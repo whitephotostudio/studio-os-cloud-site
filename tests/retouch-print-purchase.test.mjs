@@ -139,6 +139,9 @@ function setup({ storedOrders = [], storedItems = [] } = {}) {
     },
     '@/lib/payments': {
       quoteDirectOrderPlatformFees: paymentFees.quoteDirectOrderPlatformFees,
+      resolveDirectOrderPricingPolicy: paymentFees.resolveDirectOrderPricingPolicy,
+      resolveDirectOrderFeeScopes: paymentFees.resolveDirectOrderFeeScopes,
+      OrderFeeClassificationError: paymentFees.OrderFeeClassificationError,
       directOrderPlatformFeePayload: paymentFees.directOrderPlatformFeePayload,
       isFreeTrialActive: paymentFees.isFreeTrialActive,
       isStripeBillingActive: () => true, getConnectedAccountId: () => 'acct_test',

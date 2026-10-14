@@ -21,7 +21,7 @@ const publicPlanNotes = [
   'Studio includes 2 keys and is the only plan that can add extra keys for $55 each.',
 ];
 const surfaces = [
-  {name: 'pricing page', path: 'app/pricing/page.tsx', exportName: 'default', props: {}, names: ['Web Gallery Plan', 'App Plan', 'Studio Plan'], notes: publicPlanNotes},
+  {name: 'pricing page', path: 'components/pricing-page-client.tsx', exportName: 'PricingPageClient', props: {}, names: ['Web Gallery Plan', 'App Plan', 'Studio Plan'], notes: publicPlanNotes},
   {name: 'home pricing showcase', path: 'components/pricing-showcase.tsx', exportName: 'PricingShowcase', props: {variant: 'home'}, names: ['Web Gallery Plan', 'App Plan', 'Studio Plan'], notes: publicPlanNotes},
   {name: 'full pricing showcase', path: 'components/pricing-showcase.tsx', exportName: 'PricingShowcase', props: {variant: 'page'}, names: ['Starter Plan', 'Core Plan', 'Pro Plan'], notes: [
     'A simple way to start selling and delivering online.',
@@ -49,6 +49,7 @@ function serverHtml(surface, interval, env = {}) {
     '@/components/json-ld': {PricingJsonLd: () => null},
     '@/components/site-header': {SiteHeader: () => null},
     '@/components/site-footer': {SiteFooter: () => null},
+    '@/components/csp-nonce': {useCspNonce: () => 'schema-test-nonce'},
   };
   const cache = new Map();
   function load(path) {
@@ -65,7 +66,8 @@ function serverHtml(surface, interval, env = {}) {
     }, exports, {env});
     return exports;
   }
-  return renderToStaticMarkup(React.createElement(load(surface.path)[surface.exportName], surface.props));
+  const catalog = load("lib/studio-pricing.ts").getPricingCatalogSnapshot();
+  return renderToStaticMarkup(React.createElement(load(surface.path)[surface.exportName], {...surface.props, catalog}));
 }
 
 function decode(html) {
@@ -154,5 +156,68 @@ test('public cards derive order fees from the catalog without applying the annua
       const html = serverHtml(surface, interval, env);
       for (const [index, plan] of configuredPlans.entries()) assertCardDisclosure(html, surface.names[index], surface.notes[index], plan, interval);
     }
+  }
+});
+
+
+test('new monthly and annual offers match exact CAD subscriptions and qualifying production fees across public cards', () => {
+  const env = {STUDIO_GALLERY_PRICING_V2_ENABLED: '1'};
+  for (const surface of surfaces) {
+    for (const interval of ['month', 'year']) {
+      const html = serverHtml(surface, interval, env);
+      const gallery = text(planCard(html, 'Gallery'));
+      const core = text(planCard(html, 'Core'));
+      const studio = text(planCard(html, 'Studio'));
+      for (const [actual, expected] of [[gallery, interval === 'month' ? '$59' : '$599.00'],
+        [core, interval === 'month' ? '$99' : '$1,069.20'], [studio, interval === 'month' ? '$199' : '$2,149.20']]) {
+        assert.ok(actual.includes(expected), `${surface.name}: exact ${interval} price ${expected}`);
+        assert.ok(actual.includes('Photo gallery hosting included'), 'pricing publishes without unverified unlimited storage');
+        assert.doesNotMatch(actual, /Unlimited|50 MB|50MB/);
+      }
+      assert.ok(gallery.includes('No platform fee on ordinary gallery sales'));
+      for (const card of [core, studio]) {
+        assert.ok(card.includes('0.45 per qualifying school production order'));
+        assert.ok(card.includes('Ordinary gallery sales have no platform fee.'));
+        assert.ok(card.includes('Stripe processing fees are additional.'));
+      }
+      assert.doesNotMatch(text(html), /saves 10% on the base subscription/, 'does not falsely apply one discount to Gallery');
+    }
+  }
+});
+
+test('unlimited needs its separate storage switch and states its storage boundaries', () => {
+  const surface = surfaces[0];
+  const legacy = text(serverHtml(surface, 'month'));
+  const pricingOnly = text(serverHtml(surface, 'year', {STUDIO_GALLERY_PRICING_V2_ENABLED: '1'}));
+  const next = text(serverHtml(surface, 'year', {STUDIO_GALLERY_PRICING_V2_ENABLED: '1', STUDIO_GALLERY_UNLIMITED_STORAGE_ENABLED: '1'}));
+  assert.doesNotMatch(legacy, /Unlimited JPEG|What unlimited gallery storage includes/);
+  assert.doesNotMatch(pricingOnly, /Unlimited|50 MB|50MB/);
+  assert.ok(next.includes('There is no total photo-count or GB cap.'));
+  assert.ok(next.includes('while your subscription is active'));
+  assert.ok(next.includes('50 MB each'));
+  assert.ok(next.includes('RAW files, PSD files, videos and general-purpose backup storage are excluded.'));
+  assert.ok(next.includes('AI processing is billed separately.'));
+});
+
+test('Free Trial keeps its existing paid-order fee when the new paid catalog is published', () => {
+  for (const interval of ['month', 'year']) {
+    const html = serverHtml(surfaces[0], interval, {STUDIO_GALLERY_PRICING_V2_ENABLED: '1'});
+    const trial = planCard(html, 'Free Trial');
+    assert.match(text(trial), /\$0\.35 per paid order/);
+    assert.doesNotMatch(text(trial), /0\.45|ordinary gallery sales have no platform fee|Unlimited/i);
+    assert.ok(trial.indexOf('$0.35 per paid order') < trial.indexOf('href="/sign-up"'));
+  }
+});
+
+test('rendered public pricing schemas advertise actual prices without unverified storage claims', () => {
+  for (const exportName of ['PricingJsonLd', 'SoftwareApplicationJsonLd']) {
+    const surface = {path: 'components/json-ld.tsx', exportName, props: {}};
+    const html = serverHtml(surface, 'month', {STUDIO_GALLERY_PRICING_V2_ENABLED: '1'});
+    const schema = JSON.parse(html.match(/<script\b[^>]*>([\s\S]*?)<\/script>/)[1]);
+    const offers = Array.isArray(schema.offers) ? schema.offers : schema.offers.offers;
+    assert.deepEqual(offers.map(offer => [offer.name, offer.price, offer.priceCurrency]),
+      [['Gallery', '59.00', 'CAD'], ['Core', '99.00', 'CAD'], ['Studio', '199.00', 'CAD']]);
+    assert.ok(offers.every(offer => /gallery hosting/i.test(offer.description)));
+    assert.doesNotMatch(JSON.stringify(schema), /Unlimited|50 ?MB/i);
   }
 });

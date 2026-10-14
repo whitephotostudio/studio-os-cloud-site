@@ -10,7 +10,7 @@ const compiled = ts.transpileModule(readFileSync(new URL('../app/api/stripe/stat
 }).outputText;
 
 /** Execute the real status handler with isolated Connect and subscription responses. */
-function fixture({ subscription = false, country = 'US', savedCountry = null, providerFailure = false, mfaSatisfied } = {}) {
+function fixture({ subscription = false, country = 'US', savedCountry = null, providerFailure = false, mfaSatisfied, catalogSnapshot } = {}) {
   const stored = { id: 'studio-fixture', user_id: 'owner-fixture', business_name: 'Fixture studio',
     billing_currency: 'eur', stripe_connected_account_id: 'acct_fixture', stripe_account_id: null,
     stripe_subscription_id: subscription ? 'sub_fixture' : null, studio_id: null,
@@ -66,6 +66,7 @@ function fixture({ subscription = false, country = 'US', savedCountry = null, pr
     '@/lib/dashboard-auth': { createDashboardServiceClient: () => { serviceCalls++; return service; },
       resolveDashboardAuth: async () => ({ user: { id: stored.user_id, email: 'owner@example.invalid' }, mfaSatisfied }) },
     '@/lib/payments': payments,
+    '@/lib/studio-pricing': {...pricing, getPricingCatalogSnapshot: () => catalogSnapshot ?? pricing.getPricingCatalogSnapshot()},
     '@/lib/stripe-connect-country': connectCountry,
   };
   const api = {};
@@ -131,4 +132,21 @@ test('billing status denies an incomplete MFA session before service or provider
   const body = await response.json(); assert.match(body.message, /two-factor/);
   assert.equal(f.serviceCalls, 0); assert.equal(f.connectCalls.length, 0); assert.equal(f.subscriptionInputs.length, 0);
   assert.equal(body.connectReadyForPayments, false); assert.equal(body.photographerId, null);
+});
+
+test('status returns the enabled server catalog without replacing the subscriber legacy meter rate', async () => {
+  const exports = {};
+  const source = ts.transpileModule(readFileSync(new URL('../lib/studio-pricing.ts', import.meta.url), 'utf8'),
+    {compilerOptions: {module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022}}).outputText;
+  new Function('exports', 'process', source)(exports, {env: {STUDIO_GALLERY_PRICING_V2_ENABLED: '1'}});
+  const f = fixture({catalogSnapshot: exports.getPricingCatalogSnapshot()});
+  f.stored.order_usage_rate_cents = 25;
+  const body = await (await f.invoke()).json();
+  assert.equal(body.orderUsageRateCents, 25, 'actual historical billing state is separate from prospective fees');
+  assert.equal(body.billingCatalog.pricingProfile, 'gallery_v2');
+  assert.equal(body.billingCatalog.annualDiscountPercent, null);
+  assert.equal(body.billingCatalog.galleryStoragePolicy, 'existing');
+  assert.deepEqual(body.billingCatalog.plans.map(plan => [plan.priceCents, plan.annualPriceCents, plan.usageRateCents, plan.orderFeeScope]),
+    [[5900, 59900, 0, 'none'], [9900, 106920, 45, 'production_orders'], [19900, 214920, 45, 'production_orders']]);
+  assert.deepEqual(body.billingCatalog.plans.map(plan => plan.annualSavingsPercent), [15.4, 10, 10]);
 });

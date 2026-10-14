@@ -182,8 +182,10 @@ export async function syncOrderUsageFees(service: ServiceClient, input: {
   periodStart: string;
   periodEnd: string;
   billingPeriod: string;
+  /** New direct-fee offers may retain an old meter only to finish its ledger. */
+  stageNewFees?: boolean;
 }, request: StripeRequest, now = Date.now()) {
-  const { data, error } = await service.from("orders")
+  const { data, error } = input.stageNewFees === false ? { data: [], error: null } : await service.from("orders")
     .select("id,paid_at,total_cents")
     .eq("photographer_id", input.photographerId)
     .in("payment_status", ["paid", "succeeded", "partially_refunded"])
