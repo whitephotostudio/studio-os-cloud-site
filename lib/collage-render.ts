@@ -13,16 +13,19 @@ export async function loadCollageImage(url: string): Promise<HTMLImageElement> {
 
 export async function renderCollage(template: CollageTemplate, placements: Record<string, CollagePlacement>, captions: string[], width: number, placeholders = false): Promise<HTMLCanvasElement> {
   const canvas = document.createElement("canvas");
-  canvas.width = Math.round(width);
-  canvas.height = Math.round(width * template.heightInches / template.widthInches);
+  const scale = width / template.widthInches;
+  const bleed = (template.bleedInches ?? 0) * scale;
+  const trimWidth = width, trimHeight = width * template.heightInches / template.widthInches;
+  canvas.width = Math.round(trimWidth + 2 * bleed);
+  canvas.height = Math.round(trimHeight + 2 * bleed);
   const ctx = canvas.getContext("2d");
   if (!ctx) throw Error("Your browser does not support image export.");
   ctx.fillStyle = template.background;
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   for (const slot of template.slots) {
-    const left = slot.x * canvas.width, top = slot.y * canvas.height;
-    const w = slot.width * canvas.width, h = slot.height * canvas.height;
-    const placement = placements[slot.id];
+    const left = bleed + slot.x * trimWidth, top = bleed + slot.y * trimHeight;
+    const w = slot.width * trimWidth, h = slot.height * trimHeight;
+    const placement = Object.hasOwn(placements, slot.id) ? placements[slot.id] : undefined;
     if (placement) {
       const image = await loadCollageImage(placement.photo.url);
       const crop = collageCrop(image.naturalWidth, image.naturalHeight, w, h, placement.zoom, placement.x, placement.y);
@@ -31,20 +34,26 @@ export async function renderCollage(template: CollageTemplate, placements: Recor
       ctx.fillStyle = "#e9edf3";
       ctx.fillRect(left, top, w, h);
       ctx.fillStyle = "#566176";
-      ctx.font = `${canvas.width * .018}px Arial`;
+      ctx.font = `${trimWidth * .018}px Arial`;
       ctx.textAlign = "center";
       ctx.fillText(slot.label, left + w / 2, top + h / 2, w * .9);
     } else {
       throw Error(`Choose a photo for ${slot.label}.`);
     }
+    if (slot.border?.widthInches) {
+      const stroke = slot.border.widthInches * scale;
+      ctx.strokeStyle = slot.border.color;
+      ctx.lineWidth = stroke;
+      ctx.strokeRect(left + stroke / 2, top + stroke / 2, Math.max(0, w - stroke), Math.max(0, h - stroke));
+    }
   }
   // Transparent openings in the uploaded artwork reveal the assigned photos.
-  if (template.overlay) ctx.drawImage(await loadCollageImage(template.overlay), 0, 0, canvas.width, canvas.height);
+  if (template.overlay) ctx.drawImage(await loadCollageImage(template.overlay), bleed, bleed, trimWidth, trimHeight);
   ctx.fillStyle = template.ink;
   ctx.textAlign = "center";
   ctx.textBaseline = "top";
-  const fontSize = canvas.width * template.caption.size;
+  const fontSize = trimWidth * template.caption.size;
   ctx.font = `bold ${fontSize}px Arial`;
-  captions.slice(0, 3).forEach((line, i) => ctx.fillText(line.slice(0, 100), template.caption.x * canvas.width, template.caption.y * canvas.height + i * fontSize * 1.5, Math.max(1, 2 * Math.min(template.caption.x, 1 - template.caption.x) * canvas.width * .95)));
+  captions.slice(0, 3).forEach((line, i) => ctx.fillText(line.slice(0, 100), bleed + template.caption.x * trimWidth, bleed + template.caption.y * trimHeight + i * fontSize * 1.5, Math.max(1, 2 * Math.min(template.caption.x, 1 - template.caption.x) * trimWidth * .95)));
   return canvas;
 }

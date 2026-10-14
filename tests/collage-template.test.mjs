@@ -8,7 +8,7 @@ new Function('exports', ts.transpileModule(
   readFileSync(new URL('../lib/collage-template.ts', import.meta.url), 'utf8'),
   { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } },
 ).outputText)(exports);
-const { collagePreset, parseCollageTemplate, collageCrop, collageResolution } = exports;
+const { collagePreset, parseCollageTemplate, collageCrop, collageResolution, collageOutputSize } = exports;
 
 test('both sample layouts round-trip as portable templates at print dimensions', () => {
   for (const kind of ['triptych', 'graduation']) {
@@ -60,4 +60,35 @@ test('template export discards student names, photo selections and unexpected fi
     slots: source.slots.map(s => ({ ...s, assignedImageUrl: 'private.jpg' })) });
   assert.deepEqual(imported, source);
   assert.ok(!JSON.stringify(imported).includes('private.jpg'));
+});
+
+test('optional bleed, safe inset and inside borders preserve the version 1 interchange contract', () => {
+  const base = collagePreset('triptych');
+  const design = { ...base, bleedInches: .125, safeInsetInches: .125,
+    slots: base.slots.map(slot => ({ ...slot, border: { color: '#14245b', widthInches: .025 } })) };
+  assert.deepEqual(parseCollageTemplate(JSON.parse(JSON.stringify(design))), design);
+  assert.deepEqual(collageOutputSize(design), { width: 3075, height: 2475 });
+  assert.deepEqual(collageOutputSize(base), { width: 3000, height: 2400 });
+  for (const patch of [{ bleedInches: -.01 }, { bleedInches: .6 }, { safeInsetInches: NaN },
+    { slots: [{ ...base.slots[0], border: { color: 'url(bad)', widthInches: .025 } }] },
+    { slots: [{ ...base.slots[0], border: { color: '#ffffff', widthInches: .3 } }] }]) {
+    assert.throws(() => parseCollageTemplate({ ...base, ...patch }));
+  }
+});
+
+test('all advertised photo-space IDs work before any photo is selected', async () => {
+  // Object prototype names are valid portable ASCII IDs. Empty render maps
+  // must treat them as unassigned, rather than inherited placements.
+  const source = readFileSync(new URL('../lib/collage-render.ts', import.meta.url), 'utf8');
+  const labels = [];
+  const context = { fillRect() {}, fillText(label) { labels.push(label); }, drawImage() { assert.fail('Empty spaces must not load photos.'); } };
+  const renderer = {};
+  new Function('exports', 'require', 'document', ts.transpileModule(source, {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+  }).outputText)(renderer, () => exports, { createElement: () => ({ getContext: () => context }) });
+  const base = collagePreset('triptych');
+  const design = parseCollageTemplate({ ...base, slots: base.slots.map((slot, index) => ({ ...slot, id: ['constructor', '__proto__', 'toString'][index] })) });
+  const canvas = await renderer.renderCollage(design, {}, [], 900, true);
+  assert.equal(canvas.width, 900);
+  assert.deepEqual(labels, design.slots.map(slot => slot.label));
 });

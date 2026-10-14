@@ -1,10 +1,13 @@
 /** Portable design only. Student photos and orders never belong in a template. */
-export type CollageSlot = { id: string; label: string; x: number; y: number; width: number; height: number };
+export type CollageSlot = { id: string; label: string; x: number; y: number; width: number; height: number; border?: { color: string; widthInches: number } };
 export type CollageTemplate = {
   version: 1;
   name: string;
   widthInches: number;
   heightInches: number;
+  /** Dimensions describe trim; normalized design coordinates are relative to trim. */
+  bleedInches?: number;
+  safeInsetInches?: number;
   background: string;
   ink: string;
   overlay: string | null;
@@ -49,6 +52,8 @@ export function parseCollageTemplate(value: unknown): CollageTemplate {
   if (t.version !== 1) throw Error("Unsupported template version.");
   if (typeof t.name !== "string" || !t.name.trim() || t.name.length > 100) throw Error("Enter a template name (up to 100 characters).");
   if (!finite(t.widthInches, 4, 30) || !finite(t.heightInches, 4, 30) || t.widthInches * t.heightInches > 600) throw Error("Choose print dimensions from 4 to 30 inches, up to 600 square inches.");
+  if (t.bleedInches !== undefined && !finite(t.bleedInches, 0, .5)) throw Error("Bleed must be between 0 and 0.5 inches.");
+  if (t.safeInsetInches !== undefined && !finite(t.safeInsetInches, 0, .5)) throw Error("Safe inset must be between 0 and 0.5 inches.");
   const color = (v: unknown) => typeof v === "string" && /^#[a-f\d]{6}$/i.test(v);
   if (!color(t.background) || !color(t.ink)) throw Error("Invalid template colours.");
   if (t.overlay !== null && (typeof t.overlay !== "string" || t.overlay.length > MAX_TEMPLATE_BYTES || !/^data:image\/(png|jpeg);base64,[A-Za-z0-9+/]+=*$/.test(t.overlay))) throw Error("Artwork must be an embedded PNG or JPEG.");
@@ -60,13 +65,26 @@ export function parseCollageTemplate(value: unknown): CollageTemplate {
     ids.add(s.id);
     if (typeof s.label !== "string" || !s.label.trim() || s.label.length > 80) throw Error("Invalid photo-space label.");
     if (!finite(s.x, 0, 1) || !finite(s.y, 0, 1) || !finite(s.width, .02, 1) || !finite(s.height, .02, 1) || s.x + s.width > 1.000001 || s.y + s.height > 1.000001) throw Error("Keep every photo space inside the page.");
-    return { id: s.id, label: s.label, x: s.x, y: s.y, width: s.width, height: s.height };
+    let border: CollageSlot["border"];
+    if (s.border !== undefined) {
+      const b = record(s.border);
+      if (!color(b.color) || !finite(b.widthInches, 0, .25)) throw Error("Invalid photo-space border.");
+      border = { color: b.color as string, widthInches: b.widthInches };
+    }
+    return { id: s.id, label: s.label, x: s.x, y: s.y, width: s.width, height: s.height, ...(border ? { border } : {}) };
   });
   const c = record(t.caption);
   if (!finite(c.x, 0, 1) || !finite(c.y, 0, .9) || !finite(c.size, .01, .06)) throw Error("Keep the caption inside the page.");
   return { version: 1, name: t.name.trim(), widthInches: t.widthInches, heightInches: t.heightInches,
     background: t.background as string, ink: t.ink as string, overlay: t.overlay as string | null,
-    slots, caption: { x: c.x, y: c.y, size: c.size } };
+    slots, caption: { x: c.x, y: c.y, size: c.size },
+    ...(t.bleedInches !== undefined ? { bleedInches: t.bleedInches as number } : {}),
+    ...(t.safeInsetInches !== undefined ? { safeInsetInches: t.safeInsetInches as number } : {}) };
+}
+
+export function collageOutputSize(template: CollageTemplate, dpi = COLLAGE_DPI) {
+  const bleed = template.bleedInches ?? 0;
+  return { width: Math.round((template.widthInches + 2 * bleed) * dpi), height: Math.round((template.heightInches + 2 * bleed) * dpi) };
 }
 
 /** Source crop shared by preview and final output. Positions run from 0 to 1. */
