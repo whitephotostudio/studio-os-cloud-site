@@ -12,7 +12,7 @@ import {
   normalizePlanCode,
 } from "@/lib/studio-pricing";
 import { FREE_TRIAL_DAYS } from "@/lib/trial-config";
-import { formatOrderFeeMoney } from "@/lib/order-fee-display";
+import { formatOrderFeeMoney, getOrderFeeDisclosure } from "@/lib/order-fee-display";
 import { authRequestErrorMessage, withAuthRequestTimeout } from "@/lib/auth-request";
 import { PASSWORD_REQUIREMENTS } from "@/lib/password-policy";
 
@@ -26,6 +26,9 @@ export default function SignUpClient({ catalog }: { catalog: PricingCatalogSnaps
   const supabase = createClient();
   const [selectedPlan, setSelectedPlan] = useState<ReturnType<typeof normalizePlanCode>>(null);
   const [selectedInterval, setSelectedInterval] = useState<"month" | "year">("month");
+  const selectedPlanFee = selectedPlan
+    ? getOrderFeeDisclosure(catalog.plans[selectedPlan], catalog.pricingProfile)
+    : null;
   const [redirectPath, setRedirectPath] = useState("");
   const [downloadSource, setDownloadSource] = useState(false);
   const [campaignSource, setCampaignSource] = useState("");
@@ -225,6 +228,12 @@ export default function SignUpClient({ catalog }: { catalog: PricingCatalogSnaps
                   Create your account, then activate your plan in billing settings.
                   Connect your own Stripe account when you are ready to accept client payments.
                 </div>
+                {selectedPlanFee ? (
+                  <div data-selected-plan-order-fee className="mt-3 text-xs leading-6 text-neutral-600">
+                    <p>Paid plan: {selectedPlanFee.fee}{selectedPlanFee.collection ? ` · ${selectedPlanFee.collection}` : ""}.</p>
+                    <p>{selectedPlanFee.processing}</p>
+                  </div>
+                ) : null}
               </div>
             ) : null}
 

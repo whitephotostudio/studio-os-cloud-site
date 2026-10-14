@@ -223,6 +223,21 @@ test('signup trial disclosure retains the existing fee when paid Gallery pricing
   assert.doesNotMatch(h.text(), /0\.45|ordinary gallery sales have no platform order fee|Unlimited|50 ?MB/i);
 });
 
+test('all-order signup shows the selected paid-plan fee independently of the existing trial fee', async () => {
+  for (const [plan, name, rate, annual] of [['starter', 'Gallery', '0.55', '$599.00'],
+    ['core', 'Core', '0.45', '$1,069.20'], ['studio', 'Studio', '0.45', '$2,149.20']]) {
+    const h = pageHarness('components/sign-up-client.tsx', {env: {STUDIO_GALLERY_PRICING_V3_ENABLED: '1'}, search: `?plan=${plan}&interval=year`});
+    await h.flush();
+    const rendered = h.text();
+    assert.ok(rendered.includes(name));
+    assert.ok(rendered.includes(annual));
+    assert.ok(rendered.includes(`Paid plan:  ${rate} per paid order`));
+    assert.match(rendered, /Order fees are charged in your sales currency/);
+    assert.match(rendered, /Paid sales during the trial have a \$0\.35 Studio OS fee per order/);
+    assert.doesNotMatch(rendered, /ordinary gallery sales have no|qualifying school production|Unlimited|50 ?MB/i);
+  }
+});
+
 test('verification-email timeouts keep the recovery action usable without claiming delivery', async () => {
   const h = pageHarness('app/sign-in/page.tsx', {search: '?email=person%40example.invalid', auth: {
     signInWithPassword: async () => ({data: {}, error: Error('Email not confirmed')}),

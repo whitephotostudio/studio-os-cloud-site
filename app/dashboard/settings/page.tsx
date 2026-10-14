@@ -28,7 +28,7 @@ import {
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import type { BillingInterval, GalleryStoragePolicy, OrderFeeScope, PricingProfile } from "@/lib/studio-pricing";
-import { getOrderFeeCopy } from "@/lib/order-fee-display";
+import { getOrderFeeCopy, getOrderFeeDisclosure } from "@/lib/order-fee-display";
 import { WhatsNewDot, useIsFeatureNew } from "@/components/whats-new-dot";
 import { ProofWatermarkOverlay } from "@/components/parents/proof-watermark-overlay";
 import { normalizeProofWatermarkOpacity, proofWatermarkOpacity } from "@/lib/proof-watermark";
@@ -1220,8 +1220,9 @@ export default function SettingsPage() {
     billingCatalog.plans.find((plan) => plan.code === (subscriptionPlanCode || desiredPlanCode)) ||
     billingCatalog.plans[0];
   const platformBillingCurrency = billingCatalog.currency || "cad";
-  const newGalleryPricing = billingCatalog.pricingProfile === "gallery_v2";
-  const orderFeeCopy = getOrderFeeCopy(newGalleryPricing ? "gallery_v2" : "legacy");
+  const pricingProfile = billingCatalog.pricingProfile || "legacy";
+  const newGalleryPricing = pricingProfile !== "legacy";
+  const orderFeeCopy = getOrderFeeCopy(pricingProfile);
   const selectedExtraKeyPrice =
     desiredBillingInterval === "year"
       ? billingCatalog.extraDesktopKeyAnnualCents
@@ -1295,7 +1296,7 @@ export default function SettingsPage() {
             Branding + Billing + Stripe Connect
           </h1>
           <p style={{ marginTop: 12, maxWidth: 840, fontSize: 18, lineHeight: 1.7, color: "#64748b" }}>
-            Photographer sales route through the photographer’s own connected Stripe account. {newGalleryPricing ? "Ordinary gallery sales have no platform order fee; qualifying school production fees are deducted from the sale." : "Studio OS order fees are deducted from each paid sale."}
+            Photographer sales route through the photographer’s own connected Stripe account. {pricingProfile === "gallery_v2" ? "Ordinary gallery sales have no platform order fee; qualifying school production fees are deducted from the sale." : "Studio OS order fees are deducted from each paid sale."}
             Plans, extra desktop keys, and background credits are billed separately through platform billing.
           </p>
         </div>
@@ -2082,12 +2083,14 @@ export default function SettingsPage() {
                       {plan.code !== "starter" ? <div style={{ marginTop: 4 }}>Background credits sold separately.</div> : null}
                       {newGalleryPricing && <div style={{ marginTop: 4 }}>{billingCatalog.galleryStoragePolicy === "unlimited_jpeg" ? "Unlimited JPEG gallery photos. RAW backup is excluded." : "Photo gallery hosting included."}</div>}
                       <div data-order-fee style={{ marginTop: 10, color: "#64748b", lineHeight: 1.6, fontSize: 13, fontWeight: 400 }}>
-                        <div>{newGalleryPricing
+                        <div>{pricingProfile === "gallery_v3"
+                          ? `${getOrderFeeDisclosure(plan, pricingProfile, billingCurrency).fee} · deducted from each sale.`
+                          : newGalleryPricing
                           ? plan.orderFeeScope === "production_orders"
                             ? `${formatMoney(plan.usageRateCents, billingCurrency)} per qualifying school production order · deducted from each qualifying sale.`
                             : "No platform fee on ordinary gallery sales."
                           : `${(plan.usageRateCents / 100).toFixed(2)} per paid order in your sales currency · deducted from each sale.`}</div>
-                        {newGalleryPricing && plan.orderFeeScope === "production_orders" && <div>Ordinary gallery sales have no platform fee.</div>}
+                        {pricingProfile === "gallery_v2" && plan.orderFeeScope === "production_orders" && <div>Ordinary gallery sales have no platform fee.</div>}
                         <div>Stripe processing fees are additional.</div>
                       </div>
                     </div>
@@ -2097,7 +2100,7 @@ export default function SettingsPage() {
             </div>
 
             <div style={{ marginTop: 16, padding: "14px 16px", borderRadius: 14, background: "#f8fafc", border: "1px solid #e2e8f0", color: "#475569", lineHeight: 1.7, fontSize: 13 }}>
-              <div style={{ fontWeight: 800, color: "#0f172a" }}>{newGalleryPricing ? "Gallery sales and school production fees" : "Flat fees on paid orders"}</div>
+              <div style={{ fontWeight: 800, color: "#0f172a" }}>{pricingProfile === "gallery_v2" ? "Gallery sales and school production fees" : "Flat fees on paid orders"}</div>
               <div style={{ marginTop: 4 }}>{orderFeeCopy.purpose}</div>
               <div style={{ marginTop: 4 }}>{orderFeeCopy.billing}</div>
               {newGalleryPricing && <div style={{ marginTop: 4 }}>These are prices for new subscriptions and approved plan changes. Existing subscriptions keep their current Stripe prices.</div>}

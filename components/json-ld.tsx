@@ -30,7 +30,7 @@ function catalogOffers(catalog: PricingCatalogSnapshot, application = false) {
       price,
       priceCurrency: "CAD",
       ...(catalog.pricingProfile === "legacy" && application ? { priceValidUntil: "2027-12-31" } : {}),
-      description: catalog.pricingProfile === "gallery_v2"
+      description: catalog.pricingProfile !== "legacy"
         ? `${plan.description} ${fee.fee}. Stripe processing fees are additional. ${catalog.galleryStoragePolicy === "unlimited_jpeg"
           ? "Unlimited finished JPEG client gallery hosting while subscribed, up to 50 MB per photo; RAW files, videos and general-purpose backups are excluded."
           : "Photo gallery hosting included."}`

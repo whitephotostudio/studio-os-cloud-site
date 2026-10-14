@@ -213,7 +213,7 @@ const plans: PricingPlan[] = [
 
 export function PricingPageClient({ catalog }: { catalog: PricingCatalogSnapshot }) {
   const [billingInterval, setBillingInterval] = useState<BillingInterval>("month");
-  const newOffer = catalog.pricingProfile === "gallery_v2";
+  const newOffer = catalog.pricingProfile !== "legacy";
   const unlimited = catalog.galleryStoragePolicy === "unlimited_jpeg";
   const feeCopy = getOrderFeeCopy(catalog.pricingProfile);
   const displayedPlans = plans.map((plan): PricingPlan => {
@@ -354,7 +354,7 @@ export function PricingPageClient({ catalog }: { catalog: PricingCatalogSnapshot
           </div>
 
           <div className="mt-6 rounded-2xl border border-neutral-200 bg-neutral-50 px-6 py-5">
-            <h2 className="marketing-card-title text-[1.15rem]">{newOffer ? "Gallery sales and school production fees" : "Flat fees on paid orders"}</h2>
+            <h2 className="marketing-card-title text-[1.15rem]">{catalog.pricingProfile === "gallery_v2" ? "Gallery sales and school production fees" : "Flat fees on paid orders"}</h2>
             <p className="marketing-body mt-2 text-[1rem] leading-7 text-neutral-600">{feeCopy.purpose}</p>
             <p className="marketing-body mt-2 text-[1rem] leading-7 text-neutral-600">{feeCopy.billing}</p>
           </div>

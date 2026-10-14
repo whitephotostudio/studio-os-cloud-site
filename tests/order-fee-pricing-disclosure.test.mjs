@@ -221,3 +221,37 @@ test('rendered public pricing schemas advertise actual prices without unverified
     assert.doesNotMatch(JSON.stringify(schema), /Unlimited|50 ?MB/i);
   }
 });
+
+test('all-order profile shows 55/45/45 fees on every monthly and annual paid card', () => {
+  const env = {STUDIO_GALLERY_PRICING_V3_ENABLED: '1', STUDIO_GALLERY_PRICING_V2_ENABLED: '1'};
+  for (const surface of surfaces) {
+    for (const interval of ['month', 'year']) {
+      const html = serverHtml(surface, interval, env);
+      for (const [index, name] of ['Gallery', 'Core', 'Studio'].entries()) {
+        const card = planCard(html, name);
+        const rate = index === 0 ? '0.55' : '0.45';
+        const disclosure = card.match(/<div\b[^>]*\bdata-order-fee(?:="[^"]*")?[^>]*>[\s\S]*?<\/div>/)[0];
+        assert.ok(text(disclosure).includes(`${rate} per paid order · deducted from each sale`));
+        assert.match(text(disclosure), /Order fees are charged in your sales currency/);
+        assert.match(text(disclosure), /Stripe processing fees are additional/);
+        assert.ok(card.indexOf(disclosure) < card.indexOf(`href="/sign-up?plan=${['starter', 'core', 'studio'][index]}&amp;interval=${interval}"`));
+      }
+      const rendered = text(html);
+      assert.match(rendered, /This applies to gallery, school, sports, event, print and digital orders/);
+      assert.doesNotMatch(rendered, /ordinary gallery sales have no|qualifying school production|school production fee|Unlimited|50 ?MB/i);
+      if (surface === surfaces[0]) assert.match(text(planCard(html, 'Free Trial')), /\$0\.35 per paid order/);
+    }
+  }
+});
+
+test('all-order public schemas match card prices and order fees without old exemption claims', () => {
+  for (const exportName of ['PricingJsonLd', 'SoftwareApplicationJsonLd']) {
+    const surface = {path: 'components/json-ld.tsx', exportName, props: {}};
+    const html = serverHtml(surface, 'month', {STUDIO_GALLERY_PRICING_V3_ENABLED: '1'});
+    const schema = JSON.parse(html.match(/<script\b[^>]*>([\s\S]*?)<\/script>/)[1]);
+    const offers = Array.isArray(schema.offers) ? schema.offers : schema.offers.offers;
+    assert.deepEqual(offers.map(offer => [offer.name, offer.price]), [['Gallery', '59.00'], ['Core', '99.00'], ['Studio', '199.00']]);
+    for (const [index, offer] of offers.entries()) assert.match(offer.description, new RegExp(`${index === 0 ? '0\\.55' : '0\\.45'} per paid order`));
+    assert.doesNotMatch(JSON.stringify(schema), /ordinary gallery sales have no|qualifying school production|Unlimited|50 ?MB/i);
+  }
+});

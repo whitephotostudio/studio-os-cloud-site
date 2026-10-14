@@ -14,6 +14,7 @@ const studentId = '66666666-6666-4666-8666-666666666666';
 const otherSchoolId = '77777777-7777-4777-8777-777777777777';
 const otherStudentId = '88888888-8888-4888-8888-888888888888';
 const projectId = '99999999-9999-4999-8999-999999999999';
+const eventLaneId='cccccccc-cccc-4ccc-8ccc-cccccccccccc';
 const laneId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', returnId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', cookieHash = 'a'.repeat(64);
 
 /** The actual POST handler, quote, snapshot payload and Stripe form builder run against isolated dependencies. */
@@ -30,6 +31,7 @@ function fixture(options = {}) {
   const rows = [row];
   if (options.combined) rows.push({...row, id: siblingId, ...(options.crossSchool ? {school_id: otherSchoolId, student_id: otherStudentId} : {})});
   if (options.event) Object.assign(row, {school_id: null, student_id: null, project_id: projectId});
+  if (options.mixed) Object.assign(rows[1],{school_id:null,student_id:null,project_id:projectId});
   if (options.storedSnapshot) rows.forEach(member => Object.assign(member, {
     status: 'checkout_starting', platform_fee_collection_method: 'connect_application_fee',
     platform_fee_amount_cents: 25, platform_fee_currency: row.currency, platform_fee_rate_cents: 25,
@@ -55,7 +57,7 @@ function fixture(options = {}) {
     tables.students.push({id: otherStudentId, school_id: options.movedStudent ? schoolId : otherSchoolId, pin: 'OTHER456'});
   }
   tables.parent_order_session_access = options.provenance ? rows.map(member => ({order_id: member.id, token_hash: cookieHash,
-    photographer_id: photographerId, order_group_id: member.order_group_id, school_id:member.school_id, project_id:member.project_id, student_id:member.student_id,lane_ids:[laneId]})) : [];
+    photographer_id: photographerId, order_group_id: member.order_group_id, school_id:member.school_id, project_id:member.project_id, student_id:member.student_id,lane_ids:[options.mixed&&member.project_id?eventLaneId:laneId]})) : [];
   tables.parent_checkout_returns = options.storedSnapshot && !options.ambiguousLegacy ? [{id:returnId, anchor_order_id:primaryId, attempt_key:'initial'}] : [];
   let authenticatedScope;
   const service = {
@@ -106,6 +108,7 @@ function fixture(options = {}) {
   const cache = new Map();
   const safeProcess = {env: {STRIPE_SECRET_KEY: 'sk_test_routeFixture', STRIPE_BILLING_CURRENCY: 'cad',
     ...(options.pricingV2 ? {STUDIO_GALLERY_PRICING_V2_ENABLED:'1'} : {}),
+    ...(options.pricingV3 ? {STUDIO_GALLERY_PRICING_V3_ENABLED:'1'} : {}),
     ...(options.launchAt ? {STUDIO_GALLERY_PRICING_V2_LAUNCH_AT:options.launchAt} : {})}};
   async function provider(target, request) {
     if (new URL(target).pathname === '/v1/subscriptions/sub_fixture') {
@@ -113,13 +116,14 @@ function fixture(options = {}) {
       assert.equal(request.headers['Stripe-Account'], undefined, 'subscription belongs to platform');
       sequence.push('subscription-get');
       const plan = options.planCode ?? 'core';
-      const newProfile = options.subscriptionProfile === 'gallery_v2';
+      const newProfile = options.subscriptionProfile === 'gallery_v2' || options.subscriptionProfile === 'gallery_v3';
+      const version=options.subscriptionProfile==='gallery_v3'?'gallery-v3':newProfile?'gallery-v2':'v2';
       const amount = plan === 'starter' ? newProfile ? 5900 : 4900 : plan === 'core' ? 9900 : 19900;
       return Response.json({id:'sub_fixture',customer:options.subscriptionCustomer ?? 'cus_fixture',status:'active',
         metadata:{photographer_id:photographerId,plan_code:plan,billing_interval:'month',
           pricing_profile:options.subscriptionProfile,...options.subscriptionMetadata},
         items:{data:[{id:'si_base',quantity:1,price:{id:'price_base',currency:'cad',unit_amount:options.subscriptionAmount ?? amount,
-          lookup_key:`studio-os-${plan}-monthly-${newProfile?'gallery-v2':'v2'}`,recurring:{interval:'month'}}},
+          lookup_key:`studio-os-${plan}-monthly-${version}`,recurring:{interval:'month',interval_count:options.intervalCount??1,usage_type:options.subscriptionUsageType??'licensed'}}},
           ...(!newProfile ? [{id:'si_usage',price:{id:'price_usage',currency:'cad',unit_amount:options.legacyRate ?? 40,
             lookup_key:`studio-os-${plan}-order-usage-monthly-v2`,recurring:{interval:'month',usage_type:'metered'}}}] : [])]}});
     }
@@ -156,7 +160,9 @@ function fixture(options = {}) {
       if(!gallery || (input.kind==='school'&&!tables.students.some(st=>st.school_id===input.galleryId&&st.pin===input.pin)))throw new SessionError(403);
       authenticatedScope={laneId,...input,email:input.email.trim().toLowerCase(),photographerId:gallery.photographer_id,expiresAt:new Date(Date.now()+86400000).toISOString()};
       return{grant:authenticatedScope,applyCookie:async response=>{response.headers.append('set-cookie','__Host-studio_os_parent_session=session_fixture; Path=/; HttpOnly; Secure');return response;}};
-    },resolveParentGallerySession:async()=>authenticatedScope};
+    },resolveParentGallerySession:async(_request,id)=>options.mixed&&id===eventLaneId
+      ? {...authenticatedScope,laneId:eventLaneId,kind:'event',galleryId:projectId}
+      : authenticatedScope};
   const checkoutHelper=load('lib/parent-checkout-return.ts',{'server-only':{},'@/lib/dashboard-auth':{createDashboardServiceClient:()=>service},'@/lib/parent-gallery-session':foundation,
     '@/lib/payments':actualPayments,'@/lib/order-checkout-totals':load('lib/order-checkout-totals.ts')});
   const dependencies = {
@@ -426,4 +432,74 @@ test('every free trial keeps the disclosed35c fee even with a configured old cut
       assert.equal(f.stripeRequests[0].params.get('payment_intent_data[application_fee_amount]'),'35');
     }
   }
+});
+
+test('verified V3 Gallery/Core/Studio subscriptions charge55/45/45 for school and ordinary gallery purchases', async () => {
+  for(const[planCode,rate]of[['starter',55],['core',45],['studio',45]]) {
+    for(const event of [false,true]) {
+      const f=fixture({pricingV3:true,subscriptionProfile:'gallery_v3',planCode,event,provenance:event,workflowType:'portrait'});
+      const response=await f.invoke({...(event?{mode:'event',projectId,email:'event+viewer@example.invalid'}:{}),
+        pricingProfile:'gallery_v2',feeScope:'gallery',planCode:'starter',platformFeeAmount:0});
+      assert.equal(response.status,200);
+      assert.equal(f.quoteInputs[0].pricingProfile,'gallery_v3');
+      assert.equal(f.quoteInputs[0].planCode,planCode);
+      assert.equal(f.checkoutInputs[0].platformFee.amountCents,rate);
+      assert.equal(f.rows[0].platform_fee_rate_cents,rate);
+      assert.equal(f.stripeRequests[0].params.get('payment_intent_data[application_fee_amount]'),String(rate));
+      assert.equal(f.stripeRequests[0].headers['Stripe-Account'],'acct_fixture');
+    }
+  }
+});
+
+test('V3 fees charge per persisted group member in the sales currency and do not depend on public offer flags',async()=>{
+  for(const[planCode,rate]of[['starter',55],['core',45],['studio',45]]) {
+    const f=fixture({subscriptionProfile:'gallery_v3',planCode,combined:true,currency:'usd'});
+    assert.equal((await f.invoke()).status,200);
+    assert.equal(f.checkoutInputs[0].platformFee.amountCents,rate*2);
+    assert.deepEqual(f.rows.map(row=>[row.platform_fee_amount_cents,row.platform_fee_currency]),[[rate,'usd'],[rate,'usd']]);
+    const params=f.stripeRequests[0].params;
+    assert.equal(params.get('payment_intent_data[application_fee_amount]'),String(rate*2));
+    assert.equal(params.get('metadata[platform_fee_currency]'),'usd');
+    assert.equal(params.get('metadata[platform_fee_fx_rate]'),null);
+  }
+});
+
+test('V3 offers preserve existing V2 gallery waivers/production45, legacy rates, trials and frozen fees',async()=>{
+  for(const[planCode,event,expected]of[['starter',true,0],['starter',false,0],['core',true,0],['core',false,45],['studio',true,0],['studio',false,45]]) {
+    const f=fixture({pricingV3:true,subscriptionProfile:'gallery_v2',planCode,event,provenance:event});
+    assert.equal((await f.invoke(event?{mode:'event',projectId,email:'event+viewer@example.invalid'}:{})).status,200);
+    assert.equal(f.checkoutInputs[0].platformFee.amountCents,expected);
+  }
+  const old=fixture({pricingV3:true,subscriptionProfile:'legacy',legacyRate:29});
+  assert.equal((await old.invoke()).status,200);
+  assert.equal(old.checkoutInputs[0].platformFee.amountCents,29);
+  const trial=fixture({pricingV3:true,trial:true});
+  assert.equal((await trial.invoke({pricingProfile:'gallery_v3'})).status,200);
+  assert.equal(trial.checkoutInputs[0].platformFee.amountCents,35);
+  const frozen=fixture({pricingV3:true,subscriptionProfile:'gallery_v3',storedSnapshot:true});
+  assert.equal((await frozen.invoke()).status,200);
+  assert.equal(frozen.checkoutInputs[0].platformFee.amountCents,25);
+  assert.equal(frozen.sequence.includes('subscription-get'),false);
+  const owner=fixture({pricingV3:true,subscriptionProfile:'gallery_v3',owner:true});
+  assert.equal((await owner.invoke()).status,200);
+  assert.equal(owner.checkoutInputs[0].platformFee.amountCents,0);
+});
+
+test('V3 provider lookup cannot be overridden by inconsistent metadata, cadence, amount or metered billing',async()=>{
+  for(const options of [{subscriptionCustomer:'cus_foreign'},
+    {subscriptionMetadata:{photographer_id:'foreign-studio'}},{subscriptionMetadata:{pricing_profile:'gallery_v2'}},
+    {subscriptionMetadata:{plan_code:'starter'}},{subscriptionAmount:8800},{intervalCount:2},{subscriptionUsageType:'metered'}]) {
+    const f=fixture({pricingV3:true,subscriptionProfile:'gallery_v3',...options});
+    assert.equal((await f.invoke()).status,409);
+    assert.equal(f.freezeCalls.length,0);
+    assert.equal(f.checkoutInputs.length,0);
+  }
+});
+
+test('actual V3 mixed school/ordinary gallery checkout collects both55c fees using independently proven gallery lanes',async()=>{
+  const f=fixture({pricingV3:true,subscriptionProfile:'gallery_v3',planCode:'starter',combined:true,mixed:true,provenance:true,workflowType:'ordinary-portrait'});
+  assert.equal((await f.invoke()).status,200);
+  assert.equal(f.checkoutInputs[0].platformFee.amountCents,110);
+  assert.deepEqual(f.rows.map(row=>row.platform_fee_amount_cents),[55,55]);
+  assert.equal(f.stripeRequests[0].params.get('payment_intent_data[application_fee_amount]'),'110');
 });

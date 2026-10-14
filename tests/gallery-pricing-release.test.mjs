@@ -18,15 +18,19 @@ function productFor(entry) {
     name: entry.name, description: entry.description, metadata: { lookup_key: entry.lookupKey } };
 }
 function fixture({ existing = [], accountId = env.STUDIO_GALLERY_PRICING_EXPECTED_ACCOUNT_ID,
-  failFinalList = false, providerFailure = false, productPatch = {} } = {}) {
+  failFinalList = false, providerFailure = false, productPatch = {}, releaseEnv = env, checkoutLineAmount = null } = {}) {
+  const selectedProfile = releaseEnv.STUDIO_GALLERY_PRICING_V3_ENABLED === '1' ? 'gallery_v3' : 'gallery_v2';
+  const entries = galleryReleaseEntries(selectedProfile);
   const prices = new Map(existing.map(row => [row.lookup_key, structuredClone(row)]));
-  const products = new Map(entries.map(entry => [objectId('prod', entry.lookupKey), { ...productFor(entry), ...productPatch }]));
+  const products = new Map([...galleryReleaseEntries('gallery_v2'), ...galleryReleaseEntries('gallery_v3')]
+    .map(entry => [objectId('prod', entry.lookupKey), { ...productFor(entry), ...productPatch }]));
+  const checkouts = new Map();
   const calls = [], reports = [], idempotency = new Map();
   let listCount = 0;
   const fetcher = async (target, options) => {
     const url = new URL(target);
     assert.equal(url.origin, 'https://api.stripe.com', 'all provider requests are intercepted');
-    assert.equal(options.headers.Authorization, `Bearer ${env.STRIPE_SECRET_KEY}`);
+    assert.equal(options.headers.Authorization, `Bearer ${releaseEnv.STRIPE_SECRET_KEY}`);
     assert.equal(options.headers['Stripe-Account'], undefined, 'catalog belongs to the platform');
     const body = new URLSearchParams(options.body);
     const call = { path: url.pathname.slice('/v1/'.length), method: options.method, body,
@@ -39,7 +43,8 @@ function fixture({ existing = [], accountId = env.STUDIO_GALLERY_PRICING_EXPECTE
         details_submitted: true, requirements: { currently_due: [], past_due: [], disabled_reason: null } };
     } else if (call.method === 'GET' && call.path === 'prices') {
       assert.deepEqual(call.query.getAll('lookup_keys[]'), entries.map(entry => entry.lookupKey));
-      response = { object: 'list', has_more: false, data: failFinalList && ++listCount > 1 ? [] : [...prices.values()] };
+      response = { object: 'list', has_more: false, data: failFinalList && ++listCount > 1 ? []
+        : [...prices.values()].filter(price => call.query.getAll('lookup_keys[]').includes(price.lookup_key)) };
     } else if (call.method === 'GET' && call.path.startsWith('products/')) {
       response = products.get(call.path.slice('products/'.length));
     } else if (call.method === 'POST' && call.path === 'products') {
@@ -58,10 +63,31 @@ function fixture({ existing = [], accountId = env.STUDIO_GALLERY_PRICING_EXPECTE
       assert.equal(call.key, `studio-os-price-${entry.lookupKey}-${entry.unitAmount}`);
       response = idempotency.get(call.key) ?? priceFor(entry);
       prices.set(entry.lookupKey, response); idempotency.set(call.key, response);
+    } else if (call.method === 'POST' && call.path === 'checkout/sessions') {
+      assert.equal(body.get('mode'), 'subscription');
+      assert.equal(body.get('line_items[0][quantity]'), '1');
+      assert.ok([...body.keys()].every(key => !key.startsWith('customer')), 'no customer/email fields transmitted');
+      const price = [...prices.values()].find(row => row.id === body.get('line_items[0][price]'));
+      assert.ok(price, 'only a verified catalog price can enter Checkout');
+      response = { object: 'checkout.session', id: `cs_live_Verification${checkouts.size + 1}`,
+        livemode: true, mode: 'subscription', status: 'open', payment_status: 'unpaid',
+        currency: 'cad', amount_total: price.unit_amount, customer: null, subscription: null, payment_intent: null,
+        priceId: price.id };
+      checkouts.set(response.id, response);
+    } else if (call.path.startsWith('checkout/sessions/')) {
+      const [id, action] = call.path.slice('checkout/sessions/'.length).split('/');
+      const session = checkouts.get(id);
+      assert.ok(session, 'known verification session required');
+      if (call.method === 'GET' && action === 'line_items') response = { object: 'list', has_more: false,
+        data: [{price: {id: session.priceId}, quantity: 1, currency: 'cad', amount_total: checkoutLineAmount ?? session.amount_total}] };
+      else if (call.method === 'GET' && !action) response = session;
+      else if (call.method === 'POST' && action === 'expire') {
+        session.status = 'expired'; response = session;
+      } else assert.fail(`Unexpected checkout operation: ${call.method} ${call.path}`);
     } else assert.fail(`Unexpected provider request: ${call.method} ${call.path}`);
     return { ok: true, json: async () => structuredClone(response) };
   };
-  return { fetcher, calls, reports, report: value => reports.push(value), prices };
+  return { fetcher, calls, reports, report: value => reports.push(value), prices, checkouts };
 }
 
 test('the disabled release has no provider requests or catalog writes', async () => {
@@ -134,4 +160,46 @@ test('production build verifies payment prerequisites before catalog preparation
   const prebuild = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).scripts.prebuild;
   assert.ok(prebuild.indexOf('verify-payment-release.mjs') < prebuild.indexOf('verify-gallery-pricing-release.mjs'));
   assert.ok(prebuild.includes('verify-gallery-pricing-release.mjs'));
+});
+
+test('V3 prepares separate exact prices and preserves every previous V2 catalog entry', async () => {
+  const releaseEnv = {...env, STUDIO_GALLERY_PRICING_V3_ENABLED: '1'};
+  const previous = entries.map(entry => priceFor(entry));
+  const f = fixture({releaseEnv, existing: previous});
+  const result = await verifyGalleryPricingRelease(releaseEnv, f.fetcher, f.report);
+  assert.equal(result.prices.length, 6);
+  for (const price of previous) assert.deepEqual(f.prices.get(price.lookup_key), price);
+  const proof = f.reports.map(JSON.parse).filter(row => row.check === 'gallery-subscription-price');
+  assert.deepEqual(proof.map(row => [row.unitAmount, row.orderFeeRateCents, row.orderFeeScope]),
+    [[5900,55,'all_paid_orders'],[59900,55,'all_paid_orders'],[9900,45,'all_paid_orders'],
+      [106920,45,'all_paid_orders'],[19900,45,'all_paid_orders'],[214920,45,'all_paid_orders']]);
+  assert.ok(proof.every(row => row.pricingProfile === 'gallery_v3' && row.lookupKey.endsWith('-gallery-v3')));
+});
+
+const checkoutEnv = {...env, STUDIO_GALLERY_PRICING_V3_ENABLED: '1', STUDIO_GALLERY_PRICING_CHECKOUT_VERIFY: '1',
+  VERCEL_URL: 'studio-os-cloud-site-verification-whitephotostudio-7289s-projects.vercel.app'};
+
+test('provider Checkout verification tests all six amounts then expires every session without any customer or payment', async () => {
+  const f = fixture({releaseEnv: checkoutEnv});
+  const result = await verifyGalleryPricingRelease(checkoutEnv, f.fetcher, f.report);
+  assert.equal(result.verifiedCheckouts, 6);
+  assert.equal(result.checkoutSessionMutations, 12);
+  assert.equal(f.checkouts.size, 6);
+  assert.ok([...f.checkouts.values()].every(session => session.status === 'expired'
+    && session.customer === null && session.subscription === null && session.payment_intent === null));
+  assert.ok(f.calls.filter(call => call.method === 'POST').every(call => ['products','prices','checkout/sessions'].includes(call.path)
+    || /^checkout\/sessions\/cs_live_Verification\d+\/expire$/.test(call.path)));
+});
+
+test('a Checkout amount mismatch expires the probe and fails release before successful proof', async () => {
+  const f = fixture({releaseEnv: checkoutEnv, checkoutLineAmount: 1});
+  await assert.rejects(verifyGalleryPricingRelease(checkoutEnv, f.fetcher, f.report), /exact advertised price/);
+  assert.equal(f.checkouts.size, 1);
+  assert.equal([...f.checkouts.values()][0].status, 'expired');
+  assert.ok(f.reports.map(JSON.parse).every(row => row.check !== 'gallery-subscription-checkout'));
+});
+
+test('Checkout verification rejects an unrelated deployment before any provider operation', async () => {
+  await assert.rejects(verifyGalleryPricingRelease({...checkoutEnv, VERCEL_URL:'other-app.vercel.app'},
+    () => assert.fail('No network')), /project deployment identity/);
 });

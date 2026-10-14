@@ -88,6 +88,37 @@ test('annual savings come from the actual billed amounts, and order fees receive
   assert.equal(snapshot.plans.studio.usageRateCents, 45);
 });
 
+test('the corrected versioned offer charges every paid order at the exact tier rate without changing previous terms', () => {
+  const api = pricing({STUDIO_GALLERY_PRICING_V2_ENABLED: '1', STUDIO_GALLERY_PRICING_V3_ENABLED: '1',
+    STRIPE_STARTER_ORDER_USAGE_RATE_CENTS: '99', STRIPE_CORE_ORDER_USAGE_RATE_CENTS: '99',
+    STRIPE_STUDIO_ORDER_USAGE_RATE_CENTS: '99'});
+  const snapshot = api.getPricingCatalogSnapshot();
+  assert.equal(snapshot.pricingProfile, 'gallery_v3');
+  assert.equal(api.isGalleryPricingEnabled(), true);
+  assert.deepEqual(Object.values(snapshot.plans).map(plan => [plan.publicName, plan.priceCents,
+    plan.annualPriceCents, plan.usageFeeApplies, plan.usageRateCents, plan.orderFeeScope]), [
+    ['Gallery', 5900, 59900, true, 55, 'all_paid_orders'],
+    ['Core', 9900, 106920, true, 45, 'all_paid_orders'],
+    ['Studio', 19900, 214920, true, 45, 'all_paid_orders'],
+  ]);
+  assert.deepEqual(Object.values(api.getPlanDefinitions('gallery_v2')).map(plan => [plan.usageRateCents, plan.orderFeeScope]),
+    [[0, 'none'], [45, 'production_orders'], [45, 'production_orders']], 'existing V2 subscription terms remain available');
+  assert.equal(snapshot.galleryStoragePolicy, 'existing');
+  assert.deepEqual(JSON.parse(JSON.stringify(snapshot)), snapshot);
+});
+
+test('V3 requires its exact private flag and keeps new trials on the disclosed 35-cent fee', () => {
+  for (const env of [{NEXT_PUBLIC_STUDIO_GALLERY_PRICING_V3_ENABLED: '1'},
+    {STUDIO_GALLERY_PRICING_V3_ENABLED: 'true'}, {STUDIO_GALLERY_PRICING_V3_ENABLED: '0'}]) {
+    assert.equal(pricing(env).getPricingCatalogSnapshot().pricingProfile, 'legacy');
+  }
+  const api = pricing({STUDIO_GALLERY_PRICING_V3_ENABLED: '1'});
+  assert.equal(api.getPricingCatalogSnapshot().pricingProfile, 'gallery_v3');
+  assert.equal(api.getPricingCatalogSnapshot().trialPlan.usageRateCents, 35);
+  assert.equal(api.getPricingCatalogSnapshot().trialPlan.orderFeeScope, 'all_paid_orders');
+  assert.equal(api.isUnlimitedGalleryStorageEnabled(), false);
+});
+
 test('server catalog snapshots survive serialization and consumer edits cannot mutate the billing catalog', () => {
   const api = pricing({ STUDIO_GALLERY_PRICING_V2_ENABLED: '1' });
   const snapshot = api.getPricingCatalogSnapshot();

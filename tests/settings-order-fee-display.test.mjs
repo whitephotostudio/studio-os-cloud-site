@@ -145,11 +145,11 @@ test('legacy refund-only follow-up remains visible even without a current subscr
   assert.ok(panel.includes('$0.25 in refunded order fee credits queued this cycle.'));
 });
 
-function galleryCatalog() {
+function galleryCatalog(env = {STUDIO_GALLERY_PRICING_V2_ENABLED: '1'}) {
   const exports = {};
   const source = ts.transpileModule(readFileSync(new URL('../lib/studio-pricing.ts', import.meta.url), 'utf8'),
     {compilerOptions: {module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022}}).outputText;
-  new Function('exports', 'process', source)(exports, {env: {STUDIO_GALLERY_PRICING_V2_ENABLED: '1'}});
+  new Function('exports', 'process', source)(exports, {env});
   const snapshot = exports.getPricingCatalogSnapshot();
   return {...snapshot, plans: Object.values(snapshot.plans), orderUsageRateCents: 0, creditPacks: []};
 }
@@ -197,5 +197,26 @@ test('new pricing preserves real legacy rates and does not present a disabled me
     } else assert.ok(panel.includes('Legacy usage rate: $0.25 per paid order'));
     assert.ok(panel.includes('$0.25 in refunded order fee credits queued this cycle.'));
     assert.ok(text(html).includes('0.45 per qualifying school production order'));
+  }
+});
+
+test('all-order settings disclose every paid-plan fee using sales currency and retain CAD subscription prices', () => {
+  for (const desiredBillingInterval of ['month', 'year']) {
+    for (const billingCurrency of ['cad', 'usd', 'eur']) {
+      const html = settingsHtml({billingCatalog: galleryCatalog({STUDIO_GALLERY_PRICING_V3_ENABLED: '1'}),
+        billingCurrency, desiredBillingInterval, orderUsageRateCents: 0});
+      const cards = [...html.matchAll(/<button\b[^>]*>[\s\S]*?<\/button>/g)].map(match => match[0]).filter(card => card.includes('data-order-fee'));
+      assert.equal(cards.length, 3);
+      for (const [index, card] of cards.entries()) {
+        const fee = text(markedDiv(card, 'data-order-fee'));
+        const expectedRate = new Intl.NumberFormat('en-CA', {style: 'currency', currency: billingCurrency.toUpperCase()}).format(index === 0 ? .55 : .45);
+        assert.ok(fee.includes(`${expectedRate} per paid order · deducted from each sale.`));
+        assert.match(fee, /Stripe processing fees are additional/);
+      }
+      const rendered = text(html);
+      assert.ok(rendered.includes(desiredBillingInterval === 'year' ? '$599.00' : '$59.00'));
+      assert.match(rendered, /gallery, school, sports, event, print and digital orders/);
+      assert.doesNotMatch(rendered, /ordinary gallery sales have no|qualifying school production|school production fee|Unlimited JPEG|50 ?MB/i);
+    }
   }
 });

@@ -364,7 +364,7 @@ function renderComparisonValue(value: ComparisonValue) {
 export function PricingShowcase({ variant = "home", catalog }: PricingShowcaseProps) {
   const [billingInterval, setBillingInterval] = useState<BillingInterval>("month");
   const showFullPage = variant === "page";
-  const newOffer = catalog.pricingProfile === "gallery_v2";
+  const newOffer = catalog.pricingProfile !== "legacy";
   const unlimited = catalog.galleryStoragePolicy === "unlimited_jpeg";
   const orderFeeCopy = getOrderFeeCopy(catalog.pricingProfile);
   const pricingPlans = (showFullPage ? pagePlans : homePlans).map((plan) => {
@@ -386,7 +386,7 @@ export function PricingShowcase({ variant = "home", catalog }: PricingShowcasePr
     ...(newOffer ? [{ label: unlimited ? "Unlimited JPEG Client Gallery Storage" : "Photo Gallery Hosting", values: { starter: true, core: true, studio: true } }] : []),
     ...comparisonRows,
     {
-      label: newOffer ? "School Production Order Fee" : "Platform Usage Billing",
+      label: catalog.pricingProfile === "gallery_v2" ? "School Production Order Fee" : "Per Paid Order Fee",
       values: {
         starter: { label: getOrderFeeDisclosure(catalog.plans.starter, catalog.pricingProfile).fee },
         core: { label: getOrderFeeDisclosure(catalog.plans.core, catalog.pricingProfile).fee },
@@ -772,7 +772,7 @@ export function PricingShowcase({ variant = "home", catalog }: PricingShowcasePr
           </div>
 
           <div className="mt-6 rounded-2xl border border-neutral-200 bg-neutral-50 px-6 py-5 text-sm leading-7 text-neutral-600">
-            <div className="font-semibold text-neutral-950">{newOffer ? "Gallery sales and school production fees" : "Flat fees on paid orders"}</div>
+            <div className="font-semibold text-neutral-950">{catalog.pricingProfile === "gallery_v2" ? "Gallery sales and school production fees" : "Flat fees on paid orders"}</div>
             <p className="mt-2">{orderFeeCopy.purpose}</p>
             <p className="mt-2">{orderFeeCopy.billing}</p>
             {unlimited ? (
