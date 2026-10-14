@@ -1,6 +1,6 @@
 export type PlanCode = "starter" | "core" | "studio";
 export type BillingInterval = "month" | "year";
-export type PricingProfile = "legacy" | "gallery_v2";
+export type PricingProfile = "legacy" | "gallery_v2" | "gallery_v3";
 export type GalleryStoragePolicy = "existing" | "unlimited_jpeg";
 export type OrderFeeScope = "all_paid_orders" | "none" | "production_orders";
 export type CreditPackCode =
@@ -56,10 +56,18 @@ export function isGalleryPricingV2Enabled() {
   return process.env.STUDIO_GALLERY_PRICING_V2_ENABLED === "1";
 }
 
+export function isGalleryPricingV3Enabled() {
+  return process.env.STUDIO_GALLERY_PRICING_V3_ENABLED === "1";
+}
+
+export function isGalleryPricingEnabled() {
+  return isGalleryPricingV3Enabled() || isGalleryPricingV2Enabled();
+}
+
 // Storage is released independently after the capacity, retention and delivery
 // policy is verified. Publishing new prices does not promise unlimited storage.
 export function isUnlimitedGalleryStorageEnabled() {
-  return isGalleryPricingV2Enabled()
+  return isGalleryPricingEnabled()
     && process.env.STUDIO_GALLERY_UNLIMITED_STORAGE_ENABLED === "1";
 }
 
@@ -67,7 +75,8 @@ const galleryStoragePolicy: GalleryStoragePolicy =
   isUnlimitedGalleryStorageEnabled() ? "unlimited_jpeg" : "existing";
 
 export const PRICING_PROFILE: PricingProfile =
-  isGalleryPricingV2Enabled() ? "gallery_v2" : "legacy";
+  isGalleryPricingV3Enabled() ? "gallery_v3"
+    : isGalleryPricingV2Enabled() ? "gallery_v2" : "legacy";
 
 function definePlan(
   plan: Omit<PlanDefinition, "annualSavingsCents" | "annualSavingsPercent">,
@@ -189,12 +198,24 @@ const galleryPlanDefs: Record<PlanCode, PlanDefinition> = {
   }),
 };
 
+// Separate versioned subscriptions preserve the prior advertised fee policy.
+// The corrected offer charges each paid customer order in every plan.
+const allOrderPlanDefs: Record<PlanCode, PlanDefinition> = {
+  starter: definePlan({ ...galleryPlanDefs.starter,
+    usageFeeApplies: true, usageRateCents: 55, orderFeeScope: "all_paid_orders" }),
+  core: definePlan({ ...galleryPlanDefs.core,
+    usageFeeApplies: true, usageRateCents: 45, orderFeeScope: "all_paid_orders" }),
+  studio: definePlan({ ...galleryPlanDefs.studio,
+    usageFeeApplies: true, usageRateCents: 45, orderFeeScope: "all_paid_orders" }),
+};
+
 export const PLAN_DEFS: Record<PlanCode, PlanDefinition> =
-  PRICING_PROFILE === "gallery_v2" ? galleryPlanDefs : legacyPlanDefs;
+  getPlanDefinitions(PRICING_PROFILE);
 
 /** Server-selected fee policy may differ from the current offer for legacy subscribers. */
 export function getPlanDefinitions(profile: PricingProfile): Record<PlanCode, PlanDefinition> {
-  return profile === "gallery_v2" ? galleryPlanDefs : legacyPlanDefs;
+  return profile === "gallery_v3" ? allOrderPlanDefs
+    : profile === "gallery_v2" ? galleryPlanDefs : legacyPlanDefs;
 }
 
 const extraDesktopMonthly = envInt("STRIPE_EXTRA_DESKTOP_KEY_MONTHLY_CENTS", 5500);
@@ -226,7 +247,7 @@ export function getPricingCatalogSnapshot(): PricingCatalogSnapshot {
     pricingProfile: PRICING_PROFILE,
     currency: "cad",
     annualDiscountPercent: PRICING_PROFILE === "legacy" ? ANNUAL_DISCOUNT_PERCENT : null,
-    galleryStoragePolicy: PRICING_PROFILE === "gallery_v2" ? galleryStoragePolicy : "existing",
+    galleryStoragePolicy: PRICING_PROFILE !== "legacy" ? galleryStoragePolicy : "existing",
     plans: {
       starter: { ...PLAN_DEFS.starter },
       core: { ...PLAN_DEFS.core },

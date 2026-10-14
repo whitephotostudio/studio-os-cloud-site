@@ -150,3 +150,18 @@ test('status returns the enabled server catalog without replacing the subscriber
     [[5900, 59900, 0, 'none'], [9900, 106920, 45, 'production_orders'], [19900, 214920, 45, 'production_orders']]);
   assert.deepEqual(body.billingCatalog.plans.map(plan => plan.annualSavingsPercent), [15.4, 10, 10]);
 });
+
+test('status returns all-order profile and 55/45/45 rates while preserving subscriber historical state', async () => {
+  const exports = {};
+  const source = ts.transpileModule(readFileSync(new URL('../lib/studio-pricing.ts', import.meta.url), 'utf8'),
+    {compilerOptions: {module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022}}).outputText;
+  new Function('exports', 'process', source)(exports, {env: {STUDIO_GALLERY_PRICING_V3_ENABLED: '1'}});
+  const f = fixture({catalogSnapshot: exports.getPricingCatalogSnapshot()});
+  f.stored.order_usage_rate_cents = 25;
+  const body = await (await f.invoke()).json();
+  assert.equal(body.orderUsageRateCents, 25);
+  assert.equal(body.billingCatalog.pricingProfile, 'gallery_v3');
+  assert.equal(body.billingCatalog.galleryStoragePolicy, 'existing');
+  assert.deepEqual(body.billingCatalog.plans.map(plan => [plan.priceCents, plan.annualPriceCents, plan.usageRateCents, plan.orderFeeScope]),
+    [[5900, 59900, 55, 'all_paid_orders'], [9900, 106920, 45, 'all_paid_orders'], [19900, 214920, 45, 'all_paid_orders']]);
+});

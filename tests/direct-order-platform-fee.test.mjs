@@ -364,3 +364,35 @@ test('trusted new fee profile prices mixed production/gallery/test orders indivi
     subscriptionStatus:'active',isPlatformAdmin:false,currency:'cad',orders:[{id:'unknown',totalCents:1000}]}),/saved workflow/);
   assert.equal(f.calls.length,0);
 });
+
+test('V3 all-order fee applies to gallery/production/unclassified paid rows while test/free/owner rows remain waived',async context=>{
+  const f=fixture(context);
+  const orders=[{id:'portrait',totalCents:1000,feeScope:'gallery'},
+    {id:'school',totalCents:1000,feeScope:'production'},
+    {id:'ordinary',totalCents:1000},{id:'test',totalCents:1000,isTest:true},{id:'free',totalCents:0}];
+  for(const[planCode,rate]of[['starter',55],['core',45],['studio',45]]){
+    const{quote,fee}=await f.freeze(orders,{pricingProfile:'gallery_v3',planCode,currency:'usd'});
+    assert.equal(fee.amountCents,rate*3);
+    assert.equal(fee.currency,'usd');
+    assert.deepEqual(quote.orders.map(order=>order.amountCents),[rate,rate,rate,0,0]);
+    await f.api.createDirectOrderCheckoutSession({...checkoutInput,currency:'usd',totalCents:4000,platformFee:fee});
+    const params=f.calls.at(-1).body;
+    assert.equal(params.get('payment_intent_data[application_fee_amount]'),String(rate*3));
+    assert.equal(params.get('metadata[platform_fee_currency]'),'usd');
+  }
+  const waived=await f.freeze(orders,{pricingProfile:'gallery_v3',planCode:'starter',isPlatformAdmin:true});
+  assert.equal(waived.fee.amountCents,0);
+  assert.ok(waived.quote.orders.every(order=>order.collectionMethod==='waived'));
+});
+
+test('V3 Gallery55c fee refunds retain the frozen rate after a plan change and never create monthly fee credits',async context=>{
+  const f=await paidRefundFixture(context,{pricingProfile:'gallery_v3',planCode:'starter'});
+  assert.equal(f.intent.application_fee_amount,110);
+  f.tables.photographers[0].subscription_plan_code='studio';
+  const result=await f.api.reconcileOrderRefundFromStripe(f.service,'acct_fixture','pi_fixture');
+  assert.equal(result.fullyRefunded,true);
+  assert.deepEqual(f.tables.orders.map(order=>order.platform_fee_rate_cents),[55,55]);
+  assert.deepEqual(f.tables.orders.map(order=>order.refund_amount_cents),[1000,2000]);
+  assert.equal(f.legacyWaivers,0);
+  assert.ok(f.calls.every(call=>call.method==='GET'));
+});

@@ -168,6 +168,7 @@ export async function POST(request: NextRequest) {
         planCode,
         billingInterval,
         extraDesktopKeys,
+        preserveBasePlan: action === "update_extra_keys",
       });
 
       const synced = await syncSubscriptionStateFromStripe(service, photographer, subscription);
