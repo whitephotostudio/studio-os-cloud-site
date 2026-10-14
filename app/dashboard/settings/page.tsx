@@ -2084,7 +2084,7 @@ export default function SettingsPage() {
                       <div data-order-fee style={{ marginTop: 10, color: "#64748b", lineHeight: 1.6, fontSize: 13, fontWeight: 400 }}>
                         <div>{newGalleryPricing
                           ? plan.orderFeeScope === "production_orders"
-                            ? `${formatMoney(plan.usageRateCents, platformBillingCurrency)} per qualifying school production order · deducted from each qualifying sale.`
+                            ? `${formatMoney(plan.usageRateCents, billingCurrency)} per qualifying school production order · deducted from each qualifying sale.`
                             : "No platform fee on ordinary gallery sales."
                           : `${(plan.usageRateCents / 100).toFixed(2)} per paid order in your sales currency · deducted from each sale.`}</div>
                         {newGalleryPricing && plan.orderFeeScope === "production_orders" && <div>Ordinary gallery sales have no platform fee.</div>}

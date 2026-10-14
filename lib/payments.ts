@@ -2171,8 +2171,8 @@ export type DirectOrderPricingPolicy = {
 };
 
 /** The website offer cannot reprice an existing merchant. Verify paid plans
- * from their saved platform subscription, and grant the new trial only to
- * studios created after the exact private release cutoff. */
+ * from their saved platform subscription. Every free app trial keeps the
+ * legacy fee disclosed at signup, independent of its creation date. */
 export async function resolveDirectOrderPricingPolicy(photographer: {
   id: string;
   stripe_subscription_id?: string | null;
@@ -2181,7 +2181,6 @@ export async function resolveDirectOrderPricingPolicy(photographer: {
   subscription_status: string | null;
   order_usage_rate_cents?: number | null;
   is_platform_admin?: boolean | null;
-  created_at?: string | null;
 }, freeTrialActive: boolean): Promise<DirectOrderPricingPolicy> {
   const legacy: DirectOrderPricingPolicy = {
     pricingProfile: "legacy",
@@ -2190,17 +2189,7 @@ export async function resolveDirectOrderPricingPolicy(photographer: {
     freeTrialActive,
   };
   if (photographer.is_platform_admin) return legacy;
-  if (!photographer.stripe_subscription_id) {
-    const cutoff = process.env.STUDIO_GALLERY_PRICING_V2_LAUNCH_AT?.trim() ?? "";
-    const cutoffTime = Date.parse(cutoff);
-    const createdTime = Date.parse(photographer.created_at ?? "");
-    const exactCutoff = Number.isFinite(cutoffTime) && new Date(cutoffTime).toISOString() === cutoff;
-    if (freeTrialActive && isGalleryPricingV2Enabled() && exactCutoff &&
-        Number.isFinite(createdTime) && createdTime >= cutoffTime) {
-      return { ...legacy, pricingProfile: "gallery_v2" };
-    }
-    return legacy;
-  }
+  if (!photographer.stripe_subscription_id) return legacy;
 
   const subscription = await retrieveStripeSubscription(photographer.stripe_subscription_id);
   const baseItems = subscription.items.data.filter(item =>

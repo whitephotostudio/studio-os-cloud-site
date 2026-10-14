@@ -170,6 +170,21 @@ test('enabled settings show exact new prices, plan-specific annual savings and s
   }
 });
 
+test('production fees use the sales currency while subscription prices remain CAD', () => {
+  for (const billingCurrency of ['usd', 'eur']) {
+    const html = settingsHtml({billingCatalog: galleryCatalog(), billingCurrency, desiredBillingInterval: 'year', orderUsageRateCents: 0});
+    const cards = [...html.matchAll(/<button\b[^>]*>[\s\S]*?<\/button>/g)].map(match => match[0]).filter(card => card.includes('data-order-fee'));
+    const salesFee = new Intl.NumberFormat('en-CA', {style: 'currency', currency: billingCurrency.toUpperCase()}).format(0.45);
+    const cadAnnual = new Intl.NumberFormat('en-CA', {style: 'currency', currency: 'CAD'}).format(1069.20);
+    assert.ok(text(cards[1]).includes(cadAnnual), 'subscription still uses the CAD catalog');
+    for (const card of cards.slice(1)) {
+      const fee = text(markedDiv(card, 'data-order-fee'));
+      assert.ok(fee.includes(`${salesFee} per qualifying school production order`));
+      assert.doesNotMatch(fee, /^(?:CA)?\$0\.45 per qualifying school production order/);
+    }
+  }
+});
+
 test('new pricing preserves real legacy rates and does not present a disabled meter as a zero prospective fee', () => {
   const billingCatalog = galleryCatalog();
   for (const orderUsageRateCents of [0, 25]) {

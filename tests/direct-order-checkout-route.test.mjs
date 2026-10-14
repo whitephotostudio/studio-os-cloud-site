@@ -414,3 +414,16 @@ test('new USD school orders keep Express sales currency and collect45minorunits 
   assert.equal(params.get('metadata[platform_fee_fx_rate]'),null);
   assert.equal(f.stripeRequests[0].headers['Stripe-Account'],'acct_fixture');
 });
+
+test('every free trial keeps the disclosed35c fee even with a configured old cutoff and later signup date', async () => {
+  const launchAt='2026-10-01T00:00:00.000Z';
+  for(const trialCreatedAt of ['2026-09-30T23:59:59.000Z',launchAt,'2026-10-02T00:00:00.000Z']) {
+    for(const event of [false,true]) {
+      const f=fixture({pricingV2:true,trial:true,launchAt,trialCreatedAt,event,provenance:event});
+      assert.equal((await f.invoke(event?{mode:'event',projectId,email:'event+viewer@example.invalid'}:{})).status,200);
+      assert.equal(f.quoteInputs[0].pricingProfile,'legacy');
+      assert.equal(f.checkoutInputs[0].platformFee.amountCents,35);
+      assert.equal(f.stripeRequests[0].params.get('payment_intent_data[application_fee_amount]'),'35');
+    }
+  }
+});
