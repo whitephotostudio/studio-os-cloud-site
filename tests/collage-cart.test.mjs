@@ -150,7 +150,7 @@ test('real reorder hydration retains the old immutable version, restores ordinar
   assert.equal(JSON.stringify(snapshot), original); assert.equal(storage.getItem('studio-os-reorder-pending'), null);
 });
 
-test('real event hydration/save effects preserve storage through batched first render and isolate a gallery switch', () => {
+test('real event hydration/save effects preserve storage through deferred batched updates and isolate a gallery switch', async () => {
   const storage = storageFixture(), a = item('event-a'), b = item('event-b'); delete a.laneKey; delete b.laneKey;
   a.slots[0].assignedImageUrl = key; b.slots[0].assignedImageUrl = key;
   b.slots[1].collage = selection('event-b-photo', .8, oldVersion);
@@ -163,12 +163,16 @@ test('real event hydration/save effects preserve storage through batched first r
     eventCollageCartScope: { current: '' }, eventCollageCartLoadedScope: '',
     setCartItems: value => queued.push(['cartItems', value]), setEventCollageCartLoadedScope: value => queued.push(['eventCollageCartLoadedScope', value]),
     setOrderError: error => errors.push(error) };
-  function runEffect(marker) { vm.runInNewContext(compile(`(${effectSource(marker)})();`), scope); }
+  function runEffect(marker) { return vm.runInNewContext(compile(`(${effectSource(marker)})();`), scope); }
   function flushRender() {
     for (const [name, value] of queued.splice(0)) scope[name] = typeof value === 'function' ? value(scope[name]) : value;
   }
   runEffect('loadCollageCart<CartLineItem>'); runEffect('saveCollageCart(window.sessionStorage');
   assert.equal(storage.getItem('studio-os-collage-cart:v1:studio:lane-a'), originalA, 'A same-frame empty/stale cart cannot overwrite saved selections');
+  assert.equal(queued.length, 0, 'External storage hydration is deferred beyond the first effect pass');
+  await Promise.resolve();
+  runEffect('saveCollageCart(window.sessionStorage');
+  assert.equal(storage.getItem('studio-os-collage-cart:v1:studio:lane-a'), originalA, 'Queued state must not permit persistence before the next rendered scope');
   flushRender();
   assert.deepEqual(Array.from(scope.cartItems, value => value.id), ['event-a']); assert.equal(scope.cartItems[0].slots[0].assignedImageUrl, preview);
   assert.equal(scope.cartItems[0].packageSubtotalCents, 1800); assert.equal(scope.cartItems[0].slots[1].collage.placements[0].x, .3);
@@ -178,9 +182,22 @@ test('real event hydration/save effects preserve storage through batched first r
   scope.sessionAccess = { laneId: 'lane-b' };
   runEffect('loadCollageCart<CartLineItem>'); runEffect('saveCollageCart(window.sessionStorage');
   assert.equal(storage.getItem('studio-os-collage-cart:v1:studio:lane-b'), originalB, 'Prior gallery state cannot overwrite the next gallery before hydration');
+  await Promise.resolve();
+  runEffect('saveCollageCart(window.sessionStorage');
+  assert.equal(storage.getItem('studio-os-collage-cart:v1:studio:lane-b'), originalB, 'Deferred state remains isolated until the next render');
   flushRender();
   assert.deepEqual(Array.from(scope.cartItems, value => value.id), ['event-b']);
   assert.equal(scope.cartItems[0].slots[1].collage.templateVersionId, oldVersion); assert.equal(scope.cartItems[0].slots[1].collage.placements[0].x, .8);
   assert.equal(storage.getItem('studio-os-collage-cart:v1:studio:lane-a'), savedA);
+  scope.sessionAccess = { laneId: 'lane-c' };
+  const beforeCancellation = JSON.stringify(scope.cartItems);
+  const cancelHydration = runEffect('loadCollageCart<CartLineItem>');
+  assert.equal(typeof cancelHydration, 'function'); cancelHydration();
+  await Promise.resolve();
+  runEffect('saveCollageCart(window.sessionStorage');
+  assert.equal(queued.length, 0, 'A cancelled gallery cannot enqueue stale cart or scope updates');
+  assert.equal(JSON.stringify(scope.cartItems), beforeCancellation);
+  assert.equal(scope.eventCollageCartScope.current, 'studio:lane-b');
+  assert.equal(storage.getItem('studio-os-collage-cart:v1:studio:lane-c'), null);
   assert.equal(errors.length, 0);
 });
