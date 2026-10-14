@@ -1,4 +1,9 @@
 "use client";
+import { ParentCollagePicker, CollageCartPreview } from "@/components/collages/parent-collage-picker";
+import { emptyCollageSelection, packageCollageVersion, parseCollageSelection, type CollageSelection } from "@/lib/collage-selection";
+import { galleryCollagePackageAvailable, collageVersionBatches } from "@/lib/collage-catalog";
+import { loadCollageCart, saveCollageCart } from "@/lib/collage-cart";
+import { collageSelectionComplete } from "@/lib/collage-client";
 import { beginParentGallerySession, parentLaneFromPin, parentSessionPin, parentSessionGalleryPath, parentPortalFetch, migrateParentChoiceStorage, migrateParentCombineLanes, type ParentSessionAccess } from "@/lib/parent-gallery-session-client";
 import { SchoolYearbookParentPanel } from "@/components/school-yearbook-parent-panel";
 
@@ -170,6 +175,7 @@ type PackageItemValue =
       size?: string | null;
       finish?: string | null;
       composite?: boolean | null;
+      collage?: { templateVersionId: string } | null;
     };
 
 type PackageRow = {
@@ -332,7 +338,7 @@ type DrawerView =
   | "category-list"
   | "build-package"
   | "checkout";
-type ItemSlot = { label: string; assignedImageUrl: string | null; composite?: boolean };
+type ItemSlot = { label: string; assignedImageUrl: string | null; composite?: boolean; collage?: CollageSelection; collageReviewed?: string };
 type PackagePhotoFilter = "all" | "favorites";
 type DigitalSelection = {
   mediaId: string;
@@ -421,7 +427,9 @@ function persistParentCartItems(cartItems: CartLineItem[]): PersistedCartItem[] 
         compositeTitle: item.compositeTitle,
         slots: item.slots.map((s) => ({
           label: s.label,
-          assignedImageUrl: s.assignedImageUrl ?? null,
+          assignedImageUrl: s.collage ? null : s.assignedImageUrl ?? null,
+          ...(s.collage ? { collage: parseCollageSelection(s.collage) } : {}),
+          ...(s.composite ? { composite: true } : {}),
         })),
         backdrop: item.backdrop
           ? {
@@ -1911,6 +1919,7 @@ function isDigitalPackageText(...values: Array<string | null | undefined>) {
 }
 
 function isAllDigitalsPackage(pkg: PackageRow) {
+  if ((pkg.items ?? []).some(item => typeof item !== "string" && item?.collage != null)) return false;
   const haystack = [
     clean(pkg.name).toLowerCase(),
     clean(pkg.description).toLowerCase(),
@@ -1975,6 +1984,7 @@ function buildSlots(pkg: PackageRow, orderQty: number = 1, compositeImageUrl?: s
   for (const item of pkg.items ?? []) {
     const baseLabel = formatPackageItem(item);
     const isComposite = typeof item === "object" && !!item.composite;
+    const collageVersion = packageCollageVersion(item);
     const qty =
       typeof item === "object" && item.qty
         ? parseInt(String(item.qty), 10) || 1
@@ -1988,6 +1998,7 @@ function buildSlots(pkg: PackageRow, orderQty: number = 1, compositeImageUrl?: s
           label: makeIndexedLabel(baseLabel, slotIndex, slotTotal),
           assignedImageUrl: isComposite && compositeImageUrl ? compositeImageUrl : null,
           composite: isComposite,
+          ...(collageVersion ? { collage: emptyCollageSelection(collageVersion) } : {}),
         });
       }
     }
@@ -3385,6 +3396,9 @@ export default function ParentGalleryPage({ sessionAccess }: { sessionAccess?: P
 
   // Package builder
   const [slots, setSlots] = useState<ItemSlot[]>([]);
+  const [collageDesigns, setCollageDesigns] = useState<Record<string, import("@/lib/collage-client").CollageGalleryVersion>>({});
+  const [collageLoadError, setCollageLoadError] = useState("");
+  const [collageEditingItemId, setCollageEditingItemId] = useState<string | null>(null);
   const [activeSlotIndex, setActiveSlotIndex] = useState<number | null>(null);
   const [packagePhotoFilter, setPackagePhotoFilter] = useState<PackagePhotoFilter>("all");
 
@@ -3496,7 +3510,7 @@ export default function ParentGalleryPage({ sessionAccess }: { sessionAccess?: P
 
   // Hydrate from sessionStorage once photographerId is known.
   useEffect(() => {
-    if (combineHydratedRef.current) return;
+    if (!isSchoolMode || combineHydratedRef.current) return;
     if (!photographerId) return;
     const stored = loadCombineCart(photographerId);
     let cancelled = false;
@@ -3527,6 +3541,8 @@ export default function ParentGalleryPage({ sessionAccess }: { sessionAccess?: P
             slots: i.slots.map((s) => ({
               label: s.label,
               assignedImageUrl: s.assignedImageUrl,
+              collage: s.collage,
+              composite: s.composite,
             })) as ItemSlot[],
             selectedImageUrl: i.selectedImageUrl,
             retouchSelections: i.retouchSelections ?? [],
@@ -3560,7 +3576,7 @@ export default function ParentGalleryPage({ sessionAccess }: { sessionAccess?: P
     }
     void hydrate();
     return () => { cancelled = true; };
-  }, [photographerId]);
+  }, [photographerId, isSchoolMode]);
 
   // 2026-04-26: Reorder hydration.
   //
@@ -3629,7 +3645,7 @@ export default function ParentGalleryPage({ sessionAccess }: { sessionAccess?: P
       packageId?: string;
       quantity?: number;
       backdrop?: { id?: string; blurred?: boolean; blurAmount?: number } | null;
-      slots?: Array<{ label?: string; assignedImageUrl?: string | null }>;
+      slots?: Array<{ label?: string; assignedImageUrl?: string | null; collage?: CollageSelection; composite?: boolean }>;
       selectedImageUrl?: string | null;
       retouchSelections?: RetouchSelection[];
       digitalSelections?: DigitalSelection[];
@@ -3647,8 +3663,27 @@ export default function ParentGalleryPage({ sessionAccess }: { sessionAccess?: P
     const restored: CartLineItem[] = [];
     const originalBackgroundItems: CartLineItem[] = [];
     for (const raw of parsed as SnapshotEntry[]) {
+      if (!raw || typeof raw !== "object" || (raw.slots != null && !Array.isArray(raw.slots))) {
+        setOrderError("This reorder contains invalid saved photo selections. Reopen the order before continuing."); return;
+      }
       const pkg = packages.find((p) => p.id === raw.packageId);
-      if (!pkg) continue; // package was removed since the order — skip
+      if (!pkg) {
+        if ((raw.slots ?? []).some(slot => slot?.collage != null)) {
+          setOrderError("A collage product in this reorder is no longer available. None of these reordered items were added. Please contact the studio."); return;
+        }
+        continue; // Preserve older ordinary-product removal behavior.
+      }
+      let restoredSlots: ItemSlot[];
+      try {
+        restoredSlots = (raw.slots ?? []).map((s) => ({
+          label: s.label ?? "Item",
+          assignedImageUrl: restoredDisplayUrl(s.assignedImageUrl),
+          ...(s.collage != null ? { collage: parseCollageSelection(s.collage) } : {}),
+          composite: s.composite,
+        }));
+      } catch {
+        setOrderError("This reorder contains invalid saved collage or photo selections. None of these reordered items were added. Reopen the order before continuing."); return;
+      }
       const qty = Math.max(1, Math.round(Number(raw.quantity) || 1));
       const packageSubtotalCents = Math.round(pkg.price_cents) * qty;
 
@@ -3692,10 +3727,7 @@ export default function ParentGalleryPage({ sessionAccess }: { sessionAccess?: P
         packageSubtotalCents,
         backdropAddOnCents,
         lineTotalCents: packageSubtotalCents + backdropAddOnCents,
-        slots: (raw.slots ?? []).map((s) => ({
-          label: s.label ?? "Item",
-          assignedImageUrl: restoredDisplayUrl(s.assignedImageUrl),
-        })) as ItemSlot[],
+        slots: restoredSlots,
         selectedImageUrl: restoredDisplayUrl(raw.selectedImageUrl),
         retouchSelections: (raw.retouchSelections ?? []).map(selection => ({ ...selection, imageUrl: restoredDisplayUrl(selection.imageUrl) || "" })),
         digitalSelections: (raw.digitalSelections ?? []).map(selection => ({ ...selection, url: restoredDisplayUrl(selection.url) || "" })),
@@ -3760,7 +3792,7 @@ export default function ParentGalleryPage({ sessionAccess }: { sessionAccess?: P
 
   // Persist whenever cart items or lanes change (after hydration done).
   useEffect(() => {
-    if (!combineHydratedRef.current) return;
+    if (!isSchoolMode || !combineHydratedRef.current) return;
     if (!photographerId) return;
     const cart: CombineCart = {
       version: 1,
@@ -4571,6 +4603,72 @@ export default function ParentGalleryPage({ sessionAccess }: { sessionAccess?: P
     !isSchoolMode && activeEventCollectionId
       ? imagesInEventAlbum(images, activeEventCollectionId)
       : images;
+  const collageVersionIdsKey = JSON.stringify([...new Set([
+    ...packages.flatMap(pkg => (pkg.items ?? []).map(item => {
+      try { return packageCollageVersion(item); } catch { return null; }
+    })).filter((id): id is string => !!id),
+    ...cartItems.filter(item => !item.laneKey || item.laneKey === currentLane?.laneKey).flatMap(item => item.slots.flatMap(slot => slot.collage ? [slot.collage.templateVersionId] : [])),
+  ])].sort());
+  useEffect(() => {
+    const versionIds = JSON.parse(collageVersionIdsKey) as string[];
+    if (loading || !versionIds.length) return;
+    let cancelled = false;
+    void Promise.all(collageVersionBatches(versionIds).map(async batch => {
+      const query = new URLSearchParams({
+        ...(isSchoolMode ? { schoolId: schoolId || "" } : { projectId: projectId || "" }),
+        pin, email: isSchoolMode ? schoolViewerEmail : eventEmail, versionIds: batch.join(","),
+      });
+      const response = await fetch(`/api/portal/collages?${query}`, { cache: "no-store" });
+      const payload = await response.json();
+      if (!response.ok) throw Error(payload.message || "Collage templates are unavailable. Your basket was kept.");
+      return payload.versions ?? [];
+    })).then(batches => {
+      if (!cancelled) {
+        setCollageDesigns(Object.fromEntries(batches.flat().map((v: import("@/lib/collage-client").CollageGalleryVersion) => [v.id, v])));
+        setCollageLoadError("");
+      }
+    }).catch(error => { if (!cancelled) setCollageLoadError(error instanceof Error ? error.message : "Collage templates are unavailable."); });
+    return () => { cancelled = true; };
+  }, [collageVersionIdsKey, loading, isSchoolMode, schoolId, projectId, pin, schoolViewerEmail, eventEmail, fetch]);
+
+  const eventCollageCartScope = useRef("");
+  const [eventCollageCartLoadedScope, setEventCollageCartLoadedScope] = useState("");
+  useEffect(() => {
+    if (isSchoolMode || loading || !photographerId) return;
+    const laneId = sessionAccess?.laneId || parentLaneFromPin(pin);
+    if (!laneId) return;
+    const scope = `${photographerId}:${laneId}`;
+    if (eventCollageCartScope.current === scope) return;
+    let cancelled = false;
+    void Promise.resolve().then(() => {
+    if (cancelled) return;
+    try {
+      const saved = loadCollageCart<CartLineItem>(window.sessionStorage, photographerId, laneId);
+      const display = (reference: string | null) => images.find(image => image.storagePath === reference || image.url === reference || image.previewUrl === reference)?.url ?? null;
+      setCartItems(saved.map(item => {
+        const pkg = packages.find(p => p.id === item.packageId);
+        const price = pkg ? Math.round(pkg.price_cents) * item.quantity : item.packageSubtotalCents;
+        return { ...item, packageSubtotalCents: price, lineTotalCents: price + item.backdropAddOnCents,
+          slots: item.slots.map(slot => ({ ...slot, assignedImageUrl: display(slot.assignedImageUrl) })), selectedImageUrl: display(item.selectedImageUrl) };
+      }));
+      eventCollageCartScope.current = scope;
+      setEventCollageCartLoadedScope(scope);
+    } catch (error) { setOrderError(error instanceof Error ? error.message : "This collage basket could not be restored."); }
+    });
+    return () => { cancelled = true; };
+  }, [isSchoolMode, loading, photographerId, sessionAccess?.laneId, pin, images, packages]);
+  useEffect(() => {
+    if (isSchoolMode || loading || !photographerId) return;
+    const laneId = sessionAccess?.laneId || parentLaneFromPin(pin);
+    if (!laneId || eventCollageCartLoadedScope !== `${photographerId}:${laneId}`) return;
+    try {
+      saveCollageCart(window.sessionStorage, photographerId, laneId, cartItems.map(item => {
+        const canonical = (reference: string | null) => images.find(image => [image.url, image.previewUrl, image.storagePath].includes(reference))?.storagePath ?? reference;
+        return { ...item, slots: item.slots.map(slot => ({ ...slot, assignedImageUrl: canonical(slot.assignedImageUrl) ?? null })), selectedImageUrl: canonical(item.selectedImageUrl) ?? null };
+      }));
+    } catch { /* A storage limit does not change the in-memory basket. */ }
+  }, [cartItems, isSchoolMode, loading, photographerId, sessionAccess?.laneId, pin, images, eventCollageCartLoadedScope]);
+
   const compositeGalleryImages = useMemo(
     () => images.filter((img) => isCompositeGalleryImage(img)),
     [images],
@@ -6880,6 +6978,9 @@ export default function ParentGalleryPage({ sessionAccess }: { sessionAccess?: P
     options?: { skipGroupPhotoNotice?: boolean; quantityOverride?: number },
   ) {
     if (orderingDisabled) return;
+    try { (pkg.items ?? []).forEach(item => packageCollageVersion(item)); }
+    catch (error) { setOrderError(error instanceof Error ? error.message : "This collage product is unavailable."); return; }
+    setCollageEditingItemId(null);
     if (isRetouchPackage(pkg)) {
       setOrderError(RETOUCH_PRINT_REQUIRED);
       showGalleryActionNotice(RETOUCH_PRINT_REQUIRED);
@@ -6916,16 +7017,19 @@ export default function ParentGalleryPage({ sessionAccess }: { sessionAccess?: P
     const compositeAutoFillUrl = firstCompositeImage?.url ?? null;
 
     const newSlots = buildSlots(pkg, chosenQty, compositeAutoFillUrl);
+    if (newSlots.some(slot => slot.collage)) {
+      setConfirmedBackdrop(null); setSelectedBackdrop(null); setBackdropPickerOpen(false);
+    }
     setSlots(
       newSlots.map((s) => ({
         ...s,
         // For non-composite slots, pre-assign the selected image; composite slots keep their auto-fill
-        assignedImageUrl: s.composite ? s.assignedImageUrl : initialAssignedImageUrl,
+        assignedImageUrl: s.collage ? null : s.composite ? s.assignedImageUrl : initialAssignedImageUrl,
       }))
     );
     setActiveSlotIndex(null);
 
-    if (getCategory(pkg) === "digital" || compositeSelectedImage) {
+    if (!newSlots.some(slot => slot.collage) && (getCategory(pkg) === "digital" || compositeSelectedImage)) {
       setDrawerView("checkout");
     } else {
       setDrawerView("build-package");
@@ -7052,7 +7156,7 @@ export default function ParentGalleryPage({ sessionAccess }: { sessionAccess?: P
   function assignImageToSlot(imageUrl: string) {
     if (activeSlotIndex === null) return;
     // Don't allow assigning to composite slots — they're auto-filled
-    if (slots[activeSlotIndex]?.composite) return;
+    if (slots[activeSlotIndex]?.composite || slots[activeSlotIndex]?.collage) return;
     const selectedGalleryImage = visibleImages.find((img) => img.url === imageUrl);
     if (isCompositeGalleryImage(selectedGalleryImage)) return;
     setSlots((prev) =>
@@ -7062,12 +7166,12 @@ export default function ParentGalleryPage({ sessionAccess }: { sessionAccess?: P
     );
     // Skip composite slots when finding next empty
     const nextEmpty = slots.findIndex(
-      (s, i) => i > activeSlotIndex && !s.assignedImageUrl && !s.composite
+      (s, i) => i > activeSlotIndex && !s.assignedImageUrl && !s.composite && !s.collage
     );
     setActiveSlotIndex(nextEmpty >= 0 ? nextEmpty : null);
   }
 
-  const allSlotsAssigned = slots.every((s) => s.assignedImageUrl !== null);
+  const allSlotsAssigned = slots.every((s) => s.collage ? collageSelectionComplete(s.collage, collageDesigns[s.collage.templateVersionId]?.design) && s.collageReviewed === JSON.stringify(s.collage) : s.assignedImageUrl !== null);
   const compositeSelectedImage =
     isCompositeSelection && isCompositeGalleryImage(selectedImage) ? selectedImage : null;
   const packageAllAssignableImages = useMemo(
@@ -7093,12 +7197,12 @@ export default function ParentGalleryPage({ sessionAccess }: { sessionAccess?: P
       // 2026-04-26: hide retouching add-on packages from the main grid.
       // They only surface via the upsell modal at checkout, with explicit
       // copy clarifying that retouching is a SERVICE, not digital files.
-      const visible = packages.filter((pkg) => !isRetouchPackage(pkg));
+      const visible = packages.filter((pkg) => !isRetouchPackage(pkg) && galleryCollagePackageAvailable(pkg, collageDesigns));
       return isCompositeSelection
         ? visible.filter((pkg) => isCompositeEligiblePackage(pkg))
         : visible;
     },
-    [isCompositeSelection, packages],
+    [isCompositeSelection, packages, collageDesigns],
   );
   // The retouching add-on packages, surfaced ONLY via the upsell modal.
   const retouchAddonPackages = useMemo(
@@ -7156,7 +7260,7 @@ export default function ParentGalleryPage({ sessionAccess }: { sessionAccess?: P
   }, [selectedPkg, storefrontPackages]);
 
   useEffect(() => {
-    if (!compositeSelectedImage || !selectedPkg) return;
+    if (!compositeSelectedImage || !selectedPkg || slots.some(slot => slot.collage)) return;
     const compositeUrl = compositeSelectedImage.url;
     const slotsNeedUpdate = slots.some((slot) => slot.assignedImageUrl !== compositeUrl);
     if (slotsNeedUpdate) {
@@ -7259,7 +7363,7 @@ export default function ParentGalleryPage({ sessionAccess }: { sessionAccess?: P
 
     const category = getCategory(selectedPkg);
     const isDigital = category === "digital";
-    if (!isDigital && slots.some((slot) => !slot.assignedImageUrl)) return null;
+    if (!isDigital && slots.some((slot) => slot.collage ? (!collageSelectionComplete(slot.collage, collageDesigns[slot.collage.templateVersionId]?.design) || slot.collageReviewed !== JSON.stringify(slot.collage)) : !slot.assignedImageUrl)) return null;
 
     const digitalLimit = getDigitalFavoritesPackLimit(selectedPkg);
     const digitalSelections =
@@ -7306,7 +7410,7 @@ export default function ParentGalleryPage({ sessionAccess }: { sessionAccess?: P
       selectedImageUrl,
       digitalSelections,
       digitalLimit,
-      isCompositeOrder: isSchoolMode && isCompositeSelection,
+      isCompositeOrder: isSchoolMode && isCompositeSelection && !slots.some(slot => slot.collage),
       compositeTitle: selectedImage?.title || student?.class_name || null,
       backdrop: backdropSnapshot,
       orientation: lineOrientation,
@@ -7325,12 +7429,13 @@ export default function ParentGalleryPage({ sessionAccess }: { sessionAccess?: P
     selectedOrderQty,
     selectedPkg,
     slots,
+    collageDesigns,
     student?.class_name,
   ]);
 
   const checkoutItems = useMemo(
-    () => (currentDraftCartItem ? [...cartItems, currentDraftCartItem] : cartItems),
-    [cartItems, currentDraftCartItem],
+    () => (currentDraftCartItem ? [...cartItems.filter(item => item.id !== collageEditingItemId), currentDraftCartItem] : cartItems),
+    [cartItems, currentDraftCartItem, collageEditingItemId],
   );
   const combinedCheckoutEstimate = requiresCombinedParentCheckout(
     isSchoolMode, photographerId, checkoutItems, currentLane?.laneKey,
@@ -7375,7 +7480,7 @@ export default function ParentGalleryPage({ sessionAccess }: { sessionAccess?: P
     return "";
   }, [checkoutItems]);
   const basketItemCount = cartItems.length;
-  const anyPhysicalCheckoutItem = checkoutItems.some((item) => item.category !== "digital" && !isRetouchPackage({ name: item.packageName }) && !item.retouchSelections?.length);
+  const anyPhysicalCheckoutItem = checkoutItems.some((item) => item.category !== "digital" && !isRetouchPackage({ name: item.packageName, items: item.slots }) && !item.retouchSelections?.length);
   const retouchPhotoOptions = useMemo<RetouchPhotoOption[]>(() => {
     const options = new Map<string, RetouchPhotoOption>();
     // Only this gallery's purchases are selectable. Sibling selections stay
@@ -7428,6 +7533,7 @@ export default function ParentGalleryPage({ sessionAccess }: { sessionAccess?: P
   const checkoutTotalCents = checkoutPreTaxCents + checkoutTaxCents;
 
   function resetCurrentSelection() {
+    setCollageEditingItemId(null);
     setSelectedPkg(null);
     setSelectedOrderQty(1);
     setSlots([]);
@@ -7459,6 +7565,17 @@ export default function ParentGalleryPage({ sessionAccess }: { sessionAccess?: P
     if (checkoutItems.length === 0) setDrawerView("product-select");
   }
 
+  function editCollageCartItem(item: CartLineItem) {
+    const pkg = packages.find(p => p.id === item.packageId);
+    if (!pkg || (item.laneKey && item.laneKey !== currentLane?.laneKey)) {
+      setOrderError("Reopen this item's gallery to edit its collage."); return;
+    }
+    setCollageEditingItemId(item.id); setSelectedPkg(pkg); setSelectedOrderQty(item.quantity);
+    setSlots(item.slots.map(slot => ({ ...slot }))); setActiveSlotIndex(null);
+    setConfirmedBackdrop(null); setSelectedBackdrop(null); setBackdropPickerOpen(false);
+    setDrawerOpen(true); setDrawerView("build-package");
+  }
+
   function addCurrentSelectionToCart() {
     if (!currentDraftCartItem) return;
     const backdropIssue = backdropIssueForItem(currentDraftCartItem);
@@ -7482,13 +7599,13 @@ export default function ParentGalleryPage({ sessionAccess }: { sessionAccess?: P
       }
     }
     setCartItems((prev) => [
-      ...prev,
+      ...prev.filter(item => item.id !== collageEditingItemId),
       {
         ...currentDraftCartItem,
-        id:
+        id: collageEditingItemId ?? (
           typeof crypto !== "undefined" && "randomUUID" in crypto
             ? crypto.randomUUID()
-            : `cart_${Date.now()}_${prev.length + 1}`,
+            : `cart_${Date.now()}_${prev.length + 1}`),
         // Tag with the current gallery's lane so persistence + checkout
         // can later split this cart into N grouped orders. When we don't
         // have a lane yet (very early mount) the item just stays untagged
@@ -8015,7 +8132,8 @@ export default function ParentGalleryPage({ sessionAccess }: { sessionAccess?: P
         : null,
       slots: entry.slots.map((slot) => ({
         label: slot.label,
-        assignedImageUrl: slot.assignedImageUrl ?? null,
+        assignedImageUrl: slot.collage ? null : slot.assignedImageUrl ?? null,
+        ...(slot.collage ? { collage: parseCollageSelection(slot.collage) } : {}),
       })),
       selectedImageUrl: entry.selectedImageUrl ?? null,
       retouchSelections: entry.retouchSelections ?? [],
@@ -8125,7 +8243,8 @@ export default function ParentGalleryPage({ sessionAccess }: { sessionAccess?: P
               : null,
             slots: entry.slots.map((slot) => ({
               label: slot.label,
-              assignedImageUrl: slot.assignedImageUrl ?? null,
+              assignedImageUrl: slot.collage ? null : slot.assignedImageUrl ?? null,
+              ...(slot.collage ? { collage: parseCollageSelection(slot.collage) } : {}),
             })),
             selectedImageUrl: entry.selectedImageUrl ?? null,
             retouchSelections: entry.retouchSelections ?? [],
@@ -12175,6 +12294,22 @@ export default function ParentGalleryPage({ sessionAccess }: { sessionAccess?: P
                       {slots.map((slot, i) => {
                         const isActive = activeSlotIndex === i;
                         const isCompositeSlot = !!slot.composite;
+                        if (slot.collage) return <section key={i} style={{ padding: 14, border: "1px solid #4b5563", borderRadius: 12 }}>
+                          <h3 style={{ margin: "0 0 8px" }}>{slot.label} · one collage print</h3>
+                          {collageLoadError && <p role="alert">{collageLoadError}</p>}
+                          <ParentCollagePicker
+                            version={collageDesigns[slot.collage.templateVersionId]}
+                            selection={slot.collage}
+                            laneId={sessionAccess?.laneId || parentLaneFromPin(pin) || undefined}
+                            reviewed={slot.collageReviewed === JSON.stringify(slot.collage)}
+                            onReviewed={() => setSlots(previous => previous.map((s, index) => index === i ? { ...s, collageReviewed: JSON.stringify(s.collage) } : s))}
+                            photos={images.filter(image => image.source !== "composite").map(image => ({
+                              mediaId: isSchoolMode ? image.storagePath || "" : image.id,
+                              url: image.previewUrl || image.url, filename: image.filename || "Photo",
+                            })).filter(photo => !!photo.mediaId)}
+                            onChange={selection => setSlots(previous => previous.map((s, index) => index === i ? { ...s, collage: selection } : s))}
+                          />
+                        </section>;
                         return (
                           <div
                             key={i}
@@ -12322,7 +12457,7 @@ export default function ParentGalleryPage({ sessionAccess }: { sessionAccess?: P
                       })}
                     </div>
 
-                    {activeSlotIndex !== null && (
+                    {activeSlotIndex !== null && !slots[activeSlotIndex]?.collage && (
                       <>
                         <div
                           style={{
@@ -12666,7 +12801,7 @@ export default function ParentGalleryPage({ sessionAccess }: { sessionAccess?: P
                                     {item.isCompositeOrder ? `Composite • ${item.packageName}` : item.packageName}
                                   </div>
                                   <div style={{ fontSize: 11, color: "#8a8a8a", lineHeight: 1.6 }}>
-                                    {isRetouchPackage({ name: item.packageName }) || item.retouchSelections?.length
+                                    {isRetouchPackage({ name: item.packageName, items: item.slots }) || item.retouchSelections?.length
                                       ? `${item.retouchSelections?.length ?? 0} photo(s) selected for retouching`
                                       : item.category === "digital"
                                       ? item.digitalLimit
@@ -12679,7 +12814,9 @@ export default function ParentGalleryPage({ sessionAccess }: { sessionAccess?: P
                                     {item.compositeTitle ? ` • ${item.compositeTitle}` : ""}
                                     {isLandscape ? " • Landscape" : ""}
                                   </div>
-                                  {(isRetouchPackage({ name: item.packageName }) || item.retouchSelections?.length) ? (
+                                  {item.slots.map((slot, index) => slot.collage ? <CollageCartPreview key={index} selection={slot.collage} version={collageDesigns[slot.collage.templateVersionId]} laneId={parentLaneFromPin(item.lanePin) || sessionAccess?.laneId} photos={images.filter(image => image.source !== "composite").map(image => ({ mediaId: isSchoolMode ? image.storagePath || "" : image.id, url: image.previewUrl || image.url, filename: image.filename || "Photo" }))} /> : null)}
+                                  {item.slots.some(slot => slot.collage) && (!item.laneKey || item.laneKey === currentLane?.laneKey) && <button type="button" onClick={() => editCollageCartItem(item)} style={{ marginTop: 8, padding: 8, borderRadius: 8 }}>Edit collage selections</button>}
+                                  {(isRetouchPackage({ name: item.packageName, items: item.slots }) || item.retouchSelections?.length) ? (
                                     <RetouchPhotoFields
                                       photos={item.laneKey && item.laneKey !== currentLane?.laneKey
                                         ? (item.retouchSelections ?? []).map((selection, index) => ({ imageUrl: selection.imageUrl, label: `Photo ${index + 1}` }))
@@ -12814,6 +12951,7 @@ export default function ParentGalleryPage({ sessionAccess }: { sessionAccess?: P
                           </div>
                         ) : null}
 
+                        {currentDraftCartItem.slots.map((slot, index) => slot.collage ? <CollageCartPreview key={index} selection={slot.collage} version={collageDesigns[slot.collage.templateVersionId]} laneId={sessionAccess?.laneId || parentLaneFromPin(pin) || undefined} photos={images.filter(image => image.source !== "composite").map(image => ({ mediaId: isSchoolMode ? image.storagePath || "" : image.id, url: image.previewUrl || image.url, filename: image.filename || "Photo" }))} /> : null)}
                         {currentDraftCartItem.category !== "digital" && (
                           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                             {currentDraftCartItem.slots.map((slot, i) => (

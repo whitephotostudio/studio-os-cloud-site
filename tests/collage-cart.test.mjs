@@ -201,3 +201,51 @@ test('real event hydration/save effects preserve storage through deferred batche
   assert.equal(storage.getItem('studio-os-collage-cart:v1:studio:lane-c'), null);
   assert.equal(errors.length, 0);
 });
+
+test('the actual all-digitals helper preserves physical collage copies when names resemble download products', () => {
+  const scope = { clean: value => (value ?? '').trim() };
+  vm.runInNewContext(compile(`${functionSource('isDigitalPackageText')}\n${functionSource('isAllDigitalsPackage')}`), scope);
+  const allDigital = { name: 'All digital bundle', description: 'Full gallery downloads', category: 'digital', items: [] };
+  assert.equal(scope.isAllDigitalsPackage(allDigital), true);
+  assert.equal(scope.isAllDigitalsPackage({ ...allDigital, category: 'package', items: [{ qty: 2, name: 'Two memories', collage: { templateVersionId: version } }] }), false);
+  assert.equal(scope.isAllDigitalsPackage({ ...allDigital, category: 'print', items: [{ qty: 1, name: 'Collage', collage: { templateVersionId: version } }] }), false);
+  assert.equal(scope.isAllDigitalsPackage({ name: 'Ordinary 5x7 print', category: 'print' }), false);
+});
+
+function restoreReorder(snapshot, packages) {
+  const storage = storageFixture(), errors = [], existing = item('existing-basket-item');
+  storage.setItem('studio-os-reorder-pending', 'saved-order'); storage.setItem('studio-os-reorder:saved-order', JSON.stringify(snapshot));
+  let cart = [existing], review = null, counter = 0;
+  const scope = { ...policies, loading: false, photographerId: 'owner', packages, backdrops: [], onlineBackdropsEnabled: true,
+    isSchoolMode: true, currentLane: null, images: [{ id: key, storagePath: key, previewUrl: preview, url: preview }],
+    reorderHydratedRef: { current: null }, window: { sessionStorage: storage }, crypto: { randomUUID: () => `restored-${++counter}` },
+    DEFAULT_BACKDROP_BLUR_PX: 16, getCategory: () => 'print', setCartItems: value => { cart = value(cart); },
+    setReorderBackdropReview: value => { review = value; }, setOrderError: value => errors.push(value),
+    setBackdropPickerOpen() {}, setDrawerOpen() {}, setDrawerView() {}, setActiveSlotIndex() {} };
+  vm.runInNewContext(compile(`(${effectSource('studio-os-reorder-pending')})();`), scope);
+  return { cart, existing, errors, review, storage };
+}
+
+test('a missing collage product holds the complete reorder visibly without dropping copies or changing the existing basket', () => {
+  const ordinary = { packageId: 'available', quantity: 1, slots: [{ label: 'Ordinary print', assignedImageUrl: key }] };
+  const removed = { packageId: 'removed', quantity: 2, slots: [{ label: 'First collage', assignedImageUrl: null, collage: selection() }, { label: 'Second collage', assignedImageUrl: null, collage: selection(key, .8) }] };
+  const snapshot = [ordinary, removed], before = JSON.stringify(snapshot);
+  const result = restoreReorder(snapshot, [{ id: 'available', name: 'Print', price_cents: 1200 }]);
+  assert.deepEqual(result.cart, [result.existing]); assert.equal(result.review, null);
+  assert.match(result.errors[0], /collage product.*no longer available/i); assert.match(result.errors[0], /None.*added/i);
+  assert.equal(result.storage.getItem('studio-os-reorder-pending'), 'saved-order'); assert.equal(JSON.stringify(snapshot), before);
+  const legacy = restoreReorder([ordinary, { packageId: 'removed', quantity: 1, slots: [{ label: 'Old ordinary print', assignedImageUrl: key }] }], [{ id: 'available', name: 'Print', price_cents: 1200 }]);
+  assert.equal(legacy.errors.length, 0); assert.equal(legacy.cart.length, 2); assert.equal(legacy.cart[1].packageId, 'available');
+});
+
+test('malformed nested collage recipes report a reviewable error and never partially restore a mixed reorder', () => {
+  const ordinary = { packageId: 'available', quantity: 1, slots: [{ label: 'Ordinary print', assignedImageUrl: key }] };
+  const badRecipes = [{ ...selection(), placements: [{ ...selection().placements[0], x: 4 }] }, { ...selection(), templateVersionId: 'invalid' }, { ...selection(), placements: [{ ...selection().placements[0], mediaId: 'https://untrusted.invalid/photo.jpg' }] }];
+  for (const collage of badRecipes) {
+    const snapshot = [ordinary, { packageId: 'available', quantity: 1, slots: [{ label: 'Collage', assignedImageUrl: null, collage }] }];
+    const before = JSON.stringify(snapshot), result = restoreReorder(snapshot, [{ id: 'available', name: 'Print', price_cents: 1200 }]);
+    assert.deepEqual(result.cart, [result.existing]); assert.equal(result.review, null);
+    assert.match(result.errors[0], /invalid saved collage or photo selections/i); assert.match(result.errors[0], /None.*added/i);
+    assert.equal(result.storage.getItem('studio-os-reorder-pending'), 'saved-order'); assert.equal(JSON.stringify(snapshot), before);
+  }
+});
