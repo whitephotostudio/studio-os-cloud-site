@@ -84,10 +84,10 @@ test("event preview scopes source authorization to the authenticated project's a
   assert.deepEqual(h.observed.scopes[1], [orderId, ["allowed-collection"]]); assert.deepEqual(h.observed.studentFilters, []);
 });
 
-function productionHarness({ status = "paid", crossOwner = false, changed = false, wrongSnapshotOwner = false, unsigned = false } = {}) {
+function productionHarness({ status = "paid", crossOwner = false, changed = false, wrongSnapshotOwner = false, unsigned = false, quantity = 1 } = {}) {
   let renders = 0, checks = 0;
   const recipe = { photographerId: wrongSnapshotOwner ? other : owner, frozen: true, contentHash: "b".repeat(64) };
-  const service = { from(table) { assert.equal(table, "order_items"); const chain = { select() { return chain; }, eq() { return chain; }, async maybeSingle() { return { data: { collage_snapshot: recipe }, error: null }; } }; return chain; } };
+  const service = { from(table) { assert.equal(table, "order_items"); const chain = { select() { return chain; }, eq() { return chain; }, async maybeSingle() { return { data: { quantity, collage_snapshot: recipe }, error: null }; } }; return chain; } };
   const route = moduleAt("app/api/dashboard/collages/production/route", {
     "@/lib/collage-server": { ...core, async collageDashboardAccess() { if (unsigned) throw new core.CollageAccessError("Sign in", 401); return { service, photographerId: owner, user: { id: other } }; } },
     "@/lib/order-automation-auth": { async currentProductionOrders(user, ids) {
@@ -106,11 +106,12 @@ test("production route downloads the frozen paid owned print and checks financia
   assert.equal(response.headers.get("x-collage-template-hash"), "b".repeat(64)); assert.equal(response.headers.get("x-collage-recipe-hash"), "c".repeat(64));
   assert.equal(response.headers.get("x-collage-width"), "3000"); assert.equal(response.headers.get("x-collage-height"), "2400");
   assert.equal(response.headers.get("x-collage-order-id"), orderId); assert.equal(response.headers.get("x-collage-item-id"), itemId);
+  assert.equal(response.headers.get("x-collage-quantity"), "1");
   const race = productionHarness({ changed: true }); const held = await race.route.GET(race.request);
   assert.equal(held.status, 409); assert.match((await held.json()).message, /Payment changed/);
 });
 test("production route refuses unauthenticated, other-studio, unpaid and refunded items before reading originals", async () => {
-  for (const options of [{ unsigned: true }, { crossOwner: true }, { status: "unpaid" }, { status: "refunded" }, { wrongSnapshotOwner: true }]) {
+  for (const options of [{ unsigned: true }, { crossOwner: true }, { status: "unpaid" }, { status: "refunded" }, { wrongSnapshotOwner: true }, { quantity: 2 }, { quantity: null }]) {
     const h = productionHarness(options), response = await h.route.GET(h.request);
     assert.ok(response.status >= 400); assert.equal(h.renders(), 0, JSON.stringify(options));
   }

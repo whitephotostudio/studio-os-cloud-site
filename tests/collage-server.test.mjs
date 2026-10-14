@@ -78,6 +78,8 @@ test("database appends versions atomically, rejects cross-owner galleries, preve
     const orderId = "77777777-7777-4777-8777-777777777777", snapshot = { version: 1, templateVersionId: first.id, test: "frozen recipe" };
     await db.query("select create_checkout_order_once('key','hash',$1,$2,'{}')", [JSON.stringify([{ id: orderId, photographer_id: owner }]), JSON.stringify([{ order_id: orderId, quantity: 1, collage_snapshot: snapshot }])]);
     assert.deepEqual((await db.query("select collage_snapshot from order_items")).rows[0].collage_snapshot, snapshot);
+    for (const quantity of [2, 0, null]) await assert.rejects(() => db.query("insert into order_items(order_id,quantity,collage_snapshot) values($1,$2,$3)", [orderId, quantity, snapshot]), /collage_one_recipe_per_copy/);
+    await assert.rejects(() => db.query("update order_items set quantity = 2"), /collage_one_recipe_per_copy/);
     await assert.rejects(() => db.query("update order_items set collage_snapshot = '{}'"), /immutable/);
     await db.exec("set role authenticated");
     await assert.rejects(() => save(), /permission denied/);

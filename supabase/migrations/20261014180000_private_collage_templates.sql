@@ -79,6 +79,7 @@ grant execute on function public.save_collage_template_version(uuid,uuid,text,js
 
 alter table public.order_items add column if not exists collage_snapshot jsonb;
 alter table public.order_items add constraint collage_snapshot_shape check (collage_snapshot is null or (jsonb_typeof(collage_snapshot) = 'object' and collage_snapshot->>'version' = '1'));
+alter table public.order_items add constraint collage_one_recipe_per_copy check (collage_snapshot is null or quantity is not distinct from 1);
 create function public.keep_order_collage_immutable() returns trigger language plpgsql set search_path = '' as $$
 begin
   if old.collage_snapshot is not null and new.collage_snapshot is distinct from old.collage_snapshot then raise exception 'Purchased collage selections are immutable' using errcode = '42501'; end if;
