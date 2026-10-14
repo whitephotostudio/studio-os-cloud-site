@@ -36,7 +36,7 @@ import {
   X,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
-import { fetchStudentSearchPages, studentSearchFilter, studentSearchRank } from "@/lib/student-search";
+import { fetchStudentSearchPages, shortOrderIdBounds, studentSearchFilter, studentSearchRank } from "@/lib/student-search";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -72,11 +72,6 @@ export type SpotlightHit =
 
 function clean(value: string | null | undefined): string {
   return (value ?? "").trim();
-}
-
-function isShortOrderId(term: string): boolean {
-  // Orders are uuids; the user typically types the first 8 chars.
-  return /^[0-9a-f-]{4,}$/i.test(term);
 }
 
 // 2026-04-26: Year-aware search.
@@ -122,6 +117,12 @@ export function useSpotlight(term: string, enabled: boolean) {
   const [hits, setHits] = useState<SpotlightHit[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [hasMoreStudents, setHasMoreStudents] = useState(false);
+  const [studentPage, setStudentPage] = useState({ term, limit: 200 });
+  // A new autocomplete term always starts with a bounded page. Only the
+  // explicit Show more action increases how many rows are requested.
+  if (studentPage.term !== term) setStudentPage({ term, limit: 200 });
+  const studentLimit = studentPage.term === term ? studentPage.limit : 200;
 
   // Resolve photographer id once per mount.
   useEffect(() => {
@@ -149,6 +150,7 @@ export function useSpotlight(term: string, enabled: boolean) {
       setHits([]);
       setLoading(false);
       setError(null);
+      setHasMoreStudents(false);
       return;
     }
     const trimmed = term.trim();
@@ -159,6 +161,7 @@ export function useSpotlight(term: string, enabled: boolean) {
       setHits([]);
       setLoading(false);
       setError(null);
+      setHasMoreStudents(false);
       return;
     }
 
@@ -169,8 +172,9 @@ export function useSpotlight(term: string, enabled: boolean) {
     const yearEnd = year !== null ? `${year + 1}-01-01` : null;
 
     let cancelled = false;
-    setHits([]);
+    if (studentLimit === 200) setHits([]);
     setError(null);
+    if (studentLimit === 200) setHasMoreStudents(false);
     setLoading(true);
     const handle = window.setTimeout(async () => {
       try {
@@ -207,9 +211,10 @@ export function useSpotlight(term: string, enabled: boolean) {
             .order("id", { ascending: true })
             .range(from, to);
         };
-        // Read every filtered page: an early result cap hid later classes.
-        const studentResults = fetchStudentSearchPages(studentsQuery, () => cancelled)
-          .then((data) => ({ data }));
+        // One extra row tells the UI when to offer Show more. Broad terms
+        // never download an entire volume roster from live autocomplete.
+        const studentResults = fetchStudentSearchPages(studentsQuery, () => cancelled, studentLimit + 1)
+          .then((data) => ({ data: data.slice(0, studentLimit), hasMore: data.length > studentLimit }));
 
         let schoolsQuery = supabase
           .from("schools")
@@ -265,7 +270,8 @@ export function useSpotlight(term: string, enabled: boolean) {
 
         // Orders lookup by short id — only when the term looks hex-ish.
         let shortOrderIdx = -1;
-        if (isShortOrderId(trimmed)) {
+        const orderBounds = shortOrderIdBounds(trimmed);
+        if (orderBounds) {
           shortOrderIdx = promises.length;
           promises.push(
             supabase
@@ -274,17 +280,22 @@ export function useSpotlight(term: string, enabled: boolean) {
                 "id, package_name, total_cents, total_amount, currency, student:students(first_name,last_name), school:schools(school_name)",
               )
               .eq("photographer_id", photographerId)
-              .ilike("id", `${trimmed.toLowerCase()}%`)
+              .gte("id", orderBounds.lower)
+              .lte("id", orderBounds.upper)
               .limit(5),
           );
         }
 
         const results = await Promise.all(promises);
         if (cancelled) return;
+        for (const result of results as Array<{ error?: { message: string } | null }>) {
+          if (result.error) throw new Error(result.error.message);
+        }
 
         const next: SpotlightHit[] = [];
 
         const students = results[0] as {
+          hasMore: boolean;
           data?: Array<{
             id: string;
             first_name: string | null;
@@ -553,11 +564,15 @@ export function useSpotlight(term: string, enabled: boolean) {
           }
         }
 
-        if (!cancelled) setHits(next);
+        if (!cancelled) {
+          setHits(next);
+          setHasMoreStudents(students.hasMore);
+        }
       } catch {
         if (!cancelled) {
           setHits([]);
           setError("Search could not load. Please try again.");
+          setHasMoreStudents(false);
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -568,9 +583,13 @@ export function useSpotlight(term: string, enabled: boolean) {
       cancelled = true;
       window.clearTimeout(handle);
     };
-  }, [term, supabase, photographerId, enabled]);
+  }, [term, supabase, photographerId, enabled, studentLimit]);
 
-  return { hits, loading, error };
+  const loadMore = useCallback(() => {
+    if (!loading && hasMoreStudents) setStudentPage({ term, limit: studentLimit + 200 });
+  }, [term, studentLimit, loading, hasMoreStudents]);
+
+  return { hits, loading, error, hasMoreStudents, loadMore };
 }
 
 // ── Modal ────────────────────────────────────────────────────────────
@@ -591,7 +610,7 @@ export function SpotlightModal({ open, onClose, hrefFor }: SpotlightModalProps) 
   const [kindFilter, setKindFilter] = useState<SpotlightKind | null>(null);
   const router = useRouter();
   const inputRef = useRef<HTMLInputElement | null>(null);
-  const { hits, loading, error } = useSpotlight(term, open);
+  const { hits, loading, error, hasMoreStudents, loadMore } = useSpotlight(term, open);
 
   // Reset + autofocus on open.
   useEffect(() => {
@@ -760,6 +779,7 @@ export function SpotlightModal({ open, onClose, hrefFor }: SpotlightModalProps) 
             <FilterPill
               label="All"
               count={hits.length}
+              hasMore={hasMoreStudents}
               active={kindFilter === null}
               onClick={() => setKindFilter(null)}
               color="#111827"
@@ -779,6 +799,7 @@ export function SpotlightModal({ open, onClose, hrefFor }: SpotlightModalProps) 
                   key={p.kind}
                   label={p.label}
                   count={countsByKind[p.kind]}
+                  hasMore={p.kind === "student" && hasMoreStudents}
                   active={kindFilter === p.kind}
                   onClick={() =>
                     setKindFilter((prev) => (prev === p.kind ? null : p.kind))
@@ -787,6 +808,20 @@ export function SpotlightModal({ open, onClose, hrefFor }: SpotlightModalProps) 
                   background={kindBg(p.kind)}
                 />
               ))}
+          </div>
+        ) : null}
+
+        {hasMoreStudents ? (
+          <div style={{ padding: "12px 16px", flexShrink: 0, borderBottom: "1px solid #eef2f7", fontSize: 13, color: "#6b7280" }}>
+            <div>More students match. Refine your search or show more.</div>
+            <button
+              type="button"
+              onClick={loadMore}
+              disabled={loading}
+              style={{ marginTop: 8, border: "1px solid #e5e7eb", borderRadius: 8, padding: "8px 12px", background: "#fff", color: "#111827", fontWeight: 700, cursor: loading ? "default" : "pointer" }}
+            >
+              Show more students
+            </button>
           </div>
         ) : null}
 
@@ -1044,6 +1079,7 @@ export function kindFg(kind: SpotlightHit["kind"]): string {
 type FilterPillProps = {
   label: string;
   count: number;
+  hasMore?: boolean;
   active: boolean;
   onClick: () => void;
   color: string;
@@ -1053,6 +1089,7 @@ type FilterPillProps = {
 function FilterPill({
   label,
   count,
+  hasMore = false,
   active,
   onClick,
   color,
@@ -1089,7 +1126,7 @@ function FilterPill({
           color: active ? "#fff" : color,
         }}
       >
-        {count}
+        {count}{hasMore ? "+" : ""}
       </span>
     </button>
   );

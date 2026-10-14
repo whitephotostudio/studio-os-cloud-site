@@ -73,28 +73,49 @@ export function studentSearchRank(
   return studentMatchesSearch(firstName, lastName, query) ? 3 : 4;
 }
 
+/** UUID ranges support order-ID prefixes without applying ILIKE to a UUID. */
+export function shortOrderIdBounds(
+  term: string,
+): { lower: string; upper: string } | null {
+  const prefix = term.trim().replace(/-/g, "").toLowerCase();
+  if (!/^[0-9a-f]{4,32}$/.test(prefix)) return null;
+  const uuid = (value: string) =>
+    `${value.slice(0, 8)}-${value.slice(8, 12)}-${value.slice(12, 16)}-${value.slice(16, 20)}-${value.slice(20)}`;
+  return {
+    lower: uuid(prefix.padEnd(32, "0")),
+    upper: uuid(prefix.padEnd(32, "f")),
+  };
+}
+
 type StudentSearchPage<T> = {
   data: T[] | null;
   error: { message: string } | null;
 };
 
-/** Fetch every filtered page, preserving distinct student IDs and records.
+/** Fetch filtered pages, preserving distinct student IDs and records.
  *  The callback must apply stable ordering before its inclusive range.
+ *  maxRows bounds autocomplete work; its default retains exhaustive searches.
  *  Cancellation discards the whole result so stale searches cannot display
  *  a partially fetched set. */
 export async function fetchStudentSearchPages<T>(
   fetchPage: (from: number, to: number) => PromiseLike<StudentSearchPage<T>>,
   isCancelled: () => boolean = () => false,
+  maxRows: number = Infinity,
 ): Promise<T[]> {
+  if (maxRows !== Infinity && (!Number.isSafeInteger(maxRows) || maxRows < 0)) {
+    throw new RangeError("Student search row limit must be a nonnegative safe integer or Infinity.");
+  }
   const pageSize = 200;
   const rows: T[] = [];
-  for (let from = 0; ; from += pageSize) {
+  for (let from = 0; from < maxRows; from += pageSize) {
     if (isCancelled()) return [];
-    const { data, error } = await fetchPage(from, from + pageSize - 1);
+    const requestedRows = Math.min(pageSize, maxRows - from);
+    const { data, error } = await fetchPage(from, from + requestedRows - 1);
     if (isCancelled()) return [];
     if (error) throw new Error(error.message || "Unable to search students.");
     const page = data ?? [];
-    rows.push(...page);
-    if (page.length < pageSize) return rows;
+    rows.push(...page.slice(0, requestedRows));
+    if (page.length < requestedRows || rows.length >= maxRows) return rows;
   }
+  return rows;
 }

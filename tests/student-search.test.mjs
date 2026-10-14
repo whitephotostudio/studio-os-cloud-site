@@ -12,7 +12,7 @@ vm.runInNewContext(ts.transpileModule(
   { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } },
 ).outputText, { exports });
 const { studentSearchTokens, studentSearchFilter, studentMatchesSearch,
-  studentSearchRank, fetchStudentSearchPages } = exports;
+  studentSearchRank, shortOrderIdBounds, fetchStudentSearchPages } = exports;
 
 test('search words normalize case and whitespace while retaining name punctuation', () => {
   assert.deepEqual(Array.from(studentSearchTokens('  HAROUT\tSarkis\u00a0O’Neil  ')), ['harout', 'sarkis', 'o’neil']);
@@ -137,6 +137,45 @@ test('all 209 filtered students remain searchable beyond the former eight-result
   assert.equal(rows.find(row => row.id === 'student-208').class_name, 'Grade 9 B');
 });
 
+test('bounded autocomplete reads 201 rows without fetching another complete page', async () => {
+  const matches = Array.from({ length: 900 }, (_, id) => ({ id }));
+  const calls = [];
+  const rows = await fetchStudentSearchPages(async (from, to) => {
+    calls.push([from, to]);
+    return { data: matches.slice(from, to + 1), error: null };
+  }, undefined, 201);
+  assert.deepEqual(calls, [[0, 199], [200, 200]]);
+  assert.deepEqual(Array.from(rows), matches.slice(0, 201));
+});
+
+test('finite limits avoid unnecessary queries and never return excess rows', async () => {
+  const calls = [];
+  const fetchPage = async (from, to) => {
+    calls.push([from, to]);
+    // A defensive limit also holds if a fixture or server ignores the range.
+    return { data: Array.from({ length: 200 }, (_, id) => ({ id })), error: null };
+  };
+  assert.equal((await fetchStudentSearchPages(fetchPage, undefined, 50)).length, 50);
+  assert.deepEqual(calls, [[0, 49]]);
+  calls.length = 0;
+  assert.equal((await fetchStudentSearchPages(fetchPage, undefined, 200)).length, 200);
+  assert.deepEqual(calls, [[0, 199]]);
+  calls.length = 0;
+  assert.deepEqual(Array.from(await fetchStudentSearchPages(fetchPage, undefined, 0)), []);
+  assert.equal(calls.length, 0);
+});
+
+test('invalid row limits fail before requesting a page', async () => {
+  let calls = 0;
+  for (const limit of [-1, NaN, 1.5, -Infinity, Number.MAX_SAFE_INTEGER + 1]) {
+    await assert.rejects(fetchStudentSearchPages(async () => {
+      calls++;
+      return { data: [], error: null };
+    }, undefined, limit), /nonnegative safe integer or Infinity/);
+  }
+  assert.equal(calls, 0);
+});
+
 test('a full final page requires an empty follow-up page before completion', async () => {
   const calls = [];
   const rows = await fetchStudentSearchPages(async (from, to) => {
@@ -167,4 +206,46 @@ test('cancellation before or during a page discards every stale result', async (
   }, () => cancelled);
   assert.equal(calls, 2);
   assert.deepEqual(Array.from(result), []);
+});
+
+test('short order IDs become canonical inclusive UUID bounds', () => {
+  assert.deepEqual({ ...shortOrderIdBounds('  DEADbeef  ') }, {
+    lower: 'deadbeef-0000-0000-0000-000000000000',
+    upper: 'deadbeef-ffff-ffff-ffff-ffffffffffff',
+  });
+  assert.deepEqual({ ...shortOrderIdBounds('3E92') }, {
+    lower: '3e920000-0000-0000-0000-000000000000',
+    upper: '3e92ffff-ffff-ffff-ffff-ffffffffffff',
+  });
+  assert.deepEqual({ ...shortOrderIdBounds('deadbeef-cafe-1234') }, {
+    lower: 'deadbeef-cafe-1234-0000-000000000000',
+    upper: 'deadbeef-cafe-1234-ffff-ffffffffffff',
+  });
+  const full = 'deadbeef-cafe-1234-abcd-0123456789ab';
+  assert.deepEqual({ ...shortOrderIdBounds(full) }, { lower: full, upper: full });
+  assert.deepEqual({ ...shortOrderIdBounds(full.replaceAll('-', '')) }, { lower: full, upper: full });
+  for (const invalid of ['', 'abc', '----', 'xyz1', 'abcd ef12', 'abcd%', 'a'.repeat(33)]) {
+    assert.equal(shortOrderIdBounds(invalid), null, invalid);
+  }
+});
+
+test('order prefix bounds match UUID values in PostgreSQL without a text operator', async () => {
+  const db = new PGlite();
+  try {
+    await db.exec(`CREATE TABLE orders (id uuid);
+      INSERT INTO orders VALUES ('deadbeef-0000-0000-0000-000000000000'),
+        ('deadbeef-cafe-1234-abcd-0123456789ab'),
+        ('deadbeef-ffff-ffff-ffff-ffffffffffff'),
+        ('deadbeee-ffff-ffff-ffff-ffffffffffff'),
+        ('deadbef0-0000-0000-0000-000000000000');`);
+    const { lower, upper } = shortOrderIdBounds('DEADBEEF');
+    const result = await db.query('SELECT id FROM orders WHERE id >= $1::uuid AND id <= $2::uuid ORDER BY id', [lower, upper]);
+    assert.deepEqual(result.rows.map(row => row.id), [
+      'deadbeef-0000-0000-0000-000000000000',
+      'deadbeef-cafe-1234-abcd-0123456789ab',
+      'deadbeef-ffff-ffff-ffff-ffffffffffff',
+    ]);
+  } finally {
+    await db.close();
+  }
 });

@@ -7,7 +7,7 @@ import * as studentSearch from '../lib/student-search.ts';
 
 const source = readFileSync(new URL('../components/spotlight-search.tsx', import.meta.url), 'utf8');
 const file = ts.createSourceFile('spotlight-search.tsx', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
-const hookSource = ['clean', 'isShortOrderId', 'parseYearToken', 'yearOf', 'yearLabel', 'useSpotlight'].map(name => {
+const hookSource = ['clean', 'parseYearToken', 'yearOf', 'yearLabel', 'useSpotlight'].map(name => {
   const node = file.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === name);
   assert.ok(node, `Missing actual search function: ${name}`);
   return node.getText(file);
@@ -84,6 +84,8 @@ function queryDb(tables, queries) {
     const api = {
       select(selection) { q.selection = selection; return api; },
       eq(field, value) { q.filters.push({ kind: 'eq', field, value }); return api; },
+      gte(field, value) { q.filters.push({ kind: 'gte', field, value }); return api; },
+      lte(field, value) { q.filters.push({ kind: 'lte', field, value }); return api; },
       in(field, values) { q.filters.push({ kind: 'in', field, values: Array.from(values) }); return api; },
       ilike(field, pattern) { q.filters.push({ kind: 'ilike', field, pattern }); return api; },
       or(expression, options = {}) { q.filters.push({ kind: 'or', expression, relation: options.foreignTable ?? options.referencedTable }); return api; },
@@ -98,11 +100,16 @@ function queryDb(tables, queries) {
           if (table === 'students' && /\bschools(?:!inner)?\(/.test(q.selection)) {
             return { data: null, error: { code: 'PGRST201', message: 'More than one school/student relationship' } };
           }
+          if (table === 'orders' && q.filters.some(filter => filter.kind === 'ilike' && filter.field === 'id')) {
+            return { data: null, error: { code: '42883', message: 'operator does not exist: uuid ~~* unknown' } };
+          }
           const response = typeof tables[table] === 'function' ? await tables[table](q) : tables[table];
           assert.ok(response, `Expected query table: ${table}`);
           if (!Array.isArray(response)) return response;
           const rows = response.filter(row => q.filters.every(filter => {
             if (filter.kind === 'eq') return fieldValue(row, filter.field) === filter.value;
+            if (filter.kind === 'gte') return fieldValue(row, filter.field) != null && fieldValue(row, filter.field) >= filter.value;
+            if (filter.kind === 'lte') return fieldValue(row, filter.field) != null && fieldValue(row, filter.field) <= filter.value;
             if (filter.kind === 'in') return filter.values.includes(fieldValue(row, filter.field));
             if (filter.kind === 'ilike') return ilike(fieldValue(row, filter.field), filter.pattern);
             const related = filter.relation ? fieldValue(row, filter.relation) : row;
@@ -135,6 +142,7 @@ function spotlightHarness({ students = [], schools = [], projects = [], orders =
     ...studentSearch,
     exports: {},
     createClient: () => db,
+    useCallback(callback) { return callback; },
     useState(initial) {
       const index = stateCursor++;
       if (!(index in states)) states[index] = typeof initial === 'function' ? initial() : initial;
@@ -182,6 +190,7 @@ function spotlightHarness({ students = [], schools = [], projects = [], orders =
     get result() { rerender(); return result; },
     setTerm, fireTimers, settle,
     async search(term) { await setTerm(term); fireTimers(); await settle(); return result; },
+    async loadMore() { result.loadMore(); rerender(); await settle(); fireTimers(); await settle(); return result; },
     async finishTimers() { await Promise.all(runningTimers); await settle(); },
     async disable() { enabled = false; render(); rerender(); await settle(); },
     unmount() { for (const effect of effects) effect?.cleanup?.(); },
@@ -221,24 +230,41 @@ test('full names in either order find distinct Grade 8 and Grade 9 records and t
   app.unmount();
 });
 
-test('all matching students survive the old eight-result cap and multiple database pages', async () => {
+test('autocomplete reads a bounded page and explicit load-more reaches later grades and all matches', async () => {
   const rows = Array.from({ length: 205 }, (_, i) => student(`partial-${String(i).padStart(3, '0')}`, 'Harout', `Sarkisian ${String(i).padStart(3, '0')}`));
   rows.push(student('old-grade', 'Harout', 'Sarkis', { class_name: 'Grade 8 B' }));
   // Sorting first_name/last_name puts this exact reversed name after page one.
   rows.push(student('current-grade', 'Sarkis', 'Harout'));
   const app = spotlightHarness({ students: rows });
   await app.search('Harout Sarkis');
+  assert.equal(studentHits(app).length, 200);
+  assert.equal(app.result.hasMoreStudents, true);
+  assert.equal(studentHits(app).some(hit => hit.id === 'current-grade'), false);
+  const firstPages = app.queries.filter(q => q.table === 'students');
+  assert.deepEqual(firstPages.map(q => [q.offset, q.end]), [[0, 199], [200, 200]]);
+  const firstLinked = app.queries.filter(q => q.table === 'orders' && q.filters.some(filter => filter.kind === 'in'));
+  assert.deepEqual(firstLinked.map(q => q.filters.find(filter => filter.kind === 'in').values.length), [100, 100]);
+  await app.loadMore();
   const hits = studentHits(app);
   assert.equal(hits.length, 207);
+  assert.equal(app.result.hasMoreStudents, false);
   assert.deepEqual(hits.slice(0, 2).map(hit => hit.id).sort(), ['current-grade', 'old-grade']);
   assert.deepEqual(new Set(hits.map(hit => hit.id)), new Set(rows.map(row => row.id)));
   assert.equal(hits.find(hit => hit.id === 'current-grade').href, '/dashboard/projects/schools/school-current-grade?student=current-grade');
   const pages = app.queries.filter(q => q.table === 'students');
-  assert.deepEqual(pages.map(q => [q.offset, q.end]), [[0, 199], [200, 399]]);
+  assert.deepEqual(pages.map(q => [q.offset, q.end]), [[0, 199], [200, 200], [0, 199], [200, 399]]);
   assert.ok(pages.every(q => q.limit === Infinity));
   assert.ok(pages.every(q => q.orders.map(order => order.field).join(',') === 'first_name,last_name,id'));
   const linkedOrderQueries = app.queries.filter(q => q.table === 'orders' && q.filters.some(f => f.kind === 'in'));
-  assert.deepEqual(linkedOrderQueries.map(q => q.filters.find(f => f.kind === 'in').values.length), [100, 100, 7]);
+  assert.deepEqual(linkedOrderQueries.slice(2).map(q => q.filters.find(f => f.kind === 'in').values.length), [100, 100, 7]);
+  await app.search('Sarkis Harout');
+  assert.equal(studentHits(app).length, 200);
+  assert.equal(app.result.hasMoreStudents, true);
+  assert.deepEqual(app.queries.filter(q => q.table === 'students').slice(-2).map(q => [q.offset, q.end]), [[0, 199], [200, 200]]);
+  // Returning to a previously expanded term must also start a fresh bounded search.
+  await app.search('Harout Sarkis');
+  assert.equal(studentHits(app).length, 200);
+  assert.equal(app.result.hasMoreStudents, true);
   app.unmount();
 });
 
@@ -302,6 +328,56 @@ test('a later linked-order chunk failure reports an error instead of presenting 
   assert.equal(app.result.error, 'Search could not load. Please try again.');
   assert.equal(app.result.loading, false);
   assert.equal(app.result.hits.length, 0);
+  app.unmount();
+});
+
+test('every initial query error reports search failure rather than a misleading empty or partial result', async t => {
+  for (const failedSource of ['schools', 'projects', 'customer orders', 'short-id orders']) {
+    await t.test(failedSource, async () => {
+      const failure = { data: null, error: { message: `${failedSource} failed` } };
+      const shortId = failedSource === 'short-id orders';
+      const app = spotlightHarness({
+        students: [student('match', 'Harout', 'Sarkis')],
+        schools: failedSource === 'schools' ? () => failure : [],
+        projects: failedSource === 'projects' ? () => failure : [],
+        orders: q => {
+          const isShortLookup = q.filters.some(filter => filter.field === 'id' && ['gte', 'lte', 'ilike'].includes(filter.kind));
+          const isCustomerLookup = q.filters.some(filter => filter.kind === 'or');
+          return (shortId && isShortLookup) || (failedSource === 'customer orders' && isCustomerLookup) ? failure : [];
+        },
+      });
+      await app.search(shortId ? 'abcdef12' : 'Harout Sarkis');
+      assert.equal(app.result.error, 'Search could not load. Please try again.');
+      assert.equal(app.result.loading, false);
+      assert.equal(app.result.hits.length, 0);
+      assert.equal(app.result.hasMoreStudents, false);
+      app.unmount();
+    });
+  }
+});
+
+test('short order IDs use UUID range bounds and preserve owner filtering', async () => {
+  const order = (id, photographer_id = 'owner') => ({
+    id, photographer_id, package_name: 'Print', student: { first_name: 'Anna', last_name: 'Smith' },
+    school: { school_name: 'ARS' },
+  });
+  const app = spotlightHarness({ orders: [
+    order('abcdef12-0000-0000-0000-000000000001'),
+    order('abcdef12-ffff-ffff-ffff-ffffffffffff'),
+    order('abcdef13-0000-0000-0000-000000000001'),
+    order('abcdef12-0000-0000-0000-000000000002', 'other'),
+  ] });
+  await app.search('ABCDEF12');
+  assert.equal(app.result.error, null);
+  assert.deepEqual(Array.from(app.result.hits, hit => hit.id), [
+    'abcdef12-0000-0000-0000-000000000001', 'abcdef12-ffff-ffff-ffff-ffffffffffff',
+  ]);
+  const query = app.queries.find(q => q.table === 'orders' && q.filters.some(filter => filter.kind === 'gte' && filter.field === 'id'));
+  assert.ok(query, 'UUID prefix lookup uses ranges');
+  assert.ok(query.filters.some(filter => filter.kind === 'gte' && filter.value === 'abcdef12-0000-0000-0000-000000000000'));
+  assert.ok(query.filters.some(filter => filter.kind === 'lte' && filter.value === 'abcdef12-ffff-ffff-ffff-ffffffffffff'));
+  assert.ok(query.filters.some(filter => filter.kind === 'eq' && filter.field === 'photographer_id' && filter.value === 'owner'));
+  assert.equal(query.filters.some(filter => filter.kind === 'ilike' && filter.field === 'id'), false);
   app.unmount();
 });
 
