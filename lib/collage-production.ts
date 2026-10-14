@@ -30,6 +30,16 @@ export function parseCollageOrderSnapshot(value: unknown): CollageOrderSnapshot 
     design: stored.design, artworkKey: stored.artworkKey, contentHash: stored.contentHash };
 }
 
+/** Cross-client receipt: sorted object keys, original array order, UTF-8 JSON. */
+export function collageRecipeHash(value: unknown) {
+  const canonical = (entry: unknown): unknown => {
+    if (Array.isArray(entry)) return entry.map(canonical);
+    if (entry && typeof entry === "object") return Object.fromEntries(Object.entries(entry).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([key, child]) => [key, canonical(child)]));
+    return entry;
+  };
+  return createHash("sha256").update(JSON.stringify(canonical(parseCollageOrderSnapshot(value)))).digest("hex");
+}
+
 /** The same pixels feed parent review and finished production output. */
 export async function renderCollageProduction(input: {
   snapshot: unknown;

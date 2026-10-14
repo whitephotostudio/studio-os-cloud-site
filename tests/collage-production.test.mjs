@@ -14,7 +14,7 @@ function load(name) {
   return exports;
 }
 const { collageContentHash, collageArtworkKey } = load("collage-server");
-const { renderCollageProduction, parseCollageOrderSnapshot } = load("collage-production");
+const { renderCollageProduction, parseCollageOrderSnapshot, collageRecipeHash } = load("collage-production");
 const owner = "11111111-1111-4111-8111-111111111111";
 const template = () => ({ version: 1, name: "Test print", widthInches: 4, heightInches: 4, background: "#ffffff", ink: "#000000", overlay: null,
   slots: [{ id: "main", label: "Main", x: 0, y: 0, width: 1, height: 1 }], caption: { x: .5, y: .82, size: .028 } });
@@ -84,4 +84,14 @@ test("screen previews bound raster size while preserving original PPI, trim, ble
   assert.deepEqual(preview.warnings, full.warnings); assert.equal(preview.width, full.width); assert.equal(preview.height, full.height);
   assert.deepEqual(preview.trim, full.trim); assert.equal(preview.bleedPixels, full.bleedPixels);
   assert.deepEqual(await pixel(preview.bytes, 600, 400), await pixel(full.bytes, 1500, 1200));
+});
+test("recipe receipts ignore object insertion order and extra fields while binding every crop and original identity", () => {
+  const recipe = snapshot();
+  assert.equal(recipe.contentHash, "3415f5217e26c235a20598afcf8df9a5b58b3d2804d86ad35cd45ca0674c6c41");
+  assert.equal(collageRecipeHash(recipe), "a11590092089d8bd64c4d7b9955c7be490f51ef5b0e241f26dd37a0b8a0b49de");
+  const reverseKeys = entry => Array.isArray(entry) ? entry.map(reverseKeys) : entry && typeof entry === "object" ? Object.fromEntries(Object.entries(entry).reverse().map(([key, value]) => [key, reverseKeys(value)])) : entry;
+  assert.equal(collageRecipeHash(recipe), collageRecipeHash(reverseKeys(recipe)));
+  assert.equal(collageRecipeHash(recipe), collageRecipeHash({ ...recipe, ignored: "not in the immutable format" }));
+  const edited = structuredClone(recipe); edited.placements[0].zoom = 2; assert.notEqual(collageRecipeHash(recipe), collageRecipeHash(edited));
+  edited.placements[0].zoom = 1; edited.placements[0].mediaKey = "schools/another-original.jpg"; assert.notEqual(collageRecipeHash(recipe), collageRecipeHash(edited));
 });

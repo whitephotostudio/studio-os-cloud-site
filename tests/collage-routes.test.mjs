@@ -86,7 +86,7 @@ test("event preview scopes source authorization to the authenticated project's a
 
 function productionHarness({ status = "paid", crossOwner = false, changed = false, wrongSnapshotOwner = false, unsigned = false } = {}) {
   let renders = 0, checks = 0;
-  const recipe = { photographerId: wrongSnapshotOwner ? other : owner, frozen: true };
+  const recipe = { photographerId: wrongSnapshotOwner ? other : owner, frozen: true, contentHash: "b".repeat(64) };
   const service = { from(table) { assert.equal(table, "order_items"); const chain = { select() { return chain; }, eq() { return chain; }, async maybeSingle() { return { data: { collage_snapshot: recipe }, error: null }; } }; return chain; } };
   const route = moduleAt("app/api/dashboard/collages/production/route", {
     "@/lib/collage-server": { ...core, async collageDashboardAccess() { if (unsigned) throw new core.CollageAccessError("Sign in", 401); return { service, photographerId: owner, user: { id: other } }; } },
@@ -95,7 +95,7 @@ function productionHarness({ status = "paid", crossOwner = false, changed = fals
       if (status !== "paid") throw Error(`Order ${status}; hold production`);
       return { studio: { id: crossOwner ? other : owner }, orders: [{ id: orderId, revision: changed && checks > 1 ? 2 : 1 }] };
     }, productionFinancialRevision: JSON.stringify },
-    "@/lib/collage-production": { async renderCollageOrderSnapshot(value, database) { assert.equal(value, recipe); assert.equal(database, service); renders++; return { bytes: Buffer.from("finished PNG"), sha256: "a".repeat(64), warnings: [] }; } },
+    "@/lib/collage-production": { parseCollageOrderSnapshot: value => value, collageRecipeHash: () => "c".repeat(64), async renderCollageOrderSnapshot(value, database) { assert.equal(value, recipe); assert.equal(database, service); renders++; return { bytes: Buffer.from("finished PNG"), sha256: "a".repeat(64), width: 3000, height: 2400, warnings: [] }; } },
     "@/lib/rate-limit": { async rateLimit() { return { allowed: true }; } },
   });
   return { route, renders: () => renders, request: new NextRequest(`https://example.test/api/dashboard/collages/production?orderId=${orderId}&itemId=${itemId}`) };
@@ -103,6 +103,9 @@ function productionHarness({ status = "paid", crossOwner = false, changed = fals
 test("production route downloads the frozen paid owned print and checks financial state again after rendering", async () => {
   const h = productionHarness(); const response = await h.route.GET(h.request);
   assert.equal(response.status, 200); assert.equal(response.headers.get("content-type"), "image/png"); assert.equal(response.headers.get("x-collage-sha256"), "a".repeat(64)); assert.equal(h.renders(), 1);
+  assert.equal(response.headers.get("x-collage-template-hash"), "b".repeat(64)); assert.equal(response.headers.get("x-collage-recipe-hash"), "c".repeat(64));
+  assert.equal(response.headers.get("x-collage-width"), "3000"); assert.equal(response.headers.get("x-collage-height"), "2400");
+  assert.equal(response.headers.get("x-collage-order-id"), orderId); assert.equal(response.headers.get("x-collage-item-id"), itemId);
   const race = productionHarness({ changed: true }); const held = await race.route.GET(race.request);
   assert.equal(held.status, 409); assert.match((await held.json()).message, /Payment changed/);
 });
@@ -135,4 +138,37 @@ test("owner template save refuses unauthenticated, foreign-template and foreign-
   }
   const valid = saveHarness(), response = await valid.route.POST(valid.request);
   assert.equal(response.status, 200); assert.equal(valid.observed.saves, 1); assert.equal((await response.json()).version.id, versionId);
+});
+
+function orderRecipeHarness({ foreignOrder = false, foreignRecipe = false, missingColumn = false, databaseFailure = false, unsigned = false } = {}) {
+  let itemReads = 0;
+  const recipe = { photographerId: foreignRecipe ? other : owner, frozen: true };
+  const service = { from(table) {
+    const chain = { select() { return chain; }, eq(key, value) {
+      if (table === "orders" && key === "photographer_id") assert.equal(value, owner);
+      return chain;
+    }, async maybeSingle() { assert.equal(table, "orders"); return { data: foreignOrder ? null : { id: orderId }, error: null }; },
+    then(resolve) {
+      assert.equal(table, "order_items"); itemReads++;
+      return Promise.resolve({ data: missingColumn || databaseFailure ? null : [{ id: itemId, collage_snapshot: recipe }, { id: other, collage_snapshot: null }],
+        error: missingColumn ? { code: "42703", message: "column order_items.collage_snapshot does not exist" } : databaseFailure ? { code: "08006", message: "connection unavailable" } : null }).then(resolve);
+    } }; return chain;
+  } };
+  const route = moduleAt("app/api/dashboard/collages/order/route", {
+    "@/lib/collage-server": { ...core, async collageDashboardAccess() { if (unsigned) throw new core.CollageAccessError("Sign in", 401); return { service, photographerId: owner }; } },
+    "@/lib/collage-production": { parseCollageOrderSnapshot: value => value },
+  });
+  return { route, itemReads: () => itemReads, recipe, request: new NextRequest(`https://example.test/api/dashboard/collages/order?orderId=${orderId}`) };
+}
+test("owner recipe review returns frozen print selections without requiring payment or rendering originals", async () => {
+  const h = orderRecipeHarness(), response = await h.route.GET(h.request);
+  assert.equal(response.status, 200); const body = await response.json();
+  assert.equal(body.preview, true); assert.deepEqual(body.prints, [{ id: itemId, selection: h.recipe }]); assert.equal(h.itemReads(), 1);
+});
+test("owner recipe review denies foreign orders and recipes, tolerates only absent collage schema and surfaces other failures", async () => {
+  for (const [options, status, reads] of [[{ unsigned: true }, 401, 0], [{ foreignOrder: true }, 404, 0], [{ foreignRecipe: true }, 409, 1], [{ databaseFailure: true }, 503, 1]]) {
+    const h = orderRecipeHarness(options); assert.equal((await h.route.GET(h.request)).status, status); assert.equal(h.itemReads(), reads);
+  }
+  const h = orderRecipeHarness({ missingColumn: true }), response = await h.route.GET(h.request);
+  assert.equal(response.status, 200); assert.deepEqual((await response.json()).prints, []);
 });
