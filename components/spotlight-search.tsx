@@ -36,6 +36,7 @@ import {
   X,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { fetchStudentSearchPages, shortOrderIdBounds, studentSearchFilter, studentSearchRank } from "@/lib/student-search";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -71,11 +72,6 @@ export type SpotlightHit =
 
 function clean(value: string | null | undefined): string {
   return (value ?? "").trim();
-}
-
-function isShortOrderId(term: string): boolean {
-  // Orders are uuids; the user typically types the first 8 chars.
-  return /^[0-9a-f-]{4,}$/i.test(term);
 }
 
 // 2026-04-26: Year-aware search.
@@ -120,6 +116,13 @@ export function useSpotlight(term: string, enabled: boolean) {
   const [photographerId, setPhotographerId] = useState<string | null>(null);
   const [hits, setHits] = useState<SpotlightHit[]>([]);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [hasMoreStudents, setHasMoreStudents] = useState(false);
+  const [studentPage, setStudentPage] = useState({ term, limit: 200 });
+  // A new autocomplete term always starts with a bounded page. Only the
+  // explicit Show more action increases how many rows are requested.
+  if (studentPage.term !== term) setStudentPage({ term, limit: 200 });
+  const studentLimit = studentPage.term === term ? studentPage.limit : 200;
 
   // Resolve photographer id once per mount.
   useEffect(() => {
@@ -146,6 +149,8 @@ export function useSpotlight(term: string, enabled: boolean) {
     if (!enabled || !photographerId) {
       setHits([]);
       setLoading(false);
+      setError(null);
+      setHasMoreStudents(false);
       return;
     }
     const trimmed = term.trim();
@@ -155,6 +160,8 @@ export function useSpotlight(term: string, enabled: boolean) {
     if (nameTerm.length < 2 && year === null) {
       setHits([]);
       setLoading(false);
+      setError(null);
+      setHasMoreStudents(false);
       return;
     }
 
@@ -165,6 +172,9 @@ export function useSpotlight(term: string, enabled: boolean) {
     const yearEnd = year !== null ? `${year + 1}-01-01` : null;
 
     let cancelled = false;
+    if (studentLimit === 200) setHits([]);
+    setError(null);
+    if (studentLimit === 200) setHasMoreStudents(false);
     setLoading(true);
     const handle = window.setTimeout(async () => {
       try {
@@ -180,28 +190,31 @@ export function useSpotlight(term: string, enabled: boolean) {
         // (shoot_date is null AND created_at in window)" cleanly enough.
         const nameOrEmpty = nameTerm.length > 0 ? nameTerm : "";
 
-        let studentsQuery = supabase
-          .from("students")
-          .select(
-            // Pull schools.shoot_date + created_at so we can show a year
-            // tag on each student hit ("Mary Smith · 2002 · Riverside Prep").
-            "id, first_name, last_name, photo_url, school_id, class_id, class_name, role, schools:schools!students_school_id_fkey!inner(school_name, photographer_id, shoot_date, created_at)",
-          )
-          .eq("schools.photographer_id", photographerId);
-        if (nameOrEmpty.length >= 2) {
-          studentsQuery = studentsQuery.or(
-            `first_name.ilike.%${nameOrEmpty}%,last_name.ilike.%${nameOrEmpty}%,role.ilike.%${nameOrEmpty}%`,
-          );
-        }
-        if (yearStart && yearEnd) {
-          // Filter via the joined schools row's date — Supabase respects
-          // dotted column paths in or() when the relation is inner-joined.
-          studentsQuery = studentsQuery.or(
-            `and(shoot_date.gte.${yearStart},shoot_date.lt.${yearEnd}),and(shoot_date.is.null,created_at.gte.${yearStart},created_at.lt.${yearEnd})`,
-            { foreignTable: "schools" },
-          );
-        }
-        studentsQuery = studentsQuery.limit(8);
+        const studentFilter = studentSearchFilter(nameOrEmpty);
+        const studentsQuery = (from: number, to: number) => {
+          let query = supabase
+            .from("students")
+            .select(
+              "id, first_name, last_name, photo_url, school_id, class_id, class_name, role, schools:schools!students_school_id_fkey!inner(school_name, photographer_id, shoot_date, created_at)",
+            )
+            .eq("schools.photographer_id", photographerId);
+          if (studentFilter) query = query.or(studentFilter);
+          if (yearStart && yearEnd) {
+            query = query.or(
+              `and(shoot_date.gte.${yearStart},shoot_date.lt.${yearEnd}),and(shoot_date.is.null,created_at.gte.${yearStart},created_at.lt.${yearEnd})`,
+              { foreignTable: "schools" },
+            );
+          }
+          return query
+            .order("first_name", { ascending: true })
+            .order("last_name", { ascending: true })
+            .order("id", { ascending: true })
+            .range(from, to);
+        };
+        // One extra row tells the UI when to offer Show more. Broad terms
+        // never download an entire volume roster from live autocomplete.
+        const studentResults = fetchStudentSearchPages(studentsQuery, () => cancelled, studentLimit + 1)
+          .then((data) => ({ data: data.slice(0, studentLimit), hasMore: data.length > studentLimit }));
 
         let schoolsQuery = supabase
           .from("schools")
@@ -223,9 +236,7 @@ export function useSpotlight(term: string, enabled: boolean) {
           .eq("photographer_id", photographerId)
           .eq("workflow_type", "event");
         if (nameOrEmpty.length >= 2) {
-          projectsQuery = projectsQuery.or(
-            `title.ilike.%${nameOrEmpty}%,client_name.ilike.%${nameOrEmpty}%`,
-          );
+          projectsQuery = projectsQuery.or(studentSearchFilter(nameOrEmpty, ["title", "client_name"])!);
         }
         if (yearStart && yearEnd) {
           projectsQuery = projectsQuery.or(
@@ -235,7 +246,7 @@ export function useSpotlight(term: string, enabled: boolean) {
         projectsQuery = projectsQuery.limit(6);
 
         const promises: PromiseLike<unknown>[] = [
-          studentsQuery,
+          studentResults,
           schoolsQuery,
           projectsQuery,
         ];
@@ -252,16 +263,15 @@ export function useSpotlight(term: string, enabled: boolean) {
               "id, package_name, total_cents, total_amount, currency, student_id, customer_name, parent_name, parent_email, created_at, student:students(first_name,last_name), school:schools(school_name)",
             )
             .eq("photographer_id", photographerId)
-            .or(
-              `customer_name.ilike.%${trimmed}%,parent_name.ilike.%${trimmed}%,parent_email.ilike.%${trimmed}%,customer_email.ilike.%${trimmed}%`,
-            )
+            .or(studentSearchFilter(trimmed, ["customer_name", "parent_name", "parent_email", "customer_email"])!)
             .order("created_at", { ascending: false })
             .limit(8),
         );
 
         // Orders lookup by short id — only when the term looks hex-ish.
         let shortOrderIdx = -1;
-        if (isShortOrderId(trimmed)) {
+        const orderBounds = shortOrderIdBounds(trimmed);
+        if (orderBounds) {
           shortOrderIdx = promises.length;
           promises.push(
             supabase
@@ -270,17 +280,22 @@ export function useSpotlight(term: string, enabled: boolean) {
                 "id, package_name, total_cents, total_amount, currency, student:students(first_name,last_name), school:schools(school_name)",
               )
               .eq("photographer_id", photographerId)
-              .ilike("id", `${trimmed.toLowerCase()}%`)
+              .gte("id", orderBounds.lower)
+              .lte("id", orderBounds.upper)
               .limit(5),
           );
         }
 
         const results = await Promise.all(promises);
         if (cancelled) return;
+        for (const result of results as Array<{ error?: { message: string } | null }>) {
+          if (result.error) throw new Error(result.error.message);
+        }
 
         const next: SpotlightHit[] = [];
 
         const students = results[0] as {
+          hasMore: boolean;
           data?: Array<{
             id: string;
             first_name: string | null;
@@ -307,7 +322,11 @@ export function useSpotlight(term: string, enabled: boolean) {
         // typing "Ethan" should surface Ethan AND Ethan's orders.
         const matchedStudentIds: string[] = [];
         const matchedStudentNames: Record<string, string> = {};
-        for (const s of students.data ?? []) {
+        const rankedStudents = [...(students.data ?? [])].sort((a, b) =>
+          studentSearchRank(a.first_name, a.last_name, nameOrEmpty) -
+          studentSearchRank(b.first_name, b.last_name, nameOrEmpty),
+        );
+        for (const s of rankedStudents) {
           const schoolRow = Array.isArray(s.schools) ? s.schools[0] : s.schools;
           const studentName =
             [clean(s.first_name), clean(s.last_name)]
@@ -400,15 +419,28 @@ export function useSpotlight(term: string, enabled: boolean) {
         // don't double-count if the short-id branch below also matched.
         const seenOrderIds = new Set<string>();
         if (matchedStudentIds.length > 0) {
-          const { data: studentOrders } = await supabase
-            .from("orders")
-            .select(
-              "id, package_name, total_cents, total_amount, currency, student_id, created_at, school:schools(school_name)",
-            )
-            .eq("photographer_id", photographerId)
-            .in("student_id", matchedStudentIds)
-            .order("created_at", { ascending: false })
-            .limit(8);
+          const orderRequests = [];
+          // Keep large student searches below URL limits when finding orders.
+          for (let offset = 0; offset < matchedStudentIds.length; offset += 100) {
+            orderRequests.push(
+              supabase
+                .from("orders")
+                .select(
+                  "id, package_name, total_cents, total_amount, currency, student_id, created_at, school:schools(school_name)",
+                )
+                .eq("photographer_id", photographerId)
+                .in("student_id", matchedStudentIds.slice(offset, offset + 100))
+                .order("created_at", { ascending: false })
+                .limit(8),
+            );
+          }
+          const orderResults = await Promise.all(orderRequests);
+          if (cancelled) return;
+          const failedOrders = orderResults.find((result) => result.error);
+          if (failedOrders?.error) throw new Error(failedOrders.error.message);
+          const studentOrders = orderResults.flatMap((result) => result.data ?? [])
+            .sort((a, b) => clean(b.created_at).localeCompare(clean(a.created_at)))
+            .slice(0, 8);
           if (!cancelled && studentOrders) {
             for (const order of studentOrders as Array<{
               id: string;
@@ -532,7 +564,16 @@ export function useSpotlight(term: string, enabled: boolean) {
           }
         }
 
-        setHits(next);
+        if (!cancelled) {
+          setHits(next);
+          setHasMoreStudents(students.hasMore);
+        }
+      } catch {
+        if (!cancelled) {
+          setHits([]);
+          setError("Search could not load. Please try again.");
+          setHasMoreStudents(false);
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -542,9 +583,13 @@ export function useSpotlight(term: string, enabled: boolean) {
       cancelled = true;
       window.clearTimeout(handle);
     };
-  }, [term, supabase, photographerId, enabled]);
+  }, [term, supabase, photographerId, enabled, studentLimit]);
 
-  return { hits, loading };
+  const loadMore = useCallback(() => {
+    if (!loading && hasMoreStudents) setStudentPage({ term, limit: studentLimit + 200 });
+  }, [term, studentLimit, loading, hasMoreStudents]);
+
+  return { hits, loading, error, hasMoreStudents, loadMore };
 }
 
 // ── Modal ────────────────────────────────────────────────────────────
@@ -565,7 +610,7 @@ export function SpotlightModal({ open, onClose, hrefFor }: SpotlightModalProps) 
   const [kindFilter, setKindFilter] = useState<SpotlightKind | null>(null);
   const router = useRouter();
   const inputRef = useRef<HTMLInputElement | null>(null);
-  const { hits, loading } = useSpotlight(term, open);
+  const { hits, loading, error, hasMoreStudents, loadMore } = useSpotlight(term, open);
 
   // Reset + autofocus on open.
   useEffect(() => {
@@ -734,6 +779,7 @@ export function SpotlightModal({ open, onClose, hrefFor }: SpotlightModalProps) 
             <FilterPill
               label="All"
               count={hits.length}
+              hasMore={hasMoreStudents}
               active={kindFilter === null}
               onClick={() => setKindFilter(null)}
               color="#111827"
@@ -753,6 +799,7 @@ export function SpotlightModal({ open, onClose, hrefFor }: SpotlightModalProps) 
                   key={p.kind}
                   label={p.label}
                   count={countsByKind[p.kind]}
+                  hasMore={p.kind === "student" && hasMoreStudents}
                   active={kindFilter === p.kind}
                   onClick={() =>
                     setKindFilter((prev) => (prev === p.kind ? null : p.kind))
@@ -761,6 +808,20 @@ export function SpotlightModal({ open, onClose, hrefFor }: SpotlightModalProps) 
                   background={kindBg(p.kind)}
                 />
               ))}
+          </div>
+        ) : null}
+
+        {hasMoreStudents ? (
+          <div style={{ padding: "12px 16px", flexShrink: 0, borderBottom: "1px solid #eef2f7", fontSize: 13, color: "#6b7280" }}>
+            <div>More students match. Refine your search or show more.</div>
+            <button
+              type="button"
+              onClick={loadMore}
+              disabled={loading}
+              style={{ marginTop: 8, border: "1px solid #e5e7eb", borderRadius: 8, padding: "8px 12px", background: "#fff", color: "#111827", fontWeight: 700, cursor: loading ? "default" : "pointer" }}
+            >
+              Show more students
+            </button>
           </div>
         ) : null}
 
@@ -797,9 +858,9 @@ export function SpotlightModal({ open, onClose, hrefFor }: SpotlightModalProps) 
                 fontWeight: 600,
               }}
             >
-              {hits.length === 0
+              {error ?? (hits.length === 0
                 ? `No matches for "${term}".`
-                : `No ${kindFilter ? kindLabel(kindFilter).toLowerCase() + "s" : "matches"} for "${term}". Try another filter.`}
+                : `No ${kindFilter ? kindLabel(kindFilter).toLowerCase() + "s" : "matches"} for "${term}". Try another filter.`)}
             </div>
           ) : (
             visibleHits.map((hit, idx) => (
@@ -1018,6 +1079,7 @@ export function kindFg(kind: SpotlightHit["kind"]): string {
 type FilterPillProps = {
   label: string;
   count: number;
+  hasMore?: boolean;
   active: boolean;
   onClick: () => void;
   color: string;
@@ -1027,6 +1089,7 @@ type FilterPillProps = {
 function FilterPill({
   label,
   count,
+  hasMore = false,
   active,
   onClick,
   color,
@@ -1063,7 +1126,7 @@ function FilterPill({
           color: active ? "#fff" : color,
         }}
       >
-        {count}
+        {count}{hasMore ? "+" : ""}
       </span>
     </button>
   );

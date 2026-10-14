@@ -10,6 +10,11 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { ensurePackageProfile } from "@/lib/ensure-package-profile";
 import {
+  fetchStudentSearchPages,
+  studentSearchFilter,
+  studentSearchRank,
+} from "@/lib/student-search";
+import {
   StudioAssistantIntent,
   isWriteIntent,
 } from "@/lib/studio-assistant/types";
@@ -476,56 +481,39 @@ async function handleFindStudent(
     return { ok: false, status: 422, message: "Enter a student name to search." };
   }
 
-  // First, find this photographer's schools so we can scope the student query.
-  const { data: schoolRows, error: schoolErr } = await ctx.service
-    .from("schools")
-    .select("id,school_name")
-    .eq("photographer_id", ctx.photographerId)
-    .limit(500);
-
-  if (schoolErr) {
-    return {
-      ok: false,
-      status: 500,
-      message: schoolErr.message || "Unable to load schools.",
-    };
+  // Scope through the roster's school relationship on every page, including
+  // studios with more than 500 schools. Never merge separate roster records.
+  const filter = studentSearchFilter(query, ["first_name", "last_name"]);
+  if (!filter) {
+    return { ok: false, status: 422, message: "Enter a student name to search." };
   }
-  const schools = schoolRows ?? [];
-  if (!schools.length) {
-    return {
-      ok: true,
-      data: { query, results: [] },
-      message: `No students found (no schools yet).`,
-    };
-  }
-
-  const schoolIds = schools.map((s) => s.id as string);
-  const schoolNameById = new Map(schools.map((s) => [s.id as string, s.school_name as string | null]));
-
-  const like = `%${escapeLike(query)}%`;
-  const { data: studentRows, error: studentErr } = await ctx.service
-    .from("students")
-    .select("id,school_id,first_name,last_name,class_name,photo_url")
-    .in("school_id", schoolIds)
-    .or(`first_name.ilike.${like},last_name.ilike.${like}`)
-    .limit(25);
-
-  if (studentErr) {
-    return {
-      ok: false,
-      status: 500,
-      message: studentErr.message || "Unable to search students.",
-    };
-  }
-  const results = (studentRows ?? []).map((row) => ({
-    id: row.id,
-    school_id: row.school_id,
-    school_name: schoolNameById.get(row.school_id as string) ?? null,
-    first_name: row.first_name,
-    last_name: row.last_name,
-    class_name: row.class_name,
-    photo_url: row.photo_url,
-  }));
+  const studentRows = await fetchStudentSearchPages((from, to) =>
+    ctx.service
+      .from("students")
+      .select("id,school_id,first_name,last_name,class_name,photo_url,school:schools!students_school_id_fkey!inner(school_name,photographer_id)")
+      .eq("school.photographer_id", ctx.photographerId)
+      .or(filter)
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
+  const results = studentRows
+    .sort((a, b) =>
+      studentSearchRank(a.first_name, a.last_name, query) -
+      studentSearchRank(b.first_name, b.last_name, query) ||
+      String(a.id).localeCompare(String(b.id)),
+    )
+    .map((row) => {
+      const school = Array.isArray(row.school) ? row.school[0] : row.school;
+      return {
+        id: row.id,
+        school_id: row.school_id,
+        school_name: school?.school_name ?? null,
+        first_name: row.first_name,
+        last_name: row.last_name,
+        class_name: row.class_name,
+        photo_url: row.photo_url,
+      };
+    });
 
   return {
     ok: true,

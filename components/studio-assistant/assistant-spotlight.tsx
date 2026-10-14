@@ -34,7 +34,7 @@ export function InlineSpotlightResults({
   onSelect,
 }: InlineSpotlightResultsProps) {
   const [kindFilter, setKindFilter] = useState<SpotlightKind | null>(null);
-  const { hits, loading } = useSpotlight(term, true);
+  const { hits, loading, error, hasMoreStudents, loadMore } = useSpotlight(term, true);
 
   const canShow = term.trim().length >= 2;
 
@@ -84,6 +84,7 @@ export function InlineSpotlightResults({
           <Pill
             label="All"
             count={hits.length}
+            hasMore={hasMoreStudents}
             active={kindFilter === null}
             onClick={() => setKindFilter(null)}
             color="#111827"
@@ -103,6 +104,7 @@ export function InlineSpotlightResults({
                 key={p.kind}
                 label={p.label}
                 count={countsByKind[p.kind]}
+                hasMore={p.kind === "student" && hasMoreStudents}
                 active={kindFilter === p.kind}
                 onClick={() =>
                   setKindFilter((prev) => (prev === p.kind ? null : p.kind))
@@ -111,6 +113,43 @@ export function InlineSpotlightResults({
                 background={kindBg(p.kind)}
               />
             ))}
+        </div>
+      ) : null}
+
+      {hasMoreStudents ? (
+        <div
+          style={{
+            padding: "12px 14px",
+            borderBottom: "1px solid #eef2f7",
+            display: "flex",
+            alignItems: "center",
+            flexWrap: "wrap",
+            flexShrink: 0,
+            gap: 10,
+            fontSize: 13,
+            color: "#6b7280",
+          }}
+        >
+          <span style={{ flex: 1 }}>
+            More students match. Refine your search or show more.
+          </span>
+          <button
+            type="button"
+            onClick={loadMore}
+            disabled={loading}
+            style={{
+              padding: "7px 12px",
+              border: "1px solid #e5e7eb",
+              borderRadius: 8,
+              background: "#fff",
+              color: "#111827",
+              fontWeight: 700,
+              cursor: loading ? "default" : "pointer",
+              opacity: loading ? 0.6 : 1,
+            }}
+          >
+            Show more students
+          </button>
         </div>
       ) : null}
 
@@ -135,9 +174,9 @@ export function InlineSpotlightResults({
               fontWeight: 600,
             }}
           >
-            {hits.length === 0
+            {error ?? (hits.length === 0
               ? `No matches for "${term}". Try pressing Ask to run it as a command.`
-              : `No ${kindLabel(kindFilter!).toLowerCase()}s for "${term}". Try another filter.`}
+              : `No ${kindLabel(kindFilter!).toLowerCase()}s for "${term}". Try another filter.`)}
           </div>
         ) : (
           visibleHits.map((hit, idx) => (
@@ -213,13 +252,14 @@ export function InlineSpotlightResults({
 type PillProps = {
   label: string;
   count: number;
+  hasMore?: boolean;
   active: boolean;
   onClick: () => void;
   color: string;
   background: string;
 };
 
-function Pill({ label, count, active, onClick, color, background }: PillProps) {
+function Pill({ label, count, hasMore = false, active, onClick, color, background }: PillProps) {
   return (
     <button
       type="button"
@@ -250,7 +290,7 @@ function Pill({ label, count, active, onClick, color, background }: PillProps) {
           color: active ? "#fff" : color,
         }}
       >
-        {count}
+        {count}{hasMore ? "+" : ""}
       </span>
     </button>
   );
