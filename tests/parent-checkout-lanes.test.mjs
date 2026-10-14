@@ -140,7 +140,7 @@ test('current gallery authorization uses its viewer identity while the buyer edi
 });
 
 test('refreshed gallery PIN or viewer email is persisted even if saved item IDs are unchanged', () => {
-  const saves = [], values = { combineHydratedRef: { current: true }, photographerId: 'studio',
+  const saves = [], values = { isSchoolMode: true, combineHydratedRef: { current: true }, photographerId: 'studio',
     combineLanes: [lane('B')], persistedItems: [item('B')], lastPersistedSignatureRef: { current: '' },
     saveCombineCart: (value) => saves.push(structuredClone(value)) };
   const callback = hookCallback('lastPersistedSignatureRef.current = sig', 'useEffect');
