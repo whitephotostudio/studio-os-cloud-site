@@ -39,7 +39,7 @@ export function getOrderFeeDisclosure(plan: PlanDefinition, profile: PricingProf
 export function getOrderFeeCopy(profile: PricingProfile) {
   if (profile === "gallery_v2") {
     return {
-      purpose: "Ordinary gallery sales have no Studio OS platform order fee. Core and Studio charge a flat 0.45 in your sales currency per qualifying paid school production order to support the connected production and delivery workflow.",
+      purpose: "On new paid plans, ordinary gallery sales have no Studio OS platform order fee. Core and Studio charge a flat 0.45 in your sales currency per qualifying paid school production order to support the connected production and delivery workflow.",
       billing: "The school production fee is deducted from each qualifying sale, including on annual plans. Stripe processing fees are paid by your studio and are additional. AI background credits are sold separately.",
     };
   }

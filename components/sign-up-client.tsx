@@ -222,8 +222,8 @@ export default function SignUpClient({ catalog }: { catalog: PricingCatalogSnaps
                     : catalog.plans[selectedPlan].priceCents) / 100)}
                 </div>
                 <div className="mt-3 text-sm leading-7 text-neutral-500">
-                  Create your account first, then finish Stripe Connect and plan activation in
-                  billing settings.
+                  Create your account, then activate your plan in billing settings.
+                  Connect your own Stripe account when you are ready to accept client payments.
                 </div>
               </div>
             ) : null}
