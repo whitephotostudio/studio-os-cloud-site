@@ -1,0 +1,141 @@
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import test from 'node:test';
+import ts from 'typescript';
+import { getPlanDefinitions } from '../lib/studio-pricing.ts';
+
+const require = createRequire(import.meta.url);
+const settingsSource = readFileSync(new URL('../app/dashboard/settings/page.tsx', import.meta.url), 'utf8');
+
+/** Mount the actual Settings component and click its real billing Save button. */
+function harness({ profile = 'gallery_v2', ...state } = {}) {
+  const fixture = { loading: false, sessionReady: true, signedIn: true, error: null,
+    stripeSubscriptionId: 'sub_existing', subscriptionPlanCode: 'studio', subscriptionBillingInterval: 'month',
+    subscriptionStatus: 'active', subscriptionIsActive: true, extraDesktopKeys: 1,
+    desiredPlanCode: 'studio', desiredBillingInterval: 'month', desiredExtraDesktopKeys: 3,
+    billingCatalog: { pricingProfile: profile, currency: 'cad', galleryStoragePolicy: 'existing',
+      plans: Object.values(getPlanDefinitions(profile)), annualDiscountPercent: 10,
+      extraDesktopKeyMonthlyCents: 5500, extraDesktopKeyAnnualCents: 59400, creditPacks: [] }, ...state };
+  const injected = new Set(), calls = [], errors = [];
+  let initializedStateName;
+  const compiled = ts.transpileModule(settingsSource, {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX },
+    transformers: { before: [context => {
+      const visit = node => {
+        if (ts.isVariableDeclaration(node) && ts.isArrayBindingPattern(node.name) && ts.isCallExpression(node.initializer)
+          && ts.isIdentifier(node.initializer.expression) && node.initializer.expression.text === 'useState') {
+          const first = node.name.elements[0];
+          if (first && ts.isBindingElement(first) && ts.isIdentifier(first.name) && Object.hasOwn(fixture, first.name.text)) {
+            injected.add(first.name.text);
+            return ts.factory.updateVariableDeclaration(node, node.name, node.exclamationToken, node.type,
+              ts.factory.updateCallExpression(node.initializer, node.initializer.expression, node.initializer.typeArguments,
+                [ts.factory.createCallExpression(ts.factory.createIdentifier('__stateFixture'), undefined,
+                  [ts.factory.createStringLiteral(first.name.text)])]));
+          }
+        }
+        return ts.visitEachChild(node, visit, context);
+      };
+      return source => ts.visitNode(source, visit);
+    }] },
+  }).outputText;
+  assert.deepEqual([...injected].sort(), Object.keys(fixture).sort(), 'fixture must initialize actual named Settings states');
+  const jsx = (type, props) => ({ type, props });
+  const react = { useState: initial => {
+    const stateName = initializedStateName;
+    initializedStateName = undefined;
+    return [typeof initial === 'function' ? initial() : initial, value => { if (stateName === 'error') errors.push(value); }];
+  },
+    useEffect() {}, useCallback: callback => callback, useMemo: factory => factory(), useRef: initial => ({ current: initial }) };
+  const browser = { location: { href: 'https://example.invalid/dashboard/settings' } };
+  const overrides = {
+    react, 'react/jsx-runtime': { jsx, jsxs: jsx, Fragment: 'fragment' },
+    'next/link': 'link', 'qrcode.react': { QRCodeSVG: 'qr' }, 'lucide-react': require('lucide-react'),
+    '@/lib/supabase/client': { createClient: () => ({ auth: { getSession: async () => ({ data: { session: { access_token: 'fixture_token' } } }) } }) },
+    '@/components/whats-new-dot': { WhatsNewDot: 'dot', useIsFeatureNew: () => ({ isNew: false, dismiss() {} }) },
+    '@/components/parents/proof-watermark-overlay': { ProofWatermarkOverlay: 'watermark' },
+  };
+  function load(file) {
+    const exports = {};
+    const output = ts.transpileModule(readFileSync(new URL(`../${file}`, import.meta.url), 'utf8'),
+      { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
+    new Function('require', 'exports', output)(name => {
+      assert.ok(name in overrides, `unexpected dependency: ${name}`); return overrides[name];
+    }, exports);
+    return exports;
+  }
+  overrides['@/lib/order-fee-display'] = load('lib/order-fee-display.ts');
+  overrides['@/lib/proof-watermark'] = load('lib/proof-watermark.ts');
+  const exports = {};
+  new Function('require', 'exports', '__stateFixture', 'fetch', 'window', compiled)(name => {
+    assert.ok(name in overrides, `unexpected Settings dependency: ${name}`); return overrides[name];
+  }, exports, name => { initializedStateName = name; return fixture[name]; }, async (url, options) => {
+    assert.equal(url, '/api/stripe/billing', 'no provider or unrelated request is permitted');
+    assert.equal(options.method, 'POST');
+    assert.equal(options.headers.Authorization, 'Bearer fixture_token');
+    assert.equal(options.credentials, 'include');
+    calls.push(JSON.parse(options.body));
+    return { ok: true, json: async () => ({ ok: true, url: 'https://example.invalid/billing-completed' }) };
+  }, browser);
+  const tree = exports.default();
+  function nodes(node) {
+    if (node == null || typeof node === 'boolean') return [];
+    if (Array.isArray(node)) return node.flatMap(nodes);
+    return typeof node === 'object' ? [node, ...nodes(node.props?.children)] : [node];
+  }
+  const saveButtons = nodes(tree).filter(node => node.type === 'button' && typeof node.props.onClick === 'function'
+    && ['Update plan + keys', 'Start subscription', 'Activate paid subscription'].includes(node.props.children));
+  assert.equal(saveButtons.length, 1, 'one actual rendered billing Save button');
+  assert.equal(saveButtons[0].props.disabled, false);
+  return { calls, errors, save: () => saveButtons[0].props.onClick() };
+}
+
+test('existing V2 and legacy subscriptions post key-only changes without upgrading their base plan', async () => {
+  for (const profile of ['gallery_v2', 'legacy']) {
+    for (const subscriptionBillingInterval of ['month', 'year']) {
+      for (const [extraDesktopKeys, desiredExtraDesktopKeys] of [[1, 3], [3, 0]]) {
+        const h = harness({ profile, subscriptionBillingInterval, desiredBillingInterval: subscriptionBillingInterval,
+          extraDesktopKeys, desiredExtraDesktopKeys });
+        await h.save();
+        assert.deepEqual(h.calls, [{ action: 'update_extra_keys', planCode: 'studio',
+          billingInterval: subscriptionBillingInterval, extraDesktopKeys: desiredExtraDesktopKeys }]);
+      }
+    }
+  }
+});
+
+test('real plan or cadence changes remain explicit plan updates', async () => {
+  for (const state of [{ desiredPlanCode: 'core' }, { desiredBillingInterval: 'year' },
+    { subscriptionPlanCode: 'core', desiredPlanCode: 'studio' }]) {
+    const h = harness(state);
+    await h.save();
+    assert.equal(h.calls[0].action, 'update_plan');
+    assert.equal(h.calls[0].planCode, state.desiredPlanCode ?? 'studio');
+    assert.equal(h.calls[0].billingInterval, state.desiredBillingInterval ?? 'month');
+    assert.equal(h.calls[0].extraDesktopKeys, state.desiredPlanCode === 'core' ? 0 : 3);
+  }
+});
+
+test('an unknown saved plan never proves a key-only change', async () => {
+  const h = harness({ subscriptionPlanCode: null });
+  await h.save();
+  assert.equal(h.calls[0].action, 'update_plan');
+});
+
+test('unknown current cadence blocks key-only Save instead of repricing an annual subscription to the default month', async () => {
+  for (const profile of ['gallery_v2', 'legacy']) {
+    const h = harness({ profile, subscriptionBillingInterval: null, desiredBillingInterval: 'month' });
+    await h.save();
+    assert.deepEqual(h.calls, []);
+    assert.deepEqual(h.errors, ['Your current billing interval could not be verified. Refresh billing settings before changing photography keys.']);
+  }
+  const explicitPlanChange = harness({ subscriptionBillingInterval: null, desiredPlanCode: 'core' });
+  await explicitPlanChange.save();
+  assert.equal(explicitPlanChange.calls[0].action, 'update_plan');
+});
+
+test('a photographer without a subscription starts subscription checkout with chosen plan and keys', async () => {
+  const h = harness({ stripeSubscriptionId: null, subscriptionPlanCode: null, subscriptionBillingInterval: null });
+  await h.save();
+  assert.deepEqual(h.calls, [{ action: 'subscribe', planCode: 'studio', billingInterval: 'month', extraDesktopKeys: 3 }]);
+});

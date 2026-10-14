@@ -1336,26 +1336,32 @@ export async function updateStripeSubscriptionConfiguration(input: {
 
   const { baseItem, extraDesktopItem, usageItem } = findSubscriptionItems(subscription);
   const existingPlan = resolveBillingIntervalFromLookupKey(getLookupKey(baseItem?.price));
-  if (input.preserveBasePlan && (!baseItem || !existingPlan ||
+  const existingExtraDesktopKeys = extraDesktopItem ? extraDesktopItem.quantity ?? 1 : 0;
+  // Older settings clients called every save an update_plan. Derive a key-only
+  // change from Stripe's actual contract instead of trusting that action name.
+  const preserveBasePlan = input.preserveBasePlan === true || Boolean(existingPlan &&
+    existingPlan.planCode === input.planCode && existingPlan.interval === input.billingInterval &&
+    existingExtraDesktopKeys !== input.extraDesktopKeys);
+  if (preserveBasePlan && (!baseItem || !existingPlan ||
       existingPlan.planCode !== input.planCode || existingPlan.interval !== input.billingInterval ||
       (subscription.metadata?.photographer_id && subscription.metadata.photographer_id !== input.photographerId) ||
       (subscription.metadata?.pricing_profile && subscription.metadata.pricing_profile !== existingPlan.pricingProfile))) {
     throw new Error("Keep the current plan and billing interval when changing photography keys.");
   }
-  const targetPricingProfile = input.preserveBasePlan ? existingPlan!.pricingProfile : PRICING_PROFILE;
-  const targetUsagePriceId = input.preserveBasePlan ? null : catalog.usagePriceIds[input.planCode];
+  const targetPricingProfile = preserveBasePlan ? existingPlan!.pricingProfile : PRICING_PROFILE;
+  const targetUsagePriceId = preserveBasePlan ? null : catalog.usagePriceIds[input.planCode];
   if (targetUsagePriceId || usageItem) await ensureMixedIntervalBilling(subscription, input.billingInterval);
   const params = new URLSearchParams();
   let itemIndex = 0;
 
-  if (!input.preserveBasePlan && baseItem) {
+  if (!preserveBasePlan && baseItem) {
     params.set(`items[${itemIndex}][id]`, baseItem.id);
     params.set(
       `items[${itemIndex}][price]`,
       catalog.planPrices[input.planCode][input.billingInterval],
     );
     itemIndex += 1;
-  } else if (!input.preserveBasePlan) {
+  } else if (!preserveBasePlan) {
     params.set(
       `items[${itemIndex}][price]`,
       catalog.planPrices[input.planCode][input.billingInterval],

@@ -300,8 +300,8 @@ function humanizeStatus(value: string | null | undefined) {
     .join(" ");
 }
 
-function intervalLabel(interval: BillingInterval) {
-  return interval === "year" ? "Annual" : "Monthly";
+function intervalLabel(interval: BillingInterval | null) {
+  return interval === "year" ? "Annual" : interval === "month" ? "Monthly" : "Unknown";
 }
 
 function isTrialStatus(value: string | null | undefined) {
@@ -424,7 +424,7 @@ export default function SettingsPage() {
   const [stripeSubscriptionId, setStripeSubscriptionId] = useState<string | null>(null);
   const [subscriptionPlanCode, setSubscriptionPlanCode] = useState<string | null>(null);
   const [subscriptionBillingInterval, setSubscriptionBillingInterval] =
-    useState<BillingInterval>("month");
+    useState<BillingInterval | null>(null);
   const [subscriptionStatus, setSubscriptionStatus] = useState("inactive");
   const [subscriptionIsActive, setSubscriptionIsActive] = useState(false);
   const [trialActive, setTrialActive] = useState(false);
@@ -651,7 +651,9 @@ export default function SettingsPage() {
       setStripeSubscriptionId(json.stripeSubscriptionId || null);
       setSubscriptionPlanCode(json.subscriptionPlanCode || null);
       setSubscriptionBillingInterval(
-        (json.subscriptionBillingInterval || "month") as BillingInterval,
+        json.subscriptionBillingInterval === "month" || json.subscriptionBillingInterval === "year"
+          ? json.subscriptionBillingInterval
+          : null,
       );
       setSubscriptionStatus(json.subscriptionStatus || "inactive");
       setSubscriptionIsActive(Boolean(json.subscriptionIsActive));
@@ -1188,10 +1190,21 @@ export default function SettingsPage() {
     const hasSubscription = Boolean(stripeSubscriptionId);
     const nextExtraDesktopKeys =
       desiredPlanCode === "studio" ? desiredExtraDesktopKeys : 0;
+    if (hasSubscription && subscriptionPlanCode === desiredPlanCode &&
+      nextExtraDesktopKeys !== extraDesktopKeys &&
+      subscriptionBillingInterval !== "month" && subscriptionBillingInterval !== "year") {
+      setError("Your current billing interval could not be verified. Refresh billing settings before changing photography keys.");
+      return;
+    }
+    const onlyExtraKeysChanged = hasSubscription &&
+      subscriptionPlanCode === desiredPlanCode &&
+      (subscriptionBillingInterval === "month" || subscriptionBillingInterval === "year") &&
+      subscriptionBillingInterval === desiredBillingInterval &&
+      nextExtraDesktopKeys !== extraDesktopKeys;
     await runBillingAction(
       "plan",
       {
-        action: hasSubscription ? "update_plan" : "subscribe",
+        action: onlyExtraKeysChanged ? "update_extra_keys" : hasSubscription ? "update_plan" : "subscribe",
         planCode: desiredPlanCode,
         billingInterval: desiredBillingInterval,
         extraDesktopKeys: nextExtraDesktopKeys,

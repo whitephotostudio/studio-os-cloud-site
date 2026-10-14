@@ -52,6 +52,9 @@ function fixture({subscription=null}={}){
           if(metadataKey)subscription.metadata[metadataKey]=value;
         }
         result=subscription;
+      }else if(call.path==='subscription_items/si_keys_existing'&&call.method==='DELETE'){
+        subscription.items.data=subscription.items.data.filter(item=>item.id!=='si_keys_existing');
+        result={id:'si_keys_existing',deleted:true};
       }else assert.fail(`Unexpected provider request ${call.method} ${call.path}`);
       return Response.json(result);
     },{env});
@@ -118,8 +121,10 @@ test('routine V3 renewal sync recognizes monthly/yearly Gallery/Core/Studio and 
   assert.equal(f.calls.length,0);
 });
 
-test('actual extra-key billing action retains an existing V2 base price/profile instead of accepting V3 order fees',async()=>{
-  const f=fixture({subscription:oldStudioSubscription()});await f.api.ensureStripeCatalog();f.calls.length=0;
+async function actualKeyChange({action='update_extra_keys',profile='gallery_v2',extraDesktopKeys=3,extraItem=true}={}){
+  const old=oldStudioSubscription(profile);
+  if(!extraItem)old.items.data=old.items.data.filter(item=>item.id!=='si_keys_existing');
+  const f=fixture({subscription:old});await f.api.ensureStripeCatalog();f.calls.length=0;
   const photographer={id:'studio',stripe_subscription_id:'sub_existing',stripe_platform_customer_id:'cus_existing',subscription_status:'active',subscription_plan_code:'studio'};
   const service={};const handler={};
   const dependencies={'next/server':{NextResponse:{json:(body,options)=>Response.json(body,options)}},
@@ -129,9 +134,14 @@ test('actual extra-key billing action retains an existing V2 base price/profile 
       syncSubscriptionStateFromStripe:async(_service,current,subscription)=>({photographer:current,subscription,planCode:'studio'})}};
   new Function('require','exports',compile('app/api/stripe/billing/route.ts'))(name=>dependencies[name]??{},handler);
   const response=await handler.POST(new Request('https://example.invalid/api/stripe/billing',{method:'POST',headers:{'content-type':'application/json'},
-    body:JSON.stringify({action:'update_extra_keys',planCode:'studio',billingInterval:'month',extraDesktopKeys:3,pricingProfile:'gallery_v3'})}));
+    body:JSON.stringify({action,planCode:'studio',billingInterval:'month',extraDesktopKeys,pricingProfile:'gallery_v3'})}));
   assert.equal(response.status,200);
   const update=f.calls.find(call=>call.path==='subscriptions/sub_existing'&&call.method==='POST');
+  return{f,update};
+}
+
+test('actual extra-key billing action retains an existing V2 base price/profile instead of accepting V3 order fees',async()=>{
+  const {f,update}=await actualKeyChange();
   assert.ok(update);assert.equal(update.params.get('metadata[pricing_profile]'),'gallery_v2');
   assert.equal(update.params.get('metadata[extra_desktop_keys]'),'3');
   assert.equal(update.params.get('items[0][id]'),'si_keys_existing');
@@ -148,9 +158,41 @@ test('key-only changes cannot hide a plan/cadence switch while an explicit revie
     await assert.rejects(f.api.updateStripeSubscriptionConfiguration({subscriptionId:'sub_existing',photographerId:'studio',extraDesktopKeys:2,preserveBasePlan:true,...change}),/current plan and billing interval/);
   }
   assert.ok(f.calls.every(call=>call.method==='GET'));
-  await f.api.updateStripeSubscriptionConfiguration({subscriptionId:'sub_existing',photographerId:'studio',planCode:'studio',billingInterval:'month',extraDesktopKeys:2});
+  await f.api.updateStripeSubscriptionConfiguration({subscriptionId:'sub_existing',photographerId:'studio',planCode:'studio',billingInterval:'month',extraDesktopKeys:1});
   const update=f.calls.find(call=>call.method==='POST');
   assert.equal(update.params.get('items[0][id]'),'si_base_existing');
   assert.equal(update.params.get('items[0][price]'),'price_studio-os-studio-monthly-gallery-v3');
   assert.equal(update.params.get('metadata[pricing_profile]'),'gallery_v3');
+});
+
+test('older update_plan clients changing only key quantity retain the actual V2 or legacy price and fee contract',async()=>{
+  for(const profile of ['gallery_v2','legacy']) {
+    const {f,update}=await actualKeyChange({action:'update_plan',profile,extraDesktopKeys:3});
+    assert.equal(update.params.get('metadata[pricing_profile]'),profile);
+    assert.equal(update.params.get('metadata[extra_desktop_keys]'),'3');
+    assert.equal(update.params.get('items[0][id]'),'si_keys_existing');
+    assert.equal(update.params.get('items[0][quantity]'),'3');
+    assert.ok([...update.params.values()].every(value=>value!=='si_base_existing'&&!value.includes('gallery-v3')));
+    assert.equal(f.subscription.items.data[0].price.id,'price_old_base');
+    assert.equal(f.subscription.metadata.pricing_profile,profile);
+    assert.ok(f.calls.every(call=>call.path==='subscriptions/sub_existing'));
+  }
+  const added=await actualKeyChange({action:'update_plan',profile:'gallery_v2',extraDesktopKeys:1,extraItem:false});
+  assert.equal(added.update.params.get('metadata[pricing_profile]'),'gallery_v2');
+  assert.equal(added.update.params.get('items[0][quantity]'),'1');
+  assert.ok([...added.update.params.values()].every(value=>value!=='si_base_existing'&&!value.includes('gallery-v3')));
+});
+
+test('actual plan or cadence changes can accept V3 even when the requested key quantity changes too',async()=>{
+  for(const[planCode,billingInterval,keyQuantity,expectedPrice]of[
+    ['core','month',0,'price_studio-os-core-monthly-gallery-v3'],
+    ['studio','year',3,'price_studio-os-studio-annual-gallery-v3'],
+  ]) {
+    const f=fixture({subscription:oldStudioSubscription()});await f.api.ensureStripeCatalog();f.calls.length=0;
+    await f.api.updateStripeSubscriptionConfiguration({subscriptionId:'sub_existing',photographerId:'studio',planCode,billingInterval,extraDesktopKeys:keyQuantity});
+    const update=f.calls.find(call=>call.path==='subscriptions/sub_existing'&&call.method==='POST');
+    assert.equal(update.params.get('items[0][id]'),'si_base_existing');
+    assert.equal(update.params.get('items[0][price]'),expectedPrice);
+    assert.equal(update.params.get('metadata[pricing_profile]'),'gallery_v3');
+  }
 });
