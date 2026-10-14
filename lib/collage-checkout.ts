@@ -78,8 +78,8 @@ export async function validateCollageCheckoutEntries<T extends Entry>(
       if (hasSelection) throw new CollageCheckoutError("This product no longer includes a collage. Reopen the gallery and choose the product again.");
       continue;
     }
-    const category = `${pkg.category ?? ""} ${pkg.name ?? ""}`.toLowerCase();
-    if (pkg.is_retouch_addon || /digital|download|usb/.test(category) || entry.isComposite || entry.backdrop || entry.digitalSelections?.length || entry.retouchSelections?.length) {
+    const category = (pkg.category ?? "").trim().toLowerCase();
+    if (pkg.is_retouch_addon || /digital|download|usb|jpeg|jpg|png|\bfiles?\b|composite/.test(category) || entry.isComposite || entry.backdrop || entry.digitalSelections?.length || entry.retouchSelections?.length) {
       throw new CollageCheckoutError("Collages must be configured as physical prints without a backdrop, retouching or class-composite option.");
     }
     const expected = configuredSlots(pkg, entry.quantity);
@@ -88,14 +88,14 @@ export async function validateCollageCheckoutEntries<T extends Entry>(
     for (let index = 0; index < expected.length; index++) {
       const { item, versionId } = expected[index];
       const slot = entry.slots[index];
-      const itemText = typeof item === "string" ? item : `${item.type ?? ""} ${item.name ?? ""}`;
-      if (/digital|download|usb|jpeg|jpg|png|\bfiles?\b/i.test(itemText)) throw new CollageCheckoutError("Mixed collage packages must contain physical prints. Digital products need a separate package.");
+      const explicitType = typeof item === "string" ? "" : item.type ?? "";
+      if (/digital|download|usb|jpeg|jpg|png|\bfiles?\b/i.test(explicitType)) throw new CollageCheckoutError("Mixed collage packages must contain physical prints. Digital products need a separate package.");
       if (!versionId) {
         if (slot.collage) throw new CollageCheckoutError("A collage selection was supplied for an ordinary print.");
         if (!slot.assignedImageUrl) throw new CollageCheckoutError("Choose a photo for every print in the collage package.");
         continue;
       }
-      if (typeof item !== "string" && (item.composite || /digital|download|file|jpeg|jpg|png/.test(`${item.type ?? ""} ${item.name ?? ""}`.toLowerCase()))) {
+      if (typeof item !== "string" && (item.composite || /composite/i.test(explicitType))) {
         throw new CollageCheckoutError("A collage product cannot also be a digital or class-composite print.");
       }
       const configured = versions.get(versionId);

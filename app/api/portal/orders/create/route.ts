@@ -1,4 +1,4 @@
-import { CollageCheckoutError, resolveCollageCheckout, type CollageCheckoutSlot, type CollageOrderSnapshot, type CollagePackageItem } from "@/lib/collage-checkout";
+import { CollageCheckoutError, resolveCollageCheckout, collagePackageVersions, type CollageCheckoutSlot, type CollageOrderSnapshot, type CollagePackageItem } from "@/lib/collage-checkout";
 import { parseCollageSelection } from "@/lib/collage-selection";
 import { runParentGallerySessionRoute, parentGalleryRateKey } from "@/lib/parent-gallery-session-request";
 import { resolveSchoolOrderMediaReferences } from "@/lib/school-order-media";
@@ -189,7 +189,8 @@ function clean(value: string | null | undefined) {
   return (value ?? "").trim();
 }
 
-function isDigitalCategory(pkg: Pick<PackageRow, "category" | "name" | "is_retouch_addon">) {
+function isDigitalCategory(pkg: Pick<PackageRow, "category" | "name" | "is_retouch_addon" | "items">) {
+  if (collagePackageVersions(pkg).length) return false;
   if (isRetouchPackage(pkg)) return false;
   const cat = clean(pkg.category).toLowerCase();
   if (cat === "digital") return true;

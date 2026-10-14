@@ -9,11 +9,12 @@ export type RetouchSelection = {
 type RetouchPackage = {
   name?: string | null;
   is_retouch_addon?: boolean | null;
+  items?: unknown[] | null;
 };
 
-export type RetouchPrintPackage = RetouchPackage & {
+export type RetouchPrintPackage = Omit<RetouchPackage, "items"> & {
   category?: string | null;
-  items?: Array<string | { qty?: number | string | null; name?: string | null; type?: string | null; size?: string | null; finish?: string | null }> | null;
+  items?: Array<string | { qty?: number | string | null; name?: string | null; type?: string | null; size?: string | null; finish?: string | null; collage?: unknown }> | null;
 };
 
 export const RETOUCH_PRINT_REQUIRED = "Retouching is an add-on service and does not include a printed photo. Add a print or print package from the same gallery before adding retouching.";
@@ -23,6 +24,7 @@ export function isRetouchPrintPurchase(pkg: RetouchPrintPackage): boolean {
   if (isRetouchPackage(pkg)) return false;
   const category = (pkg.category ?? "").trim().toLowerCase();
   if (/digital|download|specialty/.test(category)) return false;
+  if (hasCollagePrint(pkg)) return true;
   if (/^(prints?|canvas(?:es)?|metal|individual items)$/.test(category)) return true;
   const items = (pkg.items ?? []).filter((item) =>
     typeof item === "string" || item.qty == null || Number(item.qty) > 0,
@@ -45,8 +47,14 @@ export function retouchPrintPurchaseIssue(entries: Array<{
   )) ? RETOUCH_PRINT_REQUIRED : "";
 }
 
+function hasCollagePrint(pkg: RetouchPackage): boolean {
+  return !!pkg.items?.some(item => item && typeof item === "object" && "collage" in item && item.collage != null);
+}
+
 export function isRetouchPackage(pkg: RetouchPackage): boolean {
-  return pkg.is_retouch_addon === true || /retouch/i.test(pkg.name ?? "");
+  if (pkg.is_retouch_addon === true) return true;
+  if (hasCollagePrint(pkg)) return false;
+  return /retouch/i.test(pkg.name ?? "");
 }
 
 /** The configured product name states how many distinct poses are included. */

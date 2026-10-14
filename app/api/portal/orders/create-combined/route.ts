@@ -1,4 +1,4 @@
-import { CollageCheckoutError, resolveCollageCheckout, type CollageCheckoutSlot, type CollageOrderSnapshot, type CollagePackageItem } from "@/lib/collage-checkout";
+import { CollageCheckoutError, resolveCollageCheckout, collagePackageVersions, type CollageCheckoutSlot, type CollageOrderSnapshot, type CollagePackageItem } from "@/lib/collage-checkout";
 import { parseCollageSelection } from "@/lib/collage-selection";
 import { runParentGallerySessionRoute, parentGalleryRateKey } from "@/lib/parent-gallery-session-request";
 import { resolveSchoolOrderMediaReferences } from "@/lib/school-order-media";
@@ -586,7 +586,7 @@ export async function POST(request: NextRequest) {
           lineTotalCents: packageSubtotalCents + backdropAddOnCents,
           isComposite: !!entry.isComposite,
           compositeTitle: entry.compositeTitle ?? null,
-          isDigital: !isRetouchPackage(pkg) && isDigitalCategory(pkg.category, pkg.name),
+          isDigital: !collagePackageVersions(pkg).length && !isRetouchPackage(pkg) && isDigitalCategory(pkg.category, pkg.name),
           retouchSelections,
           slots: (entry.slots ?? []).map((s) => ({
             ...(s.collage ? { collage: s.collage } : {}),

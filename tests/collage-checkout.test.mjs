@@ -276,3 +276,50 @@ test('disabling collage purchasing also blocks saved single and sibling payment 
     }
   }
 });
+
+
+test('explicit collage print configuration overrides arbitrary digital, retouch, size and material words in names', async () => {
+  const names = ['Digital canvas wallet 5x7', 'Download PNG artwork', 'USB JPEG file keepsake', 'Retouched memories', 'All digital bundle'];
+  for (const combined of [false, true]) for (const category of ['print', 'package']) for (const name of names) {
+    const h = fixture({ packageOverride: { name, category, items: [{ qty: 1, name: 'Digital style ordinary print', type: 'print', size: '5x7' },
+      { qty: 2, name: `${name} design`, type: 'print', size: '10x8', collage: { templateVersionId: versionId } }] } });
+    const body = combined ? { ...common, groups: [{ pin: students[0].pin, schoolId, email: common.parent.email, entries: [entry(schoolKey(0))] }] } : schoolBody(entry(schoolKey(0)));
+    const result = await h.post(body, combined);
+    assert.equal(result.status, 200, JSON.stringify({ combined, category, name, result }));
+    assert.equal(h.orders[0].subtotal_cents, 1367); assert.equal(h.items.length, 3); assert.equal(h.items.filter(item => item.collage_snapshot).length, 2);
+    assert.ok(h.items.every(item => item.quantity === 1)); assert.ok(h.items.filter(item => item.collage_snapshot).every(item => item.sku === null));
+  }
+});
+
+test('explicit digital/add-on/composite role conflicts still reject collage products while ordinary name heuristics are preserved', async () => {
+  for (const combined of [false, true]) for (const packageOverride of [{ is_retouch_addon: true, name: 'Keepsake' }, { category: 'digital' }, { category: 'class-composite' },
+    { items: [{ qty: 1, name: 'Print' }, { qty: 2, type: 'digital', size: '10x8', collage: { templateVersionId: versionId } }] },
+    { items: [{ qty: 1, name: 'Print' }, { qty: 2, type: 'class-composite', size: '10x8', collage: { templateVersionId: versionId } }] }]) {
+    const h = fixture({ packageOverride });
+    const body = combined ? { ...common, groups: [{ pin: students[0].pin, schoolId, email: common.parent.email, entries: [entry(schoolKey(0))] }] } : schoolBody(entry(schoolKey(0)));
+    const result = await h.post(body, combined);
+    assert.equal(result.status, combined && packageOverride.is_retouch_addon ? 400 : 409, JSON.stringify({ combined, packageOverride, result })); assert.equal(h.orders.length, 0);
+  }
+  for (const combined of [false, true]) {
+    const h = fixture({ packageOverride: { name: 'Digital download', category: 'package', items: [] } });
+    const ordinary = { packageId, quantity: 2, slots: [{ label: 'Legacy digital', assignedImageUrl: schoolKey(0) }], selectedImageUrl: schoolKey(0) };
+    const body = combined ? { ...common, groups: [{ pin: students[0].pin, schoolId, email: common.parent.email, entries: [ordinary] }] } : schoolBody(ordinary);
+    const result = await h.post(body, combined);
+    assert.equal(result.status, 200, JSON.stringify(result)); assert.equal(h.items.length, 1); assert.equal(h.items[0].quantity, 2);
+    assert.equal(h.items[0].collage_snapshot, undefined); assert.equal(h.items[0].line_total_cents, 2734);
+  }
+});
+
+test('collage category helpers honor configured product roles and sizes without interpreting free-form names', () => {
+  const { getPackageCategory, getGalleryPackageCategory } = loader({})('lib/package-categories.ts');
+  const { isRetouchPackage, isRetouchPrintPurchase } = loader({})('lib/retouching.ts');
+  for (const name of ['Digital download canvas wallet 5x7', 'Retouched memories', 'PNG file design']) {
+    const collage = { name, description: 'USB download 4x6', category: 'package', items: [{ name, type: 'print', size: '10x8', collage: { templateVersionId: versionId } }] };
+    assert.equal(getPackageCategory(collage), 'package'); assert.equal(getGalleryPackageCategory(collage), 'package');
+    assert.equal(getPackageCategory({ ...collage, category: 'print' }), 'print'); assert.equal(getGalleryPackageCategory({ ...collage, category: 'print' }), 'print');
+    assert.equal(isRetouchPackage(collage), false); assert.equal(isRetouchPrintPurchase(collage), true);
+    assert.equal(isRetouchPackage({ ...collage, is_retouch_addon: true }), true);
+  }
+  assert.equal(getPackageCategory({ name: 'Digital download', category: 'package', items: [] }), 'digital');
+  assert.equal(isRetouchPackage({ name: 'Retouched portrait service' }), true);
+});
