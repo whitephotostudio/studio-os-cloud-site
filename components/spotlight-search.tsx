@@ -36,6 +36,7 @@ import {
   X,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { fetchStudentSearchPages, studentSearchFilter, studentSearchRank } from "@/lib/student-search";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -120,6 +121,7 @@ export function useSpotlight(term: string, enabled: boolean) {
   const [photographerId, setPhotographerId] = useState<string | null>(null);
   const [hits, setHits] = useState<SpotlightHit[]>([]);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   // Resolve photographer id once per mount.
   useEffect(() => {
@@ -146,6 +148,7 @@ export function useSpotlight(term: string, enabled: boolean) {
     if (!enabled || !photographerId) {
       setHits([]);
       setLoading(false);
+      setError(null);
       return;
     }
     const trimmed = term.trim();
@@ -155,6 +158,7 @@ export function useSpotlight(term: string, enabled: boolean) {
     if (nameTerm.length < 2 && year === null) {
       setHits([]);
       setLoading(false);
+      setError(null);
       return;
     }
 
@@ -165,6 +169,8 @@ export function useSpotlight(term: string, enabled: boolean) {
     const yearEnd = year !== null ? `${year + 1}-01-01` : null;
 
     let cancelled = false;
+    setHits([]);
+    setError(null);
     setLoading(true);
     const handle = window.setTimeout(async () => {
       try {
@@ -180,28 +186,30 @@ export function useSpotlight(term: string, enabled: boolean) {
         // (shoot_date is null AND created_at in window)" cleanly enough.
         const nameOrEmpty = nameTerm.length > 0 ? nameTerm : "";
 
-        let studentsQuery = supabase
-          .from("students")
-          .select(
-            // Pull schools.shoot_date + created_at so we can show a year
-            // tag on each student hit ("Mary Smith · 2002 · Riverside Prep").
-            "id, first_name, last_name, photo_url, school_id, class_id, class_name, role, schools:schools!students_school_id_fkey!inner(school_name, photographer_id, shoot_date, created_at)",
-          )
-          .eq("schools.photographer_id", photographerId);
-        if (nameOrEmpty.length >= 2) {
-          studentsQuery = studentsQuery.or(
-            `first_name.ilike.%${nameOrEmpty}%,last_name.ilike.%${nameOrEmpty}%,role.ilike.%${nameOrEmpty}%`,
-          );
-        }
-        if (yearStart && yearEnd) {
-          // Filter via the joined schools row's date — Supabase respects
-          // dotted column paths in or() when the relation is inner-joined.
-          studentsQuery = studentsQuery.or(
-            `and(shoot_date.gte.${yearStart},shoot_date.lt.${yearEnd}),and(shoot_date.is.null,created_at.gte.${yearStart},created_at.lt.${yearEnd})`,
-            { foreignTable: "schools" },
-          );
-        }
-        studentsQuery = studentsQuery.limit(8);
+        const studentFilter = studentSearchFilter(nameOrEmpty);
+        const studentsQuery = (from: number, to: number) => {
+          let query = supabase
+            .from("students")
+            .select(
+              "id, first_name, last_name, photo_url, school_id, class_id, class_name, role, schools:schools!students_school_id_fkey!inner(school_name, photographer_id, shoot_date, created_at)",
+            )
+            .eq("schools.photographer_id", photographerId);
+          if (studentFilter) query = query.or(studentFilter);
+          if (yearStart && yearEnd) {
+            query = query.or(
+              `and(shoot_date.gte.${yearStart},shoot_date.lt.${yearEnd}),and(shoot_date.is.null,created_at.gte.${yearStart},created_at.lt.${yearEnd})`,
+              { foreignTable: "schools" },
+            );
+          }
+          return query
+            .order("first_name", { ascending: true })
+            .order("last_name", { ascending: true })
+            .order("id", { ascending: true })
+            .range(from, to);
+        };
+        // Read every filtered page: an early result cap hid later classes.
+        const studentResults = fetchStudentSearchPages(studentsQuery, () => cancelled)
+          .then((data) => ({ data }));
 
         let schoolsQuery = supabase
           .from("schools")
@@ -223,9 +231,7 @@ export function useSpotlight(term: string, enabled: boolean) {
           .eq("photographer_id", photographerId)
           .eq("workflow_type", "event");
         if (nameOrEmpty.length >= 2) {
-          projectsQuery = projectsQuery.or(
-            `title.ilike.%${nameOrEmpty}%,client_name.ilike.%${nameOrEmpty}%`,
-          );
+          projectsQuery = projectsQuery.or(studentSearchFilter(nameOrEmpty, ["title", "client_name"])!);
         }
         if (yearStart && yearEnd) {
           projectsQuery = projectsQuery.or(
@@ -235,7 +241,7 @@ export function useSpotlight(term: string, enabled: boolean) {
         projectsQuery = projectsQuery.limit(6);
 
         const promises: PromiseLike<unknown>[] = [
-          studentsQuery,
+          studentResults,
           schoolsQuery,
           projectsQuery,
         ];
@@ -252,9 +258,7 @@ export function useSpotlight(term: string, enabled: boolean) {
               "id, package_name, total_cents, total_amount, currency, student_id, customer_name, parent_name, parent_email, created_at, student:students(first_name,last_name), school:schools(school_name)",
             )
             .eq("photographer_id", photographerId)
-            .or(
-              `customer_name.ilike.%${trimmed}%,parent_name.ilike.%${trimmed}%,parent_email.ilike.%${trimmed}%,customer_email.ilike.%${trimmed}%`,
-            )
+            .or(studentSearchFilter(trimmed, ["customer_name", "parent_name", "parent_email", "customer_email"])!)
             .order("created_at", { ascending: false })
             .limit(8),
         );
@@ -307,7 +311,11 @@ export function useSpotlight(term: string, enabled: boolean) {
         // typing "Ethan" should surface Ethan AND Ethan's orders.
         const matchedStudentIds: string[] = [];
         const matchedStudentNames: Record<string, string> = {};
-        for (const s of students.data ?? []) {
+        const rankedStudents = [...(students.data ?? [])].sort((a, b) =>
+          studentSearchRank(a.first_name, a.last_name, nameOrEmpty) -
+          studentSearchRank(b.first_name, b.last_name, nameOrEmpty),
+        );
+        for (const s of rankedStudents) {
           const schoolRow = Array.isArray(s.schools) ? s.schools[0] : s.schools;
           const studentName =
             [clean(s.first_name), clean(s.last_name)]
@@ -400,15 +408,26 @@ export function useSpotlight(term: string, enabled: boolean) {
         // don't double-count if the short-id branch below also matched.
         const seenOrderIds = new Set<string>();
         if (matchedStudentIds.length > 0) {
-          const { data: studentOrders } = await supabase
-            .from("orders")
-            .select(
-              "id, package_name, total_cents, total_amount, currency, student_id, created_at, school:schools(school_name)",
-            )
-            .eq("photographer_id", photographerId)
-            .in("student_id", matchedStudentIds)
-            .order("created_at", { ascending: false })
-            .limit(8);
+          const orderRequests = [];
+          // Keep large student searches below URL limits when finding orders.
+          for (let offset = 0; offset < matchedStudentIds.length; offset += 200) {
+            orderRequests.push(
+              supabase
+                .from("orders")
+                .select(
+                  "id, package_name, total_cents, total_amount, currency, student_id, created_at, school:schools(school_name)",
+                )
+                .eq("photographer_id", photographerId)
+                .in("student_id", matchedStudentIds.slice(offset, offset + 200))
+                .order("created_at", { ascending: false })
+                .limit(8),
+            );
+          }
+          const orderResults = await Promise.all(orderRequests);
+          if (cancelled) return;
+          const studentOrders = orderResults.flatMap((result) => result.data ?? [])
+            .sort((a, b) => clean(b.created_at).localeCompare(clean(a.created_at)))
+            .slice(0, 8);
           if (!cancelled && studentOrders) {
             for (const order of studentOrders as Array<{
               id: string;
@@ -532,7 +551,12 @@ export function useSpotlight(term: string, enabled: boolean) {
           }
         }
 
-        setHits(next);
+        if (!cancelled) setHits(next);
+      } catch {
+        if (!cancelled) {
+          setHits([]);
+          setError("Search could not load. Please try again.");
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -544,7 +568,7 @@ export function useSpotlight(term: string, enabled: boolean) {
     };
   }, [term, supabase, photographerId, enabled]);
 
-  return { hits, loading };
+  return { hits, loading, error };
 }
 
 // ── Modal ────────────────────────────────────────────────────────────
@@ -565,7 +589,7 @@ export function SpotlightModal({ open, onClose, hrefFor }: SpotlightModalProps) 
   const [kindFilter, setKindFilter] = useState<SpotlightKind | null>(null);
   const router = useRouter();
   const inputRef = useRef<HTMLInputElement | null>(null);
-  const { hits, loading } = useSpotlight(term, open);
+  const { hits, loading, error } = useSpotlight(term, open);
 
   // Reset + autofocus on open.
   useEffect(() => {
@@ -797,9 +821,9 @@ export function SpotlightModal({ open, onClose, hrefFor }: SpotlightModalProps) 
                 fontWeight: 600,
               }}
             >
-              {hits.length === 0
+              {error ?? (hits.length === 0
                 ? `No matches for "${term}".`
-                : `No ${kindFilter ? kindLabel(kindFilter).toLowerCase() + "s" : "matches"} for "${term}". Try another filter.`}
+                : `No ${kindFilter ? kindLabel(kindFilter).toLowerCase() + "s" : "matches"} for "${term}". Try another filter.`)}
             </div>
           ) : (
             visibleHits.map((hit, idx) => (

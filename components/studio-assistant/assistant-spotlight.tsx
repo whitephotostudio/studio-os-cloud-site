@@ -34,7 +34,7 @@ export function InlineSpotlightResults({
   onSelect,
 }: InlineSpotlightResultsProps) {
   const [kindFilter, setKindFilter] = useState<SpotlightKind | null>(null);
-  const { hits, loading } = useSpotlight(term, true);
+  const { hits, loading, error } = useSpotlight(term, true);
 
   const canShow = term.trim().length >= 2;
 
@@ -135,9 +135,9 @@ export function InlineSpotlightResults({
               fontWeight: 600,
             }}
           >
-            {hits.length === 0
+            {error ?? (hits.length === 0
               ? `No matches for "${term}". Try pressing Ask to run it as a command.`
-              : `No ${kindLabel(kindFilter!).toLowerCase()}s for "${term}". Try another filter.`}
+              : `No ${kindLabel(kindFilter!).toLowerCase()}s for "${term}". Try another filter.`)}
           </div>
         ) : (
           visibleHits.map((hit, idx) => (

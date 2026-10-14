@@ -26,6 +26,7 @@ import {
   ShoppingBag,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { studentMatchesSearch, studentSearchRank } from "@/lib/student-search";
 import { useIsMobile } from "@/lib/use-is-mobile";
 import { uploadToR2 } from "@/lib/upload-to-r2-client";
 import { ensureSchoolCollectionId } from "@/lib/school-sync";
@@ -1851,22 +1852,20 @@ export default function SchoolsSchoolDetailPage() {
   // Matching people (students + role-holders) for the search box.  This is
   // what makes "Ethan" or "Ms. Thompson" or "coach" actually useful — you
   // can find a person directly instead of guessing which class tile they
-  // live inside.  Hits cap at 30 to keep the grid readable.
+  // live inside. Full names match in either order, like dashboard search.
   const filteredPeople = useMemo(() => {
     const q = clean(classSearch).toLowerCase();
     if (!q) return [];
     const hits = rows.filter((row) => {
-      const name = [clean(row.first_name), clean(row.last_name)]
-        .filter(Boolean)
-        .join(" ")
-        .toLowerCase();
       const role = clean(row.role).toLowerCase();
       const className = clean(row.class_name).toLowerCase();
       return (
-        name.includes(q) || role.includes(q) || className.includes(q)
+        studentMatchesSearch(row.first_name, row.last_name, q) || role.includes(q) || className.includes(q)
       );
     });
-    return hits.slice(0, 30);
+    return hits.sort((a, b) =>
+      studentSearchRank(a.first_name, a.last_name, q) - studentSearchRank(b.first_name, b.last_name, q),
+    );
   }, [classSearch, rows]);
 
   const classSearchCountLabel = classSearch
