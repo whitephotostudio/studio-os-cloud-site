@@ -4,6 +4,7 @@ import { randomBytes } from "node:crypto";
 import { contentSecurityPolicy } from "@/lib/content-security-policy";
 import { PORTAL_PIN_RESERVATION_HEADER, portalPinAttemptLimit, portalPinReservationHeader } from "@/lib/portal-pin-rate-limit";
 import { parentSessionRateBudgetKey } from "@/lib/parent-gallery-session";
+import { isLabPilot, labPilotRequested, isLabPilotPath } from "@/lib/labs/pilot";
 
 /** Routes that need strict rate limiting (auth-sensitive) */
 const STRICT_ROUTES = [
@@ -35,6 +36,18 @@ function addSecurityHeaders(response: NextResponse) {
 export async function proxy(request: NextRequest) {
   const ip = getClientIp(request);
   const pathname = request.nextUrl.pathname;
+  // The disposable lab pilot must never expose unrelated commerce, email,
+  // school or desktop actions. This runs before any shared-provider helper.
+  if (labPilotRequested()) {
+    if (!isLabPilot()) return addSecurityHeaders(NextResponse.json({ ok: false, message: "Lab test configuration unavailable." }, { status: 503 }));
+    if (!isLabPilotPath(pathname)) {
+      const response = pathname.startsWith("/api/")
+        ? NextResponse.json({ ok: false, message: "This test environment is for lab workflows only." }, { status: 404 })
+        : NextResponse.redirect(new URL("/labs-pilot", request.url));
+      response.headers.set("X-Robots-Tag", "noindex, nofollow");
+      return addSecurityHeaders(response);
+    }
+  }
   const requestHeaders = new Headers(request.headers);
   // No browser may supply a reservation identity, even on exempt/error paths.
   requestHeaders.delete(PORTAL_PIN_RESERVATION_HEADER);
@@ -101,6 +114,7 @@ export async function proxy(request: NextRequest) {
   requestHeaders.set("x-nonce", nonce);
   requestHeaders.set("Content-Security-Policy", policy);
   const response = NextResponse.next({ request: { headers: requestHeaders } });
+  if (isLabPilot()) response.headers.set("X-Robots-Tag", "noindex, nofollow");
   response.headers.set("Content-Security-Policy", policy);
   if (pathname.startsWith("/parents") || pathname.startsWith("/api/portal/") || pathname.startsWith("/dashboard")) {
     response.headers.set("Referrer-Policy", "no-referrer");
@@ -110,6 +124,7 @@ export async function proxy(request: NextRequest) {
 
 export const config = {
   matcher: [
+    "/api/:path*",
     // Apply the finite media budget even when the stored key ends in a
     // lowercase image extension excluded by the generic matcher below.
     "/api/r2/img/:path*",

@@ -7,11 +7,12 @@ import { createLabDatabase, LAB_FIXTURE, fixtureToken, seedLegacyLabCanaries, sn
 const jpeg = readFileSync(new URL('./helpers/lab-order-sample.jpg', import.meta.url));
 const png = readFileSync(new URL('./helpers/lab-order-sample.png', import.meta.url));
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
-async function role(db, name, user, action) {
+async function role(db, name, user, action, aalOverride) {
   assert.ok(['service_role', 'authenticated', 'anon'].includes(name));
   return db.transaction(async tx => {
     await tx.exec(`set local role ${name}`);
-    await tx.query("select set_config('request.jwt.claim.sub',$1,true),set_config('request.jwt.claim.role',$2,true),set_config('request.jwt.claims',$3,true)", [user || '', name, JSON.stringify({ sub: user, role: name, aal: 'aal2' })]);
+    const aal = aalOverride || JSON.parse(Buffer.from(fixtureToken(user).split('.')[1], 'base64url').toString()).aal;
+    await tx.query("select set_config('request.jwt.claim.sub',$1,true),set_config('request.jwt.claim.role',$2,true),set_config('request.jwt.claims',$3,true)", [user || '', name, JSON.stringify({ sub: user, role: name, aal })]);
     return action(tx);
   });
 }
@@ -69,6 +70,9 @@ test('actual lab order ledger preserves every legacy table while validating file
     for (const actor of [LAB_FIXTURE.labOwner, LAB_FIXTURE.labOperator, LAB_FIXTURE.labViewer]) {
       assert.equal((await role(db, 'authenticated', actor, tx => tx.query('select id from lab_orders where id=$1', [id]))).rows.length, 1);
       assert.equal((await role(db, 'authenticated', actor, tx => tx.query('select id from lab_order_assets where id=$1', [assetId]))).rows.length, 1);
+      for (const table of ['lab_orders', 'lab_order_assets', 'lab_order_events']) {
+        assert.equal((await role(db, 'authenticated', actor, tx => tx.query(`select id from ${table}`), 'aal1')).rows.length, 0, 'Direct staff SQL reads require AAL2');
+      }
     }
     for (const actor of [LAB_FIXTURE.otherOwner, LAB_FIXTURE.foreignLabOwner, LAB_FIXTURE.admin]) {
       assert.equal((await role(db, 'authenticated', actor, tx => tx.query('select id from lab_orders where id=$1', [id]))).rows.length, 0);

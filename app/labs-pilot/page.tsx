@@ -1,0 +1,82 @@
+import type { Metadata } from "next";
+import Link from "next/link";
+import { notFound } from "next/navigation";
+import { ArrowDownToLine, ArrowRight, Camera, FlaskConical, ShieldCheck } from "lucide-react";
+import { isLabPilot } from "@/lib/labs/pilot";
+import { LabPilotMfa } from "@/components/labs/lab-pilot-mfa";
+import styles from "@/components/labs/lab-pilot.module.css";
+
+export const dynamic = "force-dynamic";
+
+export const metadata: Metadata = {
+  title: "Lab pilot",
+  description: "Isolated Studio OS lab workflow test with sample data.",
+  robots: { index: false, follow: false },
+};
+
+export default function LabsPilotPage() {
+  if (!isLabPilot()) notFound();
+
+  return (
+    <main className={styles.page}>
+      <header className={styles.header}>
+        <Link href="/labs-pilot" className={styles.brand}>Studio OS <span>Lab pilot</span></Link>
+        <a href="#mfa" className={styles.quietLink}><ShieldCheck size={16} aria-hidden="true" /> Lab account security</a>
+      </header>
+
+      <section className={styles.hero}>
+        <div className={styles.eyebrow}><FlaskConical size={16} aria-hidden="true" /> Isolated sample test</div>
+        <h1>Try both sides of a lab order.</h1>
+        <p>Use the separate photographer and lab test credentials supplied to you. This pilot uses its own sample data. GTA production is disabled, and this environment does not collect payments or send real production orders.</p>
+        <div className={styles.pills}><span>Sample files only</span><span>Separate test accounts</span><span>No card charges</span></div>
+      </section>
+
+      <div className={styles.roleGrid}>
+        <section className={styles.card}>
+          <div className={styles.icon}><Camera size={23} aria-hidden="true" /></div>
+          <p className={styles.eyebrow}>Photographer</p>
+          <h2>Build and send a test order</h2>
+          <ol className={styles.steps}>
+            <li>Sign in with the supplied photographer test account.</li>
+            <li>Explore the sample lab and price sheets, then open <strong>Lab orders</strong>.</li>
+            <li>Choose a sample product, upload the sample JPEG, and submit a test order.</li>
+            <li>Return after the lab updates it to check the order timeline.</li>
+          </ol>
+          <Link className={styles.primary} href="/dashboard/labs">Open photographer workspace <ArrowRight size={17} aria-hidden="true" /></Link>
+          <Link className={styles.secondary} href="/dashboard/labs/orders">Go directly to lab orders</Link>
+        </section>
+
+        <section className={styles.card}>
+          <div className={styles.icon}><FlaskConical size={23} aria-hidden="true" /></div>
+          <p className={styles.eyebrow}>Lab</p>
+          <h2>Receive and track a test order</h2>
+          <ol className={styles.steps}>
+            <li>Sign out of the photographer account and sign in with the supplied lab test account.</li>
+            <li>Set up your own authenticator in <a href="#mfa">Lab account security below</a>, then sign in again with its code.</li>
+            <li>Open the lab portal to review the order and download its sample file.</li>
+            <li>Accept or decline it, then test the available production and delivery updates.</li>
+          </ol>
+          <Link className={styles.primary} href="/lab">Open lab portal <ArrowRight size={17} aria-hidden="true" /></Link>
+          <a className={styles.secondary} href="#mfa">Set up lab authenticator first</a>
+        </section>
+      </div>
+
+      <section className={`${styles.card} ${styles.sample}`} aria-labelledby="sample-heading">
+        <div>
+          <h2 id="sample-heading">A file you can safely use</h2>
+          <p>Download the supplied sample JPEG and use it for a matching 4 × 6 test print. Export your own test images as upright JPEG or PNG files with rotation applied to the pixels, up to 4 MB each. Files must match the chosen product’s aspect ratio; the pilot does not crop them.</p>
+        </div>
+        <a className={styles.outline} href="/labs-pilot/sample-file" download><ArrowDownToLine size={17} aria-hidden="true" /> Download sample JPEG</a>
+      </section>
+
+      <section id="mfa" className={`${styles.card} ${styles.security}`} aria-labelledby="security-heading">
+        <p className={styles.eyebrow}><ShieldCheck size={15} aria-hidden="true" /> Lab account security</p>
+        <h2 id="security-heading">Set up your own authenticator</h2>
+        <p>Use this page at <code>/labs-pilot#mfa</code> while signed in as the lab test account. You do not need to create a photographer profile. Each tester should use their supplied account and their own authenticator; keep its QR code and setup key private.</p>
+        <LabPilotMfa />
+      </section>
+
+      <footer className={styles.footer}>Sample workflow only. Use the supplied test accounts and sample files. Real customer photos, GTA operations, existing price lists, and paid checkout are outside this pilot.</footer>
+    </main>
+  );
+}

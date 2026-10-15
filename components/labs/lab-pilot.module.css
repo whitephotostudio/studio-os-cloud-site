@@ -1,0 +1,58 @@
+.page{min-height:100vh;background:#f5f6f3;color:#172923;padding:0 max(20px,calc((100vw - 1080px)/2)) 40px;font-size:15px;line-height:1.65;overflow-wrap:anywhere}
+.header{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:28px 0;border-bottom:1px solid #dce3dd}
+.brand{display:flex;align-items:center;gap:12px;font-size:21px;font-weight:750;text-decoration:none;color:#172923;letter-spacing:-.6px}
+.brand span{border:1px solid #d9e3d9;border-radius:7px;background:#eaf0e8;padding:3px 8px;font-size:11px;text-transform:uppercase;letter-spacing:1px}
+.quietLink{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:#38604e;text-decoration:none}
+.hero{max-width:780px;padding:60px 0 36px}
+.eyebrow{display:flex;align-items:center;gap:7px;margin:0 0 11px;font-size:11px;letter-spacing:1.3px;text-transform:uppercase;font-weight:750;color:#53745f}
+.hero h1{font-size:clamp(35px,5vw,53px);line-height:1.08;letter-spacing:-2px;font-weight:650;margin:12px 0 22px}
+.hero>p{font-size:17px;color:#53645a;margin:0;max-width:730px}
+.pills{display:flex;flex-wrap:wrap;gap:8px;margin-top:23px}
+.pills span{padding:4px 10px;border-radius:6px;background:#e8eee6;border:1px solid #dce5d8;color:#41604a;font-size:11px;font-weight:650}
+.roleGrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px}
+.card{min-width:0;background:#fff;border:1px solid #dce3dd;border-radius:18px;padding:28px;box-shadow:0 2px 4px #243e2b03}
+.card h2{font-size:23px;font-weight:650;line-height:1.2;letter-spacing:-.7px;margin:0 0 14px}
+.card p{color:#596a60;margin-top:0;margin-bottom:16px}
+.card .eyebrow{color:#53745f;font-size:11px;margin-bottom:9px}
+.icon{display:grid;place-items:center;width:48px;height:48px;border-radius:13px;background:#eef3eb;color:#3c6650;margin-bottom:22px}
+.steps{padding-left:20px;margin:20px 0 26px;color:#596a60;font-size:14px;display:grid;gap:12px}
+.steps li{padding-left:4px}
+.steps li::marker{color:#61816b;font-weight:700}
+.steps a{color:#355d49;text-decoration:underline;text-underline-offset:3px}
+.primary,.outline,.secondary{display:flex;align-items:center;justify-content:center;gap:9px;min-height:44px;border-radius:8px;text-decoration:none;font-size:13px;font-weight:650;text-align:center;cursor:pointer;line-height:1.4}
+.primary{border:1px solid #234e39;background:#234e39;color:#fff;padding:12px 17px}
+.primary:hover{background:#193c2b}
+.secondary{color:#456653;padding:10px 4px;margin-top:5px}
+.outline{background:#fff;color:#355a43;border:1px solid #b7cab9;padding:11px 15px;white-space:nowrap}
+.outline:hover{background:#f1f5ed}
+.primary:disabled,.outline:disabled{opacity:.55;cursor:wait}
+.sample{display:flex;align-items:center;gap:30px;margin-top:20px;background:#f0f4eb}
+.sample>div{flex:1;min-width:0}
+.sample h2{font-size:20px}
+.sample p{margin-bottom:0;font-size:13px}
+.security{margin-top:20px;scroll-margin-top:24px}
+.security>p{max-width:850px;font-size:14px}
+.security code{font-size:12px;background:#eff3ed;padding:2px 5px;border-radius:4px;color:#365642}
+.account{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:15px 17px;background:#f6f8f4;border:1px solid #e1e8dc;border-radius:10px;margin-top:22px}
+.account p{margin:0;font-size:13px;color:#435b4a}
+.account small{display:block;font-size:11px;color:#758576}
+.textButton{border:0;background:none;color:#3e654a;font-size:12px;text-decoration:underline;cursor:pointer;min-height:36px;flex-shrink:0}
+.status{margin:15px 0 0!important;font-size:13px!important}
+.success{color:#2d673d!important;background:#eff8ec;border:1px solid #d5e8cf;border-radius:8px;padding:12px 14px;margin-top:15px!important;font-size:13px!important}
+.error{color:#a62c2c!important;background:#fff1f0;border:1px solid #f3d1ce;border-radius:8px;padding:12px 14px;margin-top:15px!important;font-size:13px!important}
+.mfaActions{display:flex;align-items:center;flex-wrap:wrap;gap:12px;margin-top:18px}
+.mfaActions .primary,.mfaActions .outline{width:auto}
+.enrollment{display:grid;grid-template-columns:210px minmax(0,1fr);align-items:start;gap:25px;padding-top:24px}
+.qr{display:grid;place-items:center;padding:10px;background:#fff;border:1px solid #e0e7db;border-radius:10px}
+.qr svg{max-width:100%;height:auto}
+.enrollment p{font-size:13px;margin-bottom:15px}
+.secret{font-size:12px;margin:12px 0 18px;color:#45634d}
+.secret summary{cursor:pointer;min-height:30px}
+.secret code{display:block;overflow-wrap:anywhere;margin-top:8px;padding:8px}
+.field{display:block;font-size:12px;font-weight:650;color:#3d5947}
+.codeInput{display:block;width:min(100%,240px);box-sizing:border-box;border:1px solid #b5c6b5;background:#fff;color:#172923;border-radius:8px;padding:10px 12px;font-size:20px;letter-spacing:6px;font-weight:550;margin-top:7px}
+.footer{color:#758173;font-size:11px;padding:28px 0 0;max-width:800px}
+.banner{box-sizing:border-box;display:flex;justify-content:center;align-items:center;flex-wrap:wrap;gap:5px 18px;padding:8px 16px;background:#e8f0dc;border-bottom:1px solid #cad8ba;color:#344d2f;font-family:Arial,Helvetica,sans-serif;font-size:11px;line-height:1.4;position:relative;z-index:50;text-align:center;overflow-wrap:anywhere}
+.banner a{color:#284422;text-decoration:underline;text-underline-offset:2px;white-space:nowrap}
+.page a:focus-visible,.page button:focus-visible,.page input:focus-visible,.page summary:focus-visible,.banner a:focus-visible{outline:3px solid #6a9864;outline-offset:4px}
+@media(max-width:700px){.page{padding-left:18px;padding-right:18px}.header{align-items:flex-start;padding:20px 0}.brand{font-size:19px;flex-wrap:wrap;gap:7px}.quietLink{max-width:130px;font-size:11px;line-height:1.4;flex-shrink:0}.hero{padding:38px 0 28px}.hero h1{letter-spacing:-1.3px}.hero>p{font-size:15px}.roleGrid{grid-template-columns:minmax(0,1fr);gap:14px}.card{padding:23px 20px;border-radius:14px}.sample{display:block;margin-top:14px}.sample .outline{margin-top:18px;white-space:normal}.security{margin-top:14px}.enrollment{grid-template-columns:minmax(0,1fr);gap:20px}.qr{width:210px;max-width:100%;box-sizing:border-box}.account{align-items:flex-start;gap:8px;padding:12px}.mfaActions{align-items:stretch}.mfaActions .primary,.mfaActions .outline{width:100%}}

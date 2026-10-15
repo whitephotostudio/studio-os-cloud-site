@@ -5,6 +5,7 @@ import { OrganizationJsonLd, WebSiteJsonLd } from "@/components/json-ld";
 import { MarketingEventTracker } from "@/components/marketing/MarketingEventTracker";
 import { headers } from "next/headers";
 import { CspNonceProvider } from "@/components/csp-nonce";
+import { LabPilotBanner } from "@/components/labs/lab-pilot-banner";
 
 // A nonce must be generated for the same response as the HTML, never reused
 // from a static page cache. Image/asset caches remain independent.
@@ -141,6 +142,7 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
       <body className={`${geistSans.variable} ${geistMono.variable} ${fraunces.variable} antialiased`}>
         <CspNonceProvider nonce={nonce}>
           <MarketingEventTracker />
+          <LabPilotBanner />
           {children}
         </CspNonceProvider>
       </body>

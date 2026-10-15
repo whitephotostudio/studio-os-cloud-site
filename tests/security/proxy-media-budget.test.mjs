@@ -58,6 +58,7 @@ function fixture() {
     '@upstash/redis': { Redis: PinRedis } }, Clock);
   const csp = load('lib/content-security-policy.ts');
   const proxy = load('proxy.ts', { 'next/server': { NextResponse }, '@/lib/rate-limit': limiter,
+    '@/lib/labs/pilot': load('lib/labs/pilot.ts', { 'server-only': {} }),
     '@/lib/portal-pin-rate-limit': pinBudget, '@/lib/content-security-policy': csp,
     '@/lib/parent-gallery-session': { parentSessionRateBudgetKey: async () => null } });
   const request = (path, { method = 'GET', ip = '192.0.2.10', body } = {}) => new NextRequest(`${env.NEXT_PUBLIC_SITE_URL}${path}`, {

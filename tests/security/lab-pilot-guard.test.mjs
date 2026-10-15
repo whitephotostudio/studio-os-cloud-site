@@ -1,0 +1,56 @@
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import vm from 'node:vm';
+import test from 'node:test';
+import ts from 'typescript';
+
+const source = ts.transpileModule(readFileSync(new URL('../../lib/labs/pilot.ts', import.meta.url), 'utf8'), {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+}).outputText;
+
+function fixture(env = {}) {
+  const exports = {};
+  vm.runInNewContext(source, { exports, process: { env }, URL, Set, require: name => {
+    assert.equal(name, 'server-only');
+    return {};
+  } });
+  return exports;
+}
+
+test('pilot requires its explicit flag and exact isolated Supabase project', () => {
+  const pilot = 'https://lgwmxqjwgkzktikhkebp.supabase.co';
+  for (const NEXT_PUBLIC_SUPABASE_URL of [pilot, `${pilot}/`]) {
+    assert.equal(fixture({ STUDIO_OS_LAB_PILOT: '1', NEXT_PUBLIC_SUPABASE_URL }).isLabPilot(), true);
+    for (const STUDIO_OS_LAB_PILOT of [undefined, '', 'true', '0', ' 1']) {
+      assert.equal(fixture({ STUDIO_OS_LAB_PILOT, NEXT_PUBLIC_SUPABASE_URL }).isLabPilot(), false);
+    }
+  }
+  for (const NEXT_PUBLIC_SUPABASE_URL of [undefined, '', 'malformed',
+    'https://bwqhzczxoevouiondjak.supabase.co', 'https://another-project.supabase.co',
+    'http://lgwmxqjwgkzktikhkebp.supabase.co', `${pilot}/auth/v1`, `${pilot}?other=1`,
+    `${pilot}#fragment`, 'https://lgwmxqjwgkzktikhkebp.supabase.co.evil.example',
+    'https://attacker@lgwmxqjwgkzktikhkebp.supabase.co']) {
+    assert.equal(fixture({ STUDIO_OS_LAB_PILOT: '1', NEXT_PUBLIC_SUPABASE_URL }).isLabPilot(), false, NEXT_PUBLIC_SUPABASE_URL);
+  }
+});
+
+test('only pilot pages, existing MFA and agreement endpoints, and lab APIs pass the route gate', () => {
+  const { isLabPilotPath } = fixture();
+  for (const path of ['/labs-pilot', '/labs-pilot/sample-file', '/lab', '/sign-in', '/dashboard/labs',
+    '/dashboard/labs/', '/dashboard/labs/catalog', '/dashboard/labs/orders', '/api/dashboard/labs',
+    '/api/dashboard/lab-catalog', '/api/dashboard/lab-orders', '/api/dashboard/lab-order-assets',
+    '/api/lab/orders', '/api/lab/orders/123/files/456', '/api/dashboard/mfa',
+    '/api/dashboard/agreement/status', '/api/dashboard/agreement/accept', '/api/csp-report', '/manifest.webmanifest']) {
+    assert.equal(isLabPilotPath(path), true, path);
+  }
+  for (const path of ['/', '/dashboard', '/dashboard/settings', '/dashboard/packages', '/lab/other',
+    '/dashboard/labs-admin', '/api/lab/orders-other', '/api/dashboard/labs/other',
+    '/api/dashboard/mfa-other', '/api/dashboard/agreement/other', '/api/stripe/checkout',
+    '/api/portal/session', '/api/admin/users', '/labs-pilot/other', '/sign-in-extra',
+    '/dashboard/labs/../../admin', '/dashboard/labs/./orders', '/dashboard/labs//orders',
+    '/dashboard/labs/%2e%2e/admin', '/dashboard/labs/%252e%252e/admin',
+    '/dashboard/labs\\..\\admin', '/dashboard/labs?other=1', '/dashboard/labs#other',
+    '//dashboard/labs', 'dashboard/labs']) {
+    assert.equal(isLabPilotPath(path), false, path);
+  }
+});
