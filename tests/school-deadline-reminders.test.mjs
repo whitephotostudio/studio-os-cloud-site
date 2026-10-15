@@ -152,3 +152,17 @@ test('provider Retry-After longer than an hour is honored by later cron invocati
   await f.worker.deliverSchoolDeadlineReminders(f.db,{now:new Date('2026-10-18T14:00:00Z')});assert.equal(attempts,1);
   await f.worker.deliverSchoolDeadlineReminders(f.db,{now:new Date('2026-10-18T15:00:00Z')});assert.equal(attempts,2);
 });
+
+test('excluded contacts remain in durable reminder outcomes and never enter recipient delivery history',async t=>{fakeTimers(t);const f=fixture(251),original=f.provider.send;
+  f.provider.send=async(inputs,options)=>{const result=await original(inputs,options);if(customer(f).length===1)f.photos.classes.clear();return result;};
+  await f.worker.deliverSchoolDeadlineReminders(f.db,{now});
+  const run=f.tables.project_email_deliveries.find(row=>row.email_type==='school_deadline_reminder_run');
+  assert.equal(run.payload.outcomes.filter(row=>row.status==='excluded').length,151);
+  const history=f.tables.project_email_deliveries.filter(row=>row.email_type==='school-deadline-reminder');
+  assert.equal(history.length,100);assert.ok(history.every(row=>row.status==='sent'&&row.resend_email_id));
+  assert.equal(f.tables.project_email_deliveries.filter(row=>row.status==='excluded').length,0);
+  const checkpoint=f.tables.project_email_deliveries.find(row=>row.email_type==='school_visitor_batch'&&row.payload.offset===100);
+  assert.equal(checkpoint.payload.outcomes.filter(row=>row.status==='excluded').length,100);
+  await f.worker.deliverSchoolDeadlineReminders(f.db,{now:new Date('2026-10-18T14:00:00Z')});
+  assert.equal(f.tables.project_email_deliveries.filter(row=>row.email_type==='school-deadline-reminder').length,100);
+});

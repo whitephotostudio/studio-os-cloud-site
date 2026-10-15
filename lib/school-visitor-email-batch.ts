@@ -174,8 +174,12 @@ export async function sendSchoolVisitorEmailBatch(service: SupabaseClient, input
   const persistHistory = async (outcomes: SchoolVisitorEmailOutcome[]) => {
     // Recipient-level history can be repaired from the durable batch results
     // on a replay, without making another request to the email provider.
+    // Exclusions belong to the batch/run audit, never sent-email history:
+    // they did not attempt delivery and must not displace actual deliveries.
+    const deliveries = outcomes.filter(row => row.status !== "excluded");
+    if (!deliveries.length) return;
     try {
-      const { error } = await service.from("project_email_deliveries").upsert(outcomes.map(row => ({
+      const { error } = await service.from("project_email_deliveries").upsert(deliveries.map(row => ({
         photographer_id: input.photographerId, recipient_email: row.recipientEmail,
         email_type: input.emailType ?? "mass-promo", dedupe_key: `${batchKey}:${hash(row.recipientEmail)}`,
         resend_email_id: row.providerId ?? null, subject: input.subject, status: row.status, error_message: row.error ?? null,
