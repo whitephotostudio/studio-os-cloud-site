@@ -98,3 +98,28 @@ test('photo readiness must intersect the same selected class; an outside-range s
   assert.deepEqual(audience(data, { classMode: 'range', classFrom: 'Grade 12 A', classTo: 'Grade 12' }, new Set(['Grade 7 A'])), []);
   assert.deepEqual(audience(data, { classMode: 'range', classFrom: 'Grade 7 A', classTo: 'Grade 12' }, new Set(['Grade 12 B'])).map(row => row.email), ['contact@example.com', 'roster@example.com']);
 });
+
+test('automatic reminders exclude linked students ordered through another saved parent address', () => {
+  for (const status of ['paid', 'payment_pending', 'cancelled', 'refunded']) {
+    for (const student of [{ id: 'seven-a' }, [{ id: 'seven-a' }]]) {
+      const data = fixture();
+      data.orders.push({ id: 'other-parent-order', parent_email: 'different-parent@example.com',
+        customer_email: 'checkout@example.com', status, student });
+      const reminders = audience(data, { classMode: 'range', classFrom: 'Grade 7 A', classTo: 'Grade 12' }, new Set(['Grade 7 A', 'Grade 8 A', 'Grade 12 B']));
+      assert.equal(reminders.some(row => row.email === 'roster@example.com'), false, `${status}: roster parent`);
+      assert.equal(reminders.some(row => row.email === 'contact@example.com'), false, `${status}: second saved parent contact`);
+      assert.equal(reminders.some(row => row.email === 'registered@example.com'), true, `${status}: unrelated parent stays eligible`);
+    }
+  }
+});
+
+test('same student names or registration classes never substitute for exact student order identity', () => {
+  const data = fixture();
+  data.orders.push({ id: 'another-child-order', parent_email: 'other-parent@example.com', status: 'paid',
+    student: { id: 'different-student', first_name: 'Child', last_name: 'Seven', class_name: 'Grade 7 A' } });
+  assert.equal(audience(data, {}, new Set(['Grade 7 A'])).some(row => row.email === 'roster@example.com'), true);
+  assert.equal(audience(data, {}, new Set(['Grade 7 A'])).some(row => row.email === 'contact@example.com'), true);
+  data.orders[0].student.id = 'seven-a';
+  assert.equal(audience(data, {}, new Set(['Grade 7 A'])).some(row => row.email === 'roster@example.com'), false);
+  assert.equal(audience(data, {}, new Set(['Grade 7 A'])).some(row => row.email === 'contact@example.com'), false);
+});
