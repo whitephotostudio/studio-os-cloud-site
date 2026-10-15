@@ -80,10 +80,16 @@ test('unpaid and cancelled orders are separate from no orders; paid siblings exc
 function database(tables, failures={}) {
   const reads=[];
   return { reads, failures, from(table) {
-    let school, id, user, start=0, end=Infinity;
-    const query={select(){return query;},eq(key,value){ if(key==='school_id')school=value; else if(key==='id')id=value; else if(key==='user_id')user=value; return query; },order(){return query;},range(a,b){start=a;end=b;return run(false);},maybeSingle(){return run(true);}};
-    async function run(single){reads.push({table,start,end,school});if(table===failures.failTable&&(failures.failOffset==null||failures.failOffset<0||start===failures.failOffset))return{data:null,error:{code:'XX000'}};
-      const rows=(tables[table]||[]).filter(row=>(!school||row.school_id===school)&&(!id||row.id===id)&&(!user||row.user_id===user));
+    let start=0, end=Infinity, mutation=null; const conditions=[], prefixes=[];
+    const matches=row=>conditions.every(([key,value])=>row[key]===value)&&prefixes.every(([key,value])=>String(row[key]).startsWith(value));
+    const query={select(){return query;},eq(key,value){conditions.push([key,value]);return query;},like(key,value){prefixes.push([key,value.replace(/%$/,'')]);return query;},order(){return query;},range(a,b){start=a;end=b;return run(false);},maybeSingle(){return run(true);},
+      upsert(rows,options){mutation={kind:'upsert',rows:Array.isArray(rows)?rows:[rows],options};return query;},
+      update(values){mutation={kind:'update',values};return query;},then(resolve,reject){return run(false).then(resolve,reject);}};
+    async function run(single){reads.push({table,start,end,school:conditions.find(([key])=>key==='school_id')?.[1]});if(table===failures.failTable&&(failures.failOffset==null||failures.failOffset<0||start===failures.failOffset))return{data:null,error:{code:'XX000'}};
+      if(mutation){tables[table]??=[];const inserted=[];if(mutation.kind===failures.failMutation)return{data:null,error:{code:'XX000'}};if(mutation.kind==='update')for(const row of tables[table].filter(matches))Object.assign(row,structuredClone(mutation.values));
+        else for(const value of mutation.rows){const prior=tables[table].find(row=>row.dedupe_key===value.dedupe_key);if(prior){if(!mutation.options?.ignoreDuplicates)Object.assign(prior,structuredClone(value));}else{const added={created_at:new Date().toISOString(),...structuredClone(value)};tables[table].push(added);inserted.push(added);}}
+        const affected=mutation.kind==='upsert'?inserted:tables[table].filter(matches);return{data:single?structuredClone(affected[0]??null):null,error:null};}
+      const rows=(tables[table]||[]).filter(matches);
       return {data:structuredClone(single?rows[0]??null:rows.slice(start,end+1)),error:null};}
     return query;
   }};
@@ -116,7 +122,9 @@ test('preview fingerprints reject a new order, registration changes, missing con
 });
 
 function emailRouteFixture() {
-  const data=example(), tables=tablesFor(data), sent=[];
+  const data=example(), tables=tablesFor(data), sent=[], batches=[];
+  const resend=load('lib/resend.ts');
+  const provider={send:async(inputs,options)=>{batches.push({inputs,options});sent.push(...inputs);return inputs.map((_,index)=>({id:`fixture-${batches.length}-${index}`}));}};
   tables.photographers=[{id:photographerId,user_id:'owner',business_name:'Studio'}]; tables.schools=[{id:schoolId,photographer_id:photographerId}];
   const db=database(tables);
   const route=load('app/api/dashboard/visitors/email/route.ts',{
@@ -125,11 +133,12 @@ function emailRouteFixture() {
     '@/lib/api-validation':{parseJson:async(req,schema)=>{const value=schema.safeParse(await req.json()); return value.success?{ok:true,data:value.data}:{ok:false,response:Response.json({ok:false},{status:400})};}},
     '@/lib/require-agreement':{guardAgreement:async()=>({ok:true})},
     '@/lib/private-media-references':{signedPrivateMediaReference:()=>''},
-    '@/lib/resend':{resendConfigured:()=>true,sendResendEmail:async value=>{sent.push(value);return{id:'fixture-only'};}},
+    '@/lib/resend':{resendConfigured:()=>true,ResendRequestError:resend.ResendRequestError,
+      sendResendEmailBatch:(inputs,options)=>provider.send(inputs,options),sendResendEmail:async value=>{sent.push(value);return{id:'fixture-only'};}},
   });
   const schoolAudience={schoolId,visitorIds:['v1'],filters:{...defaults,orders:'no_orders'}};
   const request=body=>({json:async()=>({subject:'Reminder',headline:'Your gallery',message:'Photos are ready',...body})});
-  return {route,data,tables,db,sent,schoolAudience,request};
+  return {route,data,tables,db,sent,batches,provider,ResendRequestError:resend.ResendRequestError,schoolAudience,request};
 }
 
 test('email preview is read-only; send resolves the reviewed school scope and ignores arbitrary custom recipients',async()=>{
@@ -137,8 +146,9 @@ test('email preview is read-only; send resolves the reviewed school scope and ig
   assert.equal(preview.status,200);assert.equal(f.sent.length,0);const reviewed=(await preview.json()).audience;
   const body={action:'send',recipients:['outside@example.com'],schoolAudience:{...f.schoolAudience,...reviewed,requestId:'33333333-3333-4333-8333-333333333333'}};
   assert.equal((await f.route.POST(f.request(body))).status,200);
-  assert.deepEqual(f.sent.map(row=>row.to),['parent@example.com']);assert.ok(f.sent[0].idempotencyKey.length<256);
-  assert.equal((await f.route.POST(f.request(body))).status,200);assert.equal(f.sent[1].idempotencyKey,f.sent[0].idempotencyKey);
+  assert.deepEqual(f.sent.map(row=>row.to),['parent@example.com']);assert.ok(f.batches[0].options.idempotencyKey.length<256);
+  const replay=await(await f.route.POST(f.request(body))).json();assert.equal(replay.sent,1);assert.equal(f.batches.length,1);
+  assert.equal(replay.outcomes[0].providerId,'fixture-1-0');
 });
 
 test('new buyers and foreign schools are refused before any provider send',async()=>{
@@ -185,4 +195,167 @@ test('GET exposes saved registrations, linked student names, and preregistration
   tables.schools[0].photographer_id='foreign'; const before=db.reads.length;
   assert.equal((await route.GET({},context)).status,404);
   assert.equal(db.reads.slice(before).some(read=>read.table==='orders'),false);
+});
+
+function visitorBatchFixture(count) {
+  const f=emailRouteFixture();
+  f.tables.school_gallery_visitors=Array.from({length:count},(_,index)=>({id:`v${index}`,viewer_email:`parent${String(index).padStart(5,'0')}@example.com`,school_id:schoolId}));
+  f.tables.pre_release_registrations=[];f.tables.students=[];f.tables.school_student_email_contacts=[];
+  f.schoolAudience.visitorIds=f.tables.school_gallery_visitors.map(row=>row.id);
+  return f;
+}
+async function reviewedBatch(f) {
+  const response=await f.route.POST(f.request({action:'preview',schoolAudience:f.schoolAudience}));
+  assert.equal(response.status,200);
+  const preview=await response.json();assert.equal(preview.batchSize,100);
+  return {action:'send',schoolAudience:{...f.schoolAudience,...preview.audience,requestId:'33333333-3333-4333-8333-333333333333'}};
+}
+
+test('32 recipients use one provider batch; 251 recipients continue without repeating accepted chunks',async()=>{
+  const first=visitorBatchFixture(32), body32=await reviewedBatch(first);
+  const result32=await(await first.route.POST(first.request(body32))).json();
+  assert.equal(result32.sent,32);assert.equal(result32.failed,0);assert.equal(result32.nextOffset,null);
+  assert.equal(first.batches.length,1);assert.equal(first.batches[0].inputs.length,32);
+  assert.equal(first.batches[0].inputs.every(row=>typeof row.to==='string'),true);
+  const f=visitorBatchFixture(251), body=await reviewedBatch(f), outcomes=[];
+  let offset=0;
+  do{const response=await f.route.POST(f.request({...body,offset}));assert.equal(response.status,200);
+    const result=await response.json();assert.equal(result.total,251);assert.equal(result.paused,false);
+    outcomes.push(...result.outcomes);offset=result.nextOffset;
+  }while(offset!==null);
+  assert.deepEqual(f.batches.map(batch=>batch.inputs.length),[100,100,51]);
+  assert.equal(new Set(outcomes.map(row=>row.recipientEmail)).size,251);
+  const replay=await(await f.route.POST(f.request({...body,offset:100}))).json();
+  assert.equal(replay.sent,100);assert.equal(replay.nextOffset,200);assert.equal(f.batches.length,3);
+  f.tables.project_email_deliveries.forEach(row=>row.created_at='2020-01-01');
+  assert.equal((await(await f.route.POST(f.request({...body,offset:0}))).json()).sent,100);
+  assert.equal(f.batches.length,3);
+});
+
+test('more than 5000 selected contacts can be reviewed and sent in bounded slices',async()=>{
+  const f=visitorBatchFixture(5001), body=await reviewedBatch(f);
+  assert.equal(body.schoolAudience.recipients.length,5001);
+  const result=await(await f.route.POST(f.request({...body,recipients:body.schoolAudience.recipients}))).json();
+  assert.equal(result.total,5001);assert.equal(result.sent,100);assert.equal(result.nextOffset,100);
+  assert.equal(f.batches.length,1);
+});
+
+test('provider throttling pauses the same chunk with exact failure details and respects Retry-After',async()=>{
+  const f=visitorBatchFixture(32), body=await reviewedBatch(f);let attempts=0;
+  f.provider.send=async()=>{attempts++;throw new f.ResendRequestError('Please wait for the provider rate window.',429,60_000,'rate_limit_exceeded');};
+  const paused=await(await f.route.POST(f.request(body))).json();
+  assert.equal(attempts,1);assert.equal(paused.failed,32);assert.equal(paused.pending,0);assert.equal(paused.nextOffset,0);
+  assert.equal(paused.paused,true);assert.equal(paused.retryAfterMs,60_000);assert.equal(paused.providerErrorCode,'rate_limit_exceeded');
+  assert.equal(paused.outcomes[0].error,'Please wait for the provider rate window.');
+  let retriedInputs,retriedKey;
+  f.provider.send=async(inputs,options)=>{retriedInputs=inputs;retriedKey=options.idempotencyKey;return inputs.map((_,i)=>({id:`recovered-${i}`}));};
+  const recovered=await(await f.route.POST(f.request(body))).json();
+  assert.equal(recovered.sent,32);assert.equal(recovered.paused,false);assert.equal(recovered.nextOffset,null);
+  assert.equal(retriedInputs.length,32);assert.ok(retriedKey.endsWith(':0'));
+});
+
+test('provider quota exhaustion stays visible and does not fan out failures to later chunks',async()=>{
+  const f=visitorBatchFixture(251), body=await reviewedBatch(f);let attempts=0;
+  f.provider.send=async()=>{attempts++;throw new f.ResendRequestError('Daily email quota exceeded.',429,null,'daily_quota_exceeded');};
+  const result=await(await f.route.POST(f.request(body))).json();
+  assert.equal(attempts,1);assert.equal(result.failed,100);assert.equal(result.total,251);
+  assert.equal(result.paused,true);assert.equal(result.nextOffset,0);assert.equal(result.providerErrorCode,'daily_quota_exceeded');
+});
+
+test('unconfirmed old attempts, changed text, and an unavailable ledger never cause another provider send',async()=>{
+  const f=visitorBatchFixture(32), body=await reviewedBatch(f);
+  f.provider.send=async()=>{throw new f.ResendRequestError('Provider unavailable.',503,60_000);};
+  const uncertain=await(await f.route.POST(f.request(body))).json();
+  assert.equal(uncertain.pending,32);assert.equal(uncertain.failed,0);
+  f.tables.project_email_deliveries.find(row=>row.email_type==='school_visitor_batch').created_at='2020-01-01';
+  let sends=0;f.provider.send=async()=>{sends++;return[];};
+  const expired=await(await f.route.POST(f.request(body))).json();assert.equal(expired.pending,32);assert.equal(expired.retryAllowed,false);assert.equal(sends,0);
+  assert.equal((await f.route.POST(f.request({...body,message:'Different text'}))).status,409);assert.equal(sends,0);
+  const unavailable=visitorBatchFixture(1), unavailableBody=await reviewedBatch(unavailable);
+  unavailable.db.failures.failTable='project_email_deliveries';
+  assert.equal((await unavailable.route.POST(unavailable.request(unavailableBody))).status,500);assert.equal(unavailable.batches.length,0);
+});
+
+test('accepted messages pause before the next slice if the durable checkpoint cannot be saved',async()=>{
+  const f=visitorBatchFixture(251), body=await reviewedBatch(f);
+  f.db.failures.failMutation='update';
+  const result=await(await f.route.POST(f.request(body))).json();
+  assert.equal(result.sent,100);assert.equal(result.failed,0);assert.equal(result.pending,0);
+  assert.equal(result.paused,true);assert.equal(result.nextOffset,0);assert.equal(result.retryAllowed,true);
+  assert.match(result.message,/provider accepted/);assert.equal(f.batches.length,1);
+  const key=f.batches[0].options.idempotencyKey, inputs=f.batches[0].inputs;
+  f.db.failures.failMutation=null;
+  f.provider.send=async(retried,options)=>{assert.deepEqual(retried,inputs);assert.equal(options.idempotencyKey,key);return retried.map((_,i)=>({id:`fixture-1-${i}`}));};
+  const replay=await(await f.route.POST(f.request(body))).json();assert.equal(replay.sent,100);assert.equal(replay.nextOffset,100);assert.equal(replay.paused,false);
+});
+
+test('short provider throttling retries the identical batch with provider pacing',async()=>{
+  const f=visitorBatchFixture(32), body=await reviewedBatch(f);const calls=[], waits=[];
+  const originalTimeout=globalThis.setTimeout;
+  globalThis.setTimeout=(resolve,delay)=>{waits.push(delay);queueMicrotask(resolve);return 0;};
+  f.provider.send=async(inputs,options)=>{calls.push({inputs,options});if(calls.length===1)throw new f.ResendRequestError('Too many requests.',429,1250,'rate_limit_exceeded');return inputs.map((_,i)=>({id:`retry-${i}`}));};
+  try {
+    const result=await(await f.route.POST(f.request(body))).json();assert.equal(result.sent,32);assert.equal(calls.length,2);
+    assert.deepEqual(calls[0],calls[1]);assert.deepEqual(waits,[1250]);
+  }finally{globalThis.setTimeout=originalTimeout;}
+});
+
+test('accepted checkpoints backfill missing recipient history without a provider resend',async()=>{
+  const f=visitorBatchFixture(32), body=await reviewedBatch(f);
+  const initial=await(await f.route.POST(f.request(body))).json();assert.equal(initial.sent,32);
+  f.tables.project_email_deliveries=f.tables.project_email_deliveries.filter(row=>row.email_type!=='mass-promo');
+  const replay=await(await f.route.POST(f.request(body))).json();assert.equal(replay.sent,32);assert.equal(f.batches.length,1);
+  assert.equal(f.tables.project_email_deliveries.filter(row=>row.email_type==='mass-promo').length,32);
+});
+
+test('invalid idempotent payload conflicts require provider review, while concurrent conflicts can retry safely',async()=>{
+  const f=visitorBatchFixture(32), body=await reviewedBatch(f);
+  f.provider.send=async()=>{throw new f.ResendRequestError('This idempotency key was used with different email data.',409,null,'invalid_idempotent_request');};
+  const conflict=await(await f.route.POST(f.request(body))).json();assert.equal(conflict.pending,32);assert.equal(conflict.retryAllowed,false);
+  let sends=0;const originalTimeout=globalThis.setTimeout;
+  globalThis.setTimeout=resolve=>{queueMicrotask(resolve);return 0;};
+  f.provider.send=async inputs=>{sends++;if(sends===1)throw new f.ResendRequestError('This request is already in progress.',409,null,'concurrent_idempotent_requests');return inputs.map((_,i)=>({id:`recovered-${i}`}));};
+  try{const accepted=await(await f.route.POST(f.request(body))).json();assert.equal(accepted.sent,32);assert.equal(sends,2);}finally{globalThis.setTimeout=originalTimeout;}
+});
+
+test('a later rejection cannot erase an earlier uncertain provider attempt',async()=>{
+  const f=visitorBatchFixture(32), body=await reviewedBatch(f);let sends=0;
+  const originalTimeout=globalThis.setTimeout;globalThis.setTimeout=resolve=>{queueMicrotask(resolve);return 0;};
+  f.provider.send=async()=>{sends++;if(sends===1)throw new Error('Connection lost before the provider response.');throw new f.ResendRequestError('Daily quota exceeded.',429,null,'daily_quota_exceeded');};
+  try{const result=await(await f.route.POST(f.request(body))).json();assert.equal(result.pending,32);assert.equal(result.failed,0);assert.equal(result.paused,true);assert.equal(sends,2);}finally{globalThis.setTimeout=originalTimeout;}
+});
+
+test('a malformed saved address fails individually while valid recipients continue in the same batch',async()=>{
+  const f=visitorBatchFixture(101);f.tables.school_gallery_visitors[1].viewer_email='bad-address';
+  const body=await reviewedBatch(f), result=await(await f.route.POST(f.request(body))).json();
+  assert.equal(result.sent,99);assert.equal(result.failed,1);assert.equal(result.pending,0);assert.equal(result.paused,false);assert.equal(result.nextOffset,100);
+  assert.equal(f.batches[0].inputs.length,99);assert.equal(f.batches[0].inputs.some(row=>row.to==='bad-address'),false);
+  const failed=result.outcomes.find(row=>row.status==='failed');assert.equal(failed.recipientEmail,'bad-address');assert.match(failed.error,/saved email address is invalid/);
+  const replay=await(await f.route.POST(f.request(body))).json();assert.equal(replay.sent,99);assert.equal(replay.failed,1);assert.equal(f.batches.length,1);
+  const rest=await(await f.route.POST(f.request({...body,offset:100}))).json();assert.equal(rest.sent,1);assert.equal(rest.nextOffset,null);
+});
+
+test('an all-invalid slice records failures without making a provider request',async()=>{
+  const f=visitorBatchFixture(1);f.tables.school_gallery_visitors[0].viewer_email='bad-address';const body=await reviewedBatch(f);
+  const result=await(await f.route.POST(f.request(body))).json();assert.equal(result.sent,0);assert.equal(result.failed,1);assert.equal(result.paused,false);assert.equal(result.nextOffset,null);assert.equal(f.batches.length,0);
+});
+
+test('uncertainty survives browser retries: a later 429 cannot mark an earlier unconfirmed batch as failed',async()=>{
+  const f=visitorBatchFixture(32), body=await reviewedBatch(f);
+  f.provider.send=async()=>{throw new f.ResendRequestError('Provider unavailable.',503,60_000);};
+  const first=await(await f.route.POST(f.request(body))).json();assert.equal(first.pending,32);assert.equal(first.failed,0);
+  f.provider.send=async()=>{throw new f.ResendRequestError('Rate window exceeded.',429,60_000,'rate_limit_exceeded');};
+  const second=await(await f.route.POST(f.request(body))).json();assert.equal(second.pending,32);assert.equal(second.failed,0);assert.equal(second.nextOffset,0);
+});
+
+test('read-only recovery confirms accepted recipients after audience changes and refuses uncertain fresh resends',async()=>{
+  const f=visitorBatchFixture(101), body=await reviewedBatch(f);
+  await f.route.POST(f.request(body));f.tables.orders.push({...order({parent_email:f.tables.school_gallery_visitors[0].viewer_email}),school_id:schoolId});
+  const checked=await(await f.route.POST(f.request({...body,action:'status'}))).json();
+  assert.equal(checked.ok,true);assert.equal(checked.outcomes.filter(row=>row.status==='sent').length,100);assert.equal(checked.canReviewRemaining,true);assert.equal(f.batches.length,1);
+  f.tables.orders=[];f.provider.send=async()=>{throw new f.ResendRequestError('Unconfirmed provider response.',503,60_000);};
+  await f.route.POST(f.request({...body,offset:100}));
+  const pending=await(await f.route.POST(f.request({...body,action:'status'}))).json();assert.equal(pending.canReviewRemaining,false);assert.equal(pending.uncertainBatches.length,1);assert.equal(pending.uncertainBatches[0].offset,100);
+  assert.equal(pending.outcomes.length,100);assert.equal(f.batches.length,1);
+  f.tables.schools[0].photographer_id='foreign';assert.equal((await f.route.POST(f.request({...body,action:'status'}))).status,404);
 });

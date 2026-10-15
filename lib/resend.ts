@@ -35,13 +35,64 @@ export type ResendSentEmailSummary = {
 export class ResendRequestError extends Error {
   status: number;
   retryAfterMs: number | null;
+  code: string | null;
 
-  constructor(message: string, status: number, retryAfterMs: number | null) {
+  constructor(message: string, status: number, retryAfterMs: number | null, code: string | null = null) {
     super(message);
     this.name = "ResendRequestError";
     this.status = status;
     this.retryAfterMs = retryAfterMs;
+    this.code = code;
   }
+}
+
+/** The provider accepts at most 100 distinct messages in one request. Each
+ * message keeps its own To address, so recipients never see the audience. */
+export async function sendResendEmailBatch(
+  inputs: SendResendEmailInput[],
+  options: { idempotencyKey: string; timeoutMs?: number },
+) {
+  const apiKey = clean(process.env.RESEND_API_KEY);
+  if (!apiKey) throw new Error("RESEND_API_KEY is not configured.");
+  if (!inputs.length || inputs.length > 100) throw new Error("A provider batch must contain between 1 and 100 emails.");
+  if (!clean(options.idempotencyKey)) throw new Error("An email batch requires an idempotency key.");
+  if (inputs.some(input => input.attachments?.length)) throw new Error("The email provider does not support attachments in batch sends.");
+  const response = await fetch("https://api.resend.com/emails/batch", {
+    method: "POST",
+    signal: AbortSignal.timeout(options.timeoutMs ?? 10_000),
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+      "Idempotency-Key": options.idempotencyKey,
+    },
+    body: JSON.stringify(inputs.map(input => ({
+      from: `${senderName(input.fromName)} <${senderEmail()}>`,
+      to: Array.isArray(input.to) ? input.to : [input.to],
+      subject: clean(input.subject),
+      html: input.html,
+      text: clean(input.text) || undefined,
+      reply_to: resolveReplyTo(input.replyTo) || undefined,
+      tags: input.tags?.filter(tag => clean(tag.name) && clean(tag.value)) ?? [],
+    }))),
+    cache: "no-store",
+  });
+  const payload = await response.json().catch(() => ({})) as {
+    data?: { id?: string }[];
+    name?: string;
+    message?: string;
+    error?: { message?: string; name?: string };
+  };
+  if (!response.ok) throw new ResendRequestError(
+    payload.error?.message || payload.message || "Failed to send email batch with Resend.",
+    response.status,
+    retryAfterMilliseconds(response.headers.get("retry-after")),
+    payload.error?.name || payload.name || null,
+  );
+  // A malformed success is uncertain, never evidence of failed delivery.
+  if (!Array.isArray(payload.data) || payload.data.length !== inputs.length || payload.data.some(row => !clean(row.id))) {
+    throw new Error("The email provider returned an incomplete batch result. Retry the same batch to confirm its outcome.");
+  }
+  return payload.data.map(row => ({ id: clean(row.id) }));
 }
 
 function clean(value: string | null | undefined) {

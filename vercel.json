@@ -39,6 +39,10 @@
     {
       "path": "/api/cron/order-production-cleanup",
       "schedule": "*/30 * * * *"
+    },
+    {
+      "path": "/api/cron/school-deadline-reminders",
+      "schedule": "0 * * * *"
     }
   ],
   "ignoreCommand": "echo \"$VERCEL_GIT_COMMIT_MESSAGE\" | grep -qF '[skip build]'"

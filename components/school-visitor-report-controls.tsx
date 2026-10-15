@@ -1,4 +1,4 @@
-import type { SchoolVisitorFilters } from "@/lib/school-visitor-filters";
+import { compareSchoolVisitorClasses, DEFAULT_SCHOOL_VISITOR_FILTERS, isSchoolVisitorClassRangeValid, schoolVisitorClassGrade, type SchoolVisitorFilters } from "@/lib/school-visitor-filters";
 
 export function SchoolVisitorReportControls({ filters, onChange, classNames, counts }: {
   filters: SchoolVisitorFilters;
@@ -10,6 +10,11 @@ export function SchoolVisitorReportControls({ filters, onChange, classNames, cou
     ["all", "Contacts"], ["ordered", "With orders"], ["no_orders", "No orders yet"],
     ["paid", "Paid buyers"], ["digitals", "Digital buyers"],
   ] as const;
+  const sortedClasses = [...classNames].sort(compareSchoolVisitorClasses);
+  const rangeMode = filters.classMode === "range";
+  const grades = [...new Set(classNames.map(schoolVisitorClassGrade).filter((grade): grade is number => grade !== null))];
+  const endOptions = [...new Set([...sortedClasses, ...grades.map(grade => `Grade ${grade}`)])].sort(compareSchoolVisitorClasses);
+  const invalidRange = rangeMode && !isSchoolVisitorClassRangeValid(filters.classFrom, filters.classTo);
   const control = { padding: "9px 12px", border: "1px solid #ddd", borderRadius: 6, background: "#fff", color: "#111", fontSize: 13 };
   return <div style={{ marginBottom: 18, color: "#111" }}>
     <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 16 }}>
@@ -22,12 +27,33 @@ export function SchoolVisitorReportControls({ filters, onChange, classNames, cou
       </button>)}
     </div>
     <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "end" }}>
-      <label style={{ fontSize: 12, display: "grid", gap: 5 }}>Class
-        <select aria-label="Filter by class" value={filters.className} onChange={event => onChange({ ...filters, className: event.target.value })} style={control}>
-          <option value="">All classes</option>
-          {classNames.map(name => <option key={name} value={name}>{name}</option>)}
+      <label style={{ fontSize: 12, display: "grid", gap: 5 }}>Class selection
+        <select aria-label="Class selection mode" value={rangeMode ? "range" : "single"} onChange={event => {
+          const classMode = event.target.value as "single" | "range";
+          onChange({ ...filters, classMode, classFrom: filters.classFrom || filters.className || sortedClasses[0] || "", classTo: filters.classTo || sortedClasses.at(-1) || "" });
+        }} style={control}>
+          <option value="single">All classes / one class</option><option value="range" disabled={!sortedClasses.length}>Class range</option>
         </select>
       </label>
+      {rangeMode ? <>
+        <label style={{ fontSize: 12, display: "grid", gap: 5 }}>From class
+          <select aria-label="Filter from class" value={filters.classFrom || ""} onChange={event => onChange({ ...filters, classFrom: event.target.value })} style={control}>
+            <option value="" disabled>Choose starting class</option>
+            {sortedClasses.map(name => <option key={name} value={name}>{name}</option>)}
+          </select>
+        </label>
+        <label style={{ fontSize: 12, display: "grid", gap: 5 }}>Through class or grade
+          <select aria-label="Filter through class or grade" value={filters.classTo || ""} onChange={event => onChange({ ...filters, classTo: event.target.value })} style={control}>
+            <option value="" disabled>Choose ending class or grade</option>
+            {endOptions.map(name => <option key={name} value={name}>{/^Grade \d+$/.test(name) ? `${name} (all sections)` : name}</option>)}
+          </select>
+        </label>
+      </> : <label style={{ fontSize: 12, display: "grid", gap: 5 }}>Class
+        <select aria-label="Filter by class" value={filters.className} onChange={event => onChange({ ...filters, className: event.target.value })} style={control}>
+          <option value="">All classes</option>
+          {sortedClasses.map(name => <option key={name} value={name}>{name}</option>)}
+        </select>
+      </label>}
       <label style={{ fontSize: 12, display: "grid", gap: 5 }}>Orders
         <select aria-label="Filter by orders" value={filters.orders} onChange={event => onChange({ ...filters, orders: event.target.value as SchoolVisitorFilters["orders"] })} style={control}>
           <option value="all">All contacts</option><option value="ordered">Has placed an order</option>
@@ -42,10 +68,11 @@ export function SchoolVisitorReportControls({ filters, onChange, classNames, cou
           <option value="downloads">Downloaded photos</option>
         </select>
       </label>
-      <button type="button" onClick={() => onChange({ search: "", className: "", orders: "all", activity: "all" })} style={{ ...control, cursor: "pointer" }}>Clear filters</button>
+      <button type="button" onClick={() => onChange({ ...DEFAULT_SCHOOL_VISITOR_FILTERS })} style={{ ...control, cursor: "pointer" }}>Clear filters</button>
     </div>
     <div style={{ color: "#666", fontSize: 12, marginTop: 10 }}>
-      Counts are contacts matching the class, search and activity filters. “No orders yet” excludes unpaid and cancelled orders.
+      {invalidRange ? <span role="alert">Choose a starting class at or before the ending class. </span> : rangeMode ? <>The range includes both ends; a grade includes every section. </> : null}
+      Counts are contacts matching the class{rangeMode ? " range" : ""}, search and activity filters. “No orders yet” excludes unpaid and cancelled orders.
     </div>
   </div>;
 }
