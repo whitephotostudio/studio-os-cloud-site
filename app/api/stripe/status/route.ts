@@ -23,6 +23,7 @@ import {
   isStripeBillingActive,
   listRecentStripeInvoices,
   resolveFreeTrialEndsAt,
+  resolveSubscriptionCurrency,
   retrieveStripeAccount,
   retrieveStripeSubscription,
   syncConnectState,
@@ -69,6 +70,9 @@ const EMPTY_PROFILE = {
   studioEmail: "",
   billingEmail: "",
   billingCurrency: DEFAULT_BILLING_CURRENCY,
+  subscriptionCurrency: null,
+  subscriptionCountryRequired: false,
+  creditCurrency: "cad",
   businessCountry: null,
   businessCountryLocked: false,
   stripeAccountCountry: null,
@@ -103,6 +107,7 @@ const EMPTY_PROFILE = {
   billingCatalog: {
     ...pricingCatalog,
     currency: DEFAULT_BILLING_CURRENCY,
+    creditCurrency: "cad",
     plans: Object.values(pricingCatalog.plans),
     orderUsageRateCents: ORDER_USAGE_RATE_CENTS,
     creditPacks: Object.values(CREDIT_PACK_DEFS),
@@ -233,11 +238,13 @@ export async function GET(request: NextRequest) {
       }
     }
 
+    let verifiedSubscription: Awaited<ReturnType<typeof retrieveStripeSubscription>> | undefined;
     if (photographer.stripe_subscription_id) {
       try {
         const subscription = await retrieveStripeSubscription(photographer.stripe_subscription_id);
         const synced = await syncSubscriptionStateFromStripe(service, photographer, subscription);
         photographer = synced.photographer;
+        verifiedSubscription = synced.subscription || subscription;
       } catch (error) {
         warnings.push(
           error instanceof Error
@@ -246,6 +253,20 @@ export async function GET(request: NextRequest) {
         );
       }
     }
+
+    let subscriptionCurrency: "cad" | "usd" | "aud" | "gbp" | null = "cad";
+    let subscriptionCountryRequired = false;
+    // Rollback must still display an already-agreed foreign subscription in
+    // its actual currency. New offers require an explicit saved country.
+    try {
+      subscriptionCurrency = await resolveSubscriptionCurrency(photographer, verifiedSubscription);
+    } catch (error) {
+      subscriptionCurrency = null;
+      subscriptionCountryRequired = !photographer.stripe_subscription_id &&
+        !photographer.business_country && !photographer.stripe_connect_country;
+      warnings.push(error instanceof Error ? error.message : "Unable to verify your subscription currency.");
+    }
+    const subscriptionCatalog = getPricingCatalogSnapshot(subscriptionCurrency || "cad");
 
     const credits = await getCreditBalanceDetails(service, user.id, photographer.id, {
       isPlatformAdmin: photographer.is_platform_admin,
@@ -306,6 +327,9 @@ export async function GET(request: NextRequest) {
       billingEmail:
         photographer.billing_email || photographer.studio_email || user.email || "",
       billingCurrency: photographer.billing_currency || DEFAULT_BILLING_CURRENCY,
+      subscriptionCurrency,
+      subscriptionCountryRequired,
+      creditCurrency: "cad",
       businessCountry: photographer.business_country || (stripeAccountCountry === "US" || stripeAccountCountry === "CA" ? stripeAccountCountry : null),
       businessCountryLocked: Boolean(stripeAccountId || photographer.stripe_connect_country),
       stripeAccountCountry,
@@ -334,9 +358,10 @@ export async function GET(request: NextRequest) {
       studioUsage: usageSummary,
       recentInvoices,
       billingCatalog: {
-        ...pricingCatalog,
-        currency: DEFAULT_BILLING_CURRENCY,
-        plans: Object.values(pricingCatalog.plans),
+        ...subscriptionCatalog,
+        currency: subscriptionCatalog.currency,
+        creditCurrency: "cad",
+        plans: Object.values(subscriptionCatalog.plans),
         orderUsageRateCents: ORDER_USAGE_RATE_CENTS,
         creditPacks,
       },

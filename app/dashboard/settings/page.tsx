@@ -62,6 +62,9 @@ type StripeStatus = {
   studioEmail: string;
   billingEmail: string;
   billingCurrency: string;
+  subscriptionCurrency?: string | null;
+  subscriptionCountryRequired?: boolean;
+  creditCurrency?: "cad";
   businessCountry: "CA" | "US" | null;
   businessCountryLocked: boolean;
   stripeAccountCountry: string | null;
@@ -421,6 +424,10 @@ export default function SettingsPage() {
   const [studioId, setStudioId] = useState<string | null>(null);
   const [billingEmail, setBillingEmail] = useState("");
   const [billingCurrency, setBillingCurrency] = useState("cad");
+  const [subscriptionCurrency, setSubscriptionCurrency] = useState<string | null>(null);
+  const [subscriptionCurrencyUnavailable, setSubscriptionCurrencyUnavailable] = useState(false);
+  const [subscriptionCountryRequired, setSubscriptionCountryRequired] = useState(false);
+  const [creditCurrency, setCreditCurrency] = useState("cad");
   const [businessCountry, setBusinessCountry] = useState("");
   const [businessCountryLocked, setBusinessCountryLocked] = useState(false);
   const [stripeAccountCountry, setStripeAccountCountry] = useState<string | null>(null);
@@ -651,6 +658,10 @@ export default function SettingsPage() {
       }
       setBillingEmail(json.billingEmail || "");
       setBillingCurrency((json.billingCurrency || "cad").toLowerCase());
+      setSubscriptionCurrency(json.subscriptionCurrency || null);
+      setSubscriptionCurrencyUnavailable(json.subscriptionCurrency === null);
+      setSubscriptionCountryRequired(Boolean(json.subscriptionCountryRequired));
+      setCreditCurrency(json.creditCurrency === "cad" ? json.creditCurrency : "cad");
       setBusinessCountry(json.businessCountry || "");
       setBusinessCountryLocked(Boolean(json.businessCountryLocked));
       setStripeAccountCountry(json.stripeAccountCountry || null);
@@ -1201,6 +1212,14 @@ export default function SettingsPage() {
   }
 
   async function handlePlanSave() {
+    if (!stripeSubscriptionId && subscriptionCountryRequired) {
+      setError("Select and save your business country under Studio info before starting a subscription.");
+      return;
+    }
+    if (subscriptionCurrencyUnavailable) {
+      setError("Your subscription currency could not be verified. Refresh billing settings before changing your plan or photography keys.");
+      return;
+    }
     const hasSubscription = Boolean(stripeSubscriptionId);
     const nextExtraDesktopKeys =
       desiredPlanCode === "studio" ? desiredExtraDesktopKeys : 0;
@@ -1246,10 +1265,10 @@ export default function SettingsPage() {
   const activePlan =
     billingCatalog.plans.find((plan) => plan.code === (subscriptionPlanCode || desiredPlanCode)) ||
     billingCatalog.plans[0];
-  const platformBillingCurrency = billingCatalog.currency || "cad";
+  const platformBillingCurrency = subscriptionCurrency || billingCatalog.currency || "cad";
   const pricingProfile = billingCatalog.pricingProfile || "legacy";
   const newGalleryPricing = pricingProfile !== "legacy";
-  const orderFeeCopy = getOrderFeeCopy(pricingProfile);
+  const orderFeeCopy = getOrderFeeCopy(pricingProfile, subscriptionCurrencyUnavailable ? null : platformBillingCurrency);
   const selectedExtraKeyPrice =
     desiredBillingInterval === "year"
       ? billingCatalog.extraDesktopKeyAnnualCents
@@ -1932,7 +1951,7 @@ export default function SettingsPage() {
             </div>
 
             <div style={{ fontSize: 13, color: "#64748b", lineHeight: 1.7, marginTop: 14, padding: "12px 14px", background: "#f0fdf4", borderRadius: 14, border: "1px solid #d1fae5" }}>
-              Contact info and sales currency will appear on your customer invoices, order forms, and galleries. Sales currency also applies to desktop price lists. Your Studio OS subscription is billed separately in CAD.
+              Contact info and sales currency will appear on your customer invoices, order forms, and galleries. Sales currency also applies to desktop price lists. Your Studio OS subscription is billed separately{subscriptionCountryRequired ? "; save your business country to confirm its currency" : subscriptionCurrencyUnavailable ? "; refresh billing status to verify its currency" : ` in ${platformBillingCurrency.toUpperCase()}`}. AI credit packs are billed in CAD.
             </div>
           </div>
         </div>
@@ -2094,7 +2113,7 @@ export default function SettingsPage() {
                       {current ? <CheckCircle2 size={18} color="#2563eb" /> : null}
                     </div>
                     <div style={{ marginTop: 8, fontSize: 22, fontWeight: 900, color: "#0f172a" }}>
-                      {formatMoney(activePrice, platformBillingCurrency)}
+                      {subscriptionCurrencyUnavailable ? "Currency needs verification" : formatMoney(activePrice, platformBillingCurrency)}
                     </div>
                     <div style={{ marginTop: 4, fontSize: 12, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: "#64748b" }}>
                       {desiredBillingInterval === "year" ? "Annual prepaid" : "Monthly"}
@@ -2137,6 +2156,8 @@ export default function SettingsPage() {
               {newGalleryPricing && <div style={{ marginTop: 4 }}>These are prices for new subscriptions and approved plan changes. Existing subscriptions keep their current Stripe prices.</div>}
             </div>
 
+            {subscriptionCurrencyUnavailable && !subscriptionCountryRequired ? <p role="status" style={{ marginTop: 16, color: "#92400e", fontSize: 13 }}>Your subscription currency could not be verified. Refresh billing status before changing your plan or photography keys. CAD credit packs remain available separately.</p> : null}
+            {subscriptionCountryRequired && !stripeSubscriptionId ? <p role="status" style={{ marginTop: 16, color: "#92400e", fontSize: 13 }}>Select and save your business country under Studio info before starting a subscription. Subscription billing currently supports Canada and the United States; Australia and UK customer ordering are not available yet.</p> : null}
             <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 16, marginTop: 18, alignItems: "end" }}>
               <label style={{ display: "block" }}>
                 <div style={{ marginBottom: 8, fontSize: 13, fontWeight: 700, color: "#475569" }}>
@@ -2172,6 +2193,7 @@ export default function SettingsPage() {
                     ? desiredPlanCode === "core"
                       ? "App Plan includes 1 photography key. Upgrade to Studio for a second key or any extra keys."
                       : "Web Gallery stays web-only. Upgrade to App Plan or Studio to unlock the Studio OS App."
+                    : subscriptionCurrencyUnavailable ? "Refresh billing status to verify extra-key pricing."
                     : `${formatMoney(selectedExtraKeyPrice, platformBillingCurrency)} per extra key ${
                         desiredBillingInterval === "year"
                           ? "per year, billed in advance."
@@ -2201,7 +2223,7 @@ export default function SettingsPage() {
                     <button
                       type="button"
                       onClick={handlePlanSave}
-                      disabled={billingBusyAction === "plan" || !sessionReady}
+                      disabled={billingBusyAction === "plan" || !sessionReady || subscriptionCurrencyUnavailable || (!stripeSubscriptionId && subscriptionCountryRequired)}
                       style={{
                         border: "1px solid #0f172a",
                         borderRadius: 18,
@@ -2358,6 +2380,7 @@ export default function SettingsPage() {
               <div style={{ marginTop: 6, fontSize: 12, color: "#64748b" }}>Premium Cloud uses Studio OS premium cloud processing for cleaner, faster results.</div>
             </div>
 
+            <p style={{ color: "#64748b", fontSize: 13 }}>All credit packs are billed in {creditCurrency.toUpperCase()}, separately from your subscription.</p>
             <div style={{ display: "grid", gap: 14 }}>
               {billingCatalog.creditPacks.map((pack) => {
                 const actionKey = `credits:${pack.code}`;
@@ -2379,7 +2402,7 @@ export default function SettingsPage() {
                         {pack.label || pack.name}
                       </div>
                       <div style={{ marginTop: 4, color: "#64748b" }}>
-                        {pack.credits} monthly credits for {formatMoney(pack.priceCents, platformBillingCurrency)}
+                        {pack.credits} monthly credits for {formatMoney(pack.priceCents, creditCurrency)}
                       </div>
                       <div style={{ marginTop: 2, color: "#94a3b8", fontSize: 12 }}>
                         Approx. {Math.floor(pack.credits / 4)} Premium Cloud removals
@@ -2709,7 +2732,7 @@ export default function SettingsPage() {
                 ))
               ) : (
                 <div style={{ borderRadius: 18, border: "1px dashed #cbd5e1", background: "#f8fafc", padding: "18px 20px", color: "#64748b", lineHeight: 1.7 }}>
-                  No Photography Keys are active on this account yet. Web Gallery does not include app access. App Plan includes 1 key. Studio includes 2 keys, and only Studio can add extra keys for $55 each.
+                  No Photography Keys are active on this account yet. Web Gallery does not include app access. App Plan includes 1 key. Studio includes 2 keys, and only Studio can add extra keys. {subscriptionCurrencyUnavailable ? "Refresh billing status to verify extra-key pricing." : `${formatMoney(billingCatalog.extraDesktopKeyMonthlyCents, platformBillingCurrency)} each per month.`}
                 </div>
               )}
             </div>
@@ -2769,12 +2792,14 @@ export default function SettingsPage() {
                 {billingCatalog.plans.map(plan => <PlanCompareCard
                   key={plan.code}
                   name={newGalleryPricing ? plan.publicName || plan.label : planDisplayLabel(plan.code) || plan.label}
+                  currency={platformBillingCurrency}
+                  currencyAvailable={!subscriptionCurrencyUnavailable}
                   monthly={plan.priceCents / 100}
                   yearly={plan.annualPriceCents / 100}
                   yearlySavings={`Save ${plan.annualSavingsPercent ?? billingCatalog.annualDiscountPercent}%`}
                   appAccess={plan.includedDesktopKeys > 0}
                   keysIncluded={plan.includedDesktopKeys}
-                  extras={plan.code === "core" ? "Upgrade to Studio for a 2nd key" : plan.code === "studio" ? `${formatMoney(billingCatalog.extraDesktopKeyMonthlyCents, platformBillingCurrency)} each extra key per month` : null}
+                  extras={plan.code === "core" ? "Upgrade to Studio for a 2nd key" : plan.code === "studio" ? subscriptionCurrencyUnavailable ? "Refresh billing status to verify extra-key pricing." : `${formatMoney(billingCatalog.extraDesktopKeyMonthlyCents, platformBillingCurrency)} each extra key per month` : null}
                   highlight={plan.code === "studio"}
                 />)}
               </div>
@@ -3980,6 +4005,8 @@ function NumberField({
  */
 function PlanCompareCard({
   name,
+  currency,
+  currencyAvailable = true,
   monthly,
   yearly,
   yearlySavings,
@@ -3989,6 +4016,8 @@ function PlanCompareCard({
   highlight,
 }: {
   name: string;
+  currency: string;
+  currencyAvailable?: boolean;
   monthly: number;
   yearly: number;
   yearlySavings: string;
@@ -4033,11 +4062,11 @@ function PlanCompareCard({
       <div style={{ fontSize: 14, fontWeight: 900, color: "#0f172a" }}>{name}</div>
       <div>
         <div style={{ fontSize: 22, fontWeight: 900, color: "#0f172a", lineHeight: 1.1 }}>
-          {formatMoney(Math.round(monthly * 100), "cad")}
+          {currencyAvailable ? formatMoney(Math.round(monthly * 100), currency) : "Currency needs verification"}
           <span style={{ fontSize: 12, fontWeight: 700, color: "#64748b", marginLeft: 4 }}>/mo</span>
         </div>
         <div style={{ marginTop: 4, fontSize: 12, fontWeight: 700, color: "#15803d" }}>
-          {formatMoney(Math.round(yearly * 100), "cad")}/yr · {yearlySavings}
+          {currencyAvailable ? `${formatMoney(Math.round(yearly * 100), currency)}/yr · ${yearlySavings}` : "Refresh billing status"}
         </div>
       </div>
       <div style={{ height: 1, background: "#e5e7eb", margin: "4px 0" }} />

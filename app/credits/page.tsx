@@ -50,7 +50,7 @@ export default function CreditsPage() {
       if (!response.ok || !data.ok) throw new Error(data.message || "Unable to load your credits. Please try again.");
       const packs: Pack[] = data.billingCatalog.creditPacks;
       setStatus({ signedIn: true, creditBalance: data.creditBalance, packs,
-        currency: data.billingCatalog.currency || "cad", expiresAt: data.creditExpiresAt,
+        currency: data.creditCurrency === "cad" ? data.creditCurrency : "cad", expiresAt: data.creditExpiresAt,
         creditDebt: data.creditDebt, isOwner: data.isPlatformAdmin, premiumCloudAvailable: data.premiumCloudAvailable });
       setSelected(selectedCreditPack(window.location.search, packs));
     } catch (cause) {
@@ -120,7 +120,7 @@ export default function CreditsPage() {
               <div><div className="text-sm text-neutral-500">Available balance</div><div className="mt-1 text-2xl font-bold">{status.isOwner ? "Owner access included" : `${status.creditBalance.toLocaleString()} credits`}</div></div>
               <button onClick={() => void refresh()} disabled={Boolean(busy)} className="rounded-xl border border-neutral-300 px-4 py-3 text-sm font-semibold disabled:opacity-50">Refresh balance</button>
             </div>
-            <p className="mt-5 text-sm leading-6 text-neutral-600">Purchased credits expire at your next monthly billing date and do not carry over. {status.expiresAt ? `Current credits expire ${new Date(status.expiresAt).toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" })}. ` : ""}Payments are processed securely by Stripe. After purchasing, refresh your credit balance in the desktop app.</p>
+            <p className="mt-5 text-sm leading-6 text-neutral-600">Credit packs are billed in CAD. Purchased credits expire at your next monthly billing date and do not carry over. {status.expiresAt ? `Current credits expire ${new Date(status.expiresAt).toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" })}. ` : ""}Payments are processed securely by Stripe. After purchasing, refresh your credit balance in the desktop app.</p>
             {!status.premiumCloudAvailable && <p role="status" className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-900">Premium Cloud is currently unavailable. Credits can be used for local removal with Photoshop. Buy only if you can use them before your next monthly billing date.</p>}
             {Boolean(status.creditDebt) && <p className="mt-3 text-sm leading-6 text-amber-900">Your next purchase first settles {status.creditDebt} credits from a refunded purchase that was already used.</p>}
             <div className="mt-6 grid gap-4 sm:grid-cols-2">

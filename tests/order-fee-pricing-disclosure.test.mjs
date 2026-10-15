@@ -31,7 +31,7 @@ const surfaces = [
 ];
 
 /** Render the actual components and catalog; only shell UI and initial cadence are substituted. */
-function serverHtml(surface, interval, env = {}) {
+function serverHtml(surface, interval, env = {}, currency = "cad") {
   let stateIndex = 0;
   const react = {...React, useState(initial) {
     if (stateIndex++ === 0) {
@@ -44,6 +44,7 @@ function serverHtml(surface, interval, env = {}) {
     react,
     'react/jsx-runtime': jsxRuntime,
     'lucide-react': require('lucide-react'),
+    'next/navigation': {useRouter:()=>({push(){}})},
     'next/link': {__esModule: true, default: ({children, ...props}) => React.createElement('a', props, children)},
     '@/components/marketing/Reveal': {Reveal: ({children, className}) => React.createElement('div', {className}, children)},
     '@/components/json-ld': {PricingJsonLd: () => null},
@@ -66,7 +67,7 @@ function serverHtml(surface, interval, env = {}) {
     }, exports, {env});
     return exports;
   }
-  const catalog = load("lib/studio-pricing.ts").getPricingCatalogSnapshot();
+  const catalog = load("lib/studio-pricing.ts").getPricingCatalogSnapshot(currency);
   return renderToStaticMarkup(React.createElement(load(surface.path)[surface.exportName], {...surface.props, catalog}));
 }
 
@@ -255,3 +256,33 @@ test('all-order public schemas match card prices and order fees without old exem
     assert.doesNotMatch(JSON.stringify(schema), /ordinary gallery sales have no|qualifying school production|Unlimited|50 ?MB/i);
   }
 });
+
+
+for (const [country, currency, available] of [['CA','cad',true],['US','usd',true],['AU','aud',false],['GB','gbp',false]]) {
+  for (const interval of ['month','year']) test(`localized public ${country} ${interval} prices retain exact amounts and supported-country purchase boundaries`, () => {
+    const env = {STUDIO_GALLERY_PRICING_V3_ENABLED:'1',STUDIO_LOCAL_SUBSCRIPTIONS_ENABLED:'1'};
+    const html = serverHtml(surfaces[0], interval, env, currency), rendered = text(html);
+    assert.match(html, /aria-label="Subscription pricing country"/);
+    assert.match(html, new RegExp(`<option value="${country}" selected=""`));
+    const amounts = interval === 'year' ? [59900,106920,214920] : [5900,9900,19900];
+    for (const [index,name] of ['Gallery','Core','Studio'].entries()) {
+      const card = planCard(html,name);
+      const formatted = new Intl.NumberFormat('en-CA',{style:'currency',currency:currency.toUpperCase(),minimumFractionDigits:interval==='year'?2:0,maximumFractionDigits:2}).format(amounts[index]/100);
+      assert.ok(text(card).includes(formatted), `${name} exact ${currency} amount`);
+      assert.ok(text(card).includes(`${index===0?'0.55':'0.45'} per paid order`));
+      if (available) assert.ok(decode(card).includes(`/sign-up?plan=${['starter','core','studio'][index]}&interval=${interval}&country=${country}`));
+      else { assert.doesNotMatch(card,/href="\/sign-up/); assert.match(text(card),/Pricing preview/); }
+    }
+    assert.match(rendered,new RegExp(`Subscription prices are in ${currency.toUpperCase()}`));
+    assert.match(rendered,/AI background credits are sold separately in CAD/);
+    if (!available) {assert.match(rendered,/merchant onboarding and customer ordering.*not available yet/i);assert.doesNotMatch(html,/href="\/sign-up/);}
+  });
+  test(`localized structured offers for ${country} match the shown currency or omit unavailable purchasing`, () => {
+    const html=serverHtml({path:'components/json-ld.tsx',exportName:'PricingJsonLd',props:{}},'month',{STUDIO_GALLERY_PRICING_V3_ENABLED:'1',STUDIO_LOCAL_SUBSCRIPTIONS_ENABLED:'1'},currency);
+    if(!available){assert.equal(html,'');return;}
+    const schema=JSON.parse(html.match(/<script\b[^>]*>([\s\S]*?)<\/script>/)[1]);
+    assert.equal(schema.offers.priceCurrency,currency.toUpperCase());
+    assert.deepEqual(schema.offers.offers.map(o=>[o.price,o.priceCurrency]),[['59.00',currency.toUpperCase()],['99.00',currency.toUpperCase()],['199.00',currency.toUpperCase()]]);
+  });
+}
+test('localized selector stays absent with the release disabled',()=>{const html=serverHtml(surfaces[0],'month',{STUDIO_GALLERY_PRICING_V3_ENABLED:'1'});assert.doesNotMatch(html,/Subscription pricing country/);assert.match(text(html),/Subscriptions in CAD/);});

@@ -1,3 +1,4 @@
+import * as subscriptionCurrency from '../lib/subscription-currency.ts';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
@@ -116,7 +117,7 @@ function fixture({ annual = false, missingUsage = false, planCode = 'core', usag
     return { ok: true, text: async () => JSON.stringify(result) };
   };
   const dependencies = {
-    '@/lib/studio-pricing': {...pricing,isGalleryPricingEnabled:()=>pricingV2||pricingV3,
+    '@/lib/subscription-currency': subscriptionCurrency, '@/lib/studio-pricing': {...pricing,isGalleryPricingEnabled:()=>pricingV2||pricingV3,
       PRICING_PROFILE:pricingV3?'gallery_v3':pricingV2?'gallery_v2':'legacy'},
     '@/lib/stripe-billing-period': periods,
     '@/lib/order-usage-billing': ledger,
@@ -128,10 +129,10 @@ function fixture({ annual = false, missingUsage = false, planCode = 'core', usag
     '@/lib/stripe-connect-history': accountHistory,
   };
   const exports = {};
-  new Function('require', 'exports', 'fetch', compiled + '\nexports.seedCatalog = value => { catalogPromise = Promise.resolve(value); };')(
+  new Function('require', 'exports', 'fetch', compiled + '\nexports.seedCatalog = value => { catalogPromises.set("cad", Promise.resolve(value)); };')(
     name => dependencies[name] || {}, exports, fetcher,
   );
-  exports.seedCatalog({ usagePriceIds: { [planCode]: 'price_usage' }, planPrices: { [planCode]: { month: 'price_month', year: 'price_year' } }, extraDesktopKeyPriceIds: { month: 'price_extra_month', year: 'price_extra_year' } });
+  exports.seedCatalog({ currency:'cad', pricingProfile:pricingV3?'gallery_v3':pricingV2?'gallery_v2':'legacy', usagePriceIds: { [planCode]: 'price_usage' }, planPrices: { [planCode]: { month: 'price_month', year: 'price_year' } }, extraDesktopKeyPriceIds: { month: 'price_extra_month', year: 'price_extra_year' } });
   process.env.STRIPE_SECRET_KEY = 'sk_test_fixture';
   return { exports, calls, tables, service, subscription };
 }

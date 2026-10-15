@@ -9,7 +9,7 @@
 
 import { homeFaqItems } from "@/lib/marketing-faq";
 import { useCspNonce } from "@/components/csp-nonce";
-import type { PricingCatalogSnapshot, PlanCode } from "@/lib/studio-pricing";
+import { subscriptionPricingMarket, type PricingCatalogSnapshot, type PlanCode } from "@/lib/studio-pricing";
 import { getOrderFeeDisclosure } from "@/lib/order-fee-display";
 
 const planCodes: PlanCode[] = ["starter", "core", "studio"];
@@ -28,7 +28,7 @@ function catalogOffers(catalog: PricingCatalogSnapshot, application = false) {
       "@type": "Offer",
       name: plan.publicName,
       price,
-      priceCurrency: "CAD",
+      priceCurrency: catalog.currency.toUpperCase(),
       ...(catalog.pricingProfile === "legacy" && application ? { priceValidUntil: "2027-12-31" } : {}),
       description: catalog.pricingProfile !== "legacy"
         ? `${plan.description} ${fee.fee}. Stripe processing fees are additional. ${catalog.galleryStoragePolicy === "unlimited_jpeg"
@@ -39,7 +39,7 @@ function catalogOffers(catalog: PricingCatalogSnapshot, application = false) {
       priceSpecification: {
         "@type": "UnitPriceSpecification",
         price,
-        priceCurrency: "CAD",
+        priceCurrency: catalog.currency.toUpperCase(),
         billingDuration: "P1M",
       },
     };
@@ -136,6 +136,7 @@ export function SoftwareApplicationJsonLd({ catalog }: { catalog: PricingCatalog
 
 /** Product pricing schema - used on the pricing page */
 export function PricingJsonLd({ catalog }: { catalog: PricingCatalogSnapshot }) {
+  if (catalog.localizedSubscriptionsEnabled && !subscriptionPricingMarket(catalog.currency).orderingAvailable) return null;
   const prices = planCodes.map((code) => catalog.plans[code].priceCents);
   return (
     <JsonLd
@@ -158,7 +159,7 @@ export function PricingJsonLd({ catalog }: { catalog: PricingCatalogSnapshot }) 
           "@type": "AggregateOffer",
           lowPrice: (Math.min(...prices) / 100).toFixed(2),
           highPrice: (Math.max(...prices) / 100).toFixed(2),
-          priceCurrency: "CAD",
+          priceCurrency: catalog.currency.toUpperCase(),
           offerCount: planCodes.length,
           offers: catalogOffers(catalog),
         },

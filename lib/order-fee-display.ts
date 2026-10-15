@@ -49,11 +49,11 @@ export function getOrderFeeDisclosure(
   };
 }
 
-export function getOrderFeeCopy(profile: PricingProfile) {
+export function getOrderFeeCopy(profile: PricingProfile, subscriptionCurrency: string | null = "cad") {
   if (profile === "gallery_v3") {
     return {
       purpose: "Every paid order has a flat Studio OS fee: 0.55 on Gallery, or 0.45 on Core and Studio, charged in your studio’s sales currency. This applies to gallery, school, sports, event, print and digital orders.",
-      billing: "Order fees are deducted automatically from each paid sale, including on annual plans. Subscription prices are in Canadian dollars (CAD). Stripe processing fees are paid by your studio and are additional. AI background credits are sold separately.",
+      billing: `Order fees are deducted automatically from each paid sale, including on annual plans. ${subscriptionCurrency ? `Subscription prices are in ${subscriptionCurrency.toUpperCase()}.` : "Refresh billing status to verify your subscription currency."} Stripe processing fees are paid by your studio and are additional. AI background credits are sold separately in CAD.`,
     };
   }
   if (profile === "gallery_v2") {

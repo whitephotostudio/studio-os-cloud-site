@@ -1,3 +1,20 @@
+import type { SubscriptionCurrency } from "./subscription-currency";
+export type { SubscriptionCurrency } from "./subscription-currency";
+
+export const SUBSCRIPTION_PRICING_MARKETS = [
+  { country: "CA", currency: "cad", label: "Canada", orderingAvailable: true },
+  { country: "US", currency: "usd", label: "United States", orderingAvailable: true },
+  { country: "AU", currency: "aud", label: "Australia", orderingAvailable: false },
+  { country: "GB", currency: "gbp", label: "United Kingdom", orderingAvailable: false },
+] as const;
+
+/** Public display selection only; the server independently verifies billing country. */
+export function subscriptionPricingMarket(value: unknown) {
+  const selected = typeof value === "string" ? value.trim().toUpperCase() : "";
+  return SUBSCRIPTION_PRICING_MARKETS.find(market => market.country === selected || market.currency.toUpperCase() === selected)
+    ?? SUBSCRIPTION_PRICING_MARKETS[0];
+}
+
 export type PlanCode = "starter" | "core" | "studio";
 export type BillingInterval = "month" | "year";
 export type PricingProfile = "legacy" | "gallery_v2" | "gallery_v3";
@@ -228,7 +245,8 @@ export const EXTRA_DESKTOP_KEY_ANNUAL_CENTS = envInt(
 
 export type PricingCatalogSnapshot = {
   pricingProfile: PricingProfile;
-  currency: "cad";
+  currency: SubscriptionCurrency;
+  localizedSubscriptionsEnabled: boolean;
   // A single annual discount is not accurate for Gallery v2: Gallery saves
   // 15.4%, while Core and Studio save 10%. Read each plan's exact savings.
   annualDiscountPercent: number | null;
@@ -242,10 +260,12 @@ export type PricingCatalogSnapshot = {
 };
 
 /** Resolve on the server and pass this serializable snapshot across the client boundary. */
-export function getPricingCatalogSnapshot(): PricingCatalogSnapshot {
+export function getPricingCatalogSnapshot(currency: SubscriptionCurrency = "cad"): PricingCatalogSnapshot {
+  if (!["cad", "usd", "aud", "gbp"].includes(currency)) throw new Error("Unsupported subscription currency.");
   return {
     pricingProfile: PRICING_PROFILE,
-    currency: "cad",
+    currency,
+    localizedSubscriptionsEnabled: process.env.STUDIO_LOCAL_SUBSCRIPTIONS_ENABLED === "1" || process.env.STUDIO_LOCAL_SUBSCRIPTIONS_ENABLED === "true",
     annualDiscountPercent: PRICING_PROFILE === "legacy" ? ANNUAL_DISCOUNT_PERCENT : null,
     galleryStoragePolicy: PRICING_PROFILE !== "legacy" ? galleryStoragePolicy : "existing",
     plans: {

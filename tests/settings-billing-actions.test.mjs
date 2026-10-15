@@ -9,7 +9,7 @@ const require = createRequire(import.meta.url);
 const settingsSource = readFileSync(new URL('../app/dashboard/settings/page.tsx', import.meta.url), 'utf8');
 
 /** Mount the actual Settings component and click its real billing Save button. */
-function harness({ profile = 'gallery_v2', stripeConnectUrl = null, ...state } = {}) {
+function harness({ profile = 'gallery_v2', stripeConnectUrl = null, expectedPlanDisabled = false, ...state } = {}) {
   const fixture = { loading: false, sessionReady: true, signedIn: true, error: null,
     stripeSubscriptionId: 'sub_existing', subscriptionPlanCode: 'studio', subscriptionBillingInterval: 'month',
     subscriptionStatus: 'active', subscriptionIsActive: true, extraDesktopKeys: 1,
@@ -88,10 +88,10 @@ function harness({ profile = 'gallery_v2', stripeConnectUrl = null, ...state } =
   const saveButtons = nodes(tree).filter(node => node.type === 'button' && typeof node.props.onClick === 'function'
     && ['Update plan + keys', 'Start subscription', 'Activate paid subscription'].includes(node.props.children));
   assert.equal(saveButtons.length, 1, 'one actual rendered billing Save button');
-  assert.equal(saveButtons[0].props.disabled, false);
+  assert.equal(saveButtons[0].props.disabled, expectedPlanDisabled);
   const connectLabels=['Open Stripe Dashboard','Manage Stripe','Continue Stripe setup','Connect Stripe'];
   const connectButtons=nodes(tree).filter(node=>node.type==='button'&&nodes(node.props.children).some(child=>typeof child==='string'&&connectLabels.includes(child)));
-  return { calls, errors, browser, connectLabels:connectButtons.map(node=>nodes(node.props.children).find(child=>typeof child==='string'&&connectLabels.includes(child))),connect:()=>{assert.ok(connectButtons.length);return connectButtons[0].props.onClick();},save: () => saveButtons[0].props.onClick() };
+  return { calls, errors, browser, renderedNodes:nodes(tree), connectLabels:connectButtons.map(node=>nodes(node.props.children).find(child=>typeof child==='string'&&connectLabels.includes(child))),connect:()=>{assert.ok(connectButtons.length);return connectButtons[0].props.onClick();},save: () => saveButtons[0].props.onClick() };
 }
 
 test('existing V2 and legacy subscriptions post key-only changes without upgrading their base plan', async () => {
@@ -147,3 +147,34 @@ test('a photographer without a subscription starts subscription checkout with ch
 test('verified Standard management opens only its exact full Stripe dashboard URL',async()=>{const h=harness({stripeConnectUrl:'https://dashboard.stripe.com/'});assert.ok(h.connectLabels.every(label=>label==='Open Stripe Dashboard'));await h.connect();assert.equal(h.browser.location.href,'https://dashboard.stripe.com/');assert.equal(h.calls.length,1);assert.ok(h.errors.every(error=>error===null));});
 test('pending Standard and existing Express continue their authenticated Stripe onboarding flow',async()=>{for(const state of [{connectReadyForPayments:false,stripePendingAccountId:'acct_pending'},{stripeAccountType:'express',stripeDashboardType:'express'}]){const h=harness({stripeConnectUrl:'https://connect.stripe.com/setup/s/example',...state});assert.ok(h.connectLabels.every(label=>label===('stripePendingAccountId'in state?'Continue Stripe setup':'Manage Stripe')));await h.connect();assert.equal(h.browser.location.href,'https://connect.stripe.com/setup/s/example');}});
 test('actual Settings Connect action rejects arbitrary URLs, fake Stripe hosts and unexpected dashboard paths',async()=>{for(const stripeConnectUrl of ['https://attacker.example/','javascript:alert(1)','https://connect.stripe.com.attacker.example/setup','https://attacker@dashboard.stripe.com/','http://connect.stripe.com/setup','https://dashboard.stripe.com/invoices','https://dashboard.stripe.com/?redirect=attacker']){const h=harness({stripeConnectUrl});await h.connect();assert.equal(h.browser.location.href,'https://example.invalid/dashboard/settings');assert.ok(h.errors.some(error=>/destination could not be verified/.test(error||'')));}});
+
+
+test('unknown saved business country disables actual new-subscription Save and independently rejects its click',async()=>{
+ const h=harness({profile:'gallery_v3',stripeSubscriptionId:null,subscriptionPlanCode:null,subscriptionCountryRequired:true,expectedPlanDisabled:true});
+ await h.save();assert.deepEqual(h.calls,[]);assert.ok(h.errors.some(x=>/Select and save your business country/.test(x)));
+});
+test('saved subscription currency is distinct from customer sales and CAD credit pack displays',()=>{
+ const plans=Object.values(getPlanDefinitions('gallery_v3'));
+ for(const subscriptionCurrency of ['usd','aud','gbp']){
+  const h=harness({profile:'gallery_v3',subscriptionCurrency,billingCurrency:'usd',creditCurrency:'cad',billingCatalog:{pricingProfile:'gallery_v3',currency:subscriptionCurrency,plans,annualDiscountPercent:null,extraDesktopKeyMonthlyCents:5500,extraDesktopKeyAnnualCents:59400,creditPacks:[{code:'background_credits_250',credits:250,priceCents:4000,label:'Synthetic pack'}]}});
+  const text=h.renderedNodes.filter(x=>typeof x==='string'||typeof x==='number').join(' ').replace(/\s+/g,' ');
+  assert.match(text,new RegExp(`subscription is billed separately in ${subscriptionCurrency.toUpperCase()}`));
+  assert.ok(text.includes('250 monthly credits for $40.00'),'CAD credit price remains $40 rather than being relabeled');
+  assert.match(text,/All credit packs are billed in CAD/);
+  const comparisons=h.renderedNodes.filter(n=>typeof n.type==='function'&&n.type.name==='PlanCompareCard');
+  assert.equal(comparisons.length,3);assert.ok(comparisons.every(n=>n.props.currency===subscriptionCurrency));
+ }
+});
+test('an existing CAD subscription in a US-sales studio keeps CAD plan and extra-key intent',async()=>{
+ const h=harness({profile:'gallery_v3',subscriptionCurrency:'cad',billingCurrency:'usd',businessCountry:'US'});await h.save();assert.equal(h.calls[0].action,'update_extra_keys');assert.ok(!Object.hasOwn(h.calls[0],'currency'));assert.ok(!Object.hasOwn(h.calls[0],'country'));
+});
+
+
+test('unverified existing subscription currency blocks actual plan and key mutations without blocking CAD credit purchases',async()=>{
+ const h=harness({profile:'gallery_v3',subscriptionCurrency:null,subscriptionCurrencyUnavailable:true,subscriptionCountryRequired:false,expectedPlanDisabled:true,billingCatalog:{pricingProfile:'gallery_v3',currency:'cad',plans:Object.values(getPlanDefinitions('gallery_v3')),annualDiscountPercent:null,extraDesktopKeyMonthlyCents:5500,extraDesktopKeyAnnualCents:59400,creditPacks:[{code:'background_credits_250',credits:250,priceCents:4000,label:'Synthetic pack'}]}});
+ await h.save();assert.deepEqual(h.calls,[]);assert.ok(h.errors.some(x=>/subscription currency could not be verified/.test(x)));
+ const nodes=h.renderedNodes;const comparisons=nodes.filter(n=>typeof n.type==='function'&&n.type.name==='PlanCompareCard');assert.ok(comparisons.every(n=>n.props.currencyAvailable===false));
+ assert.ok(nodes.some(n=>typeof n==='string'&&n==='Currency needs verification'));
+ const portal=nodes.find(n=>n.type==='button'&&n.props.children==='Open billing portal');assert.equal(portal.props.disabled,false);
+ const credits=nodes.find(n=>n.type==='button'&&n.props.children==='Buy credits');assert.equal(credits.props.disabled,false);await credits.props.onClick();assert.deepEqual(h.calls,[{action:'buy_credits',packCode:'background_credits_250'}]);
+});

@@ -16,6 +16,7 @@ import {
   normalizeCreditPackCode,
   normalizePlanCode,
   retrieveStripeSubscription,
+  resolveSubscriptionCurrency,
   syncSubscriptionStateFromStripe,
   updateStripeSubscriptionConfiguration,
 } from "@/lib/payments";
@@ -88,9 +89,8 @@ export async function POST(request: NextRequest) {
     }
 
     const origin = requestOrigin(request);
-    const customerId = await ensurePlatformCustomer(service, photographer, user);
-
     if (action === "portal") {
+      const customerId = await ensurePlatformCustomer(service, photographer, user);
       const session = await createBillingPortalSession(
         customerId,
         billingReturnUrl(origin, "portal"),
@@ -122,6 +122,7 @@ export async function POST(request: NextRequest) {
         );
       }
 
+      const customerId = await ensurePlatformCustomer(service, photographer, user);
       const session = await createCreditsCheckoutSession({
         customerId,
         photographerId: photographer.id,
@@ -151,19 +152,29 @@ export async function POST(request: NextRequest) {
 
     const extraDesktopKeys =
       planCode === "studio" ? parseExtraDesktopKeys(body.extraDesktopKeys) : 0;
+    const hasExistingContract = Boolean(photographer.stripe_subscription_id &&
+      !["canceled", "incomplete_expired"].includes((photographer.subscription_status ?? "").toLowerCase()));
 
-    if (
-      photographer.stripe_subscription_id &&
-      !["canceled", "incomplete_expired"].includes(
-        (photographer.subscription_status ?? "").toLowerCase(),
-      )
-    ) {
+    // This is subscription billing, not the studio's independently selected
+    // customer-sales currency. Resolve before creating any new customer or
+    // Checkout so a missing country or unverified old contract fails safely.
+    const subscriptionCurrency = await resolveSubscriptionCurrency(photographer);
+    const country = (photographer.business_country || photographer.stripe_connect_country || "").toUpperCase();
+    if (!hasExistingContract && ["AU", "GB"].includes(country)) {
+      return NextResponse.json({ ok: false,
+        message: "Subscriptions for Australian and UK photographers will open with their Stripe payment rollout. No subscription was created.",
+      }, { status: 409 });
+    }
+    const customerId = await ensurePlatformCustomer(service, photographer, user);
+
+    if (hasExistingContract && photographer.stripe_subscription_id) {
       // Flush paid orders at their original plan rate before replacing the
       // subscription's usage meter. A failed refresh must block this mutation.
       const existing = await retrieveStripeSubscription(photographer.stripe_subscription_id);
       await syncSubscriptionStateFromStripe(service, photographer, existing);
       const subscription = await updateStripeSubscriptionConfiguration({
         subscriptionId: photographer.stripe_subscription_id,
+        customerId,
         photographerId: photographer.id,
         planCode,
         billingInterval,
@@ -181,6 +192,7 @@ export async function POST(request: NextRequest) {
         subscriptionPlanCode: synced.planCode,
         subscriptionBillingInterval: billingInterval,
         extraDesktopKeys: synced.extraDesktopKeys,
+        subscriptionCurrency,
       });
     }
 
@@ -191,6 +203,7 @@ export async function POST(request: NextRequest) {
       planCode,
       billingInterval,
       extraDesktopKeys,
+      subscriptionCurrency,
       successUrl: billingReturnUrl(origin, "subscription_success"),
       cancelUrl: billingReturnUrl(origin, "subscription_cancel"),
     });
@@ -203,8 +216,14 @@ export async function POST(request: NextRequest) {
       planCode,
       billingInterval,
       extraDesktopKeys,
+      subscriptionCurrency,
     });
   } catch (error) {
+    if (error instanceof Error && error.name === "SubscriptionCurrencyError") {
+      return NextResponse.json({ ok: false, message: error.message }, {
+        status: (error as Error & { status?: number }).status || 409,
+      });
+    }
     console.error("[stripe:billing]", error);
     return NextResponse.json(
       { ok: false, message: "Unable to update Stripe billing." },
