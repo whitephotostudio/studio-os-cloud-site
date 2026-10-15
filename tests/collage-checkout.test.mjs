@@ -158,6 +158,21 @@ test('combined checkout scopes every nested collage photo to its sibling and val
   assert.equal(rejected.status, 409, JSON.stringify(rejected)); assert.equal(attack.orders.length, 0); assert.equal(attack.items.length, 0);
 });
 
+test('single and combined order notes describe saved collage spaces and crops alongside ordinary photo selections', async () => {
+  for (const combined of [false, true]) {
+    const h = fixture();
+    const result = await h.post(combined ? combinedBody() : schoolBody(entry(schoolKey(0))), combined);
+    assert.equal(result.status, 200, JSON.stringify(result));
+    for (const [index, order] of h.orders.entries()) {
+      assert.equal(order.notes, order.special_notes);
+      assert.ok(order.notes.includes(`Item 1: Ordinary → ${schoolKey(index)}`));
+      assert.ok(order.notes.includes(`Item 2: ${design.name} • 10×8 collage → Collage: 3 photo spaces and crops saved`));
+      assert.ok(order.notes.includes(`Item 3: ${design.name} • 10×8 collage → Collage: 3 photo spaces and crops saved`));
+      assert.doesNotMatch(order.notes, /no photo/);
+    }
+  }
+});
+
 test('single and combined routes reject unauthorized nested photos, incomplete selections and invalid crops', async () => {
   for (const combined of [false, true]) {
     for (const tamper of [item => { item.slots[1].collage.placements[0].mediaId = schoolKey(1); },

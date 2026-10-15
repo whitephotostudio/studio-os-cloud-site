@@ -730,7 +730,7 @@ export async function POST(request: NextRequest) {
             ? entry.slots
                 .map(
                   (slot, i) =>
-                    `Item ${i + 1}: ${slot.label} → ${slot.assignedImageUrl ?? "no photo"}`,
+                    `Item ${i + 1}: ${slot.label} → ${slot.collage ? `Collage: ${slot.collage.placements.length} photo spaces and crops saved` : slot.assignedImageUrl ?? "no photo"}`,
                 )
                 .join("\n")
             : "";
