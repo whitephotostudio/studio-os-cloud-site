@@ -1015,14 +1015,14 @@ export default function SchoolVisitorsPage() {
             <label style={{ display: "flex", gap: 10, alignItems: "center", fontSize: 14, fontWeight: 800 }}>
               <input type="checkbox" role="switch" aria-label="Automatic deadline reminder" checked={deadlineReminder?.settings.enabled ?? false}
                 disabled={savingReminder || !deadlineReminder} onChange={event => void saveDeadlineReminder(event.target.checked)} />
-              Automatic deadline reminder {deadlineReminder?.settings.enabled ? "ON" : "OFF"}
+              Automatic deadline reminder {deadlineReminder ? deadlineReminder.settings.enabled ? "ON" : "OFF" : reminderError ? "Status unavailable" : "Loading…"}
             </label>
             <div style={{ marginTop: 8, color: textMuted, fontSize: 12, lineHeight: 1.6 }}>
-              Uses your saved message for parents who have not placed an order, only in classes with photos available in the gallery. {deadlineReminder?.settings.classMode === "range"
+              Uses your saved message for parents who have not placed an order, only in classes with photos available in the gallery. {deadlineReminder && (deadlineReminder.settings.classMode === "range"
                 ? `Class range: ${deadlineReminder.settings.classFrom} through ${deadlineReminder.settings.classTo}.`
-                : "All photographed classes in this school."}
-              {deadlineReminder?.plannedReminderDate ? ` ${deadlineReminder.settings.enabled && deadlineReminder.templateReady ? "Scheduled" : "Reminder date:"} ${deadlineReminder.plannedReminderDate} at 9:00 a.m. (${deadlineReminder.settings.timeZone}), the day before the deadline.`
-                : " Set an ordering deadline and save your message before turning this on."}
+                : "All photographed classes in this school.")}
+              {deadlineReminder && (deadlineReminder.plannedReminderDate ? ` ${deadlineReminder.settings.enabled && deadlineReminder.templateReady ? "Scheduled" : "Reminder date:"} ${deadlineReminder.plannedReminderDate} at 9:00 a.m. (${deadlineReminder.settings.timeZone}), the day before the deadline.`
+                : " Set an ordering deadline and save your message before turning this on.")}
               {" "}The photographer receives an email report with accepted, failed and excluded counts.
             </div>
             {deadlineReminder?.photoClasses && <div style={{ marginTop: 8, fontSize: 12, color: textMuted, maxHeight: 90, overflowY: "auto" }}>
