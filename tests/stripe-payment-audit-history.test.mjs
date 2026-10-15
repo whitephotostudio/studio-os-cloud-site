@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { resolveAuditedPaymentAccount, verifyPaymentRelease, WHITEPHOTO_STANDARD_AUDIT_SCOPE,verifyStandardWebhookDestinations,
-  STANDARD_CONNECT_WEBHOOK_EVENTS,STANDARD_PLATFORM_WEBHOOK_EVENTS } from '../scripts/verify-payment-release.mjs';
+  STANDARD_CONNECT_WEBHOOK_EVENTS,STANDARD_PLATFORM_WEBHOOK_EVENTS,WHITEPHOTO_STANDARD_WEBHOOK_CONFIGURATION } from '../scripts/verify-payment-release.mjs';
 
 const order={id:'11111111-1111-4111-8111-111111111111',photographer_id:'22222222-2222-4222-8222-222222222222',stripe_payment_intent_id:'pi_old'};
 const error=code=>Object.assign(new Error('Database verification failed; details withheld.'),{code});
@@ -103,7 +103,7 @@ function releaseFixture(options={}) {
     }
     return{ok:true,json:async()=>structuredClone(data)};
   };
-  return{env,control,standard,express,calls,logs,run:()=>verifyPaymentRelease(env,fetcher,line=>logs.push(JSON.parse(line)))};
+  return{env,control,standard,express,calls,logs,fetcher,run:()=>verifyPaymentRelease(env,fetcher,line=>logs.push(JSON.parse(line)))};
 }
 
 test('live flags force the complete history/control audit even when optional history and generic release probes are absent',async()=>{
@@ -317,5 +317,107 @@ test('provider-only audit cannot ignore conflicting candidate metadata, missing 
     const f=releaseFixture({...options,env:{STUDIO_STANDARD_PROVIDER_RELEASE_VERIFY:'1',STUDIO_PAYMENT_RELEASE_VERIFY:undefined,
       STRIPE_STANDARD_LIVE_CHECKOUT_ENABLED:undefined,STRIPE_STANDARD_LIVE_MIGRATION_ENABLED:undefined}});
     await assert.rejects(f.run,/ownership|requirements|balance|subscriptions/);assert.ok(f.calls.every(row=>row.method==='GET'));
+  }
+});
+
+const webhookPin=WHITEPHOTO_STANDARD_WEBHOOK_CONFIGURATION;
+function configurationFixture(options={}){
+  const f=releaseFixture({control:{migration_enabled:false,checkout_enabled:false,reservation_required:false,activation_enabled:false,...options.control},
+    standard:{metadata:{},...options.standard},platformId:options.platformId,balance:options.balance,
+    photographers:options.photographers??[{id:scope.photographerId,user_id:scope.userId,stripe_account_id:scope.expressAccountId,
+      stripe_connected_account_id:scope.expressAccountId,stripe_standard_migrated_at:null,stripe_connect_route_version:0}],
+    protections:options.protections,rows:options.rows,
+    env:{STUDIO_PAYMENT_RELEASE_VERIFY:undefined,STUDIO_STANDARD_PROVIDER_RELEASE_VERIFY:'1',STUDIO_STANDARD_WEBHOOK_CONFIGURE:scope.releaseKey,
+      STUDIO_STANDARD_COMPATIBLE_RELEASE_CONFIRMED:webhookPin.acknowledgment,STUDIO_STANDARD_COMPATIBLE_RELEASE_COMMIT:'a'.repeat(40),
+      STRIPE_STANDARD_MIGRATION_ENABLED:undefined,STRIPE_STANDARD_LIVE_CHECKOUT_ENABLED:undefined,STRIPE_STANDARD_LIVE_MIGRATION_ENABLED:undefined,...options.env}});
+  const oldConnected=['checkout.session.completed','payment_intent.succeeded','charge.refunded','refund.updated','refund.failed','payout.paid'];
+  const oldPlatform=['checkout.session.completed','customer.subscription.created','customer.subscription.updated','invoice.payment_succeeded'];
+  const endpoints=[{id:webhookPin.connectedEndpointId,object:'webhook_endpoint',url:webhookPin.url,status:'enabled',livemode:true,
+    enabled_events:options.complete?[...oldConnected,...STANDARD_CONNECT_WEBHOOK_EVENTS]:oldConnected,application:'ca_original',api_version:'2025-12-15.clover'},
+    {id:webhookPin.platformEndpointId,object:'webhook_endpoint',url:webhookPin.url,status:'enabled',livemode:true,
+      enabled_events:options.complete?[...oldPlatform,...STANDARD_PLATFORM_WEBHOOK_EVENTS]:oldPlatform,application:null,api_version:'2025-12-15.clover'}];
+  const writes=[],reads=[];
+  const fetcher=async(target,init)=>{
+    const url=new URL(target);reads.push({url,method:init.method});
+    if(url.pathname==='/v2/core/event_destinations'){
+      const list={data:endpoints.map((endpoint,index)=>({...destination([index===0?'@accounts':'@self'],[...endpoint.enabled_events],endpoint.id),...options.destinationPatch,...(writes.length===2?options.finalDestinationPatch:{})})),next_page_url:null};
+      if(options.duplicateDestination)list.data.push(list.data[0]);
+      return{ok:true,json:async()=>list};
+    }
+    if(url.pathname.startsWith('/v1/webhook_endpoints/')){
+      const endpoint=endpoints.find(row=>url.pathname===`/v1/webhook_endpoints/${row.id}`);assert.ok(endpoint,'only the two exact endpoint paths are permitted');
+      if(init.method==='GET')return{ok:true,json:async()=>({...structuredClone(endpoint),...options.endpointPatch,...(writes.length===2?options.finalEndpointPatch:{})})};
+      assert.equal(init.method,'POST');const body=[...init.body.entries()];assert.ok(body.every(([key])=>key==='enabled_events[]'));
+      assert.match(init.headers['Idempotency-Key'],/^studio-standard-webhooks-20261015-[a-f0-9]{64}$/);
+      writes.push({id:endpoint.id,events:body.map(([,value])=>value)});
+      if(options.failSecond&&writes.length===2)return{ok:false,status:503,json:async()=>({error:{message:'private-provider-body'}})};
+      endpoint.enabled_events=writes.at(-1).events;
+      return{ok:true,json:async()=>({...structuredClone(endpoint),...options.postPatch})};
+    }
+    return f.fetcher(target,init);
+  };
+  return{...f,endpoints,writes,reads,run:()=>verifyPaymentRelease(f.env,fetcher,line=>f.logs.push(JSON.parse(line)))};
+}
+
+test('explicit Standard webhook preparation adds only missing events to the two pinned endpoints and preserves all prior billing events',async()=>{
+  const f=configurationFixture();const original=f.endpoints.map(row=>[...row.enabled_events]);await f.run();
+  assert.equal(f.writes.length,2);assert.deepEqual(f.writes.map(row=>row.id),[webhookPin.connectedEndpointId,webhookPin.platformEndpointId]);
+  for(let index=0;index<2;index++)for(const event of original[index])assert.ok(f.endpoints[index].enabled_events.includes(event));
+  assert.ok(STANDARD_CONNECT_WEBHOOK_EVENTS.every(event=>f.endpoints[0].enabled_events.includes(event)));
+  assert.ok(STANDARD_PLATFORM_WEBHOOK_EVENTS.every(event=>f.endpoints[1].enabled_events.includes(event)));
+  const proof=f.logs.find(row=>row.check==='stripe-standard-webhook-subscriptions-configured');
+  assert.equal(proof.endpointSubscriptionWrites,2);assert.equal(proof.expressStillSelected,true);assert.equal(proof.allReleaseControlsOff,true);
+  assert.equal(proof.databaseMutations,0);assert.equal(proof.financialMutations,0);
+  assert.equal(f.reads.filter(row=>row.method==='POST').length,2);assert.ok(f.reads.filter(row=>row.url.origin!=='https://api.stripe.com').every(row=>row.method==='GET'));
+  const writes=f.writes.length;await f.run();assert.equal(f.writes.length,writes,'rerun skips already-complete subscriptions');
+  assert.equal(f.logs.filter(row=>row.check==='stripe-standard-webhook-subscriptions-configured').at(-1).endpointSubscriptionWrites,0);
+  assert.ok(!JSON.stringify(f.logs).includes('sk_live_fake'));assert.ok(!JSON.stringify(f.logs).includes('service-test'));
+});
+
+test('endpoint configuration refuses absent acknowledgment, foreign schema/owner/routes, active controls and live flags before every POST',async()=>{
+  for(const options of [
+    {env:{STUDIO_STANDARD_PROVIDER_RELEASE_VERIFY:undefined}},{env:{STUDIO_STANDARD_WEBHOOK_CONFIGURE:'wrong'}},
+    {env:{STUDIO_STANDARD_COMPATIBLE_RELEASE_CONFIRMED:undefined}},{env:{STUDIO_STANDARD_COMPATIBLE_RELEASE_COMMIT:'not-a-commit'}},
+    {env:{STRIPE_STANDARD_MIGRATION_ENABLED:'true'}},{env:{STRIPE_STANDARD_LIVE_CHECKOUT_ENABLED:'true'}},
+    {env:{STRIPE_STANDARD_LIVE_MIGRATION_ENABLED:'true'}},{env:{STUDIO_CREDIT_WEBHOOK_CONFIGURE:'1'}},
+    {env:{STUDIO_PAYMENT_REFUND_WEBHOOK_ID:'we_other'}},{env:{SUPABASE_SERVICE_ROLE_KEY:'[SENSITIVE]'}},
+    {protections:{version:'wrong'}},{protections:{reservation_guard_present:false}},{rows:[]},{rows:[{},{}]},
+    ...['migration_enabled','checkout_enabled','reservation_required','activation_enabled'].map(name=>({control:{[name]:true}})),
+    {photographers:[{id:scope.photographerId,user_id:'foreign'}]},
+    {photographers:[{id:scope.photographerId,user_id:scope.userId,stripe_account_id:scope.standardAccountId,stripe_connected_account_id:scope.standardAccountId,stripe_standard_migrated_at:'2026-10-15',stripe_connect_route_version:1}]},
+    {platformId:'acct_foreign'},{balance:{livemode:false}},{standard:{metadata:{user_id:'foreign'}}},{standard:{future_requirements:undefined}},
+  ]){const f=configurationFixture(options);await assert.rejects(f.run);assert.equal(f.writes.length,0,JSON.stringify(options));}
+});
+
+test('endpoint configuration cannot infer scopes from application or modify foreign/ambiguous/thin/test destinations',async()=>{
+  for(const options of [
+    ...[{id:'we_other'},{events_from:['@self']},{events_from:['@accounts','@self']},{event_payload:'thin'},
+      {livemode:false},{status:'disabled'},{webhook_endpoint:{url:'https://studiooscloud.com/api/stripe/webhook'}},
+      {enabled_events:[]}].map(destinationPatch=>({destinationPatch})),
+    {duplicateDestination:true},{endpointPatch:{id:'we_other'}},{endpointPatch:{url:'https://foreign.example/api/stripe/webhook'}},
+    {endpointPatch:{livemode:false}},{endpointPatch:{status:'disabled'}},{endpointPatch:{enabled_events:['*']}},
+  ]){const f=configurationFixture(options);await assert.rejects(f.run);assert.equal(f.writes.length,0);}
+});
+
+test('partial endpoint configuration failure never removes prior subscriptions and can be safely reconciled by GET before rerun',async()=>{
+  const f=configurationFixture({failSecond:true});await assert.rejects(f.run,/subscription addition failed/);assert.equal(f.writes.length,2);
+  assert.ok(f.endpoints[0].enabled_events.includes('payout.paid'));assert.ok(f.endpoints[0].enabled_events.includes('account.updated'));
+  assert.ok(f.endpoints[1].enabled_events.includes('invoice.payment_succeeded'));assert.ok(!f.endpoints[1].enabled_events.includes('application_fee.refunded'));
+  assert.equal(f.logs.some(row=>row.check==='stripe-standard-webhook-subscriptions-configured'),false);
+  await f.run();assert.equal(f.writes.length,3,'rerun GETs and repairs only the remaining endpoint');
+});
+
+test('endpoint POST response or final GET drift cannot be reported as a successful repair',async()=>{
+  for(const postPatch of [{application:'foreign'},{api_version:'2020-01-01'},{enabled_events:['account.updated']},{url:'https://foreign.example'}]){
+    const f=configurationFixture({postPatch});await assert.rejects(f.run);assert.equal(f.writes.length,1);assert.equal(f.logs.some(row=>row.check==='stripe-standard-webhook-subscriptions-configured'),false);
+  }
+});
+
+test('fresh final v1 and v2 scope GETs independently reject drift after both endpoint additions',async()=>{
+  for(const options of [{finalEndpointPatch:{application:'foreign'}},{finalEndpointPatch:{api_version:'old'}},
+    {finalEndpointPatch:{enabled_events:['account.updated']}},{finalDestinationPatch:{events_from:['@self']}},
+    {finalDestinationPatch:{webhook_endpoint:{url:'https://foreign.example'}}}]){
+    const f=configurationFixture(options);await assert.rejects(f.run);assert.equal(f.writes.length,2);
+    assert.equal(f.logs.some(row=>row.check==='stripe-standard-webhook-subscriptions-configured'),false);
   }
 });

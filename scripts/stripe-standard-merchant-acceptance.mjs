@@ -131,7 +131,7 @@ export async function verifyInterruptedRecovery({service,provider,captured,cronS
   if(before.stripe_account_id!==account||before.livemode!==false||!['pending','processing'].includes(before.status)||before.attempts<1
     ||canonical(before.payload)!==canonical(event)||before.payload_hash!==sha(canonical(event)))fail('No actual interrupted durable merchant event matches the signed HTTP delivery.');
   if(Date.parse(before.next_attempt_at)>Date.now())fail('The real merchant retry/lease is not due yet; wait without editing its ledger.');
-  const genuine=await provider.request(`events/${event.id}`);
+  const genuine=await provider.request(`events/${event.id}`,{account});
   if(genuine.id!==event.id||genuine.type!==event.type||eventAccount(genuine)!==account||genuine.livemode!==false||canonical(genuine.data)!==canonical(event.data))fail('The original real provider event does not match the durable interrupted delivery.');
   if(typeof cronSecret!=='string'||cronSecret.length<24||/\s/.test(cronSecret))fail('The private isolated cron authorization is required.');
   const response=await fetcher(MERCHANT_ACCEPTANCE_SCOPE.origin+'/api/cron/stripe-merchant-event-recovery',{headers:{Authorization:`Bearer ${cronSecret}`},redirect:'error',signal:AbortSignal.timeout(60_000)});
@@ -139,6 +139,36 @@ export async function verifyInterruptedRecovery({service,provider,captured,cronS
   const after=await query(service.from('stripe_merchant_events').select('*').eq('event_id',event.id).single());
   if(after.status!=='processed'||after.attempts<=before.attempts||canonical(after.payload)!==canonical(event)||after.stripe_account_id!==account)fail('Actual recovery did not preserve and complete the original event.');
   return{eventId:event.id,type:event.type,account,beforeStatus:before.status,afterStatus:after.status,attemptsBefore:before.attempts,attemptsAfter:after.attempts,actualHttpCronStatus:response.status,ledgerStateFabricated:false};
+}
+export async function verifyDeletedDisposableDeauthorization({proof,captureFile,secretFile,eventAccessProof,service}){
+  const captured=await readGenuineCapturedEvent({captureFile,secretFile,resultStatus:200}),event=captured.event,account=proof.disposable?.accountId;
+  const deleted=Date.parse(proof.disposable?.deletedAt),requested=Date.parse(proof.disposable?.deleteRequestedAt),received=Date.parse(captured.record.receivedAt);
+  const create=proof.requests?.find(r=>r.method==='POST'&&r.path==='accounts'&&r.account===MERCHANT_ACCEPTANCE_SCOPE.platform&&r.status===200);
+  const receipt=proof.requests?.find(r=>r.method==='DELETE'&&r.path===`accounts/${account}`&&r.account===MERCHANT_ACCEPTANCE_SCOPE.platform&&r.status===200);
+  if(proof.platformId!==MERCHANT_ACCEPTANCE_SCOPE.platform||proof.preflight?.platformId!==MERCHANT_ACCEPTANCE_SCOPE.platform||proof.preflight?.livemode!==false
+    ||!isAccount(account)||primary.has(account)||proof.disposable?.registered!==true
+    ||proof.disposable.createIdempotencyKey!==`studio-standard-merchant-test-${proof.runId}-create`
+    ||!create||!receipt||!/^req_[A-Za-z0-9]+$/.test(receipt.requestId||'')||!Number.isFinite(requested)||!Number.isFinite(deleted)||requested>deleted
+    ||!Number.isFinite(Date.parse(create.at))||Date.parse(create.at)>requested||!Number.isFinite(Date.parse(receipt.at))||Date.parse(receipt.at)<requested||Date.parse(receipt.at)>deleted+1000
+    ||received<deleted-1000||event.type!=='account.application.deauthorized'||event.account!==account||event.livemode!==false
+    ||event.data?.object?.object!=='application'||!/^ca_[A-Za-z0-9]+$/.test(event.data.object.id||'')
+    ||!Number.isSafeInteger(event.created)||event.created*1000<requested-1000||event.created*1000>received+1000)fail('A genuine signed disposable deauthorization and successful guarded empty DELETE receipt are required.');
+  const failedPlatform=proof.requests.find(r=>r.method==='GET'&&r.path===`events/${event.id}`&&r.account===MERCHANT_ACCEPTANCE_SCOPE.platform&&r.status===404);
+  const connected=eventAccessProof?.connectedScopedEventGet?.request;
+  if(eventAccessProof?.accountId!==account||eventAccessProof.eventId!==event.id||eventAccessProof.deletedAt!==proof.disposable.deletedAt
+    ||eventAccessProof.platformScopedEventGet?.status!==404||!failedPlatform||eventAccessProof.platformScopedEventGet.requestId!==failedPlatform.requestId
+    ||eventAccessProof.connectedScopedEventGet?.ok!==false||connected?.method!=='GET'||connected.path!==`events/${event.id}`||connected.account!==account||connected.status!==403)fail('Both actual post-delete event API access failures must be recorded explicitly.');
+  const query=async q=>{const r=await q;if(r.error)throw r.error;return r.data;};
+  const row=await query(service.from('photographer_stripe_accounts').select('*').eq('stripe_account_id',account).eq('livemode',false).single());
+  const ledger=await query(service.from('stripe_merchant_events').select('*').eq('event_id',event.id).single());
+  const owner=await query(service.from('photographers').select('id,user_id,stripe_account_id,stripe_connected_account_id,stripe_connect_route_version').eq('id',MERCHANT_ACCEPTANCE_SCOPE.photographer).single());
+  if(row.stripe_account_id!==account||row.account_type!=='standard'||row.livemode!==false||row.status!=='blocked'||!row.deauthorized_at||row.photographer_id!==MERCHANT_ACCEPTANCE_SCOPE.photographer
+    ||ledger.status!=='processed'||ledger.event_id!==event.id||ledger.event_type!==event.type||ledger.stripe_account_id!==account||ledger.livemode!==false
+    ||canonical(ledger.payload)!==canonical(event)||ledger.payload_hash!==sha(canonical(event))
+    ||owner.id!==MERCHANT_ACCEPTANCE_SCOPE.photographer||owner.user_id!==MERCHANT_ACCEPTANCE_SCOPE.owner||owner.stripe_account_id!==MERCHANT_ACCEPTANCE_SCOPE.express
+    ||owner.stripe_connected_account_id!==MERCHANT_ACCEPTANCE_SCOPE.express||owner.stripe_connect_route_version!==eventAccessProof.primaryRouteVersion||eventAccessProof.primaryRoutingPreserved!==true)fail('Signed deauthorization must block only the disposable history and preserve the verified post-rollback primary route.');
+  return{eventId:event.id,accountId:account,historyStatus:row.status,actualHttpStatus:200,originalSignatureVerified:true,guardedEmptyDeleteRequestId:receipt.requestId,
+    providerEventGetVerified:false,providerEventApiUnavailableAfterDelete:true,platformEventGetStatus:404,connectedEventGetStatus:403,primaryRoutingUnchanged:true,ledgerStateFabricated:false};
 }
 export async function runMerchantAcceptance(options){
   const mutation=assertMerchantPhaseAllowed(options);
@@ -187,14 +217,9 @@ export async function runMerchantAcceptance(options){
         proof.checks.push({label:'genuine provider dispute observed through signed actual Next HTTP',eventId:captured.event.id,disputeId:row.dispute_id,accountId:options.accountId,paymentIntentId:context.payment.id,status:row.status,applicationFeeCents:context.fee});
       }
     }else if(options.phase==='verify-deauthorization'){
-      if(!proof.disposable?.deletedAt)fail('Delete only the separately created empty test Standard account first.');
-      const captured=await readGenuineCapturedEvent({captureFile:options.captureFile,secretFile:options.webhookSecretFile,resultStatus:200});
-      if(captured.event.type!=='account.application.deauthorized'||captured.event.account!==proof.disposable.accountId)fail('The genuine disposable-account deauthorization delivery is required.');
-      const event=await request(`events/${captured.event.id}`);if(event.id!==captured.event.id||event.type!==captured.event.type||event.account!==captured.event.account||event.livemode!==false)fail('Provider deauthorization event identity differs.');
-      const row=await query(service.from('photographer_stripe_accounts').select('*').eq('stripe_account_id',proof.disposable.accountId).eq('livemode',false).single());
-      const ledger=await query(service.from('stripe_merchant_events').select('*').eq('event_id',event.id).single());
-      if(row.status!=='blocked'||!row.deauthorized_at||row.photographer_id!==MERCHANT_ACCEPTANCE_SCOPE.photographer||ledger.status!=='processed')fail('Actual signed deauthorization did not block only the disposable history.');
-      proof.checks.push({label:'genuine Standard account deauthorization through actual signed Next webhook',eventId:event.id,accountId:row.stripe_account_id,historyStatus:row.status});
+      const result=await verifyDeletedDisposableDeauthorization({proof,captureFile:options.captureFile,secretFile:options.webhookSecretFile,
+        eventAccessProof:await privateJson(options.eventAccessProofFile),service});
+      proof.checks.push({label:'genuine Standard deauthorization verified by original signed HTTP and guarded empty DELETE receipt; event API access revoked',...result});
     }else if(options.phase==='recover-interrupted'){
       const captured=await readGenuineCapturedEvent({captureFile:options.captureFile,secretFile:options.webhookSecretFile,resultStatus:503});
       if(![MERCHANT_ACCEPTANCE_SCOPE.express,MERCHANT_ACCEPTANCE_SCOPE.standard,proof.disposable?.accountId].includes(eventAccount(captured.event)))fail('Only a genuine owned interrupted test event may be recovered.');

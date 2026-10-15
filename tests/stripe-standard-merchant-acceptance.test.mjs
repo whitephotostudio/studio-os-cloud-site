@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createHash,createHmac } from 'node:crypto';
 import { MERCHANT_ACCEPTANCE_SCOPE as scope,createMerchantTestProvider,assertDisposableAccount,assertEmptyDisposable,
-  assertMerchantPhaseAllowed,verifyDisputeContext,readGenuineCapturedEvent,verifyInterruptedRecovery } from '../scripts/stripe-standard-merchant-acceptance.mjs';
+  assertMerchantPhaseAllowed,verifyDisputeContext,readGenuineCapturedEvent,verifyInterruptedRecovery,verifyDeletedDisposableDeauthorization } from '../scripts/stripe-standard-merchant-acceptance.mjs';
 const sha=value=>createHash('sha256').update(value).digest('hex');
 const canonical=value=>Array.isArray(value)?`[${value.map(canonical).join(',')}]`:value&&typeof value==='object'
   ?`{${Object.entries(value).sort(([a],[b])=>a.localeCompare(b)).map(([key,child])=>`${JSON.stringify(key)}:${canonical(child)}`).join(',')}}`:JSON.stringify(value);
@@ -77,9 +77,9 @@ test('dispute cannot borrow another account, changed frozen fee or copied unrela
     const f=disputeFixture();mutate(f);await assert.rejects(verifyDisputeContext(f.options),/differs|belong/);
   }
 });
-async function captureFixture(t,status=503){
+async function captureFixture(t,status=503,eventOverride){
   const dir=await fs.mkdtemp(path.join(os.tmpdir(),'merchant-signature-unit-'));await fs.chmod(dir,0o700);t.after(()=>fs.rm(dir,{recursive:true,force:true}));
-  const event={id:'evt_genuineunit',type:'account.updated',livemode:false,account:scope.standard,data:{object:{id:scope.standard}}},raw=Buffer.from(JSON.stringify(event)),secret='whsec_merchantunit',now=Date.now(),timestamp=Math.floor(now/1000);
+  const event=eventOverride||{id:'evt_genuineunit',type:'account.updated',livemode:false,account:scope.standard,data:{object:{id:scope.standard}}},raw=Buffer.from(JSON.stringify(event)),secret='whsec_merchantunit',now=Date.now(),timestamp=Math.floor(now/1000);
   const signature=`t=${timestamp},v1=${createHmac('sha256',secret).update(`${timestamp}.`).update(raw).digest('hex')}`;
   const record={format:'stripe-cli-signed-test-delivery-v1',captureId:'unit',receivedAt:new Date(now).toISOString(),eventId:event.id,eventType:event.type,livemode:false,operatorPinnedPlatformId:scope.platform,signatureVerifiedAtCapture:true,originalStripeSignature:signature,rawBodyBase64:raw.toString('base64'),rawBodySha256:sha(raw)};
   const captureFile=path.join(dir,'unit.delivery.json'),secretFile=path.join(dir,'secret');
@@ -95,7 +95,7 @@ function recoveryFixture(event){
   const before={event_id:event.id,stripe_account_id:event.account,livemode:false,status:'pending',attempts:1,next_attempt_at:new Date(Date.now()-1000).toISOString(),payload:event,payload_hash:sha(canonical(event))};
   let recovered=false,http=0,gets=0;
   const service={from(table){assert.equal(table,'stripe_merchant_events');const q={select(){return q;},eq(){return q;},single:async()=>({data:recovered?{...before,status:'processed',attempts:2}:before,error:null})};return q;}};
-  const provider={request:async resource=>{assert.equal(resource,'events/'+event.id);gets++;return event;}};
+  const provider={request:async(resource,options)=>{assert.equal(resource,'events/'+event.id);assert.deepEqual(options,{account:event.account});gets++;return event;}};
   const fetcher=async(url,options)=>{assert.equal(url,scope.origin+'/api/cron/stripe-merchant-event-recovery');assert.ok(options.headers.Authorization.startsWith('Bearer '));http++;recovered=true;return{ok:true,status:200,json:async()=>({ok:true,recovered:1})};};
   return{before,service,provider,fetcher,counts:()=>({http,gets})};
 }
@@ -103,9 +103,55 @@ test('real local cron recovers only an already pending original signed event wit
   const c=await captureFixture(t),f=recoveryFixture(c.event),captured=await readGenuineCapturedEvent({...c,resultStatus:503});
   const result=await verifyInterruptedRecovery({...f,captured,cronSecret:'unit-local-private-cron-123456789'});assert.equal(result.beforeStatus,'pending');assert.equal(result.afterStatus,'processed');assert.equal(result.ledgerStateFabricated,false);assert.deepEqual(f.counts(),{http:1,gets:1});
 });
+test('merchant recovery scopes provider event retrieval to the exact connected account before local cron',async t=>{
+  const c=await captureFixture(t),f=recoveryFixture(c.event),captured=await readGenuineCapturedEvent({...c,resultStatus:503}),calls=[];
+  const provider=createMerchantTestProvider({key:'sk_test_merchant_unit',expectedPlatform:scope.platform,fetcher:async(url,options)=>{
+    const route=new URL(url).pathname.slice(4);calls.push({route,options});
+    assert.ok(['account','balance','events/'+c.event.id].includes(route));
+    return{ok:true,status:200,headers:new Headers({'request-id':'req_scoped_event'}),json:async()=>route==='account'?{id:scope.platform}:route==='balance'?{object:'balance',livemode:false}:c.event};
+  }});
+  await provider.preflight();
+  const result=await verifyInterruptedRecovery({...f,provider,captured,cronSecret:'unit-local-private-cron-123456789'});
+  assert.equal(result.afterStatus,'processed');assert.equal(f.counts().http,1);
+  const eventCalls=calls.filter(call=>call.route.startsWith('events/'));
+  assert.equal(eventCalls.length,1);assert.equal(eventCalls[0].options.method,'GET');
+  assert.equal(eventCalls[0].options.headers['Stripe-Account'],c.event.account);
+  assert.ok(calls.filter(call=>!call.route.startsWith('events/')).every(call=>call.options.headers['Stripe-Account']===undefined));
+});
 test('processed, mismatched or not-yet-due ledger rows cannot be used as interruption proof or force cron',async t=>{
   const c=await captureFixture(t),captured=await readGenuineCapturedEvent({...c,resultStatus:503});
   for(const mutate of [f=>{f.before.status='processed';},f=>{f.before.payload_hash='f'.repeat(64);},f=>{f.before.next_attempt_at=new Date(Date.now()+60_000).toISOString();}]){
     const f=recoveryFixture(c.event);mutate(f);await assert.rejects(verifyInterruptedRecovery({...f,captured,cronSecret:'unit-local-private-cron-123456789'}),/interrupted|due/);assert.equal(f.counts().http,0);
   }
+});
+async function deauthorizationFixture(t,eventPatch={}){
+  const now=Date.now(),account='acct_disposableTest',event={id:'evt_deauthunit',type:'account.application.deauthorized',livemode:false,account,created:Math.floor(now/1000),data:{object:{id:'ca_unit',object:'application'}},...eventPatch};
+  const capture=await captureFixture(t,200,event),deletedAt=new Date(now-2000).toISOString(),deleteRequestedAt=new Date(now-3000).toISOString();
+  const receipt={method:'DELETE',path:'accounts/'+account,account:scope.platform,status:200,requestId:'req_deleted',at:deletedAt};
+  const p={platformId:scope.platform,runId,preflight:{platformId:scope.platform,livemode:false},disposable:{accountId:account,registered:true,createIdempotencyKey:'studio-standard-merchant-test-'+runId+'-create',deleteRequestedAt,deletedAt},requests:[{method:'POST',path:'accounts',account:scope.platform,status:200,at:new Date(now-5000).toISOString()},receipt,{method:'GET',path:'events/'+event.id,account:scope.platform,status:404,requestId:'req_unavailable'}]};
+  const eventAccessProof={accountId:account,eventId:event.id,deletedAt,platformScopedEventGet:{status:404,requestId:'req_unavailable'},connectedScopedEventGet:{ok:false,request:{method:'GET',path:'events/'+event.id,account,status:403}},primaryRouteVersion:2,primaryRoutingPreserved:true};
+  const history={stripe_account_id:account,account_type:'standard',livemode:false,status:'blocked',deauthorized_at:new Date(now).toISOString(),photographer_id:scope.photographer};
+  const ledger={event_id:event.id,event_type:event.type,stripe_account_id:account,livemode:false,status:'processed',payload:event,payload_hash:sha(canonical(event))};
+  const owner={id:scope.photographer,user_id:scope.owner,stripe_account_id:scope.express,stripe_connected_account_id:scope.express,stripe_connect_route_version:2};let reads=0;
+  const service={from(table){reads++;const q={select(){return q;},eq(){return q;},single:async()=>({data:table==='photographer_stripe_accounts'?history:table==='stripe_merchant_events'?ledger:owner,error:null})};return q;}};
+  return{proof:p,captureFile:capture.captureFile,secretFile:capture.secretFile,eventAccessProof,service,history,ledger,owner,capture,reads:()=>reads};
+}
+test('deleted disposable deauthorization uses original signed HTTP200 and exact successful empty DELETE receipt with API unavailability explicit',async t=>{
+  const f=await deauthorizationFixture(t),result=await verifyDeletedDisposableDeauthorization(f);
+  assert.equal(result.historyStatus,'blocked');assert.equal(result.originalSignatureVerified,true);assert.equal(result.providerEventGetVerified,false);
+  assert.equal(result.platformEventGetStatus,404);assert.equal(result.connectedEventGetStatus,403);assert.equal(result.primaryRoutingUnchanged,true);
+});
+test('deauthorization rejects missing, failed or foreign DELETE receipts before reading database effects',async t=>{
+  for(const mutate of [f=>{f.proof.requests=f.proof.requests.filter(r=>r.method!=='DELETE');},f=>{f.proof.requests.find(r=>r.method==='DELETE').status=500;},f=>{f.proof.requests.find(r=>r.method==='DELETE').path='accounts/'+scope.standard;},f=>{f.proof.requests.find(r=>r.method==='DELETE').account='acct_foreign';}]){
+    const f=await deauthorizationFixture(t);mutate(f);await assert.rejects(verifyDeletedDisposableDeauthorization(f),/DELETE receipt/);assert.equal(f.reads(),0);
+  }
+});
+test('deauthorization rejects wrong event scope/type, forged signature and non-original processed ledger',async t=>{
+  for(const patch of [{account:'acct_foreign'},{type:'account.updated'},{livemode:true}]){
+    const f=await deauthorizationFixture(t,patch);await assert.rejects(verifyDeletedDisposableDeauthorization(f));assert.equal(f.reads(),0);
+  }
+  const forged=await deauthorizationFixture(t);forged.capture.record.originalStripeSignature='t='+Math.floor(Date.now()/1000)+',v1='+'0'.repeat(64);
+  await fs.writeFile(forged.captureFile,JSON.stringify(forged.capture.record),{mode:0o600});await assert.rejects(verifyDeletedDisposableDeauthorization(forged));assert.equal(forged.reads(),0);
+  const copied=await deauthorizationFixture(t);copied.ledger.payload_hash='f'.repeat(64);await assert.rejects(verifyDeletedDisposableDeauthorization(copied),/block only/);
+  const changed=await deauthorizationFixture(t);changed.owner.stripe_account_id=scope.standard;await assert.rejects(verifyDeletedDisposableDeauthorization(changed),/preserve/);
 });

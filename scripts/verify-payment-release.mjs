@@ -1,4 +1,5 @@
 import { pathToFileURL } from 'node:url';
+import { createHash } from 'node:crypto';
 
 const missingHistorySchemaCodes = new Set(['42883','42P01','42703','PGRST202','PGRST204','PGRST205']);
 const missingHistorySchema = error => missingHistorySchemaCodes.has(error?.code);
@@ -50,11 +51,95 @@ async function standardDestinationsGet(key,fetcher) {
   return response.json();
 }
 
+export const WHITEPHOTO_STANDARD_WEBHOOK_CONFIGURATION = Object.freeze({
+  connectedEndpointId:'we_1TIBXDPxlnWeytFA1UniR0oO',platformEndpointId:'we_1TIBPIPxlnWeytFAlrnRKuDI',
+  url:'https://www.studiooscloud.com/api/stripe/webhook',acknowledgment:'whitephoto-20261015-compatible-handlers-published',
+});
+
+/** Explicit one-shot operational repair, only after compatible handlers were
+ * published with additive history installed and future routing still Express.
+ * The published-commit acknowledgment is an operator assertion; independently
+ * verified deployment evidence is required by the runbook. No signing secrets
+ * are read or returned. Only the two existing endpoint subscriptions may change. */
+async function configureStandardWebhookDestinations(env,key,initialList,fetcher,report) {
+  const scope=WHITEPHOTO_STANDARD_AUDIT_SCOPE,pin=WHITEPHOTO_STANDARD_WEBHOOK_CONFIGURATION;
+  if(env.STUDIO_STANDARD_WEBHOOK_CONFIGURE!==scope.releaseKey ||
+    env.STUDIO_STANDARD_COMPATIBLE_RELEASE_CONFIRMED!==pin.acknowledgment ||
+    !/^[a-f0-9]{40}$/.test(env.STUDIO_STANDARD_COMPATIBLE_RELEASE_COMMIT||'') ||
+    ['STRIPE_STANDARD_MIGRATION_ENABLED','STRIPE_STANDARD_LIVE_MIGRATION_ENABLED','STRIPE_STANDARD_LIVE_CHECKOUT_ENABLED'].some(name=>env[name]==='true') ||
+    env.STUDIO_CREDIT_WEBHOOK_CONFIGURE==='1'||env.STUDIO_PAYMENT_REFUND_WEBHOOK_ID) {
+    throw new Error('Standard endpoint configuration requires the exact release acknowledgment, a verified published compatible commit and all Standard routing flags off.');
+  }
+  const serviceKey=(env.SUPABASE_SERVICE_ROLE_KEY||'').trim();
+  if(!serviceKey||serviceKey==='[SENSITIVE]')throw new Error('Protected database service access is required before endpoint configuration.');
+  const db=async path=>{const response=await fetcher(`${env.NEXT_PUBLIC_SUPABASE_URL.replace(/\/$/,'')}/rest/v1/${path}`,{
+    method:'GET',headers:{apikey:serviceKey,Authorization:`Bearer ${serviceKey}`},signal:AbortSignal.timeout(20000)});
+    if(!response.ok)throw new Error(`Standard endpoint database preparation verification failed (HTTP ${response.status}); details withheld.`);return response.json();};
+  const schema=await db('rpc/stripe_account_history_schema_status');
+  if(schema?.version!=='20261015010000'||schema.history_schema_present!==true||schema.reservation_guard_present!==true)throw new Error('Compatible additive history schema is unverified before endpoint configuration.');
+  const controls=await db(`stripe_standard_live_release_controls?select=*&release_key=eq.${scope.releaseKey}`);
+  if(!Array.isArray(controls)||controls.length!==1)throw new Error('The exact disabled Standard release control row is required.');
+  verifyStandardReleaseControl(controls[0],env,scope.platformAccountId);
+  if(['migration_enabled','checkout_enabled','reservation_required','activation_enabled'].some(name=>controls[0][name]!==false))throw new Error('Endpoint configuration requires all database release controls off.');
+  const rows=await db(`photographers?select=id,user_id,stripe_account_id,stripe_connected_account_id,stripe_standard_migrated_at,stripe_connect_route_version&id=eq.${scope.photographerId}`);
+  if(!Array.isArray(rows)||rows.length!==1||rows[0].id!==scope.photographerId||rows[0].user_id!==scope.userId||
+    rows[0].stripe_account_id!==scope.expressAccountId||rows[0].stripe_connected_account_id!==scope.expressAccountId||
+    rows[0].stripe_standard_migrated_at!==null||Number(rows[0].stripe_connect_route_version)!==0)throw new Error('Endpoint configuration requires verified unmigrated WhitePhoto original Express routing.');
+  const specs=[{id:pin.connectedEndpointId,scope:'@accounts',required:STANDARD_CONNECT_WEBHOOK_EVENTS},
+    {id:pin.platformEndpointId,scope:'@self',required:STANDARD_PLATFORM_WEBHOOK_EVENTS}];
+  const exactDestination=(list,spec)=>{
+    if(!Array.isArray(list?.data)||list.next_page_url!==null)throw new Error('Complete provider destination scope proof is required before endpoint configuration.');
+    const matches=list.data.filter(row=>row.id===spec.id),row=matches[0];
+    if(matches.length!==1||row.object!=='v2.core.event_destination'||row.type!=='webhook_endpoint'||row.status!=='enabled'||row.livemode!==true||
+      row.event_payload!=='snapshot'||!Array.isArray(row.events_from)||row.events_from.length!==1||row.events_from[0]!==spec.scope||
+      row.webhook_endpoint?.url!==pin.url||!Array.isArray(row.enabled_events)||!row.enabled_events.length||row.enabled_events.some(event=>typeof event!=='string'||!event))throw new Error('The pinned live endpoint identity, exact URL or explicit event scope differs.');
+    return row;
+  };
+  const endpointGet=async id=>{const response=await fetcher(`https://api.stripe.com/v1/webhook_endpoints/${id}`,{
+    method:'GET',headers:{Authorization:`Bearer ${key}`},signal:AbortSignal.timeout(20000)});
+    if(!response.ok)throw new Error(`Pinned endpoint GET failed (HTTP ${response.status}); details withheld.`);return response.json();};
+  const exactEndpoint=(row,spec)=>{if(row?.object!=='webhook_endpoint'||row.id!==spec.id||row.url!==pin.url||row.status!=='enabled'||row.livemode!==true||
+    !Array.isArray(row.enabled_events)||!row.enabled_events.length||row.enabled_events.some(event=>typeof event!=='string'||!event))throw new Error('Pinned endpoint provider identity or existing event subscriptions differ.');return row;};
+  const before=[];
+  for(const spec of specs){const destination=exactDestination(initialList,spec),endpoint=exactEndpoint(await endpointGet(spec.id),spec);
+    if([...new Set(destination.enabled_events)].sort().join(',')!==[...new Set(endpoint.enabled_events)].sort().join(','))throw new Error('Fresh v1 and v2 endpoint subscription proof disagree.');
+    before.push({spec,endpoint});}
+  let writes=0;
+  for(const {spec,endpoint} of before){
+    const events=endpoint.enabled_events.includes('*')?['*']:[...new Set([...endpoint.enabled_events,...spec.required])].sort();
+    if(events.length===new Set(endpoint.enabled_events).size&&events.every(event=>endpoint.enabled_events.includes(event)))continue;
+    const body=new URLSearchParams();for(const event of events)body.append('enabled_events[]',event);
+    const digest=createHash('sha256').update(JSON.stringify({id:spec.id,events})).digest('hex');
+    const response=await fetcher(`https://api.stripe.com/v1/webhook_endpoints/${spec.id}`,{method:'POST',
+      headers:{Authorization:`Bearer ${key}`,'Content-Type':'application/x-www-form-urlencoded','Idempotency-Key':`studio-standard-webhooks-20261015-${digest}`},
+      body,signal:AbortSignal.timeout(20000)});
+    if(!response.ok)throw new Error(`Pinned endpoint subscription addition failed (HTTP ${response.status}); inspect fresh provider state before retry, details withheld.`);
+    writes++;
+    const updated=exactEndpoint(await response.json(),spec);
+    if(updated.application!==endpoint.application||updated.api_version!==endpoint.api_version||events.some(event=>!updated.enabled_events.includes(event)))throw new Error('Endpoint update did not preserve original owner, API version or every required/original event.');
+  }
+  const after=await standardDestinationsGet(key,fetcher);
+  for(const {spec,endpoint}of before){const destination=exactDestination(after,spec),current=exactEndpoint(await endpointGet(spec.id),spec);
+    const required=endpoint.enabled_events.includes('*')?['*']:[...endpoint.enabled_events,...spec.required];
+    if(current.application!==endpoint.application||current.api_version!==endpoint.api_version||required.some(event=>!current.enabled_events.includes(event))||
+      [...new Set(destination.enabled_events)].sort().join(',')!==[...new Set(current.enabled_events)].sort().join(','))throw new Error('Fresh endpoint GET verification failed to preserve exact scope, owner, version or all subscriptions.');}
+  const proof=verifyStandardWebhookDestinations(after,env.STUDIO_PAYMENT_EXPECTED_APP_URL);
+  if(!proof.ok)throw new Error('Configured Standard webhook subscriptions remain incomplete.');
+  report(JSON.stringify({check:'stripe-standard-webhook-subscriptions-configured',ok:true,endpointIds:specs.map(spec=>spec.id),
+    endpointSubscriptionWrites:writes,preservedOriginalEvents:true,scopeProof:'provider_v2_events_from',
+    compatiblePublishedCommit:env.STUDIO_STANDARD_COMPATIBLE_RELEASE_COMMIT,compatibleCommitProof:'operator-asserted; independently verified deployment receipt required',
+    expressStillSelected:true,allReleaseControlsOff:true,databaseMutations:0,financialMutations:0}));
+  return after;
+}
+
 /** Optional pre-schema, GET-only audit inside the protected remote build. It
  * never proves DB routing or activation readiness and permits only empty (not
  * conflicting) candidate ownership while reporting that binding still remains. */
 export async function verifyStandardProviderRelease(env=process.env,fetcher=fetch,report=console.log) {
-  if(env.STUDIO_STANDARD_PROVIDER_RELEASE_VERIFY!=='1')return;
+  if(env.STUDIO_STANDARD_PROVIDER_RELEASE_VERIFY!=='1'){
+    if(env.STUDIO_STANDARD_WEBHOOK_CONFIGURE)throw new Error('Standard endpoint configuration requires the explicit protected provider audit.');
+    return;
+  }
   const scope=WHITEPHOTO_STANDARD_AUDIT_SCOPE,key=(env.STRIPE_SECRET_KEY||'').trim();
   if(!/^sk_live_[A-Za-z0-9]+$/.test(key)||env.STUDIO_STANDARD_EXPECTED_PLATFORM_ACCOUNT_ID!==scope.platformAccountId||
     env.STUDIO_PAYMENT_EXPECTED_PROJECT_REF!==scope.projectRef||env.NEXT_PUBLIC_SUPABASE_URL?.replace(/\/$/,'')!==`https://${scope.projectRef}.supabase.co`||
@@ -68,7 +153,9 @@ export async function verifyStandardProviderRelease(env=process.env,fetcher=fetc
   report(JSON.stringify({check:'stripe-standard-provider-only-readiness',ok:true,platformAccountId:platform.id,
     standardAccountId:standard.id,expressAccountId:express.id,ownershipBound:ready.ownershipBound,currentRequirementsClear:true,
     futureRequirementsClear:true,expressRollbackReady:true,databaseRoutingVerified:false,activationReady:false,databaseMutations:0,financialMutations:0}));
-  const destinations=verifyStandardWebhookDestinations(await standardDestinationsGet(key,fetcher),env.STUDIO_PAYMENT_EXPECTED_APP_URL);
+  let destinationList=await standardDestinationsGet(key,fetcher);
+  if(env.STUDIO_STANDARD_WEBHOOK_CONFIGURE)destinationList=await configureStandardWebhookDestinations(env,key,destinationList,fetcher,report);
+  const destinations=verifyStandardWebhookDestinations(destinationList,env.STUDIO_PAYMENT_EXPECTED_APP_URL);
   report(JSON.stringify({check:'stripe-standard-provider-only-webhooks',...destinations,databaseMutations:0,financialMutations:0}));
   if(!destinations.ok)throw new Error('Standard webhook connected/platform snapshot subscriptions are incomplete.');
 }
