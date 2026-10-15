@@ -32,6 +32,8 @@ export const maxDuration = 60;
 
 const MAX_CAMPAIGN_DELIVERIES = 500;
 const SEND_CONCURRENCY = 5;
+// This row tracks a reminder workflow, not an email accepted by the provider.
+const REMINDER_RUN_CHECKPOINT_TYPE = "school_deadline_reminder_run";
 
 const SendCampaignBodySchema = z.object({
   action: z.enum(["campaign", "test", "student", "resend"]).optional(),
@@ -289,6 +291,7 @@ export async function GET(
       .from("project_email_deliveries")
       .select("id,recipient_email,email_type,resend_email_id,subject,status,payload,error_message,sent_at")
       .eq("photographer_id", photographerRow.id)
+      .neq("email_type", REMINDER_RUN_CHECKPOINT_TYPE)
       .contains("payload", { schoolId })
       .order("sent_at", { ascending: false })
       .limit(50);
@@ -304,7 +307,9 @@ export async function GET(
       // report safely falls back to the locally recorded Sent/Failed state.
     }
 
-    const deliveryReport = ((historyRows ?? []) as SchoolDeliveryHistoryRow[]).map((row) => {
+    const deliveryReport = ((historyRows ?? []) as SchoolDeliveryHistoryRow[])
+      .filter((row) => row.email_type !== REMINDER_RUN_CHECKPOINT_TYPE)
+      .map((row) => {
       const payload = row.payload ?? {};
       const status = deliveryStatus(
         row.resend_email_id ? providerStatuses.get(row.resend_email_id) : null,

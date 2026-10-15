@@ -35,12 +35,12 @@ function fixture({ enabled = false, status = 'pre_release', classes = ['Grade 7'
     from(table) {
       let predicate = () => true, operation = 'read', value;
       const query = {
-        select() { return query; },
-        eq(key, expected) { const prev = predicate; predicate = row => prev(row) && row[key] === expected; return query; },
+        select(columns) { if (table === 'schools') assert.equal(columns?.split(',').includes('updated_at'), false, 'Live schools schema has no updated_at column'); return query; },
+        eq(key, expected) { assert.notEqual(key, 'updated_at'); const prev = predicate; predicate = row => prev(row) && (key === 'gallery_settings->>visitorEmailSettingsRevision' ? row.gallery_settings?.visitorEmailSettingsRevision ?? null : row[key]) === expected; return query; },
         is(key, expected) { return query.eq(key, expected); },
         insert(nextValue) { operation = 'insert'; value = nextValue; return query; },
         upsert(nextValue) { operation = 'upsert'; value = nextValue; return query; },
-        update(nextValue) { operation = 'update'; value = nextValue; return query; },
+        update(nextValue) { assert.equal('updated_at' in nextValue, false); operation = 'update'; value = nextValue; return query; },
         maybeSingle() { return run(true); },
         then(ok, err) { return run(false).then(ok, err); },
       };
@@ -168,6 +168,37 @@ test('desktop-style school updates keep explicit Off, and stale gallery windows 
   assert.equal((await route.PATCH(f.req({ online_backdrops_override: true, expected_online_backdrops_override: null }), f.context)).status, 409);
   assert.equal(f.school.online_backdrops_override, false);
   assert.equal(f.audits.length, auditsBeforeConflict);
+});
+test('school settings saves carry forward the current visitor template and refuse concurrent preference changes', async () => {
+  const f = fixture({ status: 'active' });
+  const template = { subject: 'Keep subject', headline: 'Keep headline', message: 'Keep my written message' };
+  const reminder = { enabled: true, timeZone: 'America/Toronto', sendHour: 9, classMode: 'range', classFrom: '7A', classTo: 'Grade 12' };
+  f.school.gallery_settings.visitorEmailTemplate = template;
+  f.school.gallery_settings.visitorDeadlineReminder = reminder;
+  const route = load('app/api/dashboard/schools/[schoolId]/route.ts', f.dependencies);
+  const response = await route.PATCH(f.req({ gallery_settings: { share: {}, extras: { sendEmailCampaign: false }, visitorEmailTemplate: { ...template, message: 'Stale template' } } }), f.context);
+  assert.equal(response.status, 200);
+  assert.deepEqual(f.school.gallery_settings.visitorEmailTemplate, template);
+  assert.deepEqual(f.school.gallery_settings.visitorDeadlineReminder, reminder);
+  const service = f.dependencies['@/lib/dashboard-auth'].createDashboardServiceClient();
+  const from = service.from.bind(service);
+  service.from = table => {
+    const query = from(table);
+    if (table === 'schools') {
+      const update = query.update.bind(query);
+      query.update = body => {
+        f.school.gallery_settings = { ...f.school.gallery_settings, visitorEmailSettingsRevision: '22222222-2222-4222-8222-222222222222', visitorEmailTemplate: { ...template, message: 'Newer composer save' } };
+        return update(body);
+      };
+    }
+    return query;
+  };
+  const auditsBefore = f.audits.length;
+  const conflict = await route.PATCH(f.req({ gallery_settings: { share: {}, extras: { sendEmailCampaign: false } } }), f.context);
+  assert.equal(conflict.status, 409);
+  assert.equal(f.school.gallery_settings.visitorEmailTemplate.message, 'Newer composer save');
+  assert.equal(f.audits.length, auditsBefore);
+  assert.equal(f.sent.length, 0);
 });
 test('successful school CAS audits the matched prior override after an intervening save, including inherited null', async () => {
   for (const expected of [null, false, true]) {

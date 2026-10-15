@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { randomUUID } from "node:crypto";
 import {
   createDashboardServiceClient,
   resolveDashboardAuth,
@@ -282,6 +283,7 @@ export async function PATCH(
       );
     }
 
+    const previousEmailSettingsRevision = normalizeEventGallerySettings(schoolRow.gallery_settings).visitorEmailSettingsRevision ?? null;
     const updates: Record<string, unknown> = {};
 
     if (hasOwn(body, "school_name") || hasOwn(body, "name")) {
@@ -318,7 +320,15 @@ export async function PATCH(
     if (hasOwn(body, "checkout_contact_required")) updates.checkout_contact_required = body.checkout_contact_required === true;
     if (hasOwn(body, "internal_notes")) updates.internal_notes = clean(body.internal_notes) || null;
     if (hasOwn(body, "gallery_settings")) {
-      updates.gallery_settings = normalizeEventGallerySettings(body.gallery_settings);
+      // Visitor email tools own their draft and reminder opt-in. An older open
+      // settings page must not replace them when saving other preferences.
+      const visitorSettings = normalizeEventGallerySettings(schoolRow.gallery_settings);
+      updates.gallery_settings = {
+        ...normalizeEventGallerySettings(body.gallery_settings),
+        visitorEmailTemplate: visitorSettings.visitorEmailTemplate,
+        visitorDeadlineReminder: visitorSettings.visitorDeadlineReminder,
+        visitorEmailSettingsRevision: randomUUID(),
+      };
     }
     if (hasOwn(body, "online_backdrops_override")) {
       updates.online_backdrops_override = body.online_backdrops_override;
@@ -386,6 +396,11 @@ export async function PATCH(
       .update(updates)
       .eq("id", schoolId)
       .eq("photographer_id", photographerRow.id);
+    if (hasOwn(body, "gallery_settings")) {
+      updateQuery = previousEmailSettingsRevision === null
+        ? updateQuery.is("gallery_settings->>visitorEmailSettingsRevision", null)
+        : updateQuery.eq("gallery_settings->>visitorEmailSettingsRevision", previousEmailSettingsRevision);
+    }
     if (hasOwn(body, "online_backdrops_override") && hasOwn(body, "expected_online_backdrops_override")) {
       updateQuery = body.expected_online_backdrops_override === null
         ? updateQuery.is("online_backdrops_override", null)
@@ -397,6 +412,12 @@ export async function PATCH(
 
     if (updateError) throw updateError;
     if (!updatedSchoolRow?.id) {
+      if (hasOwn(body, "gallery_settings")) {
+        return NextResponse.json(
+          { ok: false, message: "This school's gallery settings changed in another window. Reload before saving." },
+          { status: 409 },
+        );
+      }
       if (hasOwn(body, "online_backdrops_override") && hasOwn(body, "expected_online_backdrops_override")) {
         return NextResponse.json(
           { ok: false, message: "This school's background setting changed in another window. Reload before saving." },

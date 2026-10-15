@@ -10,8 +10,10 @@ import { resendConfigured, sendResendEmail } from "@/lib/resend";
 import { guardAgreement } from "@/lib/require-agreement";
 import { signedPrivateMediaReference } from "@/lib/private-media-references";
 import { loadSchoolVisitorData, schoolVisitorEmailAudience } from "@/lib/school-visitor-audience";
+import { SCHOOL_VISITOR_EMAIL_BATCH_SIZE, SchoolVisitorEmailConflict, sendSchoolVisitorEmailBatch, schoolVisitorEmailCampaignStatus } from "@/lib/school-visitor-email-batch";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 function clean(v: string | null | undefined) {
   return (v ?? "").trim();
@@ -22,13 +24,16 @@ function escHtml(s: string) {
 }
 
 const EmailBodySchema = z.object({
-  recipients: z.array(z.string().email().max(320)).max(5000).default([]),
-  action: z.enum(["preview", "send"]).default("send"),
+  recipients: z.array(z.string().email().max(320)).default([]),
+  action: z.enum(["preview", "send", "status"]).default("send"),
+  offset: z.number().int().nonnegative().default(0),
   schoolAudience: z.object({
     schoolId: z.string().uuid(),
-    visitorIds: z.array(z.string().min(1).max(512)).min(1).max(5000),
+    visitorIds: z.array(z.string().min(1).max(512)).min(1),
     filters: z.object({
       search: z.string().max(500), className: z.string().max(200),
+      classMode: z.enum(["single", "range"]).default("single"),
+      classFrom: z.string().max(200).default(""), classTo: z.string().max(200).default(""),
       orders: z.enum(["all", "ordered", "no_orders", "paid", "unpaid", "digitals"]),
       activity: z.enum(["all", "registered", "visited", "favorites", "downloads"]),
     }),
@@ -38,6 +43,14 @@ const EmailBodySchema = z.object({
   subject: z.string().min(1).max(500),
   headline: z.string().min(1).max(500),
   message: z.string().max(10_000).default(""),
+}).superRefine((body, context) => {
+  // Event/project callers still use the synchronous direct-recipient path.
+  // Keep its existing request bound; school audiences resolve and paginate
+  // their full recipient list on the server instead.
+  if (!body.schoolAudience && body.recipients.length > 5000) context.addIssue({
+    code: "custom", path: ["recipients"],
+    message: "Direct recipient lists are limited to 5000 addresses. Choose a school audience for larger batches.",
+  });
 });
 
 /**
@@ -54,7 +67,8 @@ export async function POST(request: NextRequest) {
 
     const parsed = await parseJson(request, EmailBodySchema);
     if (!parsed.ok) return parsed.response;
-    const { subject, headline, message, schoolAudience, action } = parsed.data;
+    const { subject, headline, message, schoolAudience, action, offset } = parsed.data;
+    let audienceFingerprint = "";
     let recipients = [...new Set(parsed.data.recipients.map(email => email.trim().toLowerCase()))];
 
     const service = createDashboardServiceClient();
@@ -83,6 +97,13 @@ export async function POST(request: NextRequest) {
       if (!school || school.photographer_id !== pg.id) {
         return NextResponse.json({ ok: false, message: "School not found." }, { status: 404 });
       }
+      if (action === "status") {
+        if (!schoolAudience.requestId) return NextResponse.json({ ok: false, message: "Choose an earlier email attempt to check." }, { status: 400 });
+        const status = await schoolVisitorEmailCampaignStatus(service, {
+          photographerId: String(pg.id), schoolId: schoolAudience.schoolId, requestId: schoolAudience.requestId,
+        });
+        return NextResponse.json({ ok: true, ...status }, { headers: { "Cache-Control": "private, no-store" } });
+      }
       const data = await loadSchoolVisitorData(service, schoolAudience.schoolId);
       let audience;
       try {
@@ -93,11 +114,12 @@ export async function POST(request: NextRequest) {
       // Ignore submitted custom addresses. Resolve the reviewed school
       // audience again, including all orders, immediately before sending.
       recipients = audience.recipients;
-      if (action === "preview") return NextResponse.json({ ok: true, audience });
+      if (action === "preview") return NextResponse.json({ ok: true, audience, batchSize: SCHOOL_VISITOR_EMAIL_BATCH_SIZE });
       if (!schoolAudience.requestId || schoolAudience.fingerprint !== audience.fingerprint) {
         return NextResponse.json({ ok: false, message: "The recipient list changed. Refresh the report and review recipients again." }, { status: 409 });
       }
-    } else if (action === "preview") {
+      audienceFingerprint = audience.fingerprint;
+    } else if (action === "preview" || action === "status") {
       return NextResponse.json({ ok: false, message: "Choose a school audience." }, { status: 400 });
     }
     if (!recipients.length) return NextResponse.json({ ok: false, message: "No recipients selected." }, { status: 400 });
@@ -147,6 +169,17 @@ export async function POST(request: NextRequest) {
 </body>
 </html>`;
 
+    if (schoolAudience?.requestId) {
+      const result = await sendSchoolVisitorEmailBatch(service, {
+        photographerId: String(pg.id), schoolId: schoolAudience.schoolId,
+        requestId: schoolAudience.requestId, audienceFingerprint, recipients, offset,
+        subject, headline, message,
+        email: { subject, html, fromName: businessName, replyTo: replyTo || null,
+          tags: [{ name: "type", value: "mass-promo" }, { name: "school_id", value: schoolAudience.schoolId }] },
+      });
+      return NextResponse.json(result, { headers: { "Cache-Control": "private, no-store" } });
+    }
+
     // Send emails in batches of 10
     const BATCH = 10;
     let sent = 0;
@@ -174,6 +207,9 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ ok: true, sent, failed, total: recipients.length });
   } catch (error) {
+    if (error instanceof SchoolVisitorEmailConflict) {
+      return NextResponse.json({ ok: false, message: error.message }, { status: 409 });
+    }
     console.error("Mass email error:", error);
     return NextResponse.json(
       { ok: false, message: "Failed to send emails." },
