@@ -25,6 +25,13 @@ export const LAB_FIXTURE = Object.freeze({
   productB: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
   admin: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
   adminPhotographer: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+  labOwner: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
+  labOperator: 'f1111111-1111-4111-8111-111111111111',
+  labViewer: 'f2222222-2222-4222-8222-222222222222',
+  foreignLabOwner: 'f3333333-3333-4333-8333-333333333333',
+  foreignLab: 'f4444444-4444-4444-8444-444444444444',
+  foreignProduct: 'f5555555-5555-4555-8555-555555555555',
+  orderProduct: 'f6666666-6666-4666-8666-666666666666',
   password: 'LocalLabOnly123!',
 });
 const repository = fileURLToPath(new URL('../', import.meta.url));
@@ -35,10 +42,17 @@ const identifier = value => {
   return '"' + value + '"';
 };
 const json = value => JSON.stringify(value);
+const fixtureEmails = new Map([
+  [LAB_FIXTURE.owner, 'owner@lab.example.test'], [LAB_FIXTURE.otherOwner, 'other@lab.example.test'],
+  [LAB_FIXTURE.admin, 'admin@lab.example.test'], [LAB_FIXTURE.labOwner, 'labowner@lab.example.test'],
+  [LAB_FIXTURE.labOperator, 'operator@lab.example.test'], [LAB_FIXTURE.labViewer, 'viewer@lab.example.test'],
+  [LAB_FIXTURE.foreignLabOwner, 'foreignlab@lab.example.test'],
+]);
+const fixtureMfaUsers = new Set([LAB_FIXTURE.admin, LAB_FIXTURE.labOwner, LAB_FIXTURE.labOperator, LAB_FIXTURE.labViewer, LAB_FIXTURE.foreignLabOwner]);
 
 export function fixtureToken(userId = LAB_FIXTURE.owner, role = 'authenticated') {
   const encode = value => Buffer.from(json(value)).toString('base64url');
-  const data = `${encode({ alg: 'HS256', typ: 'JWT' })}.${encode({ sub: userId, role, aal: userId === LAB_FIXTURE.admin ? 'aal2' : 'aal1', iss: 'local-lab-fixture', aud: 'authenticated', iat: Math.floor(Date.now() / 1000), exp: Math.floor(Date.now() / 1000) + 86400 })}`;
+  const data = `${encode({ alg: 'HS256', typ: 'JWT' })}.${encode({ sub: userId, role, aal: fixtureMfaUsers.has(userId) ? 'aal2' : 'aal1', iss: 'local-lab-fixture', aud: 'authenticated', iat: Math.floor(Date.now() / 1000), exp: Math.floor(Date.now() / 1000) + 86400 })}`;
   return `${data}.${createHmac('sha256', tokenSecret).update(data).digest('base64url')}`;
 }
 function tokenClaims(token) {
@@ -53,11 +67,11 @@ function tokenClaims(token) {
   } catch { return null; }
 }
 function fixtureUser(id) {
-  if (![LAB_FIXTURE.owner, LAB_FIXTURE.otherOwner, LAB_FIXTURE.admin].includes(id)) return null;
-  return { id, aud: 'authenticated', role: 'authenticated', email: id === LAB_FIXTURE.owner ? 'owner@lab.example.test' : id === LAB_FIXTURE.admin ? 'admin@lab.example.test' : 'other@lab.example.test', email_confirmed_at: '2026-10-15T00:00:00Z', confirmed_at: '2026-10-15T00:00:00Z', created_at: '2026-10-15T00:00:00Z', app_metadata: { provider: 'email', providers: ['email'] }, user_metadata: {}, identities: [], factors: id === LAB_FIXTURE.admin ? [{ id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', factor_type: 'totp', status: 'verified', friendly_name: 'Synthetic local factor', created_at: '2026-10-15T00:00:00Z', updated_at: '2026-10-15T00:00:00Z' }] : [] };
+  if (!fixtureEmails.has(id)) return null;
+  return { id, aud: 'authenticated', role: 'authenticated', email: fixtureEmails.get(id), email_confirmed_at: '2026-10-15T00:00:00Z', confirmed_at: '2026-10-15T00:00:00Z', created_at: '2026-10-15T00:00:00Z', app_metadata: { provider: 'email', providers: ['email'] }, user_metadata: {}, identities: [], factors: fixtureMfaUsers.has(id) ? [{ id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', factor_type: 'totp', status: 'verified', friendly_name: 'Synthetic local factor', created_at: '2026-10-15T00:00:00Z', updated_at: '2026-10-15T00:00:00Z' }] : [] };
 }
 
-export async function createLabDatabase() {
+export async function createLabDatabase({ beforeLabOrdersMigration } = {}) {
   const db = new PGlite();
   await db.exec(`
     create role anon; create role authenticated; create role service_role bypassrls;
@@ -75,6 +89,11 @@ export async function createLabDatabase() {
     create table packages(id uuid primary key default gen_random_uuid(),local_id text,photographer_id uuid references photographers(id),profile_id text references package_profiles(id),profile_name text,name text,description text,price_cents integer,items jsonb,active boolean default true,category text,sort_order integer);
     create table schools(id uuid primary key,photographer_id uuid references photographers(id),school_name text,package_profile_id text);
     create table projects(id uuid primary key,photographer_id uuid references photographers(id),title text,workflow_type text default 'event',package_profile_id text);
+    create table orders(id uuid primary key,photographer_id uuid references photographers(id),school_id uuid,project_id uuid,status text,payment_status text,total_cents integer,cart_snapshot jsonb,updated_at timestamptz default now());
+    create schema storage;
+    create table storage.buckets(id text primary key,name text,public boolean default false,file_size_limit bigint,allowed_mime_types text[]);
+    create table storage.objects(id uuid primary key default gen_random_uuid(),bucket_id text,name text,owner uuid,owner_id text,metadata jsonb);
+    create function storage.foldername(text) returns text[] language sql immutable as $$ select string_to_array($1,'/') $$;
     grant select on photographers,subscriptions,photographer_agreements,schools,projects,package_profiles,packages to authenticated;
     grant all on all tables in schema public to service_role;
     insert into auth.users(id) values ('${LAB_FIXTURE.owner}'),('${LAB_FIXTURE.otherOwner}'),('${LAB_FIXTURE.admin}');
@@ -88,17 +107,43 @@ export async function createLabDatabase() {
   await db.exec(readFileSync(migration, 'utf8'));
   const catalogMigration = new URL('../supabase/migrations/20261015210000_lab_catalog_imports.sql', import.meta.url);
   if (existsSync(catalogMigration)) await db.exec(readFileSync(catalogMigration, 'utf8'));
+  for (const user of [LAB_FIXTURE.labOwner, LAB_FIXTURE.labOperator, LAB_FIXTURE.labViewer, LAB_FIXTURE.foreignLabOwner]) {
+    await db.query('insert into auth.users(id) values ($1)', [user]);
+    await db.query('insert into photographer_agreements(user_id,agreement_version) values ($1,$2)', [user, '2026-04-v1']);
+  }
   // Test-only data lives here, never in the product migration or GTA catalog.
-  await db.query(`insert into studio_labs(id,slug,name,location,country_code,city,region,currency,status,intake_enabled,catalog_verified,description) values ($1,'fixture-lab','Synthetic local lab','Local fixture only','CA','Fixture city','Fixture region','CAD','active',false,true,'Generated test catalog. No real lab, provider or printer is connected.')`, [LAB_FIXTURE.lab]);
+  await db.query(`insert into studio_labs(id,slug,name,location,country_code,city,region,currency,status,intake_enabled,catalog_verified,description) values ($1,'fixture-lab','Synthetic local lab','Local fixture only','CA','Fixture city','Fixture region','CAD','active',true,true,'Generated test catalog. No real lab, provider or printer is connected.'),($2,'fixture-foreign-lab','Other synthetic lab','Local fixture only','CA','Other fixture city','Fixture region','CAD','active',true,true,'Isolated foreign lab for access tests.')`, [LAB_FIXTURE.lab, LAB_FIXTURE.foreignLab]);
   await db.query(`insert into studio_lab_catalog(id,lab_id,category,name,size,finish,cost_cents,currency,sku,verified,active,popular,width_inches,height_inches,cost_source) values ($1,$3,'prints','Synthetic 5x7 print','5x7','Lustre',200,'CAD','SYNTHETIC-5X7',true,true,true,5,7,'lab_confirmed'),($2,$3,'prints','Synthetic 8x10 print','8x10','Lustre',400,'CAD','SYNTHETIC-8X10',true,true,true,8,10,'lab_confirmed')`, [LAB_FIXTURE.productA, LAB_FIXTURE.productB, LAB_FIXTURE.lab]);
-  await db.query("insert into lab_memberships(lab_id,user_id,role) values ($1,$2,'owner')", [LAB_FIXTURE.lab, LAB_FIXTURE.owner]);
+  await db.query(`insert into studio_lab_catalog(id,lab_id,category,name,size,finish,cost_cents,currency,sku,verified,active,popular,width_inches,height_inches,cost_source) values ($1,$2,'prints','Foreign synthetic 5x7 print','5x7','Lustre',250,'CAD','FOREIGN-5X7',true,true,true,5,7,'lab_confirmed')`, [LAB_FIXTURE.foreignProduct, LAB_FIXTURE.foreignLab]);
+  await db.query(`insert into studio_lab_catalog(id,lab_id,category,name,size,finish,cost_cents,currency,sku,verified,active,popular,width_inches,height_inches,cost_source) values ($1,$2,'prints','Synthetic 6x4 order print','6x4','Lustre',120,'CAD','SYNTHETIC-6X4',true,true,false,6,4,'lab_confirmed')`, [LAB_FIXTURE.orderProduct, LAB_FIXTURE.lab]);
+  for (const [user, memberRole, lab] of [[LAB_FIXTURE.labOwner, 'owner', LAB_FIXTURE.lab], [LAB_FIXTURE.labOperator, 'operator', LAB_FIXTURE.lab], [LAB_FIXTURE.labViewer, 'viewer', LAB_FIXTURE.lab], [LAB_FIXTURE.foreignLabOwner, 'owner', LAB_FIXTURE.foreignLab]]) await db.query('insert into lab_memberships(lab_id,user_id,role) values ($1,$2,$3)', [lab, user, memberRole]);
+  if (beforeLabOrdersMigration) await beforeLabOrdersMigration(db);
+  const ordersMigration = new URL('../supabase/migrations/20261015220000_lab_orders.sql', import.meta.url);
+  if (existsSync(ordersMigration)) await db.exec(readFileSync(ordersMigration, 'utf8'));
   return db;
+}
+
+export async function snapshotLegacyLabFixture(db) {
+  const values = {};
+  for (const table of ['schools', 'projects', 'packages', 'package_profiles', 'orders']) {
+    values[table] = (await db.query(`select coalesce(jsonb_agg(to_jsonb(t) order by t.id),'[]'::jsonb) as rows from ${identifier(table)} t`)).rows[0].rows;
+  }
+  return JSON.stringify(values);
+}
+
+export async function seedLegacyLabCanaries(db) {
+  await db.query("insert into package_profiles(id,name,photographer_id) values ('legacy-fixture-profile','Existing school price list',$1)", [LAB_FIXTURE.photographer]);
+  await db.query("insert into packages(id,local_id,photographer_id,profile_id,profile_name,name,description,price_cents,items,active,category,sort_order) values ('f7777777-7777-4777-8777-777777777777','legacy-package',$1,'legacy-fixture-profile','Existing school price list','Existing portrait package','Preserve the original prices',1799,'[{\"productName\":\"Legacy 5x7\",\"quantity\":2}]'::jsonb,true,'prints',1)", [LAB_FIXTURE.photographer]);
+  await db.query("update schools set package_profile_id='legacy-fixture-profile' where id=$1", [LAB_FIXTURE.school]);
+  await db.query("update projects set package_profile_id='legacy-fixture-profile' where id=$1", [LAB_FIXTURE.project]);
+  await db.query("insert into orders(id,photographer_id,school_id,project_id,status,payment_status,total_cents,cart_snapshot,updated_at) values ('f8888888-8888-4888-8888-888888888888',$1,$2,$3,'completed','paid',1799,'{\"packageName\":\"Existing portrait package\",\"price\":1799}'::jsonb,'2026-10-01T12:00:00Z')", [LAB_FIXTURE.photographer, LAB_FIXTURE.school, LAB_FIXTURE.project]);
 }
 
 /** A deliberately small PostgREST adapter; all mutations/RPCs execute real SQL. */
 export async function createLabFixture({ port = 55471 } = {}) {
-  const db = await createLabDatabase();
+  const db = await createLabDatabase({ beforeLabOrdersMigration: seedLegacyLabCanaries });
   const requests = [];
+  const storageFiles = new Map();
   const anonKey = fixtureToken(null, 'anon');
   const serviceKey = fixtureToken(null, 'service_role');
   let queue = Promise.resolve();
@@ -124,16 +169,46 @@ export async function createLabFixture({ port = 55471 } = {}) {
     const url = new URL(request.url, 'http://127.0.0.1');
     requests.push({ method: request.method, path: url.pathname });
     try {
-      let raw = '';
-      for await (const chunk of request) { raw += chunk; if (raw.length > 1_000_000) throw Error('Fixture body too large'); }
-      const body = raw ? JSON.parse(raw) : {};
+      const chunks = []; let bytes = 0;
+      for await (const chunk of request) { chunks.push(Buffer.from(chunk)); bytes += chunk.length; if (bytes > 6_000_000) throw Error('Fixture body too large'); }
+      const raw = Buffer.concat(chunks);
       const bearer = (request.headers.authorization || '').replace(/^Bearer /i, '');
       const claims = tokenClaims(bearer);
+      if (url.pathname.startsWith('/storage/v1/bucket/')) {
+        if (claims?.role !== 'service_role') { send(403, { statusCode: '403', error: 'Forbidden' }); return; }
+        const bucketId = decodeURIComponent(url.pathname.slice('/storage/v1/bucket/'.length));
+        const bucket = await serial(() => db.query('select * from storage.buckets where id=$1', [bucketId]));
+        send(bucket.rows.length ? 200 : 404, bucket.rows[0] || { statusCode: '404', error: 'Not Found' }); return;
+      }
+      if (url.pathname.startsWith('/storage/v1/object/')) {
+        if (claims?.role !== 'service_role') { send(403, { statusCode: '403', error: 'Forbidden', message: 'Private fixture storage requires service authentication' }); return; }
+        const storagePath = decodeURIComponent(url.pathname.slice('/storage/v1/object/'.length)).replace(/^authenticated\//, '');
+        const [bucket, ...segments] = storagePath.split('/');
+        if (bucket !== 'lab-production-files' || segments.some(part => !part || part === '.' || part === '..' || part.includes('\\'))) { send(400, { statusCode: '400', error: 'Invalid path', message: 'Use the private fixture bucket and a normalized key' }); return; }
+        const key = segments.join('/');
+        if (request.method === 'POST' && key) {
+          if (storageFiles.has(key) && request.headers['x-upsert'] !== 'true') { send(409, { statusCode: '409', error: 'Duplicate', message: 'Object already exists' }); return; }
+          storageFiles.set(key, { bytes: raw, contentType: request.headers['content-type'] || 'application/octet-stream' });
+          send(200, { Key: `${bucket}/${key}`, Id: 'synthetic-local-object' }); return;
+        }
+        if (request.method === 'GET' && key) {
+          const file = storageFiles.get(key);
+          if (!file) { send(404, { statusCode: '404', error: 'Not Found', message: 'Object not found' }); return; }
+          response.writeHead(200, { 'content-type': file.contentType, 'content-length': file.bytes.length, 'cache-control': 'private, no-store' }); response.end(file.bytes); return;
+        }
+        if (request.method === 'DELETE' && !key) {
+          const body = raw.length ? JSON.parse(raw.toString('utf8')) : {};
+          for (const prefix of body.prefixes || []) storageFiles.delete(prefix);
+          send(200, (body.prefixes || []).map(name => ({ name }))); return;
+        }
+        send(400, { statusCode: '400', error: 'Unsupported fixture storage operation' }); return;
+      }
+      const body = raw.length ? JSON.parse(raw.toString('utf8')) : {};
       if (url.pathname === '/health') { send(200, { ok: true, synthetic: true, localOnly: true }); return; }
       if (url.pathname === '/auth/v1/token') {
         const user = url.searchParams.get('grant_type') === 'refresh_token'
           ? fixtureUser(body.refresh_token?.replace('fixture-refresh-', ''))
-          : fixtureUser(body.email === 'owner@lab.example.test' ? LAB_FIXTURE.owner : body.email === 'other@lab.example.test' ? LAB_FIXTURE.otherOwner : body.email === 'admin@lab.example.test' ? LAB_FIXTURE.admin : '');
+          : fixtureUser([...fixtureEmails.entries()].find(([, email]) => email === body.email)?.[0]);
         if (!user || url.searchParams.get('grant_type') !== 'refresh_token' && body.password !== LAB_FIXTURE.password) { send(400, { error: 'invalid_grant', error_description: 'Invalid login credentials' }); return; }
         send(200, { access_token: fixtureToken(user.id), refresh_token: `fixture-refresh-${user.id}`, expires_in: 86400, expires_at: Math.floor(Date.now() / 1000) + 86400, token_type: 'bearer', user }); return;
       }
@@ -166,13 +241,13 @@ export async function createLabFixture({ port = 55471 } = {}) {
           else throw Error(`Unsupported fixture filter: ${op}`);
         }
         const predicate = where.length ? ` where ${where.join(' and ')}` : '';
-        if (request.method === 'POST' && resource === 'studio_labs') {
+        if (request.method === 'POST' && ['studio_labs', 'lab_order_assets'].includes(resource)) {
           const rows = Array.isArray(body) ? body : [body];
           if (rows.length !== 1 || !rows[0] || typeof rows[0] !== 'object') throw Error('Fixture lab insert expects one object');
           const entries = Object.entries(rows[0]);
           const select = url.searchParams.get('select') || '*';
           const fields = select === '*' ? '*' : select.split(',').map(identifier).join(',');
-          const result = await tx.query(`insert into ${table}(${entries.map(([key]) => identifier(key)).join(',')}) values (${entries.map((_, i) => `$${i + 1}`).join(',')}) returning ${fields}`, entries.map(([, value]) => value));
+          const result = await tx.query(`insert into ${table}(${entries.map(([key]) => identifier(key)).join(',')}) values (${entries.map((_, i) => `$${i + 1}`).join(',')}) returning ${fields}`, entries.map(([, value]) => value !== null && typeof value === 'object' ? JSON.stringify(value) : value));
           return { rows: result.rows, count: result.rows.length };
         }
         if (['GET', 'HEAD'].includes(request.method)) {
@@ -200,7 +275,7 @@ export async function createLabFixture({ port = 55471 } = {}) {
   await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, '127.0.0.1', resolve); });
   const actualPort = server.address().port;
   let closing;
-  return { db, server, requests, url: `http://127.0.0.1:${actualPort}`, anonKey, serviceKey,
+  return { db, server, requests, storageFiles, url: `http://127.0.0.1:${actualPort}`, anonKey, serviceKey,
     close: () => closing ||= (async () => { await new Promise(resolve => server.close(resolve)); await queue; await db.close(); })() };
 }
 
@@ -223,6 +298,7 @@ async function main() {
     console.log(`Sign in: http://localhost:${appPort}/sign-in?redirect=/dashboard/labs`);
     console.log(`Synthetic account: owner@lab.example.test / ${LAB_FIXTURE.password}`);
     console.log(`Synthetic platform admin with fixture AAL2: admin@lab.example.test / ${LAB_FIXTURE.password}`);
+    console.log(`Synthetic lab portal with fixture AAL2: labowner@lab.example.test, operator@lab.example.test, viewer@lab.example.test, foreignlab@lab.example.test / ${LAB_FIXTURE.password}`);
   } else console.log('Use --app to launch actual Next with only the synthetic local Supabase configuration.');
   const stop = async () => { app?.kill('SIGTERM'); await fixture.close(); process.exit(0); };
   process.once('SIGINT', stop); process.once('SIGTERM', stop);

@@ -30,7 +30,7 @@ const navActiveStyle: React.CSSProperties = {
   background: "#1a1a1a",
 };
 
-const NAV_ITEMS = [
+const NAV_ITEMS: { href: string; label: string; match: RegExp; section?: string }[] = [
   { href: "/dashboard", label: "Dashboard", match: /^\/dashboard$/ },
   { href: "/dashboard/clients", label: "Clients", match: /^\/dashboard\/clients/ },
   // Schools owns both the school list AND the school galleries, which live at
@@ -42,12 +42,13 @@ const NAV_ITEMS = [
   { href: "/dashboard/projects/events", label: "Projects", match: /^\/dashboard\/projects(?!\/schools)/ },
   { href: "/dashboard/calendar", label: "Calendar", match: /^\/dashboard\/calendar/ },
   { href: "/dashboard/orders", label: "Orders", match: /^\/dashboard\/orders/ },
-  { href: "/dashboard/packages", label: "Packages", match: /^\/dashboard\/packages/ },
-  { href: "/dashboard/labs", label: "Labs & Price Sheets", match: /^\/dashboard\/labs/ },
+  { href: "/dashboard/packages", label: "In-house / Self-fulfillment", match: /^\/dashboard\/packages/, section: "Personal" },
+  { href: "/dashboard/labs", label: "Labs & Price Sheets", match: /^\/dashboard\/labs(?!\/orders)/, section: "Partner labs" },
+  { href: "/dashboard/labs/orders", label: "Lab orders", match: /^\/dashboard\/labs\/orders/ },
   // 2026-04-25: Backdrops was reachable only by typing the URL.  Surface it
   // between Packages and Settings so photographers can always find their
   // backdrop catalog + the new Supports landscape tickbox.
-  { href: "/dashboard/backdrops", label: "Backdrops", match: /^\/dashboard\/backdrops/ },
+  { href: "/dashboard/backdrops", label: "Backdrops", match: /^\/dashboard\/backdrops/, section: "Studio" },
   { href: "/dashboard/settings", label: "Settings", match: /^\/dashboard\/settings/ },
   { href: "/dashboard/membership", label: "Membership", match: /^\/dashboard\/membership/ },
   { href: "/dashboard/feature-requests", label: "Feature Requests", match: /^\/dashboard\/feature-requests/ },
@@ -131,14 +132,16 @@ export function DashboardSidebar({
 
       <nav style={{ flex: 1, paddingTop: 18 }}>
         {NAV_ITEMS.map((item) => (
+          <div key={item.href}>
+          {item.section && <div style={{ padding: "18px 24px 5px", color: "#90958f", fontSize: 10, letterSpacing: "1.4px", textTransform: "uppercase" }}>{item.section}</div>}
           <Link
-            key={item.href}
             href={item.href}
             onClick={onNavigate}
             style={item.match.test(pathname) ? navActiveStyle : navItemStyle}
           >
             {item.label}
           </Link>
+          </div>
         ))}
         {isAdmin && (
           <>

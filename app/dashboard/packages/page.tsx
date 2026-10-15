@@ -965,9 +965,10 @@ export default function PackagesPage() {
         <div style={{ padding: "40px" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 32 }}>
             <div>
+              <p style={{ fontSize: 11, fontWeight: 600, color: "#666", letterSpacing: "1.2px", textTransform: "uppercase", margin: "0 0 8px" }}>Personal · In-house / Self-fulfillment</p>
               <h1 style={{ fontSize: 26, fontWeight: 700, margin: 0, color: "#111" }}>Price Sheets</h1>
               <p style={{ margin: "4px 0 0", color: "#666", fontSize: 14 }}>
-                Manage pricing profiles — assign to any school or event project
+                Set your in-house prices and assign them to schools or event projects
               </p>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
