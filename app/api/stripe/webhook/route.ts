@@ -1,5 +1,6 @@
 import { scheduleOrderRefundEmails } from "@/lib/order-refund-notifications";
 import { isCustomerOrderStripeEvent, processCustomerOrderStripeEvent } from "@/lib/customer-order-webhook";
+import { isStripeMerchantEvent, processStripeMerchantEvent } from "@/lib/stripe-merchant-webhook";
 import { NextRequest, NextResponse } from "next/server";
 import { pausePlatformCreditEvent } from "@/lib/credit-maintenance";
 import { createDashboardServiceClient } from "@/lib/dashboard-auth";
@@ -136,7 +137,7 @@ function webhookSecrets() {
 
 async function finalizeVerifiedCustomerOrder(service: ReturnType<typeof createDashboardServiceClient>, input: {
   accountId: string; orderId: string; checkoutSessionId?: string | null;
-  paymentIntentId?: string | null; paymentStatus: string; note: string;
+  paymentIntentId?: string | null; paymentStatus: string; note: string; metadata?: Record<string, unknown> | null;
 }) {
   const proofInput = { ...input, outcome: "paid" as const };
   const verified = await verifyOrderWebhookPayment(service, proofInput);
@@ -518,6 +519,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, message: "Credit fulfillment is briefly paused for an upgrade." }, { status: 503, headers: { "Retry-After": "120" } });
   }
 
+  // A Standard account can receive unrelated merchant payments carrying a
+  // generic order_id. Studio OS has always stamped its own payment flow on
+  // both Checkout Sessions and PaymentIntents, including legacy checkouts.
+  if (event.account && ["checkout.session.completed", "checkout.session.async_payment_succeeded",
+      "payment_intent.succeeded", "payment_intent.payment_failed"].includes(event.type) &&
+      (event.data.object.metadata as Record<string, unknown> | null | undefined)?.billing_flow !== "customer_order") {
+    return NextResponse.json({ ok: true, ignored: true }, { status: 200 });
+  }
   const service = createDashboardServiceClient();
   // Customer payment claims expire if this worker is terminated. Platform
   // credits/refunds retain their existing independent fulfillment ledgers.
@@ -527,6 +536,19 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(result, { status: result.status, ...(result.status === 503 ? { headers: { "Retry-After": "60" } } : {}) });
     } catch {
       return NextResponse.json({ ok: false, message: "Customer payment processing needs retry." }, { status: 503, headers: { "Retry-After": "60" } });
+    }
+  }
+  // Account history remains active when new Standard onboarding is disabled.
+  // These recoverable claims also handle platform-scoped application-fee
+  // notifications without confusing them with connected customer payments.
+  if (isStripeMerchantEvent(event)) {
+    try {
+      const result = await processStripeMerchantEvent(service, event);
+      if (result) return NextResponse.json(result, { status: result.status,
+        ...(result.status === 503 ? { headers: { "Retry-After": "60" } } : {}) });
+    } catch {
+      return NextResponse.json({ ok: false, message: "Merchant event processing needs retry." },
+        { status: 503, headers: { "Retry-After": "60" } });
     }
   }
   const object = event.data.object;
@@ -548,7 +570,11 @@ export async function POST(req: NextRequest) {
       ["paid", "no_payment_required"].includes(String(object.payment_status)) &&
       (billingFlow === "customer_order" || (object.metadata as Record<string, string>).order_id))
   ));
-  const processBeforeRecording = processCreditsFirst || processPaidOrderFirst;
+  // Legacy installations without the new ledger can safely re-run the
+  // verified refund/account handlers. Recording before effects would consume
+  // a retry permanently if the process died between the insert and handler.
+  const processMerchantFirst = Boolean(event.account && ["account.updated", "charge.refunded", "refund.updated", "refund.failed"].includes(event.type));
+  const processBeforeRecording = processCreditsFirst || processPaidOrderFirst || processMerchantFirst;
 
   // Insert-first dedup: atomically claim this event.id before doing any work.
   // If another concurrent delivery already inserted it, recordStripeEvent
@@ -731,7 +757,7 @@ export async function POST(req: NextRequest) {
             await finalizeVerifiedCustomerOrder(service, {
               accountId: event.account,
               orderId: session.metadata?.order_id ?? "",
-              checkoutSessionId: session.id,
+              checkoutSessionId: session.id, metadata: session.metadata,
               paymentIntentId: session.payment_intent ?? null,
               paymentStatus: session.payment_status ?? "paid",
               note: `[Stripe webhook ${session.id}] payment confirmed`,
@@ -746,7 +772,7 @@ export async function POST(req: NextRequest) {
         if (event.account && paymentIntent.metadata?.order_id) {
           await finalizeVerifiedCustomerOrder(service, {
             accountId: event.account,
-            orderId: paymentIntent.metadata.order_id,
+            orderId: paymentIntent.metadata.order_id, metadata: paymentIntent.metadata,
             paymentIntentId: paymentIntent.id,
             paymentStatus: paymentIntent.status ?? "succeeded",
             note: `[Stripe payment intent ${paymentIntent.id}] payment confirmed`,
@@ -760,7 +786,7 @@ export async function POST(req: NextRequest) {
         if (event.account && paymentIntent.metadata?.order_id) {
           if (!await verifyOrderWebhookPayment(service, {
             accountId: event.account, orderId: paymentIntent.metadata.order_id,
-            paymentIntentId: paymentIntent.id, outcome: "failed",
+            paymentIntentId: paymentIntent.id, metadata: paymentIntent.metadata, outcome: "failed",
           })) break;
           await markOrderOrGroupPaymentFailure(service, {
             paymentIntentId: paymentIntent.id,

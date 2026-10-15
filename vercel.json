@@ -9,6 +9,10 @@
       "schedule": "* * * * *"
     },
     {
+      "path": "/api/cron/stripe-merchant-event-recovery",
+      "schedule": "*/5 * * * *"
+    },
+    {
       "path": "/api/cron/credit-processing-recovery",
       "schedule": "*/5 * * * *"
     },

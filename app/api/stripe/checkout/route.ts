@@ -1,4 +1,8 @@
 import { lockOrderPayment } from "@/lib/order-payment-lock";
+import { createHash } from "node:crypto";
+import { canonicalCheckoutJson } from "@/lib/checkout-attempt";
+import { orderCheckoutIdempotencyKey } from "@/lib/order-payment-policy";
+import { getCheckoutRouting, resolveOrderPaymentAccount, reserveOrderPaymentAccount, bindOrderPaymentReferences, backfillOrderPaymentAccount, isStripeHistorySchemaMissing } from "@/lib/stripe-connect-history";
 import { NextRequest, NextResponse } from "next/server";
 import { createDashboardServiceClient } from "@/lib/dashboard-auth";
 import { assertStoredOrderBackdropCutouts } from "@/lib/stored-order-backdrop-preflight";
@@ -16,12 +20,13 @@ import {
   resolveDirectOrderPricingPolicy,
   OrderFeeClassificationError,
   directOrderPlatformFeePayload,
+  directOrderPlatformFeeMetadata,
   describeConnectStatus,
-  getConnectedAccountId,
   isStripeBillingActive,
   isFreeTrialActive,
   retrieveStripeAccount,
   retrieveCheckoutSession,
+  retrievePaymentIntent,
   syncConnectState,
 } from "@/lib/payments";
 import {
@@ -346,7 +351,20 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const stripeAccountId = getConnectedAccountId(photographer);
+    let routing = await getCheckoutRouting(sb, {
+      photographerId: photographer.id, currency: clean(order.currency || "cad").toLowerCase(),
+      orderId: checkoutAnchorOrder.id,
+    });
+    let stripeAccountId = routing.accountId;
+    const savedSessionId = checkoutOrders.find(member => member.stripe_checkout_session_id)?.stripe_checkout_session_id;
+    const savedPaymentId = checkoutOrders.find(member => member.stripe_payment_intent_id)?.stripe_payment_intent_id;
+    if (savedSessionId || savedPaymentId) {
+      stripeAccountId = await resolveOrderPaymentAccount(sb, {
+        photographerId: photographer.id, orderId: checkoutAnchorOrder.id,
+        orderGroupId: checkoutAnchorOrder.order_group_id,
+        checkoutSessionId: savedSessionId, paymentIntentId: savedPaymentId,
+      });
+    }
     if (!stripeAccountId) {
       return respond(
         { ok: false, message: "This photographer has not connected Stripe yet." },
@@ -547,7 +565,64 @@ export async function POST(req: NextRequest) {
         return respond({ ok: true, url: existing.url, sessionId: existing.id });
       }
       if (existing.status !== "expired") return respond({ ok: false, message: "Payment was already submitted. Check your order confirmation before trying again." }, { status: 409 });
+      // Bind old Express history from a fresh provider GET before a replacement
+      // can be reserved. Installing history must not break a known expired
+      // checkout, and must never turn an unknown request into a new charge.
+      const frozenFee = checkoutOrders.some(member => member.platform_fee_collection_method != null)
+        ? directOrderPlatformFeePayload(checkoutOrders, currency) : null;
+      const feeMetadata = frozenFee ? directOrderPlatformFeeMetadata(frozenFee) : {};
+      const verifyMetadata = (metadata: Record<string, string> | null | undefined) => {
+        if (metadata?.billing_flow !== "customer_order" || metadata.photographer_id !== photographer.id ||
+            !checkoutOrders.some(member => member.id === metadata.order_id) ||
+            (metadata.order_group_id || null) !== (checkoutAnchorOrder.order_group_id || null) ||
+            Object.entries(feeMetadata).some(([key, value]) => metadata[key] !== value) ||
+            (!frozenFee && Object.keys(metadata).some(key => key.startsWith("platform_fee_")))) {
+          throw new ParentCheckoutReturnError(409);
+        }
+      };
+      if (existing.mode !== "payment" || existing.payment_status !== "unpaid" || typeof existing.livemode !== "boolean" ||
+          existing.amount_total !== totalCents || existing.currency?.toLowerCase() !== currency ||
+          existing.client_reference_id !== existing.metadata?.order_id ||
+          (savedPaymentId && existing.payment_intent !== savedPaymentId)) throw new ParentCheckoutReturnError(409);
+      verifyMetadata(existing.metadata);
+      if (existing.payment_intent) {
+        const intent = await retrievePaymentIntent(existing.payment_intent, stripeAccountId);
+        if (intent.id !== existing.payment_intent || intent.livemode !== existing.livemode || intent.status !== "canceled" ||
+            intent.amount !== totalCents || intent.amount_received !== 0 || intent.currency?.toLowerCase() !== currency ||
+            (intent.application_fee_amount ?? 0) !== (frozenFee?.amountCents ?? 0)) throw new ParentCheckoutReturnError(409);
+        verifyMetadata(intent.metadata);
+      }
+      try {
+        await backfillOrderPaymentAccount(sb, {
+          photographerId: photographer.id, orderIds: checkoutOrders.map(member => member.id), accountId: stripeAccountId,
+          checkoutSessionId: existing.id, paymentIntentId: existing.payment_intent || null, amountCents: totalCents, currency,
+          evidence: {source: "verified_stripe_get", account_id: stripeAccountId, photographer_id: photographer.id,
+            livemode: existing.livemode, checkout_session_id: existing.id, payment_intent_id: existing.payment_intent || null,
+            verified_at: new Date().toISOString(), status: "expired", payment_status: "unpaid"},
+        });
+      } catch (error) {
+        // Before the additive schema exists, the original Express path remains
+        // usable after the same provider proof. Other failures stop checkout.
+        if (!isStripeHistorySchemaMissing(error)) throw error;
+      }
       expiredSessionId = existing.id;
+    }
+
+    // Existing payable sessions remain on their original account. Only a
+    // provider-confirmed expired session may create a replacement on the
+    // current route, with its saved fee policy still intact.
+    routing = await getCheckoutRouting(sb, {
+      photographerId: photographer.id, currency, orderId: checkoutAnchorOrder.id,
+      previousExpiredSessionId: expiredSessionId,
+    });
+    if (routing.accountId !== stripeAccountId) {
+      stripeAccountId = routing.accountId;
+      const nextAccount = await retrieveStripeAccount(stripeAccountId);
+      await syncConnectState(sb, photographer.id, nextAccount);
+      const nextStatus = describeConnectStatus({ accountId: stripeAccountId,
+        detailsSubmitted: Boolean(nextAccount.details_submitted), chargesEnabled: Boolean(nextAccount.charges_enabled),
+        payoutsEnabled: Boolean(nextAccount.payouts_enabled), disabledReason: nextAccount.requirements?.disabled_reason ?? null });
+      if (!nextStatus.readyForPayments) return respond({ ok: false, message: nextStatus.message }, { status: 409 });
     }
 
     // An event PIN does not identify the creator of an old draft. Only an
@@ -614,12 +689,7 @@ export async function POST(req: NextRequest) {
       }));
     }
     const platformFee = legacyAttempt ? undefined : directOrderPlatformFeePayload(checkoutOrders, currency);
-    // This marker stays on ambiguous network failure. Cancellation must not
-    // claim success while an unrecorded Stripe session might still be payable.
-    const { error: startingError } = await sb.from("orders").update({ status: "checkout_starting" }).in("id", checkoutOrders.map((member) => member.id));
-    if (startingError) throw startingError;
-
-    const session = await createDirectOrderCheckoutSession({
+    const checkoutInput = {
       accountId: stripeAccountId,
       orderId: checkoutAnchorOrder.id,
       photographerId: photographer.id,
@@ -646,6 +716,48 @@ export async function POST(req: NextRequest) {
       orderGroupId: order.order_group_id,
       previousExpiredSessionId: expiredSessionId,
       platformFee,
+    };
+    const paymentAttempt = await reserveOrderPaymentAccount(sb, {
+      photographerId: photographer.id, orderIds: checkoutOrders.map(member => member.id),
+      anchorOrderId: checkoutAnchorOrder.id, expectedAccountId: stripeAccountId,
+      expectedRouteVersion: routing.routeVersion, amountCents: totalCents, currency,
+      previousExpiredSessionId: expiredSessionId,
+      idempotencyKey: orderCheckoutIdempotencyKey(checkoutAnchorOrder.id, expiredSessionId),
+      requestHash: createHash("sha256").update(canonicalCheckoutJson(checkoutInput)).digest("hex"),
+    });
+    // A crash can save the provider binding before its order/return references.
+    // Reuse that exact session with a GET, even beyond Stripe's idempotency TTL.
+    // Never create another external session merely to repair database writes.
+    const savedSession = paymentAttempt.checkoutSessionId
+      ? await retrieveCheckoutSession(paymentAttempt.checkoutSessionId, paymentAttempt.accountId) : null;
+    if (savedSession) {
+      const feeMetadata = platformFee ? directOrderPlatformFeeMetadata(platformFee) : {};
+      if (savedSession.id !== paymentAttempt.checkoutSessionId || savedSession.mode !== "payment" ||
+          savedSession.status !== "open" || savedSession.payment_status !== "unpaid" || !savedSession.url ||
+          savedSession.amount_total !== totalCents || savedSession.currency?.toLowerCase() !== currency ||
+          savedSession.client_reference_id !== checkoutAnchorOrder.id ||
+          savedSession.metadata?.billing_flow !== "customer_order" ||
+          savedSession.metadata.photographer_id !== photographer.id || savedSession.metadata.order_id !== checkoutAnchorOrder.id ||
+          (savedSession.metadata.order_group_id || null) !== (order.order_group_id || null) ||
+          (paymentAttempt.paymentIntentId && savedSession.payment_intent !== paymentAttempt.paymentIntentId) ||
+          Object.entries(feeMetadata).some(([key, value]) => savedSession.metadata?.[key] !== value)) {
+        return respond({ ok: false, message: "The saved checkout needs verification before another payment can start." }, { status: 409 });
+      }
+    }
+
+    // Bind the account before recording the external request boundary. An
+    // unbound checkout_starting row requires review; a reserved retry is safe.
+    // This marker stays on ambiguous network failure. Cancellation must not
+    // claim success while an unrecorded Stripe session might still be payable.
+    const { error: startingError } = await sb.from("orders").update({ status: "checkout_starting" }).in("id", checkoutOrders.map((member) => member.id));
+    if (startingError) throw startingError;
+
+    const session = savedSession || await createDirectOrderCheckoutSession({
+      ...checkoutInput, accountId: paymentAttempt.accountId, idempotencyKey: paymentAttempt.idempotencyKey,
+    });
+    if (paymentAttempt.attemptId) await bindOrderPaymentReferences(sb, {
+      attemptId: paymentAttempt.attemptId, checkoutSessionId: session.id,
+      paymentIntentId: session.payment_intent || null,
     });
 
     // Save the exact provider mapping before publishing the session or

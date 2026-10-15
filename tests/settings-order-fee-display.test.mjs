@@ -51,7 +51,7 @@ function settingsHtml(state = {}) {
   const shared = ts.transpileModule(readFileSync(new URL('../lib/order-fee-display.ts', import.meta.url), 'utf8'), {compilerOptions: {module: ts.ModuleKind.CommonJS}}).outputText;
   new Function('exports', shared)(sharedExports);
   overrides['@/lib/order-fee-display'] = sharedExports;
-  for (const path of ['lib/proof-watermark', 'components/parents/proof-watermark-overlay']) {
+  for (const path of ['lib/proof-watermark', 'components/parents/proof-watermark-overlay', 'components/dashboard/stripe-standard-migration']) {
     const dependencyExports = {};
     const output = ts.transpileModule(readFileSync(new URL(`../${path}.${path.startsWith('components/') ? 'tsx' : 'ts'}`, import.meta.url), 'utf8'), {compilerOptions: {module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX}}).outputText;
     new Function('require', 'exports', output)(name => {

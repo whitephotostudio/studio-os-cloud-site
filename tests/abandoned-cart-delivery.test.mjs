@@ -1,3 +1,4 @@
+import * as stripeHistory from '../lib/stripe-connect-history.ts';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFileSync } from 'node:fs';
@@ -17,7 +18,9 @@ function fixture(options={}) {
     projects:[{id:'gallery',photographer_id:'studio',title:'Gallery',gallery_settings:{},portal_status:'active',expiration_date:'2100-01-01',...options.gallery}],schools:[]};
   const sends=[],stripeReads=[],rpcCalls=[],finishes=[];let active=true;
   const service={from(table){let predicate=()=>true;const chain={select(){return chain},eq(k,v){const old=predicate;predicate=r=>old(r)&&r[k]===v;return chain},async maybeSingle(){return {data:structuredClone(tables[table].find(predicate)??null),error:null}}};return chain},
-    async rpc(name,args){rpcCalls.push({name,args});
+    async rpc(name,args){
+      if(name==='resolve_order_payment_account')return {data:null,error:{code:'PGRST202'}};
+      rpcCalls.push({name,args});
       if(name==='claim_abandoned_cart_reminders')return {data:active?[structuredClone(claim)]:[],error:null};
       if(name==='authorize_abandoned_cart_reminder_send'){if(options.authorizationChanged){active=false;return {data:false,error:null}}return {data:true,error:null}}
       assert.equal(name,'complete_abandoned_cart_reminder');finishes.push(args);
@@ -25,6 +28,7 @@ function fixture(options={}) {
       active=false;return {data:true,error:null};}};
   const metadata={photographer_id:'studio',order_id:'draft',billing_flow:'customer_order'};
   const dependencies={
+    '@/lib/stripe-connect-history':stripeHistory,
     '@/lib/event-gallery-email':{buildAbandonedCartEmail:input=>({subject:'Finish your saved order',html:`<a href="${input.stopRemindersUrl}">Stop reminders</a>`,text:`${input.orderTotalLabel}\n${input.stopRemindersUrl}`}),buildSchoolAbandonedCartEmail:input=>({subject:'School order',html:input.stopRemindersUrl,text:input.stopRemindersUrl}),eventFromName:p=>p.business_name,eventReplyTo:p=>p.studio_email},
     '@/lib/event-gallery-settings':{normalizeEventGallerySettings:()=>({extras:{enableAbandonedCartEmail:!options.disabled},share:{}})},
     '@/lib/abandoned-cart-reminder-links':{createAbandonedCartStopUrl:()=>options.noSignedUrl?null:'https://example.test/cart-reminders/stop?token=signed'},

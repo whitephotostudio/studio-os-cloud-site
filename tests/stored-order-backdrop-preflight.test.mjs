@@ -84,6 +84,8 @@ function setup({ orders = [order()], lockedOrders = orders, originals = [origina
     unit_price_cents: saved.subtotal_cents, line_total_cents: saved.subtotal_cents }));
   const sb = {
     async rpc(name, args) {
+      // Explicit pre-migration schema uses the real history compatibility path.
+      if (['resolve_order_payment_account','get_photographer_checkout_routing','reserve_order_payment_account'].includes(name)) return {data:null,error:{code:'PGRST202'}};
       if (name === 'freeze_order_platform_fees') {
         assert.equal(locked, true);
         assert.equal(args.p_photographer_id, photographerId);

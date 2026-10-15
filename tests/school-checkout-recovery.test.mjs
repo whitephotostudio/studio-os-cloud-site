@@ -1,3 +1,4 @@
+import * as stripeHistory from '../lib/stripe-connect-history.ts';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {readFileSync} from 'node:fs';
@@ -46,7 +47,7 @@ function fixture(options = {}) {
     metadata: {billing_flow: 'customer_order', photographer_id: photographerId, order_id: orderId,
       ...(options.combined ? {order_group_id: groupId} : {}),
       ...(options.captured ? {portal_return_order_id: options.combined ? siblingId : orderId, portal_return_email: 'Viewer+Child@Example.invalid'} : {})}};
-  const service = {from(table) {
+  const service = {async rpc(name){assert.equal(name,'resolve_order_payment_account');return {data:null,error:{code:'PGRST202'}};},from(table) {
     assert.ok(table in tables);
     let predicate = () => true, maximum = Infinity;
     const chain = {
@@ -67,6 +68,7 @@ function fixture(options = {}) {
   }};
   const helper = load('lib/school-parent-gallery-link.ts');
   const route = load('app/api/stripe/checkout/confirm/route.ts', {
+    '@/lib/stripe-connect-history':stripeHistory,
     'next/server': {NextResponse: {json: (body, init) => Response.json(body, init)}},
     '@/lib/dashboard-auth': {createDashboardServiceClient: () => service},
     '@/lib/parent-gallery-session-request':{getParentGalleryRequestScope:()=>options.mappedScope??null,runParentGallerySessionRoute:()=>assert.fail('Direct confirm fixture never adapts')},

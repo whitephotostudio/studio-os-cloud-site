@@ -14,6 +14,17 @@ export function authorizedEventDownloadImages<T extends EventPhotoReference>(ima
 }
 
 
+/** Keep absolute legacy storage URLs intact when preparing an order identity.
+ * This only preserves a reference; the server still proves its current album
+ * scope and immutable storage owner before accepting or reading the photo.
+ */
+export function normalizeGalleryStorageReference(value: string | null | undefined) {
+  const raw = (value ?? "").trim();
+  if (/^https?:\/\//i.test(raw)) return raw;
+  return raw.split("/").map(part => part.trim()).filter(Boolean).join("/");
+}
+
+
 function durableSchoolPhotoReference(value: string | null | undefined) {
   const safeKey = (key: unknown) => typeof key === "string" && !key.startsWith("/") && key.includes("/") && /\.(jpe?g|png|webp|avif)$/i.test(key) && !key.includes("..") && !key.includes("\\") && !key.includes("://") && !/[\u0000-\u001f\u007f]/.test(key) ? key : null;
   if (safeKey(value)) return safeKey(value);

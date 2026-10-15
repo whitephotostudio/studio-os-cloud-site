@@ -1,6 +1,6 @@
 import type { ConfirmedRefund } from "@/lib/order-refund-notifications";
 import { hasDigitalProductLabel } from "@/lib/digital-product-label";
-import { allocateRefundCents, orderCheckoutIdempotencyKey, type ApplicationFeeCharge, type PaymentOrder } from "@/lib/order-payment-policy";
+import { allocateRefundCents, assertPaymentBelongsToOrders, orderCheckoutIdempotencyKey, type ApplicationFeeCharge, type PaymentOrder } from "@/lib/order-payment-policy";
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { createDashboardServiceClient } from "@/lib/dashboard-auth";
 import { syncPhotographyKeysByPhotographerId } from "@/lib/studio-os-app";
@@ -36,6 +36,7 @@ import { readAllBillingRows, reconcileOrderUsageFeeRefunds, syncOrderUsageFees }
 import { isStripeBillingActive } from "@/lib/subscription-access";
 import { SUPPORTED_ORDER_CURRENCIES } from "@/lib/order-currency";
 import { ConnectProfileError, normalizeBusinessCountry, normalizeSelectedSalesCurrency, verifiedConnectCountry, type BusinessCountry } from "@/lib/stripe-connect-country";
+import { resolveOrderPaymentAccount, syncStripeAccountHistory } from "@/lib/stripe-connect-history";
 export {
   isStripeBillingActive, isTrialStatus, resolveFreeTrialEndsAt,
   getFreeTrialDaysRemaining, isFreeTrialActive, isFreeTrialExpired,
@@ -217,6 +218,7 @@ export type StripeSubscription = {
 
 export type StripeCheckoutSession = {
   id: string;
+  livemode?: boolean;
   url?: string | null;
   mode?: string | null;
   payment_status?: string | null;
@@ -233,6 +235,7 @@ export type StripeCheckoutSession = {
 
 type StripePaymentIntent = {
   id: string;
+  livemode?: boolean;
   status: string;
   metadata?: Record<string, string> | null;
   latest_charge?: string | null;
@@ -1429,6 +1432,14 @@ export async function syncConnectState(
     stripe_connect_payouts_enabled: account.payouts_enabled,
   };
 
+  // A historical account can still send updates and finish payments. Its
+  // state must never replace the studio's active route for new checkouts.
+  if (await syncStripeAccountHistory(service, {
+    photographerId, account, accountId: account.id, country,
+    detailsSubmitted: account.details_submitted, chargesEnabled: account.charges_enabled,
+    payoutsEnabled: account.payouts_enabled,
+  })) return updates;
+
   const { error } = await service.rpc("sync_photographer_connect_state", {
     p_photographer_id: photographerId, p_account_id: account.id, p_country: country,
     p_details_submitted: account.details_submitted,
@@ -2463,6 +2474,8 @@ export async function createDirectOrderCheckoutSession(input: {
    */
   orderGroupId?: string | null;
   previousExpiredSessionId?: string | null;
+  /** Persisted by the account-history reservation before this provider call. */
+  idempotencyKey?: string;
   /** Frozen in the database before creating this session; omit for legacy checkout retries. */
   platformFee?: DirectOrderPlatformFee;
 }) {
@@ -2532,7 +2545,7 @@ export async function createDirectOrderCheckoutSession(input: {
     method: "POST",
     body: params,
     account: input.accountId,
-    idempotencyKey: orderCheckoutIdempotencyKey(input.orderId, input.previousExpiredSessionId),
+    idempotencyKey: input.idempotencyKey || orderCheckoutIdempotencyKey(input.orderId, input.previousExpiredSessionId),
   });
 }
 
@@ -2807,7 +2820,10 @@ export async function verifyDirectOrderPlatformFeePayment(service: ServiceClient
     .select("stripe_account_id,stripe_connected_account_id,is_platform_admin")
     .eq("id", rows[0].photographer_id).maybeSingle();
   if (ownerError) throw ownerError;
-  const accountId = photographer ? getConnectedAccountId(photographer) : null;
+  const accountId = await resolveOrderPaymentAccount(service, {
+    photographerId: rows[0].photographer_id, orderId: rows[0].id,
+    orderGroupId: rows[0].order_group_id, paymentIntentId,
+  });
   if (!accountId || (photographer?.is_platform_admin && fee.amountCents !== 0)) throw new Error("Payment account could not be verified.");
   const intent = await retrievePaymentIntent(paymentIntentId, accountId);
   const gross = rows.reduce((sum, row) => sum + Number(row.total_cents ?? 0), 0);
@@ -2955,37 +2971,88 @@ export async function markOrderOrGroupRefunded(
   return primaryResult;
 }
 
-/** Read current Stripe refund state instead of trusting webhook delivery order. */
-export async function reconcileOrderRefundFromStripe(service: ServiceClient, account: string, paymentIntentId: string) {
-  const intent = await stripeRequest<{ id: string; amount: number; currency: string; latest_charge?: string | { id: string } | null; metadata?: Record<string, string> }>(`payment_intents/${encodeURIComponent(paymentIntentId)}`, { account });
-  if (!intent.metadata?.order_id) return null;
+/** Routing history is not payment proof. Verify the immutable checkout before
+ * attributing a refund, application-fee event or dispute to Studio OS orders. */
+export async function verifySavedOrderPaymentFromStripe(service: ServiceClient, account: string, paymentIntentId: string, intent: {
+  id: string; status: string; amount: number; amount_received: number; currency: string; metadata?: Record<string, string>;
+}) {
+  if (intent.metadata?.billing_flow !== "customer_order" || !intent.metadata.order_id) return null;
   const { data: owner, error: ownerError } = await service.from("orders").select("photographer_id").eq("id", intent.metadata.order_id).maybeSingle();
   if (ownerError) throw ownerError;
   if (!owner || owner.photographer_id !== intent.metadata.photographer_id) throw new Error("Refund order ownership mismatch");
-  const { data: photographer, error: pe } = await service.from("photographers").select("stripe_account_id,stripe_connected_account_id").eq("id", owner.photographer_id).single();
-  if (pe || !photographer || getConnectedAccountId(photographer) !== account) throw new Error("Refund account mismatch");
+  const originalAccount = await resolveOrderPaymentAccount(service, {
+    photographerId: owner.photographer_id, orderId: intent.metadata.order_id, paymentIntentId,
+  });
+  if (originalAccount !== account) throw new Error("Refund account mismatch");
+  // Account history chooses the API scope; editable merchant metadata is not
+  // proof that this payment belongs to the saved checkout. Validate every
+  // group member and its provider session before ANY refund/hold mutation,
+  // including partial and pending refunds.
+  const ids = await expandOrderIdsForGroup(service, { orderId: intent.metadata.order_id });
+  const { data: rows, error: rowsError } = await service.from("orders")
+    .select("id,photographer_id,order_group_id,status,payment_status,paid_at,stripe_payment_intent_id,stripe_checkout_session_id,total_cents,total_amount,currency,platform_fee_collection_method,platform_fee_amount_cents,platform_fee_currency,platform_fee_rate_cents,stripe_application_fee_id")
+    .in("id", ids);
+  if (rowsError) throw rowsError;
+  const orders = (rows ?? []).map(row => ({ ...row, total_cents: row.total_cents != null ? Number(row.total_cents)
+    : row.total_amount != null ? Math.round(Number(row.total_amount) * 100) : Number.NaN })) as PaymentOrder[];
+  const groupId = orders[0]?.order_group_id || null;
+  if (!ids.length || orders.length !== ids.length || new Set(orders.map(row => row.id)).size !== ids.length ||
+      orders.some(row => !ids.includes(row.id) || row.photographer_id !== owner.photographer_id ||
+        (row.order_group_id || null) !== groupId || !Number.isSafeInteger(row.total_cents) || row.total_cents < 0) ||
+      intent.id !== paymentIntentId || intent.status !== "succeeded" || !Number.isSafeInteger(intent.amount) || intent.amount <= 0 ||
+      intent.amount_received !== intent.amount || intent.metadata.billing_flow !== "customer_order" ||
+      (intent.metadata.order_group_id || null) !== groupId) throw new Error("The complete refund payment could not be verified.");
+  assertPaymentBelongsToOrders(orders, intent);
+  const sessions = [...new Set(orders.map(row => row.stripe_checkout_session_id).filter((id): id is string => Boolean(id)))];
+  const savedIntents = [...new Set(orders.map(row => row.stripe_payment_intent_id).filter((id): id is string => Boolean(id)))];
+  if (sessions.length > 1 || savedIntents.length > 1) throw new Error("Refund checkout references are ambiguous.");
+  if (sessions.length) {
+    const session = await retrieveCheckoutSession(sessions[0], account);
+    if (session.id !== sessions[0] || session.mode !== "payment" || session.status !== "complete" || session.payment_status !== "paid" ||
+        session.payment_intent !== paymentIntentId || session.amount_total !== intent.amount || session.currency?.toLowerCase() !== intent.currency.toLowerCase() ||
+        session.metadata?.billing_flow !== "customer_order" || session.metadata.photographer_id !== owner.photographer_id ||
+        !orders.some(row => row.id === session.metadata?.order_id) || (session.metadata.order_group_id || null) !== groupId) {
+      throw new Error("The refund payment does not match its saved checkout session.");
+    }
+  } else if (savedIntents.length !== 1 || savedIntents[0] !== paymentIntentId) {
+    throw new Error("The refund has no immutable saved payment reference.");
+  }
+  return { ids, orders, orderId: intent.metadata.order_id };
+}
+
+/** Read current Stripe refund state instead of trusting webhook delivery order. */
+export async function reconcileOrderRefundFromStripe(service: ServiceClient, account: string, paymentIntentId: string) {
+  const intent = await stripeRequest<{ id: string; status: string; amount: number; amount_received: number; currency: string; latest_charge?: string | { id: string } | null; metadata?: Record<string, string> }>(`payment_intents/${encodeURIComponent(paymentIntentId)}`, { account });
+  const verified = await verifySavedOrderPaymentFromStripe(service, account, paymentIntentId, intent);
+  if (!verified) return null;
+  const { ids, orders, orderId } = verified;
   const verifiedRefunds: ConfirmedRefund[] = [];
   let startingAfter = ""; let confirmedCents = 0; let pending = false;
   do {
     const query = new URLSearchParams({ payment_intent: paymentIntentId, limit: "100" });
     if (startingAfter) query.set("starting_after", startingAfter);
     const page = await stripeRequest<{ data: ConfirmedRefund[]; has_more: boolean }>("refunds", { account, query });
+    if (page.data.some(refund => refund.status === "succeeded" && (!Number.isSafeInteger(refund.amount) || refund.amount <= 0 ||
+        refund.currency.toLowerCase() !== intent.currency.toLowerCase()))) throw new Error("Refund amount or currency could not be verified.");
     verifiedRefunds.push(...page.data);
     confirmedCents += page.data.filter((r) => r.status === "succeeded").reduce((sum, r) => sum + r.amount, 0);
     pending ||= page.data.some((r) => r.status === "pending" || r.status === "requires_action");
-    startingAfter = page.has_more ? page.data.at(-1)?.id || "" : "";
+    const nextCursor = page.has_more ? page.data.at(-1)?.id || "" : "";
+    if (page.has_more && (!nextCursor || nextCursor === startingAfter)) throw new Error("Refund pagination did not advance.");
+    startingAfter = nextCursor;
   } while (startingAfter);
+  if (!Number.isSafeInteger(confirmedCents) || confirmedCents > intent.amount) throw new Error("Cumulative refund exceeds the verified payment.");
+  if ((confirmedCents > 0 || pending) && orders.some(row => !row.stripe_payment_intent_id)) {
+    // A genuine refund may arrive before the paid webhook persisted its PI.
+    // Keep the verified reference so refund notices and delayed terminal
+    // deliveries can reconcile, without overwriting an existing payment.
+    const { error } = await service.from("orders").update({ stripe_payment_intent_id: paymentIntentId })
+      .in("id", ids).is("stripe_payment_intent_id", null);
+    if (error) throw error;
+    orders.forEach(row => { row.stripe_payment_intent_id ||= paymentIntentId; });
+  }
   let result: MarkOrderRefundedResult | null = null;
   if (confirmedCents >= intent.amount && confirmedCents > 0) {
-    const ids = await expandOrderIdsForGroup(service, { orderId: intent.metadata.order_id });
-    const { data: rows, error: rowsError } = await service.from("orders")
-      .select("id,photographer_id,order_group_id,status,payment_status,paid_at,stripe_payment_intent_id,stripe_checkout_session_id,total_cents,currency,platform_fee_collection_method,platform_fee_amount_cents,platform_fee_currency,platform_fee_rate_cents,stripe_application_fee_id")
-      .in("id", ids);
-    if (rowsError) throw rowsError;
-    const orders = (rows ?? []) as PaymentOrder[];
-    if (!ids.length || orders.length !== ids.length || new Set(orders.map((row) => row.id)).size !== ids.length || orders.some((row) => !ids.includes(row.id))) {
-      throw new Error("The complete refund order group could not be verified.");
-    }
     if (orders.some((row) => row.platform_fee_collection_method != null)) {
       // Customer and platform refunds are independent balances. Keep the
       // production hold through a pending fee or lost provider response.
@@ -3001,10 +3068,9 @@ export async function reconcileOrderRefundFromStripe(service: ServiceClient, acc
       if (charge.amount_refunded !== intent.amount || !fee.fullyRefunded) return null;
     }
   }
-  if (confirmedCents > 0) result = await markOrderOrGroupRefunded(service, { orderId: intent.metadata.order_id, partial: confirmedCents < intent.amount,
+  if (confirmedCents > 0) result = await markOrderOrGroupRefunded(service, { orderId, partial: confirmedCents < intent.amount,
     refundAmountCents: confirmedCents, note: `Stripe refund status verified for ${paymentIntentId}.` });
   if (pending) {
-    const ids = await expandOrderIdsForGroup(service, { orderId: intent.metadata.order_id });
     const { error } = await service.from("orders").update({ status: "refund_pending" }).in("id", ids).neq("status", "refunded");
     if (error) throw error;
   }

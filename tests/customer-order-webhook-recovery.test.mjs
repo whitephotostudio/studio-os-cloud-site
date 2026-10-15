@@ -61,6 +61,9 @@ async function fixture(options = {}) {
       return chain;
     },
     async rpc(name, params) {
+      if (name === "resolve_order_payment_account" || name === "find_photographer_stripe_account" || name === "claim_stripe_merchant_event") {
+        return { data: null, error: { code: "PGRST202" } }; // Explicit pre-migration schema fixture.
+      }
       try {
         let result;
         if (name === "claim_customer_order_webhook") result = await db.query("select claim_customer_order_webhook($1,$2,$3,$4,$5,$6,$7) as value", [params.p_event_id, params.p_order_id, params.p_account, params.p_event_type, params.p_payload_hash, JSON.stringify(params.p_payload), params.p_token]);
@@ -106,13 +109,15 @@ async function fixture(options = {}) {
       return { mode: "payment", status: "complete", ...(providerEvents.get(sessionId)||event.data.object), ...(options.sessionOverrides ?? {}) };
     },
   };
-  const verifier=load("lib/order-webhook-payment.ts", {"@/lib/payments":payments});
+  const accountHistory=load("lib/stripe-connect-history.ts", {});
+  const verifier=load("lib/order-webhook-payment.ts", {"@/lib/payments":payments,"@/lib/stripe-connect-history":accountHistory});
   const locks=[];
   const lock={lockOrderPayment:async (_service,key)=>{assert.ok((await db.query("select id from orders where id=$1 or order_group_id=$1 limit 1",[key])).rows.length);locks.push(key);return async()=>{};}};
   const api = load("lib/customer-order-webhook.ts", {
     "@/lib/order-webhook-payment":verifier,"@/lib/order-payment-lock":lock,
     "node:crypto": crypto, "@/lib/checkout-attempt": { canonicalCheckoutJson },
     "@/lib/order-checkout-totals": { sumStoredOrderTotalsCents }, "@/lib/payments": payments,
+    "@/lib/stripe-connect-history":accountHistory,
   });
   const event = {
     id: "evt_fixture", type: "checkout.session.completed", account: "acct_fixture", livemode: false,
@@ -123,7 +128,7 @@ async function fixture(options = {}) {
     p_event_id: event.id, p_order_id: orderId, p_account: event.account, p_event_type: event.type,
     p_payload_hash: crypto.createHash("sha256").update(canonicalCheckoutJson(event)).digest("hex"), p_payload: event, p_token: token,
   });
-  return { db, service, api, event, owner, ids, calls, receipts, providerReads, history, claim, payments, verifier, lock, locks, providerEvents, setIntentStatus: value => { intentStatus = value; }, setTruncate: value => { truncate = value; } };
+  return { db, service, api, event, owner, ids, calls, receipts, providerReads, history, claim, payments, verifier, lock, locks, providerEvents, accountHistory, setIntentStatus: value => { intentStatus = value; }, setTruncate: value => { truncate = value; } };
 }
 async function run(options, callback) {
   const f = await fixture(options);
@@ -262,10 +267,14 @@ test("webhook signatures are checked before customer payment claims and other fl
     "@/lib/dashboard-auth": { createDashboardServiceClient: () => f.service },
     "@/lib/order-webhook-payment":f.verifier,"@/lib/order-payment-lock":f.lock,
     "@/lib/customer-order-webhook": { ...f.api, processCustomerOrderStripeEvent: async (...args) => { claimed++; return f.api.processCustomerOrderStripeEvent(...args); } },
-    "@/lib/payments": { verifyStripeSignature: async () => signatureValid, recordStripeEvent: async () => { legacy++; return { inserted: false }; } },
+    "@/lib/payments": { verifyStripeSignature: async () => signatureValid, recordStripeEvent: async () => { legacy++; return { inserted: false }; },reconcileOrderRefundFromStripe: async () => null },
     "@/lib/credit-maintenance": { pausePlatformCreditEvent: () => false },
   };
   for (const name of ["order-refund-notifications", "studio-os-app", "admin-notification-center", "owner-notifications", "resend", "r2", "audit", "stripe-billing-period"]) deps[`@/lib/${name}`] = {};
+  deps["@/lib/stripe-merchant-webhook"] = load("lib/stripe-merchant-webhook.ts", {
+    "node:crypto":crypto,"@/lib/checkout-attempt":{canonicalCheckoutJson},"@/lib/stripe-connect-history":f.accountHistory,
+    "@/lib/payments":f.payments,"@/lib/order-refund-notifications":{},
+  });
   const route = load("app/api/stripe/webhook/route.ts", deps);
   const oldSecret = process.env.STRIPE_WEBHOOK_SECRET;
   process.env.STRIPE_WEBHOOK_SECRET = "fixture-secret";
@@ -340,3 +349,43 @@ for(const overrides of [{sessionOverrides:{payment_status:"unpaid"}},{sessionOve
     assert.equal((await f.db.query("select payment_status from orders")).rows[0].payment_status,"pending");
   }));
 }
+
+
+test("unrelated Standard event metadata is ignored before customer ledgers, UUID lookups or provider calls",async()=>{
+  const never=()=>assert.fail('Unrelated merchant event touched customer payment dependencies');
+  const api=load('lib/customer-order-webhook.ts',{'node:crypto':crypto,'@/lib/checkout-attempt':{canonicalCheckoutJson},
+    '@/lib/payments':{retrieveCheckoutSession:never,recordStripeEvent:never,finalizePaidOrderOrGroup:never,markOrderOrGroupPaymentFailure:never},
+    '@/lib/stripe-connect-history':{resolveOrderPaymentAccount:never},'@/lib/order-webhook-payment':{verifyOrderWebhookPayment:never},
+    '@/lib/order-payment-lock':{lockOrderPayment:never}});
+  const service={from:never,rpc:never};
+  for(const billing_flow of [undefined,null,'invoice','merchant_external']) {
+    const event={id:'evt_external',type:'payment_intent.succeeded',account:'acct_standard',livemode:false,
+      data:{object:{id:'pi_external',metadata:{billing_flow,order_id:'external-order-not-uuid'}}}};
+    assert.equal(api.isCustomerOrderStripeEvent(event),false);
+    assert.deepEqual(await api.processCustomerOrderStripeEvent(service,event),{ok:true,status:200,ignored:true});
+  }
+});
+
+test("pending saved-session recovery retains and verifies the historical customer_order flow marker",()=>run({},async f=>{
+  f.event.data.object.metadata.billing_flow='merchant_external';
+  const result=await f.api.reconcilePendingCustomerOrderPayments(f.service);
+  assert.equal(result.recovered,0);assert.equal(f.calls.length,0);assert.equal(f.receipts.size,0);
+  assert.equal((await f.db.query('select payment_status from orders')).rows[0].payment_status,'pending');
+}));
+
+
+test("already-claimed legacy internal recovery payloads retain their exact hash while real provider markers remain mandatory",()=>run({},async f=>{
+  const session=f.event.data.object;
+  const event={id:`customer-payment-recovery:${session.id}`,type:'checkout.session.completed',account:f.event.account,livemode:false,
+    data:{object:{id:session.id,payment_intent:session.payment_intent,payment_status:session.payment_status,amount_total:session.amount_total,
+      currency:session.currency,metadata:{order_id:session.metadata.order_id,photographer_id:session.metadata.photographer_id}}}};
+  assert.equal(event.data.object.metadata.billing_flow,undefined);
+  const token=crypto.randomUUID();
+  assert.equal((await f.service.rpc('claim_customer_order_webhook',{p_event_id:event.id,p_order_id:session.metadata.order_id,p_account:event.account,
+    p_event_type:event.type,p_payload_hash:crypto.createHash('sha256').update(canonicalCheckoutJson(event)).digest('hex'),p_payload:event,p_token:token})).data,'claimed');
+  await f.service.rpc('finish_customer_order_webhook',{p_event_id:event.id,p_token:token,p_result:'pending'});
+  assert.equal(f.api.isCustomerOrderStripeEvent(event),true);
+  const result=await f.api.reconcilePendingCustomerOrderPayments(f.service);
+  assert.equal(result.recovered,1);assert.equal(f.receipts.size,1);
+  assert.equal((await f.db.query('select status from customer_order_webhooks where event_id=$1',[event.id])).rows[0].status,'processed');
+}));

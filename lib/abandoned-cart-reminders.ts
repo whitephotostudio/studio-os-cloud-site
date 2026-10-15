@@ -3,6 +3,7 @@ import { buildAbandonedCartEmail, buildSchoolAbandonedCartEmail, eventFromName, 
 import { normalizeEventGallerySettings } from "@/lib/event-gallery-settings";
 import { createAbandonedCartStopUrl } from "@/lib/abandoned-cart-reminder-links";
 import { retrieveCheckoutSession, retrievePaymentIntent } from "@/lib/payments";
+import { resolveOrderPaymentAccount } from "@/lib/stripe-connect-history";
 import { resendConfigured, sendResendEmail } from "@/lib/resend";
 import { hasActiveSubscription } from "@/lib/subscription-gate";
 import { calendarBoundaryEnd, hasCalendarBoundaryPassed } from "@/lib/calendar-dates";
@@ -256,7 +257,10 @@ export async function deliverAbandonedCartReminders(service: SupabaseClient, opt
       const email = projectId
         ? buildAbandonedCartEmail({ project: gallery, photographer, share: settings.share, origin: options.origin, orderTotalLabel, stopRemindersUrl })
         : buildSchoolAbandonedCartEmail({ school: gallery, photographer, origin: options.origin, orderTotalLabel, stopRemindersUrl });
-      if (!await verifyCartReminderCheckout(candidate, photographer.stripe_connected_account_id || photographer.stripe_account_id || null,
+      const paymentAccount = candidate.stripe_checkout_session_id || candidate.stripe_payment_intent_id
+        ? await resolveOrderPaymentAccount(service, { photographerId: photographer.id, orderId: candidate.id,
+          checkoutSessionId: candidate.stripe_checkout_session_id, paymentIntentId: candidate.stripe_payment_intent_id }) : null;
+      if (!await verifyCartReminderCheckout(candidate, paymentAccount,
         Math.min(Date.now() + 8_000, workDeadline - 17_000))) {
         await finishClaim(service, claim, "skipped", null, deadline); skipped++; continue;
       }

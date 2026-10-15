@@ -60,6 +60,7 @@ function fixture(options = {}) {
     photographer_id: photographerId, order_group_id: member.order_group_id, school_id:member.school_id, project_id:member.project_id, student_id:member.student_id,lane_ids:[options.mixed&&member.project_id?eventLaneId:laneId]})) : [];
   tables.parent_checkout_returns = options.storedSnapshot && !options.ambiguousLegacy ? [{id:returnId, anchor_order_id:primaryId, attempt_key:'initial'}] : [];
   let authenticatedScope;
+  let historyBound = false;
   const service = {
     from(table) {
       assert.ok(table in tables, `unexpected table ${table}`);
@@ -87,6 +88,38 @@ function fixture(options = {}) {
     },
     async rpc(name, args) {
       assert.equal(locked, true);
+      if (name === 'get_photographer_checkout_routing') {
+        if (!options.standard && !options.historyInstalled) return {data:null,error:{code:'PGRST202'}};
+        return {data:{accountId:options.standard?'acct_standard':'acct_fixture',routeVersion:options.standard?1:0,
+          feeRateCents:null,connectionType:options.standard?'standard':'express',livemode:false},error:null};
+      }
+      if (name === 'reserve_order_payment_account') {
+        if (!options.standard && !options.historyInstalled) return {data:null,error:{code:'PGRST202'}};
+        if(options.unknownUnbound || options.legacySession && !historyBound) return {data:null,error:{code:'23514',message:'Original account proof required'}};
+        sequence.push('reserve-account');
+        assert.equal(args.p_expected_account_id,options.standard?'acct_standard':'acct_fixture');assert.equal(args.p_expected_route_version,options.standard?1:0);
+        assert.equal(args.p_amount_cents,rows.reduce((n,r)=>n+r.total_cents,0));
+        assert.deepEqual([...args.p_order_ids].sort(),rows.map(r=>r.id).sort());
+        assert.match(args.p_request_hash,/^[a-f0-9]{64}$/);
+        if(options.routeRace)return{data:null,error:{code:'23514',message:'Route changed before reservation'}};
+        return{data:{attemptId:'cccccccc-cccc-4ccc-8ccc-cccccccccccc',accountId:args.p_expected_account_id,idempotencyKey:args.p_idempotency_key,routeVersion:args.p_expected_route_version,checkoutSessionId:options.boundSession?'cs_created':null,paymentIntentId:null},error:null};
+      }
+      if (name === 'bind_order_payment_references') {
+        sequence.push('bind-account');assert.equal(args.p_checkout_session_id,'cs_created');return{data:null,error:null};
+      }
+      if (name === 'resolve_order_payment_account') return options.historyInstalled
+        ? {data:'acct_fixture',error:null} : {data:null,error:{code:'PGRST202'}};
+      if (name === 'backfill_order_payment_account') {
+        if (!options.historyInstalled) return {data:null,error:{code:'PGRST202'}};
+        sequence.push('backfill-original');
+        if(options.backfillError)return{data:null,error:{code:'23514',message:'Original proof rejected'}};
+        assert.equal(args.p_account_id,'acct_fixture');assert.equal(args.p_checkout_session_id,'cs_legacy');
+        assert.deepEqual([...args.p_order_ids].sort(),rows.map(row=>row.id).sort());
+        assert.equal(args.p_amount_cents,rows.reduce((total,row)=>total+row.total_cents,0));
+        assert.equal(args.p_evidence.source,'verified_stripe_get');assert.equal(args.p_evidence.livemode,false);
+        historyBound=true;
+        return {data:{attemptId:'old-binding',accountId:'acct_fixture',idempotencyKey:'verified-history-cs_legacy',routeVersion:0},error:null};
+      }
       if (name === 'register_parent_checkout_return') {
         sequence.push('register-return');
         assert.deepEqual(args.p_order_ids,[...rows.map(member=>member.id)].sort());
@@ -106,7 +139,7 @@ function fixture(options = {}) {
     },
   };
   const cache = new Map();
-  const safeProcess = {env: {STRIPE_SECRET_KEY: 'sk_test_routeFixture', STRIPE_BILLING_CURRENCY: 'cad',
+  const safeProcess = {env: {STRIPE_SECRET_KEY: 'sk_test_routeFixture', STRIPE_BILLING_CURRENCY: 'cad', NEXT_PUBLIC_SUPABASE_URL:'http://127.0.0.1:54321',
     ...(options.pricingV2 ? {STUDIO_GALLERY_PRICING_V2_ENABLED:'1'} : {}),
     ...(options.pricingV3 ? {STUDIO_GALLERY_PRICING_V3_ENABLED:'1'} : {}),
     ...(options.launchAt ? {STUDIO_GALLERY_PRICING_V2_LAUNCH_AT:options.launchAt} : {})}};
@@ -134,7 +167,7 @@ function fixture(options = {}) {
     if(options.providerError)throw new Error('Synthetic lost provider response');
     return Response.json({id: 'cs_created', url: 'https://checkout.stripe.invalid/fixture'});
   }
-  const pure = new Set(['studio-pricing', 'trial-config', 'subscription-access', 'order-payment-policy', 'order-checkout-totals', 'order-currency', 'school-parent-gallery-link', 'online-backdrop-policy']);
+  const pure = new Set(['studio-pricing', 'trial-config', 'subscription-access', 'order-payment-policy', 'order-checkout-totals', 'order-currency', 'school-parent-gallery-link', 'online-backdrop-policy', 'stripe-connect-history', 'checkout-attempt']);
   function load(path, overrides = {}) {
     if (cache.has(path)) return cache.get(path);
     const exports = {}; cache.set(path, exports);
@@ -168,6 +201,7 @@ function fixture(options = {}) {
   const dependencies = {
     'next/server': {NextResponse: {json: (value, init) => Response.json(value, init)}},
     '@/lib/dashboard-auth': {createDashboardServiceClient: () => service},
+    '@/lib/stripe-connect-history':load('lib/stripe-connect-history.ts'),
     '@/lib/parent-gallery-session-request':{getParentGalleryRequestScope:()=>null,runParentGallerySessionRoute:()=>assert.fail('Legacy fixture never selects adapter')},
     '@/lib/parent-gallery-session':foundation,'@/lib/parent-checkout-return':checkoutHelper,
     '@/lib/order-payment-lock': {lockOrderPayment: async () => {
@@ -180,9 +214,35 @@ function fixture(options = {}) {
     '@/lib/order-checkout-totals': load('lib/order-checkout-totals.ts'),
     '@/lib/school-parent-gallery-link': load('lib/school-parent-gallery-link.ts'),
     '@/lib/payments': {...actualPayments,
-      retrieveStripeAccount: async () => ({id: 'acct_fixture', details_submitted: true, charges_enabled: true, payouts_enabled: true}),
+      retrieveStripeAccount: async accountId => ({id: accountId, details_submitted: true, charges_enabled: true, payouts_enabled: true}),
       syncConnectState: async () => {},
-      retrieveCheckoutSession: async id => ({id, status: options.legacySession === 'expired' ? 'expired' : 'open', url: 'https://checkout.stripe.invalid/legacy'}),
+      retrieveCheckoutSession: async (id,accountId) => {
+        sequence.push(`get-session:${accountId}`);
+        if (!options.boundSession) return {id, livemode:false,mode:'payment',payment_status:'unpaid',
+          status: options.legacySession === 'expired' ? 'expired' : 'open', url: 'https://checkout.stripe.invalid/legacy',
+          amount_total:rows.reduce((n,r)=>n+r.total_cents,0),currency:row.currency,client_reference_id:primaryId,payment_intent:null,
+          metadata:{billing_flow:'customer_order',photographer_id:photographerId,order_id:primaryId,
+            ...(row.order_group_id?{order_group_id:row.order_group_id}:{}),
+            ...(row.platform_fee_collection_method?actualPayments.directOrderPlatformFeeMetadata(actualPayments.directOrderPlatformFeePayload(rows,row.currency)):{} )},
+          ...options.legacySessionOverrides};
+        sequence.push('saved-session-get');
+        return {id,mode:'payment',status:'open',payment_status:'unpaid',amount_total:rows.reduce((n,r)=>n+r.total_cents,0),currency:row.currency,
+          client_reference_id:primaryId,url:'https://checkout.stripe.invalid/recovered',payment_intent:null,
+          metadata:{billing_flow:'customer_order',photographer_id:photographerId,order_id:primaryId,
+            ...(row.order_group_id?{order_group_id:row.order_group_id}:{}),
+            ...actualPayments.directOrderPlatformFeeMetadata(actualPayments.directOrderPlatformFeePayload(rows,row.currency))},
+          ...options.boundSessionOverrides};
+      },
+      retrievePaymentIntent:async(id,accountId)=>{
+        sequence.push(`get-intent:${accountId}`);
+        return{id,livemode:false,status:'canceled',amount:rows.reduce((n,r)=>n+r.total_cents,0),amount_received:0,
+          currency:row.currency,application_fee_amount:row.platform_fee_collection_method
+            ? actualPayments.directOrderPlatformFeePayload(rows,row.currency).amountCents : null,
+          metadata:{billing_flow:'customer_order',photographer_id:photographerId,order_id:primaryId,
+            ...(row.order_group_id?{order_group_id:row.order_group_id}:{}),
+            ...(row.platform_fee_collection_method?actualPayments.directOrderPlatformFeeMetadata(actualPayments.directOrderPlatformFeePayload(rows,row.currency)):{} )},
+          ...options.expiredIntentOverrides};
+      },
       quoteDirectOrderPlatformFees: async input => {sequence.push('quote'); quoteInputs.push(structuredClone(input)); return actualPayments.quoteDirectOrderPlatformFees(input);},
       createDirectOrderCheckoutSession: async input => {
         sequence.push('create-checkout'); checkoutInputs.push(structuredClone(input));
@@ -214,6 +274,71 @@ test('combined checkout freezes both orders once and collects80c through one cha
   assert.ok(f.rows.every(member => member.platform_fee_amount_cents === 40));
   assert.equal(f.stripeRequests.length, 1); assert.equal(f.stripeRequests[0].params.get('payment_intent_data[application_fee_amount]'), '80');
   assert.equal(f.stripeRequests[0].params.get('line_items[0][price_data][unit_amount]'), '2000');
+});
+
+test('an activated Standard route preserves the actual legacy40c fee and rejects client account/rate claims', async () => {
+  const f=fixture({standard:true});
+  assert.equal((await f.invoke({standardFeeRateCents:1,accountId:'acct_attacker'})).status,200);
+  assert.equal(f.quoteInputs[0].standardFeeRateCents,undefined);
+  assert.equal(f.stripeRequests[0].headers['Stripe-Account'],'acct_standard');
+  assert.equal(f.stripeRequests[0].params.get('payment_intent_data[application_fee_amount]'),'40');
+  assert.ok(f.sequence.indexOf('reserve-account')<f.sequence.indexOf('write:checkout_starting'));
+  assert.ok(f.sequence.indexOf('write:checkout_starting')<f.sequence.indexOf('provider-checkout'));
+  assert.ok(f.sequence.indexOf('provider-checkout')<f.sequence.indexOf('bind-account'));
+  assert.ok(f.sequence.indexOf('bind-account')<f.sequence.indexOf('bind-return'));
+});
+
+test('Standard combined checkout preserves80c for two legacy40c orders while owner orders remain waived',async()=>{
+  const combined=fixture({standard:true,combined:true});
+  assert.equal((await combined.invoke()).status,200);
+  assert.equal(combined.stripeRequests[0].params.get('payment_intent_data[application_fee_amount]'),'80');
+  const owner=fixture({standard:true,owner:true});
+  assert.equal((await owner.invoke()).status,200);
+  assert.equal(owner.stripeRequests[0].params.get('payment_intent_data[application_fee_amount]'),null);
+  assert.equal(owner.rows[0].platform_fee_amount_cents,0);
+});
+
+test('a bound session survives a crash before order reference writes without another Stripe POST',async()=>{
+  const f=fixture({standard:true,storedSnapshot:true,boundSession:true});
+  const response=await f.invoke();assert.equal(response.status,200);
+  assert.equal((await response.json()).url,'https://checkout.stripe.invalid/recovered');
+  assert.equal(f.stripeRequests.length,0);assert.equal(f.checkoutInputs.length,0);
+  assert.ok(f.sequence.indexOf('saved-session-get')<f.sequence.indexOf('bind-account'));
+  assert.equal(f.rows[0].stripe_checkout_session_id,'cs_created');assert.equal(f.rows[0].status,'payment_pending');
+  assert.equal(f.rows[0].platform_fee_amount_cents,25);
+});
+
+test('a bound session with changed fee, amount, scope or terminal state never causes a replacement POST',async()=>{
+  for(const boundSessionOverrides of [{amount_total:999},{currency:'usd'},{client_reference_id:siblingId},
+    {metadata:{billing_flow:'customer_order',photographer_id:photographerId,order_id:primaryId}},
+    {status:'complete',payment_status:'paid'},{status:'expired'},{id:'cs_other'}]){
+    const f=fixture({standard:true,storedSnapshot:true,boundSession:true,boundSessionOverrides}),before=structuredClone(f.rows);
+    assert.equal((await f.invoke()).status,409);assert.equal(f.stripeRequests.length,0);assert.equal(f.checkoutInputs.length,0);
+    assert.deepEqual(f.rows,before);
+  }
+});
+
+test('cutover racing checkout reservation fails before any Stripe request',async()=>{
+  const f=fixture({standard:true,routeRace:true});
+  assert.equal((await f.invoke()).status,500);
+  assert.equal(f.stripeRequests.length,0);
+  assert.equal(f.rows[0].status,'payment_pending');
+});
+
+test('a frozen pre-migration fee remains25c on a Standard retry rather than being repriced',async()=>{
+  const f=fixture({standard:true,storedSnapshot:true});
+  assert.equal((await f.invoke()).status,200);
+  assert.equal(f.quoteInputs.length,0);
+  assert.equal(f.stripeRequests[0].params.get('payment_intent_data[application_fee_amount]'),'25');
+});
+
+test('Standard USD checkout retains the actual legacy nominal40c fee without FX conversion',async()=>{
+  const f=fixture({standard:true,currency:'usd'});
+  assert.equal((await f.invoke()).status,200);
+  assert.equal(f.stripeRequests[0].headers['Stripe-Account'],'acct_standard');
+  assert.equal(f.stripeRequests[0].params.get('payment_intent_data[application_fee_amount]'),'40');
+  assert.equal(f.stripeRequests[0].params.get('metadata[platform_fee_currency]'),'usd');
+  assert.equal(f.stripeRequests[0].params.get('metadata[platform_fee_fx_rate]'),null);
 });
 
 test('an ordinary active trial uses the server-derived Studio35c rate', async () => {
@@ -502,4 +627,110 @@ test('actual V3 mixed school/ordinary gallery checkout collects both55c fees usi
   assert.equal(f.checkoutInputs[0].platformFee.amountCents,110);
   assert.deepEqual(f.rows.map(row=>row.platform_fee_amount_cents),[55,55]);
   assert.equal(f.stripeRequests[0].params.get('payment_intent_data[application_fee_amount]'),'110');
+});
+
+
+for (const currency of ['cad','usd']) test(`Standard ${currency.toUpperCase()} routes preserve V3 Gallery55/Core45/Studio45 on all paid workflows`,async()=>{
+  for(const[planCode,rate]of[['starter',55],['core',45],['studio',45]]) {
+    for(const workflowType of ['school','portrait','event','sports']) {
+      const event=workflowType!=='school';
+      const f=fixture({standard:true,pricingV3:true,subscriptionProfile:'gallery_v3',currency,planCode,event,provenance:event,workflowType});
+      const response=await f.invoke({...(event?{mode:'event',projectId,email:'event+viewer@example.invalid'}:{}),
+        pricingProfile:'gallery_v2',standardFeeRateCents:1,accountId:'acct_attacker'});
+      assert.equal(response.status,200,`${planCode}/${workflowType}`);
+      assert.equal(f.quoteInputs[0].pricingProfile,'gallery_v3');
+      assert.equal(f.quoteInputs[0].standardFeeRateCents,undefined);
+      assert.equal(f.stripeRequests[0].headers['Stripe-Account'],'acct_standard');
+      assert.equal(f.stripeRequests[0].params.get('payment_intent_data[application_fee_amount]'),String(rate));
+      assert.equal(f.stripeRequests[0].params.get('metadata[platform_fee_currency]'),currency);
+      assert.equal(f.stripeRequests[0].params.get('metadata[platform_fee_fx_rate]'),null);
+      assert.ok(f.sequence.indexOf('reserve-account')<f.sequence.indexOf('provider-checkout'));
+      assert.ok(f.sequence.indexOf('provider-checkout')<f.sequence.indexOf('bind-account'));
+    }
+  }
+});
+
+test('Standard migration preserves V2 gallery waivers, legacy contracts and trial35 rather than overriding them45',async()=>{
+  for(const[planCode,event,expected]of[['starter',false,0],['starter',true,0],['core',true,0],['core',false,45],['studio',true,0],['studio',false,45]]) {
+    const f=fixture({standard:true,pricingV3:true,subscriptionProfile:'gallery_v2',planCode,event,provenance:event});
+    assert.equal((await f.invoke(event?{mode:'event',projectId,email:'viewer@example.invalid'}:{})).status,200);
+    assert.equal(f.checkoutInputs[0].platformFee.amountCents,expected);
+  }
+  const old=fixture({standard:true,pricingV3:true,subscriptionProfile:'legacy',legacyRate:29});
+  assert.equal((await old.invoke()).status,200);assert.equal(old.checkoutInputs[0].platformFee.amountCents,29);
+  const trial=fixture({standard:true,pricingV3:true,trial:true});
+  assert.equal((await trial.invoke()).status,200);assert.equal(trial.checkoutInputs[0].platformFee.amountCents,35);
+});
+
+test('Standard V3 grouped USD Gallery fees remain55 per member while owner and saved frozen fees remain unchanged',async()=>{
+  const group=fixture({standard:true,pricingV3:true,subscriptionProfile:'gallery_v3',planCode:'starter',currency:'usd',combined:true});
+  assert.equal((await group.invoke()).status,200);
+  assert.deepEqual(group.rows.map(row=>[row.platform_fee_amount_cents,row.platform_fee_currency]),[[55,'usd'],[55,'usd']]);
+  assert.equal(group.stripeRequests[0].params.get('payment_intent_data[application_fee_amount]'),'110');
+  const owner=fixture({standard:true,pricingV3:true,subscriptionProfile:'gallery_v3',owner:true});
+  assert.equal((await owner.invoke()).status,200);assert.equal(owner.checkoutInputs[0].platformFee.amountCents,0);
+  const frozen=fixture({standard:true,pricingV3:true,subscriptionProfile:'gallery_v3',storedSnapshot:true});
+  assert.equal((await frozen.invoke()).status,200);assert.equal(frozen.checkoutInputs[0].platformFee.amountCents,25);
+  assert.equal(frozen.sequence.includes('subscription-get'),false);
+});
+
+test('installing history with migration disabled keeps known open Express sessions usable without backfill or new payments',async()=>{
+  const f=fixture({historyInstalled:true,legacySession:'open'});
+  assert.equal((await f.invoke()).status,200);
+  assert.ok(f.sequence.includes('get-session:acct_fixture'));
+  assert.equal(f.sequence.includes('backfill-original'),false);
+  assert.equal(f.stripeRequests.length,0);
+});
+
+for(const standard of [false,true])test(`known expired Express checkout binds provider proof before replacement with Standard=${standard}`,async()=>{
+  const f=fixture({historyInstalled:true,standard,legacySession:'expired',combined:true});
+  assert.equal((await f.invoke()).status,200);
+  assert.ok(f.sequence.indexOf('get-session:acct_fixture')<f.sequence.indexOf('backfill-original'));
+  assert.ok(f.sequence.indexOf('backfill-original')<f.sequence.indexOf('reserve-account'));
+  assert.ok(f.sequence.indexOf('reserve-account')<f.sequence.indexOf('provider-checkout'));
+  assert.equal(f.stripeRequests[0].headers['Stripe-Account'],standard?'acct_standard':'acct_fixture');
+  assert.equal(f.stripeRequests[0].params.get('payment_intent_data[application_fee_amount]'),null,'old zero-fee policy stays frozen');
+});
+
+test('expired legacy session ownership, amount, currency, fee and unpaid-state mismatches stop before backfill or payment',async()=>{
+  for(const legacySessionOverrides of [{amount_total:99},{currency:'usd'},{mode:'subscription'},
+    {payment_status:'paid'},{livemode:undefined},{client_reference_id:siblingId},
+    {metadata:{billing_flow:'customer_order',photographer_id:photographerId,order_id:primaryId,platform_fee_amount_cents:'55'}},
+    {metadata:{billing_flow:'customer_order',photographer_id:'foreign',order_id:primaryId}}]) {
+    const f=fixture({historyInstalled:true,legacySession:'expired',legacySessionOverrides});
+    assert.equal((await f.invoke()).status,409);
+    assert.equal(f.sequence.includes('backfill-original'),false);
+    assert.equal(f.stripeRequests.length,0);
+  }
+});
+
+test('an unknown historical checkout_starting marker cannot create a Stripe session after additive history is installed',async()=>{
+  const f=fixture({historyInstalled:true,storedSnapshot:true,unknownUnbound:true});
+  assert.equal((await f.invoke()).status,500);
+  assert.equal(f.stripeRequests.length,0);assert.equal(f.rows[0].status,'checkout_starting');
+});
+
+
+test('a canceled unpaid expired-session PI is verified on original Express before binding and replacement',async()=>{
+  const f=fixture({historyInstalled:true,standard:true,legacySession:'expired',legacySessionOverrides:{payment_intent:'pi_canceled'}});
+  assert.equal((await f.invoke()).status,200);
+  assert.ok(f.sequence.indexOf('get-intent:acct_fixture')<f.sequence.indexOf('backfill-original'));
+  assert.ok(f.sequence.indexOf('backfill-original')<f.sequence.indexOf('provider-checkout'));
+  assert.equal(f.stripeRequests[0].headers['Stripe-Account'],'acct_standard');
+});
+
+test('an expired-session PI with a possible payment or changed scope prevents history binding and a second charge',async()=>{
+  for(const expiredIntentOverrides of [{status:'processing'},{status:'succeeded',amount_received:1000},
+    {amount_received:1},{amount:999},{currency:'usd'},{livemode:true},{application_fee_amount:55},
+    {metadata:{billing_flow:'customer_order',photographer_id:'foreign',order_id:primaryId}}]) {
+    const f=fixture({historyInstalled:true,standard:true,legacySession:'expired',legacySessionOverrides:{payment_intent:'pi_canceled'},expiredIntentOverrides});
+    assert.equal((await f.invoke()).status,409);
+    assert.equal(f.sequence.includes('backfill-original'),false);assert.equal(f.stripeRequests.length,0);
+  }
+});
+
+test('a rejected on-demand history backfill is never bypassed as a missing-schema compatibility retry',async()=>{
+  const f=fixture({historyInstalled:true,legacySession:'expired',backfillError:true});
+  assert.equal((await f.invoke()).status,500);
+  assert.equal(f.sequence.includes('reserve-account'),false);assert.equal(f.stripeRequests.length,0);
 });

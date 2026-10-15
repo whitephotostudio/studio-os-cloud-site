@@ -7,7 +7,7 @@ import { resolvePhotographerOrderCurrency, type OrderCurrency } from "@/lib/orde
 
 import { loadGalleryImage, cachedGalleryImage, galleryThumbnailUrl } from "@/lib/gallery-image-cache";
 import { retryPortalPreviewImage } from "@/lib/portal-preview-retry";
-import { authorizedEventDownloadImages, canonicalEventOrderEntry, type EventFileDelivery } from "@/lib/event-gallery-media-client";
+import { authorizedEventDownloadImages, canonicalEventOrderEntry, normalizeGalleryStorageReference, type EventFileDelivery } from "@/lib/event-gallery-media-client";
 
 import { checkoutAttemptForPayload } from "@/lib/checkout-attempt-client";
 import { hasSchoolCheckoutGalleryContext, schoolCheckoutRecoveryUrl } from "@/lib/parent-checkout-recovery";
@@ -4014,7 +4014,7 @@ export default function ParentGalleryPage({ sessionAccess }: { sessionAccess?: P
                 url,
                 collectionId: clean(row.collection_id) || null,
                 filename: clean(row.filename) || null,
-                storagePath: normalizeStorageFolder(row.storage_path ?? ""),
+                storagePath: normalizeGalleryStorageReference(row.storage_path),
                 downloadUrl: null,
                 thumbnailUrl,
                 previewUrl,

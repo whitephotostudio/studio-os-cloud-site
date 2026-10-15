@@ -14,17 +14,23 @@ const compiled = ts.transpileModule(readFileSync(new URL('../lib/payments.ts', i
 const refundHelperCompiled = ts.transpileModule(readFileSync(new URL('../lib/direct-order-fee-refund.ts', import.meta.url), 'utf8'), {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
 }).outputText;
+const accountHistory = {};
+new Function('require', 'exports', ts.transpileModule(readFileSync(new URL('../lib/stripe-connect-history.ts', import.meta.url), 'utf8'), {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+}).outputText)(() => ({}), accountHistory);
 const checkoutInput = { accountId: 'acct_fixture', orderId: 'order-a', photographerId: 'studio', currency: 'cad', totalCents: 3000,
   productName: 'Photos', description: 'Fixture photos', successUrl: 'https://example.invalid/success', cancelUrl: 'https://example.invalid/cancel' };
 
-function fixture(context) {
+function fixture(context, {accountId = 'acct_fixture'} = {}) {
   const savedKey = process.env.STRIPE_SECRET_KEY;
   process.env.STRIPE_SECRET_KEY = 'sk_test_intercepted_fixture';
   context.after(() => { if (savedKey === undefined) delete process.env.STRIPE_SECRET_KEY; else process.env.STRIPE_SECRET_KEY = savedKey; });
   const calls = []; const writes = [];
-  const tables = { orders: [], photographers: [{ id: 'studio', stripe_connected_account_id: 'acct_fixture', stripe_account_id: null,
+  const tables = { orders: [], photographers: [{ id: 'studio', stripe_connected_account_id: accountId, stripe_account_id: null,
     is_platform_admin: false, subscription_plan_code: 'core', subscription_status: 'active', stripe_subscription_item_usage_id: null }] };
   let intent;
+  let session;
+  let originalHistoryAccount = null;
   let readFault;
   let providerReadFault;
   let charge;
@@ -39,6 +45,7 @@ function fixture(context) {
     '@/lib/subscription-access': { isStripeBillingActive: value => ['active', 'trialing'].includes(value) },
     '@/lib/credit-maintenance': { creditMaintenanceActive: () => false }, '@/lib/resend': { resendConfigured: () => false },
     '@/lib/order-usage-billing': { reconcileOrderUsageFeeRefunds: async () => { legacyWaivers++; } },
+    '@/lib/stripe-connect-history': accountHistory,
   };
   const api = {};
   new Function('require', 'exports', 'fetch', compiled)(name => dependencies[name] || {}, api, async (target, options) => {
@@ -48,7 +55,11 @@ function fixture(context) {
     calls.push(call);
     if (providerReadFault === call.path) throw Error('fixture provider read unavailable');
     if (call.path === 'checkout/sessions' && call.method === 'POST') return { ok: true, text: async () => JSON.stringify({ id: 'cs_fixture', url: 'https://checkout.stripe.invalid/fixture' }) };
-    if (call.path === 'payment_intents/pi_fixture' && call.method === 'GET') return { ok: true, text: async () => JSON.stringify(intent) };
+    if ((call.path === 'payment_intents/pi_fixture' || call.path === 'payment_intents/pi_forged') && call.method === 'GET') return { ok: true, text: async () => JSON.stringify(intent) };
+    if (call.path === 'checkout/sessions/cs_fixture' && call.method === 'GET') {
+      assert.equal(call.headers['Stripe-Account'], accountId, 'saved Checkout Session stays on its original account');
+      return { ok: true, text: async () => JSON.stringify(session) };
+    }
     if (call.path === 'refunds' && call.method === 'GET') return { ok: true, text: async () => JSON.stringify({ data: refunds, has_more: false }) };
     if (call.path === 'charges/ch_fixture' && call.method === 'GET') return { ok: true, text: async () => JSON.stringify(charge) };
     if (call.path === 'application_fees/fee_fixture' && call.method === 'GET') {
@@ -60,7 +71,11 @@ function fixture(context) {
   const refundHelper = {};
   new Function('require', 'exports', refundHelperCompiled)(name => name === '@/lib/payments' ? api : dependencies[name] || {}, refundHelper);
   dependencies['@/lib/direct-order-fee-refund'] = refundHelper;
-  const service = { from(table) {
+  const service = { async rpc(name) {
+    assert.equal(name, 'resolve_order_payment_account');
+    if (originalHistoryAccount) return { data: originalHistoryAccount, error: null };
+    return { data: null, error: { code: 'PGRST202' } }; // History has not been installed in this baseline fixture.
+  }, from(table) {
     assert.ok(table in tables);
     let predicate = () => true; let update; let selected;
     const result = (single = false) => {
@@ -81,6 +96,7 @@ function fixture(context) {
       select(fields) { selected = fields; return chain; },
       eq(key, value) { const before = predicate; predicate = row => before(row) && row[key] === value; return chain; },
       neq(key, value) { const before = predicate; predicate = row => before(row) && row[key] !== value; return chain; },
+      is(key, value) { const before = predicate; predicate = row => before(row) && row[key] === value; return chain; },
       in(key, values) { const before = predicate; predicate = row => before(row) && values.includes(row[key]); return chain; },
       update(values) { update = values; return chain; },
       limit() { return chain; },
@@ -96,6 +112,7 @@ function fixture(context) {
       currency, orders, ...options });
     tables.orders = orders.map((order, index) => ({ id: order.id, photographer_id: 'studio', order_group_id: orders.length > 1 ? 'group_fixture' : null,
       total_cents: order.totalCents, currency, package_name: 'Prints', status: 'pending', payment_status: 'pending', paid_at: null,
+      stripe_checkout_session_id: 'cs_fixture', stripe_payment_intent_id: null,
       notes: '', platform_fee_collection_method: quote.orders[index].collectionMethod, platform_fee_amount_cents: quote.orders[index].amountCents,
       platform_fee_currency: quote.currency, platform_fee_rate_cents: quote.rateCents, stripe_application_fee_id: null }));
     const fee = api.directOrderPlatformFeePayload(tables.orders, currency);
@@ -105,14 +122,57 @@ function fixture(context) {
         ...(orders.length > 1 ? { order_group_id: 'group_fixture' } : {}), ...api.directOrderPlatformFeeMetadata(fee) } };
     charge = { id: 'ch_fixture', payment_intent: intent.id, amount: intent.amount, amount_refunded: intent.amount, currency,
       application_fee_amount: fee.amountCents || null, application_fee: fee.amountCents ? 'fee_fixture' : null };
-    applicationFee = { id: 'fee_fixture', object: 'application_fee', account: 'acct_fixture', charge: charge.id,
+    applicationFee = { id: 'fee_fixture', object: 'application_fee', account: accountId, charge: charge.id,
       amount: fee.amountCents, amount_refunded: fee.amountCents, currency, refunded: true };
     refunds = [{ id: 're_fixture', status: 'succeeded', amount: intent.amount, currency }];
+    session = {id:'cs_fixture',mode:'payment',status:'complete',payment_status:'paid',payment_intent:'pi_fixture',
+      amount_total:intent.amount,currency,metadata:{...intent.metadata}};
     return { quote, fee };
   }
   return { api, calls, writes, tables, service, freeze, failRead(value) { readFault = value; }, failProviderRead(value) { providerReadFault = value; },
-    get intent() { return intent; }, get charge() { return charge; }, get applicationFee() { return applicationFee; }, get refunds() { return refunds; }, get legacyWaivers() { return legacyWaivers; } };
+    get intent() { return intent; }, get session() { return session; }, get charge() { return charge; }, get applicationFee() { return applicationFee; }, get refunds() { return refunds; }, get legacyWaivers() { return legacyWaivers; },
+    switchActiveAccount(nextAccountId) {originalHistoryAccount=accountId;tables.photographers[0].stripe_connected_account_id=nextAccountId;tables.photographers[0].stripe_standard_migrated_at='2026-10-15';},
+    activateStandard() {originalHistoryAccount=accountId;tables.photographers[0].stripe_connected_account_id='acct_standard';tables.photographers[0].stripe_standard_migrated_at='2026-10-13';} };
 }
+
+for (const status of ['partial', 'full', 'pending']) test(`copied metadata on an unrelated PI cannot ${status}-refund or hold a saved checkout with initial null PI`, async context => {
+  const f=fixture(context);await f.freeze([{id:'order-a',totalCents:3000}]);f.activateStandard();
+  assert.equal(f.tables.orders[0].stripe_payment_intent_id,null,'initial account reservation is not a payment binding');
+  f.intent.id='pi_forged';f.refunds[0].status=status==='pending'?'pending':'succeeded';f.refunds[0].amount=status==='partial'?1000:3000;
+  const before=structuredClone(f.tables.orders);
+  await assert.rejects(f.api.reconcileOrderRefundFromStripe(f.service,'acct_fixture','pi_forged'),/saved checkout session/);
+  assert.deepEqual(f.tables.orders,before);assert.equal(f.writes.length,0);
+  assert.equal(f.calls.filter(call=>call.path==='refunds').length,0,'session proof precedes refund history and all holds');
+});
+
+test('a genuine old Express refund keeps working after active Standard changes and verifies the original saved session',async context=>{
+  const f=fixture(context);await f.freeze([{id:'order-a',totalCents:3000},{id:'order-b',totalCents:2000}]);f.activateStandard();
+  const result=await f.api.reconcileOrderRefundFromStripe(f.service,'acct_fixture','pi_fixture');
+  assert.equal(result.fullyRefunded,true);assert.ok(f.tables.orders.every(row=>row.status==='refunded'));
+  assert.ok(f.tables.orders.every(row=>row.stripe_payment_intent_id==='pi_fixture'),'refund arriving before paid webhook retains verified PI for notices');
+  assert.ok(f.calls.some(call=>call.path==='checkout/sessions/cs_fixture'));
+  assert.ok(f.calls.filter(call=>call.path!=='application_fees/fee_fixture').every(call=>call.headers['Stripe-Account']==='acct_fixture'));
+  assert.equal(f.tables.photographers[0].stripe_connected_account_id,'acct_standard');
+});
+
+test('refund payment group, gross, currency and saved-session mismatches fail before any mutation',async context=>{
+  for(const change of [f=>{f.intent.amount=5001;f.intent.amount_received=5001;},f=>f.intent.currency='usd',
+    f=>f.session.payment_intent='pi_other',f=>f.session.amount_total=100,f=>f.session.currency='usd',
+    f=>f.session.payment_status='unpaid',f=>f.tables.orders[1].photographer_id='other',f=>f.failRead('group-truncated'),
+    f=>f.tables.orders.forEach(row=>row.stripe_checkout_session_id=null)]){
+    const f=fixture(context);await f.freeze([{id:'order-a',totalCents:3000},{id:'order-b',totalCents:2000}]);change(f);
+    const before=structuredClone(f.tables.orders);await assert.rejects(f.api.reconcileOrderRefundFromStripe(f.service,'acct_fixture','pi_fixture'));
+    assert.deepEqual(f.tables.orders,before);assert.equal(f.writes.length,0);
+  }
+});
+
+test('refund amounts and currencies are verified before partial/full order mutations',async context=>{
+  for(const change of [f=>f.refunds[0].amount=3001,f=>f.refunds[0].currency='usd',f=>f.refunds[0].amount=1.5]){
+    const f=fixture(context);await f.freeze([{id:'order-a',totalCents:3000}]);change(f);
+    const before=structuredClone(f.tables.orders);await assert.rejects(f.api.reconcileOrderRefundFromStripe(f.service,'acct_fixture','pi_fixture'));
+    assert.deepEqual(f.tables.orders,before);assert.equal(f.writes.length,0);
+  }
+});
 
 test('Starter55c App40c and Studio35c are deducted inside connected Checkout without increasing the customer total', async context => {
   const f = fixture(context);
@@ -274,7 +334,7 @@ test('lost or incomplete group lookups never finalize, fail or refund just the s
 });
 
 async function paidRefundFixture(context, options = {}) {
-  const f = fixture(context);
+  const f = fixture(context, {accountId:options.accountId});
   await f.freeze([{ id: 'order-a', totalCents: 1000 }, { id: 'order-b', totalCents: 2000 }], options);
   f.tables.orders.forEach(row => Object.assign(row, { status: 'paid', payment_status: 'paid', paid_at: '2026-10-07T19:00:00Z', stripe_payment_intent_id: 'pi_fixture' }));
   return f;
@@ -395,4 +455,45 @@ test('V3 Gallery55c fee refunds retain the frozen rate after a plan change and n
   assert.deepEqual(f.tables.orders.map(order=>order.refund_amount_cents),[1000,2000]);
   assert.equal(f.legacyWaivers,0);
   assert.ok(f.calls.every(call=>call.method==='GET'));
+});
+
+
+for(const accountId of ['acct_express_original','acct_standard_original']) {
+  for(const currency of ['cad','usd']) test(`V3 ${currency.toUpperCase()} refund stays on ${accountId} after active routing changes`,async context=>{
+    for(const[planCode,rate]of[['starter',55],['core',45],['studio',45]]) {
+      const f=await paidRefundFixture(context,{accountId,currency,pricingProfile:'gallery_v3',planCode});
+      f.switchActiveAccount(accountId==='acct_express_original'?'acct_standard_future':'acct_express_rollback');
+      f.tables.photographers[0].subscription_plan_code='studio';
+      const before=f.tables.orders.map(row=>row.platform_fee_rate_cents);
+      assert.equal(f.intent.application_fee_amount,rate*2);
+      const result=await f.api.reconcileOrderRefundFromStripe(f.service,accountId,'pi_fixture');
+      assert.equal(result.fullyRefunded,true);
+      assert.deepEqual(f.tables.orders.map(row=>row.platform_fee_rate_cents),before);
+      assert.deepEqual(f.tables.orders.map(row=>row.refund_amount_cents),[1000,2000]);
+      assert.equal(f.legacyWaivers,0);
+      assert.ok(f.calls.filter(call=>call.path!=='application_fees/fee_fixture').every(call=>call.headers['Stripe-Account']===accountId));
+      assert.ok(f.calls.every(call=>call.method==='GET'));
+    }
+  });
+}
+
+
+test('refund verification ignores unrelated merchant metadata with generic order_id before any database lookup',async context=>{
+  const f=fixture(context);
+  const forbiddenService={from(){assert.fail('Unrelated merchant refund must not query Studio OS orders');},rpc(){assert.fail('Unrelated merchant refund must not resolve Studio OS routing');}};
+  for(const metadata of [undefined,{}, {order_id:'external-order-123'}, {billing_flow:'merchant_external',order_id:'external-order-123'},
+    {billing_flow:'invoice',order_id:'order-a',photographer_id:'studio'}]) {
+    const result=await f.api.verifySavedOrderPaymentFromStripe(forbiddenService,'acct_fixture','pi_fixture',{
+      id:'pi_fixture',status:'succeeded',amount:1000,amount_received:1000,currency:'cad',metadata});
+    assert.equal(result,null);assert.deepEqual(f.calls,[]);assert.deepEqual(f.writes,[]);
+  }
+});
+
+test('refund reconciliation reads an unknown merchant PI once to classify it, then ignores it without database or refund calls',async context=>{
+  const f=fixture(context);await f.freeze([{id:'order-a',totalCents:1000}]);
+  f.intent.metadata={billing_flow:'merchant_external',order_id:'external-order-not-uuid'};
+  const forbiddenService={from(){assert.fail('Unrelated refund must not query Studio OS orders');},rpc(){assert.fail('Unrelated refund must not resolve Studio OS routing');}};
+  assert.equal(await f.api.reconcileOrderRefundFromStripe(forbiddenService,'acct_fixture','pi_fixture'),null);
+  assert.deepEqual(f.calls.map(call=>[call.path,call.method]),[['payment_intents/pi_fixture','GET']]);
+  assert.deepEqual(f.writes,[]);
 });

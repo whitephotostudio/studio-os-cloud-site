@@ -54,6 +54,7 @@ function harness({ profile = 'gallery_v2', ...state } = {}) {
     '@/lib/supabase/client': { createClient: () => ({ auth: { getSession: async () => ({ data: { session: { access_token: 'fixture_token' } } }) } }) },
     '@/components/whats-new-dot': { WhatsNewDot: 'dot', useIsFeatureNew: () => ({ isNew: false, dismiss() {} }) },
     '@/components/parents/proof-watermark-overlay': { ProofWatermarkOverlay: 'watermark' },
+    '@/components/dashboard/stripe-standard-migration': { StripeStandardMigration: 'standard-migration' },
   };
   function load(file) {
     const exports = {};

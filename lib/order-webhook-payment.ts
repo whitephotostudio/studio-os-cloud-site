@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { getConnectedAccountId, retrieveCheckoutSession, retrievePaymentIntent } from "@/lib/payments";
+import { retrieveCheckoutSession, retrievePaymentIntent } from "@/lib/payments";
+import { resolveOrderPaymentAccount } from "@/lib/stripe-connect-history";
 
 type SavedOrder = {
   id: string;
@@ -19,8 +20,15 @@ export async function verifyOrderWebhookPayment(service: SupabaseClient, input: 
   orderId: string;
   checkoutSessionId?: string | null;
   paymentIntentId?: string | null;
+  livemode?: boolean;
   outcome: "paid" | "failed";
+  /** Signed event metadata is a flow selector, never payment proof. */
+  metadata?: Record<string, unknown> | null;
 }) {
+  // Standard merchants also receive payments outside Studio OS. Their generic
+  // order_id metadata must never enter our UUID lookup or financial verifier.
+  // Omitted metadata keeps trusted internal callers using saved provider proof.
+  if ("metadata" in input && input.metadata?.billing_flow !== "customer_order") return false;
   const fail = () => { throw new Error("Stripe webhook payment does not match its saved checkout."); };
   const seed = await service.from("orders").select(select).eq("id", input.orderId).maybeSingle<SavedOrder>();
   if (seed.error) throw seed.error;
@@ -43,9 +51,13 @@ export async function verifyOrderWebhookPayment(service: SupabaseClient, input: 
     : order.total_amount != null ? Math.round(Number(order.total_amount) * 100) : Number.NaN);
   const total = amounts.reduce((sum, amount) => sum + amount, 0);
   if (amounts.some(amount => !Number.isSafeInteger(amount) || amount < 0) || !Number.isSafeInteger(total) || total < 0) fail();
-  const photographer = await service.from("photographers").select("stripe_account_id,stripe_connected_account_id").eq("id", owner).maybeSingle();
-  if (photographer.error) throw photographer.error;
-  if (!photographer.data || getConnectedAccountId(photographer.data) !== input.accountId) fail();
+  const originalAccount = await resolveOrderPaymentAccount(service, {
+    photographerId: owner!, orderId: seed.data.id, orderGroupId: groupId,
+    checkoutSessionId: input.checkoutSessionId || seed.data.stripe_checkout_session_id,
+    paymentIntentId: input.paymentIntentId || seed.data.stripe_payment_intent_id,
+    livemode: input.livemode,
+  });
+  if (originalAccount !== input.accountId) fail();
   const matchesMetadata = (metadata: Record<string, string> | null | undefined) =>
     metadata?.billing_flow === "customer_order" && metadata.photographer_id === owner &&
     orders.some(order => order.id === metadata.order_id) && (metadata.order_group_id || null) === groupId;

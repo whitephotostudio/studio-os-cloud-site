@@ -7,7 +7,8 @@ import { getClientIp, rateLimit } from "@/lib/rate-limit";
 import { validateEventGalleryAccess } from "@/lib/event-gallery-access";
 import { hasCalendarBoundaryPassed } from "@/lib/calendar-dates";
 import { hasActiveSubscription } from "@/lib/subscription-gate";
-import { getConnectedAccountId, stripeRequest } from "@/lib/payments";
+import { stripeRequest } from "@/lib/payments";
+import { resolveOrderPaymentAccount } from "@/lib/stripe-connect-history";
 import { lockOrderPayment } from "@/lib/order-payment-lock";
 import { assertPaymentBelongsToOrders } from "@/lib/order-payment-policy";
 import { recordAudit } from "@/lib/audit";
@@ -82,7 +83,12 @@ async function context(service: Service, body: Input) {
     orders = data as ParentCheckoutOrder[];
   }
   assertParentCheckoutScope(orders, body.orderId, grant);
-  return { orders, grant, account: getConnectedAccountId(photographer) };
+  const hasProviderPayment = orders.some(member => member.stripe_checkout_session_id || member.stripe_payment_intent_id);
+  const account = hasProviderPayment ? await resolveOrderPaymentAccount(service, {
+    photographerId: photographer.id, orderId: seed.id, orderGroupId: seed.order_group_id,
+    checkoutSessionId: seed.stripe_checkout_session_id, paymentIntentId: seed.stripe_payment_intent_id,
+  }) : null;
+  return { orders, grant, account };
 }
 
 async function paymentState(ctx: Awaited<ReturnType<typeof context>>) {
