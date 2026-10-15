@@ -8,7 +8,6 @@ import {
   ExternalLink,
   LockKeyhole,
   MonitorSmartphone,
-  Share,
   Smartphone,
 } from "lucide-react";
 
@@ -285,15 +284,6 @@ export default function MobileAppPage() {
               </div>
             </div>
 
-            <div className="mt-10 grid gap-3 rounded-2xl border border-red-100 bg-red-50 p-5 text-sm leading-6 text-red-900 md:grid-cols-[auto_1fr]">
-              <Share className="mt-0.5 h-5 w-5 text-red-600" />
-              <p>
-                A normal website cannot safely distribute an unsigned iPhone app
-                to every photographer. The current website install works now as a
-                mobile web app; the native app should go through TestFlight or the
-                App Store for real customer installs.
-              </p>
-            </div>
           </div>
         </section>
       </main>
