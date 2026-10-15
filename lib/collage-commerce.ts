@@ -68,7 +68,7 @@ export function commerceCatalogue(state: CommerceState) {
     const effective = selected && profiles.has(selected) ? selected : resolvePackageProfileId({ selectedProfileId: selected, packages: packages as Array<{ profile_id?: string | null; profile_name?: string | null }> });
     return { kind, id: text(row.id), name: text(kind === "school" ? row.school_name : row.title) || "Gallery", profileId: effective, selectedProfileId: selected };
   });
-  return { currency, catalogRevision: commerceHash(state), profiles: [...profiles.values()], galleries, products: state.packages.map(packageShape) };
+  return { photographerId: text(state.owner.id), currency, catalogRevision: commerceHash(state), profiles: [...profiles.values()], galleries, products: state.packages.map(packageShape) };
 }
 function record(value: unknown, message = "Invalid collage publication."): Row {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new CollageAccessError(message);

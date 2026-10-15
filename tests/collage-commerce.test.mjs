@@ -21,7 +21,7 @@ function input(state, change = {}) {
 }
 test("fresh unassigned galleries can publish their first priced product without changing profiles", () => {
   const state = emptyState(), catalogue = commerceCatalogue(state), request = parseCommerceRequest(input(state));
-  assert.equal(catalogue.currency, "cad"); assert.deepEqual(catalogue.profiles, [{ id: null, name: "Unassigned catalogue" }]);
+  assert.equal(catalogue.photographerId, owner); assert.equal(catalogue.currency, "cad"); assert.deepEqual(catalogue.profiles, [{ id: null, name: "Unassigned catalogue" }]);
   assert.equal(catalogue.galleries[0].profileId, null); assert.equal(validateCommercePublication(state, request).items.length, 1);
   assert.equal(state.schools[0].package_profile_id, null);
 });

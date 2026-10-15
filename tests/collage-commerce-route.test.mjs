@@ -42,7 +42,7 @@ function harness({ unsigned = false, limited = false, existing = false, concurre
 }
 test("commerce endpoint returns owner catalogue and atomically publishes exact price, scoped version and local identity", async () => {
   const h = harness(), get = await h.route.GET(new NextRequest("https://example.test/api/dashboard/collages/commerce")); assert.equal(get.status, 200);
-  const catalogue = await get.json(); assert.equal(catalogue.currency, "cad"); assert.equal(catalogue.galleries[0].id, school); assert.equal(catalogue.catalogRevision, h.originalBody.catalogRevision);
+  const catalogue = await get.json(); assert.equal(catalogue.photographerId, owner); assert.equal(catalogue.currency, "cad"); assert.equal(catalogue.galleries[0].id, school); assert.equal(catalogue.catalogRevision, h.originalBody.catalogRevision);
   const result = await h.route.POST(h.request()); assert.equal(result.status, 200); const published = await result.json();
   assert.equal(published.product.priceCents, 2500); assert.equal(published.product.localId, `collage_${requestId}`); assert.equal(published.version.id, versionId); assert.equal(h.counters.writes, 1); assert.equal(h.counters.mutates, true);
 });
