@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { createDashboardServiceClient, resolveDashboardAuth } from "@/lib/dashboard-auth";
-import { getConnectedAccountId, stripeRequest, markOrderOrGroupRefunded } from "@/lib/payments";
+import { stripeRequest, markOrderOrGroupRefunded } from "@/lib/payments";
+import { resolveOrderPaymentAccount } from "@/lib/stripe-connect-history";
 import { lockOrderPayment } from "@/lib/order-payment-lock";
 import { assertPaymentBelongsToOrders, verifyPaymentConfirmation, verifyPaymentTarget, type ApplicationFeeCharge, type PaymentOrder, type PaymentSnapshot } from "@/lib/order-payment-policy";
 import { completeDirectOrderApplicationFeeRefund, verifyDirectOrderApplicationFeeRefund, type DirectOrderFeeRefundState } from "@/lib/direct-order-fee-refund";
@@ -32,7 +33,12 @@ async function context(request: NextRequest, orderId: string) {
     if (ge || !data?.length || data.some((o) => o.photographer_id !== photographer.id)) throw new Error("Combined order ownership could not be verified.");
     orders = data;
   }
-  return { user, service, photographer, order, orders: orders as (PaymentOrder & { parent_name?: string; customer_name?: string })[], account: getConnectedAccountId(photographer) };
+  const hasProviderPayment = orders.some(member => member.stripe_checkout_session_id || member.stripe_payment_intent_id);
+  const account = hasProviderPayment ? await resolveOrderPaymentAccount(service, {
+    photographerId: photographer.id, orderId: order.id, orderGroupId: order.order_group_id,
+    checkoutSessionId: order.stripe_checkout_session_id, paymentIntentId: order.stripe_payment_intent_id,
+  }) : null;
+  return { user, service, photographer, order, orders: orders as (PaymentOrder & { parent_name?: string; customer_name?: string })[], account };
 }
 
 async function paymentState(ctx: Awaited<ReturnType<typeof context>>) {

@@ -12,6 +12,8 @@ const compile = path => ts.transpileModule(readFileSync(new URL(path, import.met
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
 }).outputText;
 const paymentsCompiled = compile('../lib/payments.ts');
+const history = {};
+new Function('require', 'exports', compile('../lib/stripe-connect-history.ts'))(() => ({}), history);
 const connectCompiled = compile('../app/api/stripe/connect/route.ts');
 const profileCompiled = compile('../app/api/stripe/business-profile/route.ts');
 const migration = readFileSync(new URL('../supabase/migrations/20261008200000_explicit_stripe_business_country.sql', import.meta.url), 'utf8');
@@ -63,6 +65,7 @@ async function fixture(context, { existing = false, accountCountry = null } = {}
       return chain;
     },
     async rpc(name, args) {
+      if (name === 'sync_photographer_stripe_account_history') return {data: null, error: {code: 'PGRST202', message: 'History schema is absent in this legacy-country fixture'}};
       assert.ok(['configure_photographer_payment_profile', 'sync_photographer_connect_state'].includes(name));
       try {
         const values = Object.values(args);
@@ -75,6 +78,7 @@ async function fixture(context, { existing = false, accountCountry = null } = {}
     '@/lib/studio-pricing': pricing, '@/lib/stripe-connect-country': connectCountry,
     '@/lib/order-currency': {}, '@/lib/trial-config': { FREE_TRIAL_DAYS: 30 },
     '@/lib/subscription-access': { isStripeBillingActive: status => status === 'active' },
+    '@/lib/stripe-connect-history': history,
   };
   const payments = {};
   new Function('require', 'exports', 'fetch', paymentsCompiled)(name => dependencies[name] || {}, payments, async (target, options) => {

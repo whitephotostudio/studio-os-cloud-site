@@ -1,7 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { canonicalCheckoutJson } from "@/lib/checkout-attempt";
-import { finalizePaidOrderOrGroup, getConnectedAccountId, markOrderOrGroupPaymentFailure, recordStripeEvent, retrieveCheckoutSession } from "@/lib/payments";
+import { finalizePaidOrderOrGroup, markOrderOrGroupPaymentFailure, recordStripeEvent, retrieveCheckoutSession } from "@/lib/payments";
+import { resolveOrderPaymentAccount } from "@/lib/stripe-connect-history";
 import { verifyOrderWebhookPayment } from "@/lib/order-webhook-payment";
 import { lockOrderPayment } from "@/lib/order-payment-lock";
 
@@ -14,8 +15,14 @@ const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const clean = (value: unknown) => typeof value === "string" ? value.trim() : "";
 const metadataOf = (event: CustomerOrderStripeEvent) => event.data.object.metadata as Record<string, unknown> | null | undefined;
 
+function isLegacyInternalRecovery(event: CustomerOrderStripeEvent) {
+  const objectId = clean(event.data.object.id);
+  return event.type === "checkout.session.completed" && /^cs_[A-Za-z0-9_]+$/.test(objectId) &&
+    event.id === `customer-payment-recovery:${objectId}` && metadataOf(event)?.billing_flow === undefined;
+}
 export function isCustomerOrderStripeEvent(event: CustomerOrderStripeEvent) {
-  return Boolean(event.account && eventTypes.has(event.type) && clean(metadataOf(event)?.order_id));
+  return Boolean(event.account && eventTypes.has(event.type) && clean(metadataOf(event)?.order_id) &&
+    (metadataOf(event)?.billing_flow === "customer_order" || isLegacyInternalRecovery(event)));
 }
 class PaymentScopeError extends Error {}
 type PaymentOrder = {
@@ -31,10 +38,13 @@ async function verifiedOrderScope(service: SupabaseClient, event: CustomerOrderS
     .eq("id", orderId).maybeSingle<PaymentOrder>();
   if (seedError) throw seedError;
   if (!seed?.photographer_id) throw new PaymentScopeError("Customer payment order is unavailable.");
-  const { data: photographer, error: photographerError } = await service.from("photographers")
-    .select("id,stripe_account_id,stripe_connected_account_id").eq("id", seed.photographer_id).maybeSingle();
-  if (photographerError) throw photographerError;
-  if (!photographer || getConnectedAccountId(photographer) !== event.account || clean(metadata?.photographer_id) !== seed.photographer_id) {
+  const originalAccount = await resolveOrderPaymentAccount(service, {
+    photographerId: seed.photographer_id, orderId: seed.id, orderGroupId: seed.order_group_id,
+    checkoutSessionId: seed.stripe_checkout_session_id,
+    paymentIntentId: seed.stripe_payment_intent_id,
+    livemode: event.livemode,
+  });
+  if (originalAccount !== event.account || clean(metadata?.photographer_id) !== seed.photographer_id) {
     throw new PaymentScopeError("Customer payment account does not match the order owner.");
   }
   let orders: PaymentOrder[] = [seed];
@@ -92,8 +102,9 @@ async function verifyPaidCompletion(service: SupabaseClient, scope: Awaited<Retu
 
 /** A claimed event is complete only after the paid state and its outbox commit. */
 export async function processCustomerOrderStripeEvent(service: SupabaseClient, event: CustomerOrderStripeEvent) {
+  if (!isCustomerOrderStripeEvent(event)) return { ok: true, status: 200, ignored: true };
   const orderId = clean(metadataOf(event)?.order_id), token = randomUUID();
-  if (!isCustomerOrderStripeEvent(event) || !uuid.test(orderId) || !clean(event.id) || event.id.length > 255) {
+  if (!uuid.test(orderId) || !clean(event.id) || event.id.length > 255) {
     return { ok: false, status: 400, review: true };
   }
   const hash = createHash("sha256").update(canonicalCheckoutJson(event)).digest("hex");
@@ -120,7 +131,10 @@ export async function processCustomerOrderStripeEvent(service: SupabaseClient, e
       // Preserve the saved-checkout/provider verification and order/group lock
       // used by checkout, refunds and the legacy webhook path.
       const proof = { accountId: event.account!, orderId: scope.orderId, checkoutSessionId: scope.sessionId,
-        paymentIntentId: scope.paymentIntentId, outcome: failed ? "failed" as const : "paid" as const };
+        paymentIntentId: scope.paymentIntentId, livemode: event.livemode,
+        // Pre-existing internal recovery hashes omitted the flow marker. Keep
+        // their identity stable; provider GETs below still require customer_order.
+        ...(!isLegacyInternalRecovery(event) ? {metadata: metadataOf(event)} : {}), outcome: failed ? "failed" as const : "paid" as const };
       const verified = await verifyOrderWebhookPayment(service, proof);
       if (!verified && paid) throw new PaymentScopeError("The saved payment order is no longer available.");
       if (verified) {
@@ -188,14 +202,14 @@ export async function reconcilePendingCustomerOrderPayments(service: SupabaseCli
   for (let index = 0; index < rows.length; index += 3) {
     await Promise.all(rows.slice(index, index + 3).map(async row => {
       try {
-        const { data: owner, error: ownerError } = await service.from("photographers")
-          .select("id,stripe_account_id,stripe_connected_account_id").eq("id", row.photographer_id).maybeSingle();
-        if (ownerError) throw ownerError;
-        const account = owner && getConnectedAccountId(owner);
+        const account = await resolveOrderPaymentAccount(service, {
+          photographerId: row.photographer_id, orderId: row.id,
+          orderGroupId: row.order_group_id, checkoutSessionId: row.stripe_checkout_session_id,
+        });
         if (!account) throw new Error("Customer payment owner unavailable.");
         const session = await retrieveCheckoutSession(row.stripe_checkout_session_id!, account);
         if (!["paid", "no_payment_required"].includes(session.payment_status || "")) { unpaid++; return; }
-        if (session.id !== row.stripe_checkout_session_id || session.metadata?.photographer_id !== row.photographer_id ||
+        if (session.id !== row.stripe_checkout_session_id || session.metadata?.billing_flow !== "customer_order" || session.metadata.photographer_id !== row.photographer_id ||
           (!row.order_group_id && session.metadata?.order_id !== row.id) ||
           (row.order_group_id && session.metadata?.order_group_id !== row.order_group_id)) throw new Error("Recovered customer payment identity mismatch.");
         const event: CustomerOrderStripeEvent = {
@@ -206,7 +220,7 @@ export async function reconcilePendingCustomerOrderPayments(service: SupabaseCli
           data: { object: {
             id: session.id, payment_intent: session.payment_intent, payment_status: session.payment_status,
             amount_total: session.amount_total, currency: session.currency,
-            metadata: { order_id: session.metadata?.order_id, photographer_id: session.metadata?.photographer_id,
+            metadata: { order_id: session.metadata.order_id, photographer_id: session.metadata.photographer_id,
               ...(session.metadata?.order_group_id ? { order_group_id: session.metadata.order_group_id } : {}) },
           } },
         };

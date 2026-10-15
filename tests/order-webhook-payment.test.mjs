@@ -17,14 +17,15 @@ const group = '10000000-0000-4000-8000-000000000004';
 process.env.STRIPE_SECRET_KEY = 'sk_test_intercepted_webhook_fixture';
 process.env.STRIPE_WEBHOOK_SECRET = 'local-fixture-secret';
 
-function fixture({combined = false, direct = false, noStoredReferences = false} = {}) {
-  const writes = [], reads = [], recorded = new Set(), sequence = [], eventClaims = new Map();
+function fixture({combined = false, direct = false, noStoredReferences = false, historical = false} = {}) {
+  const databaseCalls = [], writes = [], reads = [], recorded = new Set(), sequence = [], eventClaims = new Map();
   const tables = {
     orders: [{id: orderA, photographer_id: studio, order_group_id: combined ? group : null,
       status: 'payment_pending', payment_status: 'pending', paid_at: null, total_cents: 3000,
       total_amount: 30, currency: 'cad', package_name: 'Prints', notes: '', platform_fee_collection_method: null,
       stripe_checkout_session_id: noStoredReferences ? null : 'cs_fixture', stripe_payment_intent_id: null}],
-    photographers: [{id: studio, stripe_connected_account_id: 'acct_fixture', stripe_account_id: null}],
+    photographers: [{id: studio, stripe_connected_account_id: historical ? 'acct_standard' : 'acct_fixture', stripe_account_id: null,
+      stripe_standard_migrated_at: historical ? '2026-10-13' : null}],
     order_payment_locks: [],
   };
   if (combined) tables.orders.push({...tables.orders[0], id: orderB, total_cents: 2500, total_amount: 25});
@@ -36,6 +37,19 @@ function fixture({combined = false, direct = false, noStoredReferences = false} 
     currency: 'cad', application_fee_amount: null, metadata: {...metadata}};
   let providerError = false, groupFault = null, recordError = false, failWriteId = null, onLock;
   const service = {async rpc(name, args) {
+    databaseCalls.push(`rpc:${name}`);
+    if (name === 'resolve_order_payment_account') {
+      if (!historical) return {data: null, error: {code: 'PGRST202'}};
+      // Model an immutable historical attempt independently of the current
+      // photographer pointer. The real history RPC has its own SQL tests.
+      if (args.p_photographer_id !== studio || (args.p_order_id && ![orderA, orderB].includes(args.p_order_id)) ||
+          (args.p_checkout_session_id && args.p_checkout_session_id !== 'cs_fixture') ||
+          (args.p_payment_intent_id && args.p_payment_intent_id !== 'pi_fixture') ||
+          (args.p_expected_account && args.p_expected_account !== 'acct_fixture')) {
+        return {data: null, error: Error('Historical payment binding mismatch')};
+      }
+      return {data: 'acct_fixture', error: null};
+    }
     if (name === 'ensure_paid_order_emails') return {data: [], error: null};
     if (name === 'claim_customer_order_webhook') {
       let saved = eventClaims.get(args.p_event_id);
@@ -56,6 +70,7 @@ function fixture({combined = false, direct = false, noStoredReferences = false} 
     sequence.push(`lock:${args.p_key}`); onLock?.();
     return {data: true, error: null};
   }, from(table) {
+    databaseCalls.push(`table:${table}`);
     let predicates = [], values, deleting = false, selected;
     const result = single => {
       if (table === 'stripe_events') {
@@ -123,6 +138,8 @@ function fixture({combined = false, direct = false, noStoredReferences = false} 
   dependencies['@/lib/parent-gallery-entry'] = parentGalleryEntryFixture();
   dependencies['@/lib/pin-recovery'] = dependencies['@/lib/parent-gallery-entry'];
   dependencies['@/lib/paid-order-emails'] = load('lib/paid-order-emails.ts');
+  dependencies['@/lib/stripe-connect-history'] = load('lib/stripe-connect-history.ts');
+  dependencies['@/lib/stripe-merchant-webhook'] = {isStripeMerchantEvent: () => false};
   const payments = load('lib/payments.ts');
   dependencies['@/lib/payments'] = {...payments, verifyStripeSignature: async () => true,
     recordStripeEvent: async (_service, event) => {
@@ -141,7 +158,8 @@ function fixture({combined = false, direct = false, noStoredReferences = false} 
   }
   dependencies['@/lib/checkout-attempt'] = load('lib/checkout-attempt.ts');
   dependencies['@/lib/order-checkout-totals'] = load('lib/order-checkout-totals.ts');
-  dependencies['@/lib/order-webhook-payment'] = load('lib/order-webhook-payment.ts');
+  const actualVerifier = load('lib/order-webhook-payment.ts');
+  dependencies['@/lib/order-webhook-payment'] = actualVerifier;
   dependencies['@/lib/order-payment-lock'] = load('lib/order-payment-lock.ts');
   dependencies['@/lib/customer-order-webhook'] = load('lib/customer-order-webhook.ts');
   const webhook = load('app/api/stripe/webhook/route.ts');
@@ -152,12 +170,22 @@ function fixture({combined = false, direct = false, noStoredReferences = false} 
       id: changes.eventId || 'evt_fixture', type, account: changes.account || 'acct_fixture', data: {object},
     })});
   }
-  return {tables, writes, reads, recorded, sequence, invoke, get session() {return session;}, get intent() {return intent;},
+  return {tables, writes, reads, recorded, sequence, databaseCalls, invoke, verify:input=>actualVerifier.verifyOrderWebhookPayment(service,input), get session() {return session;}, get intent() {return intent;},
     failProvider() {providerError = true;}, recoverProvider() {providerError = false;}, groupFault(value) {groupFault = value;},
     failRecordOnce() {recordError = true;}, failOrderWrite(id) {failWriteId = id;}, onLock(callback) {onLock = callback;}};
 }
 
 for (const type of ['checkout.session.completed', 'checkout.session.async_payment_succeeded', 'payment_intent.succeeded']) {
+  test(`${type} finalizes an old Express payment after Standard activation with onboarding disabled`, async t => {
+    const previous = process.env.STRIPE_STANDARD_MIGRATION_ENABLED; process.env.STRIPE_STANDARD_MIGRATION_ENABLED = 'false';
+    t.after(() => { if (previous === undefined) delete process.env.STRIPE_STANDARD_MIGRATION_ENABLED; else process.env.STRIPE_STANDARD_MIGRATION_ENABLED = previous; });
+    const f = fixture({combined: true, direct: true, historical: true});
+    assert.equal((await f.invoke(type)).status, 200);
+    assert.ok(f.tables.orders.every(row => row.status === 'paid' && row.platform_fee_amount_cents === 40));
+    assert.equal(f.tables.photographers[0].stripe_connected_account_id, 'acct_standard');
+    assert.equal((await f.invoke(type, {account: 'acct_standard', eventId: 'evt_wrong_account'})).status, 400);
+    assert.equal(f.writes.length, 2, 'a current account cannot claim a historical payment');
+  });
   test(`${type} cannot mark another studio's legacy order paid`, async () => {
     const f = fixture(), before = structuredClone(f.tables.orders);
     assert.equal((await f.invoke(type, {account: 'acct_foreign'})).status, 400);
@@ -323,3 +351,38 @@ for (const total of [-1, 1.5, Number.MAX_SAFE_INTEGER + 1, null]) {
     assert.equal(f.writes.length, 0); assert.equal(f.reads.length, 0); assert.equal(f.tables.order_payment_locks.length, 0);
   });
 }
+
+
+for(const type of ['checkout.session.completed','checkout.session.async_payment_succeeded','payment_intent.succeeded','payment_intent.payment_failed']) {
+  test(`${type} acknowledges unrelated Standard merchant payments before UUID lookup, provider reads or event claims`,async()=>{
+    for(const billing_flow of [undefined,null,'invoice','merchant_external','customer_order ']) {
+      for(const order_id of ['external-invoice-123',orderA]) {
+        const f=fixture({historical:true});
+        const response=await f.invoke(type,{object:{metadata:{billing_flow,order_id,photographer_id:studio}}});
+        assert.equal(response.status,200);assert.equal((await response.json()).ignored,true);
+        assert.deepEqual(f.databaseCalls,[]);assert.deepEqual(f.reads,[]);assert.deepEqual(f.writes,[]);
+        assert.equal(f.recorded.size,0);assert.deepEqual(f.sequence,[]);
+      }
+    }
+  });
+}
+
+test('actual shared payment verifier ignores explicit unrelated metadata before touching database or Stripe',async()=>{
+  for(const metadata of [undefined,null,{}, {billing_flow:'external',order_id:'merchant-order-not-uuid'},
+    {billing_flow:'invoice',order_id:orderA,photographer_id:studio}]) {
+    const f=fixture();
+    assert.equal(await f.verify({accountId:'acct_fixture',orderId:'external-invoice-123',paymentIntentId:'pi_fixture',outcome:'paid',metadata}),false);
+    assert.deepEqual(f.databaseCalls,[]);assert.deepEqual(f.reads,[]);assert.deepEqual(f.writes,[]);
+  }
+});
+
+test('legacy saved customer_order markers still receive full actual provider proof and reject mismatches',async()=>{
+  const f=fixture({historical:true});
+  const input={accountId:'acct_fixture',orderId:orderA,checkoutSessionId:'cs_fixture',paymentIntentId:'pi_fixture',outcome:'paid',metadata:{billing_flow:'customer_order'}};
+  assert.deepEqual(await f.verify(input),{lockKey:orderA});
+  assert.ok(f.reads.includes('/v1/checkout/sessions/cs_fixture'));
+  assert.ok(f.reads.includes('/v1/payment_intents/pi_fixture'));
+  f.intent.amount=2999;
+  await assert.rejects(()=>f.verify(input),/does not match its saved checkout/);
+  assert.equal(f.writes.length,0);
+});

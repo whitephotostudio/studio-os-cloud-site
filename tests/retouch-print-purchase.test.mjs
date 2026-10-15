@@ -71,6 +71,8 @@ function setup({ storedOrders = [], storedItems = [] } = {}) {
         writes.push({ table: 'order_items', value: args.p_items });
         return { data: args.p_response, error: null };
       }
+      // Explicit pre-migration schema uses the real history compatibility path.
+      if (['resolve_order_payment_account','get_photographer_checkout_routing','reserve_order_payment_account'].includes(name)) return {data:null,error:{code:'PGRST202'}};
       if (name === 'freeze_order_platform_fees') {
         assert.equal(args.p_photographer_id, photographerId);
         for (const snapshot of args.p_snapshots) Object.assign(storedOrders.find(order => order.id === snapshot.id), snapshot);
@@ -97,7 +99,7 @@ function setup({ storedOrders = [], storedItems = [] } = {}) {
           try {
             let rows = table === 'packages' ? packages : table === 'students' ? ['12345','67890'].map(pin => ({ id: studentIds[pin], pin, school_id: schoolId, class_id: null }))
               : table === 'schools' ? [{ id: schoolId, photographer_id: photographerId }]
-              : table === 'photographers' ? [{ id: photographerId, subscription_status: 'active', subscription_plan_code: 'core' }]
+              : table === 'photographers' ? [{ id: photographerId, subscription_status: 'active', subscription_plan_code: 'core', stripe_account_id: 'acct_test' }]
               : table === 'orders' ? storedOrders : table === 'order_items' ? storedItems : [];
             if (inserted) rows = [{ id: 'new-order-' + writes.length }];
             else { rows = rows.filter(row => filters.every(filter => filter(row))); if (updated) rows.forEach(row => Object.assign(row, updated)); }

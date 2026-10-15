@@ -148,3 +148,30 @@ test('server canonical order resolution binds print, retouch and digital photo i
  test('every event context copy of settings removes private download PIN and owner-only contact',async()=>{
  const h=harness({extras:{downloadPinEnabled:true,downloadPin:'owner-only-download-pin'}});h.tables.projects[0].gallery_settings.desktopClientEmail='private-owner-contact@example.test';const result=await h.post('app/api/portal/event-gallery-context/route.ts',h.body());assert.equal(result.status,200);assert.equal(JSON.stringify(result.body).includes('owner-only-download-pin'),false);assert.equal(JSON.stringify(result.body).includes('private-owner-contact@example.test'),false);
  });
+
+
+test('legacy HTTP and HTTPS event storage references survive browser mapping and strict server order resolution',async()=>{
+  for(const stored of ['http://127.0.0.1:55421/storage/v1/object/authenticated/photos/projects/synthetic/photo.png',
+    'https://owned.supabase.co/storage/v1/object/authenticated/photos/projects/synthetic/photo.jpg']) {
+    const h=harness(),client=h.load('lib/event-gallery-media-client.ts'),server=h.load('lib/event-order-media.ts');
+    h.tables.media.find(row=>row.id===a).storage_path=stored;
+    const preview=`/api/portal/event-preview/${a}.jpg?token=gallery-preview`;
+    const image={id:a,url:preview,storagePath:client.normalizeGalleryStorageReference(`  ${stored}  `)};
+    assert.equal(image.storagePath,stored);
+    const entry=client.canonicalEventOrderEntry({selectedImageUrl:preview,slots:[{assignedImageUrl:preview}],retouchSelections:[],digitalSelections:[{mediaId:a,url:preview}]},[image]);
+    await server.resolveEventOrderMediaReferences(h.service,projectId,[albumA],[entry]);
+    assert.equal(entry.selectedImageUrl,stored);assert.equal(entry.slots[0].assignedImageUrl,stored);assert.equal(entry.digitalSelections[0].url,stored);
+    for(const invalid of [stored.replace('://',':/'),'https://foreign.supabase.co/storage/v1/object/authenticated/photos/photo.jpg','javascript:alert(1)','fixture/b.jpg']) {
+      await assert.rejects(server.resolveEventOrderMediaReferences(h.service,projectId,[albumA],[{selectedImageUrl:invalid,slots:[],retouchSelections:[],digitalSelections:[]}]),/outside/);
+    }
+    assert.equal(h.writes.length,0);
+  }
+});
+
+test('event storage mapping preserves existing R2 keys and still rejects unavailable browser photo references',()=>{
+  const h=harness(),client=h.load('lib/event-gallery-media-client.ts');
+  assert.equal(client.normalizeGalleryStorageReference('projects/synthetic/photo.jpg'),'projects/synthetic/photo.jpg');
+  assert.equal(client.normalizeGalleryStorageReference(' projects / synthetic // photo.jpg '),'projects/synthetic/photo.jpg');
+  assert.equal(client.normalizeGalleryStorageReference(null),'');
+  assert.throws(()=>client.canonicalEventPhotoReference('https://foreign.test/photo.jpg',[{id:a,url:'/api/portal/event-preview/'+a+'.jpg?token=valid',storagePath:'fixture/a.jpg'}]),/no longer available/);
+});

@@ -16,6 +16,10 @@ const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.Modu
 const ledgerCompiled = ts.transpileModule(readFileSync(new URL('../lib/order-usage-billing.ts', import.meta.url), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
 const ledger = {};
 new Function('require', 'exports', ledgerCompiled)(name => name === 'node:crypto' ? { randomUUID } : {}, ledger);
+const accountHistory = {};
+new Function('require', 'exports', ts.transpileModule(readFileSync(new URL('../lib/stripe-connect-history.ts', import.meta.url), 'utf8'), {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+}).outputText)(() => ({}), accountHistory);
 
 function fixture({ annual = false, missingUsage = false, planCode = 'core', usageRate, pricingV2 = false, pricingV3 = false } = {}) {
   const calls = [];
@@ -65,11 +69,13 @@ function fixture({ annual = false, missingUsage = false, planCode = 'core', usag
       limit() { return chain; },
       update(value) { update = value; return chain; },
       async upsert(value) { tables[table].push(value); return { error: null }; },
+      async maybeSingle() { const result = await chain; return {...result, data: result.data[0] ?? null}; },
       then(resolve, reject) { let matching = tables[table].filter(predicate); if (sortKey) matching.sort((a,b)=>String(a[sortKey]).localeCompare(String(b[sortKey])));
         if (bounds) matching = matching.slice(bounds[0],bounds[1]+1);
         if (update) matching.forEach(row => Object.assign(row, update)); return Promise.resolve({ data: structuredClone(matching), error: null }).then(resolve, reject); },
     }; return chain;
   }, async rpc(name, args) {
+    if (name === 'sync_photographer_stripe_account_history') return { data: null, error: { code: 'PGRST202' } };
     if (name === 'sync_photographer_connect_state') {
       Object.assign(tables.photographers[0], { stripe_account_id: args.p_account_id, stripe_connected_account_id: args.p_account_id,
         stripe_connect_country: args.p_country, stripe_connect_onboarding_complete: args.p_details_submitted && args.p_charges_enabled && args.p_payouts_enabled,
@@ -119,6 +125,7 @@ function fixture({ annual = false, missingUsage = false, planCode = 'core', usag
     '@/lib/trial-config': { FREE_TRIAL_DAYS: 14 },
     '@/lib/subscription-access': { isStripeBillingActive: value => ['active', 'trialing'].includes(value) },
     '@/lib/studio-os-app': { syncPhotographyKeysByPhotographerId: async () => {} },
+    '@/lib/stripe-connect-history': accountHistory,
   };
   const exports = {};
   new Function('require', 'exports', 'fetch', compiled + '\nexports.seedCatalog = value => { catalogPromise = Promise.resolve(value); };')(

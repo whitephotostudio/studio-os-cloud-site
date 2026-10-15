@@ -132,10 +132,20 @@ function webhookHarness({ failGrant = false, failRecord = false } = {}) {
   const refunds = [];
   let grantFailure = failGrant;
   let recordFailure = failRecord;
+  const service = {
+    rpc: async name => { assert.equal(name, 'find_photographer_stripe_account'); return {data: null, error: {code: 'PGRST202'}}; },
+    from: table => { assert.equal(table, 'photographers'); const query = {select() {return this;}, eq() {return this;},
+      maybeSingle: async () => ({data: null, error: null})}; return query; },
+  };
+  const merchant = load('lib/stripe-merchant-webhook.ts', {
+    '@/lib/stripe-connect-history': load('lib/stripe-connect-history.ts'),
+    '@/lib/checkout-attempt': load('lib/checkout-attempt.ts'),
+  });
   const api = load('app/api/stripe/webhook/route.ts', {
     'next/server': { NextResponse: { json: (body, options) => Response.json(body, options) } },
-    '@/lib/dashboard-auth': { createDashboardServiceClient: () => ({}) },
+    '@/lib/dashboard-auth': { createDashboardServiceClient: () => service },
     '@/lib/customer-order-webhook': { isCustomerOrderStripeEvent: () => false },
+    '@/lib/stripe-merchant-webhook': merchant,
     '@/lib/payments': {
       verifyStripeSignature: async () => true,
       recordStripeEvent: async (_db, event) => {
@@ -152,7 +162,7 @@ function webhookHarness({ failGrant = false, failRecord = false } = {}) {
     },
   });
   const run = (type, object = paidSession, account) => api.POST({
-    headers: new Headers({ 'stripe-signature': 'test' }), text: async () => JSON.stringify({ id: 'evt_purchase', type, account, data: { object } }),
+    headers: new Headers({ 'stripe-signature': 'test' }), text: async () => JSON.stringify({ id: 'evt_purchase', type, account, livemode: false, data: { object } }),
   });
   return { record, grants, refunds, run };
 }

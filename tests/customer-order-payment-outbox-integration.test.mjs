@@ -57,9 +57,11 @@ async function fixture({ failure = null, combined = false, loseProviderResponse 
     await db.query("insert into order_items(order_id,product_name,quantity,unit_price_cents,line_total_cents,sku) values($1,'8x10 print',1,2900,2900,'private/saved-photo.jpg')", [id]);
   };
   for (const id of ids) await insertOrder(id);
+  const databaseCalls = [];
   const allowedTables = new Set(['orders', 'photographers', 'stripe_events', 'customer_order_webhooks', 'paid_order_emails']);
   const service = {
     from(table) {
+      databaseCalls.push(`table:${table}`);
       assert.ok(allowedTables.has(table), `Unexpected business table ${table}`);
       const predicates = [], sorts = [], values = [];
       let changes, insert, count = false, limit;
@@ -96,6 +98,8 @@ async function fixture({ failure = null, combined = false, loseProviderResponse 
       return chain;
     },
     async rpc(name, p) {
+      databaseCalls.push(`rpc:${name}`);
+      if (name === 'resolve_order_payment_account') return { data: null, error: { code: 'PGRST202' } };
       const calls = {
         claim_customer_order_webhook: ['select claim_customer_order_webhook($1,$2,$3,$4,$5,$6,$7) value', [p.p_event_id, p.p_order_id, p.p_account, p.p_event_type, p.p_payload_hash, p.p_payload, p.p_token], true],
         finish_customer_order_webhook: ['select finish_customer_order_webhook($1,$2,$3) value', [p.p_event_id, p.p_token, p.p_result], true],
@@ -139,6 +143,7 @@ async function fixture({ failure = null, combined = false, loseProviderResponse 
     '@/lib/resend': resend, '@/lib/parent-gallery-entry': parentGalleryEntryFixture(),
     '@/lib/pin-recovery': parentGalleryEntryFixture(),
   });
+  const accountHistory = load('lib/stripe-connect-history.ts');
   const payments = load('lib/payments.ts', {
     'node:crypto': crypto, '@/lib/studio-pricing': pricing, '@/lib/stripe-billing-period': periods,
     '@/lib/order-payment-policy': orderPolicy, '@/lib/trial-config': { FREE_TRIAL_DAYS: 30 },
@@ -147,6 +152,7 @@ async function fixture({ failure = null, combined = false, loseProviderResponse 
     '@/lib/credit-maintenance': maintenance, '@/lib/paid-order-emails': emails, '@/lib/resend': resend,
     '@/lib/order-push': { sendNewOrderPush: async () => {} },
     '@/lib/digital-product-label': load('lib/digital-product-label.ts'),
+    '@/lib/stripe-connect-history': accountHistory,
   });
   // Use the real payment verifier and finalizer. Only external provider reads
   // and the lease transport are synthetic; all outbox/claim writes use SQL.
@@ -176,7 +182,7 @@ async function fixture({ failure = null, combined = false, loseProviderResponse 
         amount_received: saved.amount, metadata: saved.metadata };
     },
   };
-  const verifier = load('lib/order-webhook-payment.ts', { '@/lib/payments': providerPayments });
+  const verifier = load('lib/order-webhook-payment.ts', { '@/lib/payments': providerPayments, '@/lib/stripe-connect-history': accountHistory });
   const lock = { async lockOrderPayment(lockedService, key) {
     assert.equal(lockedService, service);
     const { rows } = await db.query('select id,photographer_id from orders where coalesce(order_group_id,id)=$1', [key]);
@@ -189,23 +195,28 @@ async function fixture({ failure = null, combined = false, loseProviderResponse 
     'node:crypto': crypto, '@/lib/payments': providerPayments,
     '@/lib/order-webhook-payment': verifier, '@/lib/order-payment-lock': lock,
     '@/lib/checkout-attempt': { canonicalCheckoutJson }, '@/lib/order-checkout-totals': { sumStoredOrderTotalsCents },
+    '@/lib/stripe-connect-history': accountHistory,
   });
   const route = load('app/api/stripe/webhook/route.ts', {
     'next/server': { NextResponse: { json: (body, options) => Response.json(body, options) } },
     '@/lib/customer-order-webhook': customer, '@/lib/payments': payments, '@/lib/credit-maintenance': maintenance,
     '@/lib/dashboard-auth': { createDashboardServiceClient: () => service },
+    '@/lib/stripe-merchant-webhook': load('lib/stripe-merchant-webhook.ts', {
+      'node:crypto':crypto,'@/lib/checkout-attempt':{canonicalCheckoutJson},'@/lib/stripe-connect-history':accountHistory,
+      '@/lib/payments':providerPayments,
+    }),
   });
   const event = (seed = ids[0], session = 'cs_integration', orderGroup = group, eventId = 'evt_integration') => ({
     id: eventId, account: 'acct_integration', type: 'checkout.session.completed', livemode: false,
     data: { object: { id: session, payment_intent: `pi_${session}`, payment_status: 'paid', currency: 'cad', amount_total: orderGroup ? 5800 : 2900,
-      metadata: { order_id: seed, photographer_id: owner, ...(orderGroup ? { order_group_id: orderGroup } : {}) } } },
+      metadata: { billing_flow: 'customer_order', order_id: seed, photographer_id: owner, ...(orderGroup ? { order_group_id: orderGroup } : {}) } } },
   });
   const post = async (payload = event(), valid = true) => {
     const raw = JSON.stringify(payload), timestamp = Math.floor(Date.now() / 1000);
     const digest = crypto.createHmac('sha256', valid ? process.env.STRIPE_WEBHOOK_SECRET : 'wrong-secret').update(`${timestamp}.${raw}`).digest('hex');
     return route.POST({ headers: new Headers({ 'stripe-signature': `t=${timestamp},v1=${digest}` }), text: async () => raw });
   };
-  return { db, owner, ids, group, deferred, providerCalls, providerReceipts, insertOrder, event, post, service, customer, emails, providerReads, lockKeys, activeLocks };
+  return { db, owner, ids, group, deferred, databaseCalls, providerCalls, providerReceipts, insertOrder, event, post, service, customer, emails, providerReads, lockKeys, activeLocks };
 }
 
 async function run(options, callback) {
@@ -300,4 +311,25 @@ test('1000 signed webhooks execute real payment finalization and stage exactly 2
   assert.equal((await f.db.query('select count(*)::int n from paid_order_emails')).rows[0].n, 2000);
   assert.equal((await f.db.query("select count(*)::int n from paid_order_emails where snapshot->'items'->0->>'sku'='private/saved-photo.jpg'")).rows[0].n, 2000);
   assert.equal(f.deferred.length, 1000); assert.equal(f.providerCalls.length, 0, 'Payment completion does not await email provider delivery');
+}));
+
+
+test('real signed unrelated Standard payments are acknowledged without UUID queries or even an installed paid-email outbox',()=>run({},async f=>{
+  await f.db.exec('drop table paid_order_emails cascade');
+  for(const billing_flow of [undefined,null,'merchant_external']) {
+    for(const order_id of ['external-invoice-not-uuid',f.ids[0]]) {
+      const event=f.event();
+      event.data.object.metadata={billing_flow,order_id,photographer_id:f.owner};
+      const response=await f.post(event);
+      assert.equal(response.status,200);assert.equal((await response.json()).ignored,true);
+      assert.deepEqual(f.databaseCalls,[]);assert.deepEqual(f.providerReads,[]);assert.deepEqual(f.providerCalls,[]);
+      assert.deepEqual(f.lockKeys,[]);assert.deepEqual(f.deferred,[]);
+    }
+  }
+  assert.equal((await f.db.query('select count(*)::int n from customer_order_webhooks')).rows[0].n,0);
+  assert.equal((await f.db.query('select count(*)::int n from stripe_events')).rows[0].n,0);
+  assert.equal((await f.db.query('select payment_status from orders')).rows[0].payment_status,'pending');
+  const invalid=f.event();invalid.data.object.metadata={order_id:'external-invoice-not-uuid'};
+  assert.equal((await f.post(invalid,false)).status,400,'Unrelated events still require a genuine signature');
+  assert.deepEqual(f.databaseCalls,[]);
 }));

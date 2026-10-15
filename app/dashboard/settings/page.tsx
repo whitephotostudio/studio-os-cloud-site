@@ -32,6 +32,7 @@ import { getOrderFeeCopy, getOrderFeeDisclosure } from "@/lib/order-fee-display"
 import { WhatsNewDot, useIsFeatureNew } from "@/components/whats-new-dot";
 import { ProofWatermarkOverlay } from "@/components/parents/proof-watermark-overlay";
 import { normalizeProofWatermarkOpacity, proofWatermarkOpacity } from "@/lib/proof-watermark";
+import { StripeStandardMigration } from "@/components/dashboard/stripe-standard-migration";
 
 type StripeStatus = {
   ok: boolean;
@@ -1405,6 +1406,8 @@ export default function SettingsPage() {
             </div>
           </div>
         ) : null}
+
+        <StripeStandardMigration accessToken={accessToken} signedIn={signedIn} onAccountChange={loadStatus} />
 
         {/* ── Row 1: Branding + Stripe ────────────────────────────────── */}
         <div style={{ display: "grid", gap: 20, gridTemplateColumns: "1.4fr 1fr" }}>

@@ -4,6 +4,7 @@ import { after } from "next/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { buildOrderRefundEmail } from "@/lib/order-refund-email";
 import { resendConfigured, resolveReplyTo, sendResendEmail, type SendResendEmailInput } from "@/lib/resend";
+import { resolveOrderPaymentAccount } from "@/lib/stripe-connect-history";
 
 export type ConfirmedRefund = { id: string; status: string; amount: number; currency: string; created: number };
 export type RefundNotificationInput = { account: string; paymentIntentId: string; orderId: string; refunds: ConfirmedRefund[] };
@@ -19,7 +20,12 @@ export async function queueOrderRefundEmails(service: SupabaseClient, input: Ref
   const { data: orders, error: orderError } = await query.order("id");
   if (orderError || !orders?.length || orders.some(o => o.photographer_id !== seed.photographer_id || o.stripe_payment_intent_id !== input.paymentIntentId)) throw new Error("Refund notification payment scope mismatch");
   const { data: photographer, error: photographerError } = await service.from("photographers").select("id,user_id,business_name,billing_email,studio_email,stripe_connected_account_id,stripe_account_id").eq("id", seed.photographer_id).single();
-  if (photographerError || !photographer || (photographer.stripe_connected_account_id || photographer.stripe_account_id) !== input.account) throw new Error("Refund notification studio mismatch");
+  if (photographerError || !photographer) throw new Error("Refund notification studio mismatch");
+  const originalAccount = await resolveOrderPaymentAccount(service, {
+    photographerId: seed.photographer_id, orderId: seed.id,
+    orderGroupId: seed.order_group_id, paymentIntentId: input.paymentIntentId,
+  });
+  if (originalAccount !== input.account) throw new Error("Refund notification studio mismatch");
   const buyers = [...new Set(orders.map(o => email(o.customer_email) || email(o.parent_email)))];
   // A combined payment has one buyer. Never expose another buyer's order.
   if (buyers.length !== 1 || !buyers[0]) throw new Error("Refund notification buyer unavailable or ambiguous");

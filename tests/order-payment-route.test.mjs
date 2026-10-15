@@ -20,11 +20,21 @@ function fixture(options={}) {
   const row={id,photographer_id:studio,order_group_id:null,total_cents:10360,currency:options.orderCurrency||'cad',status:'paid',payment_status:'succeeded',paid_at:'2026-09-23',stripe_payment_intent_id:'pi_test',stripe_checkout_session_id:'cs_test'};
   if(options.unpaid) Object.assign(row,{status:'payment_pending',payment_status:'pending',paid_at:null,stripe_payment_intent_id:null});
   if(options.starting) Object.assign(row,{status:'checkout_starting',stripe_checkout_session_id:null});
+  if(options.noProvider)Object.assign(row,{stripe_checkout_session_id:null,stripe_payment_intent_id:null});
   const rows=[row];
   if(options.combined){row.order_group_id='33333333-3333-4333-8333-333333333333';rows.push({...row,id:'44444444-4444-4444-8444-444444444444'});}
   if(options.directFee || options.waivedFee) rows.forEach((r,index)=>Object.assign(r,{platform_fee_collection_method:options.waivedFee||(options.waivedMember&&index===rows.length-1)?'waived':'connect_application_fee',platform_fee_amount_cents:options.waivedFee||(options.waivedMember&&index===rows.length-1)?0:40,platform_fee_currency:r.currency,platform_fee_rate_cents:options.waivedFee?0:40,stripe_application_fee_id:options.waivedFee||(options.waivedMember&&index===rows.length-1)?null:'fee_test'}));
-  const tables={orders:rows,photographers:[{id:studio,user_id:options.otherOwner?'other':'owner',stripe_connected_account_id:'acct_test',stripe_account_id:null}]};
-  const service={from(table){let predicate=()=>true;let update;const chain={select(){return chain},eq(k,v){const prev=predicate;predicate=r=>prev(r)&&r[k]===v;return chain},in(k,v){const prev=predicate;predicate=r=>prev(r)&&v.includes(r[k]);return chain},is(k,v){return chain.eq(k,v)},order(){return chain},update(v){update=v;return chain},single(){return run(true)},maybeSingle(){return run(true)},then(a,b){return run(false).then(a,b)}};
+  const tables={orders:rows,photographers:[{id:studio,user_id:options.otherOwner?'other':'owner',stripe_connected_account_id:options.noAccount?null:options.migrated?'acct_standard':'acct_test',stripe_account_id:null,
+    stripe_standard_migrated_at:options.migrated?'2026-10-13T00:00:00Z':null}]};
+  const historyReads=[];
+  const service={async rpc(name,args){
+    assert.equal(name,'resolve_order_payment_account');historyReads.push(structuredClone(args));
+    if(options.migrated){
+      assert.equal(args.p_photographer_id,studio);assert.equal(args.p_order_id,id);
+      return{data:options.wrongHistoryAccount?'acct_other':'acct_test',error:null};
+    }
+    return{data:null,error:{code:'PGRST202'}};
+  },from(table){let predicate=()=>true;let update;const chain={select(){return chain},eq(k,v){const prev=predicate;predicate=r=>prev(r)&&r[k]===v;return chain},in(k,v){const prev=predicate;predicate=r=>prev(r)&&v.includes(r[k]);return chain},is(k,v){return chain.eq(k,v)},order(){return chain},update(v){update=v;return chain},single(){return run(true)},maybeSingle(){return run(true)},then(a,b){return run(false).then(a,b)}};
   async function run(single){const matching=tables[table].filter(predicate);if(update)matching.forEach(r=>Object.assign(r,update));return {data:single?matching.length===1?structuredClone(matching[0]):null:structuredClone(matching),error:single&&matching.length!==1?{message:'not found'}:null};}return chain;}};
   const notifications=[];
   const actions=[];let refunds=[];let locked=false;let sessionStatus=options.unpaid?'open':'complete';let lost=options.lostReply;
@@ -81,13 +91,30 @@ function fixture(options={}) {
     '@/lib/order-payment-lock':{lockOrderPayment:async()=>{if(locked)throw Error('busy');locked=true;return async()=>{locked=false;};}},
     '@/lib/order-refund-notifications':{scheduleOrderRefundEmails:async(_service,input)=>{if(options.emailFailure)throw Error('queue unavailable');notifications.push(input);}},
     '@/lib/order-payment-policy':policy,'@/lib/audit':{recordAudit:async()=>{}},
+    '@/lib/stripe-connect-history':load('lib/stripe-connect-history.ts'),
   };
   dependencies['@/lib/direct-order-fee-refund']=load('lib/direct-order-fee-refund.ts',{'@/lib/payments':{...actualPayments,stripeRequest},'@/lib/order-payment-policy':policy});
   const exports={};new Function('require','exports',compiled)(name=>{if(!dependencies[name])throw Error(name);return dependencies[name];},exports);
   const body={orderId:id,action:'refund',reason:'Duplicate payment',paymentId:options.unpaid?null:'pi_test',amountCents:options.unpaid||options.alreadyFullCustomerRefund?0:intent.amount-(options.partialPrior||0),orderIds:rows.map(r=>r.id)};
   const request=(data=body)=>({nextUrl:new URL(`https://example.test/api/dashboard/orders/payment?orderId=${id}`),headers:new Headers(),json:async()=>data});
-  return {exports,rows,actions,body,request,notifications,fee,confirmFeeRefund(){fee.amount_refunded=fee.amount;fee.refunded=true;}};
+  return {exports,rows,actions,body,request,notifications,fee,historyReads,confirmFeeRefund(){fee.amount_refunded=fee.amount;fee.refunded=true;}};
 }
+test('old Express refund uses its immutable account after the photographer activates Standard',async()=>{
+  const f=fixture({migrated:true,directFee:true,combined:true});
+  assert.equal((await f.exports.GET(f.request())).status,200);
+  assert.equal((await f.exports.POST(f.request())).status,200);
+  assert.equal(f.actions.filter(a=>a.path==='refunds').length,1);
+  assert.equal(f.actions.find(a=>a.path==='refunds').account,'acct_test');
+  assert.ok(f.rows.every(r=>r.status==='refunded'));
+  assert.ok(f.historyReads.every(r=>r.p_checkout_session_id==='cs_test'&&r.p_payment_intent_id==='pi_test'));
+  assert.equal((await f.exports.POST(f.request())).status,200);
+  assert.equal(f.actions.filter(a=>a.path==='refunds').length,1);
+});
+test('an incorrect historical account binding stops every refund and cancellation action',async()=>{
+  const f=fixture({migrated:true,wrongHistoryAccount:true,directFee:true});
+  assert.equal((await f.exports.POST(f.request())).status,409);
+  assert.equal(f.actions.length,0);assert.equal(f.rows[0].status,'paid');
+});
 test('refund is owner scoped, confirmed, and one Stripe request across retries',async()=>{
   const f=fixture({combined:true});
   const preview=await (await f.exports.GET(f.request())).json();
@@ -229,4 +256,23 @@ test('inconsistent customer charge refund proof blocks fee recovery despite a su
  const f=fixture({directFee:true,alreadyFullCustomerRefund:true,chargeRefundMismatch:true});
  const snapshot=await(await f.exports.GET(f.request())).json();assert.equal(snapshot.canCompleteApplicationFeeRefund,false);
  assert.equal((await f.exports.POST(f.request())).status,409);assert.equal(f.actions.length,0);assert.equal(f.rows[0].status,'refund_pending');
+});
+
+
+test('a genuinely unpaid cart can be cancelled before the photographer connects Stripe without provider or history access',async()=>{
+  for(const combined of [false,true]){
+    const f=fixture({unpaid:true,noProvider:true,noAccount:true,combined});f.body.action='cancel';
+    const preview=await (await f.exports.GET(f.request())).json();assert.equal(preview.canCancel,true);assert.equal(preview.chargedCents,0);
+    assert.equal((await f.exports.POST(f.request())).status,200);assert.ok(f.rows.every(row=>row.status==='cancelled'));
+    assert.equal(f.actions.length,0);assert.equal(f.historyReads.length,0);
+  }
+});
+
+test('missing provider references never make uncertain or database-paid orders safe to cancel',async()=>{
+  for(const options of [{unpaid:true,starting:true},{unpaid:false}]){
+    const f=fixture({...options,noProvider:true,noAccount:true});f.body.action='cancel';f.body.paymentId=null;f.body.amountCents=0;
+    const before=f.rows[0].status;
+    assert.equal((await f.exports.POST(f.request())).status,409);assert.equal(f.rows[0].status,before);
+    assert.equal(f.actions.length,0);assert.equal(f.historyReads.length,0);
+  }
 });

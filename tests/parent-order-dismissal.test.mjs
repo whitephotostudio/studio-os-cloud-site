@@ -1,3 +1,4 @@
+import * as stripeHistory from '../lib/stripe-connect-history.ts';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFileSync } from 'node:fs';
@@ -36,9 +37,9 @@ function fixture(options = {}) {
     ...options.row }];
   if (options.group) orders.push({ ...orders[0], id: second, ...options.secondRow });
   const tables = { orders, schools: [{ id: school, photographer_id: studio, status: 'active', portal_status: 'active', expiration_date: null }],
-    students: [{ id: student, school_id: school, pin: '1234' }], photographers: [{ id: studio, stripe_connected_account_id: 'acct_owner' }],
+    students: [{ id: student, school_id: school, pin: '1234' }], photographers: [{ id: studio, stripe_connected_account_id: options.noAccount?null:options.migrated?'acct_standard':'acct_owner',stripe_standard_migrated_at:options.migrated?'2026-10-13':null }],
     school_gallery_visitors: [{ school_id: school, viewer_email: email }], event_gallery_visitors: [{ project_id: project, viewer_email: email }] };
-  const actions = [], writes = [], stops = [], audit = [];
+  const actions = [], writes = [], stops = [], audit = [], historyReads=[];
   const metadata = { photographer_id: studio, order_id: id, billing_flow: 'customer_order',
     ...(options.event ? { project_id: project } : { school_id: school, student_id: student }) };
   const session = { id: 'cs_draft', status: 'open', payment_status: 'unpaid', payment_intent: options.intent ? 'pi_draft' : null,
@@ -67,6 +68,7 @@ function fixture(options = {}) {
     }
     return chain;
   }, async rpc(name, params) {
+    if(name==='resolve_order_payment_account'){historyReads.push(structuredClone(params));return options.migrated?{data:options.wrongHistoryAccount?'acct_other':'acct_owner',error:null}:{data:null,error:{code:'PGRST202'}};}
     assert.equal(name, 'stop_abandoned_cart_reminders');
     assert.ok(locked, 'suppression is inside the shared payment lock');
     assert.ok(orders.every(row => ['payment_pending', 'cancel_pending', 'cancelled', 'canceled'].includes(row.status)), 'only unpaid cancellation states can stop reminders');
@@ -91,6 +93,7 @@ function fixture(options = {}) {
     throw Error(`Unexpected request ${path}`);
   }
   const dependencies = {
+    '@/lib/stripe-connect-history':stripeHistory,
     '@/lib/parent-gallery-session-request': {
       parentGalleryRateKey: () => null,
       runParentGallerySessionRoute: () => assert.fail('Dismissal fixtures must validate their explicit legacy gallery credentials'),
@@ -118,7 +121,7 @@ function fixture(options = {}) {
   const body = { orderId: id, pin: '1234', email, ...(options.event ? { projectId: project } : { schoolId: school }), confirmed: true };
   const request = (data = body) => ({ nextUrl: new URL('https://example.test/api/portal/orders/dismiss'),
     headers: new Headers({ origin: options.origin || 'https://example.test' }), json: async () => data });
-  return { exports, history, orders, actions, writes, stops, audit, request, body, tables };
+  return { exports, history, orders, actions, writes, stops, audit, request, body, tables, historyReads };
 }
 
 test('authorized draft stops reminders, expires Stripe before cancellation, and retains its data', async () => {
@@ -231,4 +234,28 @@ test('confirmation, strict body, origin and rate limit reject forged requests', 
   const origin = fixture({ origin: 'https://attacker.test' }); assert.equal((await origin.exports.POST(origin.request())).status, 403);
   const limited = fixture({ rateLimited: true }); assert.equal((await limited.exports.POST(limited.request())).status, 429);
   assert.equal(f.writes.length, 0);
+});
+
+
+test('parents can discard a genuinely unpaid cart before the photographer has any Stripe connection',async()=>{
+  for(const options of [{},{event:true},{group:true}]){
+    const f=fixture({...options,noProvider:true,noAccount:true});const before=structuredClone(f.orders.map(row=>row.cart_snapshot));
+    assert.equal((await f.exports.POST(f.request())).status,200);assert.ok(f.orders.every(row=>row.status==='cancelled'));
+    assert.equal(f.actions.length,0);assert.equal(f.historyReads.length,0);assert.deepEqual(f.orders.map(row=>row.cart_snapshot),before);
+  }
+});
+
+test('parent dismissal still rejects uncertain or paid carts without any saved Stripe reference',async()=>{
+  for(const row of [{status:'checkout_starting'},{status:'paid',payment_status:'succeeded',paid_at:'2026-10-15'}]){
+    const f=fixture({noProvider:true,noAccount:true,row});
+    assert.equal((await f.exports.POST(f.request())).status,409);assert.equal(f.writes.length,0);assert.equal(f.actions.length,0);assert.equal(f.stops.length,0);
+  }
+});
+
+test('parent dismissal of an old Express session after cutover still resolves and expires only the original account',async()=>{
+  const f=fixture({migrated:true});
+  assert.equal((await f.exports.POST(f.request())).status,200);assert.equal(f.actions[0].account,'acct_owner');
+  assert.ok(f.historyReads.length>=2);assert.ok(f.historyReads.every(row=>row.p_checkout_session_id==='cs_draft'));
+  const wrong=fixture({migrated:true,wrongHistoryAccount:true});
+  assert.equal((await wrong.exports.POST(wrong.request())).status,409);assert.equal(wrong.actions.length,0);assert.equal(wrong.writes.length,0);
 });

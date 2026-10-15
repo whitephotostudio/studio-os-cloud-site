@@ -2,10 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { createDashboardServiceClient } from "@/lib/dashboard-auth";
 import {
   finalizePaidOrderOrGroup,
-  getConnectedAccountId,
   retrieveCheckoutSession,
   type StripeCheckoutSession,
 } from "@/lib/payments";
+import { resolveOrderPaymentAccount } from "@/lib/stripe-connect-history";
 import { getParentGalleryRequestScope, runParentGallerySessionRoute } from "@/lib/parent-gallery-session-request";
 import { ParentGallerySessionError } from "@/lib/parent-gallery-session";
 import { hasMappedParentCheckout, resolveParentCheckoutReturn, ParentCheckoutReturnError,
@@ -37,12 +37,6 @@ type OrderRow = {
   currency: string | null;
 };
 const ORDER_SELECT = "id,photographer_id,status,payment_status,paid_at,stripe_checkout_session_id,order_group_id,school_id,student_id,customer_email,parent_email,total_cents,total_amount,currency";
-
-type PhotographerRow = {
-  id: string;
-  stripe_account_id: string | null;
-  stripe_connected_account_id: string | null;
-};
 
 function service() {
   return createDashboardServiceClient();
@@ -147,17 +141,14 @@ export async function POST(req: NextRequest) {
     let session: StripeCheckoutSession | null = null;
     let galleryUrl: string | undefined = privateGalleryUrl;
     if (!alreadyPaid || (sessionId && order.school_id)) {
-      const { data: photographer, error: photographerError } = await sb
-        .from("photographers")
-        .select("id,stripe_account_id,stripe_connected_account_id")
-        .eq("id", order.photographer_id)
-        .maybeSingle<PhotographerRow>();
-      if (photographerError) throw photographerError;
-      const stripeAccountId = photographer ? getConnectedAccountId(photographer) : null;
+      const resolvedSessionId = sessionId || order.stripe_checkout_session_id || "";
+      const stripeAccountId = await resolveOrderPaymentAccount(sb, {
+        photographerId: order.photographer_id!, orderId: order.id,
+        orderGroupId: order.order_group_id, checkoutSessionId: resolvedSessionId,
+      });
       if (!stripeAccountId) {
         return NextResponse.json({ ok: false, message: "Stripe account not available for this order." }, { status: 400 });
       }
-      const resolvedSessionId = sessionId || order.stripe_checkout_session_id || "";
       session = await retrieveCheckoutSession(resolvedSessionId, stripeAccountId);
       if (session.id !== resolvedSessionId || (sessionId && sessionId !== order.stripe_checkout_session_id)) throw new Error("Checkout session mismatch.");
       if (session.payment_status !== "paid" && session.payment_status !== "no_payment_required") {

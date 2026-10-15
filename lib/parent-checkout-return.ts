@@ -4,7 +4,8 @@ import {
   bootstrapParentGallerySession, parentSessionCookieBinding, resolveParentGallerySession,
   type ParentGallerySessionScope,
 } from "@/lib/parent-gallery-session";
-import { getConnectedAccountId, retrieveCheckoutSession, type StripeCheckoutSession } from "@/lib/payments";
+import { retrieveCheckoutSession, type StripeCheckoutSession } from "@/lib/payments";
+import { resolveOrderPaymentAccount } from "@/lib/stripe-connect-history";
 import { storedOrderTotalCents, sumStoredOrderTotalsCents } from "@/lib/order-checkout-totals";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -232,9 +233,10 @@ export async function resolveParentCheckoutReturn(request: Request, returnId: st
   // A Stripe landing must include the exact provider substitution; a clean
   // internal view/confirm loads the already-bound ID only in server memory.
   if (new URL(request.url).pathname.startsWith("/parents/checkout-return/") && !explicitSession) fail();
-  const photographer = await service.from("photographers").select("id,stripe_account_id,stripe_connected_account_id").eq("id", row.photographer_id).maybeSingle();
-  if (photographer.error) fail(503);
-  const accountId = photographer.data ? getConnectedAccountId(photographer.data) : null;
+  const accountId = await resolveOrderPaymentAccount(service, {
+    photographerId: row.photographer_id, orderId: row.anchor_order_id,
+    orderGroupId: row.order_group_id, checkoutSessionId: row.stripe_session_id,
+  });
   if (!accountId) fail(503);
   const session = await retrieveCheckoutSession(row.stripe_session_id, accountId);
   verifyPaidSession(row, orders, session);
