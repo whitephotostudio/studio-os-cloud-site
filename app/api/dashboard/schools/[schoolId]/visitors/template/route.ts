@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { randomUUID } from "node:crypto";
 import { createDashboardServiceClient, resolveDashboardAuth } from "@/lib/dashboard-auth";
 import { parseJson } from "@/lib/api-validation";
 import { guardAgreement } from "@/lib/require-agreement";
 import { recordAudit } from "@/lib/audit";
 import { mergeSchoolVisitorEmailTemplate, readSchoolVisitorEmailTemplate } from "@/lib/school-visitor-email-template";
+import { readSchoolVisitorEmailSettingsRevision } from "@/lib/event-gallery-settings";
 
 export const dynamic = "force-dynamic";
 
@@ -21,7 +23,6 @@ type SchoolRow = {
   id: string;
   photographer_id: string;
   gallery_settings: unknown;
-  updated_at: string | null;
 };
 
 function privateJson(body: unknown, status = 200) {
@@ -33,7 +34,7 @@ function failure(message: string, status: number, code?: string) {
 }
 
 function snapshot(school: SchoolRow) {
-  return { template: readSchoolVisitorEmailTemplate(school.gallery_settings), version: school.updated_at ?? null };
+  return { template: readSchoolVisitorEmailTemplate(school.gallery_settings), version: readSchoolVisitorEmailSettingsRevision(school.gallery_settings) };
 }
 
 async function authorizedSchool(request: NextRequest, schoolId: string, writing: boolean) {
@@ -50,7 +51,7 @@ async function authorizedSchool(request: NextRequest, schoolId: string, writing:
   if (photographerError) throw photographerError;
   if (!photographer?.id) return { response: failure("Photographer profile not found.", 403) };
   const { data: school, error: schoolError } = await service
-    .from("schools").select("id,photographer_id,gallery_settings,updated_at")
+    .from("schools").select("id,photographer_id,gallery_settings")
     .eq("id", schoolId).eq("photographer_id", photographer.id).maybeSingle<SchoolRow>();
   if (schoolError) throw schoolError;
   if (!school) return { response: failure("School not found.", 404) };
@@ -83,18 +84,16 @@ export async function PUT(request: NextRequest, { params }: Context) {
     if (JSON.stringify(current.template) === JSON.stringify(template)) {
       return privateJson({ ok: true, ...current });
     }
-    const previousTime = expectedVersion ? Date.parse(expectedVersion) : NaN;
-    const version = new Date(Math.max(Date.now(), Number.isFinite(previousTime) ? previousTime + 1 : 0)).toISOString();
+    const version = randomUUID();
     let update = auth.service.from("schools").update({
-      gallery_settings: mergeSchoolVisitorEmailTemplate(auth.school.gallery_settings, template),
-      updated_at: version,
+      gallery_settings: { ...mergeSchoolVisitorEmailTemplate(auth.school.gallery_settings, template), visitorEmailSettingsRevision: version },
     }).eq("id", auth.school.id).eq("photographer_id", auth.photographer.id);
-    update = expectedVersion === null ? update.is("updated_at", null) : update.eq("updated_at", expectedVersion);
-    const { data: saved, error } = await update.select("id,photographer_id,gallery_settings,updated_at").maybeSingle<SchoolRow>();
+    update = expectedVersion === null ? update.is("gallery_settings->>visitorEmailSettingsRevision", null) : update.eq("gallery_settings->>visitorEmailSettingsRevision", expectedVersion);
+    const { data: saved, error } = await update.select("id,photographer_id,gallery_settings").maybeSingle<SchoolRow>();
     if (error) throw error;
     if (!saved) {
       const { data: latest, error: latestError } = await auth.service.from("schools")
-        .select("id,photographer_id,gallery_settings,updated_at").eq("id", auth.school.id)
+        .select("id,photographer_id,gallery_settings").eq("id", auth.school.id)
         .eq("photographer_id", auth.photographer.id).maybeSingle<SchoolRow>();
       if (latestError) throw latestError;
       if (!latest) return failure("School not found.", 404);

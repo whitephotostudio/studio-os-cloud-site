@@ -12,7 +12,7 @@ function load(path, dependencies = {}) {
   }).outputText;
   new Function("require", "exports", code)(name => {
     if (name in dependencies) return dependencies[name];
-    if (name === "zod") return require(name);
+    if (name === "zod" || name.startsWith("node:")) return require(name);
     if (name.startsWith("@/")) return load(`${name.slice(2)}.ts`, dependencies);
     throw Error(`Unexpected module ${name}`);
   }, exports);
@@ -21,21 +21,21 @@ function load(path, dependencies = {}) {
 const settings = load("lib/event-gallery-settings.ts");
 const helper = load("lib/school-visitor-email-template.ts");
 const draft = { subject: "Reminder", headline: "Photos are ready", message: "Hello,\n\n  Keep this exact message.\n" };
-const initialVersion = "2026-10-15T15:00:00.000Z";
+const initialVersion = "11111111-1111-4111-8111-111111111111";
 
 function fixture({ version = initialVersion, gallerySettings = { extras: { pickupEnabled: false }, unknownFutureSetting: { keep: true } }, user = { id: "owner" }, mfaSatisfied = true, owner = "photographer", agreement = { ok: true }, race, failure } = {}) {
   const state = {
-    school: { id: "school", photographer_id: owner, gallery_settings: structuredClone(gallerySettings), updated_at: version },
+    school: { id: "school", photographer_id: owner, gallery_settings: version === null ? structuredClone(gallerySettings) : { ...structuredClone(gallerySettings), visitorEmailSettingsRevision: version } },
     writes: [], filters: [], reads: [], audits: [], raced: false,
   };
   const db = { from(table) {
     const predicates = [];
     let update;
     const query = {
-      select() { return query; },
-      eq(key, value) { predicates.push({ method: "eq", key, value }); return query; },
-      is(key, value) { predicates.push({ method: "is", key, value }); return query; },
-      update(value) { update = structuredClone(value); return query; },
+      select(columns) { if (table === "schools") assert.equal(columns?.split(",").includes("updated_at"), false, "Live schools schema has no updated_at column"); return query; },
+      eq(key, value) { assert.notEqual(key, "updated_at"); predicates.push({ method: "eq", key, value }); return query; },
+      is(key, value) { assert.notEqual(key, "updated_at"); predicates.push({ method: "is", key, value }); return query; },
+      update(value) { assert.equal("updated_at" in value, false); update = structuredClone(value); return query; },
       async maybeSingle() {
         state.reads.push(table);
         if (failure === table) return { data: null, error: { message: "database unavailable" } };
@@ -43,7 +43,7 @@ function fixture({ version = initialVersion, gallerySettings = { extras: { picku
         const matches = predicates.every(({ method, key, value }) => {
           if (method === "eq" && value === null) return false;
           if (key === "gallery_settings" && value !== null) return JSON.stringify(row[key]) === value;
-          return row[key] === value;
+          return (key === "gallery_settings->>visitorEmailSettingsRevision" ? row.gallery_settings?.visitorEmailSettingsRevision ?? null : row[key]) === value;
         });
         if (update) {
           state.filters.push(predicates);
@@ -111,7 +111,7 @@ test("unfinished and empty messages persist without falling back to a different 
   const response = await f.save({ template: empty, expectedVersion: null });
   assert.equal(response.status, 200);
   assert.deepEqual((await (await f.read()).json()).template, empty);
-  assert.ok(f.state.filters[0].some(row => row.method === "is" && row.key === "updated_at" && row.value === null));
+  assert.ok(f.state.filters[0].some(row => row.method === "is" && row.key === "gallery_settings->>visitorEmailSettingsRevision" && row.value === null));
   assert.equal(f.state.filters[0].some(row => row.key === "gallery_settings"), false);
 });
 
@@ -120,7 +120,7 @@ test("stale versions and settings races are rejected without overwriting either 
   assert.equal((await stale.save({ template: draft, expectedVersion: "older-version" })).status, 409);
   assert.equal(stale.state.writes.length, 0);
   {
-    const f = fixture({ race: row => ({ ...row, updated_at: "2026-10-15T15:00:01.000Z", gallery_settings: { extras: { pickupEnabled: true }, visitorEmailTemplate: { ...draft, message: "Newer draft" } } }) });
+    const f = fixture({ race: row => ({ ...row, gallery_settings: { visitorEmailSettingsRevision: "22222222-2222-4222-8222-222222222222", extras: { pickupEnabled: true }, visitorEmailTemplate: { ...draft, message: "Newer draft" } } }) });
     const response = await f.save();
     assert.equal(response.status, 409);
     const body = await response.json();

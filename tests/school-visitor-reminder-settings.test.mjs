@@ -12,31 +12,31 @@ function load(path, dependencies = {}) {
   }).outputText;
   new Function("require", "exports", code)(name => {
     if (name in dependencies) return dependencies[name];
-    if (name === "zod") return require(name);
+    if (name === "zod" || name.startsWith("node:")) return require(name);
     if (name.startsWith("@/")) return load(`${name.slice(2)}.ts`, dependencies);
     throw Error(`Unexpected module ${name}`);
   }, exports);
   return exports;
 }
 const settingsModule = load("lib/event-gallery-settings.ts");
-const initialVersion = "2026-10-15T15:00:00.000Z";
+const initialVersion = "11111111-1111-4111-8111-111111111111";
 const template = { subject: "Reminder", headline: "Order deadline", message: "My exact saved message\n" };
 const defaults = { enabled: false, timeZone: "America/Toronto", sendHour: 9, classMode: "all", classFrom: "", classTo: "", photosOnly: true };
 
 function fixture({ version = initialVersion, dueDate = "2026-10-19T00:00:00+00:00", gallerySettings = { visitorEmailTemplate: template, extras: { pickupEnabled: false }, future: { keep: true } }, user = { id: "owner" }, mfaSatisfied = true, owner = "photographer", agreement = { ok: true }, race, failure, status = null, statusFails = false, photoClasses = ["Grade 12 B", "7A"], eligibilityFails = false } = {}) {
   const state = {
-    school: { id: "school", photographer_id: owner, gallery_settings: structuredClone(gallerySettings), order_due_date: dueDate, updated_at: version },
-    otherSchool: { id: "other-school", photographer_id: owner, gallery_settings: { visitorEmailTemplate: template }, order_due_date: dueDate, updated_at: version },
+    school: { id: "school", photographer_id: owner, gallery_settings: version === null ? structuredClone(gallerySettings) : { ...structuredClone(gallerySettings), visitorEmailSettingsRevision: version }, order_due_date: dueDate },
+    otherSchool: { id: "other-school", photographer_id: owner, gallery_settings: { visitorEmailTemplate: template }, order_due_date: dueDate },
     writes: [], filters: [], reads: [], audits: [], statusReads: [], photoReads: [], raced: false,
   };
   const db = { from(table) {
     const predicates = [];
     let update;
     const query = {
-      select() { return query; },
-      eq(key, value) { predicates.push({ method: "eq", key, value }); return query; },
-      is(key, value) { predicates.push({ method: "is", key, value }); return query; },
-      update(value) { update = structuredClone(value); return query; },
+      select(columns) { if (table === "schools") assert.equal(columns?.split(",").includes("updated_at"), false, "Live schools schema has no updated_at column"); return query; },
+      eq(key, value) { assert.notEqual(key, "updated_at"); predicates.push({ method: "eq", key, value }); return query; },
+      is(key, value) { assert.notEqual(key, "updated_at"); predicates.push({ method: "is", key, value }); return query; },
+      update(value) { assert.equal("updated_at" in value, false); update = structuredClone(value); return query; },
       async maybeSingle() {
         state.reads.push(table);
         if (failure === table) return { data: null, error: { message: "database unavailable" } };
@@ -44,7 +44,7 @@ function fixture({ version = initialVersion, dueDate = "2026-10-19T00:00:00+00:0
         const matches = predicates.every(({ method, key, value }) => {
           if (method === "eq" && value === null) return false;
           if (key === "gallery_settings" && value !== null) return JSON.stringify(row[key]) === value;
-          return row[key] === value;
+          return (key === "gallery_settings->>visitorEmailSettingsRevision" ? row.gallery_settings?.visitorEmailSettingsRevision ?? null : row[key]) === value;
         });
         if (update) {
           state.filters.push(predicates);
@@ -64,7 +64,7 @@ function fixture({ version = initialVersion, dueDate = "2026-10-19T00:00:00+00:0
     return query;
   } };
   const next = { NextResponse: { json: (body, init) => Response.json(body, init) } };
-  const route = load("app/api/dashboard/schools/[schoolId]/visitors/reminder/route.ts", {
+  const dependencies = {
     "next/server": next,
     "@/lib/dashboard-auth": { resolveDashboardAuth: async () => ({ user, mfaSatisfied }), createDashboardServiceClient: () => db },
     "@/lib/require-agreement": { guardAgreement: async () => agreement },
@@ -79,12 +79,15 @@ function fixture({ version = initialVersion, dueDate = "2026-10-19T00:00:00+00:0
       if (eligibilityFails) throw Error("Photo availability unavailable");
       return new Set(photoClasses);
     } },
-  });
+  };
+  const route = load("app/api/dashboard/schools/[schoolId]/visitors/reminder/route.ts", dependencies);
+  const templateRoute = load("app/api/dashboard/schools/[schoolId]/visitors/template/route.ts", dependencies);
   const context = { params: Promise.resolve({ schoolId: "school" }) };
   const request = body => ({ json: async () => body });
   const save = (body = { enabled: true, expectedVersion: version }) => route.PUT(request(body), context);
   const read = () => route.GET({}, context);
-  return { state, save, read };
+  const saveTemplate = body => templateRoute.PUT(request(body), context);
+  return { state, save, read, saveTemplate };
 }
 
 test("normalization defaults reminders off, preserves the school scope, and strips owner settings publicly", () => {
@@ -94,6 +97,28 @@ test("normalization defaults reminders off, preserves the school scope, and stri
   assert.equal(settingsModule.sanitizeEventGallerySettingsForClient({ visitorDeadlineReminder: reminder }).visitorDeadlineReminder, undefined);
   assert.equal(settingsModule.normalizeSchoolVisitorDeadlineReminder({ enabled: "true", timeZone: "Invalid/Zone", sendHour: 23 }).enabled, false);
   assert.equal(settingsModule.normalizeSchoolVisitorDeadlineReminder({ timeZone: "Invalid/Zone" }).timeZone, "America/Toronto");
+  assert.equal(settingsModule.normalizeEventGallerySettings({ visitorEmailSettingsRevision: initialVersion }).visitorEmailSettingsRevision, initialVersion);
+  assert.equal(settingsModule.sanitizeEventGallerySettingsForClient({ visitorEmailSettingsRevision: initialVersion }).visitorEmailSettingsRevision, undefined);
+});
+
+test("template and reminder writes share one private UUID revision on the actual schools schema", async () => {
+  const f = fixture({ version: null });
+  assert.equal("updated_at" in f.state.school, false);
+  const first = await f.saveTemplate({ template: { ...template, message: "Saved revised message" }, expectedVersion: null });
+  assert.equal(first.status, 200);
+  const firstState = await first.json();
+  assert.match(firstState.version, /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i);
+  assert.equal((await f.save({ enabled: true, expectedVersion: null })).status, 409);
+  const second = await f.save({ enabled: true, expectedVersion: firstState.version });
+  assert.equal(second.status, 200);
+  const secondState = await second.json();
+  assert.notEqual(secondState.version, firstState.version);
+  assert.equal((await f.saveTemplate({ template, expectedVersion: firstState.version })).status, 409);
+  const third = await f.saveTemplate({ template, expectedVersion: secondState.version });
+  assert.equal(third.status, 200);
+  assert.equal(f.state.school.gallery_settings.visitorDeadlineReminder.enabled, true);
+  assert.deepEqual(f.state.school.gallery_settings.visitorEmailTemplate, template);
+  assert.equal("updated_at" in f.state.school, false);
 });
 
 test("GET shows the original deadline and day-before calendar date without enabling any school", async () => {
@@ -195,7 +220,7 @@ test("stale versions, concurrent draft edits and deadline changes cannot silentl
   const stale = fixture();
   assert.equal((await stale.save({ enabled: true, expectedVersion: "older" })).status, 409);
   assert.equal(stale.state.writes.length, 0);
-  for (const race of [row => ({ ...row, updated_at: "2026-10-15T15:01:00Z", gallery_settings: { ...row.gallery_settings, visitorEmailTemplate: { ...template, message: "Newer message" } } }), row => ({ ...row, updated_at: "2026-10-15T15:01:00Z" }), row => ({ ...row, order_due_date: null })]) {
+  for (const race of [row => ({ ...row, gallery_settings: { ...row.gallery_settings, visitorEmailSettingsRevision: "22222222-2222-4222-8222-222222222222", visitorEmailTemplate: { ...template, message: "Newer message" } } }), row => ({ ...row, gallery_settings: { ...row.gallery_settings, visitorEmailSettingsRevision: "22222222-2222-4222-8222-222222222222" } }), row => ({ ...row, order_due_date: null })]) {
     const f = fixture({ race });
     assert.equal((await f.save()).status, 409);
     assert.equal(f.state.writes.length, 0);

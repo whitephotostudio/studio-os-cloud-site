@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { randomUUID } from "node:crypto";
 import { createDashboardServiceClient, resolveDashboardAuth } from "@/lib/dashboard-auth";
 import { parseJson } from "@/lib/api-validation";
 import { guardAgreement } from "@/lib/require-agreement";
@@ -7,6 +8,7 @@ import { recordAudit } from "@/lib/audit";
 import {
   isSchoolVisitorReminderTimeZone,
   normalizeSchoolVisitorDeadlineReminder,
+  readSchoolVisitorEmailSettingsRevision,
 } from "@/lib/event-gallery-settings";
 import { readSchoolVisitorEmailTemplate } from "@/lib/school-visitor-email-template";
 import { compareSchoolVisitorClasses, isSchoolVisitorClassRangeValid } from "@/lib/school-visitor-filters";
@@ -32,7 +34,6 @@ type SchoolRow = {
   photographer_id: string;
   gallery_settings: unknown;
   order_due_date: string | null;
-  updated_at: string | null;
 };
 type ReminderStatus = {
   deadline: string;
@@ -74,7 +75,7 @@ function snapshot(school: SchoolRow) {
       ? "Automatic reminders are waiting for a valid class range." : undefined;
   return {
     settings, templateReady, dueDate: school.order_due_date ?? null, plannedReminderDate,
-    version: school.updated_at ?? null, ...(statusMessage ? { statusMessage } : {}),
+    version: readSchoolVisitorEmailSettingsRevision(school.gallery_settings), ...(statusMessage ? { statusMessage } : {}),
   };
 }
 
@@ -92,7 +93,7 @@ async function authorizedSchool(request: NextRequest, schoolId: string, writing:
   if (photographerError) throw photographerError;
   if (!photographer?.id) return { response: failure("Photographer profile not found.", 403) };
   const { data: school, error: schoolError } = await service.from("schools")
-    .select("id,photographer_id,gallery_settings,order_due_date,updated_at")
+    .select("id,photographer_id,gallery_settings,order_due_date")
     .eq("id", schoolId).eq("photographer_id", photographer.id).maybeSingle<SchoolRow>();
   if (schoolError) throw schoolError;
   if (!school) return { response: failure("School not found.", 404) };
@@ -168,14 +169,13 @@ export async function PUT(request: NextRequest, { params }: Context) {
       const [status, photos] = await Promise.all([reminderStatus(auth), photoClassDetails(auth)]);
       return privateJson({ ok: true, ...current, status, ...photos });
     }
-    const previousTime = current.version ? Date.parse(current.version) : NaN;
-    const version = new Date(Math.max(Date.now(), Number.isFinite(previousTime) ? previousTime + 1 : 0)).toISOString();
+    const version = randomUUID();
     let update = auth.service.from("schools").update({
-      gallery_settings: { ...settingsObject(auth.school.gallery_settings), visitorDeadlineReminder: settings }, updated_at: version,
+      gallery_settings: { ...settingsObject(auth.school.gallery_settings), visitorDeadlineReminder: settings, visitorEmailSettingsRevision: version },
     }).eq("id", auth.school.id).eq("photographer_id", auth.photographer.id);
-    update = current.version === null ? update.is("updated_at", null) : update.eq("updated_at", current.version);
+    update = current.version === null ? update.is("gallery_settings->>visitorEmailSettingsRevision", null) : update.eq("gallery_settings->>visitorEmailSettingsRevision", current.version);
     update = auth.school.order_due_date === null ? update.is("order_due_date", null) : update.eq("order_due_date", auth.school.order_due_date);
-    const { data: saved, error } = await update.select("id,photographer_id,gallery_settings,order_due_date,updated_at").maybeSingle<SchoolRow>();
+    const { data: saved, error } = await update.select("id,photographer_id,gallery_settings,order_due_date").maybeSingle<SchoolRow>();
     if (error) throw error;
     if (!saved) return failure("This gallery changed while the automatic reminder was saving. Reload before trying again.", 409, "reminder_conflict");
     await recordAudit({

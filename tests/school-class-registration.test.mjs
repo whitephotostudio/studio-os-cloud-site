@@ -25,7 +25,7 @@ const next = { NextResponse: { json: (data, options) => Response.json(data, opti
 function fixture({ enabled = false, status = 'pre_release', classes = ['Grade 7', 'Grade 12'], owner = true, contactError = false, registrationError = false, matchingPin = true, backdropOverride = null } = {}) {
   const calls = [], sent = [], rpcCalls = [], audits = [];
   const schedule = { shootDates: ['2026-10-05', '2026-10-26', '2026-11-02'], slotMinutes: 10 };
-  const school = { id: schoolId, updated_at: null, photographer_id: photographerId, school_name: 'School', status, email_required: true, registration_class_required: enabled, online_backdrops_override: backdropOverride, gallery_settings: { schedule, share: {}, extras: { sendEmailCampaign: false } } };
+  const school = { id: schoolId, photographer_id: photographerId, school_name: 'School', status, email_required: true, registration_class_required: enabled, online_backdrops_override: backdropOverride, gallery_settings: { schedule, share: {}, extras: { sendEmailCampaign: false } } };
   const tables = {
     schools: [school], photographers: [{ id: photographerId, user_id: 'owner', studio_email: 'studio@example.com' }],
     students: matchingPin ? [{ id: studentId, school_id: schoolId, pin: '12345', photo_url: 'ready.jpg' }] : [],
@@ -35,12 +35,12 @@ function fixture({ enabled = false, status = 'pre_release', classes = ['Grade 7'
     from(table) {
       let predicate = () => true, operation = 'read', value;
       const query = {
-        select() { return query; },
-        eq(key, expected) { const prev = predicate; predicate = row => prev(row) && (key === 'gallery_settings' && typeof expected === 'string' ? JSON.stringify(row[key]) === expected : row[key] === expected); return query; },
+        select(columns) { if (table === 'schools') assert.equal(columns?.split(',').includes('updated_at'), false, 'Live schools schema has no updated_at column'); return query; },
+        eq(key, expected) { assert.notEqual(key, 'updated_at'); const prev = predicate; predicate = row => prev(row) && (key === 'gallery_settings->>visitorEmailSettingsRevision' ? row.gallery_settings?.visitorEmailSettingsRevision ?? null : row[key]) === expected; return query; },
         is(key, expected) { return query.eq(key, expected); },
         insert(nextValue) { operation = 'insert'; value = nextValue; return query; },
         upsert(nextValue) { operation = 'upsert'; value = nextValue; return query; },
-        update(nextValue) { operation = 'update'; value = nextValue; return query; },
+        update(nextValue) { assert.equal('updated_at' in nextValue, false); operation = 'update'; value = nextValue; return query; },
         maybeSingle() { return run(true); },
         then(ok, err) { return run(false).then(ok, err); },
       };
@@ -187,8 +187,7 @@ test('school settings saves carry forward the current visitor template and refus
     if (table === 'schools') {
       const update = query.update.bind(query);
       query.update = body => {
-        f.school.gallery_settings = { ...f.school.gallery_settings, visitorEmailTemplate: { ...template, message: 'Newer composer save' } };
-        f.school.updated_at = '2099-10-15T15:01:00.000Z';
+        f.school.gallery_settings = { ...f.school.gallery_settings, visitorEmailSettingsRevision: '22222222-2222-4222-8222-222222222222', visitorEmailTemplate: { ...template, message: 'Newer composer save' } };
         return update(body);
       };
     }

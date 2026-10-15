@@ -132,6 +132,8 @@ export type EventGallerySettings = {
   visitorEmailTemplate?: GalleryVisitorEmailTemplate;
   /** Per-school opt-in for the day-before-order-deadline email. */
   visitorDeadlineReminder?: SchoolVisitorDeadlineReminderSettings;
+  /** Opaque owner-only revision shared by all school visitor email settings. */
+  visitorEmailSettingsRevision?: string;
   /** Owner's project client email, used to reconnect the project to CRM. */
   desktopClientEmail?: string;
   /** Owner-only project contact snapshot for restoring another desktop. */
@@ -186,6 +188,11 @@ export function normalizeSchoolVisitorDeadlineReminder(value: unknown): SchoolVi
     classFrom: typeof source?.classFrom === "string" ? source.classFrom.slice(0, 200).trim() : "",
     classTo: typeof source?.classTo === "string" ? source.classTo.slice(0, 200).trim() : "",
   };
+}
+
+export function readSchoolVisitorEmailSettingsRevision(value: unknown): string | null {
+  const revision = asObject(value)?.visitorEmailSettingsRevision;
+  return typeof revision === "string" && revision.length > 0 && revision.length <= 128 ? revision : null;
 }
 
 /** Keep unfinished drafts, including empty fields and intentional whitespace. */
@@ -409,6 +416,7 @@ export function normalizeEventGallerySettings(value: unknown): EventGallerySetti
   const source = asObject(value);
   const visitorEmailTemplate = normalizeGalleryVisitorEmailTemplate(source?.visitorEmailTemplate);
   const visitorDeadlineReminder = asObject(source?.visitorDeadlineReminder);
+  const visitorEmailSettingsRevision = readSchoolVisitorEmailSettingsRevision(value);
   const desktopClientSource = asObject(source?.desktopClientContact);
   const extrasSource = asObject(source?.extras);
   const brandingSource = asObject(source?.branding);
@@ -434,6 +442,7 @@ export function normalizeEventGallerySettings(value: unknown): EventGallerySetti
     version: 1,
     ...(visitorEmailTemplate ? { visitorEmailTemplate } : {}),
     ...(visitorDeadlineReminder ? { visitorDeadlineReminder: normalizeSchoolVisitorDeadlineReminder(visitorDeadlineReminder) } : {}),
+    ...(visitorEmailSettingsRevision ? { visitorEmailSettingsRevision } : {}),
     galleryLanguage: asString(
       source?.galleryLanguage,
       defaultEventGallerySettings.galleryLanguage,
@@ -841,6 +850,7 @@ export function sanitizeEventGallerySettingsForClient(
     ...normalized,
     visitorEmailTemplate: undefined,
     visitorDeadlineReminder: undefined,
+    visitorEmailSettingsRevision: undefined,
     desktopClientEmail: "",
     desktopClientContact: undefined,
     extras: {
