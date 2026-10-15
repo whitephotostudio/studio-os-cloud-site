@@ -62,6 +62,40 @@ its openings. Two collage copies remain two independent selections, rather than
 turning openings into additional billable prints. Ordinary and class-composite
 slots retain their established behavior.
 
+## Publishing a sellable design from Flutter
+
+`GET /api/dashboard/collages/commerce` returns the authenticated photographer ID,
+sales currency, catalogue revision, owned price sheets/products and school/event
+project targets. Flutter uses those current values for review; it does not infer
+a price or gallery grant from portable template JSON.
+
+`POST` accepts a fresh UUID `requestId`, the reviewed `catalogRevision`, portable
+`design`, an optional existing `templateId`, gallery targets
+`{kind: "school" | "project", id}`, and a product operation:
+
+- `mode: "create" | "update"`, with an owned product `id` for updates or a
+  `name` for creation;
+- `profileId`, an owned sheet identifier or `null` for the unassigned catalogue;
+- `priceCents`, an integer amount in the studio currency's minor units;
+- `copyCount`, 1–20 included finished collage prints per package set;
+- optional `itemIndex` to replace an existing collage item, or `null` to append.
+
+The SQL operation atomically saves a new immutable version, grants and product
+binding. It preserves existing ordinary physical print items and validates a
+maximum of 20 finished print slots per package set. It rejects digital,
+retouching-add-on and class-composite conflicts. The reviewed full owned
+catalogue, gallery profiles and currency must still match; concurrent edits
+produce a conflict. A repeated committed request returns the same version and
+product receipt, including after an uncertain network outcome.
+
+Publication checks the selected galleries' effective price sheets against the
+resulting active catalogue. At purchase, configured collage entries are checked
+again using the current gallery sheet, gallery settings override, studio default
+and the existing parent catalogue fallback. A different owned price sheet's
+cheaper product ID cannot establish access. The check applies independently to
+each sibling group and to event project galleries. Existing ordinary orders
+retain their established behavior.
+
 ## Frozen order and production
 
 The server re-prices the product and expands its configured copies. It resolves
@@ -106,3 +140,13 @@ applied to production. Collage purchasing requires explicit server enablement
 checkout. Keep it off until authenticated purchase, restoration, fulfillment,
 lab-size/bleed and native-release checks pass. Existing ordinary orders do not
 need the collage migration or enablement flag to continue working.
+
+The isolated HTTP tests apply both collage migrations locally and exercise real
+single/sibling/event checkout, signed simulated-provider webhook transitions,
+order review and original-media production. The connected native/browser run's
+sanitized [receipt](collage-evidence/browser-order-receipt.json) binds the two
+3000×2400 PNGs and ZIP entries to exact paid item IDs and crop/caption manifests;
+native production downloaded those same PNG hashes before staging two Noritsu
+JPEGs. The fake identity, local storage and simulated payment transports are
+explicit boundaries. This is not an installed native build, actual Stripe
+test-mode payment, production migration, deployment or printer verification.

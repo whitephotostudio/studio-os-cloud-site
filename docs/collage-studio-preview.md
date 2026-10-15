@@ -28,9 +28,21 @@ large overlay when opening a gallery.
 The native Collages section sits beside school Composites and is also available
 for projects. It saves owner-scoped immutable local versions, imports/exports
 Cloud's v1 design JSON, previews original local test photos with independent
-crops, exports print-sized PNG previews and explicitly saves/opens private
-Cloud drafts. Gallery availability and sellable package pricing are managed in
-Cloud. Class composites retain their independent model and production behavior.
+crops, exports print-sized PNG previews and saves/opens private Cloud drafts.
+Its commerce controls now load the authenticated studio's currency, price
+sheets, products and school/project targets. A photographer can set the price
+and included copy count, create a standalone product or append/replace a collage
+item in an existing physical package, then publish from Flutter. Publication
+atomically saves the immutable design version, gallery grants and product
+binding. Existing ordinary print contents are preserved. Class composites keep
+their independent model and production behavior.
+
+The publication request carries the catalogue revision the photographer
+reviewed and a durable request ID. Changed prices, package contents, gallery
+profiles or ownership make stale publication fail; retries of a committed
+request return the same receipt. The server checks that the product's price
+sheet will actually be offered by every selected gallery. A same-size template
+edit creates a new version rather than altering already purchased recipes.
 
 ## Parent shopping and restoration
 
@@ -59,6 +71,10 @@ ordinary portrait print.
   are append-only. Gallery grants support one-way withdrawal.
 - Server validation of version/gallery ownership, required openings, crop bounds,
   independent copy counts, product roles/output size and current package price.
+  Collage purchases also recheck the gallery's current selected price sheet,
+  settings override or studio default using the parent catalogue's fallback
+  rules. Supplying a cheaper product ID from another sheet fails before writes,
+  including within one sibling group. Ordinary-order behavior is preserved.
   Browser image URLs, uploaded snapshots and prices do not establish authority.
 - One immutable `order_items.collage_snapshot` per finished print/copy, with
   authorized original media keys, crops, captions, design/artwork hashes and
@@ -89,14 +105,14 @@ V2 directory, which did not have Git metadata. The V1 fallback is untouched.
 resuming saved collage payment drafts stop while it is off. Ordinary print,
 digital, class-composite and payment-provider configuration remain unchanged.
 
-The migration `20261014180000_private_collage_templates.sql` is included for
-review and local SQL tests only. Before any production enablement, apply the
-reviewed migration in an isolated environment and verify authenticated desktop
-save → Cloud publication/product setup → parent/sibling selection and restoration
-→ test payment → receipt/order review → final native and Cloud output, including
-lab dimensions and bleed. A signed native release and installed-app verification
-are also still required. No live payment, lab send, printer action, customer-order
-mutation, migration, app replacement or deployment was performed for this work.
+The migrations `20261014180000_private_collage_templates.sql` and
+`20261014190000_collage_commerce.sql` are supplied for review. They were applied
+only to isolated local databases. The purchase-to-print rehearsal below passes
+against those migrations. Production enablement still needs a complete isolated
+Supabase deployment rehearsal, actual Stripe test-mode credentials/webhooks,
+lab-size/bleed checks and a signed native release verified as an installed app.
+No live payment, lab send, printer action, customer-order mutation, production
+migration, app replacement, deployment or draft merge was performed.
 
 ## Verification
 
@@ -113,3 +129,38 @@ resolution warnings, template import/export privacy, border/bleed output at
 3075×2475 for a 10×8-inch trim with 0.125-inch bleed, and 390-pixel phone layouts
 without horizontal overflow. It reported no browser errors. Browser and native
 fixture screenshots are local evidence, not authenticated live deployment proof.
+
+### Purchase-to-print rehearsal
+
+`tests/collage-end-to-end.test.mjs` runs real HTTP route handlers, auth consumers,
+parent cookie/lane scope checks, publication and order/payment SQL, previews,
+history, production rendering and ZIP downloads against a fresh PGlite database
+and private Redis socket. It covers mixed packages, two independently cropped
+copies, unauthorized nested media, school and event/album access, sibling
+checkout, restored payloads, current price-sheet enforcement, publication
+replay/stale revisions and webhook replay. Publishing a later design and price
+leaves the paid raster hash and original order price unchanged; a compatible
+older-version reorder uses the new price. Preview/print pixels are compared at
+the same screen size.
+
+The connected acceptance run used Flutter's real editor commerce controls to
+publish a CAD 32.50 set of two collages and a CAD 54.25 mixed package containing
+one 5×7 print plus two collages. The real parent browser component reviewed
+independent photos, reuse, captions and crops, restored its basket, and purchased
+the mixed package. Order `9290f057-dd4e-4081-99df-3d393c31e240` became paid at
+5,425 cents through the real signed webhook handler. Its ZIP contains one
+ordinary JPEG, two distinct 3000×2400 collage PNGs, two matching recipe reports
+and the order summary. The exact same paid item IDs then passed the native
+production service and Noritsu JPEG encoder, producing two 3000×2400 staged
+JPEGs without invoking a printer. Item IDs, not array position, bind each copy's
+caption/crops and output hash. The sanitized
+[browser order receipt](collage-evidence/browser-order-receipt.json) records the
+exact PNG and ZIP hashes without tokens, cookies or local account configuration.
+
+The identity provider, object storage and Stripe HTTP transport are simulated
+fixture boundaries; the payment is explicitly **not Stripe test mode**. No real
+charge or email is sent. The parent context read model is a fixture adapter;
+checkout, payment and production handlers run unchanged. This demonstrates the
+connected isolated workflow, not live-provider, installed-build or deployment
+verification. Reproduction instructions are in
+[`tests/fixtures/collage-e2e/README.md`](../tests/fixtures/collage-e2e/README.md).
