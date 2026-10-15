@@ -40,7 +40,8 @@ test('only pilot pages, existing MFA and agreement endpoints, and lab APIs pass 
     '/dashboard/labs/', '/dashboard/labs/catalog', '/dashboard/labs/orders', '/api/dashboard/labs',
     '/api/dashboard/lab-catalog', '/api/dashboard/lab-orders', '/api/dashboard/lab-order-assets',
     '/api/lab/orders', '/api/lab/orders/123/files/456', '/api/dashboard/mfa',
-    '/api/dashboard/agreement/status', '/api/dashboard/agreement/accept', '/api/csp-report', '/manifest.webmanifest']) {
+    '/api/dashboard/agreement/status', '/api/dashboard/agreement/accept', '/api/csp-report', '/manifest.webmanifest',
+    '/terms', '/privacy', '/data-responsibility-agreement']) {
     assert.equal(isLabPilotPath(path), true, path);
   }
   for (const path of ['/', '/dashboard', '/dashboard/settings', '/dashboard/packages', '/lab/other',

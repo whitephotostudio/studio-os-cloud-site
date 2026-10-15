@@ -23,6 +23,7 @@ const PILOT_EXACT_PATHS = new Set([
   "/api/dashboard/lab-order-assets", "/api/lab/orders", "/api/dashboard/mfa",
   "/api/dashboard/agreement/status", "/api/dashboard/agreement/accept",
   "/api/csp-report", "/manifest.webmanifest",
+  "/terms", "/privacy", "/data-responsibility-agreement",
 ]);
 
 /** Only the pilot workflow can reach application routes in a pilot deployment. */
