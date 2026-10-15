@@ -1,5 +1,6 @@
 import { pathToFileURL } from 'node:url';
 import { createHash } from 'node:crypto';
+import { verifyStandardSignupInventory } from './stripe-standard-signup-inventory.mjs';
 
 const missingHistorySchemaCodes = new Set(['42883','42P01','42703','PGRST202','PGRST204','PGRST205']);
 const missingHistorySchema = error => missingHistorySchemaCodes.has(error?.code);
@@ -320,6 +321,7 @@ export async function resolveAuditedPaymentAccount(db, order, historyRequired = 
 // [SENSITIVE]. Never export secrets, log provider error bodies, or move money.
 // Explicit webhook configuration flags may update event subscriptions only.
 export async function verifyPaymentRelease(env = process.env, fetcher = fetch, report = console.log) {
+  await verifyStandardSignupInventory(env,fetcher,report);
   await verifyStandardSignupRelease(env,fetcher,report);
   await verifyStandardProviderRelease(env,fetcher,report);
   const liveStandardRequested = env.STRIPE_STANDARD_LIVE_CHECKOUT_ENABLED === 'true' || env.STRIPE_STANDARD_LIVE_MIGRATION_ENABLED === 'true';
