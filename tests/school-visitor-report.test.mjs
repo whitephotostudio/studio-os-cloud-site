@@ -359,3 +359,10 @@ test('read-only recovery confirms accepted recipients after audience changes and
   assert.equal(pending.outcomes.length,100);assert.equal(f.batches.length,1);
   f.tables.schools[0].photographer_id='foreign';assert.equal((await f.route.POST(f.request({...body,action:'status'}))).status,404);
 });
+
+test('direct recipient lists retain their previous 5000-address request bound without limiting server-resolved school audiences',async()=>{
+  const f=emailRouteFixture(), recipients=Array.from({length:5001},(_,index)=>`direct${index}@example.com`);
+  const overLimit=await f.route.POST(f.request({recipients}));assert.equal(overLimit.status,400);assert.equal(f.sent.length,0);assert.equal(f.db.reads.length,0);
+  const direct=await f.route.POST(f.request({recipients:recipients.slice(0,5000)}));assert.equal(direct.status,200);assert.equal((await direct.json()).sent,5000);
+  assert.equal(f.sent.length,5000);
+});

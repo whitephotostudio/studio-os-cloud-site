@@ -43,6 +43,14 @@ const EmailBodySchema = z.object({
   subject: z.string().min(1).max(500),
   headline: z.string().min(1).max(500),
   message: z.string().max(10_000).default(""),
+}).superRefine((body, context) => {
+  // Event/project callers still use the synchronous direct-recipient path.
+  // Keep its existing request bound; school audiences resolve and paginate
+  // their full recipient list on the server instead.
+  if (!body.schoolAudience && body.recipients.length > 5000) context.addIssue({
+    code: "custom", path: ["recipients"],
+    message: "Direct recipient lists are limited to 5000 addresses. Choose a school audience for larger batches.",
+  });
 });
 
 /**
