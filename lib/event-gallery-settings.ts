@@ -128,6 +128,10 @@ export type EventScheduleDetails = {
 export type EventGallerySettings = {
   version: 1;
   galleryLanguage: string;
+  /** Saved owner draft for the Gallery Visitors email composer. */
+  visitorEmailTemplate?: GalleryVisitorEmailTemplate;
+  /** Per-school opt-in for the day-before-order-deadline email. */
+  visitorDeadlineReminder?: SchoolVisitorDeadlineReminderSettings;
   /** Owner's project client email, used to reconnect the project to CRM. */
   desktopClientEmail?: string;
   /** Owner-only project contact snapshot for restoring another desktop. */
@@ -143,6 +147,54 @@ export type EventGallerySettings = {
   share: EventGalleryShareSettings;
   schedule: EventScheduleDetails;
 };
+
+export type GalleryVisitorEmailTemplate = {
+  subject: string;
+  headline: string;
+  message: string;
+};
+
+export type SchoolVisitorDeadlineReminderSettings = {
+  enabled: boolean;
+  timeZone: string;
+  sendHour: 9;
+  classMode: "all" | "range";
+  classFrom: string;
+  classTo: string;
+  photosOnly: true;
+};
+
+export const DEFAULT_SCHOOL_VISITOR_REMINDER_TIME_ZONE = "America/Toronto";
+
+export function isSchoolVisitorReminderTimeZone(value: string) {
+  if (!value || value.length > 100 || /^[+-]/.test(value)) return false;
+  try {
+    new Intl.DateTimeFormat("en-CA", { timeZone: value }).format();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function normalizeSchoolVisitorDeadlineReminder(value: unknown): SchoolVisitorDeadlineReminderSettings {
+  const source = asObject(value);
+  const timeZone = typeof source?.timeZone === "string" && isSchoolVisitorReminderTimeZone(source.timeZone)
+    ? source.timeZone : DEFAULT_SCHOOL_VISITOR_REMINDER_TIME_ZONE;
+  return {
+    enabled: source?.enabled === true, timeZone, sendHour: 9, photosOnly: true,
+    classMode: source?.classMode === "range" ? "range" : "all",
+    classFrom: typeof source?.classFrom === "string" ? source.classFrom.slice(0, 200).trim() : "",
+    classTo: typeof source?.classTo === "string" ? source.classTo.slice(0, 200).trim() : "",
+  };
+}
+
+/** Keep unfinished drafts, including empty fields and intentional whitespace. */
+export function normalizeGalleryVisitorEmailTemplate(value: unknown): GalleryVisitorEmailTemplate | null {
+  const row = asObject(value);
+  if (!row || typeof row.subject !== "string" || typeof row.headline !== "string" || typeof row.message !== "string") return null;
+  if (row.subject.length > 500 || row.headline.length > 500 || row.message.length > 10_000) return null;
+  return { subject: row.subject, headline: row.headline, message: row.message };
+}
 
 export const defaultEventGalleryExtras: EventGalleryExtraSettings = {
   priceSheetProfileId: "",
@@ -355,6 +407,8 @@ function normalizeTaxRatesByCountry(value: unknown): Record<string, number> {
 
 export function normalizeEventGallerySettings(value: unknown): EventGallerySettings {
   const source = asObject(value);
+  const visitorEmailTemplate = normalizeGalleryVisitorEmailTemplate(source?.visitorEmailTemplate);
+  const visitorDeadlineReminder = asObject(source?.visitorDeadlineReminder);
   const desktopClientSource = asObject(source?.desktopClientContact);
   const extrasSource = asObject(source?.extras);
   const brandingSource = asObject(source?.branding);
@@ -378,6 +432,8 @@ export function normalizeEventGallerySettings(value: unknown): EventGallerySetti
 
   return {
     version: 1,
+    ...(visitorEmailTemplate ? { visitorEmailTemplate } : {}),
+    ...(visitorDeadlineReminder ? { visitorDeadlineReminder: normalizeSchoolVisitorDeadlineReminder(visitorDeadlineReminder) } : {}),
     galleryLanguage: asString(
       source?.galleryLanguage,
       defaultEventGallerySettings.galleryLanguage,
@@ -783,6 +839,8 @@ export function sanitizeEventGallerySettingsForClient(
   const normalized = normalizeEventGallerySettings(value);
   return {
     ...normalized,
+    visitorEmailTemplate: undefined,
+    visitorDeadlineReminder: undefined,
     desktopClientEmail: "",
     desktopClientContact: undefined,
     extras: {

@@ -25,7 +25,7 @@ const next = { NextResponse: { json: (data, options) => Response.json(data, opti
 function fixture({ enabled = false, status = 'pre_release', classes = ['Grade 7', 'Grade 12'], owner = true, contactError = false, registrationError = false, matchingPin = true, backdropOverride = null } = {}) {
   const calls = [], sent = [], rpcCalls = [], audits = [];
   const schedule = { shootDates: ['2026-10-05', '2026-10-26', '2026-11-02'], slotMinutes: 10 };
-  const school = { id: schoolId, photographer_id: photographerId, school_name: 'School', status, email_required: true, registration_class_required: enabled, online_backdrops_override: backdropOverride, gallery_settings: { schedule, share: {}, extras: { sendEmailCampaign: false } } };
+  const school = { id: schoolId, updated_at: null, photographer_id: photographerId, school_name: 'School', status, email_required: true, registration_class_required: enabled, online_backdrops_override: backdropOverride, gallery_settings: { schedule, share: {}, extras: { sendEmailCampaign: false } } };
   const tables = {
     schools: [school], photographers: [{ id: photographerId, user_id: 'owner', studio_email: 'studio@example.com' }],
     students: matchingPin ? [{ id: studentId, school_id: schoolId, pin: '12345', photo_url: 'ready.jpg' }] : [],
@@ -36,7 +36,7 @@ function fixture({ enabled = false, status = 'pre_release', classes = ['Grade 7'
       let predicate = () => true, operation = 'read', value;
       const query = {
         select() { return query; },
-        eq(key, expected) { const prev = predicate; predicate = row => prev(row) && row[key] === expected; return query; },
+        eq(key, expected) { const prev = predicate; predicate = row => prev(row) && (key === 'gallery_settings' && typeof expected === 'string' ? JSON.stringify(row[key]) === expected : row[key] === expected); return query; },
         is(key, expected) { return query.eq(key, expected); },
         insert(nextValue) { operation = 'insert'; value = nextValue; return query; },
         upsert(nextValue) { operation = 'upsert'; value = nextValue; return query; },
@@ -168,6 +168,38 @@ test('desktop-style school updates keep explicit Off, and stale gallery windows 
   assert.equal((await route.PATCH(f.req({ online_backdrops_override: true, expected_online_backdrops_override: null }), f.context)).status, 409);
   assert.equal(f.school.online_backdrops_override, false);
   assert.equal(f.audits.length, auditsBeforeConflict);
+});
+test('school settings saves carry forward the current visitor template and refuse concurrent preference changes', async () => {
+  const f = fixture({ status: 'active' });
+  const template = { subject: 'Keep subject', headline: 'Keep headline', message: 'Keep my written message' };
+  const reminder = { enabled: true, timeZone: 'America/Toronto', sendHour: 9, classMode: 'range', classFrom: '7A', classTo: 'Grade 12' };
+  f.school.gallery_settings.visitorEmailTemplate = template;
+  f.school.gallery_settings.visitorDeadlineReminder = reminder;
+  const route = load('app/api/dashboard/schools/[schoolId]/route.ts', f.dependencies);
+  const response = await route.PATCH(f.req({ gallery_settings: { share: {}, extras: { sendEmailCampaign: false }, visitorEmailTemplate: { ...template, message: 'Stale template' } } }), f.context);
+  assert.equal(response.status, 200);
+  assert.deepEqual(f.school.gallery_settings.visitorEmailTemplate, template);
+  assert.deepEqual(f.school.gallery_settings.visitorDeadlineReminder, reminder);
+  const service = f.dependencies['@/lib/dashboard-auth'].createDashboardServiceClient();
+  const from = service.from.bind(service);
+  service.from = table => {
+    const query = from(table);
+    if (table === 'schools') {
+      const update = query.update.bind(query);
+      query.update = body => {
+        f.school.gallery_settings = { ...f.school.gallery_settings, visitorEmailTemplate: { ...template, message: 'Newer composer save' } };
+        f.school.updated_at = '2099-10-15T15:01:00.000Z';
+        return update(body);
+      };
+    }
+    return query;
+  };
+  const auditsBefore = f.audits.length;
+  const conflict = await route.PATCH(f.req({ gallery_settings: { share: {}, extras: { sendEmailCampaign: false } } }), f.context);
+  assert.equal(conflict.status, 409);
+  assert.equal(f.school.gallery_settings.visitorEmailTemplate.message, 'Newer composer save');
+  assert.equal(f.audits.length, auditsBefore);
+  assert.equal(f.sent.length, 0);
 });
 test('successful school CAS audits the matched prior override after an intervening save, including inherited null', async () => {
   for (const expected of [null, false, true]) {

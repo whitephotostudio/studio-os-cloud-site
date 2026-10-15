@@ -59,6 +59,7 @@ type SchoolUpdateBody = z.infer<typeof SchoolUpdateBodySchema>;
 
 type SchoolRow = {
   id: string;
+  updated_at: string | null;
   school_name: string | null;
   photographer_id: string | null;
   local_school_id?: string | null;
@@ -269,7 +270,7 @@ export async function PATCH(
 
     const { data: schoolRow, error: schoolError } = await service
       .from("schools")
-      .select("id,school_name,photographer_id,local_school_id,status,shoot_date,order_due_date,expiration_date,package_profile_id,email_required,registration_class_required,checkout_contact_required,internal_notes,access_mode,access_pin,cover_photo_url,gallery_settings,gallery_slug,screenshot_protection_desktop,screenshot_protection_mobile,screenshot_protection_watermark,group_label_singular,group_label_plural,online_backdrops_override")
+      .select("id,updated_at,school_name,photographer_id,local_school_id,status,shoot_date,order_due_date,expiration_date,package_profile_id,email_required,registration_class_required,checkout_contact_required,internal_notes,access_mode,access_pin,cover_photo_url,gallery_settings,gallery_slug,screenshot_protection_desktop,screenshot_protection_mobile,screenshot_protection_watermark,group_label_singular,group_label_plural,online_backdrops_override")
       .eq("id", schoolId)
       .eq("photographer_id", photographerRow.id)
       .maybeSingle<SchoolRow>();
@@ -282,7 +283,11 @@ export async function PATCH(
       );
     }
 
-    const updates: Record<string, unknown> = {};
+    const previousUpdatedAt = clean(schoolRow.updated_at) || null;
+    const previousTime = previousUpdatedAt ? Date.parse(previousUpdatedAt) : NaN;
+    const updates: Record<string, unknown> = {
+      updated_at: new Date(Math.max(Date.now(), Number.isFinite(previousTime) ? previousTime + 1 : 0)).toISOString(),
+    };
 
     if (hasOwn(body, "school_name") || hasOwn(body, "name")) {
       updates.school_name = clean(body.school_name || body.name) || null;
@@ -318,7 +323,14 @@ export async function PATCH(
     if (hasOwn(body, "checkout_contact_required")) updates.checkout_contact_required = body.checkout_contact_required === true;
     if (hasOwn(body, "internal_notes")) updates.internal_notes = clean(body.internal_notes) || null;
     if (hasOwn(body, "gallery_settings")) {
-      updates.gallery_settings = normalizeEventGallerySettings(body.gallery_settings);
+      // Visitor email tools own their draft and reminder opt-in. An older open
+      // settings page must not replace them when saving other preferences.
+      const visitorSettings = normalizeEventGallerySettings(schoolRow.gallery_settings);
+      updates.gallery_settings = {
+        ...normalizeEventGallerySettings(body.gallery_settings),
+        visitorEmailTemplate: visitorSettings.visitorEmailTemplate,
+        visitorDeadlineReminder: visitorSettings.visitorDeadlineReminder,
+      };
     }
     if (hasOwn(body, "online_backdrops_override")) {
       updates.online_backdrops_override = body.online_backdrops_override;
@@ -386,17 +398,28 @@ export async function PATCH(
       .update(updates)
       .eq("id", schoolId)
       .eq("photographer_id", photographerRow.id);
+    if (hasOwn(body, "gallery_settings")) {
+      updateQuery = previousUpdatedAt === null
+        ? updateQuery.is("updated_at", null)
+        : updateQuery.eq("updated_at", previousUpdatedAt);
+    }
     if (hasOwn(body, "online_backdrops_override") && hasOwn(body, "expected_online_backdrops_override")) {
       updateQuery = body.expected_online_backdrops_override === null
         ? updateQuery.is("online_backdrops_override", null)
         : updateQuery.eq("online_backdrops_override", body.expected_online_backdrops_override);
     }
     const { data: updatedSchoolRow, error: updateError } = await updateQuery
-      .select("id,school_name,photographer_id,local_school_id,status,shoot_date,order_due_date,expiration_date,package_profile_id,email_required,registration_class_required,checkout_contact_required,internal_notes,access_mode,access_pin,cover_photo_url,gallery_settings,gallery_slug,screenshot_protection_desktop,screenshot_protection_mobile,screenshot_protection_watermark,group_label_singular,group_label_plural,online_backdrops_override")
+      .select("id,updated_at,school_name,photographer_id,local_school_id,status,shoot_date,order_due_date,expiration_date,package_profile_id,email_required,registration_class_required,checkout_contact_required,internal_notes,access_mode,access_pin,cover_photo_url,gallery_settings,gallery_slug,screenshot_protection_desktop,screenshot_protection_mobile,screenshot_protection_watermark,group_label_singular,group_label_plural,online_backdrops_override")
       .maybeSingle<SchoolRow>();
 
     if (updateError) throw updateError;
     if (!updatedSchoolRow?.id) {
+      if (hasOwn(body, "gallery_settings")) {
+        return NextResponse.json(
+          { ok: false, message: "This school's gallery settings changed in another window. Reload before saving." },
+          { status: 409 },
+        );
+      }
       if (hasOwn(body, "online_backdrops_override") && hasOwn(body, "expected_online_backdrops_override")) {
         return NextResponse.json(
           { ok: false, message: "This school's background setting changed in another window. Reload before saving." },
