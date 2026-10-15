@@ -95,7 +95,7 @@ export function StripeStandardMigration({ accessToken, signedIn, onAccountChange
         I confirm ownership of the displayed account for future checkouts. Existing payments keep their original account.
       </label> : null}
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-        {!standardSelected && (testOnly || !status.pending?.ownershipBound) ? <button type="button" style={buttonStyle} disabled={busy || !testOnly && !confirmed} onClick={() => action("start")}>{testOnly ? status.pending ? "Continue test onboarding" : "Create Standard test account" : "Verify existing Standard ownership"}</button> : null}
+        {!standardSelected ? <button type="button" style={buttonStyle} disabled={busy || !testOnly && !confirmed} onClick={() => action("start")}>{testOnly ? status.pending ? "Continue test onboarding" : "Create Standard test account" : status.pending?.ownershipBound ? "Reverify Standard account" : "Verify existing Standard ownership"}</button> : null}
         <button type="button" style={buttonStyle} disabled={busy} onClick={() => { setBusy(true); refresh().catch(() => setMessage("Unable to refresh the connection.")).finally(() => setBusy(false)); }}>Refresh verification</button>
         {status.backfillAvailable && !standardSelected ? <button type="button" style={buttonStyle} disabled={busy} onClick={() => action("backfill")}>{backfillCursor ? "Verify next old-payment batch" : "Verify old payment history"}</button> : null}
         {status.pending ? <button type="button" style={buttonStyle} disabled={busy || !confirmed || !status.pending.ready || !testOnly && !status.activationAvailable} onClick={() => action("activate", status.pending?.accountId)}>Switch future checkouts</button> : null}

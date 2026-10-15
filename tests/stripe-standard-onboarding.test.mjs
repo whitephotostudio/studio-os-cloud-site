@@ -455,8 +455,14 @@ test('live adoption accepts only the explicit existing Standard identity and pre
   assert.ok(verifiedIndex>mutationIndex&&registrationIndex>verifiedIndex,'Metadata must be reread from Stripe before history registration');
   assert.equal(f.activations.length,0);assert.equal(f.intent(),null);assertNoCommercialWrites(f);
   for(const registered of f.registrations)assertFreshProof(registered,registered.account.id);
+  const priorRegistrations=f.registrations.length;
   f.calls.length=0;await f.api.startStandardConnection(f.request(liveAdoptionBody()));
   assert.equal(f.calls.filter(call=>call.method==='POST').length,0,'An already verified ownership binding needs no repeated provider write');
+  const refreshed=f.registrations.slice(priorRegistrations);
+  assert.deepEqual(refreshed.map(input=>input.account.id),[liveScope.expressAccountId,liveScope.standardAccountId]);
+  for(const registered of refreshed)assertFreshProof(registered,registered.account.id);
+  assert.equal(f.activations.length,0);assert.equal(f.intent(),null);
+  assert.equal(f.photographer.stripe_connected_account_id,liveScope.expressAccountId);assertNoCommercialWrites(f);
 });
 
 test('live adoption refuses conflicting ownership and refuses an unacknowledged metadata binding',async()=>{
