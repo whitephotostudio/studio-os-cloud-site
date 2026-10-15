@@ -20,7 +20,15 @@ The server prints its config path. Flutter's isolated driver can publish a stand
 node tests/fixtures/collage-e2e/scenario.mjs /absolute/fixture/config.json
 ```
 
-For a Cloud-only rehearsal, add `--publish` to create the fixture's products through the same commerce API. Do not add it after the native driver has published. The browser launcher is `scripts/collage-e2e-browser.mjs`; its temporary page and proxy mount the real parent gallery component and send API requests to this server.
+For a Cloud-only rehearsal, add `--publish` to create the fixture's products through the same commerce API. Do not add it after the native driver has published. Start the real parent UI against that server in the clean worktree (no environment files):
+
+```sh
+node scripts/collage-e2e-browser.mjs --origin http://localhost:55468 --port 3114
+```
+
+Open `http://localhost:3114/collage-e2e` in a browser. The launcher mounts temporary page/proxy files, uses only fixture credentials, and removes those files on exit. It refuses to overwrite existing files or load local environment files. API requests use a same-origin proxy; signed photo URLs retain their canonical `/api/portal/` path so saved-cart media identity checks run unchanged. Fixture payments refuse external destinations. The latest fixture provider page returns to the local UI; an already running older fixture may require manually reopening the local page after the signed webhook completes. Automated HTTP scenarios cover the actual checkout-return confirmation separately.
+
+Use a fresh browser origin after changing the fixture helper to avoid stale development chunks. Stop the launcher before TypeScript generation, full tests or a production build, so its temporary routes are absent. No helper page/proxy route is included in the shipped app.
 
 Artifacts are written to the config's `outputDirectory`: independently cropped print PNGs, parent preview, restored basket, production ZIP, `http-e2e-receipt.json`, and `native-config.json`. The native production phase consumes `native-config.json` and produces its own Noritsu receipt and JPEG files. Fixture JWTs and all media are synthetic.
 

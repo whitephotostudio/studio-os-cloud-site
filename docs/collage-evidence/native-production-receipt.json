@@ -1,0 +1,52 @@
+{
+  "phase": "native-production",
+  "printCount": 2,
+  "prints": [
+    {
+      "filename": "9290f057-dd4e-4081-99df-3d393c31e240_74e519b6-556f-440d-acd7-a7d2c56afcf0.jpg",
+      "orderId": "9290f057-dd4e-4081-99df-3d393c31e240",
+      "itemId": "74e519b6-556f-440d-acd7-a7d2c56afcf0",
+      "sha256": "cf64c4438a4b35331b073c3304edec05350d46ab25089efb49e48d2b9a1b6e9a",
+      "width": 3000,
+      "height": 2400,
+      "productionReceipt": {
+        "version": 1,
+        "ownerId": "01000000-0000-4000-8000-000000000002",
+        "cloudOrderId": "9290f057-dd4e-4081-99df-3d393c31e240",
+        "itemId": "74e519b6-556f-440d-acd7-a7d2c56afcf0",
+        "recipeHash": "b96dae2de10d0500dcc0850df3f96c4491fda0b483be2cd2a81bd1e89791e54b",
+        "templateHash": "4e8ae5a9a603ac20fd992452f2273adbc4045f6109052042d0152e51626b258a",
+        "sourceSha256": "4842634336a408ba1c60edb34bec161c9b764bd1020e50a615c6ad27482b66fb",
+        "printSha256": "4842634336a408ba1c60edb34bec161c9b764bd1020e50a615c6ad27482b66fb",
+        "trimWidthPixels": 3000,
+        "trimHeightPixels": 2400,
+        "resolutionWarningCount": 0,
+        "quantity": 1
+      }
+    },
+    {
+      "filename": "9290f057-dd4e-4081-99df-3d393c31e240_e7eb5d82-1107-4033-90cd-8c8b1b419715.jpg",
+      "orderId": "9290f057-dd4e-4081-99df-3d393c31e240",
+      "itemId": "e7eb5d82-1107-4033-90cd-8c8b1b419715",
+      "sha256": "94baefe72ced49ae8e1bd9cdf402f6000e18d985bb892633478fa7461b3bf950",
+      "width": 3000,
+      "height": 2400,
+      "productionReceipt": {
+        "version": 1,
+        "ownerId": "01000000-0000-4000-8000-000000000002",
+        "cloudOrderId": "9290f057-dd4e-4081-99df-3d393c31e240",
+        "itemId": "e7eb5d82-1107-4033-90cd-8c8b1b419715",
+        "recipeHash": "9faeb0f6f8569deaca6317664e12ee6e2d03b2825af6e2d7b46313298c86f9f1",
+        "templateHash": "4e8ae5a9a603ac20fd992452f2273adbc4045f6109052042d0152e51626b258a",
+        "sourceSha256": "b69837eaaf794d89c70f930071bf46b205fcae0915d53aee0244a53bd6489cca",
+        "printSha256": "b69837eaaf794d89c70f930071bf46b205fcae0915d53aee0244a53bd6489cca",
+        "trimWidthPixels": 3000,
+        "trimHeightPixels": 2400,
+        "resolutionWarningCount": 0,
+        "quantity": 1
+      }
+    }
+  ],
+  "noPrinterInvoked": true,
+  "verificationScope": "Isolated source snapshot; real desktop production service; synthetic paid order; no printer invoked."
+}
