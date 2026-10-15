@@ -50,7 +50,6 @@ export async function runCollageScenario(config,{publish=false}={}) {
   assert.equal((await client.request('/api/dashboard/collages/'+versionId,{token:config.foreignToken})).status,404);
   const lanes=[];
   for(const parent of config.parents){const body={kind:parent.kind,galleryId:parent.galleryId,pin:parent.pin,email:parent.email};lanes.push((await client.ok('/api/portal/session',{body})).json);}
-  const stranger=fixtureClient(config);assert.equal((await stranger.request('/api/portal/gallery-context',{body:{parentLaneId:lanes[0].laneId}})).status,401);
   const mediaFor=index=>config.media.filter(row=>row.schoolId===config.parents[index].galleryId);
   const entryFor=(index,version=versionId,design=stored.design)=>({packageId:mixed.id,quantity:1,price:1,slots:mixed.items.flatMap(item=>Array.from({length:item.qty||1},(_,copy)=>item.collage?{label:'Collage print',assignedImageUrl:null,collage:selections(design,version,mediaFor(index),copy)}:{label:'Ordinary print',assignedImageUrl:mediaFor(index)[0].key}))});
   const common={parent:{name:'Isolated Parent',email:'parent@example.test',phone:''},delivery:{method:'pickup'}};
@@ -59,6 +58,7 @@ export async function runCollageScenario(config,{publish=false}={}) {
   assert.equal((await client.request('/api/portal/orders/create',{body:invalid,headers:{'x-studio-parent-session':'1'}})).status,409);
   const badPreview=await client.request('/api/portal/collages/preview',{body:{parentLaneId:lanes[0].laneId,selection:invalid.entries[0].slots.find(slot=>slot.collage).collage}});assert.equal(badPreview.status,403);
   const goodSelection=body.entries[0].slots.find(slot=>slot.collage).collage;
+  const stranger=fixtureClient(config);assert.equal((await stranger.request('/api/portal/collages/preview',{body:{parentLaneId:lanes[0].laneId,selection:goodSelection}})).status,401);
   const preview=await client.ok('/api/portal/collages/preview',{body:{parentLaneId:lanes[0].laneId,selection:goodSelection}});
   const previewBytes=Buffer.from(preview.json.preview.split(',')[1],'base64'),previewMetadata=await sharp(previewBytes).metadata();
   assert.equal(Math.max(previewMetadata.width,previewMetadata.height),1200);await writeFile(path.join(config.outputDirectory,'parent-preview.png'),previewBytes);
@@ -75,6 +75,11 @@ export async function runCollageScenario(config,{publish=false}={}) {
   assert.equal((await client.request(outputPath(collages[0]),{token:config.ownerToken})).status,409);
   const checkout=(await client.ok('/api/stripe/checkout',{body:{orderId:created.orderId,parentLaneId:lanes[0].laneId},headers:{'x-studio-parent-session':'1'}})).json;
   const sessionId=checkout.sessionId||checkout.checkoutSessionId||checkout.url.split('/').at(-1);
+  if(config.fixtureRevision>=2){
+    const providerPage=await client.ok('/__fixture/provider/'+sessionId+'?fixtureReturnTo='+encodeURIComponent('http://localhost:3114/collage-e2e'));
+    const script=providerPage.bytes.toString().match(/<script>([\s\S]*?)<\/script>/)?.[1],button={};assert.ok(script,'Fixture payment button has a parseable script binding.');
+    new Function('document','fetch','location',script)({getElementById:()=>button},()=>{throw Error('Unexpected provider call before click');},{});assert.equal(typeof button.onclick,'function');
+  }
   const receipt=(await client.ok('/__fixture/complete-payment',{body:{sessionId}})).json;assert.equal(receipt.receipt.notStripeTestMode,true);
   await client.ok('/__fixture/complete-payment',{body:{sessionId}});
   const paidState=(await client.ok('/__fixture/state')).json,paidOrder=paidState.orders.find(row=>row.id===created.orderId);assert.equal(paidOrder.payment_status,'paid');assert.ok(paidOrder.paid_at);
