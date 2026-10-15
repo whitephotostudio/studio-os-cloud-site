@@ -4,6 +4,8 @@ import { parseCollageSelection, packageCollageVersion, type CollageSelection } f
 import { resolveCollageVersions, type StoredCollageVersion } from "@/lib/collage-server";
 import { resolveSchoolOrderMediaReferences } from "@/lib/school-order-media";
 import { resolveEventOrderMediaReferences } from "@/lib/event-order-media";
+import { filterPackagesForProfile } from "@/lib/package-profile-selection";
+import { normalizeEventGallerySettings } from "@/lib/event-gallery-settings";
 
 /** Captured from server-owned immutable versions and authorized original keys. */
 export type CollageOrderSnapshot = Omit<CollageSelection, "placements"> & {
@@ -28,6 +30,31 @@ export type CollagePackageItem = string | {
 type CollagePackage = { items?: CollagePackageItem[] | null; category?: string | null; name?: string | null; is_retouch_addon?: boolean | null };
 type Entry = { packageId: string; quantity: number; slots: CollageCheckoutSlot[]; isComposite?: boolean; backdrop?: unknown; digitalSelections?: unknown[]; retouchSelections?: unknown[] };
 export class CollageCheckoutError extends Error {}
+
+async function assertGalleryCollageProducts(service: SupabaseClient, photographerId: string,
+  scope: { schoolId: string } | { projectId: string }, packageIds: string[]) {
+  const galleryTable = "schoolId" in scope ? "schools" : "projects";
+  const galleryId = "schoolId" in scope ? scope.schoolId : scope.projectId;
+  const [gallery, studio] = await Promise.all([
+    service.from(galleryTable).select("package_profile_id,gallery_settings").eq("id", galleryId).eq("photographer_id", photographerId).maybeSingle(),
+    service.from("photographers").select("default_package_profile_id").eq("id", photographerId).maybeSingle(),
+  ]);
+  if (gallery.error || studio.error || !gallery.data || !studio.data) throw new CollageCheckoutError("Could not verify this gallery's collage products. Reopen the gallery.");
+  // Match the parent catalogue's active, price-ordered package list and its
+  // legacy profile fallback. Browser package IDs cannot bypass a price sheet.
+  const catalogue: Array<{ id: string; profile_id?: string | null }> = [];
+  for (let offset = 0; offset < 10000; offset += 500) {
+    const page = await service.from("packages").select("id,profile_id").eq("photographer_id", photographerId)
+      .eq("active", true).order("price_cents", { ascending: true }).order("id", { ascending: true }).range(offset, offset + 499);
+    if (page.error) throw new CollageCheckoutError("Could not verify this gallery's current price sheet. Please try again.");
+    catalogue.push(...(page.data ?? []));
+    if ((page.data?.length ?? 0) < 500) break;
+    if (offset === 9500) throw new CollageCheckoutError("This catalogue is too large to verify safely. Please contact the studio.");
+  }
+  const selectedProfileId = gallery.data.package_profile_id || normalizeEventGallerySettings(gallery.data.gallery_settings).extras.priceSheetProfileId || studio.data.default_package_profile_id;
+  const available = new Set(filterPackagesForProfile(catalogue, { selectedProfileId }).packages.map(row => row.id));
+  if (packageIds.some(id => !available.has(id))) throw new CollageCheckoutError("A collage product is not offered by this gallery's current price sheet. Reopen the gallery and choose an available product.");
+}
 
 /** No format checks or version lookups affect older ordinary-print packages. */
 export function collagePackageVersions(pkg: CollagePackage): string[] {
@@ -154,6 +181,7 @@ export async function resolveCollageCheckout<T extends Entry>(
   const versionIds = [...new Set([...configuredVersionIds, ...selectedVersionIds])];
   if (!versionIds.length) return;
   if (process.env.STUDIO_OS_COLLAGE_CHECKOUT_ENABLED !== "1") throw new CollageCheckoutError("Collages are a preview. Purchasing will be available after production integration is verified.");
+  await assertGalleryCollageProducts(service, photographerId, scope, entries.filter(entry => collagePackageVersions(getPackage(entry.packageId)).length).map(entry => entry.packageId));
   let versions: Map<string, StoredCollageVersion>;
   try { versions = await resolveCollageVersions(service, photographerId, scope, versionIds); }
   catch (error) { throw new CollageCheckoutError(error instanceof Error ? error.message : "Could not verify collage availability."); }

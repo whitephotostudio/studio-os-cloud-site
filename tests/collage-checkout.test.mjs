@@ -55,9 +55,10 @@ function fixture({ enabled = '1', packageOverride = {}, rejectVersions = false, 
     from(table) {
       const filters = []; let single = false;
       const query = { select() { return query; }, eq(k, v) { filters.push(row => row[k] === v); return query; },
+        order() { return query; }, range() { return query; },
         in(k, values) { filters.push(row => values.includes(row[k])); return query; }, maybeSingle() { single = true; return query; },
         then(resolve, reject) {
-          const rows = (table === 'students' ? students : table === 'schools' ? [{ id: schoolId, photographer_id: owner }]
+          const rows = (table === 'students' ? students : table === 'schools' ? [{ id: schoolId, photographer_id: owner }] : table === 'projects' ? [{ id: projectId, photographer_id: owner }]
             : table === 'photographers' ? [{ id: owner, subscription_status: 'active' }] : table === 'packages' ? packages : []).filter(row => filters.every(f => f(row)));
           return Promise.resolve({ data: single ? rows[0] ?? null : rows, error: null }).then(resolve, reject);
         } };

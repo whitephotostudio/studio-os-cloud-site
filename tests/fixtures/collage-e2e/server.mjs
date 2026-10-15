@@ -26,7 +26,7 @@ export async function startCollageFixture({ outputDirectory, port = 0, includeEv
   const jwtSecret=randomBytes(32).toString('hex'), serviceKey='fixture-service-'+randomBytes(12).toString('hex'), anonKey='fixture-anon-only';
   const tokenFor = sub => { const payload=Buffer.from(JSON.stringify({sub,aal:'aal1',role:'authenticated',exp:Math.floor(Date.now()/1000)+86400})).toString('base64url');const head=Buffer.from('{"alg":"HS256","typ":"JWT"}').toString('base64url');return`${head}.${payload}.${createHmac('sha256',jwtSecret).update(`${head}.${payload}`).digest('base64url')}`; };
   const ownerToken=tokenFor(ids.user), foreignToken=tokenFor(ids.otherUser), objects=new Map(), payments=new Map(), observations={auth:[],sql:[],provider:[],storage:[],emails:[],routes:[]}, requestContext=new AsyncLocalStorage();
-  let baseUrl, environment, closed=false;
+  let baseUrl, environment, closed=false, activeRequests=0;
   const media = [];
   for (let student=0;student<2;student++) for(let index=0;index<3;index++) {
     const schoolId=student?ids.siblingSchool:ids.school, studentId=student?ids.siblingStudent:ids.student;
@@ -142,6 +142,11 @@ export async function startCollageFixture({ outputDirectory, port = 0, includeEv
   async function route(request) {
     const url=request.nextUrl;
     if(url.pathname==='/__fixture/config')return Response.json(config);
+    if(url.pathname==='/__fixture/reload'&&request.method==='POST') {
+      if(activeRequests!==1)return Response.json({ok:false,message:'Wait until fixture driver requests finish before reloading.'},{status:409});
+      const count=modules.size;modules.clear();for(const timer of timers)clearInterval(timer);timers.clear();
+      return Response.json({ok:true,reloadedModules:count});
+    }
     if(url.pathname==='/__fixture/object') {
       const key=url.searchParams.get('key'),expires=url.searchParams.get('expires');
       const signature=createHmac('sha256',jwtSecret).update(`${key}:${expires}`).digest('hex');
@@ -191,6 +196,7 @@ export async function startCollageFixture({ outputDirectory, port = 0, includeEv
     return requestContext.run(request,()=>handler(request,context));
   }
   const server=createServer(async(req,res)=>{
+    activeRequests++;
     try {
       const chunks=[];for await(const chunk of req)chunks.push(chunk);
       const headers=new Headers();for(const[key,value]of Object.entries(req.headers))if(value!==undefined)headers.set(key,Array.isArray(value)?value.join(','):value);
@@ -201,6 +207,7 @@ export async function startCollageFixture({ outputDirectory, port = 0, includeEv
       const cookies=response.headers.getSetCookie?.()||[];if(cookies.length)res.setHeader('set-cookie',cookies);
       res.end(Buffer.from(await response.arrayBuffer()));
     } catch(error) { if(!error.status)console.error('[collage fixture]',error);res.statusCode=Number(error.status)||500;res.setHeader('content-type','application/json');res.end(JSON.stringify({ok:false,message:error.message,fixture:true})); }
+    finally { activeRequests--; }
   });
   await new Promise(resolve=>server.listen(port,'127.0.0.1',resolve));baseUrl=`http://localhost:${server.address().port}`;
   environment={NODE_ENV:'test',NEXT_PUBLIC_SITE_URL:baseUrl,NEXT_PUBLIC_SUPABASE_URL:baseUrl,NEXT_PUBLIC_SUPABASE_ANON_KEY:anonKey,SUPABASE_SERVICE_ROLE_KEY:serviceKey,STRIPE_SECRET_KEY:'sk_fixture_simulated_never_real',STRIPE_CONNECT_WEBHOOK_SECRET:'whsec_isolated_fixture_only',EVENT_DOWNLOAD_TOKEN_SECRET:'isolated-collage-fixture-secret-'+jwtSecret,DOWNLOAD_TOKEN_SECRET:'isolated-collage-fixture-secret-'+jwtSecret,STUDIO_OS_COLLAGE_CHECKOUT_ENABLED:'1',UPSTASH_REDIS_REST_URL:'https://fixture.invalid',UPSTASH_REDIS_REST_TOKEN:'fixture',STUDIO_CREDIT_MAINTENANCE:'1'};
