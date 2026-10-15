@@ -79,9 +79,11 @@ async function fixture(t) {
           then(resolve,reject){return Promise.resolve(result(false)).then(resolve,reject);}};return query;
       }
       if (table === 'stripe_merchant_disputes') return { upsert: async value => { disputes.set(value.dispute_id, value); return { error: null }; } };
-      const query = { select() { return this; }, in() { return this; }, lte() { return this; }, order() { return this; }, not() { return this; },
+      let selectedColumns='';
+      const query = { select(columns) { selectedColumns=columns;return this; }, eq(){return this;}, in() { return this; }, lte() { return this; }, order() { return this; }, not() { return this; },
         async limit(limit) {
-          if (table === 'photographers') return { data: [...registry.values()].some(r => r.migratedAt) ? [{ stripe_standard_migrated_at: '2026-10-13' }] : [], error: null };
+          if (table === 'photographers') return { data: [...registry.values()].some(r => selectedColumns==='stripe_account_history_required'?r.historyRequired:r.migratedAt)
+            ? [{ [selectedColumns]: selectedColumns==='stripe_account_history_required'?true:'2026-10-13' }] : [], error: null };
           assert.equal(table, 'stripe_merchant_events');
           if (missingLedger) return { data: null, error: { code: '42P01' } };
           return { data: (await db.query(`select payload from stripe_merchant_events where status in ('pending','processing')
@@ -91,7 +93,14 @@ async function fixture(t) {
       return query;
     },
   };
+  let signupUpdate = null, signupUpdateFailure = false;
   const deps = {
+    '@/lib/stripe-standard-signup': { refreshStandardSignupFromAccount: async (_service,input) => {
+      calls.push({action:'signup-refresh',...input});
+      assert.equal((await db.query('select status from stripe_merchant_events where stripe_account_id=$1 order by created_at desc limit 1',[input.account.id])).rows[0]?.status,'processing','Signup effects must follow the durable event claim');
+      if(signupUpdateFailure){signupUpdateFailure=false;throw new Error('signup provider GET interrupted');}
+      return signupUpdate || {handled:false,activated:false,account:null};
+    } },
     '@/lib/checkout-attempt': { canonicalCheckoutJson: canonical },
     '@/lib/stripe-connect-history': {
       findStripeAccountOwner: async (_service, accountId, { livemode }) => {
@@ -105,7 +114,7 @@ async function fixture(t) {
         calls.push({ action: 'sync', account: account.id }); return { photographerId: studio, isActive: account.id === activeAccount };
       },
       markStripeAccountDeauthorized: async (_service, { accountId }) => {
-        registry.get(accountId).status = 'blocked'; registry.get(accountId).ready = false;
+        const row=registry.get(accountId);if(row){row.status = 'blocked';row.ready = false;}else assert.equal((await db.query("select status from stripe_merchant_events where stripe_account_id=$1",[accountId])).rows[0]?.status,'processing','Unknown deauthorization must be durable before its effect');
         if (activeAccount === accountId) ready = false; calls.push({ action: 'deauthorized', account: accountId });
       },
       resolveOrderPaymentAccount: async (_service, { photographerId, paymentIntentId, expectedAccount }) => {
@@ -159,6 +168,7 @@ async function fixture(t) {
     latestDispute(value) { latestDisputeStatus = value; },
     unregisteredExpress(){activeAccount='acct_old';ready=false;unregisteredAccounts.add('acct_old');const row=registry.get('acct_old');row.migratedAt=null;row.status='active';row.ready=false;},
     failLegacyState(){legacyStateFailure=true;},
+    signupUpdate(value){signupUpdate=value;},failSignupUpdate(){signupUpdateFailure=true;},
   };
 }
 
@@ -295,6 +305,15 @@ test('missing recovery schema allows unmigrated legacy path but fails closed aft
   assert.equal((await f.api.recoverStripeMerchantEvents(f.service)).schemaMissing, true);
 });
 
+test('born-Standard merchant recovery cannot hide missing history when new-account creation is off and no pilot migration exists',async t=>{
+  const f=await fixture(t);f.missingLedger();for(const row of f.registry.values())row.migratedAt=null;
+  f.registry.get('acct_new').historyRequired=true;
+  const previous=process.env.STRIPE_STANDARD_NEW_ACCOUNTS_ENABLED;process.env.STRIPE_STANDARD_NEW_ACCOUNTS_ENABLED='false';
+  t.after(()=>{if(previous===undefined)delete process.env.STRIPE_STANDARD_NEW_ACCOUNTS_ENABLED;else process.env.STRIPE_STANDARD_NEW_ACCOUNTS_ENABLED=previous;});
+  await assert.rejects(f.api.recoverStripeMerchantEvents(f.service),e=>e.code==='42P01');
+  assert.equal(f.calls.length,0);
+});
+
 test('turning new onboarding off does not disable historical refund recovery', async t => {
   const f = await fixture(t); const previous = process.env.STRIPE_STANDARD_MIGRATION_ENABLED;
   process.env.STRIPE_STANDARD_MIGRATION_ENABLED = 'false'; t.after(() => {
@@ -408,3 +427,9 @@ test('an unrelated Standard charge with a generic order_id is ignored before Stu
   assert.equal(f.calls.filter(call=>call.action==='provider-get'&&call.path.startsWith('checkout/sessions/')).length,0);
   assert.equal((await f.db.query('select status from stripe_merchant_events')).rows[0].status,'processed');
 });
+
+test('signed deauthorization racing account registration is durably retained before an owner exists',async t=>{const f=await fixture(t),event=evt('account.application.deauthorized',{id:'ca_app'},'acct_notYetRegistered','evt_unregistered_deauth');const result=await f.api.processStripeMerchantEvent(f.service,event);assert.equal(result.status,200);const row=(await f.db.query('select * from stripe_merchant_events where event_id=$1',[event.id])).rows[0];assert.equal(row.stripe_account_id,event.account);assert.equal(row.event_type,'account.application.deauthorized');assert.equal(row.status,'processed');assert.deepEqual(row.payload,event);assert.equal(row.attempts,1);assert.equal(f.calls.filter(call=>call.action==='deauthorized').length,1);assert.equal(f.activeAccount,'acct_new');assert.equal((await f.api.processStripeMerchantEvent(f.service,event)).duplicate,true);assert.equal(f.calls.filter(call=>call.action==='deauthorized').length,1);});
+test('unknown deauthorization cannot be acknowledged when its durable inbox is absent',async t=>{const f=await fixture(t);f.missingLedger();await assert.rejects(f.api.processStripeMerchantEvent(f.service,evt('account.application.deauthorized',{id:'ca_app'},'acct_notYetRegistered','evt_missing_deauth')));assert.equal(f.calls.some(call=>call.action==='deauthorized'),false);assert.equal(f.activeAccount,'acct_new');});
+
+test('first owned Standard account.updated reaches signup first-activation only after the durable claim',async t=>{const f=await fixture(t);f.signupUpdate({handled:true,activated:true,account:{id:'acct_pendingSignup'}});const event=evt('account.updated',{id:'acct_pendingSignup',charges_enabled:false},'acct_pendingSignup','evt_signup_first');const result=await f.api.processStripeMerchantEvent(f.service,event);assert.equal(result.status,200);assert.equal(f.calls.filter(c=>c.action==='signup-refresh').length,1);assert.equal(f.calls.filter(c=>c.action==='get-account'||c.action==='legacy-sync').length,0);assert.equal((await f.db.query('select status from stripe_merchant_events where event_id=$1',[event.id])).rows[0].status,'processed');assert.equal(f.activeAccount,'acct_new');});
+test('signup account.updated provider failure stays retryable and unrelated updates cannot create account mappings',async t=>{const f=await fixture(t);f.failSignupUpdate();const event=evt('account.updated',{id:'acct_pendingSignup'},'acct_pendingSignup','evt_signup_retry');assert.equal((await f.api.processStripeMerchantEvent(f.service,event)).status,503);assert.equal((await f.db.query('select status from stripe_merchant_events where event_id=$1',[event.id])).rows[0].status,'pending');f.signupUpdate({handled:true,activated:false,account:{id:'acct_pendingSignup'}});assert.equal((await f.api.processStripeMerchantEvent(f.service,event)).status,200);f.signupUpdate({handled:false,activated:false,account:null});const external=await f.api.processStripeMerchantEvent(f.service,evt('account.updated',{id:'acct_unrelated'},'acct_unrelated','evt_unrelated_signup'));assert.equal(external.ignored,true);assert.equal(f.calls.filter(c=>c.action==='legacy-sync').length,0);assert.equal(f.activeAccount,'acct_new');});

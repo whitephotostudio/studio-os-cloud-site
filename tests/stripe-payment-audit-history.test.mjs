@@ -1,11 +1,26 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { resolveAuditedPaymentAccount, verifyPaymentRelease, WHITEPHOTO_STANDARD_AUDIT_SCOPE,verifyStandardWebhookDestinations,
-  STANDARD_CONNECT_WEBHOOK_EVENTS,STANDARD_PLATFORM_WEBHOOK_EVENTS,WHITEPHOTO_STANDARD_WEBHOOK_CONFIGURATION } from '../scripts/verify-payment-release.mjs';
+  STANDARD_CONNECT_WEBHOOK_EVENTS,STANDARD_PLATFORM_WEBHOOK_EVENTS,WHITEPHOTO_STANDARD_WEBHOOK_CONFIGURATION,verifyStandardSignupRelease } from '../scripts/verify-payment-release.mjs';
 
 const order={id:'11111111-1111-4111-8111-111111111111',photographer_id:'22222222-2222-4222-8222-222222222222',stripe_payment_intent_id:'pi_old'};
 const error=code=>Object.assign(new Error('Database verification failed; details withheld.'),{code});
 const legacy={stripe_connected_account_id:'acct_old',stripe_standard_migrated_at:null};
+
+test('born-Standard audit payments never use the current pointer if immutable history is unavailable with creation disabled',async()=>{
+  await assert.rejects(()=>resolveAuditedPaymentAccount(async path=>{
+    if(path.startsWith('rpc/'))throw error('PGRST202');
+    assert.ok(path.includes('stripe_account_history_required'));
+    return[{...legacy,stripe_account_history_required:true}];
+  },order),/requires its verified original account/);
+  const paths=[];
+  await assert.rejects(()=>resolveAuditedPaymentAccount(async path=>{
+    paths.push(path);if(path.startsWith('rpc/'))throw error('PGRST202');
+    if(path.includes('stripe_account_history_required'))throw error('42703');
+    return[{...legacy,stripe_standard_migrated_at:'2026-10-15T07:00:00Z'}];
+  },order),/requires its verified original account/);
+  assert.equal(paths.length,3,'Missing signup column must retain the earlier pilot migration marker');
+});
 
 test('audit resolver refuses ambiguous/migrated missing history regardless optional probe flag',async()=>{
   for(const historyRequired of [false,true]){
@@ -71,7 +86,9 @@ function releaseFixture(options={}) {
     metadata:{photographer_id:scope.photographerId,user_id:scope.userId},capabilities:{card_payments:'active',transfers:'active'},requirements:emptyRequirements(),...options.express};
   const required=['resolve_order_payment_account','reserve_order_payment_account','bind_order_payment_references',
     'backfill_order_payment_account','activate_photographer_standard_account','rollback_photographer_standard_account',
-    'claim_stripe_merchant_event','finish_stripe_merchant_event','get_photographer_checkout_routing','register_photographer_stripe_account','assert_whitephoto_live_stripe_scope','stripe_account_history_schema_status'];
+    'claim_stripe_merchant_event','finish_stripe_merchant_event','get_photographer_checkout_routing','register_photographer_stripe_account','assert_whitephoto_live_stripe_scope','stripe_account_history_schema_status',
+    'stripe_standard_signup_schema_status','stripe_standard_signup_params_hash','get_photographer_standard_signup_eligibility',
+    'reserve_photographer_standard_signup','record_photographer_standard_signup_account','activate_photographer_standard_signup'];
   const schema={paths:Object.fromEntries(required.filter(name=>name!==options.missingRpc).map(name=>[`/rpc/${name}`,{post:{}}]))};
   const calls=[],logs=[];
   const fetcher=async(target,init)=>{
@@ -93,6 +110,13 @@ function releaseFixture(options={}) {
       assert.equal(url.origin,`https://${scope.projectRef}.supabase.co`);
       if(url.pathname==='/rest/v1/')data=schema;
       else if(url.pathname==='/rest/v1/rpc/stripe_account_history_schema_status')data={version:'20261015010000',history_schema_present:true,reservation_guard_present:true,...options.protections};
+      else if(url.pathname==='/rest/v1/rpc/stripe_standard_signup_schema_status')data={version:'20261015020000',signup_schema_present:true,
+        history_required_guard_present:true,legacy_creation_barrier_present:true,service_only_rpcs:true,service_only_tables:true,...options.signupProtections};
+      else if(url.pathname==='/rest/v1/stripe_standard_signup_release_controls'){
+        assert.equal(url.searchParams.get('release_key'),'eq.standard-signup-v1');
+        data=options.signupRows??[{release_key:'standard-signup-v1',platform_account_id:scope.platformAccountId,project_ref:scope.projectRef,
+          enabled:true,enrollment_starts_at:new Date(Date.now()-3600000).toISOString(),allowed_countries:['CA','US'],allowed_currencies:['cad','usd'],...options.signupControl}];
+      }
       else if(url.pathname==='/rest/v1/photographers' && url.searchParams.has('id'))data=options.photographers??[{id:scope.photographerId,user_id:scope.userId,
         stripe_connected_account_id:scope.expressAccountId,stripe_account_id:scope.expressAccountId,stripe_standard_migrated_at:null}];
       else if(url.pathname==='/rest/v1/stripe_standard_live_release_controls'){
@@ -105,6 +129,75 @@ function releaseFixture(options={}) {
   };
   return{env,control,standard,express,calls,logs,fetcher,run:()=>verifyPaymentRelease(env,fetcher,line=>logs.push(JSON.parse(line)))};
 }
+
+test('new Standard signup audit defaults off and preserves disabled deployment compatibility without network access',async()=>{
+  for(const env of [{},{STRIPE_STANDARD_NEW_ACCOUNTS_ENABLED:'false'},{STRIPE_STANDARD_NEW_ACCOUNTS_ENABLED:'TRUE'}]) {
+    await verifyStandardSignupRelease(env,()=>assert.fail('Default-off signup audit cannot require new schema'),()=>assert.fail('No readiness claim while disabled'));
+  }
+});
+
+test('new Standard flag independently forces schema, service-only permissions, exact live controls and connected/platform webhook proof',async()=>{
+  const f=releaseFixture({env:{STUDIO_PAYMENT_RELEASE_VERIFY:undefined,STRIPE_STANDARD_MIGRATION_ENABLED:'false',
+    STRIPE_STANDARD_LIVE_MIGRATION_ENABLED:'false',STRIPE_STANDARD_LIVE_CHECKOUT_ENABLED:'false',STRIPE_STANDARD_NEW_ACCOUNTS_ENABLED:'true'},
+    control:{migration_enabled:false,checkout_enabled:false,reservation_required:false,activation_enabled:false}});
+  await f.run();
+  const result=f.logs.find(line=>line.check==='stripe-standard-new-signup-release');
+  assert.equal(result.creationFlag,true);assert.equal(result.creationControl,true);assert.equal(result.serviceOnlyPermissions,true);
+  assert.equal(result.legacyCreationBarrier,true);assert.equal(result.immutableHistoryRequired,true);
+  assert.equal(result.existingMerchantRoutingChanged,false);assert.equal(result.financialMutations,0);assert.equal(result.databaseMutations,0);
+  assert.ok(f.calls.some(call=>call.url.pathname==='/rest/v1/photographer_stripe_standard_signups'&&call.url.searchParams.get('limit')==='0'));
+  assert.ok(f.calls.some(call=>call.url.pathname==='/rest/v1/stripe_standard_signup_eligible_profiles'&&call.url.searchParams.get('limit')==='0'));
+  assert.ok(f.logs.some(line=>line.check==='stripe-account-history-schema'),'New signup cannot skip the existing immutable-history audit');
+  assert.equal(f.calls.some(call=>call.url.pathname.startsWith('/v1/accounts/')),false,'New-only audit does not expand or adopt pilot accounts');
+  assert.ok(f.calls.every(call=>call.method==='GET'));
+  const output=JSON.stringify(f.logs);for(const secret of ['sk_live_fake','service-test','private-photographer@example.invalid'])assert.equal(output.includes(secret),false);
+});
+
+test('explicit disabled preparation audit proves new schema without enabling creation or requiring a merchant cutover',async()=>{
+  const f=releaseFixture({env:{STUDIO_STANDARD_SIGNUP_RELEASE_VERIFY:'1',STRIPE_STANDARD_NEW_ACCOUNTS_ENABLED:'false'},signupControl:{enabled:false}});
+  await verifyStandardSignupRelease(f.env,f.fetcher,line=>f.logs.push(JSON.parse(line)));
+  assert.equal(f.logs[0].creationFlag,false);assert.equal(f.logs[0].creationControl,false);
+  assert.ok(f.calls.every(call=>call.method==='GET'));
+  assert.equal(f.calls.some(call=>call.url.pathname.startsWith('/v1/accounts/')),false);
+});
+
+test('new Standard signup audit fails closed for wrong platform/project/app/mode or configuration operations before new controls',async()=>{
+  for(const options of [{platformId:'acct_foreign'},{balance:{livemode:false}},
+    ...Object.entries({STRIPE_SECRET_KEY:'sk_test_fake',SUPABASE_SERVICE_ROLE_KEY:'[SENSITIVE]',STUDIO_STANDARD_EXPECTED_PLATFORM_ACCOUNT_ID:'acct_foreign',
+      STUDIO_PAYMENT_EXPECTED_PROJECT_REF:'foreign',NEXT_PUBLIC_SUPABASE_URL:'https://foreign.supabase.co',STUDIO_PAYMENT_EXPECTED_APP_URL:'https://foreign.test',
+      STUDIO_STANDARD_WEBHOOK_CONFIGURE:'whitephoto-20261015',STUDIO_CREDIT_WEBHOOK_CONFIGURE:'1',STUDIO_PAYMENT_REFUND_WEBHOOK_ID:'we_foreign'})
+      .map(([key,value])=>({env:{[key]:value}}))]) {
+    const f=releaseFixture({...options,env:{...options.env,STRIPE_STANDARD_NEW_ACCOUNTS_ENABLED:'true'}});
+    await assert.rejects(()=>verifyStandardSignupRelease(f.env,f.fetcher),/exact protected live|exact platform|GET-only/);
+    assert.equal(f.calls.some(call=>call.url.pathname==='/rest/v1/stripe_standard_signup_release_controls'),false);
+  }
+});
+
+test('new Standard signup creation requires its exact enabled control, proven schema guards and six service-only RPCs',async()=>{
+  const invalidControls=[{enabled:false},{enabled:'true'},{release_key:'whitephoto-20261015'},{platform_account_id:'acct_foreign'},
+    {project_ref:'foreign'},{allowed_countries:['CA']},{allowed_countries:['CA','CA']},{allowed_countries:['CA','US','GB']},
+    {allowed_currencies:['cad']},{allowed_currencies:['cad','eur']},{enrollment_starts_at:null},{enrollment_starts_at:'invalid'},
+    {enrollment_starts_at:new Date(Date.now()+86400000).toISOString()}];
+  for(const options of [...invalidControls.map(signupControl=>({signupControl})),{signupRows:[]},{signupRows:[{},{}]},
+    ...['signup_schema_present','history_required_guard_present','legacy_creation_barrier_present','service_only_rpcs','service_only_tables'].map(key=>({signupProtections:{[key]:false}})),
+    {signupProtections:{version:'old'}},...['stripe_standard_signup_params_hash','record_photographer_standard_signup_account','activate_photographer_standard_signup']
+      .map(missingRpc=>({missingRpc})),{protections:{reservation_guard_present:false}}]) {
+    const f=releaseFixture({...options,env:{STRIPE_STANDARD_NEW_ACCOUNTS_ENABLED:'true'}});
+    await assert.rejects(()=>verifyStandardSignupRelease(f.env,f.fetcher),/signup|history/);
+    assert.equal(f.calls.some(call=>call.url.pathname==='/v2/core/event_destinations'),false,'Unproven signup controls cannot reach webhook readiness claim');
+  }
+});
+
+test('new Standard signup audit requires genuine connected-account and platform events with complete scope pagination',async()=>{
+  for(const destinations of [{data:[destination(['@self'],['*'],'ed_platform')],next_page_url:null},
+    {data:[destination(['@accounts'],['*'],'ed_connect')],next_page_url:null},
+    {...completeDestinations(),next_page_url:'/v2/next'},
+    {data:[destination(['@accounts'],STANDARD_CONNECT_WEBHOOK_EVENTS.filter(event=>event!=='account.application.deauthorized'),'ed_connect'),
+      destination(['@self'],[...STANDARD_PLATFORM_WEBHOOK_EVENTS],'ed_platform')],next_page_url:null}]) {
+    const f=releaseFixture({env:{STRIPE_STANDARD_NEW_ACCOUNTS_ENABLED:'true'},destinations});
+    await assert.rejects(()=>verifyStandardSignupRelease(f.env,f.fetcher),/scope proof is incomplete|webhook scope/);
+  }
+});
 
 test('live flags force the complete history/control audit even when optional history and generic release probes are absent',async()=>{
   const f=releaseFixture({env:{STUDIO_PAYMENT_RELEASE_VERIFY:undefined}});

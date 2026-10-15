@@ -27,12 +27,20 @@ import {
   retrieveStripeSubscription,
   syncConnectState,
   syncSubscriptionStateFromStripe,
+  type PhotographerBillingRow,
 } from "@/lib/payments";
 import { verifiedConnectCountry } from "@/lib/stripe-connect-country";
 import { getPricingCatalogSnapshot } from "@/lib/studio-pricing";
+import { refreshStandardSignupForPhotographer } from "@/lib/stripe-standard-signup";
 
 export const dynamic = "force-dynamic";
 const pricingCatalog = getPricingCatalogSnapshot();
+type ConnectedAccountStatus = Awaited<ReturnType<typeof retrieveStripeAccount>> & {
+  type?: string;
+  controller?: { fees?: { payer?: string }; losses?: { payments?: string }; requirement_collection?: string; stripe_dashboard?: { type?: string } };
+  capabilities?: Record<string, string>;
+  future_requirements?: Record<string, unknown> | null;
+};
 
 const EMPTY_PROFILE = {
   ok: false,
@@ -42,6 +50,9 @@ const EMPTY_PROFILE = {
   brandColor: "#0f172a",
   logoUrl: "",
   stripeAccountId: null,
+  stripeAccountType: null,
+  stripeDashboardType: null,
+  stripePendingAccountId: null,
   detailsSubmitted: false,
   chargesEnabled: false,
   payoutsEnabled: false,
@@ -121,6 +132,20 @@ export async function GET(request: NextRequest) {
     const service = createDashboardServiceClient();
     let photographer = await getOrCreatePhotographerByUser(service, user);
     const warnings: string[] = [];
+    let signup: Awaited<ReturnType<typeof refreshStandardSignupForPhotographer<PhotographerBillingRow>>> | null = null;
+    let signupRefreshError: string | null = null;
+    // A previously reserved Standard account can finish onboarding with new
+    // creation disabled. The helper only GET-verifies and atomically registers
+    // or first-activates the exact authenticated owner's existing intent.
+    if (mfaSatisfied === true) {
+      try {
+        signup = await refreshStandardSignupForPhotographer(service, { photographer, userId: user.id });
+        if (signup.handled) photographer = signup.photographer;
+      } catch {
+        signupRefreshError = "Your Stripe setup needs verification before customer payments can continue.";
+        warnings.push(signupRefreshError);
+      }
+    }
 
     let studioName = "Studio OS Cloud";
     if (photographer.studio_id) {
@@ -140,11 +165,43 @@ export async function GET(request: NextRequest) {
     let payoutsEnabled = Boolean(photographer.stripe_connect_payouts_enabled);
     let connectDisabledReason: string | null = null;
     let stripeAccountCountry: string | null = null;
-    let connectCountryError: string | null = null;
+    let connectCountryError: string | null = signupRefreshError;
+    let stripeAccountType: "express" | "standard" | null = null;
+    let stripeDashboardType: "express" | "full" | null = null;
+    const stripePendingAccountId = signup?.handled && signup.pending && signup.account ? signup.account.id : null;
+    let standardReady: boolean | null = null;
+    const strictStandardReady = (account: ConnectedAccountStatus) => {
+      const clean = (requirements: object | null | undefined) => {
+        const fields = requirements as Record<string, unknown> | null | undefined;
+        return Boolean(fields) && !fields?.disabled_reason && ["currently_due", "eventually_due", "past_due", "pending_verification", "errors"]
+          .every(key => Array.isArray(fields?.[key]) && (fields?.[key] as unknown[]).length === 0);
+      };
+      return account?.type === "standard" && account.controller?.fees?.payer === "account" && account.controller?.losses?.payments === "stripe" &&
+        account.controller?.requirement_collection === "stripe" && account.controller?.stripe_dashboard?.type === "full" &&
+        account.details_submitted === true && account.charges_enabled === true && account.payouts_enabled === true &&
+        account.capabilities?.card_payments === "active" && account.capabilities?.transfers === "active" &&
+        clean(account.requirements) && clean(account.future_requirements);
+    };
+    if (signup?.handled && signup.account) {
+      stripeAccountCountry = signup.account.country || null;
+      stripeAccountType = signup.account.type === "standard" ? "standard" : null;
+      stripeDashboardType = signup.account.controller?.stripe_dashboard?.type === "full" ? "full" : null;
+      detailsSubmitted = signup.account.details_submitted === true;
+      chargesEnabled = signup.account.charges_enabled === true;
+      payoutsEnabled = signup.account.payouts_enabled === true;
+      standardReady = signup.active && !signup.blocked && strictStandardReady(signup.account as ConnectedAccountStatus);
+    }
+    if (signup?.blocked) connectCountryError = "This Stripe connection was disconnected. Contact Studio OS support before reconnecting.";
+    if (signupRefreshError || signup?.blocked) detailsSubmitted = chargesEnabled = payoutsEnabled = false;
 
-    if (stripeAccountId) {
+    if (stripeAccountId && !connectCountryError) {
       try {
-        const account = await retrieveStripeAccount(stripeAccountId);
+        const account = (signup?.handled && signup.active && signup.account?.id === stripeAccountId
+          ? signup.account : await retrieveStripeAccount(stripeAccountId)) as ConnectedAccountStatus;
+        stripeAccountType = account.type === "standard" || account.type === "express" ? account.type : null;
+        stripeDashboardType = account.controller?.stripe_dashboard?.type === "full" ? "full"
+          : account.controller?.stripe_dashboard?.type === "express" ? "express" : null;
+        standardReady = account.type === "standard" ? strictStandardReady(account) : null;
         stripeAccountCountry = account.country || null;
         verifiedConnectCountry(account, photographer.business_country || photographer.stripe_connect_country);
         await syncConnectState(service, photographer.id, account);
@@ -195,7 +252,10 @@ export async function GET(request: NextRequest) {
     });
     const creditPacks = await ensureCreditPackageCatalog(service);
     const usageSummary = await getUsageSummaryForCurrentPeriod(service, photographer);
-    const connectStatus = connectCountryError ? { label: "Needs review", message: connectCountryError, readyForPayments: false } : describeConnectStatus({
+    const connectStatus = connectCountryError ? { label: "Needs review", message: connectCountryError, readyForPayments: false }
+      : signup?.pending ? { label: "Setup in progress", message: "Continue Stripe setup to finish verification. Customer payments stay unavailable until Stripe is ready.", readyForPayments: false }
+      : standardReady === false ? { label: "Needs verification", message: "Stripe still needs verification or payment capabilities before this Standard account can accept customer orders.", readyForPayments: false }
+      : describeConnectStatus({
       accountId: stripeAccountId,
       detailsSubmitted,
       chargesEnabled,
@@ -225,10 +285,13 @@ export async function GET(request: NextRequest) {
       brandColor: photographer.brand_color || "#0f172a",
       logoUrl: photographer.logo_url || "",
       stripeAccountId,
+      stripeAccountType,
+      stripeDashboardType,
+      stripePendingAccountId,
       detailsSubmitted,
       chargesEnabled,
       payoutsEnabled,
-      onboardingComplete: detailsSubmitted && chargesEnabled && payoutsEnabled,
+      onboardingComplete: Boolean(stripeAccountId) && connectStatus.readyForPayments && detailsSubmitted && chargesEnabled && payoutsEnabled,
       connectStatusLabel: connectStatus.label,
       connectStatusMessage: connectStatus.message,
       connectReadyForPayments: connectStatus.readyForPayments,

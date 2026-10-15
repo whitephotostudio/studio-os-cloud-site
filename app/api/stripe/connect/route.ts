@@ -14,6 +14,8 @@ import {
   syncConnectState,
 } from "@/lib/payments";
 import { ConnectProfileError, verifiedConnectCountry } from "@/lib/stripe-connect-country";
+import { assertStandardSignupConnectAllowed, startStandardSignup } from "@/lib/stripe-standard-signup";
+import { StandardConnectError, standardAccountReadiness, type StandardAccount } from "@/lib/stripe-standard-connect";
 
 export const dynamic = "force-dynamic";
 
@@ -51,9 +53,10 @@ export async function POST(request: NextRequest) {
     const service = createDashboardServiceClient();
     const body = (await request.json().catch(() => ({}))) as ConnectBody;
     let photographer = await getOrCreatePhotographerByUser(service, user);
-    // Reserve an explicit business country under a row lock before any Stripe
-    // creation request; an uncertain request retries the same account/country.
-    const profile = await configureConnectBusinessProfile(service, photographer, body, true);
+    await assertStandardSignupConnectAllowed(service, { photographer, userId: user.id });
+    // Standard reservation owns the first country lock. Reserving through the
+    // legacy Express path first would turn a new signup into an uncertain retry.
+    const profile = await configureConnectBusinessProfile(service, photographer, body, false);
     if (!profile.businessCountry) throw new ConnectProfileError("Choose your business country before connecting Stripe.");
 
     const brandingUpdates: Record<string, string | null> = {};
@@ -94,6 +97,15 @@ export async function POST(request: NextRequest) {
       await service.from("studios").update({ name: studioName }).eq("id", photographer.studio_id);
     }
 
+    const standard = await startStandardSignup(service, {
+      request, photographer, userId: user.id, email: billingEmail, country: profile.businessCountry, salesCurrency: profile.salesCurrency,
+    });
+    if (standard) return NextResponse.json(standard);
+
+    // Legacy Express requests retain their original country and idempotency
+    // behavior. The SQL lock refuses this path for reserved Standard signups.
+    await configureConnectBusinessProfile(service, photographer, body, true);
+
     let stripeAccountId = getConnectedAccountId(photographer);
     let account;
 
@@ -124,6 +136,20 @@ export async function POST(request: NextRequest) {
     verifiedConnectCountry(account, profile.businessCountry);
     await syncConnectState(service, photographer.id, account);
 
+    const standardAccount = account as unknown as StandardAccount;
+    if (standardAccount.type === "standard") {
+      if (standardAccount.metadata?.photographer_id !== photographer.id || standardAccount.metadata?.user_id !== user.id) {
+        throw new ConnectProfileError("The selected Standard account's ownership could not be verified.", 409);
+      }
+      const readiness = standardAccountReadiness(standardAccount, profile.businessCountry, {
+        livemode: /^sk_live_/.test(process.env.STRIPE_SECRET_KEY || ""),
+      });
+      return NextResponse.json({ ok: true, url: "https://dashboard.stripe.com/", stripeAccountId,
+        stripeAccountType: "standard", stripeDashboardType: "full", businessCountry: profile.businessCountry,
+        stripeAccountCountry: account.country, onboardingComplete: readiness.ready,
+        chargesEnabled: account.charges_enabled, payoutsEnabled: account.payouts_enabled });
+    }
+
     const origin = requestOrigin(request);
     const link = await createConnectedAccountLink(stripeAccountId, {
       returnUrl: connectReturnUrl(origin, "returned"),
@@ -145,9 +171,9 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(
       {
         ok: false,
-        message: error instanceof ConnectProfileError ? error.message : "Unable to start Stripe Connect onboarding. Check your business country and try again, or contact Studio OS support.",
+        message: error instanceof ConnectProfileError || error instanceof StandardConnectError ? error.message : "Unable to start Stripe Connect onboarding. Check your business country and try again, or contact Studio OS support.",
       },
-      { status: error instanceof ConnectProfileError ? error.status : 500 },
+      { status: error instanceof ConnectProfileError || error instanceof StandardConnectError ? error.status : 500 },
     );
   }
 }

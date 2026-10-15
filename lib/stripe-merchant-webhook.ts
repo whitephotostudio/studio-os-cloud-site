@@ -4,6 +4,7 @@ import { canonicalCheckoutJson } from "@/lib/checkout-attempt";
 import { findStripeAccountOwner, isStripeHistorySchemaMissing, markStripeAccountDeauthorized } from "@/lib/stripe-connect-history";
 import { reconcileOrderRefundFromStripe, recordStripeEvent, retrieveStripeAccount, stripeRequest, syncConnectState, verifySavedOrderPaymentFromStripe } from "@/lib/payments";
 import { scheduleOrderRefundEmails } from "@/lib/order-refund-notifications";
+import { refreshStandardSignupFromAccount } from "@/lib/stripe-standard-signup";
 
 export type StripeMerchantEvent = {
   id: string; type: string; account?: string; livemode?: boolean;
@@ -87,14 +88,19 @@ export async function processStripeMerchantEvent(service: SupabaseClient, event:
     throw error;
   }
   const owner = await findStripeAccountOwner(service, eventScope.accountId, { livemode: event.livemode });
-  if (!owner) return { ok: true, status: 200, ignored: true };
+  const deauthorization = event.type === "account.application.deauthorized";
+  const accountUpdate = event.type === "account.updated";
+  // Revocation can race the first account-registration reply. Preserve every
+  // signed deauthorization in the durable inbox even before an owner exists;
+  // signup registration/activation rejects that account+mode tombstone.
+  if (!owner && !deauthorization && !accountUpdate) return { ok: true, status: 200, ignored: true };
   const token = randomUUID();
   const { data: claim, error: claimError } = await service.rpc("claim_stripe_merchant_event", {
     p_event_id: event.id, p_account: eventScope.accountId, p_livemode: event.livemode, p_event_type: event.type,
     p_payload_hash: createHash("sha256").update(canonicalCheckoutJson(event)).digest("hex"), p_payload: event, p_token: token,
   });
   if (claimError) {
-    if (isStripeHistorySchemaMissing(claimError) && !owner.migratedAt) return null;
+    if (isStripeHistorySchemaMissing(claimError) && owner && !owner.migratedAt && !owner.historyRequired && !deauthorization) return null;
     throw claimError;
   }
   if (claim === "processed") return { ok: true, status: 200, duplicate: true };
@@ -106,16 +112,28 @@ export async function processStripeMerchantEvent(service: SupabaseClient, event:
     if (!data) throw new Error("Merchant event lease changed during processing.");
   };
   try {
+    const photographerId = owner?.photographerId || "";
+    if (!photographerId && !deauthorization && !accountUpdate) throw new MerchantScopeError("Merchant ownership is unavailable.");
     if (event.type === "account.updated") {
       // Always read current account state: a delayed older event cannot undo
       // the latest readiness or switch the active account pointer.
-      if (owner.status !== "blocked") {
-        const account = await retrieveStripeAccount(eventScope.accountId);
-        if (account.id !== eventScope.accountId) throw new MerchantScopeError("Stripe account identity changed.");
-        // The additive ledger also sees Express studios that have not entered
-        // the migration registry. This helper updates their current connection,
-        // while an existing history row keeps legacy updates off the active route.
-        await syncConnectState(service, owner.photographerId, account);
+      if (owner?.status !== "blocked") {
+        // An account.updated can arrive before first registration. The signup
+        // helper resolves only an immutable owned intent, GETs current provider
+        // state, and first-activates only after readiness and revocation guards.
+        const signup = await refreshStandardSignupFromAccount(service, {
+          account: { id: eventScope.accountId }, livemode: event.livemode!,
+        });
+        if (!signup.handled && owner) {
+          const account = await retrieveStripeAccount(eventScope.accountId);
+          if (account.id !== eventScope.accountId) throw new MerchantScopeError("Stripe account identity changed.");
+          // Express studios without registry rows retain readiness updates;
+          // historical rows can never replace the selected current account.
+          await syncConnectState(service, photographerId, account);
+        } else if (!signup.handled) {
+          await recordStripeEvent(service, event, event); await finish("processed");
+          return { ok: true, status: 200, ignored: true };
+        }
       }
     } else if (event.type === "account.application.deauthorized") {
       await markStripeAccountDeauthorized(service, { accountId: eventScope.accountId, livemode: event.livemode });
@@ -127,26 +145,26 @@ export async function processStripeMerchantEvent(service: SupabaseClient, event:
         currency: string; livemode: boolean; evidence_details?: { due_by?: number } }>(`disputes/${encodeURIComponent(disputeId)}`, { account: eventScope.accountId });
       if (dispute.id !== disputeId || dispute.livemode !== event.livemode || !Number.isSafeInteger(dispute.amount) || dispute.amount < 0 ||
           !dispute.currency || !dispute.status) throw new MerchantScopeError("Dispute identity or amount differs.");
-      const paymentIntentId = await verifiedChargePayment(service, eventScope.accountId, objectId(dispute.charge), owner.photographerId);
+      const paymentIntentId = await verifiedChargePayment(service, eventScope.accountId, objectId(dispute.charge), photographerId);
       if (!paymentIntentId) {
         await recordStripeEvent(service, event, event); await finish("processed");
         return { ok: true, status: 200, ignored: true };
       }
       if (dispute.payment_intent && dispute.payment_intent !== paymentIntentId) throw new MerchantScopeError("Dispute payment differs.");
       const { error } = await service.from("stripe_merchant_disputes").upsert({ stripe_account_id: eventScope.accountId,
-        dispute_id: dispute.id, photographer_id: owner.photographerId, payment_intent_id: paymentIntentId,
+        dispute_id: dispute.id, photographer_id: photographerId, payment_intent_id: paymentIntentId,
         charge_id: objectId(dispute.charge), livemode: event.livemode, status: dispute.status, amount_cents: dispute.amount,
         currency: dispute.currency.toLowerCase(), evidence_due_at: dispute.evidence_details?.due_by
           ? new Date(dispute.evidence_details.due_by * 1000).toISOString() : null, observed_at: observedAt, verified_at: new Date().toISOString(),
       }, { onConflict: "stripe_account_id,dispute_id" });
       if (error) throw error;
     } else if (event.type.startsWith("application_fee.")) {
-      const payment = await verifiedChargePayment(service, eventScope.accountId, eventScope.chargeId, owner.photographerId);
+      const payment = await verifiedChargePayment(service, eventScope.accountId, eventScope.chargeId, photographerId);
       if (payment) await reconcileRefund(service, eventScope.accountId, payment);
     } else {
       let payment: string | null = objectId(event.data.object.payment_intent);
       if (!payment && objectId(event.data.object.charge)) payment = await verifiedChargePayment(service, eventScope.accountId,
-        objectId(event.data.object.charge), owner.photographerId);
+        objectId(event.data.object.charge), photographerId);
       // The reconciler verifies the original saved account, group, amount and
       // fee before touching orders, and ignores payments outside Studio OS.
       if (payment) await reconcileRefund(service, eventScope.accountId, payment);
@@ -173,7 +191,10 @@ export async function recoverStripeMerchantEvents(service: SupabaseClient, limit
       const marker = await service.from("photographers").select("stripe_standard_migrated_at")
         .not("stripe_standard_migrated_at", "is", null).limit(1);
       if (marker.error && !isStripeHistorySchemaMissing(marker.error)) throw marker.error;
-      if (!marker.data?.length) return { checked: 0, recovered: 0, retry: 0, schemaMissing: true };
+      const signupMarker = await service.from("photographers").select("stripe_account_history_required")
+        .eq("stripe_account_history_required", true).limit(1);
+      if (signupMarker.error && !isStripeHistorySchemaMissing(signupMarker.error)) throw signupMarker.error;
+      if (!marker.data?.length && !signupMarker.data?.length) return { checked: 0, recovered: 0, retry: 0, schemaMissing: true };
     }
     throw error;
   }

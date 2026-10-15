@@ -9,11 +9,12 @@ const require = createRequire(import.meta.url);
 const settingsSource = readFileSync(new URL('../app/dashboard/settings/page.tsx', import.meta.url), 'utf8');
 
 /** Mount the actual Settings component and click its real billing Save button. */
-function harness({ profile = 'gallery_v2', ...state } = {}) {
+function harness({ profile = 'gallery_v2', stripeConnectUrl = null, ...state } = {}) {
   const fixture = { loading: false, sessionReady: true, signedIn: true, error: null,
     stripeSubscriptionId: 'sub_existing', subscriptionPlanCode: 'studio', subscriptionBillingInterval: 'month',
     subscriptionStatus: 'active', subscriptionIsActive: true, extraDesktopKeys: 1,
     desiredPlanCode: 'studio', desiredBillingInterval: 'month', desiredExtraDesktopKeys: 3,
+    ...(stripeConnectUrl ? {connecting:false,businessCountry:'CA',connectReadyForPayments:true,stripeAccountType:'standard',stripeDashboardType:'full',stripePendingAccountId:null} : {}),
     billingCatalog: { pricingProfile: profile, currency: 'cad', galleryStoragePolicy: 'existing',
       plans: Object.values(getPlanDefinitions(profile)), annualDiscountPercent: 10,
       extraDesktopKeyMonthlyCents: 5500, extraDesktopKeyAnnualCents: 59400, creditPacks: [] }, ...state };
@@ -71,12 +72,12 @@ function harness({ profile = 'gallery_v2', ...state } = {}) {
   new Function('require', 'exports', '__stateFixture', 'fetch', 'window', compiled)(name => {
     assert.ok(name in overrides, `unexpected Settings dependency: ${name}`); return overrides[name];
   }, exports, name => { initializedStateName = name; return fixture[name]; }, async (url, options) => {
-    assert.equal(url, '/api/stripe/billing', 'no provider or unrelated request is permitted');
+    assert.equal(url, stripeConnectUrl ? '/api/stripe/connect' : '/api/stripe/billing', 'no provider or unrelated request is permitted');
     assert.equal(options.method, 'POST');
     assert.equal(options.headers.Authorization, 'Bearer fixture_token');
     assert.equal(options.credentials, 'include');
     calls.push(JSON.parse(options.body));
-    return { ok: true, json: async () => ({ ok: true, url: 'https://example.invalid/billing-completed' }) };
+    return { ok: true, json: async () => ({ ok: true, url: stripeConnectUrl || 'https://example.invalid/billing-completed' }) };
   }, browser);
   const tree = exports.default();
   function nodes(node) {
@@ -88,7 +89,9 @@ function harness({ profile = 'gallery_v2', ...state } = {}) {
     && ['Update plan + keys', 'Start subscription', 'Activate paid subscription'].includes(node.props.children));
   assert.equal(saveButtons.length, 1, 'one actual rendered billing Save button');
   assert.equal(saveButtons[0].props.disabled, false);
-  return { calls, errors, save: () => saveButtons[0].props.onClick() };
+  const connectLabels=['Open Stripe Dashboard','Manage Stripe','Continue Stripe setup','Connect Stripe'];
+  const connectButtons=nodes(tree).filter(node=>node.type==='button'&&nodes(node.props.children).some(child=>typeof child==='string'&&connectLabels.includes(child)));
+  return { calls, errors, browser, connectLabels:connectButtons.map(node=>nodes(node.props.children).find(child=>typeof child==='string'&&connectLabels.includes(child))),connect:()=>{assert.ok(connectButtons.length);return connectButtons[0].props.onClick();},save: () => saveButtons[0].props.onClick() };
 }
 
 test('existing V2 and legacy subscriptions post key-only changes without upgrading their base plan', async () => {
@@ -140,3 +143,7 @@ test('a photographer without a subscription starts subscription checkout with ch
   await h.save();
   assert.deepEqual(h.calls, [{ action: 'subscribe', planCode: 'studio', billingInterval: 'month', extraDesktopKeys: 3 }]);
 });
+
+test('verified Standard management opens only its exact full Stripe dashboard URL',async()=>{const h=harness({stripeConnectUrl:'https://dashboard.stripe.com/'});assert.ok(h.connectLabels.every(label=>label==='Open Stripe Dashboard'));await h.connect();assert.equal(h.browser.location.href,'https://dashboard.stripe.com/');assert.equal(h.calls.length,1);assert.ok(h.errors.every(error=>error===null));});
+test('pending Standard and existing Express continue their authenticated Stripe onboarding flow',async()=>{for(const state of [{connectReadyForPayments:false,stripePendingAccountId:'acct_pending'},{stripeAccountType:'express',stripeDashboardType:'express'}]){const h=harness({stripeConnectUrl:'https://connect.stripe.com/setup/s/example',...state});assert.ok(h.connectLabels.every(label=>label===('stripePendingAccountId'in state?'Continue Stripe setup':'Manage Stripe')));await h.connect();assert.equal(h.browser.location.href,'https://connect.stripe.com/setup/s/example');}});
+test('actual Settings Connect action rejects arbitrary URLs, fake Stripe hosts and unexpected dashboard paths',async()=>{for(const stripeConnectUrl of ['https://attacker.example/','javascript:alert(1)','https://connect.stripe.com.attacker.example/setup','https://attacker@dashboard.stripe.com/','http://connect.stripe.com/setup','https://dashboard.stripe.com/invoices','https://dashboard.stripe.com/?redirect=attacker']){const h=harness({stripeConnectUrl});await h.connect();assert.equal(h.browser.location.href,'https://example.invalid/dashboard/settings');assert.ok(h.errors.some(error=>/destination could not be verified/.test(error||'')));}});

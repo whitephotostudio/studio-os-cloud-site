@@ -1,5 +1,6 @@
 import { pathToFileURL } from 'node:url';
 import { createHash } from 'node:crypto';
+import { verifyStandardSignupInventory } from './stripe-standard-signup-inventory.mjs';
 
 const missingHistorySchemaCodes = new Set(['42883','42P01','42703','PGRST202','PGRST204','PGRST205']);
 const missingHistorySchema = error => missingHistorySchemaCodes.has(error?.code);
@@ -160,6 +161,65 @@ export async function verifyStandardProviderRelease(env=process.env,fetcher=fetc
   if(!destinations.ok)throw new Error('Standard webhook connected/platform snapshot subscriptions are incomplete.');
 }
 
+// New-account enrollment has its own controls. It never expands the completed
+// WhitePhoto migration allowlist or changes existing merchant routing.
+export async function verifyStandardSignupRelease(env=process.env,fetcher=fetch,report=console.log) {
+  const enabled=env.STRIPE_STANDARD_NEW_ACCOUNTS_ENABLED==='true';
+  if(!enabled&&env.STUDIO_STANDARD_SIGNUP_RELEASE_VERIFY!=='1')return;
+  const scope=WHITEPHOTO_STANDARD_AUDIT_SCOPE,key=(env.STRIPE_SECRET_KEY||'').trim();
+  const serviceKey=(env.SUPABASE_SERVICE_ROLE_KEY||'').trim();
+  const databaseUrl=env.NEXT_PUBLIC_SUPABASE_URL?.replace(/\/$/,'');
+  if(!/^sk_live_[A-Za-z0-9]+$/.test(key)||!serviceKey||serviceKey==='[SENSITIVE]'||
+    env.STUDIO_STANDARD_EXPECTED_PLATFORM_ACCOUNT_ID!==scope.platformAccountId||
+    env.STUDIO_PAYMENT_EXPECTED_PROJECT_REF!==scope.projectRef||databaseUrl!==`https://${scope.projectRef}.supabase.co`||
+    !['https://studiooscloud.com','https://www.studiooscloud.com'].includes(env.STUDIO_PAYMENT_EXPECTED_APP_URL?.replace(/\/$/,''))) {
+    throw new Error('New Standard signup verification requires the exact protected live platform/project/app configuration.');
+  }
+  if(env.STUDIO_STANDARD_WEBHOOK_CONFIGURE||env.STUDIO_CREDIT_WEBHOOK_CONFIGURE==='1'||env.STUDIO_PAYMENT_REFUND_WEBHOOK_ID) {
+    throw new Error('New Standard signup verification is GET-only and cannot run with webhook configuration operations.');
+  }
+  const get=async(url,headers)=>{const response=await fetcher(url,{method:'GET',headers,signal:AbortSignal.timeout(20000)});
+    if(!response.ok)throw new Error(`New Standard signup GET verification failed (HTTP ${response.status}); details withheld.`);
+    return response.json();};
+  const db=path=>get(`${databaseUrl}/rest/v1/${path}`,{apikey:serviceKey,Authorization:`Bearer ${serviceKey}`});
+  const stripe=path=>get(`https://api.stripe.com/v1/${path}`,{Authorization:`Bearer ${key}`});
+  const platform=await stripe('account'),balance=await stripe('balance');
+  if(platform.id!==scope.platformAccountId||balance.object!=='balance'||balance.livemode!==true) {
+    throw new Error('New Standard signup verification requires exact platform and live balance proof.');
+  }
+  const schema=await db('');
+  const rpcs=['stripe_standard_signup_schema_status','stripe_standard_signup_params_hash','get_photographer_standard_signup_eligibility',
+    'reserve_photographer_standard_signup','record_photographer_standard_signup_account','activate_photographer_standard_signup'];
+  if(rpcs.some(name=>!schema.paths?.[`/rpc/${name}`]?.post))throw new Error('New Standard signup service-only API schema is incomplete.');
+  const protections=await db('rpc/stripe_standard_signup_schema_status');
+  if(protections?.version!=='20261015020000'||['signup_schema_present','history_required_guard_present','legacy_creation_barrier_present','service_only_rpcs','service_only_tables']
+    .some(name=>protections[name]!==true))throw new Error('New Standard signup schema, legacy barrier or service-only permissions are unverified.');
+  const history=await db('rpc/stripe_account_history_schema_status');
+  if(history?.version!=='20261015010000'||history.history_schema_present!==true||history.reservation_guard_present!==true) {
+    throw new Error('New Standard signup requires the installed immutable history and checkout reservation protections.');
+  }
+  await db('photographers?select=id,stripe_account_history_required&limit=0');
+  await db('photographer_stripe_standard_signups?select=id,status,stripe_account_id,request_hash,provider_request_hash,attempted_at&limit=0');
+  await db('stripe_standard_signup_eligible_profiles?select=photographer_id,livemode,audit_source,provider_inventory_sha256,provider_verified_at,revoked_at&limit=0');
+  const rows=await db('stripe_standard_signup_release_controls?select=release_key,platform_account_id,project_ref,enabled,enrollment_starts_at,allowed_countries,allowed_currencies&release_key=eq.standard-signup-v1');
+  const control=Array.isArray(rows)&&rows.length===1?rows[0]:null;
+  const exactArray=(values,expected)=>Array.isArray(values)&&values.length===expected.length&&[...values].sort().join(',')===[...expected].sort().join(',');
+  const enrollment=typeof control?.enrollment_starts_at==='string'?Date.parse(control.enrollment_starts_at):NaN;
+  if(!control||control.release_key!=='standard-signup-v1'||control.platform_account_id!==scope.platformAccountId||control.project_ref!==scope.projectRef||
+    typeof control.enabled!=='boolean'||!Number.isFinite(enrollment)||enrollment>Date.now()||
+    !exactArray(control.allowed_countries,['CA','US'])||!exactArray(control.allowed_currencies,['cad','usd'])) {
+    throw new Error('New Standard signup exact control scope, enrollment cutoff or CA/US CAD/USD coverage is unverified.');
+  }
+  if(enabled&&control.enabled!==true)throw new Error('New Standard signup creation flag requires its independently enabled database control.');
+  const destinations=verifyStandardWebhookDestinations(await standardDestinationsGet(key,fetcher),env.STUDIO_PAYMENT_EXPECTED_APP_URL);
+  if(!destinations.ok)throw new Error('New Standard signup connected/platform webhook scope or required events are incomplete.');
+  report(JSON.stringify({check:'stripe-standard-new-signup-release',ok:true,version:protections.version,releaseKey:control.release_key,
+    platformAccountId:platform.id,creationFlag:enabled,creationControl:control.enabled,enrollmentStartsAt:control.enrollment_starts_at,
+    allowedCountries:control.allowed_countries,allowedCurrencies:control.allowed_currencies,serviceOnlyPermissions:true,
+    immutableHistoryRequired:true,legacyCreationBarrier:true,webhookScopeProof:destinations.scopeProof,
+    existingMerchantRoutingChanged:false,databaseMutations:0,financialMutations:0}));
+}
+
 export function verifyStandardReleaseControl(control, env, platformAccountId) {
   const scope = WHITEPHOTO_STANDARD_AUDIT_SCOPE;
   const liveCheckout = env.STRIPE_STANDARD_LIVE_CHECKOUT_ENABLED === 'true';
@@ -237,14 +297,19 @@ export async function resolveAuditedPaymentAccount(db, order, historyRequired = 
   }
   let photographers;
   try {
-    photographers = await db(`photographers?select=stripe_account_id,stripe_connected_account_id,stripe_standard_migrated_at&id=eq.${order.photographer_id}`);
+    photographers = await db(`photographers?select=stripe_account_id,stripe_connected_account_id,stripe_standard_migrated_at,stripe_account_history_required&id=eq.${order.photographer_id}`);
   } catch (error) {
-    // Only an absent marker column identifies a genuinely pre-history schema.
-    // Other errors, including a timeout, must never select another account.
     if (!['42703','PGRST204'].includes(error?.code)) throw error;
-    photographers = await db(`photographers?select=stripe_account_id,stripe_connected_account_id&id=eq.${order.photographer_id}`);
+    // The new signup marker is additive to the earlier pilot history schema.
+    // Keep the older migration marker when only this newest column is absent.
+    try {
+      photographers = await db(`photographers?select=stripe_account_id,stripe_connected_account_id,stripe_standard_migrated_at&id=eq.${order.photographer_id}`);
+    } catch (error) {
+      if (!['42703','PGRST204'].includes(error?.code)) throw error;
+      photographers = await db(`photographers?select=stripe_account_id,stripe_connected_account_id&id=eq.${order.photographer_id}`);
+    }
   }
-  if (!Array.isArray(photographers) || photographers.length !== 1 || photographers[0].stripe_standard_migrated_at) {
+  if (!Array.isArray(photographers) || photographers.length !== 1 || photographers[0].stripe_standard_migrated_at || photographers[0].stripe_account_history_required===true) {
     throw new Error('A migrated audit payment requires its verified original account.');
   }
   const account = photographers[0].stripe_connected_account_id || photographers[0].stripe_account_id;
@@ -256,10 +321,12 @@ export async function resolveAuditedPaymentAccount(db, order, historyRequired = 
 // [SENSITIVE]. Never export secrets, log provider error bodies, or move money.
 // Explicit webhook configuration flags may update event subscriptions only.
 export async function verifyPaymentRelease(env = process.env, fetcher = fetch, report = console.log) {
+  await verifyStandardSignupInventory(env,fetcher,report);
+  await verifyStandardSignupRelease(env,fetcher,report);
   await verifyStandardProviderRelease(env,fetcher,report);
   const liveStandardRequested = env.STRIPE_STANDARD_LIVE_CHECKOUT_ENABLED === 'true' || env.STRIPE_STANDARD_LIVE_MIGRATION_ENABLED === 'true';
   let standardWebhooksRequired=liveStandardRequested;
-  const historyRequired = env.STUDIO_STRIPE_ACCOUNT_HISTORY_VERIFY === '1' || liveStandardRequested;
+  const historyRequired = env.STUDIO_STRIPE_ACCOUNT_HISTORY_VERIFY === '1' || liveStandardRequested || env.STRIPE_STANDARD_NEW_ACCOUNTS_ENABLED==='true';
   if (env.STUDIO_PAYMENT_RELEASE_VERIFY !== '1' && env.STUDIO_ORDER_PLATFORM_FEE_RELEASE_VERIFY !== '1' && !historyRequired) return;
   const key = (env.STRIPE_SECRET_KEY || '').trim();
   const serviceKey = (env.SUPABASE_SERVICE_ROLE_KEY || '').trim();
