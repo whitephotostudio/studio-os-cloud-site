@@ -1,3 +1,4 @@
+import * as subscriptionCurrency from '../lib/subscription-currency.ts';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -179,7 +180,7 @@ test('the actual v2 Stripe catalog and checkout use the public prices without tr
   const paymentsSource = ts.transpileModule(readFileSync(new URL('../lib/payments.ts', import.meta.url), 'utf8'),
     { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
   new Function('require', 'exports', 'fetch', 'process', paymentsSource)(name =>
-    name === '@/lib/studio-pricing' ? catalogApi : name.startsWith('@/') ? {} : require(name), payments,
+    name === '@/lib/subscription-currency' ? subscriptionCurrency : name === '@/lib/studio-pricing' ? catalogApi : name.startsWith('@/') ? {} : require(name), payments,
   async (target, options) => {
     const url = new URL(target);
     assert.equal(url.origin, 'https://api.stripe.com', 'every provider request is intercepted');
@@ -247,7 +248,7 @@ test('routine sync of new monthly and annual v2 subscriptions never attaches a s
   const providerCalls = [];
   const mirrors = [];
   const dependencies = {
-    '@/lib/studio-pricing': catalogApi,
+    '@/lib/subscription-currency': subscriptionCurrency, '@/lib/studio-pricing': catalogApi,
     '@/lib/stripe-billing-period': periods,
     '@/lib/order-usage-billing': { reconcileOrderUsageFeeRefunds: async () => {} },
     '@/lib/subscription-access': { isStripeBillingActive: status => ['active', 'trialing'].includes(status) },

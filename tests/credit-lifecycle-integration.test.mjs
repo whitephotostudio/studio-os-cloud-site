@@ -13,7 +13,7 @@ function load(path, overrides = {}) {
   const compiled = ts.transpileModule(readFileSync(new URL(`../${path}`, import.meta.url), 'utf8'), {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: false },
   }).outputText;
-  new Function('require', 'exports', compiled)(name => name in overrides ? overrides[name]
+  new Function('require', 'exports', compiled)(name => name in overrides ? overrides[name] : name === '@/lib/subscription-currency' ? load('lib/subscription-currency.ts')
     : name.startsWith('@/') ? {} : require(name), exports);
   return exports;
 }

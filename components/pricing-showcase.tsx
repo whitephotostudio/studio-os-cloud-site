@@ -316,19 +316,19 @@ const comparisonRows: ComparisonRow[] = [
   },
 ];
 
-function formatMoney(cents: number, exact = false) {
+function formatMoney(cents: number, exact = false, currency = "cad") {
   return new Intl.NumberFormat("en-CA", {
     style: "currency",
-    currency: "CAD",
+    currency: currency.toUpperCase(),
     minimumFractionDigits: exact ? 2 : 0,
     maximumFractionDigits: exact ? 2 : 0,
   }).format(cents / 100);
 }
 
-function formatMonthlyEquivalent(cents: number) {
+function formatMonthlyEquivalent(cents: number, currency = "cad") {
   return new Intl.NumberFormat("en-CA", {
     style: "currency",
-    currency: "CAD",
+    currency: currency.toUpperCase(),
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   }).format(cents / 1200);
@@ -366,7 +366,7 @@ export function PricingShowcase({ variant = "home", catalog }: PricingShowcasePr
   const showFullPage = variant === "page";
   const newOffer = catalog.pricingProfile !== "legacy";
   const unlimited = catalog.galleryStoragePolicy === "unlimited_jpeg";
-  const orderFeeCopy = getOrderFeeCopy(catalog.pricingProfile);
+  const orderFeeCopy = getOrderFeeCopy(catalog.pricingProfile, catalog.currency);
   const pricingPlans = (showFullPage ? pagePlans : homePlans).map((plan) => {
     if (!newOffer) return plan;
     return {
@@ -680,7 +680,7 @@ export function PricingShowcase({ variant = "home", catalog }: PricingShowcasePr
 
                     <div className="mt-6 flex items-end gap-2">
                       <div className="text-5xl font-semibold tracking-tight">
-                        {formatMoney(activePrice, newOffer)}
+                        {formatMoney(activePrice, newOffer, catalog.currency)}
                       </div>
                       <div className={isFeatured ? "pb-2 text-sm font-medium text-neutral-300" : "pb-2 text-sm font-medium text-neutral-500"}>
                         /{annual ? "year" : "month"}
@@ -689,7 +689,7 @@ export function PricingShowcase({ variant = "home", catalog }: PricingShowcasePr
 
                     <div className={isFeatured ? "mt-3 text-sm text-neutral-300" : "mt-3 text-sm text-neutral-500"}>
                       {annual
-                        ? `Paid in advance · equivalent to ${formatMonthlyEquivalent(activePrice)}/month`
+                        ? `Paid in advance · equivalent to ${formatMonthlyEquivalent(activePrice, catalog.currency)}/month`
                         : "Billed monthly"}
                     </div>
 
@@ -889,7 +889,7 @@ export function PricingShowcase({ variant = "home", catalog }: PricingShowcasePr
                           >
                             <div className="text-sm font-semibold text-neutral-950">{plan.name}</div>
                             <div className="mt-1 text-sm text-neutral-500">
-                              {formatMoney(priceFor(plan.code, "month"), newOffer)}/month
+                              {formatMoney(priceFor(plan.code, "month"), newOffer, catalog.currency)}/month
                             </div>
                           </th>
                         ))}

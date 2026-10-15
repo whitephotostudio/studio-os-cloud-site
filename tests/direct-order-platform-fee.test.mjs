@@ -1,3 +1,4 @@
+import * as subscriptionCurrency from '../lib/subscription-currency.ts';
 import assert from 'node:assert/strict';
 import * as crypto from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -38,7 +39,7 @@ function fixture(context, {accountId = 'acct_fixture'} = {}) {
   let refunds = [];
   let legacyWaivers = 0;
   const dependencies = {
-    'node:crypto': crypto, '@/lib/studio-pricing': pricing, '@/lib/order-payment-policy': orderPolicy,
+    'node:crypto': crypto, '@/lib/subscription-currency': subscriptionCurrency, '@/lib/studio-pricing': pricing, '@/lib/order-payment-policy': orderPolicy,
     '@/lib/order-currency': orderCurrency,
     '@/lib/digital-product-label': digitalLabels,
     '@/lib/trial-config': { FREE_TRIAL_DAYS: 30 },

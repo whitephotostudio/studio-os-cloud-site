@@ -37,6 +37,13 @@ import { isStripeBillingActive } from "@/lib/subscription-access";
 import { SUPPORTED_ORDER_CURRENCIES } from "@/lib/order-currency";
 import { ConnectProfileError, normalizeBusinessCountry, normalizeSelectedSalesCurrency, verifiedConnectCountry, type BusinessCountry } from "@/lib/stripe-connect-country";
 import { resolveOrderPaymentAccount, syncStripeAccountHistory } from "@/lib/stripe-connect-history";
+import {
+  SUBSCRIPTION_CURRENCIES, SubscriptionCurrencyError, localSubscriptionBillingEnabled,
+  normalizeSubscriptionCurrency, subscriptionCurrencyForCountry,
+  subscriptionPlanLookupKey, subscriptionExtraKeyLookupKey, type SubscriptionCurrency,
+} from "@/lib/subscription-currency";
+export { SubscriptionCurrencyError, localSubscriptionBillingEnabled } from "@/lib/subscription-currency";
+export type { SubscriptionCurrency } from "@/lib/subscription-currency";
 export {
   isStripeBillingActive, isTrialStatus, resolveFreeTrialEndsAt,
   getFreeTrialDaysRemaining, isFreeTrialActive, isFreeTrialExpired,
@@ -273,9 +280,12 @@ type CatalogEntry = {
   usageType?: "metered";
   meterEventName?: string;
   lookupKey: string;
+  immutable?: boolean;
 };
 
 export type StripeCatalog = {
+  currency: SubscriptionCurrency;
+  pricingProfile: PricingProfile;
   planPrices: Record<PlanCode, Record<BillingInterval, string>>;
   extraDesktopKeyPriceIds: Record<BillingInterval, string>;
   usagePriceIds: Record<PlanCode, string | null>;
@@ -300,6 +310,7 @@ function env(name: string, fallback?: string) {
 }
 
 export const DEFAULT_BILLING_CURRENCY = env("STRIPE_BILLING_CURRENCY", "cad").toLowerCase();
+const CREDIT_BILLING_CURRENCY = "cad";
 const STRIPE_API_VERSION = env("STRIPE_API_VERSION", "2025-06-30.basil");
 
 export const ORDER_USAGE_RATE_CENTS = DEFAULT_ORDER_USAGE_RATE_CENTS;
@@ -338,11 +349,6 @@ const ORDER_USAGE_METER_EVENT_NAMES: Record<PlanCode, string> = {
   starter: "studio_os_starter_order_usage",
   core: "studio_os_core_order_usage",
   studio: "studio_os_studio_order_usage",
-};
-
-const EXTRA_DESKTOP_KEY_LOOKUPS: Record<BillingInterval, string> = {
-  month: "studio-os-extra-desktop-key-monthly-v2",
-  year: "studio-os-extra-desktop-key-annual-v2",
 };
 
 const ORDER_USAGE_LOOKUP_KEYS: Record<PlanCode, string> = {
@@ -787,6 +793,7 @@ async function ensureCatalogEntry(entry: CatalogEntry) {
 
   if (
     existingPrice &&
+    (!entry.immutable || existingPrice.active === true) &&
     existingPrice.unit_amount === entry.unitAmount &&
     existingPrice.currency.toLowerCase() === entry.currency &&
     (existingPrice.recurring?.interval ?? null) === (entry.interval ?? null) &&
@@ -795,6 +802,9 @@ async function ensureCatalogEntry(entry: CatalogEntry) {
     recurringMeter === meterId
   ) {
     return existingPrice.id;
+  }
+  if (existingPrice && entry.immutable) {
+    throw new SubscriptionCurrencyError("The saved localized subscription price needs verification before billing can continue.", 409);
   }
 
   const product = await stripeRequest<StripeProduct>("products", {
@@ -814,7 +824,7 @@ async function ensureCatalogEntry(entry: CatalogEntry) {
   priceParams.set("unit_amount", String(entry.unitAmount));
   priceParams.set("product", product.id);
   priceParams.set("lookup_key", entry.lookupKey);
-  priceParams.set("transfer_lookup_key", "true");
+  if (!entry.immutable) priceParams.set("transfer_lookup_key", "true");
   if (entry.interval) {
     priceParams.set("recurring[interval]", entry.interval);
   }
@@ -834,7 +844,8 @@ async function ensureCatalogEntry(entry: CatalogEntry) {
   return created.id;
 }
 
-let catalogPromise: Promise<StripeCatalog> | null = null;
+const catalogPromises = new Map<SubscriptionCurrency, Promise<StripeCatalog>>();
+let creditCatalogPromise: Promise<Record<CreditPackCode, string>> | null = null;
 
 function orderUsageDescription(rateCents: number) {
   const rate = new Intl.NumberFormat("en-CA", {
@@ -845,12 +856,22 @@ function orderUsageDescription(rateCents: number) {
   return `Completed paid order usage billed monthly at ${rate} per order`;
 }
 
-export async function ensureStripeCatalog() {
-  if (!catalogPromise) {
-    catalogPromise = (async () => {
+export async function ensureStripeCatalog(rawCurrency: SubscriptionCurrency = "cad"): Promise<StripeCatalog> {
+  const currency = normalizeSubscriptionCurrency(rawCurrency);
+  if (!currency) throw new SubscriptionCurrencyError("Choose a supported subscription currency.");
+  if (!catalogPromises.has(currency)) {
+    const pending = (async () => {
       if (isGalleryPricingEnabled() && DEFAULT_BILLING_CURRENCY !== "cad") {
         throw new Error("The new gallery pricing catalog requires CAD billing.");
       }
+      const pricingProfile = currency === "cad" ? PRICING_PROFILE : "gallery_v3";
+      const planDefinitions = currency === "cad" ? PLAN_DEFS : getPlanDefinitions("gallery_v3");
+      const planLookups = currency === "cad" ? PLAN_LOOKUP_KEYS : Object.fromEntries(
+        (["starter", "core", "studio"] as const).map(code => [code, {
+          month: subscriptionPlanLookupKey(code, "month", currency), year: subscriptionPlanLookupKey(code, "year", currency),
+        }]),
+      ) as Record<PlanCode, Record<BillingInterval, string>>;
+      const galleryPricing = pricingProfile !== "legacy";
       // Verify every existing order meter before any product, price or meter
       // mutation, including the earlier base-plan catalog entries.
       const existingMeters = await readBillingMeters();
@@ -861,21 +882,23 @@ export async function ensureStripeCatalog() {
         starter: {
           month: await ensureCatalogEntry({
             code: "starter_month",
-            name: isGalleryPricingEnabled() ? "Gallery Monthly" : "Starter Monthly",
-            description: isGalleryPricingEnabled() ? "Studio OS Gallery monthly subscription" : "Studio OS Starter monthly subscription",
-            currency: DEFAULT_BILLING_CURRENCY,
-            unitAmount: PLAN_DEFS.starter.priceCents,
+            name: galleryPricing ? "Gallery Monthly" : "Starter Monthly",
+            description: galleryPricing ? "Studio OS Gallery monthly subscription" : "Studio OS Starter monthly subscription",
+            currency,
+            immutable: currency !== "cad",
+            unitAmount: planDefinitions.starter.priceCents,
             interval: "month",
-            lookupKey: PLAN_LOOKUP_KEYS.starter.month,
+            lookupKey: planLookups.starter.month,
           }),
           year: await ensureCatalogEntry({
             code: "starter_year",
-            name: isGalleryPricingEnabled() ? "Gallery Annual" : "Starter Annual",
-            description: isGalleryPricingEnabled() ? "Studio OS Gallery annual subscription paid in advance" : "Studio OS Starter annual subscription paid in advance",
-            currency: DEFAULT_BILLING_CURRENCY,
-            unitAmount: PLAN_DEFS.starter.annualPriceCents,
+            name: galleryPricing ? "Gallery Annual" : "Starter Annual",
+            description: galleryPricing ? "Studio OS Gallery annual subscription paid in advance" : "Studio OS Starter annual subscription paid in advance",
+            currency,
+            immutable: currency !== "cad",
+            unitAmount: planDefinitions.starter.annualPriceCents,
             interval: "year",
-            lookupKey: PLAN_LOOKUP_KEYS.starter.year,
+            lookupKey: planLookups.starter.year,
           }),
         },
         core: {
@@ -883,19 +906,21 @@ export async function ensureStripeCatalog() {
             code: "core_month",
             name: "Core Monthly",
             description: "Studio OS Core monthly subscription",
-            currency: DEFAULT_BILLING_CURRENCY,
-            unitAmount: PLAN_DEFS.core.priceCents,
+            currency,
+            immutable: currency !== "cad",
+            unitAmount: planDefinitions.core.priceCents,
             interval: "month",
-            lookupKey: PLAN_LOOKUP_KEYS.core.month,
+            lookupKey: planLookups.core.month,
           }),
           year: await ensureCatalogEntry({
             code: "core_year",
             name: "Core Annual",
             description: "Studio OS Core annual subscription paid in advance",
-            currency: DEFAULT_BILLING_CURRENCY,
-            unitAmount: PLAN_DEFS.core.annualPriceCents,
+            currency,
+            immutable: currency !== "cad",
+            unitAmount: planDefinitions.core.annualPriceCents,
             interval: "year",
-            lookupKey: PLAN_LOOKUP_KEYS.core.year,
+            lookupKey: planLookups.core.year,
           }),
         },
         studio: {
@@ -903,19 +928,21 @@ export async function ensureStripeCatalog() {
             code: "studio_month",
             name: "Studio Monthly",
             description: "Studio OS Studio monthly subscription",
-            currency: DEFAULT_BILLING_CURRENCY,
-            unitAmount: PLAN_DEFS.studio.priceCents,
+            currency,
+            immutable: currency !== "cad",
+            unitAmount: planDefinitions.studio.priceCents,
             interval: "month",
-            lookupKey: PLAN_LOOKUP_KEYS.studio.month,
+            lookupKey: planLookups.studio.month,
           }),
           year: await ensureCatalogEntry({
             code: "studio_year",
             name: "Studio Annual",
             description: "Studio OS Studio annual subscription paid in advance",
-            currency: DEFAULT_BILLING_CURRENCY,
-            unitAmount: PLAN_DEFS.studio.annualPriceCents,
+            currency,
+            immutable: currency !== "cad",
+            unitAmount: planDefinitions.studio.annualPriceCents,
             interval: "year",
-            lookupKey: PLAN_LOOKUP_KEYS.studio.year,
+            lookupKey: planLookups.studio.year,
           }),
         },
       } as Record<PlanCode, Record<BillingInterval, string>>;
@@ -925,26 +952,28 @@ export async function ensureStripeCatalog() {
           code: "extra_desktop_keys_month",
           name: "Extra Desktop Key Monthly",
           description: "Additional Studio OS desktop key billed monthly",
-          currency: DEFAULT_BILLING_CURRENCY,
+          currency,
+          immutable: currency !== "cad",
           unitAmount: EXTRA_DESKTOP_KEY_MONTHLY_CENTS,
           interval: "month",
-          lookupKey: EXTRA_DESKTOP_KEY_LOOKUPS.month,
+          lookupKey: subscriptionExtraKeyLookupKey("month", currency),
         }),
         year: await ensureCatalogEntry({
           code: "extra_desktop_keys_year",
           name: "Extra Desktop Key Annual",
           description: "Additional Studio OS desktop key billed annually in advance",
-          currency: DEFAULT_BILLING_CURRENCY,
+          currency,
+          immutable: currency !== "cad",
           unitAmount: EXTRA_DESKTOP_KEY_ANNUAL_CENTS,
           interval: "year",
-          lookupKey: EXTRA_DESKTOP_KEY_LOOKUPS.year,
+          lookupKey: subscriptionExtraKeyLookupKey("year", currency),
         }),
       } satisfies Record<BillingInterval, string>;
 
       // Versioned gallery offers collect their flat fees directly at checkout.
       // Do not create or attach a second monthly usage meter to them.
       // Existing legacy usage items remain identifiable and unchanged.
-      const usagePriceIds = isGalleryPricingEnabled() ? {
+      const usagePriceIds = galleryPricing ? {
         starter: null, core: null, studio: null,
       } : {
         starter: await ensureCatalogEntry({
@@ -982,12 +1011,12 @@ export async function ensureStripeCatalog() {
         }),
       } satisfies Record<PlanCode, string | null>;
 
-      const creditPackPriceIds = {
+      if (!creditCatalogPromise) creditCatalogPromise = (async () => ({
         background_credits_250: await ensureCatalogEntry({
           code: "background_credits_250",
           name: "Background Credits 250",
           description: "Studio OS background credit pack",
-          currency: DEFAULT_BILLING_CURRENCY,
+          currency: CREDIT_BILLING_CURRENCY,
           unitAmount: CREDIT_PACK_DEFS.background_credits_250.priceCents,
           lookupKey: CREDIT_PACK_LOOKUP_KEYS.background_credits_250,
         }),
@@ -995,7 +1024,7 @@ export async function ensureStripeCatalog() {
           code: "background_credits_1000",
           name: "Background Credits 1000",
           description: "Studio OS background credit pack",
-          currency: DEFAULT_BILLING_CURRENCY,
+          currency: CREDIT_BILLING_CURRENCY,
           unitAmount: CREDIT_PACK_DEFS.background_credits_1000.priceCents,
           lookupKey: CREDIT_PACK_LOOKUP_KEYS.background_credits_1000,
         }),
@@ -1003,7 +1032,7 @@ export async function ensureStripeCatalog() {
           code: "background_credits_2500",
           name: "Background Credits 2500",
           description: "Studio OS background credit pack",
-          currency: DEFAULT_BILLING_CURRENCY,
+          currency: CREDIT_BILLING_CURRENCY,
           unitAmount: CREDIT_PACK_DEFS.background_credits_2500.priceCents,
           lookupKey: CREDIT_PACK_LOOKUP_KEYS.background_credits_2500,
         }),
@@ -1011,7 +1040,7 @@ export async function ensureStripeCatalog() {
           code: "background_credits_5000",
           name: "Background Credits 5000",
           description: "Studio OS background credit pack",
-          currency: DEFAULT_BILLING_CURRENCY,
+          currency: CREDIT_BILLING_CURRENCY,
           unitAmount: CREDIT_PACK_DEFS.background_credits_5000.priceCents,
           lookupKey: CREDIT_PACK_LOOKUP_KEYS.background_credits_5000,
         }),
@@ -1019,25 +1048,31 @@ export async function ensureStripeCatalog() {
           code: "background_credits_10000",
           name: "Background Credits 10000",
           description: "Studio OS background credit pack",
-          currency: DEFAULT_BILLING_CURRENCY,
+          currency: CREDIT_BILLING_CURRENCY,
           unitAmount: CREDIT_PACK_DEFS.background_credits_10000.priceCents,
           lookupKey: CREDIT_PACK_LOOKUP_KEYS.background_credits_10000,
         }),
-      } as Record<CreditPackCode, string>;
+      } as Record<CreditPackCode, string>))().catch(error => {
+        creditCatalogPromise = null;
+        throw error;
+      });
+      const creditPackPriceIds = await creditCatalogPromise;
 
       return {
+        currency, pricingProfile,
         planPrices,
         extraDesktopKeyPriceIds,
         usagePriceIds,
         creditPackPriceIds,
       };
     })().catch((error) => {
-      catalogPromise = null;
+      catalogPromises.delete(currency);
       throw error;
     });
+    catalogPromises.set(currency, pending);
   }
 
-  return catalogPromise;
+  return catalogPromises.get(currency)!;
 }
 
 export async function retrieveStripeAccount(accountId: string) {
@@ -1130,6 +1165,16 @@ function getLookupKey(price: StripePrice | null | undefined) {
 }
 
 function resolveBillingIntervalFromLookupKey(lookupKey: string) {
+  for (const currency of SUBSCRIPTION_CURRENCIES) {
+    if (currency === "cad") continue;
+    for (const planCode of ["starter", "core", "studio"] as const) {
+      for (const interval of ["month", "year"] as const) {
+        if (lookupKey === subscriptionPlanLookupKey(planCode, interval, currency)) {
+          return { planCode, interval, pricingProfile: "gallery_v3" as const, currency };
+        }
+      }
+    }
+  }
   for (const [pricingProfile, lookups] of [
     ["legacy", LEGACY_PLAN_LOOKUP_KEYS], ["gallery_v2", GALLERY_PLAN_LOOKUP_KEYS],
     ["gallery_v3", GALLERY_V3_PLAN_LOOKUP_KEYS],
@@ -1141,7 +1186,7 @@ function resolveBillingIntervalFromLookupKey(lookupKey: string) {
         [BillingInterval, string]
       >) {
         if (lookupKey === value) {
-          return { planCode, interval, pricingProfile };
+          return { planCode, interval, pricingProfile, currency: "cad" as const };
         }
       }
     }
@@ -1188,7 +1233,8 @@ function findSubscriptionItems(subscription: StripeSubscription) {
 
   const extraDesktopItem =
     subscription.items.data.find((item) =>
-      Object.values(EXTRA_DESKTOP_KEY_LOOKUPS).includes(getLookupKey(item.price)),
+      SUBSCRIPTION_CURRENCIES.some(currency => (["month", "year"] as const)
+        .some(interval => subscriptionExtraKeyLookupKey(interval, currency) === getLookupKey(item.price))),
     ) ?? null;
 
   const usageItem =
@@ -1197,6 +1243,68 @@ function findSubscriptionItems(subscription: StripeSubscription) {
     ) ?? null;
 
   return { baseItem, extraDesktopItem, usageItem };
+}
+
+function verifySubscriptionCurrency(photographer: {
+  id: string; stripe_subscription_id: string | null; stripe_platform_customer_id: string | null;
+}, subscription: StripeSubscription) {
+  const baseItems = subscription.items.data.filter(item => resolveBillingIntervalFromLookupKey(getLookupKey(item.price)));
+  const metadata = subscription.metadata ?? {};
+  if (!photographer.stripe_subscription_id || subscription.id !== photographer.stripe_subscription_id ||
+      !photographer.stripe_platform_customer_id || subscription.customer !== photographer.stripe_platform_customer_id ||
+      baseItems.length !== 1 || (metadata.photographer_id && metadata.photographer_id !== photographer.id)) {
+    throw new SubscriptionCurrencyError("Your existing subscription ownership could not be verified. Refresh billing or contact Studio OS support.", 409);
+  }
+  const baseItem = baseItems[0];
+  const resolved = resolveBillingIntervalFromLookupKey(getLookupKey(baseItem.price))!;
+  const currency = normalizeSubscriptionCurrency(baseItem.price.currency);
+  if (!currency || (metadata.plan_code && metadata.plan_code !== resolved.planCode) ||
+      (metadata.billing_interval && metadata.billing_interval !== resolved.interval) ||
+      (metadata.pricing_profile && metadata.pricing_profile !== resolved.pricingProfile) ||
+      (metadata.subscription_currency && metadata.subscription_currency !== currency) ||
+      subscription.items.data.some(item => item.price.currency?.toLowerCase() !== currency)) {
+    throw new SubscriptionCurrencyError("Your existing subscription currency or price could not be verified.", 409);
+  }
+  if (resolved.pricingProfile !== "legacy") {
+    const plan = getPlanDefinitions(resolved.pricingProfile)[resolved.planCode];
+    const amount = resolved.interval === "year" ? plan.annualPriceCents : plan.priceCents;
+    if (metadata.photographer_id !== photographer.id || metadata.pricing_profile !== resolved.pricingProfile ||
+        currency !== resolved.currency || baseItem.price.unit_amount !== amount ||
+        baseItem.price.recurring?.interval !== resolved.interval ||
+        (baseItem.price.recurring?.interval_count ?? 1) !== 1 ||
+        (baseItem.price.recurring?.usage_type ?? "licensed") !== "licensed" || baseItem.price.recurring?.meter != null ||
+        (baseItem.quantity ?? 1) !== 1) {
+      throw new SubscriptionCurrencyError("Your existing subscription currency or price could not be verified.", 409);
+    }
+    if (currency !== "cad") {
+      const otherItems = subscription.items.data.filter(item => item !== baseItem);
+      if (metadata.subscription_currency !== currency || otherItems.length > 1 ||
+          (otherItems.length > 0 && resolved.planCode !== "studio") || otherItems.some(item =>
+        getLookupKey(item.price) !== subscriptionExtraKeyLookupKey(resolved.interval, currency) ||
+        item.price.unit_amount !== (resolved.interval === "year" ? EXTRA_DESKTOP_KEY_ANNUAL_CENTS : EXTRA_DESKTOP_KEY_MONTHLY_CENTS) ||
+        item.price.recurring?.interval !== resolved.interval || (item.price.recurring?.interval_count ?? 1) !== 1 ||
+        (item.price.recurring?.usage_type ?? "licensed") !== "licensed" ||
+        !Number.isSafeInteger(item.quantity ?? 1) || (item.quantity ?? 1) < 1)) {
+        throw new SubscriptionCurrencyError("Your existing subscription extras could not be verified.", 409);
+      }
+    }
+  }
+  return { currency, baseItem, resolved };
+}
+
+/** Saved Stripe prices take precedence over country changes and rollout flags. */
+export async function resolveSubscriptionCurrency(photographer: {
+  id: string; stripe_subscription_id?: string | null; stripe_platform_customer_id?: string | null;
+  business_country?: string | null; stripe_connect_country?: string | null;
+}, subscriptionInput?: StripeSubscription): Promise<SubscriptionCurrency> {
+  if (photographer.stripe_subscription_id) {
+    const subscription = subscriptionInput ?? await retrieveStripeSubscription(photographer.stripe_subscription_id);
+    return verifySubscriptionCurrency({ id: photographer.id, stripe_subscription_id: photographer.stripe_subscription_id,
+      stripe_platform_customer_id: photographer.stripe_platform_customer_id ?? null }, subscription).currency;
+  }
+  if (subscriptionInput) throw new SubscriptionCurrencyError("The subscription does not match this photographer.", 409);
+  if (!localSubscriptionBillingEnabled()) return "cad";
+  return subscriptionCurrencyForCountry(photographer.business_country || photographer.stripe_connect_country);
 }
 
 export async function listRecentStripeInvoices(customerId: string, limit = 6) {
@@ -1223,10 +1331,16 @@ export async function createPlanCheckoutSession(input: {
   planCode: PlanCode;
   billingInterval: BillingInterval;
   extraDesktopKeys: number;
+  subscriptionCurrency?: SubscriptionCurrency;
   successUrl: string;
   cancelUrl: string;
 }) {
-  const catalog = await ensureStripeCatalog();
+  const currency = normalizeSubscriptionCurrency(input.subscriptionCurrency ?? "cad");
+  if (!currency) throw new SubscriptionCurrencyError("Choose a supported subscription currency.");
+  if (currency !== "cad" && !localSubscriptionBillingEnabled()) {
+    throw new SubscriptionCurrencyError("Localized subscriptions are not available yet.", 409);
+  }
+  const catalog = await ensureStripeCatalog(currency);
   const params = new URLSearchParams();
   params.set("mode", "subscription");
   params.set("customer", input.customerId);
@@ -1237,15 +1351,17 @@ export async function createPlanCheckoutSession(input: {
   params.set("metadata[billing_interval]", input.billingInterval);
   params.set("metadata[photographer_id]", input.photographerId);
   params.set("metadata[user_id]", input.userId);
-  params.set("metadata[pricing_profile]", PRICING_PROFILE);
+  params.set("metadata[pricing_profile]", catalog.pricingProfile);
+  params.set("metadata[subscription_currency]", currency);
   params.set("subscription_data[metadata][plan_code]", input.planCode);
   params.set("subscription_data[metadata][billing_interval]", input.billingInterval);
   params.set("subscription_data[metadata][photographer_id]", input.photographerId);
   params.set("subscription_data[metadata][user_id]", input.userId);
-  params.set("subscription_data[metadata][pricing_profile]", PRICING_PROFILE);
+  params.set("subscription_data[metadata][pricing_profile]", catalog.pricingProfile);
+  params.set("subscription_data[metadata][subscription_currency]", currency);
   // Checkout cannot combine annual and monthly items. The monthly usage item
   // is attached after payment to this flexible annual subscription.
-  if (input.billingInterval === "year" && !isGalleryPricingEnabled()) {
+  if (input.billingInterval === "year" && catalog.pricingProfile === "legacy") {
     params.set("subscription_data[billing_mode][type]", "flexible");
   }
   params.set("line_items[0][price]", catalog.planPrices[input.planCode][input.billingInterval]);
@@ -1304,7 +1420,7 @@ export async function createCreditsCheckoutSession(input: {
   for (const prefix of ["metadata", "payment_intent_data[metadata]"]) {
     params.set(`${prefix}[credits]`, String(pack.credits));
     params.set(`${prefix}[price_cents]`, String(pack.priceCents));
-    params.set(`${prefix}[currency]`, DEFAULT_BILLING_CURRENCY);
+    params.set(`${prefix}[currency]`, CREDIT_BILLING_CURRENCY);
   }
 
   return stripeRequest<StripeCheckoutSession>("checkout/sessions", {
@@ -1326,16 +1442,17 @@ export async function createBillingPortalSession(customerId: string, returnUrl: 
 export async function updateStripeSubscriptionConfiguration(input: {
   subscriptionId: string;
   photographerId: string;
+  customerId: string;
   planCode: PlanCode;
   billingInterval: BillingInterval;
   extraDesktopKeys: number;
   /** Changing key quantity is not acceptance of a newer base-plan contract. */
   preserveBasePlan?: boolean;
 }) {
-  const [catalog, subscription] = await Promise.all([
-    ensureStripeCatalog(),
-    retrieveStripeSubscription(input.subscriptionId),
-  ]);
+  const subscription = await retrieveStripeSubscription(input.subscriptionId);
+  const verified = verifySubscriptionCurrency({ id: input.photographerId, stripe_subscription_id: input.subscriptionId,
+    stripe_platform_customer_id: input.customerId }, subscription);
+  const catalog = await ensureStripeCatalog(verified.currency);
 
   const { baseItem, extraDesktopItem, usageItem } = findSubscriptionItems(subscription);
   const existingPlan = resolveBillingIntervalFromLookupKey(getLookupKey(baseItem?.price));
@@ -1351,7 +1468,7 @@ export async function updateStripeSubscriptionConfiguration(input: {
       (subscription.metadata?.pricing_profile && subscription.metadata.pricing_profile !== existingPlan.pricingProfile))) {
     throw new Error("Keep the current plan and billing interval when changing photography keys.");
   }
-  const targetPricingProfile = preserveBasePlan ? existingPlan!.pricingProfile : PRICING_PROFILE;
+  const targetPricingProfile = preserveBasePlan ? existingPlan!.pricingProfile : catalog.pricingProfile;
   const targetUsagePriceId = preserveBasePlan ? null : catalog.usagePriceIds[input.planCode];
   if (targetUsagePriceId || usageItem) await ensureMixedIntervalBilling(subscription, input.billingInterval);
   const params = new URLSearchParams();
@@ -1377,7 +1494,7 @@ export async function updateStripeSubscriptionConfiguration(input: {
       params.set(`items[${itemIndex}][id]`, extraDesktopItem.id);
       params.set(
         `items[${itemIndex}][price]`,
-        catalog.extraDesktopKeyPriceIds[input.billingInterval],
+        preserveBasePlan ? extraDesktopItem.price.id : catalog.extraDesktopKeyPriceIds[input.billingInterval],
       );
       params.set(`items[${itemIndex}][quantity]`, String(input.extraDesktopKeys));
     } else {
@@ -1403,6 +1520,7 @@ export async function updateStripeSubscriptionConfiguration(input: {
   params.set("metadata[photographer_id]", input.photographerId);
   params.set("metadata[extra_desktop_keys]", String(input.extraDesktopKeys));
   params.set("metadata[pricing_profile]", targetPricingProfile);
+  params.set("metadata[subscription_currency]", verified.currency);
   params.set("proration_behavior", "create_prorations");
 
   await stripeRequest<StripeSubscription>(`subscriptions/${subscription.id}`, {
@@ -1536,6 +1654,13 @@ export async function syncSubscriptionStateFromStripe(
   const planCode = resolvePlanCodeFromSubscription(subscription);
   const { baseItem, usageItem } = findSubscriptionItems(subscription);
   const subscriptionPricingProfile = resolveBillingIntervalFromLookupKey(getLookupKey(baseItem?.price))?.pricingProfile ?? "legacy";
+  if ((baseItem && normalizeSubscriptionCurrency(baseItem.price.currency) !== "cad" && subscriptionPricingProfile === "gallery_v3") ||
+      (subscription.metadata?.subscription_currency && subscription.metadata.subscription_currency !== "cad")) {
+    // A genuine first subscription webhook arrives before its id is mirrored.
+    // Ownership still requires the already-saved platform Customer and exact metadata.
+    verifySubscriptionCurrency({ id: photographer.id, stripe_subscription_id: subscription.id,
+      stripe_platform_customer_id: photographer.stripe_platform_customer_id }, subscription);
+  }
   const directFeeSubscription = subscriptionPricingProfile !== "legacy";
 
   if (planCode && !usageItem && !directFeeSubscription && isStripeBillingActive(subscription.status)) {
@@ -1808,11 +1933,11 @@ export async function handleCreditPackCheckoutCompleted(
   const pack = CREDIT_PACK_DEFS[packCode];
   const credits = Number(session.metadata?.credits ?? pack.credits);
   const priceCents = Number(session.metadata?.price_cents ?? pack.priceCents);
-  const currency = session.metadata?.currency ?? DEFAULT_BILLING_CURRENCY;
+  const currency = session.metadata?.currency ?? CREDIT_BILLING_CURRENCY;
   if (!Number.isSafeInteger(credits) || credits <= 0 ||
       !Number.isSafeInteger(priceCents) || priceCents <= 0 ||
       session.amount_total !== priceCents || session.currency !== currency ||
-      currency !== DEFAULT_BILLING_CURRENCY) {
+      currency !== CREDIT_BILLING_CURRENCY) {
     throw new Error("Paid credit checkout does not match its credit offer.");
   }
 
@@ -2244,10 +2369,15 @@ export async function resolveDirectOrderPricingPolicy(photographer: {
     throw new OrderFeeClassificationError();
   }
   if (resolved.pricingProfile !== "legacy") {
+    if (resolved.currency !== "cad") {
+      try { verifySubscriptionCurrency({ id: photographer.id, stripe_subscription_id: photographer.stripe_subscription_id,
+        stripe_platform_customer_id: photographer.stripe_platform_customer_id ?? null }, subscription); }
+      catch { throw new OrderFeeClassificationError(); }
+    }
     const plan = getPlanDefinitions(resolved.pricingProfile)[resolved.planCode];
     const amount = resolved.interval === "year" ? plan.annualPriceCents : plan.priceCents;
     if (metadata.photographer_id !== photographer.id || metadata.pricing_profile !== resolved.pricingProfile ||
-        baseItem.price.currency.toLowerCase() !== "cad" || baseItem.price.unit_amount !== amount ||
+        baseItem.price.currency.toLowerCase() !== resolved.currency || baseItem.price.unit_amount !== amount ||
         baseItem.price.recurring?.interval !== resolved.interval ||
         (baseItem.price.recurring?.interval_count ?? 1) !== 1 ||
         (baseItem.price.recurring?.usage_type ?? "licensed") !== "licensed" ||

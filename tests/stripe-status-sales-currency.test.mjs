@@ -10,7 +10,7 @@ const compiled = ts.transpileModule(readFileSync(new URL('../app/api/stripe/stat
 }).outputText;
 
 /** Execute the real status handler with isolated Connect and subscription responses. */
-function fixture({ subscription = false, country = 'US', savedCountry = null, providerFailure = false, mfaSatisfied, catalogSnapshot, noCurrent=false, accountChanges={},signupResult=null,signupFailure=false } = {}) {
+function fixture({ subscription = false, country = 'US', savedCountry = null, providerFailure = false, mfaSatisfied, catalogSnapshot, noCurrent=false, accountChanges={},signupResult=null,signupFailure=false, subscriptionCurrency='cad', subscriptionCurrencyFailure=false } = {}) {
   const stored = { id: 'studio-fixture', user_id: 'owner-fixture', business_name: 'Fixture studio',
     billing_currency: 'eur', stripe_connected_account_id: noCurrent?null:'acct_fixture', stripe_account_id: null,
     stripe_subscription_id: subscription ? 'sub_fixture' : null, studio_id: null,
@@ -48,6 +48,12 @@ function fixture({ subscription = false, country = 'US', savedCountry = null, pr
       subscriptionInputs.push(structuredClone(photographer));
       return { photographer: { ...photographer, subscription_status: actualSubscription.status } };
     },
+    resolveSubscriptionCurrency: async (photographer, actualSubscription) => {
+      assert.equal(photographer.id, stored.id);
+      if (subscription) assert.equal(actualSubscription.id, 'sub_fixture');
+      if (subscriptionCurrencyFailure) throw new Error('Select your business country before subscribing.');
+      return subscriptionCurrency;
+    },
     getCreditBalanceDetails: async () => ({ balance: 0, expiresAt: null, creditDebt: 0 }),
     ensureCreditPackageCatalog: async () => [],
     getUsageSummaryForCurrentPeriod: async (actualService, photographer) => {
@@ -74,7 +80,10 @@ function fixture({ subscription = false, country = 'US', savedCountry = null, pr
       if(currentSignup.active&&currentSignup.account){photographer.stripe_connected_account_id=currentSignup.account.id;photographer.stripe_account_id=currentSignup.account.id;Object.assign(stored,photographer);}
       return{...currentSignup,photographer};
     }},
-    '@/lib/studio-pricing': {...pricing, getPricingCatalogSnapshot: () => catalogSnapshot ?? pricing.getPricingCatalogSnapshot()},
+    '@/lib/studio-pricing': {...pricing, getPricingCatalogSnapshot: currency => {
+      const snapshot = catalogSnapshot ?? pricing.getPricingCatalogSnapshot();
+      return {...snapshot, currency: currency || snapshot.currency};
+    }},
     '@/lib/stripe-connect-country': connectCountry,
   };
   const api = {};
@@ -98,6 +107,31 @@ test('actual status refresh retains EUR sales currency when the connected accoun
   assert.equal(body.connectReadyForPayments, true);
   assert.equal(body.onboardingComplete, true);
   assert.deepEqual(body.warnings, []);
+});
+
+test('localized subscription status keeps its currency separate from sales and CAD credits', async () => {
+  for (const subscriptionCurrency of ['cad', 'usd', 'aud', 'gbp']) {
+    const f = fixture({ subscriptionCurrency });
+    const body = await (await f.invoke()).json();
+    assert.equal(body.subscriptionCurrency, subscriptionCurrency);
+    assert.equal(body.billingCatalog.currency, subscriptionCurrency);
+    assert.equal(body.billingCurrency, 'eur');
+    assert.equal(body.creditCurrency, 'cad');
+    assert.equal(body.billingCatalog.creditCurrency, 'cad');
+    assert.equal(f.stored.billing_currency, 'eur');
+    assert.equal(body.subscriptionCountryRequired, false);
+  }
+});
+
+test('unknown subscription country does not block CAD credit catalog or advertise a subscription currency', async () => {
+  const f = fixture({ subscriptionCurrencyFailure: true });
+  const body = await (await f.invoke()).json();
+  assert.equal(body.ok, true);
+  assert.equal(body.subscriptionCurrency, null);
+  assert.equal(body.subscriptionCountryRequired, true);
+  assert.equal(body.creditCurrency, 'cad');
+  assert.equal(body.billingCurrency, 'eur');
+  assert.match(body.warnings.join(' '), /business country/);
 });
 
 test('actual status refresh passes selected EUR to subscription and usage sync despite USD Connect and CAD subscription', async () => {

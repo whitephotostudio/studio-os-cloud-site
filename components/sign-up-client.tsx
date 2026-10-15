@@ -7,6 +7,7 @@ import { SiteFooter } from "@/components/site-footer";
 import { createClient } from "@/lib/supabase/client";
 import { useAuthFormReady } from "@/lib/use-auth-form-ready";
 import {
+  subscriptionPricingMarket,
   type PricingCatalogSnapshot,
   normalizeBillingInterval,
   normalizePlanCode,
@@ -22,6 +23,8 @@ export default function SignUpClient({ catalog }: { catalog: PricingCatalogSnaps
     core: catalog.plans.core.publicName,
     studio: catalog.plans.studio.publicName,
   };
+  const market = subscriptionPricingMarket(catalog.currency);
+  const previewOnly = Boolean(catalog.localizedSubscriptionsEnabled && !market.orderingAvailable);
   const formReady = useAuthFormReady();
   const supabase = createClient();
   const [selectedPlan, setSelectedPlan] = useState<ReturnType<typeof normalizePlanCode>>(null);
@@ -219,14 +222,15 @@ export default function SignUpClient({ catalog }: { catalog: PricingCatalogSnaps
                 <div className="mt-3 text-base text-neutral-600">
                   {new Intl.NumberFormat("en-CA", {
                     style: "currency",
-                    currency: "CAD",
+                    currency: (catalog.currency || "cad").toUpperCase(),
                   }).format((selectedInterval === "year"
                     ? catalog.plans[selectedPlan].annualPriceCents
                     : catalog.plans[selectedPlan].priceCents) / 100)}
                 </div>
                 <div className="mt-3 text-sm leading-7 text-neutral-500">
-                  Create your account, then activate your plan in billing settings.
-                  Connect your own Stripe account when you are ready to accept client payments.
+                  {previewOnly
+                    ? `Pricing preview only. Merchant onboarding and customer ordering for ${market.label} are not available yet. Creating a free account does not activate or purchase this plan.`
+                    : "Create your account, then choose and save your business country in billing settings before activating a plan. Connect your own Stripe account when you are ready to accept client payments."}
                 </div>
                 {selectedPlanFee ? (
                   <div data-selected-plan-order-fee className="mt-3 text-xs leading-6 text-neutral-600">
@@ -237,9 +241,10 @@ export default function SignUpClient({ catalog }: { catalog: PricingCatalogSnaps
               </div>
             ) : null}
 
+            {catalog.localizedSubscriptionsEnabled ? <p className="mt-5 text-sm leading-6 text-neutral-600">Subscription preview: {market.label} · {market.currency.toUpperCase()}. Your saved business country determines new subscription currency; existing subscriptions keep their current currency. AI credit packs remain in CAD.</p> : null}
             <div className="mt-8 text-sm text-neutral-500">
               Need to compare packages first?{" "}
-              <Link href="/pricing" className="font-medium text-neutral-950 underline underline-offset-4">
+              <Link href={catalog.localizedSubscriptionsEnabled ? `/pricing?country=${market.country}` : "/pricing"} className="font-medium text-neutral-950 underline underline-offset-4">
                 View pricing
               </Link>
             </div>

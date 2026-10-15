@@ -9,7 +9,7 @@ const entries = galleryReleaseEntries();
 const objectId = (prefix, lookup) => `${prefix}_${lookup.replaceAll('-', '_')}`;
 function priceFor(entry, product = objectId('prod', entry.lookupKey)) {
   return { object: 'price', id: objectId('price', entry.lookupKey), active: true, livemode: true,
-    lookup_key: entry.lookupKey, unit_amount: entry.unitAmount, currency: 'cad', type: 'recurring',
+    lookup_key: entry.lookupKey, unit_amount: entry.unitAmount, currency: entry.currency, type: 'recurring',
     billing_scheme: 'per_unit', recurring: { interval: entry.interval, interval_count: 1, usage_type: 'licensed', meter: null },
     product, metadata: {} };
 }
@@ -18,11 +18,13 @@ function productFor(entry) {
     name: entry.name, description: entry.description, metadata: { lookup_key: entry.lookupKey } };
 }
 function fixture({ existing = [], accountId = env.STUDIO_GALLERY_PRICING_EXPECTED_ACCOUNT_ID,
-  failFinalList = false, providerFailure = false, productPatch = {}, releaseEnv = env, checkoutLineAmount = null } = {}) {
+  failFinalList = false, providerFailure = false, productPatch = {}, releaseEnv = env, checkoutLineAmount = null,
+  balanceLivemode = true, checkoutLinePatch = {}, checkoutPatch = {} } = {}) {
   const selectedProfile = releaseEnv.STUDIO_GALLERY_PRICING_V3_ENABLED === '1' ? 'gallery_v3' : 'gallery_v2';
-  const entries = galleryReleaseEntries(selectedProfile);
+  const localized = ['1', 'true'].includes(releaseEnv.STUDIO_LOCAL_SUBSCRIPTIONS_ENABLED);
+  const entries = galleryReleaseEntries(selectedProfile, localized);
   const prices = new Map(existing.map(row => [row.lookup_key, structuredClone(row)]));
-  const products = new Map([...galleryReleaseEntries('gallery_v2'), ...galleryReleaseEntries('gallery_v3')]
+  const products = new Map([...galleryReleaseEntries('gallery_v2'), ...galleryReleaseEntries('gallery_v3', true)]
     .map(entry => [objectId('prod', entry.lookupKey), { ...productFor(entry), ...productPatch }]));
   const checkouts = new Map();
   const calls = [], reports = [], idempotency = new Map();
@@ -41,10 +43,16 @@ function fixture({ existing = [], accountId = env.STUDIO_GALLERY_PRICING_EXPECTE
     if (call.method === 'GET' && call.path === 'account') {
       response = { object: 'account', id: accountId, charges_enabled: true, payouts_enabled: true,
         details_submitted: true, requirements: { currently_due: [], past_due: [], disabled_reason: null } };
+    } else if (call.method === 'GET' && call.path === 'balance') {
+      response = { object: 'balance', livemode: balanceLivemode };
     } else if (call.method === 'GET' && call.path === 'prices') {
-      assert.deepEqual(call.query.getAll('lookup_keys[]'), entries.map(entry => entry.lookupKey));
+      const requested = call.query.getAll('lookup_keys[]');
+      assert.ok(requested.length > 0 && requested.length <= 10, 'Stripe supports at most ten lookup keys');
+      const batchStart = entries.findIndex(entry => entry.lookupKey === requested[0]);
+      assert.deepEqual(requested, entries.slice(batchStart, batchStart + 10).map(entry => entry.lookupKey));
       response = { object: 'list', has_more: false, data: failFinalList && ++listCount > 1 ? []
-        : [...prices.values()].filter(price => call.query.getAll('lookup_keys[]').includes(price.lookup_key)) };
+        : [...prices.values()].filter(price => call.query.getAll('lookup_keys[]').includes(price.lookup_key)
+          && (!call.query.has('active') || String(price.active) === call.query.get('active'))) };
     } else if (call.method === 'GET' && call.path.startsWith('products/')) {
       response = products.get(call.path.slice('products/'.length));
     } else if (call.method === 'POST' && call.path === 'products') {
@@ -57,8 +65,9 @@ function fixture({ existing = [], accountId = env.STUDIO_GALLERY_PRICING_EXPECTE
     } else if (call.method === 'POST' && call.path === 'prices') {
       const entry = entries.find(entry => entry.lookupKey === body.get('lookup_key'));
       assert.ok(entry, 'legacy lookup keys cannot be transferred');
-      assert.deepEqual([...body], [['currency', 'cad'], ['unit_amount', String(entry.unitAmount)],
-        ['product', objectId('prod', entry.lookupKey)], ['lookup_key', entry.lookupKey], ['transfer_lookup_key', 'true'],
+      assert.deepEqual([...body], [['currency', entry.currency], ['unit_amount', String(entry.unitAmount)],
+        ['product', objectId('prod', entry.lookupKey)], ['lookup_key', entry.lookupKey],
+        ...(!localized || entry.currency === 'cad' ? [['transfer_lookup_key', 'true']] : []),
         ['recurring[interval]', entry.interval]]);
       assert.equal(call.key, `studio-os-price-${entry.lookupKey}-${entry.unitAmount}`);
       response = idempotency.get(call.key) ?? priceFor(entry);
@@ -67,19 +76,27 @@ function fixture({ existing = [], accountId = env.STUDIO_GALLERY_PRICING_EXPECTE
       assert.equal(body.get('mode'), 'subscription');
       assert.equal(body.get('line_items[0][quantity]'), '1');
       assert.ok([...body.keys()].every(key => !key.startsWith('customer')), 'no customer/email fields transmitted');
-      const price = [...prices.values()].find(row => row.id === body.get('line_items[0][price]'));
-      assert.ok(price, 'only a verified catalog price can enter Checkout');
+      const linePrices = [];
+      for (let index = 0; body.has(`line_items[${index}][price]`); index++) {
+        assert.equal(body.get(`line_items[${index}][quantity]`), '1');
+        const price = [...prices.values()].find(row => row.id === body.get(`line_items[${index}][price]`));
+        assert.ok(price, 'only a verified catalog price can enter Checkout'); linePrices.push(price);
+      }
+      assert.ok(linePrices.length >= 1 && linePrices.length <= 2);
+      assert.ok(linePrices.every(price => price.currency === linePrices[0].currency
+        && price.recurring.interval === linePrices[0].recurring.interval));
       response = { object: 'checkout.session', id: `cs_live_Verification${checkouts.size + 1}`,
         livemode: true, mode: 'subscription', status: 'open', payment_status: 'unpaid',
-        currency: 'cad', amount_total: price.unit_amount, customer: null, subscription: null, payment_intent: null,
-        priceId: price.id };
+        currency: linePrices[0].currency, amount_total: linePrices.reduce((sum, price) => sum + price.unit_amount, 0),
+        customer: null, subscription: null, payment_intent: null, linePrices, ...checkoutPatch };
       checkouts.set(response.id, response);
     } else if (call.path.startsWith('checkout/sessions/')) {
       const [id, action] = call.path.slice('checkout/sessions/'.length).split('/');
       const session = checkouts.get(id);
       assert.ok(session, 'known verification session required');
       if (call.method === 'GET' && action === 'line_items') response = { object: 'list', has_more: false,
-        data: [{price: {id: session.priceId}, quantity: 1, currency: 'cad', amount_total: checkoutLineAmount ?? session.amount_total}] };
+        data: session.linePrices.map(price => ({price: {id: price.id}, quantity: 1, currency: price.currency,
+          amount_total: checkoutLineAmount ?? price.unit_amount, ...checkoutLinePatch })) };
       else if (call.method === 'GET' && !action) response = session;
       else if (call.method === 'POST' && action === 'expire') {
         session.status = 'expired'; response = session;
@@ -202,4 +219,137 @@ test('a Checkout amount mismatch expires the probe and fails release before succ
 test('Checkout verification rejects an unrelated deployment before any provider operation', async () => {
   await assert.rejects(verifyGalleryPricingRelease({...checkoutEnv, VERCEL_URL:'other-app.vercel.app'},
     () => assert.fail('No network')), /project deployment identity/);
+});
+
+const localizedEnv = { ...env, STUDIO_GALLERY_PRICING_V3_ENABLED: '1', STUDIO_LOCAL_SUBSCRIPTIONS_ENABLED: '1' };
+const localizedEntries = galleryReleaseEntries('gallery_v3', true);
+
+test('localized catalog shares exact backend keys, amounts and fee policy across four currencies', () => {
+  assert.equal(localizedEntries.length, 32);
+  assert.equal(new Set(localizedEntries.map(entry => entry.lookupKey)).size, 32);
+  for (const currency of ['cad', 'usd', 'aud', 'gbp']) {
+    const rows = localizedEntries.filter(entry => entry.currency === currency);
+    assert.deepEqual(rows.filter(entry => entry.kind === 'base').map(entry =>
+      [entry.unitAmount, entry.interval, entry.orderFeeRateCents, entry.orderFeeScope]), [
+      [5900, 'month', 55, 'all_paid_orders'], [59900, 'year', 55, 'all_paid_orders'],
+      [9900, 'month', 45, 'all_paid_orders'], [106920, 'year', 45, 'all_paid_orders'],
+      [19900, 'month', 45, 'all_paid_orders'], [214920, 'year', 45, 'all_paid_orders'],
+    ]);
+    assert.deepEqual(rows.filter(entry => entry.kind === 'extra_key').map(entry => [entry.unitAmount, entry.interval]),
+      [[5500, 'month'], [59400, 'year']]);
+    assert.ok(rows.every(entry => currency === 'cad' ? !entry.lookupKey.endsWith('-cad') : entry.lookupKey.endsWith(`-${currency}`)));
+  }
+  assert.deepEqual(localizedEntries.filter(entry => entry.currency === 'cad' && entry.kind === 'base').map(entry => entry.lookupKey),
+    galleryReleaseEntries('gallery_v3').map(entry => entry.lookupKey));
+  assert.deepEqual(localizedEntries.filter(entry => entry.currency === 'cad' && entry.kind === 'extra_key').map(entry => entry.lookupKey),
+    ['studio-os-extra-desktop-key-monthly-v2', 'studio-os-extra-desktop-key-annual-v2']);
+});
+
+test('localized flag accepts only explicit approved values and requires V3 before network', async () => {
+  for (const value of ['1', 'true']) {
+    await assert.rejects(verifyGalleryPricingRelease({ ...env, STUDIO_LOCAL_SUBSCRIPTIONS_ENABLED: value },
+      () => assert.fail('No network')), /require.*V3/);
+    const releaseEnv = { ...localizedEnv, STUDIO_LOCAL_SUBSCRIPTIONS_ENABLED: value };
+    const f = fixture({ releaseEnv, existing: localizedEntries.map(entry => priceFor(entry)) });
+    const result = await verifyGalleryPricingRelease(releaseEnv, f.fetcher, f.report);
+    assert.equal(result.prices.length, 32);
+  }
+  for (const value of [undefined, '0', 'TRUE', 'yes']) {
+    const releaseEnv = { ...localizedEnv, STUDIO_LOCAL_SUBSCRIPTIONS_ENABLED: value };
+    const f = fixture({ releaseEnv, existing: galleryReleaseEntries('gallery_v3').map(entry => priceFor(entry)) });
+    assert.equal((await verifyGalleryPricingRelease(releaseEnv, f.fetcher, f.report)).prices.length, 6);
+  }
+  await assert.rejects(verifyGalleryPricingRelease({ ...env, STUDIO_LOCAL_SUBSCRIPTIONS_CATALOG_PREPARE: '1' },
+    () => assert.fail('No network')), /requires localized subscriptions/);
+});
+
+test('normal localized release reads all 32 existing entries with zero provider mutations', async () => {
+  const existing = localizedEntries.map(entry => priceFor(entry));
+  const f = fixture({ releaseEnv: localizedEnv, existing });
+  const result = await verifyGalleryPricingRelease(localizedEnv, f.fetcher, f.report);
+  assert.equal(result.prices.length, 32); assert.equal(result.catalogMutations, 0);
+  assert.ok(f.calls.every(call => call.method === 'GET'));
+  assert.deepEqual(f.calls.filter(call => call.path === 'prices').map(call => call.query.getAll('lookup_keys[]').length),
+    [10,10,10,10,10,10,2,2,10,10,10,10,10,10,2,2], 'active and inactive complete reads respect the actual Stripe list limit');
+  assert.deepEqual([...f.prices.values()], existing);
+  const summary = f.reports.map(JSON.parse).find(row => row.check === 'gallery-pricing-release');
+  assert.equal(summary.verifiedBasePrices, 24); assert.equal(summary.verifiedExtraKeyPrices, 8);
+  assert.equal(summary.localizedCatalogPreparation, false);
+});
+
+test('missing localized prices fail before any POST unless one-shot preparation is explicitly enabled', async () => {
+  for (const flag of [undefined, '0', 'true']) {
+    const releaseEnv = { ...localizedEnv, STUDIO_LOCAL_SUBSCRIPTIONS_CATALOG_PREPARE: flag };
+    const f = fixture({ releaseEnv, existing: localizedEntries.slice(0, 8).map(entry => priceFor(entry)) });
+    await assert.rejects(verifyGalleryPricingRelease(releaseEnv, f.fetcher, f.report), /incomplete.*no catalog writes/);
+    assert.ok(f.calls.every(call => call.method === 'GET'));
+  }
+  const releaseEnv = { ...localizedEnv, STUDIO_LOCAL_SUBSCRIPTIONS_CATALOG_PREPARE: '1' };
+  const originalCad = localizedEntries.slice(0, 8).map(entry => priceFor(entry));
+  const f = fixture({ releaseEnv, existing: originalCad });
+  const prepared = await verifyGalleryPricingRelease(releaseEnv, f.fetcher, f.report);
+  assert.equal(prepared.catalogMutations, 48, 'only 24 missing foreign products and prices are created');
+  const posts = f.calls.filter(call => call.method === 'POST');
+  assert.ok(posts.filter(call => call.path === 'prices').every(call => !call.body.has('transfer_lookup_key')));
+  for (const price of originalCad) assert.deepEqual(f.prices.get(price.lookup_key), price);
+  const retry = await verifyGalleryPricingRelease(releaseEnv, f.fetcher, f.report);
+  assert.equal(retry.catalogMutations, 0); assert.deepEqual(retry.prices, prepared.prices);
+});
+
+test('any foreign mismatch blocks all preparation, including a late extra-key mismatch with earlier prices missing', async () => {
+  const releaseEnv = { ...localizedEnv, STUDIO_LOCAL_SUBSCRIPTIONS_CATALOG_PREPARE: '1' };
+  for (const patch of [{unit_amount: 1}, {currency: 'cad'}, {active: false}, {livemode: false},
+    {metadata: {pricing_profile: 'legacy'}}, {recurring: {interval: 'month', interval_count: 1, usage_type: 'licensed'}},
+    {recurring: {interval: 'year', interval_count: 1, usage_type: 'metered'}}]) {
+    const f = fixture({ releaseEnv, existing: [{ ...priceFor(localizedEntries.at(-1)), ...patch }] });
+    await assert.rejects(verifyGalleryPricingRelease(releaseEnv, f.fetcher, f.report), /incompatible/);
+    assert.equal(f.calls.filter(call => call.method === 'POST').length, 0);
+  }
+  const last = localizedEntries.at(-1);
+  const f = fixture({ releaseEnv, existing: [priceFor(last)], productPatch: {
+    metadata: { lookup_key: last.lookupKey, pricing_profile: 'legacy' } } });
+  await assert.rejects(verifyGalleryPricingRelease(releaseEnv, f.fetcher, f.report), /product is incompatible/);
+  assert.equal(f.calls.filter(call => call.method === 'POST').length, 0);
+});
+
+test('an inactive foreign lookup hidden from active results blocks every catalog creation', async () => {
+  const releaseEnv = { ...localizedEnv, STUDIO_LOCAL_SUBSCRIPTIONS_CATALOG_PREPARE: '1' };
+  const inactive = { ...priceFor(localizedEntries.at(-1)), active: false };
+  const f = fixture({ releaseEnv, existing: [inactive] });
+  await assert.rejects(verifyGalleryPricingRelease(releaseEnv, f.fetcher, f.report), /incompatible/);
+  const reads = f.calls.filter(call => call.path === 'prices');
+  assert.deepEqual(reads.map(call => call.query.get('active')), ['true','false','true','false','true','false','true','false']);
+  assert.equal(f.calls.filter(call => call.method === 'POST').length, 0);
+});
+
+test('localized release verifies exact live platform and balance mode before catalog operations', async () => {
+  for (const options of [{ accountId: 'acct_AnotherPlatform' }, { balanceLivemode: false }, { balanceLivemode: null }]) {
+    const f = fixture({ releaseEnv: localizedEnv, ...options });
+    await assert.rejects(verifyGalleryPricingRelease(localizedEnv, f.fetcher, f.report), /platform account|live platform balance/);
+    assert.ok(f.calls.every(call => call.method === 'GET' && ['account','balance'].includes(call.path)));
+  }
+});
+
+test('localized unpaid probes verify all 24 bases and eight matching-currency/cadence extra-key combinations', async () => {
+  const releaseEnv = { ...checkoutEnv, STUDIO_LOCAL_SUBSCRIPTIONS_ENABLED: '1' };
+  const f = fixture({ releaseEnv, existing: localizedEntries.map(entry => priceFor(entry)) });
+  const result = await verifyGalleryPricingRelease(releaseEnv, f.fetcher, f.report);
+  assert.equal(result.catalogMutations, 0); assert.equal(result.verifiedCheckouts, 32);
+  assert.equal(result.checkoutSessionMutations, 64);
+  assert.equal([...f.checkouts.values()].filter(session => session.linePrices.length === 1).length, 24);
+  assert.equal([...f.checkouts.values()].filter(session => session.linePrices.length === 2).length, 8);
+  assert.ok([...f.checkouts.values()].every(session => session.status === 'expired' && session.customer === null
+    && session.subscription === null && session.payment_intent === null));
+  const extraProof = f.reports.map(JSON.parse).filter(row => row.check === 'gallery-extra-key-checkout');
+  assert.deepEqual(extraProof.map(row => row.checkoutAmount), [25400,274320,25400,274320,25400,274320,25400,274320]);
+  assert.ok(f.reports.every(row => !row.includes(releaseEnv.STRIPE_SECRET_KEY)));
+});
+
+test('localized invalid line currency, amount or identity always expires the unpaid probe and stops', async () => {
+  const releaseEnv = { ...checkoutEnv, STUDIO_LOCAL_SUBSCRIPTIONS_ENABLED: '1' };
+  for (const patch of [{currency: 'invalid'}, {amount_total: 1}, {price: {id: 'price_Foreign'}}]) {
+    const f = fixture({ releaseEnv, existing: localizedEntries.map(entry => priceFor(entry)), checkoutLinePatch: patch });
+    await assert.rejects(verifyGalleryPricingRelease(releaseEnv, f.fetcher, f.report), /exact advertised price/);
+    assert.equal(f.checkouts.size, 1); assert.equal([...f.checkouts.values()][0].status, 'expired');
+  }
 });

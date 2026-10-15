@@ -167,7 +167,7 @@ function fixture(options = {}) {
     if(options.providerError)throw new Error('Synthetic lost provider response');
     return Response.json({id: 'cs_created', url: 'https://checkout.stripe.invalid/fixture'});
   }
-  const pure = new Set(['studio-pricing', 'trial-config', 'subscription-access', 'order-payment-policy', 'order-checkout-totals', 'order-currency', 'school-parent-gallery-link', 'online-backdrop-policy', 'stripe-connect-history', 'checkout-attempt']);
+  const pure = new Set(['subscription-currency', 'studio-pricing', 'trial-config', 'subscription-access', 'order-payment-policy', 'order-checkout-totals', 'order-currency', 'school-parent-gallery-link', 'online-backdrop-policy', 'stripe-connect-history', 'checkout-attempt']);
   function load(path, overrides = {}) {
     if (cache.has(path)) return cache.get(path);
     const exports = {}; cache.set(path, exports);

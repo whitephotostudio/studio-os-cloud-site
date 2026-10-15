@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useState } from "react";
 import {
   ArrowUpRight,
@@ -17,6 +18,8 @@ import { Reveal } from "@/components/marketing/Reveal";
 import { SiteFooter } from "@/components/site-footer";
 import { SiteHeader } from "@/components/site-header";
 import {
+  SUBSCRIPTION_PRICING_MARKETS,
+  subscriptionPricingMarket,
   type PricingCatalogSnapshot,
   type BillingInterval,
   type PlanCode,
@@ -211,14 +214,21 @@ const plans: PricingPlan[] = [
   },
 ];
 
-export function PricingPageClient({ catalog }: { catalog: PricingCatalogSnapshot }) {
-  const [billingInterval, setBillingInterval] = useState<BillingInterval>("month");
+export function PricingPageClient({ catalog, initialInterval = "month" }: { catalog: PricingCatalogSnapshot; initialInterval?: BillingInterval }) {
+  const [billingInterval, setBillingInterval] = useState<BillingInterval>(initialInterval);
+  const router = useRouter();
   const newOffer = catalog.pricingProfile !== "legacy";
   const unlimited = catalog.galleryStoragePolicy === "unlimited_jpeg";
-  const feeCopy = getOrderFeeCopy(catalog.pricingProfile);
+  const feeCopy = getOrderFeeCopy(catalog.pricingProfile, catalog.currency);
+  const market = subscriptionPricingMarket(catalog.currency);
+  const previewOnly = Boolean(catalog.localizedSubscriptionsEnabled && !market.orderingAvailable);
+  const money = (cents: number) => new Intl.NumberFormat("en-CA", { style: "currency", currency: catalog.currency.toUpperCase(), maximumFractionDigits: 2 }).format(cents / 100);
   const displayedPlans = plans.map((plan): PricingPlan => {
     if (!newOffer) return plan;
-    const rename = (text: string) => text.replaceAll("App Plan", "Core").replaceAll("Web Gallery", "Gallery").replaceAll("Studio Plan", "Studio").replaceAll("Everything in the Core", "Everything in Core");
+    const rename = (text: string) => (catalog.localizedSubscriptionsEnabled
+      ? text.replaceAll("Extra keys for $55 each", `Extra keys for ${money(billingInterval === "year" ? catalog.extraDesktopKeyAnnualCents : catalog.extraDesktopKeyMonthlyCents)} each ${billingInterval === "year" ? "per year" : "per month"}`)
+        .replaceAll("extra keys for $55 each", `extra keys for ${money(billingInterval === "year" ? catalog.extraDesktopKeyAnnualCents : catalog.extraDesktopKeyMonthlyCents)} each ${billingInterval === "year" ? "per year" : "per month"}`)
+      : text).replaceAll("App Plan", "Core").replaceAll("Web Gallery", "Gallery").replaceAll("Studio Plan", "Studio").replaceAll("Everything in the Core", "Everything in Core");
     return {
       ...plan,
       name: plan.code ? catalog.plans[plan.code].publicName : plan.name,
@@ -255,7 +265,7 @@ export function PricingPageClient({ catalog }: { catalog: PricingCatalogSnapshot
                 locally, and manages production.
               </p>
               <div className="mt-8 flex flex-wrap justify-center gap-3">
-                {[`${FREE_TRIAL_DAYS}-day launch trial`, "Studio workflow included", "Subscriptions in CAD"].map((label) => (
+                {[`${FREE_TRIAL_DAYS}-day launch trial`, "Studio workflow included", `Subscriptions in ${catalog.currency.toUpperCase()}`].map((label) => (
                   <span
                     key={label}
                     className="marketing-kicker rounded-full border border-white/15 bg-white/10 px-4 py-2 text-white/75 backdrop-blur"
@@ -266,6 +276,20 @@ export function PricingPageClient({ catalog }: { catalog: PricingCatalogSnapshot
               </div>
             </div>
           </Reveal>
+
+          {catalog.localizedSubscriptionsEnabled ? <div className="mt-6 rounded-2xl border border-neutral-200 bg-white p-5">
+            <label className="block text-sm font-semibold text-neutral-800">
+              Subscription pricing country
+              <select aria-label="Subscription pricing country" value={market.country}
+                onChange={event => {
+                  const selected = SUBSCRIPTION_PRICING_MARKETS.find(item => item.country === event.target.value);
+                  if (selected) router.push(`/pricing?country=${selected.country}&interval=${billingInterval}`);
+                }} className="mt-2 block w-full rounded-xl border border-neutral-300 bg-white px-4 py-3 sm:max-w-sm">
+                {SUBSCRIPTION_PRICING_MARKETS.map(item => <option key={item.country} value={item.country}>{item.label} · {item.currency.toUpperCase()}</option>)}
+              </select>
+            </label>
+            {previewOnly ? <p role="status" className="mt-3 text-sm leading-6 text-amber-800">Pricing preview only. Stripe merchant onboarding and customer ordering for {market.label} are not available yet. These plans cannot be purchased from this preview.</p> : null}
+          </div> : null}
 
           <Reveal delay={80} className="mt-6 rounded-[1.5rem] border border-red-200 bg-gradient-to-r from-red-50 via-white to-red-50 p-5 sm:p-6">
             <div className="flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
@@ -297,7 +321,7 @@ export function PricingPageClient({ catalog }: { catalog: PricingCatalogSnapshot
                   Choose monthly or annual billing
                 </h2>
                 <p className="marketing-body mt-2 text-[1rem] leading-7 text-neutral-600">
-                  {newOffer ? "Pay annually: Gallery C$599, Core C$1,069.20, or Studio C$2,149.20. Order fees are the same on monthly and annual plans." : `Annual billing is paid in advance and saves ${catalog.annualDiscountPercent}% on the base subscription.`}
+                  {newOffer ? `Pay annually: Gallery ${money(catalog.plans.starter.annualPriceCents)}, Core ${money(catalog.plans.core.annualPriceCents)}, or Studio ${money(catalog.plans.studio.annualPriceCents)}. Order fees are the same on monthly and annual plans.` : `Annual billing is paid in advance and saves ${catalog.annualDiscountPercent}% on the base subscription.`}
                 </p>
               </div>
               <div
@@ -331,7 +355,8 @@ export function PricingPageClient({ catalog }: { catalog: PricingCatalogSnapshot
               </div>
             </div>
             <p className="marketing-caption mt-4 text-neutral-500">
-              Subscription prices are in Canadian dollars (CAD). {newOffer ? "Gallery saves C$109 a year; Core and Studio save 10%." : `Annual billing saves ${catalog.annualDiscountPercent}%.`}
+              Subscription prices are in {catalog.currency.toUpperCase()}. {newOffer ? `Gallery saves ${money(catalog.plans.starter.annualSavingsCents)} a year; Core and Studio save 10%.` : `Annual billing saves ${catalog.annualDiscountPercent}%.`}
+              {catalog.localizedSubscriptionsEnabled ? " Your saved business country determines checkout currency; existing subscriptions keep their current currency." : ""}
             </p>
           </Reveal>
 
@@ -391,13 +416,13 @@ export function PricingPageClient({ catalog }: { catalog: PricingCatalogSnapshot
               </p>
             </div>
             <Link
-              href="/sign-up"
+              href={previewOnly ? "/pricing?country=CA" : `/sign-up${catalog.localizedSubscriptionsEnabled ? `?country=${market.country}` : ""}`}
               data-marketing-event="cta_start_trial"
               data-marketing-label="Pricing final CTA"
               data-marketing-placement="pricing_page"
               className="marketing-button premium-button inline-flex items-center justify-center gap-2 rounded-2xl bg-neutral-950 px-7 py-4 text-white shadow-[0_16px_38px_rgba(0,0,0,0.18)] transition hover:bg-black"
             >
-              Start Free Trial
+              {previewOnly ? "Compare supported country pricing" : "Start Free Trial"}
               <ArrowUpRight className="h-4 w-4" />
             </Link>
           </div>
@@ -431,7 +456,7 @@ function PricingCard({
   const formattedPrice = planCode
     ? new Intl.NumberFormat("en-CA", {
         style: "currency",
-        currency: "CAD",
+        currency: catalog.currency.toUpperCase(),
         minimumFractionDigits: billingInterval === "year" ? 2 : 0,
         maximumFractionDigits: 2,
       }).format(priceCents / 100)
@@ -439,11 +464,13 @@ function PricingCard({
   const monthlyEquivalent = planCode
     ? new Intl.NumberFormat("en-CA", {
         style: "currency",
-        currency: "CAD",
+        currency: catalog.currency.toUpperCase(),
       }).format(priceCents / (billingInterval === "year" ? 1200 : 100))
     : null;
+  const market = subscriptionPricingMarket(catalog.currency);
+  const previewOnly = Boolean(catalog.localizedSubscriptionsEnabled && !market.orderingAvailable);
   const href = planCode
-    ? `/sign-up?plan=${planCode}&interval=${billingInterval}`
+    ? `/sign-up?plan=${planCode}&interval=${billingInterval}${catalog.localizedSubscriptionsEnabled ? `&country=${market.country}` : ""}`
     : plan.href;
   const isAnnualPlan = Boolean(planCode && billingInterval === "year");
 
@@ -509,7 +536,7 @@ function PricingCard({
         {planCode
           ? billingInterval === "year"
             ? `Paid annually · ${monthlyEquivalent}/month equivalent`
-            : "Billed monthly · CAD"
+            : `Billed monthly · ${catalog.currency.toUpperCase()}`
           : plan.billing}
       </p>
 
@@ -560,7 +587,7 @@ function PricingCard({
           </div>
         ) : null}
 
-        <Link
+        {previewOnly ? <p className="mt-5 rounded-2xl border border-amber-300 bg-amber-50 px-5 py-4 text-center text-sm font-semibold text-amber-900">Pricing preview · Ordering not available yet</p> : <Link
           href={href}
           data-marketing-event="cta_start_trial"
           data-marketing-label={`Pricing plan: ${plan.name}`}
@@ -573,7 +600,7 @@ function PricingCard({
         >
           {plan.cta}
           <ArrowUpRight className="h-4 w-4" />
-        </Link>
+        </Link>}
       </div>
     </article>
   );

@@ -1,3 +1,4 @@
+import * as subscriptionCurrency from '../lib/subscription-currency.ts';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {createRequire} from 'node:module';
@@ -25,7 +26,7 @@ function fixture({subscription=null}={}){
     }
   }
   const api={};
-  const dependencies={'@/lib/studio-pricing':pricing,'@/lib/stripe-billing-period':periods,
+  const dependencies={'@/lib/subscription-currency':subscriptionCurrency,'@/lib/studio-pricing':pricing,'@/lib/stripe-billing-period':periods,
     '@/lib/order-usage-billing':{reconcileOrderUsageFeeRefunds:async()=>{}},
     '@/lib/subscription-access':{isStripeBillingActive:status=>['active','trialing'].includes(status)},
     '@/lib/studio-os-app':{syncPhotographyKeysByPhotographerId:async()=>{}}};
@@ -155,10 +156,10 @@ test('actual extra-key billing action retains an existing V2 base price/profile 
 test('key-only changes cannot hide a plan/cadence switch while an explicit reviewed plan update selects V3',async()=>{
   const f=fixture({subscription:oldStudioSubscription()});await f.api.ensureStripeCatalog();f.calls.length=0;
   for(const change of [{planCode:'core',billingInterval:'month'},{planCode:'studio',billingInterval:'year'}]){
-    await assert.rejects(f.api.updateStripeSubscriptionConfiguration({subscriptionId:'sub_existing',photographerId:'studio',extraDesktopKeys:2,preserveBasePlan:true,...change}),/current plan and billing interval/);
+    await assert.rejects(f.api.updateStripeSubscriptionConfiguration({subscriptionId:'sub_existing',customerId:'cus_existing',photographerId:'studio',extraDesktopKeys:2,preserveBasePlan:true,...change}),/current plan and billing interval/);
   }
   assert.ok(f.calls.every(call=>call.method==='GET'));
-  await f.api.updateStripeSubscriptionConfiguration({subscriptionId:'sub_existing',photographerId:'studio',planCode:'studio',billingInterval:'month',extraDesktopKeys:1});
+  await f.api.updateStripeSubscriptionConfiguration({subscriptionId:'sub_existing',customerId:'cus_existing',photographerId:'studio',planCode:'studio',billingInterval:'month',extraDesktopKeys:1});
   const update=f.calls.find(call=>call.method==='POST');
   assert.equal(update.params.get('items[0][id]'),'si_base_existing');
   assert.equal(update.params.get('items[0][price]'),'price_studio-os-studio-monthly-gallery-v3');
@@ -189,7 +190,7 @@ test('actual plan or cadence changes can accept V3 even when the requested key q
     ['studio','year',3,'price_studio-os-studio-annual-gallery-v3'],
   ]) {
     const f=fixture({subscription:oldStudioSubscription()});await f.api.ensureStripeCatalog();f.calls.length=0;
-    await f.api.updateStripeSubscriptionConfiguration({subscriptionId:'sub_existing',photographerId:'studio',planCode,billingInterval,extraDesktopKeys:keyQuantity});
+    await f.api.updateStripeSubscriptionConfiguration({subscriptionId:'sub_existing',customerId:'cus_existing',photographerId:'studio',planCode,billingInterval,extraDesktopKeys:keyQuantity});
     const update=f.calls.find(call=>call.path==='subscriptions/sub_existing'&&call.method==='POST');
     assert.equal(update.params.get('items[0][id]'),'si_base_existing');
     assert.equal(update.params.get('items[0][price]'),expectedPrice);
