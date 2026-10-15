@@ -366,3 +366,35 @@ test('direct recipient lists retain their previous 5000-address request bound wi
   const direct=await f.route.POST(f.request({recipients:recipients.slice(0,5000)}));assert.equal(direct.status,200);assert.equal((await direct.json()).sent,5000);
   assert.equal(f.sent.length,5000);
 });
+
+test('no-order filters exclude exact linked student orders placed through a different parent email',()=>{
+  for(const status of ['paid','payment_pending','cancelled','refunded']) {
+    const data=example();data.orders=[order({parent_email:'another-parent@example.com',customer_email:'checkout@example.com',
+      student:{id:'s1',first_name:'Child',last_name:'One',class_name:'Grade 7'},status})];
+    const parent=audience.buildSchoolVisitorAudience(data).find(row=>row.id==='v1');
+    assert.equal(parent.orderCount,1,status);assert.deepEqual(parent.orders,[{id:'o1'}]);
+    assert.equal(filters.matchesSchoolVisitorFilters(parent,{...defaults,orders:'no_orders'}),false,status);
+    assert.throws(()=>audience.schoolVisitorEmailAudience(schoolId,data,['v1'],{...defaults,orders:'no_orders'}));
+  }
+});
+
+test('a linked student order arriving after manual review blocks sending to the other parent',async()=>{
+  const f=emailRouteFixture();
+  const preview=await f.route.POST(f.request({action:'preview',schoolAudience:f.schoolAudience}));assert.equal(preview.status,200);
+  const reviewed=(await preview.json()).audience;assert.deepEqual(reviewed.recipients,['parent@example.com']);
+  f.tables.orders.push({...order({parent_email:'different-parent@example.com',customer_email:'checkout@example.com',
+    student:{id:'s1',first_name:'Child',last_name:'One',class_name:'Grade 7'}}),school_id:schoolId});
+  const response=await f.route.POST(f.request({schoolAudience:{...f.schoolAudience,...reviewed,requestId:'33333333-3333-4333-8333-333333333333'}}));
+  assert.equal(response.status,409);assert.equal(f.sent.length,0);assert.equal(f.batches.length,0);
+  assert.match((await response.json()).message,/recipient list changed/);
+  const newPreview=await f.route.POST(f.request({action:'preview',schoolAudience:f.schoolAudience}));
+  assert.equal(newPreview.status,409);assert.equal(f.sent.length,0);
+});
+
+test('a namesake order does not suppress another child until an explicit student ID matches',()=>{
+  const data=example();data.orders=[order({parent_email:'different-parent@example.com',customer_email:'checkout@example.com',
+    student:{id:'another-student',first_name:'Child',last_name:'One',class_name:'Grade 7'}})];
+  assert.deepEqual(audience.schoolVisitorEmailAudience(schoolId,data,['v1'],{...defaults,orders:'no_orders'}).recipients,['parent@example.com']);
+  data.orders[0].student.id='s1';
+  assert.throws(()=>audience.schoolVisitorEmailAudience(schoolId,data,['v1'],{...defaults,orders:'no_orders'}));
+});

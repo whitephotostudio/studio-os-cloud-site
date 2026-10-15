@@ -91,9 +91,16 @@ export function buildSchoolVisitorAudience(data: SchoolVisitorData) {
       firstVisit: text(order.created_at), lastVisit: text(order.created_at), preRelease: false, alsoPreRelease: false, registrationClasses: [] });
   }
   return [...byEmail.values()].map(visitor => {
-    const orders = data.orders.filter(order => [visitorEmail(order.parent_email), visitorEmail(order.customer_email)].includes(visitor.email));
-    const linkedIds = new Set(data.contacts.filter(contact => visitorEmail(contact.email) === visitor.email).map(contact => text(contact.student_id)));
-    const students = data.students.filter(student => linkedIds.has(text(student.id)) || visitorEmail(student.parent_email) === visitor.email);
+    const contactIds = new Set(data.contacts.filter(contact => visitorEmail(contact.email) === visitor.email).map(contact => text(contact.student_id)).filter(Boolean));
+    const students = data.students.filter(student => text(student.id) &&
+      (contactIds.has(text(student.id)) || visitorEmail(student.parent_email) === visitor.email));
+    // Every input table is scoped to this school by loadSchoolVisitorData.
+    // Only its loaded student identities can establish an alternate-address
+    // order match; stale contact IDs, names and shared surnames cannot.
+    const linkedIds = new Set(students.map(student => text(student.id)));
+    const orders = data.orders.filter(order =>
+      [visitorEmail(order.parent_email), visitorEmail(order.customer_email)].includes(visitor.email) ||
+      linkedIds.has(text(studentRecord(order.student).id)));
     const linkedStudents = [...students, ...orders.map(order => studentRecord(order.student))];
     const downloads = data.downloads.filter(download => visitorEmail(download.viewer_email) === visitor.email);
     const favorites = data.favorites.filter(favorite => visitorEmail(favorite.viewer_email) === visitor.email);
