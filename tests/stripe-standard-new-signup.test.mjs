@@ -51,6 +51,33 @@ test('CA and US signup persists pending ownership before exposing a hosted link 
 test('lost account creation and lost database save reuse exact frozen body and idempotency despite profile changes',async()=>{
  for(const failure of ['lost','saveFailure']){const f=fixture({[failure]:true});await assert.rejects(f.start());f.photographer.business_name='Edited studio';f.photographer.billing_email='edited@example.test';await f.start();const creates=f.calls.filter(c=>c.path==='accounts');assert.equal(creates.length,2);assert.equal(creates[0].body,creates[1].body);assert.equal(creates[0].key,creates[1].key);assert.equal(f.intent.stripe_account_id,'acct_new');}
 });
+test('signup retry permits at most thirty seconds of future clock skew while preserving strict twenty-three-hour expiry',()=>{
+ const {api}=fixture(),now=Date.parse('2026-10-15T18:51:45.561Z'),hour=60*60*1000;
+ for(const [age,allowed]of [[0,true],[-6,true],[-30000,true],[-30001,false],[-hour,false],[23*hour-1,true],[23*hour,false],[23*hour+1,false]]){
+  assert.equal(api.standardSignupRetryAllowed({attempted_at:new Date(now-age).toISOString()},now),allowed,`age ${age}`);
+ }
+ for(const attempted_at of ['invalid','',undefined,null])assert.equal(api.standardSignupRetryAllowed({attempted_at},now),false);
+ assert.equal(api.standardSignupRetryAllowed({attempted_at:new Date(now).toISOString()},NaN),false);
+});
+test('a first database reservation six milliseconds ahead of the app retries the exact request under SQL controls',async()=>{
+ const originalNow=Date.now;Date.now=()=>Date.parse('2026-10-15T18:51:45.561Z');
+ try{const f=fixture({age:-6,lost:true});await assert.rejects(f.start(),/lost account reply/);
+  const original=structuredClone(f.intent);assert.equal(original.attempted_at,'2026-10-15T18:51:45.567Z');
+  f.photographer.business_name='Later profile name';f.photographer.billing_email='later@example.test';await f.start();
+  const creates=f.calls.filter(c=>c.path==='accounts'),reservations=f.calls.filter(c=>c.rpc==='reserve_photographer_standard_signup');
+  assert.equal(creates.length,2);assert.equal(creates[0].body,creates[1].body);assert.equal(creates[0].key,creates[1].key);assert.equal(creates[0].key,original.idempotency_key);
+  assert.equal(reservations.length,3);assert.ok(reservations.every(c=>c.args.p_request_hash===original.request_hash&&JSON.stringify(c.args.p_creation_params)===JSON.stringify(original.creation_params)));
+  assert.ok(f.calls.findLastIndex(c=>c.rpc==='reserve_photographer_standard_signup')<f.calls.findLastIndex(c=>c.path==='accounts'));
+  assert.equal(f.intent.id,original.id);assert.equal(f.intent.request_hash,original.request_hash);assert.equal(f.intent.stripe_account_id,'acct_new');assert.equal(f.photographer.stripe_account_id,null);
+ }finally{Date.now=originalNow;}
+});
+test('small clock skew cannot bypass browser ownership or disabled unknown-result creation',async()=>{
+ const originalNow=Date.now;Date.now=()=>Date.parse('2026-10-15T18:51:45.561Z');
+ try{const foreign=fixture({age:-6});foreign.request.headers.set('origin','https://foreign.test');await assert.rejects(foreign.start(),/this Studio OS page/);assert.equal(foreign.calls.length,0);
+  const f=fixture({age:-6,lost:true});await assert.rejects(f.start(),/lost account reply/);const original=structuredClone(f.intent),creates=f.calls.filter(c=>c.path==='accounts').length;
+  process.env.STRIPE_STANDARD_NEW_ACCOUNTS_ENABLED='false';await assert.rejects(f.start(),/reconciliation/);assert.equal(f.calls.filter(c=>c.path==='accounts').length,creates);assert.deepEqual(f.intent,original);
+ }finally{Date.now=originalNow;}
+});
 test('repeated pending links and ready status never create another account; feature off continues saved Standard servicing',async()=>{
  const f=fixture();await f.start();await f.start();assert.equal(f.calls.filter(c=>c.path==='accounts').length,1);f.provider.charges_enabled=f.provider.payouts_enabled=f.provider.details_submitted=true;process.env.STRIPE_STANDARD_NEW_ACCOUNTS_ENABLED='false';const refreshed=await f.api.refreshStandardSignupForPhotographer(f.service,{photographer:f.photographer,userId:'owner'});assert.equal(refreshed.active,true);assert.equal(refreshed.photographer.stripe_account_id,'acct_new');assert.equal((await f.start()).url,'https://dashboard.stripe.com/');assert.equal(f.calls.filter(c=>c.path==='accounts').length,1);
 });

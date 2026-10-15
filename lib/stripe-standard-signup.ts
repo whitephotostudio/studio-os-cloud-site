@@ -46,7 +46,9 @@ export function standardSignupParamsHash(params: Record<string, string>) {
 }
 export function standardSignupRetryAllowed(intent: Pick<Signup, "attempted_at">, now = Date.now()) {
   const age = now - new Date(intent.attempted_at).getTime();
-  return Number.isFinite(age) && age >= 0 && age < 23 * 60 * 60 * 1000;
+  // Database and app clocks can differ slightly even on the first reservation.
+  // The SQL re-reservation still independently enforces controls and expiry.
+  return Number.isFinite(age) && age >= -30_000 && age < 23 * 60 * 60 * 1000;
 }
 function unpack<T>(data: unknown): T { return (Array.isArray(data) ? data[0] : data) as T; }
 async function platformProof(ctx: Context) {
