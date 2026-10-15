@@ -14,7 +14,7 @@ import {
   syncConnectState,
 } from "@/lib/payments";
 import { ConnectProfileError, verifiedConnectCountry } from "@/lib/stripe-connect-country";
-import { startStandardSignup } from "@/lib/stripe-standard-signup";
+import { assertStandardSignupConnectAllowed, startStandardSignup } from "@/lib/stripe-standard-signup";
 import { StandardConnectError, standardAccountReadiness, type StandardAccount } from "@/lib/stripe-standard-connect";
 
 export const dynamic = "force-dynamic";
@@ -53,6 +53,7 @@ export async function POST(request: NextRequest) {
     const service = createDashboardServiceClient();
     const body = (await request.json().catch(() => ({}))) as ConnectBody;
     let photographer = await getOrCreatePhotographerByUser(service, user);
+    await assertStandardSignupConnectAllowed(service, { photographer, userId: user.id });
     // Standard reservation owns the first country lock. Reserving through the
     // legacy Express path first would turn a new signup into an uncertain retry.
     const profile = await configureConnectBusinessProfile(service, photographer, body, false);

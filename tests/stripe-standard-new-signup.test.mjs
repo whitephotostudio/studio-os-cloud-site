@@ -68,3 +68,45 @@ test('browser ownership, permanent marker and payment boundary cannot silently f
  const api=f.api;process.env.STRIPE_SECRET_KEY='sk_live_intercepted';process.env.NEXT_PUBLIC_SUPABASE_URL='https://bwqhzczxoevouiondjak.supabase.co';process.env.STUDIO_STANDARD_EXPECTED_PLATFORM_ACCOUNT_ID='acct_1TBlT4PxlnWeytFA';process.env.STUDIO_PAYMENT_EXPECTED_APP_URL='https://www.studiooscloud.com';process.env.VERCEL_ENV='preview';assert.throws(()=>api.assertStandardSignupEnvironment(),/environment/);
  process.env.STRIPE_STANDARD_NEW_ACCOUNTS_ENABLED='false';const required=fixture({schemaMissing:true});required.photographer.stripe_account_history_required=true;await assert.rejects(required.start(),/saved Stripe connection/);
 });
+
+test('connect route rejects a blocked signup before deleted-account GETs or profile and branding writes',async()=>{
+ for(const enabled of ['true','false']){
+  const f=fixture({ready:true});await f.start();f.intent.status='blocked';f.photographer.stripe_account_history_required=true;f.calls.length=0;
+  process.env.STRIPE_STANDARD_NEW_ACCOUNTS_ENABLED=enabled;
+  const before=structuredClone(f.photographer);let forbiddenCalls=0;
+  const forbidden=()=>{forbiddenCalls++;throw Error('Blocked signup must not call profile/provider mutations or the deleted account.');};
+  const route=load('app/api/stripe/connect/route.ts',{
+   'next/server':{NextResponse:{json:(body,init)=>Response.json(body,init)}},
+   '@/lib/dashboard-auth':{resolveDashboardAuth:async()=>({user:{id:'owner',email:'first@example.test'},mfaSatisfied:true}),createDashboardServiceClient:()=>f.service},
+   '@/lib/payments':{getOrCreatePhotographerByUser:async()=>f.photographer,configureConnectBusinessProfile:forbidden,retrieveStripeAccount:forbidden,createConnectedAccount:forbidden,createConnectedAccountLink:forbidden,syncConnectState:forbidden},
+   '@/lib/stripe-connect-country':country,'@/lib/stripe-standard-signup':f.api,'@/lib/stripe-standard-connect':standard,
+  });
+  const response=await route.POST({...f.request,json:async()=>({businessCountry:'US',salesCurrency:'usd',businessName:'Must not save',studioName:'Must not save'})});
+  assert.equal(response.status,409);const body=await response.json();assert.equal(body.ok,false);assert.match(body.message,/support review/);assert.equal(body.url,undefined);
+  assert.equal(forbiddenCalls,0);assert.equal(f.calls.length,0);assert.deepEqual(f.photographer,before);assert.equal(f.intent.status,'blocked');
+ }
+});
+
+test('connect preflight validates owner, frozen intent, selected pointers and actual permanent marker without provider calls',async()=>{
+ for(const mutate of [f=>f.intent.actor_user_id='foreign',f=>f.intent.request_hash='bad',f=>f.intent.platform_account_id='acct_foreign',f=>f.photographer.stripe_account_id='acct_foreign']){
+  const f=fixture({ready:true});await f.start();mutate(f);f.calls.length=0;
+  await assert.rejects(f.api.assertStandardSignupConnectAllowed(f.service,{photographer:f.photographer,userId:'owner'}));assert.equal(f.calls.length,0);
+ }
+ const f=fixture();f.photographer.stripe_account_history_required=true;
+ const projection={...f.photographer};delete projection.stripe_account_history_required;
+ await assert.rejects(f.api.assertStandardSignupConnectAllowed(f.service,{photographer:projection,userId:'owner'}),/support review/);assert.equal(f.calls.length,0);
+ await assert.rejects(f.api.assertStandardSignupConnectAllowed(f.service,{photographer:f.photographer,userId:'foreign'}),/another owner/);assert.equal(f.calls.length,0);
+});
+
+test('connect preflight selects the intended payment mode and keeps legacy feature-off schema compatibility',async()=>{
+ const f=fixture({ready:true});await f.start();f.calls.length=0;
+ const conditions=[];const original=f.service.from.bind(f.service);
+ const rows=[structuredClone(f.intent),{...structuredClone(f.intent),id:'other-mode',livemode:true,status:'blocked'}];
+ const service={...f.service,from(table){if(table!=='photographer_stripe_standard_signups')return original(table);
+  const q={select(){return q},eq(key,value){conditions.push([key,value]);return q},async maybeSingle(){const matches=rows.filter(row=>conditions.every(([key,value])=>row[key]===value));return matches.length>1?{data:null,error:{code:'PGRST116'}}:{data:matches[0]||null,error:null}}};return q;}};
+ await f.api.assertStandardSignupConnectAllowed(service,{photographer:f.photographer,userId:'owner'});
+ assert.ok(conditions.some(([key,value])=>key==='livemode'&&value===false));assert.equal(f.calls.length,0);
+ process.env.STRIPE_STANDARD_NEW_ACCOUNTS_ENABLED='false';delete process.env.STUDIO_STANDARD_SANDBOX_EXPECTED_PLATFORM_ACCOUNT_ID;
+ const legacy=fixture({existing:'acct_old',schemaMissing:true});await legacy.api.assertStandardSignupConnectAllowed(legacy.service,{photographer:legacy.photographer,userId:'owner'});assert.equal(legacy.calls.length,0);
+ legacy.photographer.stripe_account_history_required=true;await assert.rejects(legacy.api.assertStandardSignupConnectAllowed(legacy.service,{photographer:legacy.photographer,userId:'owner'}));assert.equal(legacy.calls.length,0);
+});

@@ -108,6 +108,43 @@ async function refreshedPhotographer(service: Service, photographerId: string, u
   return data as Photographer;
 }
 
+/** Reject revoked signups before profile writes or a GET of their deleted account. */
+export async function assertStandardSignupConnectAllowed(service: Service, input: { photographer: Photographer; userId: string }) {
+  if (input.photographer.user_id !== input.userId) {
+    throw new ConnectProfileError("The saved Stripe connection belongs to another owner.", 409);
+  }
+  let query = service.from("photographer_stripe_standard_signups").select("*")
+    .eq("photographer_id", input.photographer.id);
+  // This only selects the row. A found signup still requires the complete
+  // platform/environment proof below; legacy connections need no new pins.
+  const key = process.env.STRIPE_SECRET_KEY || "";
+  if (/^sk_live_/.test(key)) query = query.eq("livemode", true);
+  else if (/^(?:sk_test_|rkcs_test_)/.test(key)) query = query.eq("livemode", false);
+  const { data, error } = await query.maybeSingle();
+  if (error) {
+    if (!standardNewAccountsEnabled() && isStripeHistorySchemaMissing(error)) {
+      const fresh = await refreshedPhotographer(service, input.photographer.id, input.userId);
+      if (!fresh.stripe_account_history_required) return;
+    }
+    throw error;
+  }
+  if (!data) {
+    // The regular billing projection predates this marker. Check the current
+    // owner row rather than treating an omitted marker as a legacy connection.
+    const fresh = await refreshedPhotographer(service, input.photographer.id, input.userId);
+    if (fresh.stripe_account_history_required) {
+      throw new ConnectProfileError("The saved Stripe connection needs support review.", 409);
+    }
+    return;
+  }
+  const intent = data as Signup;
+  validateIntent(intent, input.photographer.id, input.userId, assertStandardSignupEnvironment());
+  if ([input.photographer.stripe_account_id, input.photographer.stripe_connected_account_id]
+    .some(id => id && id !== intent.stripe_account_id)) {
+    throw new ConnectProfileError("The selected Stripe account does not match its saved signup. Contact Studio OS support.", 409);
+  }
+}
+
 export async function refreshStandardSignupForPhotographer<T extends Photographer>(service: Service, input: { photographer: T; userId: string }) {
   const empty = { handled: false, account: null, photographer: input.photographer, pending: false, blocked: false, active: false };
   // On older deployments the additive table may be absent. This compatibility

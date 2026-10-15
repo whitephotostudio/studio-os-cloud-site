@@ -112,7 +112,7 @@ async function fixture(context, { existing = false, accountCountry = null, accou
     '@/lib/dashboard-auth': { createDashboardServiceClient: () => { serviceCalls++; return service; },
       resolveDashboardAuth: async () => ({ user: signedIn ? { id: userId, email: 'owner@example.invalid' } : null, mfaSatisfied }) },
     '@/lib/payments': payments, '@/lib/stripe-connect-country': connectCountry,
-    '@/lib/stripe-standard-signup': { startStandardSignup: async () => null },
+    '@/lib/stripe-standard-signup': { assertStandardSignupConnectAllowed: async () => {}, startStandardSignup: async () => null },
     '@/lib/stripe-standard-connect': standardConnect,
   };
   const connect = {}, profile = {};
