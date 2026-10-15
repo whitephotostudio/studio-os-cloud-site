@@ -16,9 +16,11 @@ const history = {};
 new Function('require', 'exports', compile('../lib/stripe-connect-history.ts'))(() => ({}), history);
 const connectCompiled = compile('../app/api/stripe/connect/route.ts');
 const profileCompiled = compile('../app/api/stripe/business-profile/route.ts');
+const standardConnect = {};
+new Function('require', 'exports', compile('../lib/stripe-standard-connect.ts'))(name => name === '@/lib/stripe-connect-country' ? connectCountry : {}, standardConnect);
 const migration = readFileSync(new URL('../supabase/migrations/20261008200000_explicit_stripe_business_country.sql', import.meta.url), 'utf8');
 
-async function fixture(context, { existing = false, accountCountry = null } = {}) {
+async function fixture(context, { existing = false, accountCountry = null, accountOverrides = {} } = {}) {
   const db = new PGlite();
   context.after(() => db.close());
   await db.exec(`create role anon; create role authenticated; create role service_role;
@@ -37,7 +39,7 @@ async function fixture(context, { existing = false, accountCountry = null } = {}
   if (!existing) await insert();
   if (accountCountry) await db.query("update photographers set stripe_connected_account_id='acct_existing', stripe_account_id='acct_existing' where id=$1", [photographerId]);
   const calls = [];
-  const accounts = new Map(accountCountry ? [['acct_existing', { id: 'acct_existing', country: accountCountry }]] : []);
+  const accounts = new Map(accountCountry ? [['acct_existing', { id: 'acct_existing', country: accountCountry, ...accountOverrides }]] : []);
   let providerCountryOverride;
   let failAccountLink = false;
   let loseCreationResponse = false;
@@ -110,6 +112,8 @@ async function fixture(context, { existing = false, accountCountry = null } = {}
     '@/lib/dashboard-auth': { createDashboardServiceClient: () => { serviceCalls++; return service; },
       resolveDashboardAuth: async () => ({ user: signedIn ? { id: userId, email: 'owner@example.invalid' } : null, mfaSatisfied }) },
     '@/lib/payments': payments, '@/lib/stripe-connect-country': connectCountry,
+    '@/lib/stripe-standard-signup': { startStandardSignup: async () => null },
+    '@/lib/stripe-standard-connect': standardConnect,
   };
   const connect = {}, profile = {};
   for (const [compiled, route] of [[connectCompiled, connect], [profileCompiled, profile]]) {
@@ -148,6 +152,20 @@ test('legacy Canada account and EUR sales survive status sync and reopening onbo
   const row = await f.row();
   assert.equal(row.billing_currency, 'eur'); assert.equal(row.business_country, 'CA'); assert.equal(row.sales_currency_configured, true);
   assert.equal(f.calls.filter(call => call.path === 'accounts').length, 0);
+});
+
+test('existing owned Standard account opens its full dashboard and foreign metadata never exposes a link', async context => {
+  const empty = { currently_due: [], eventually_due: [], past_due: [], pending_verification: [], errors: [] };
+  const accountOverrides = { type: 'standard', metadata: { photographer_id: photographerId, user_id: userId },
+    controller: { fees: { payer: 'account' }, losses: { payments: 'stripe' }, requirement_collection: 'stripe', stripe_dashboard: { type: 'full' } },
+    capabilities: { card_payments: 'active', transfers: 'active' }, requirements: empty, future_requirements: empty };
+  const f = await fixture(context, { existing: true, accountCountry: 'CA', accountOverrides });
+  const response = await f.connect({});
+  assert.equal(response.status, 200); const data = await response.json();
+  assert.equal(data.url, 'https://dashboard.stripe.com/'); assert.equal(data.stripeAccountType, 'standard'); assert.equal(data.onboardingComplete, true);
+  assert.equal(f.calls.some(call => call.path === 'account_links' || call.path === 'accounts'), false);
+  const foreign = await fixture(context, { existing: true, accountCountry: 'CA', accountOverrides: { ...accountOverrides, metadata: { photographer_id: 'foreign', user_id: userId } } });
+  assert.equal((await foreign.connect({})).status, 409); assert.equal(foreign.calls.some(call => call.path === 'account_links'), false);
 });
 
 test('missing, unsupported or malformed selections fail without Stripe account creation', async context => {

@@ -42,6 +42,9 @@ type StripeStatus = {
   brandColor: string;
   logoUrl: string;
   stripeAccountId: string | null;
+  stripeAccountType?: "express" | "standard" | null;
+  stripeDashboardType?: "express" | "full" | null;
+  stripePendingAccountId?: string | null;
   detailsSubmitted: boolean;
   chargesEnabled: boolean;
   payoutsEnabled: boolean;
@@ -401,6 +404,9 @@ export default function SettingsPage() {
   }, [commerceCardDot]);
 
   const [stripeAccountId, setStripeAccountId] = useState<string | null>(null);
+  const [stripeAccountType, setStripeAccountType] = useState<"express" | "standard" | null>(null);
+  const [stripeDashboardType, setStripeDashboardType] = useState<"express" | "full" | null>(null);
+  const [stripePendingAccountId, setStripePendingAccountId] = useState<string | null>(null);
   const [detailsSubmitted, setDetailsSubmitted] = useState(false);
   const [chargesEnabled, setChargesEnabled] = useState(false);
   const [payoutsEnabled, setPayoutsEnabled] = useState(false);
@@ -559,6 +565,9 @@ export default function SettingsPage() {
       setBrandColor(json.brandColor || "#0f172a");
       setLogoUrl(json.logoUrl || "");
       setStripeAccountId(json.stripeAccountId);
+      setStripeAccountType(json.stripeAccountType || null);
+      setStripeDashboardType(json.stripeDashboardType || null);
+      setStripePendingAccountId(json.stripePendingAccountId || null);
       setDetailsSubmitted(Boolean(json.detailsSubmitted));
       setChargesEnabled(Boolean(json.chargesEnabled));
       setPayoutsEnabled(Boolean(json.payoutsEnabled));
@@ -1005,7 +1014,11 @@ export default function SettingsPage() {
       }
 
       if (json.url) {
-        window.location.href = json.url;
+        const target = new URL(json.url);
+        const onboarding = target.protocol === "https:" && target.hostname === "connect.stripe.com" && !target.port;
+        const dashboard = target.origin === "https://dashboard.stripe.com" && target.pathname === "/" && !target.search && !target.hash;
+        if (target.username || target.password || !onboarding && !dashboard) throw new Error("The Stripe destination could not be verified.");
+        window.location.href = target.toString();
         return;
       }
 
@@ -1276,7 +1289,7 @@ export default function SettingsPage() {
   const showSubscriptionLockedWarning =
     !isPlatformAdmin && !subscriptionIsActive && !subscriptionInTrial;
   const showTrialInfo = !isPlatformAdmin && subscriptionInTrial;
-  const connectButtonLabel = connectReadyForPayments ? "Manage Stripe" : "Connect Stripe";
+  const connectButtonLabel = connectReadyForPayments ? stripeAccountType === "standard" && stripeDashboardType === "full" ? "Open Stripe Dashboard" : "Manage Stripe" : stripePendingAccountId ? "Continue Stripe setup" : "Connect Stripe";
   const planActionLabel =
     billingBusyAction === "plan"
       ? "Opening billing..."
@@ -1468,6 +1481,8 @@ export default function SettingsPage() {
             </div>
             <StatusRow label="Stripe account ID" value={stripeAccountId || "Not connected yet"} />
             <StatusRow label="Stripe account country" value={stripeAccountCountry || "Not verified yet"} />
+            {stripeAccountType ? <StatusRow label="Stripe account type" value={stripeAccountType === "standard" ? "Standard" : "Express"} /> : null}
+            {stripePendingAccountId && !stripeAccountId ? <StatusRow label="Stripe setup in progress" value={stripePendingAccountId} /> : null}
             <StatusRow label="Details submitted" value={detailsSubmitted ? "Yes" : "No"} ok={detailsSubmitted} />
             <StatusRow label="Charges enabled" value={chargesEnabled ? "Yes" : "No"} ok={chargesEnabled} />
             <StatusRow label="Payouts enabled" value={payoutsEnabled ? "Yes" : "No"} ok={payoutsEnabled} />

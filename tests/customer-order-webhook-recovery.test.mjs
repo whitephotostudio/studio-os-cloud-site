@@ -274,6 +274,7 @@ test("webhook signatures are checked before customer payment claims and other fl
   deps["@/lib/stripe-merchant-webhook"] = load("lib/stripe-merchant-webhook.ts", {
     "node:crypto":crypto,"@/lib/checkout-attempt":{canonicalCheckoutJson},"@/lib/stripe-connect-history":f.accountHistory,
     "@/lib/payments":f.payments,"@/lib/order-refund-notifications":{},
+    "@/lib/stripe-standard-signup":{refreshStandardSignupFromAccount:async()=>assert.fail("Customer payment signature fixture cannot invoke new Standard onboarding")},
   });
   const route = load("app/api/stripe/webhook/route.ts", deps);
   const oldSecret = process.env.STRIPE_WEBHOOK_SECRET;

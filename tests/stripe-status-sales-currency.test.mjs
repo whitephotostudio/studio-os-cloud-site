@@ -10,15 +10,15 @@ const compiled = ts.transpileModule(readFileSync(new URL('../app/api/stripe/stat
 }).outputText;
 
 /** Execute the real status handler with isolated Connect and subscription responses. */
-function fixture({ subscription = false, country = 'US', savedCountry = null, providerFailure = false, mfaSatisfied, catalogSnapshot } = {}) {
+function fixture({ subscription = false, country = 'US', savedCountry = null, providerFailure = false, mfaSatisfied, catalogSnapshot, noCurrent=false, accountChanges={},signupResult=null,signupFailure=false } = {}) {
   const stored = { id: 'studio-fixture', user_id: 'owner-fixture', business_name: 'Fixture studio',
-    billing_currency: 'eur', stripe_connected_account_id: 'acct_fixture', stripe_account_id: null,
+    billing_currency: 'eur', stripe_connected_account_id: noCurrent?null:'acct_fixture', stripe_account_id: null,
     stripe_subscription_id: subscription ? 'sub_fixture' : null, studio_id: null,
     stripe_platform_customer_id: null, subscription_status: 'active', subscription_plan_code: 'core',
     stripe_connect_onboarding_complete: false, stripe_connect_charges_enabled: false,
     stripe_connect_payouts_enabled: false, is_platform_admin: false, business_country: savedCountry };
   const connectCalls = [], subscriptionInputs = [], usageInputs = [];
-  let serviceCalls = 0;
+  let serviceCalls = 0,providerCalls=0;const signupCalls=[];let currentSignup=signupResult;
   const service = { from: () => assert.fail('Unexpected direct database access in the status fixture') };
   const payments = {
     ...pricing,
@@ -26,10 +26,10 @@ function fixture({ subscription = false, country = 'US', savedCountry = null, pr
     getOrCreatePhotographerByUser: async () => structuredClone(stored),
     getConnectedAccountId: photographer => photographer.stripe_connected_account_id || photographer.stripe_account_id,
     retrieveStripeAccount: async accountId => {
-      assert.equal(accountId, 'acct_fixture');
+      providerCalls++;assert.equal(accountId, 'acct_fixture');
       if (providerFailure) throw new Error('Fixture provider unavailable');
       return { id: accountId, country, default_currency: 'usd', details_submitted: true, charges_enabled: true,
-        payouts_enabled: true, requirements: { disabled_reason: null } };
+        payouts_enabled: true, requirements: { disabled_reason: null },...accountChanges };
     },
     syncConnectState: async (actualService, photographerId, account) => {
       assert.equal(actualService, service); assert.equal(photographerId, stored.id);
@@ -66,6 +66,14 @@ function fixture({ subscription = false, country = 'US', savedCountry = null, pr
     '@/lib/dashboard-auth': { createDashboardServiceClient: () => { serviceCalls++; return service; },
       resolveDashboardAuth: async () => ({ user: { id: stored.user_id, email: 'owner@example.invalid' }, mfaSatisfied }) },
     '@/lib/payments': payments,
+    '@/lib/stripe-standard-signup': {refreshStandardSignupForPhotographer:async(actualService,input)=>{
+      assert.equal(actualService,service);assert.equal(input.userId,stored.user_id);signupCalls.push(input);
+      if(signupFailure)throw new Error('signup verification interrupted');
+      if(!currentSignup)return{handled:false,account:null,photographer:input.photographer,pending:false,blocked:false,active:false};
+      const photographer={...input.photographer,...currentSignup.photographer};
+      if(currentSignup.active&&currentSignup.account){photographer.stripe_connected_account_id=currentSignup.account.id;photographer.stripe_account_id=currentSignup.account.id;Object.assign(stored,photographer);}
+      return{...currentSignup,photographer};
+    }},
     '@/lib/studio-pricing': {...pricing, getPricingCatalogSnapshot: () => catalogSnapshot ?? pricing.getPricingCatalogSnapshot()},
     '@/lib/stripe-connect-country': connectCountry,
   };
@@ -73,7 +81,7 @@ function fixture({ subscription = false, country = 'US', savedCountry = null, pr
   new Function('require', 'exports', 'process', 'fetch', compiled)(name => {
     assert.ok(name in modules, `Unexpected dependency ${name}`); return modules[name];
   }, api, { env: {} }, () => assert.fail('No live provider request is permitted'));
-  return { invoke: () => api.GET({}), stored, connectCalls, subscriptionInputs, usageInputs, get serviceCalls() { return serviceCalls; } };
+  return { invoke: () => api.GET({}), stored, connectCalls, subscriptionInputs, usageInputs, get serviceCalls() { return serviceCalls; },get providerCalls(){return providerCalls;},signupCalls,setSignupResult:value=>{currentSignup=value;} };
 }
 
 test('actual status refresh retains EUR sales currency when the connected account defaults to USD', async () => {
@@ -165,3 +173,9 @@ test('status returns all-order profile and 55/45/45 rates while preserving subsc
   assert.deepEqual(body.billingCatalog.plans.map(plan => [plan.priceCents, plan.annualPriceCents, plan.usageRateCents, plan.orderFeeScope]),
     [[5900, 59900, 55, 'all_paid_orders'], [9900, 106920, 45, 'all_paid_orders'], [19900, 214920, 45, 'all_paid_orders']]);
 });
+
+const readyStandard=()=>({id:'acct_fixture',object:'account',type:'standard',country:'US',default_currency:'usd',details_submitted:true,charges_enabled:true,payouts_enabled:true,controller:{fees:{payer:'account'},losses:{payments:'stripe'},requirement_collection:'stripe',stripe_dashboard:{type:'full'}},capabilities:{card_payments:'active',transfers:'active'},requirements:{disabled_reason:null,currently_due:[],eventually_due:[],past_due:[],pending_verification:[],errors:[]},future_requirements:{disabled_reason:null,currently_due:[],eventually_due:[],past_due:[],pending_verification:[],errors:[]}});
+test('owned incomplete Standard signup remains pending and a returned onboarding URL alone cannot advertise readiness',async()=>{const account={...readyStandard(),details_submitted:false,charges_enabled:false,payouts_enabled:false};const f=fixture({noCurrent:true,mfaSatisfied:true,signupResult:{handled:true,account,pending:true,blocked:false,active:false}});const body=await(await f.invoke()).json();assert.equal(body.stripeAccountId,null);assert.equal(body.stripePendingAccountId,'acct_fixture');assert.equal(body.stripeAccountType,'standard');assert.equal(body.stripeDashboardType,'full');assert.equal(body.onboardingComplete,false);assert.equal(body.connectReadyForPayments,false);assert.equal(body.connectStatusLabel,'Setup in progress');assert.equal(f.signupCalls.length,1);assert.equal(f.providerCalls,0);assert.equal(f.connectCalls.length,0);});
+test('existing ready signup can first-activate through the shared refresh helper with new creation disabled',async()=>{const f=fixture({noCurrent:true,mfaSatisfied:true,signupResult:{handled:true,account:readyStandard(),pending:false,blocked:false,active:true}});const body=await(await f.invoke()).json();assert.equal(body.stripeAccountId,'acct_fixture');assert.equal(body.stripePendingAccountId,null);assert.equal(body.stripeAccountType,'standard');assert.equal(body.stripeDashboardType,'full');assert.equal(body.onboardingComplete,true);assert.equal(body.connectReadyForPayments,true);assert.equal(f.signupCalls.length,1);assert.equal(f.providerCalls,0,'reuse the freshly verified account instead of another provider GET');assert.equal(f.connectCalls.length,1);assert.equal(body.billingCurrency,'eur');});
+test('Standard readiness requires complete current/future requirements and correct controller/capabilities',async()=>{for(const patch of [{future_requirements:undefined},{requirements:{...readyStandard().requirements,pending_verification:['due']}},{future_requirements:{...readyStandard().future_requirements,eventually_due:['due']}},{capabilities:{card_payments:'inactive',transfers:'active'}},{controller:{...readyStandard().controller,fees:{payer:'application'}}}]){const f=fixture({accountChanges:{...readyStandard(),...patch}}),body=await(await f.invoke()).json();assert.equal(body.stripeAccountType,'standard');assert.equal(body.onboardingComplete,false);assert.equal(body.connectReadyForPayments,false);assert.equal(body.connectStatusLabel,'Needs verification');}});
+test('revoked signup or failed owned signup refresh cannot reuse cached readiness or provider fallback',async()=>{for(const options of [{signupFailure:true},{signupResult:{handled:true,account:readyStandard(),pending:false,blocked:true,active:false}}]){const f=fixture({mfaSatisfied:true,...options});Object.assign(f.stored,{stripe_connect_onboarding_complete:true,stripe_connect_charges_enabled:true,stripe_connect_payouts_enabled:true});const body=await(await f.invoke()).json();assert.equal(body.connectReadyForPayments,false);assert.equal(body.onboardingComplete,false);assert.equal(body.chargesEnabled,false);assert.equal(body.payoutsEnabled,false);assert.equal(f.providerCalls,0);assert.equal(f.connectCalls.length,0);}});

@@ -16,11 +16,12 @@ export type StripeAccountHistoryRow = {
 };
 export type StripeAccountOwner = {
   photographerId: string; accountId: string; status: StripeAccountHistoryRow["status"];
-  livemode: boolean | null; migratedAt: string | null;
+  livemode: boolean | null; migratedAt: string | null; historyRequired?: boolean;
 };
 export type CheckoutRouting = {
   accountId: string; routeVersion: number; feeRateCents: number | null;
   connectionType: "express" | "standard"; livemode: boolean | null;
+  origin?: "standard_signup"; signupIntentId?: string; platformAccountId?: string; historyRequired?: boolean;
 };
 export type PaymentAccountReservation = {
   attemptId: string | null; accountId: string; idempotencyKey: string; routeVersion: number;
@@ -95,7 +96,28 @@ export function assertStandardCheckoutTestMode() {
   }
 }
 
-function assertStandardCheckoutScope(photographerId: string, accountId: string, livemode: boolean | null) {
+function assertStandardCheckoutScope(photographerId: string, accountId: string, livemode: boolean | null, route?: CheckoutRouting) {
+  if (route?.origin === "standard_signup") {
+    const scope = WHITEPHOTO_STANDARD_LIVE_SCOPE;
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(route.signupIntentId || "") ||
+        route.historyRequired !== true || !/^acct_[A-Za-z0-9]+$/.test(route.platformAccountId || "") ||
+        route.platformAccountId === accountId) throw new Error("The saved Standard signup origin cannot be verified.");
+    if (livemode === true) {
+      // A creation flag must never disable servicing an already owned account.
+      if (!/^sk_live_[A-Za-z0-9]+$/.test(process.env.STRIPE_SECRET_KEY || "") ||
+          process.env.NEXT_PUBLIC_SUPABASE_URL?.replace(/\/$/, "") !== `https://${scope.projectRef}.supabase.co` ||
+          process.env.STUDIO_STANDARD_EXPECTED_PLATFORM_ACCOUNT_ID !== scope.platformAccountId ||
+          route.platformAccountId !== scope.platformAccountId || process.env.VERCEL_ENV === "preview" ||
+          !["https://studiooscloud.com", "https://www.studiooscloud.com"].includes(process.env.STUDIO_PAYMENT_EXPECTED_APP_URL?.replace(/\/$/, "") || "")) {
+        throw new Error("The exact live Standard signup checkout environment is unverified.");
+      }
+    } else {
+      assertStandardCheckoutTestMode();
+      if (livemode !== false || route.platformAccountId !== process.env.STUDIO_STANDARD_SANDBOX_EXPECTED_PLATFORM_ACCOUNT_ID ||
+          route.platformAccountId === scope.platformAccountId) throw new Error("The exact Standard signup sandbox origin is unverified.");
+    }
+    return;
+  }
   if (livemode === true) {
     assertStandardLiveEnvironment(process.env, false);
     if (photographerId !== WHITEPHOTO_STANDARD_LIVE_SCOPE.photographerId ||
@@ -109,18 +131,25 @@ function assertStandardCheckoutScope(photographerId: string, accountId: string, 
 
 type LegacyPhotographer = {
   id: string; stripe_account_id: string | null; stripe_connected_account_id: string | null;
-  stripe_standard_migrated_at?: string | null; stripe_connect_route_version?: number;
+  stripe_standard_migrated_at?: string | null; stripe_connect_route_version?: number; stripe_account_history_required?: boolean;
 };
 async function legacyPhotographer(service: Service, photographerId: string) {
   let result = await service.from("photographers")
-    .select("id,stripe_account_id,stripe_connected_account_id,stripe_standard_migrated_at")
+    .select("id,stripe_account_id,stripe_connected_account_id,stripe_standard_migrated_at,stripe_connect_route_version,stripe_account_history_required")
     .eq("id", photographerId).maybeSingle<LegacyPhotographer>();
   if (result.error && isStripeHistorySchemaMissing(result.error)) {
-    result = await service.from("photographers").select("id,stripe_account_id,stripe_connected_account_id")
+    // Before the additive signup schema, still check the original migration
+    // marker. Never drop both markers merely because the newest column is absent.
+    result = await service.from("photographers").select("id,stripe_account_id,stripe_connected_account_id,stripe_standard_migrated_at,stripe_connect_route_version")
       .eq("id", photographerId).maybeSingle<LegacyPhotographer>();
+    if (result.error && isStripeHistorySchemaMissing(result.error)) {
+      result = await service.from("photographers").select("id,stripe_account_id,stripe_connected_account_id")
+        .eq("id", photographerId).maybeSingle<LegacyPhotographer>();
+    }
   }
   if (result.error) throw result.error;
-  if (!result.data || result.data.stripe_standard_migrated_at) {
+  if (!result.data || result.data.stripe_standard_migrated_at || result.data.stripe_account_history_required ||
+      Number(result.data.stripe_connect_route_version ?? 0) > 0) {
     throw new Error("The original Stripe payment account is unavailable; review is required.");
   }
   return result.data;
@@ -164,7 +193,10 @@ export async function getCheckoutRouting(service: Service, input: {
   if (!error) {
     if (!/^acct_[A-Za-z0-9_]+$/.test(data?.accountId ?? "") || !Number.isSafeInteger(Number(data.routeVersion)) ||
       Number(data.routeVersion) < 0 || !["express", "standard"].includes(data.connectionType)) throw new Error("Payment routing cannot be verified.");
-    if (data.connectionType === "standard") assertStandardCheckoutScope(input.photographerId, data.accountId, data.livemode);
+    if (data.origin === "standard_signup" && !["cad", "usd"].includes((input.currency ?? "cad").toLowerCase())) {
+      throw new Error("The Standard signup sales currency is unsupported.");
+    }
+    if (data.connectionType === "standard") assertStandardCheckoutScope(input.photographerId, data.accountId, data.livemode, data);
     // Routing never sets commercial fees; only verified subscription policy and
     // immutable per-order snapshots determine the amount collected.
     return { ...data, feeRateCents: null, routeVersion: Number(data.routeVersion) } as CheckoutRouting;
