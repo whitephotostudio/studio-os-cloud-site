@@ -3,6 +3,7 @@ import { resolveSchoolOrderMediaReferences } from "@/lib/school-order-media";
 import { resolveEventOrderMediaReferences } from "@/lib/event-order-media";
 import { randomUUID } from "node:crypto";
 import { checkoutAttemptIdentity } from "@/lib/checkout-attempt";
+import { labCheckoutIssue } from "@/lib/lab-checkout-policy";
 import { NextRequest, NextResponse } from "next/server";
 import { createDashboardServiceClient } from "@/lib/dashboard-auth";
 import { validateEventGalleryAccess } from "@/lib/event-gallery-access";
@@ -830,6 +831,9 @@ export async function POST(request: NextRequest) {
         );
       }
     }
+
+    const labIssue = labCheckoutIssue(Array.from(packageMap.values()));
+    if (labIssue) return NextResponse.json({ ok: false, message: labIssue }, { status: 409 });
 
     const purchaseIssue = retouchPrintPurchaseIssue(entries.map((entry) => ({
       pkg: packageMap.get(entry.packageId)!, quantity: entry.quantity,

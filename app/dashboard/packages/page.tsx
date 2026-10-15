@@ -971,6 +971,9 @@ export default function PackagesPage() {
               </p>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <Link href="/dashboard/labs" style={{ color: "#111", fontSize: 14, fontWeight: 600, textDecoration: "underline", textUnderlineOffset: 4 }}>
+                Build a lab price sheet
+              </Link>
               <span style={{ fontSize: 13, color: "#666" }}>{userEmail}</span>
               <button
                 onClick={() => { setNewSheetName(""); setNewSheetDupFrom(""); setShowNewSheet(true); }}

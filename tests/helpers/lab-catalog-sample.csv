@@ -1,0 +1,4 @@
+sku,name,category,size,finish,wholesale_price,currency,popular
+SYNTHETIC-5X7,Synthetic 5x7 print,Prints,5x7,Lustre,2.40,CAD,yes
+SYNTHETIC-8X10,Synthetic 8x10 print,Prints,8x10,Lustre,6.40,CAD,yes
+SYNTHETIC-CANVAS,Synthetic canvas,Canvas,16x20,Matte,40.00,CAD,no
