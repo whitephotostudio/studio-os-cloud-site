@@ -69,3 +69,75 @@ test('paper-frame pointer and keyboard interactions move the photo while retaini
   frame.props.onKeyDown({ ...event,key:'ArrowRight',shiftKey:false }); near(changes.pop().x,.2425); frame.props.onKeyDown({ ...event,key:'ArrowRight',shiftKey:true }); near(changes.pop().x,.22);
   assert.deepEqual(initial,{ x:.25,y:.25,width:.5,height:.5 }); assert.equal(frame.props.style,undefined,'Moving a photo does not resize or reposition its finished print container');
 });
+
+function hookHarness(extra={}) {
+  const slots=[],effects=[]; let cursor=0;
+  const slot=(kind,initial)=>{ const index=cursor++; if (!(index in slots)) slots[index]={ kind,value:typeof initial==='function'?initial():initial }; assert.equal(slots[index].kind,kind); return slots[index]; };
+  const hooks={ ...React,useRef:initial=>slot('ref',()=>({ current:initial })).value,useState:initial=>{ const current=slot('state',initial); return [current.value,next=>{ current.value=typeof next==='function'?next(current.value):next; }]; },useCallback:(fn,dependencies)=>{ const current=slot('callback',()=>({ fn,dependencies })); if (dependencies.some((dependency,index)=>!Object.is(dependency,current.value.dependencies[index]))) current.value={ fn,dependencies }; return current.value.fn; },useEffect:(effect,dependencies)=>{ const current=slot('effect',()=>({ dependencies:null })); if (!current.value.dependencies || dependencies.some((dependency,index)=>!Object.is(dependency,current.value.dependencies[index]))) { current.value.dependencies=dependencies; effects.push(effect); } } };
+  const local=load('components/labs/sheet-layout-builder.tsx',{ ...deps,...extra,react:hooks,'./sheet-crop-editor':crop });
+  return { local,render(component,props){ cursor=0;return component(props); },effects };
+}
+function thumbnailHarness(patch={}) {
+  const h=hookHarness(),assigned=[],hovered=[],queried=[],captured=new Set(),events=[]; let props={ assetId:photo.id,filename:photo.filename,width:photo.widthPixels,height:photo.heightPixels,url:'blob:SYNTHETIC-preview',selected:false,disabled:false,onAssign:cell=>assigned.push(cell),onHoverCell:cell=>hovered.push(cell),targetAtPoint:(x,y)=>{ queried.push([x,y]);return x>=200&&x<400&&y>=0&&y<280?'b':null; },children:'SYNTHETIC preview',...patch };
+  const render=next=>{ if (next) props={ ...props,...next }; return h.render(h.local.SheetPhotoThumbnail,props); },button=()=>nodes(render()).find(node=>node.type==='button');
+  const event=(patch={})=>({ button:0,pointerId:7,pointerType:'mouse',clientX:20,clientY:300,detail:1,preventDefault(){ events.push('prevent'); },stopPropagation(){ events.push('stop'); },currentTarget:{ setPointerCapture:id=>captured.add(id),hasPointerCapture:id=>captured.has(id),releasePointerCapture:id=>captured.delete(id) },...patch });
+  return { render,button,event,assigned,hovered,queried,captured,events };
+}
+
+test('photo drag threshold and drop targets reject outside paper, foreign cells and invalid pointer coordinates',()=>{
+  assert.equal(builder.sheetPhotoDragMoved(10,10,15.9,10),false); assert.equal(builder.sheetPhotoDragMoved(10,10,16,10),true); assert.equal(builder.sheetPhotoDragMoved(10,10,13.6,14.8),true);
+  for (const value of [NaN,Infinity,-Infinity]) for (const position of [0,1,2,3]) { const args=[0,0,10,10]; args[position]=value; assert.equal(builder.sheetPhotoDragMoved(...args),false); }
+  const inside={ getAttribute:name=>name==='data-sheet-cell'?'b':null },outside={ getAttribute:()=> 'a' },unknown={ getAttribute:()=> 'foreign-cell' },paper={ contains:element=>element===inside||element===unknown },element=target=>({ closest:selector=>{ assert.equal(selector,'[data-sheet-cell]');return target; } });
+  assert.equal(builder.sheetPhotoDropTarget(element(inside),paper,['a','b']),'b');
+  for (const [target,paperNode,ids] of [[null,paper,['a','b']],[element(null),paper,['a','b']],[element(outside),paper,['a','b']],[element(unknown),paper,['a','b']],[element(inside),null,['a','b']],[element(inside),paper,['a']]]) assert.equal(builder.sheetPhotoDropTarget(target,paperNode,ids),null);
+});
+
+test('mouse and touch drags capture one pointer, assign the exact paper cell once and suppress the following click',()=>{
+  for (const pointerType of ['mouse','touch','pen']) {
+    const h=thumbnailHarness(),button=h.button(),down=h.event({ pointerType }); assert.equal(button.props.draggable,false); assert.equal(button.props['data-sheet-photo'],photo.id); button.props.onPointerDown(down); assert(h.captured.has(7));
+    button.props.onPointerMove(h.event({ pointerId:8,pointerType,clientX:250,clientY:150 })); assert.deepEqual(h.queried,[],'Another pointer cannot move this photograph');
+    button.props.onPointerMove(h.event({ pointerType,clientX:250,clientY:150 })); assert.deepEqual(h.hovered,['b']); assert(nodes(h.render()).some(node=>node.type==='div'&&node.props['aria-hidden']==='true'),'Dragging shows an image ghost');
+    h.button().props.onPointerUp(h.event({ pointerType,clientX:250,clientY:150 })); assert.deepEqual(h.assigned,['b']); assert.equal(h.captured.size,0); assert.equal(h.hovered.at(-1),null); assert(!nodes(h.render()).some(node=>node.type==='div'&&node.props['aria-hidden']==='true'));
+    h.button().props.onLostPointerCapture(h.event({ pointerType })); h.button().props.onClick(h.event({ pointerType })); assert.deepEqual(h.assigned,['b'],'The synthetic post-drag click cannot also fill the selected cell');
+    h.button().props.onClick(h.event({ pointerType,detail:0 })); assert.deepEqual(h.assigned,['b',undefined],'Keyboard activation remains available after dragging');
+  }
+});
+
+test('off-paper, cancelled, lost-capture and newly disabled drags cannot assign a photo',()=>{
+  for (const ending of ['outside','cancel','lost','disabled']) {
+    const h=thumbnailHarness(),button=h.button(); button.props.onPointerDown(h.event()); button.props.onPointerMove(h.event({ clientX:250,clientY:150 }));
+    if (ending==='outside') h.button().props.onPointerUp(h.event({ clientX:500,clientY:150 }));
+    if (ending==='cancel') h.button().props.onPointerCancel(h.event());
+    if (ending==='lost') h.button().props.onLostPointerCapture(h.event());
+    if (ending==='disabled') { h.render({ disabled:true });h.button().props.onPointerUp(h.event({ clientX:250,clientY:150 })); }
+    assert.equal(h.hovered.at(-1),null); assert(!nodes(h.render()).some(node=>node.type==='div'&&node.props['aria-hidden']==='true')); h.button().props.onClick(h.event()); assert.deepEqual(h.assigned,[],ending);
+    h.button().props.onPointerMove(h.event({ clientX:250,clientY:150 })); h.button().props.onPointerUp(h.event({ clientX:250,clientY:150 })); assert.deepEqual(h.assigned,[],ending+' cannot resume without a new pointer down');
+  }
+  for (const patch of [{ disabled:true },{ url:undefined }]) { const h=thumbnailHarness(patch); h.button().props.onPointerDown(h.event()); h.button().props.onPointerUp(h.event({ clientX:250,clientY:150 })); assert.equal(h.captured.size,0); assert.deepEqual(h.assigned,[]); }
+  const right=thumbnailHarness();right.button().props.onPointerDown(right.event({ button:2 })); assert.equal(right.captured.size,0);
+});
+
+test('a final pointer position can complete a drag without move events while a short tap retains click selection',()=>{
+  const fast=thumbnailHarness();fast.button().props.onPointerDown(fast.event());fast.button().props.onPointerUp(fast.event({ clientX:250,clientY:150 })); assert.deepEqual(fast.assigned,['b']);fast.button().props.onClick(fast.event()); assert.deepEqual(fast.assigned,['b']);
+  const tap=thumbnailHarness();tap.button().props.onPointerDown(tap.event());tap.button().props.onPointerUp(tap.event({ clientX:23,clientY:302 })); assert.deepEqual(tap.assigned,[]);tap.button().props.onClick(tap.event());assert.deepEqual(tap.assigned,[undefined]); assert.equal(tap.captured.size,0);
+});
+
+test('foreign pointer cancellation cannot erase the active captured photo drag',()=>{
+  const h=thumbnailHarness();h.button().props.onPointerDown(h.event());h.button().props.onPointerMove(h.event({ clientX:250,clientY:150 }));
+  for (const handler of ['onPointerCancel','onLostPointerCapture']) h.button().props[handler](h.event({ pointerId:8 }));assert(nodes(h.render()).some(node=>node.type==='div'&&node.props['aria-hidden']==='true'));h.button().props.onPointerUp(h.event({ clientX:250,clientY:150 }));assert.deepEqual(h.assigned,['b']);
+});
+
+test('a job sheet rejects foreign photo IDs and external uploads while assignment requires fresh crop review',async()=>{
+  const original=globalThis.sessionStorage,requests=[],workspace={ drafts:[],sources:[photo],canCreate:true,jobId:'22222222-2222-4222-8222-222222222222',jobReference:'SYNTHETIC existing job' },user={ id:'33333333-3333-4333-8333-333333333333' };
+  globalThis.sessionStorage={ removeItem(){} };
+  try {
+    const h=hookHarness({ '@/lib/supabase/client':{ createClient:()=>({ auth:{ getSession:async()=>({ data:{ session:{ access_token:'SYNTHETIC-not-a-token',user } } }),onAuthStateChange:()=>({ data:{ subscription:{ unsubscribe(){} } } }) } }) },'./production-client':{ productionSessionRead:()=>null,productionSessionWrite(){},productionFetch:async(path,body)=>{ requests.push({ path,body });assert.equal(body,undefined,'This UI test must never submit a write');return { json:async()=>({ ok:true,workspace }) }; } } }),render=()=>h.render(h.local.SheetLayoutBuilder,{ audience:'lab',jobId:workspace.jobId });
+    render();h.effects.splice(0).forEach(effect=>effect()); for (let i=0;i<6;i++) await Promise.resolve(); let tree=render();
+    const paperLabel=nodes(tree).find(node=>node.type==='label'&&text(node).startsWith('1. Choose paper')),paper=nodes(paperLabel).find(node=>node.type==='select');assert(paper);paper.props.onChange({ target:{ value:'7x10' } });tree=render();
+    const thumb=nodes(tree).find(node=>node.type===h.local.SheetPhotoThumbnail);assert(thumb);assert.equal(thumb.props.disabled,true,'An unrendered private preview cannot be assigned');const preview=nodes(thumb).find(node=>typeof node.type==='function'&&node.props.source?.id===photo.id);assert(preview);preview.props.onReady('blob:SYNTHETIC-decoded');tree=render();
+    const cell=nodes(tree).find(node=>node.props?.['data-sheet-cell']==='b');assert(cell);const drop=id=>cell.props.onDrop({ preventDefault(){},dataTransfer:{ getData:()=>id } });drop('44444444-4444-4444-8444-444444444444');assert(!nodes(render()).some(node=>node.type===crop.SheetCropEditor),'A foreign or unlisted original never opens crop review');
+    const section=nodes(tree).find(node=>node.type==='section'&&node.props['data-dropzone']===false);assert(section);section.props.onDrop({ preventDefault(){},stopPropagation(){},dataTransfer:{ files:[new File(['SYNTHETIC'],'SYNTHETIC.jpg',{ type:'image/jpeg' })] } });assert.equal(requests.length,1,'Dropping an external file in a job cannot upload a new original');assert(text(render()).includes('Use only the photos assigned to this job.'));
+    drop(photo.id);tree=render();const editor=nodes(tree).find(node=>node.type===crop.SheetCropEditor);assert(editor);assert.equal(editor.props.ready,false);assert.equal(editor.props.reviewed,false);assert.equal(nodes(tree).find(node=>node.type===h.local.SheetPhotoThumbnail).props.disabled,true,'No second photo can be assigned while this print needs crop review');assert.match(nodes(tree).find(node=>node.props?.['data-sheet-cell']==='a').props['aria-label'],/empty/,'Assigning b leaves a unchanged');
+    assert.equal(requests.length,1);assert.deepEqual(workspace.sources,[photo]);
+  } finally { if (original===undefined) delete globalThis.sessionStorage;else globalThis.sessionStorage=original; }
+});
