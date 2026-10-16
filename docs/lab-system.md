@@ -4,6 +4,8 @@ The first module is a native Cloud workflow with no ROES code or transport. Phot
 
 Six [built-in print collections](./research-starter-collections.md) provide individual sizes and editable print-only packages before a catalog loads. Their previews remain available without matching lab products. Creating a new collection draft uses only exact, approved catalog products, explicitly selected finish and photographer-chosen cost markup/rounding; missing or ambiguous products stay unavailable and incomplete packages are never added. Existing schools and prices remain unchanged.
 
+[Private in-house price copies](./in-house-price-copies.md) appear separately under **Your studio prices**. They preserve an existing studio profile's retail prices and contents in an owner-private test draft; editing a copy leaves original price profiles and current school pricing unchanged.
+
 ## Routes and storage
 
 - `/dashboard/labs`: photographer workspace in the existing dashboard.
