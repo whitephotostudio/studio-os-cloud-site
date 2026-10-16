@@ -65,7 +65,7 @@ type StripeStatus = {
   subscriptionCurrency?: string | null;
   subscriptionCountryRequired?: boolean;
   creditCurrency?: "cad";
-  businessCountry: "CA" | "US" | null;
+  businessCountry: "CA" | "US" | "AU" | "GB" | null;
   businessCountryLocked: boolean;
   stripeAccountCountry: string | null;
   salesCurrencyConfigured: boolean;
@@ -1904,12 +1904,17 @@ export default function SettingsPage() {
                   onChange={(event) => {
                     const country = event.target.value;
                     setBusinessCountry(country);
-                    if (!salesCurrencyConfigured && country) setBillingCurrency(country === "US" ? "usd" : "cad");
+                    if (!salesCurrencyConfigured && country) {
+                      const currency = ({ CA: "cad", US: "usd", AU: "aud", GB: "gbp" } as Record<string, string>)[country];
+                      if (currency) setBillingCurrency(currency);
+                    }
                   }}
                   style={{ width: "100%", borderRadius: 18, border: "1px solid #d6dfef", padding: "14px 16px", background: "#fff", fontSize: 16, color: "#0f172a" }}>
                   <option value="">Choose your business country</option>
                   <option value="CA">Canada</option>
                   <option value="US">United States</option>
+                  <option value="AU">Australia</option>
+                  <option value="GB">United Kingdom</option>
                 </select>
                 <div style={{ marginTop: 6, fontSize: 12, color: "#64748b" }}>
                   {businessCountryLocked ? "Your Stripe business country is locked. Contact support if it needs review." : "Choose where your business is legally established before connecting Stripe."}

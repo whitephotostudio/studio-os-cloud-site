@@ -159,12 +159,6 @@ export async function POST(request: NextRequest) {
     // customer-sales currency. Resolve before creating any new customer or
     // Checkout so a missing country or unverified old contract fails safely.
     const subscriptionCurrency = await resolveSubscriptionCurrency(photographer);
-    const country = (photographer.business_country || photographer.stripe_connect_country || "").toUpperCase();
-    if (!hasExistingContract && ["AU", "GB"].includes(country)) {
-      return NextResponse.json({ ok: false,
-        message: "Subscriptions for Australian and UK photographers will open with their Stripe payment rollout. No subscription was created.",
-      }, { status: 409 });
-    }
     const customerId = await ensurePlatformCustomer(service, photographer, user);
 
     if (hasExistingContract && photographer.stripe_subscription_id) {

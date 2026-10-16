@@ -330,7 +330,7 @@ export async function GET(request: NextRequest) {
       subscriptionCurrency,
       subscriptionCountryRequired,
       creditCurrency: "cad",
-      businessCountry: photographer.business_country || (stripeAccountCountry === "US" || stripeAccountCountry === "CA" ? stripeAccountCountry : null),
+      businessCountry: photographer.business_country || (["CA", "US", "AU", "GB"].includes(stripeAccountCountry || "") ? stripeAccountCountry : null),
       businessCountryLocked: Boolean(stripeAccountId || photographer.stripe_connect_country),
       stripeAccountCountry,
       salesCurrencyConfigured: photographer.sales_currency_configured !== false,

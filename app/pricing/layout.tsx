@@ -3,7 +3,7 @@ import type { Metadata } from "next";
 export const metadata: Metadata = {
   title: "Pricing for Galleries, Online Booking & Workflow",
   description:
-    "Compare Studio OS Cloud plans in USD for US businesses and CAD for businesses in Canada, with premium galleries, online booking, desktop capture, AI tools, and connected production.",
+    "Compare Studio OS Cloud plans in CAD, USD, AUD, and GBP for businesses in Canada, the US, Australia, and the UK, with premium galleries and connected photography workflow.",
   alternates: {
     canonical: "https://www.studiooscloud.com/pricing",
   },

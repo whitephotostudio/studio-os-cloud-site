@@ -39,7 +39,7 @@ export function classifySignupInventory({accounts,profiles,owners,histories}){
   else if(p.stripe_account_history_required===true)reason='history_required';
   else if(!blank(p.stripe_connect_country))reason='uncertain_legacy_creation';
   else if(!blank(p.stripe_standard_migrated_at)||p.stripe_connect_route_version!==0)reason='existing_payment_history';
-  else if(!['cad','usd'].includes((p.billing_currency||'cad').toLowerCase())||p.business_country&&!['CA','US'].includes(p.business_country))reason='unsupported_country_or_currency';
+  else if(!['cad','usd','aud','gbp'].includes((p.billing_currency||'cad').toLowerCase())||p.business_country&&!['CA','US','AU','GB'].includes(p.business_country))reason='unsupported_country_or_currency';
   else if(!Number.isFinite(Date.parse(p.created_at))||Date.parse(p.created_at)>Date.now()+30000)reason='enrollment_date_unverified';
   else if(['registry','intents','bindings','signups'].some(k=>histories[k].some(r=>r.photographer_id===p.id))||histories.orders.some(o=>o.photographer_id===p.id&&(o.stripe_checkout_session_id||o.stripe_payment_intent_id||o.stripe_payment_account_binding_id||o.status==='checkout_starting')))reason='existing_payment_history';
   if(!reason){const matched=accounts.filter(a=>{const m=metadataMatches(a,p),i=identity(a);return m.photo||m.user||i.emails.some(v=>profileEmails.includes(v))||i.names.some(v=>profileNames.includes(v));});

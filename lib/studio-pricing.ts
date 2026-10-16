@@ -4,8 +4,8 @@ export type { SubscriptionCurrency } from "./subscription-currency";
 export const SUBSCRIPTION_PRICING_MARKETS = [
   { country: "CA", currency: "cad", label: "Canada", orderingAvailable: true },
   { country: "US", currency: "usd", label: "United States", orderingAvailable: true },
-  { country: "AU", currency: "aud", label: "Australia", orderingAvailable: false },
-  { country: "GB", currency: "gbp", label: "United Kingdom", orderingAvailable: false },
+  { country: "AU", currency: "aud", label: "Australia", orderingAvailable: true },
+  { country: "GB", currency: "gbp", label: "United Kingdom", orderingAvailable: true },
 ] as const;
 
 /** Public display selection only; the server independently verifies billing country. */

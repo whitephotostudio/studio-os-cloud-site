@@ -11,7 +11,7 @@ type Photographer = { id: string; user_id: string; business_name?: string | null
   stripe_connected_account_id?: string | null; stripe_account_history_required?: boolean };
 type Signup = { id: string; photographer_id: string; actor_user_id: string; platform_account_id: string;
   country: string; livemode: boolean; status: string; stripe_account_id: string | null; attempted_at: string;
-  creation_params: Record<string, string>; request_hash: string; provider_request_hash: string; idempotency_key: string };
+  allowed_currencies: string[]; creation_params: Record<string, string>; request_hash: string; provider_request_hash: string; idempotency_key: string };
 type Context = { livemode: boolean; platformAccountId: string };
 
 export function standardNewAccountsEnabled(environment: NodeJS.ProcessEnv = process.env) {
@@ -71,9 +71,14 @@ async function loadSignup(service: Service, photographerId: string, userId: stri
 }
 function validateIntent(intent: Signup, photographerId: string, userId: string, ctx: Context) {
   const params = intent.creation_params;
-  if (!intent.id || intent.photographer_id !== photographerId || intent.actor_user_id !== userId ||
+  // Historical CA/US intents keep their original sales scope. Only a newly
+  // reserved regional intent may carry all four currencies; never rewrite it.
+  const currencies = Array.isArray(intent.allowed_currencies) ? [...intent.allowed_currencies].sort().join(",") : "";
+  const savedSalesScopeValid = (intent.allowed_currencies?.length === 2 && currencies === "cad,usd" && ["CA", "US"].includes(intent.country)) ||
+    (intent.allowed_currencies?.length === 4 && currencies === "aud,cad,gbp,usd");
+  if (!intent.id || !savedSalesScopeValid || intent.photographer_id !== photographerId || intent.actor_user_id !== userId ||
       intent.platform_account_id !== ctx.platformAccountId || intent.livemode !== ctx.livemode ||
-      !["CA", "US"].includes(intent.country) || !params || Object.values(params).some(value => typeof value !== "string") ||
+      !["CA", "US", "AU", "GB"].includes(intent.country) || !params || Object.values(params).some(value => typeof value !== "string") ||
       params.type !== "standard" || params.country !== intent.country || params["metadata[photographer_id]"] !== photographerId ||
       params["metadata[user_id]"] !== userId || intent.request_hash !== standardSignupParamsHash(params) ||
       intent.provider_request_hash !== standardSignupParamsHash({ ...params, "metadata[standard_signup_id]": intent.id }) ||
@@ -228,8 +233,8 @@ export async function startStandardSignup(service: Service, input: {
       if (["existing_account", "uncertain_legacy_creation", "existing_payment_history"].includes(eligibility?.reason)) return null;
       throw new ConnectProfileError("New Standard connections are not available for this profile yet. Contact Studio OS support.", 409);
     }
-    if (input.salesCurrency && !["cad", "usd"].includes(input.salesCurrency.toLowerCase())) {
-      throw new ConnectProfileError("Choose CAD or USD sales before connecting your new Standard Stripe account.", 409);
+    if (input.salesCurrency && !["cad", "usd", "aud", "gbp"].includes(input.salesCurrency.toLowerCase())) {
+      throw new ConnectProfileError("Choose CAD, USD, AUD or GBP sales before connecting your new Standard Stripe account.", 409);
     }
     await platformProof(ctx);
     const params: Record<string, string> = { type: "standard", country: input.country,

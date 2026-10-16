@@ -170,7 +170,7 @@ test('existing owned Standard account opens its full dashboard and foreign metad
 
 test('missing, unsupported or malformed selections fail without Stripe account creation', async context => {
   const f = await fixture(context);
-  for (const body of [{}, { salesCurrency: 'usd', salesCurrencyExplicit: true }, { businessCountry: 'GB' }, { businessCountry: 1 }, { businessCountry: 'US', salesCurrency: 'jpy' },
+  for (const body of [{}, { salesCurrency: 'usd', salesCurrencyExplicit: true }, { businessCountry: 'FR' }, { businessCountry: 1 }, { businessCountry: 'US', salesCurrency: 'jpy' },
     { businessCountry: 'US', salesCurrencyExplicit: 'false' }]) {
     assert.ok((await f.connect(body)).status >= 400);
   }
@@ -269,4 +269,11 @@ test('read-only deployment schema guard verifies the installed schema and is ser
   await assert.rejects(f.db.exec('select stripe_business_profile_schema_status()'), /permission denied/);
   await f.db.exec('reset role; alter table photographers disable trigger protect_photographer_payment_country');
   assert.equal((await f.db.query('select stripe_business_profile_schema_status() as status')).rows[0].status.client_country_guard_ready, false);
+});
+
+
+test('business-country validation accepts the four supported legal countries and refuses aliases or malformed values',()=>{
+ for(const value of ['CA','US','AU','GB'])assert.equal(connectCountry.normalizeBusinessCountry(` ${value.toLowerCase()} `),value);
+ for(const value of ['FR','UK','aud',1,{},[]])assert.throws(()=>connectCountry.normalizeBusinessCountry(value),connectCountry.ConnectProfileError);
+ assert.equal(connectCountry.normalizeBusinessCountry(null),null);assert.equal(connectCountry.normalizeBusinessCountry(''),null);
 });

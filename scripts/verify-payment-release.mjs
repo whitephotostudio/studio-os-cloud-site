@@ -192,7 +192,7 @@ export async function verifyStandardSignupRelease(env=process.env,fetcher=fetch,
     'reserve_photographer_standard_signup','record_photographer_standard_signup_account','activate_photographer_standard_signup'];
   if(rpcs.some(name=>!schema.paths?.[`/rpc/${name}`]?.post))throw new Error('New Standard signup service-only API schema is incomplete.');
   const protections=await db('rpc/stripe_standard_signup_schema_status');
-  if(protections?.version!=='20261015020000'||['signup_schema_present','history_required_guard_present','legacy_creation_barrier_present','service_only_rpcs','service_only_tables']
+  if(protections?.version!=='20261016010000'||['regional_markets_present','signup_schema_present','history_required_guard_present','legacy_creation_barrier_present','service_only_rpcs','service_only_tables']
     .some(name=>protections[name]!==true))throw new Error('New Standard signup schema, legacy barrier or service-only permissions are unverified.');
   const history=await db('rpc/stripe_account_history_schema_status');
   if(history?.version!=='20261015010000'||history.history_schema_present!==true||history.reservation_guard_present!==true) {
@@ -205,10 +205,12 @@ export async function verifyStandardSignupRelease(env=process.env,fetcher=fetch,
   const control=Array.isArray(rows)&&rows.length===1?rows[0]:null;
   const exactArray=(values,expected)=>Array.isArray(values)&&values.length===expected.length&&[...values].sort().join(',')===[...expected].sort().join(',');
   const enrollment=typeof control?.enrollment_starts_at==='string'?Date.parse(control.enrollment_starts_at):NaN;
+  const regionalScope=exactArray(control?.allowed_countries,['CA','US','AU','GB'])&&exactArray(control?.allowed_currencies,['cad','usd','aud','gbp']);
+  const legacyPreparationScope=!enabled&&exactArray(control?.allowed_countries,['CA','US'])&&exactArray(control?.allowed_currencies,['cad','usd']);
   if(!control||control.release_key!=='standard-signup-v1'||control.platform_account_id!==scope.platformAccountId||control.project_ref!==scope.projectRef||
     typeof control.enabled!=='boolean'||!Number.isFinite(enrollment)||enrollment>Date.now()||
-    !exactArray(control.allowed_countries,['CA','US'])||!exactArray(control.allowed_currencies,['cad','usd'])) {
-    throw new Error('New Standard signup exact control scope, enrollment cutoff or CA/US CAD/USD coverage is unverified.');
+    (!regionalScope&&!legacyPreparationScope)) {
+    throw new Error('New Standard signup exact control scope, enrollment cutoff or CA/US/AU/GB CAD/USD/AUD/GBP coverage is unverified.');
   }
   if(enabled&&control.enabled!==true)throw new Error('New Standard signup creation flag requires its independently enabled database control.');
   const destinations=verifyStandardWebhookDestinations(await standardDestinationsGet(key,fetcher),env.STUDIO_PAYMENT_EXPECTED_APP_URL);

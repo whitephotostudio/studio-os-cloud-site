@@ -193,7 +193,7 @@ export async function getCheckoutRouting(service: Service, input: {
   if (!error) {
     if (!/^acct_[A-Za-z0-9_]+$/.test(data?.accountId ?? "") || !Number.isSafeInteger(Number(data.routeVersion)) ||
       Number(data.routeVersion) < 0 || !["express", "standard"].includes(data.connectionType)) throw new Error("Payment routing cannot be verified.");
-    if (data.origin === "standard_signup" && !["cad", "usd"].includes((input.currency ?? "cad").toLowerCase())) {
+    if (data.origin === "standard_signup" && !["cad", "usd", "aud", "gbp"].includes((input.currency ?? "cad").toLowerCase())) {
       throw new Error("The Standard signup sales currency is unsupported.");
     }
     if (data.connectionType === "standard") assertStandardCheckoutScope(input.photographerId, data.accountId, data.livemode, data);
