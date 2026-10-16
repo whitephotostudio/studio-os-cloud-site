@@ -1,0 +1,272 @@
+[
+  {
+    "destination": "https://www.studiooscloud.com/m",
+    "source": null,
+    "blocked": false
+  },
+  {
+    "destination": "https://www.studiooscloud.com/m/capture?school=123",
+    "source": null,
+    "blocked": false
+  },
+  {
+    "destination": "https://www.studiooscloud.com/m/orders/order1",
+    "source": null,
+    "blocked": false
+  },
+  {
+    "destination": "https://www.studiooscloud.com/m/invoices/invoice1",
+    "source": null,
+    "blocked": false
+  },
+  {
+    "destination": "https://www.studiooscloud.com/sign-in?redirect=%2Fm",
+    "source": null,
+    "blocked": false
+  },
+  {
+    "destination": "https://www.studiooscloud.com/forgot-password",
+    "source": null,
+    "blocked": false
+  },
+  {
+    "destination": "https://www.studiooscloud.com/reset-password",
+    "source": null,
+    "blocked": false
+  },
+  {
+    "destination": "https://www.studiooscloud.com/privacy",
+    "source": null,
+    "blocked": false
+  },
+  {
+    "destination": "https://www.studiooscloud.com/terms",
+    "source": null,
+    "blocked": false
+  },
+  {
+    "destination": "https://www.studiooscloud.com/data-responsibility",
+    "source": null,
+    "blocked": false
+  },
+  {
+    "destination": "https://www.studiooscloud.com/dashboard/projects/schools/s1/settings",
+    "source": null,
+    "blocked": false
+  },
+  {
+    "destination": "https://www.studiooscloud.com/dashboard/projects/e1/orders",
+    "source": null,
+    "blocked": false
+  },
+  {
+    "destination": "https://www.studiooscloud.com/dashboard/settings",
+    "source": null,
+    "blocked": false
+  },
+  {
+    "destination": "https://www.studiooscloud.com/dashboard/settings?stripe=returned",
+    "source": null,
+    "blocked": false
+  },
+  {
+    "destination": "https://www.studiooscloud.com/dashboard/settings?billing=subscription_success",
+    "source": null,
+    "blocked": true
+  },
+  {
+    "destination": "https://www.studiooscloud.com/m?billing=credits_success",
+    "source": null,
+    "blocked": true
+  },
+  {
+    "destination": "https://www.studiooscloud.com/dashboard",
+    "source": null,
+    "blocked": true
+  },
+  {
+    "destination": "https://www.studiooscloud.com/dashboard/?welcome=1",
+    "source": null,
+    "blocked": true
+  },
+  {
+    "destination": "https://www.studiooscloud.com/pricing",
+    "source": null,
+    "blocked": true
+  },
+  {
+    "destination": "https://studiooscloud.com/prices",
+    "source": null,
+    "blocked": true
+  },
+  {
+    "destination": "https://www.studiooscloud.com/sign-up",
+    "source": null,
+    "blocked": true
+  },
+  {
+    "destination": "https://www.studiooscloud.com/signup",
+    "source": null,
+    "blocked": true
+  },
+  {
+    "destination": "https://www.studiooscloud.com/credits?billing=credits_cancel",
+    "source": null,
+    "blocked": true
+  },
+  {
+    "destination": "https://www.studiooscloud.com/dashboard/membership",
+    "source": null,
+    "blocked": true
+  },
+  {
+    "destination": "https://www.studiooscloud.com/dashboard/membership/history",
+    "source": null,
+    "blocked": true
+  },
+  {
+    "destination": "https://www.studiooscloud.com/api/stripe/billing",
+    "source": null,
+    "blocked": true
+  },
+  {
+    "destination": "https://www.studiooscloud.com/api/stripe/checkout",
+    "source": null,
+    "blocked": false
+  },
+  {
+    "destination": "https://www.studiooscloud.com/api/stripe/connect",
+    "source": null,
+    "blocked": false
+  },
+  {
+    "destination": "https://www.studiooscloud.com/g/gallery?session_id=cs_test",
+    "source": null,
+    "blocked": false
+  },
+  {
+    "destination": "https://www.studiooscloud.com/checkout-success?order_id=o1",
+    "source": null,
+    "blocked": false
+  },
+  {
+    "destination": "https://www.studiooscloud.com/%70ricing",
+    "source": null,
+    "blocked": true
+  },
+  {
+    "destination": "https://www.studiooscloud.com/%2570ricing",
+    "source": null,
+    "blocked": true
+  },
+  {
+    "destination": "https://www.studiooscloud.com/m/../pricing",
+    "source": null,
+    "blocked": true
+  },
+  {
+    "destination": "https://www.studiooscloud.com//dashboard//membership/",
+    "source": null,
+    "blocked": true
+  },
+  {
+    "destination": "https://www.studiooscloud.com/dashboard/memberships",
+    "source": null,
+    "blocked": false
+  },
+  {
+    "destination": "https://www.studiooscloud.com/pricing-guide",
+    "source": null,
+    "blocked": false
+  },
+  {
+    "destination": "https://checkout.stripe.com/c/pay/customer-order",
+    "source": "https://www.studiooscloud.com/g/gallery",
+    "blocked": false
+  },
+  {
+    "destination": "https://checkout.stripe.com/c/pay/customer-order",
+    "source": "https://www.studiooscloud.com/m/orders/o1",
+    "blocked": false
+  },
+  {
+    "destination": "https://checkout.stripe.com/c/pay/opaque",
+    "source": null,
+    "blocked": false
+  },
+  {
+    "destination": "https://checkout.stripe.com/c/pay/platform",
+    "source": "https://www.studiooscloud.com/dashboard/settings",
+    "blocked": true
+  },
+  {
+    "destination": "https://billing.stripe.com/p/session/platform",
+    "source": "https://www.studiooscloud.com/dashboard/membership",
+    "blocked": true
+  },
+  {
+    "destination": "https://billing.stripe.com/p/session/unknown",
+    "source": null,
+    "blocked": false
+  },
+  {
+    "destination": "https://buy.stripe.com/platform",
+    "source": "https://www.studiooscloud.com/credits",
+    "blocked": true
+  },
+  {
+    "destination": "https://connect.stripe.com/oauth/authorize?state=connect",
+    "source": "https://www.studiooscloud.com/dashboard/settings",
+    "blocked": false
+  },
+  {
+    "destination": "https://connect.stripe.com/setup/s/session",
+    "source": "https://www.studiooscloud.com/dashboard/settings",
+    "blocked": false
+  },
+  {
+    "destination": "https://dashboard.stripe.com/acct_merchant",
+    "source": "https://www.studiooscloud.com/dashboard/settings",
+    "blocked": false
+  },
+  {
+    "destination": "https://invoice.stripe.com/i/physical-order",
+    "source": "https://www.studiooscloud.com/m/invoices/i1",
+    "blocked": false
+  },
+  {
+    "destination": "https://checkout.stripe.com/c/pay/opaque?success_url=https%3A%2F%2Fwww.studiooscloud.com%2Fcredits%3Fbilling%3Dcredits_success",
+    "source": null,
+    "blocked": true
+  },
+  {
+    "destination": "https://checkout.stripe.com/c/pay/opaque?success_url=https%3A%2F%2Fwww.studiooscloud.com%2Fg%2Fgallery%3Fpaid%3D1",
+    "source": null,
+    "blocked": false
+  },
+  {
+    "destination": "https://www.studiooscloud.com.evil.example/pricing",
+    "source": null,
+    "blocked": false
+  },
+  {
+    "destination": "https://billing.stripe.com.evil.example/p/session/platform",
+    "source": "https://www.studiooscloud.com/dashboard/settings",
+    "blocked": false
+  },
+  {
+    "destination": "mailto:support@studiooscloud.com",
+    "source": null,
+    "blocked": false
+  },
+  {
+    "destination": "tel:+14165550123",
+    "source": null,
+    "blocked": false
+  },
+  {
+    "destination": "webcal://www.studiooscloud.com/calendar/feed",
+    "source": null,
+    "blocked": false
+  }
+]

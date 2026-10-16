@@ -50,6 +50,7 @@ function harness({ profile = 'gallery_v2', stripeConnectUrl = null, expectedPlan
     useEffect() {}, useCallback: callback => callback, useMemo: factory => factory(), useRef: initial => ({ current: initial }) };
   const browser = { location: { href: 'https://example.invalid/dashboard/settings' } };
   const overrides = {
+    '@/lib/native-companion': { nativeBillingActionBlocked: () => false },
     react, 'react/jsx-runtime': { jsx, jsxs: jsx, Fragment: 'fragment' },
     'next/link': 'link', 'qrcode.react': { QRCodeSVG: 'qr' }, 'lucide-react': require('lucide-react'),
     '@/lib/supabase/client': { createClient: () => ({ auth: { getSession: async () => ({ data: { session: { access_token: 'fixture_token' } } }) } }) },

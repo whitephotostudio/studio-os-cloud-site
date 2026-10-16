@@ -39,6 +39,7 @@ function settingsHtml(state = {}) {
   }).outputText;
   assert.deepEqual([...injected].sort(), Object.keys(fixture).sort(), 'all fixture states must match actual named page states');
   const overrides = {
+    '@/lib/native-companion': {nativeBillingActionBlocked: () => false},
     react: React,
     'react/jsx-runtime': jsxRuntime,
     'lucide-react': require('lucide-react'),

@@ -1,5 +1,18 @@
 @import "tailwindcss";
 
+/* The signed iPhone app is a companion for existing Studio OS accounts. */
+.native-companion-only { display: none; }
+.studio-os-native .native-companion-only { display: block; }
+.studio-os-native [data-native-hide],
+.studio-os-native [data-native-purchase],
+.studio-os-native a[href="/dashboard"],
+.studio-os-native a[href^="/pricing"],
+.studio-os-native a[href^="/prices"],
+.studio-os-native a[href^="/sign-up"],
+.studio-os-native a[href^="/signup"],
+.studio-os-native a[href^="/credits"],
+.studio-os-native a[href^="/dashboard/membership"] { display: none !important; }
+
 :root {
   --background: #ffffff;
   --foreground: #171717;

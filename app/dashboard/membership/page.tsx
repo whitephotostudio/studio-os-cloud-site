@@ -1,4 +1,5 @@
 "use client";
+import { nativeBillingActionBlocked } from "@/lib/native-companion";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
@@ -429,6 +430,7 @@ export default function MembershipPage() {
   }, [loadData]);
 
   const handleCancelMembership = useCallback(async () => {
+    if (nativeBillingActionBlocked("portal")) return;
     setCancelLoading(true);
     try {
       const supabase = createClient();
