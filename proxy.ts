@@ -23,7 +23,9 @@ function addSecurityHeaders(response: NextResponse) {
   if (!response.headers.has("Referrer-Policy")) response.headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
   response.headers.set(
     "Permissions-Policy",
-    "camera=(), microphone=(), geolocation=()",
+    // Capture can be reached by SPA navigation, so the initial document must
+    // permit same-origin camera requests. Browser consent is still required.
+    "camera=(self), microphone=(), geolocation=()",
   );
   response.headers.set(
     "Strict-Transport-Security",
