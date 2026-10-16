@@ -41,7 +41,7 @@ function fixture({ admin = true, count = 2507, failTable, failOffset = 1000 } = 
   } };
   const auth = { resolveDashboardAuth: async () => ({ user: { id: owner }, mfaSatisfied: true }), createDashboardServiceClient: () => service };
   const rates = { rateLimit: async () => ({ allowed: true }) };
-  const server = load('lib/labs/server.ts', { 'node:crypto': crypto, './validation': validation, './money': money, './starters': starters, '@/lib/dashboard-auth': auth, '@/lib/rate-limit': rates });
+  const server = load('lib/labs/server.ts', { 'node:crypto': crypto, './validation': validation, './money': money, './starters': starters, './country-profiles': { loadLabCountryProfiles: async () => ({ available: false, options: [] }) }, '@/lib/dashboard-auth': auth, '@/lib/rate-limit': rates });
   const route = load('app/api/dashboard/lab-catalog/route.ts', {
     'next/server': { NextResponse: { json: (body, options) => Response.json(body, options) } }, 'node:crypto': crypto, zod: { z },
     '@/lib/dashboard-auth': auth, '@/lib/rate-limit': rates, '@/lib/require-agreement': { guardAgreement: async () => ({ ok: true }) },

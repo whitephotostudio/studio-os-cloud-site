@@ -2,7 +2,13 @@
 
 Studio OS should keep one photographer workflow while the available options come from the selected country and lab. A country does not, by itself, prove a lab's product availability, currency, shipping coverage or crop/colour services.
 
-This change adds a **pure planning contract**, `lib/labs/fulfillment-profile.ts`. It does not create a new live order route, persist profiles, change an existing order, connect a provider or enable printing. The existing three-print pilot, sheet drafts and Windows rehearsal helper retain their current contracts.
+The pure planning contract in `lib/labs/fulfillment-profile.ts` is now connected to the photographer's **Labs & price sheets** directory. A separate, append-only country-profile registry supplies the screen through the authenticated workspace GET. There is no new live order route, provider connection or printing permission. The existing three-print pilot, sheet drafts and Windows rehearsal helper retain their current contracts.
+
+Country, city and lab are explicit choices. Changing a parent choice clears its dependent choices and hides the previous lab's options. There is no implicit first-lab fallback. The directory shows the exact selected profile's currency, products/costs, dimensions, finishes, paper, input modes, crop/colour services and delivery choices. A country's listing is distinct from shipping coverage.
+
+Browsing is read-only and remains separate from the saved price-sheet editor. Existing sheets keep their original lab, currency and contents. New drafts created from the directory are bound on the server to the chosen lab/market/revision and permitted catalog IDs; their creation context cannot be changed or removed on save. Duplicating a sheet retains its context. Choosing another market requires a separate sheet.
+
+An unconfigured domestic listing, including GTA Imaging, can expose its existing active catalog as an explicitly unverified reference. It does not infer paper, crop/colour or delivery services. A pending foreign-market profile cannot borrow the domestic catalog. Reference-only draft creation requires explicit acknowledgment and a bounded reference catalog; services and ordering remain unconfirmed.
 
 ## The selection rule
 
@@ -38,10 +44,16 @@ Only manual-download planning is supported by the new contract. API, hot-folder 
 
 Every result remains a rehearsal: `testOnly:true`, `printAllowed:false` and `operationallyAuthorized:false`. A compatible plan proves only that its declared specifications match. It does not prove that private assets are owned, images are reviewed, files have been rendered, the lab has accepted an order, payment succeeded, a printer received files or physical printing occurred. Keep the existing account/MFA checks, immutable asset hashes, crop/colour reviews, receiver acceptance, idempotency and sealed handoff checks at their operational boundaries.
 
-## Wiring the next workflow safely
+## Registry and rollout boundaries
 
-1. Add a separate, authorized profile registry with immutable approved revisions and lab ownership. Do not backfill approval into existing lab/catalog records. A catalog upload remains unverified until reviewed.
-2. Resolve options for the selected country and lab on the server. Scope and paginate directory/catalog queries before worldwide volume; the current workspace still downloads a bounded complete directory/catalog and is not an unbounded worldwide search service.
+Migration `20261016090000_lab_country_profiles.sql` adds a service-only registry, a latest-revision view and an administrator-only append RPC. It seeds no profiles and changes no existing rows. Approved documents are revalidated against the current exact lab, market, SKU, dimensions, currency and verified single-print catalog units before the screen exposes configured options. A later pending or invalid revision holds the profile instead of reviving an old approval.
+
+The loader reads current revisions in bounded pages, with a 500-profile / 500 KB ceiling. Missing schema, unavailable reads or capacity exhaustion leave new options pending and keep the existing price workspace available. Worldwide production scale still requires filtered directory/catalog queries and lazy profile detail loading; this pilot does not claim unlimited global search capacity.
+
+## Extending the operational workflow safely
+
+1. Add a lab-owner proposal/review interface when onboarding real labs. Registry approval is currently a trusted operations action; the photographer's directory cannot upload a profile, approve a catalog or enable a lab.
+2. Scope and paginate directory/catalog queries before worldwide volume. Retain exact server resolution of the selected country and lab; do not infer a currency or service from country alone.
 3. Create a new versioned order snapshot containing the chosen profile revision, exact per-product SKU/specification, prices/currency, services and delivery selection. Preserve old order versions. The current fixed three-print production pilot is not a universal package engine and is not rewritten by this addition.
 4. Run compatibility checks again on the server against the exact saved revision and current operational holds. Adding a revised catalog/profile must never change an already approved order or reinterpret its files.
 5. Introduce one transport at a time, with idempotent submission, provider status reconciliation, explicit ambiguous-outcome handling and separate shipments/tracking when needed. A staged download or provider acceptance must never be labeled physically printed.
@@ -53,4 +65,4 @@ Current schools, original price profiles, retail copies, existing catalog rows a
 
 `node --test tests/lab-fulfillment-profile.test.mjs` exercises fictional Canadian, British and Japanese profiles; separate and combined paper; exact cross-unit matching; an eight-line mixed-size order; source/quantity conservation; unsupported options; stale/foreign profile rejection; and immutable, non-operational test snapshots. These are offline compatibility tests, not tests of real labs or international payment availability.
 
-The focused regression set also includes `lab-money`, `lab-production-renderer`, `lab-production-v2` and `lab-sheet-layouts`. No existing application module, route, migration or renderer is changed by this foundation.
+The screen-integration tests additionally cover registry immutability/permissions, exact catalog projection, current revisions, read-only GET, dependent selectors and frozen new-draft context. Existing school prices, old sheets, production renderers, payment routes and applied migrations are not rewritten by the integration.

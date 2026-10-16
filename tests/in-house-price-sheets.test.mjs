@@ -16,7 +16,7 @@ const money = load('lib/labs/money.ts');
 const validation = load('lib/labs/validation.ts', { zod: { z }, './money': money });
 const imports = load('lib/labs/in-house-validation.ts', { 'node:crypto': crypto, zod: { z }, './money': money, './validation': validation });
 const starters = load('lib/labs/starters.ts', { './money': money });
-const server = load('lib/labs/server.ts', { 'node:crypto': crypto, './validation': validation, './money': money, './starters': starters, '@/lib/dashboard-auth': {}, '@/lib/rate-limit': {} });
+const server = load('lib/labs/server.ts', { 'node:crypto': crypto, './validation': validation, './money': money, './starters': starters, './country-profiles': { loadLabCountryProfiles: async () => ({ available: false, options: [] }) }, '@/lib/dashboard-auth': {}, '@/lib/rate-limit': {} });
 const inHouseServer = load('lib/labs/in-house-server.ts', { 'node:crypto': crypto, './server': server, './validation': validation });
 
 function sourceSheet() {

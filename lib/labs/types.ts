@@ -1,4 +1,5 @@
 import type { InHousePriceSheet } from "./in-house-types";
+import type { FulfillmentProfile } from "./fulfillment-profile";
 
 /** Shared browser/server contracts. Catalog costs are never accepted from a save request. */
 export type LabCategory = "prints" | "fine_art" | "canvas" | "metal";
@@ -71,7 +72,12 @@ export type LabPriceSheet = {
   terms: string;
   assignments: GalleryRef[];
   publishedProfileId: string | null;
+  /** Server-frozen creation context. Absent on existing sheets. */
+  marketContext?: { marketCountryCode: string; profileRevision: number | null; referenceOnly: boolean; catalogProductIds: string[] };
 };
+
+export type LabCountryProfileOption = { labId: string; marketCountryCode: string; city: string; region: string; physicalCountryCode: string; revision: number | null; status: "configured" | "pending"; reason: string; profile: FulfillmentProfile | null; catalogProductIds: string[]; testOnly: true; printAllowed: false; operationallyAuthorized: false };
+export type LabCountryProfiles = { available: boolean; options: LabCountryProfileOption[] };
 
 export type LabGallery = GalleryRef & { name: string; currentProfileId: string | null };
 
@@ -84,6 +90,7 @@ export type LabWorkspace = {
   starterCollections?: LabStarterCollection[];
   /** Owner-private retail copies; never exposed through the partner lab directory. */
   inHousePriceSheets?: InHousePriceSheet[];
+  countryProfiles?: LabCountryProfiles;
 };
 
 export type LabStarterSize = { id: string; widthInches: number; heightInches: number; label: string };
@@ -95,7 +102,7 @@ export type LabStarterCollection = {
 };
 
 export type LabWorkspaceAction =
-  | { action: "create"; labId: string; name: string; starter: "popular" | "blank"; templateId?: string; templateVersion?: number; finish?: string; markupPercent?: number; rounding?: LabRounding }
+  | { action: "create"; labId: string; name: string; starter: "popular" | "blank"; templateId?: string; templateVersion?: number; finish?: string; markupPercent?: number; rounding?: LabRounding; marketCountryCode?: string; profileRevision?: number | null; referenceOnly?: boolean }
   | { action: "save"; sheet: LabPriceSheet; expectedVersion: number }
   | { action: "duplicate"; id: string; name: string }
   | { action: "delete"; id: string; expectedVersion: number }

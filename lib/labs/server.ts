@@ -7,6 +7,7 @@ import type { Lab, LabCatalogProduct, LabGallery, LabPriceSheet, LabWorkspace, L
 import { LabError, assertLabFulfillmentIntegrated, assertPublicationReady, labSheetDocument, roundedRetailCents, validateSheetCatalog } from "./validation";
 import { isLabCurrency } from "./money";
 import { LAB_STARTER_COLLECTIONS, resolveStarterCollection, starterCollection } from "./starters";
+import { loadLabCountryProfiles } from "./country-profiles";
 import type { InHousePriceSheet } from "./in-house-types";
 
 type Row = Record<string, unknown>;
@@ -103,7 +104,8 @@ export async function loadLabWorkspace(access: LabAccess): Promise<LabWorkspace>
     ...(schools.data ?? []).map(row => ({ kind: "school" as const, id: String(row.id), name: String(row.school_name || "School"), currentProfileId: row.package_profile_id == null ? null : String(row.package_profile_id) })),
     ...(projects.data ?? []).map(row => ({ kind: "project" as const, id: String(row.id), name: String(row.title || "Project"), currentProfileId: row.package_profile_id == null ? null : String(row.package_profile_id) })),
   ];
-  return { labs: labs.map(labFromRow), catalog: catalog.map(catalogFromRow), priceSheets: (sheets.data ?? []).map(sheetFromRow), galleries, starterCollections: LAB_STARTER_COLLECTIONS, inHousePriceSheets };
+  const mappedLabs = labs.map(labFromRow), mappedCatalog = catalog.map(catalogFromRow);
+  return { labs: mappedLabs, catalog: mappedCatalog, priceSheets: (sheets.data ?? []).map(sheetFromRow), galleries, starterCollections: LAB_STARTER_COLLECTIONS, inHousePriceSheets, countryProfiles: await loadLabCountryProfiles(service, mappedLabs, mappedCatalog) };
 }
 
 export async function performLabAction(access: LabAccess, action: LabWorkspaceAction) {
@@ -115,6 +117,16 @@ export async function performLabAction(access: LabAccess, action: LabWorkspaceAc
   if (action.action === "create") {
     const lab = workspace.labs.find(l => l.id === action.labId);
     if (!lab || !isLabCurrency(lab.currency)) throw new LabError("Choose an available lab with a supported currency.");
+    let selectedCatalog = workspace.catalog;
+    let marketContext: LabPriceSheet["marketContext"];
+    if (action.marketCountryCode !== undefined) {
+      const option = workspace.countryProfiles?.options.find(o => o.labId === lab.id && o.marketCountryCode === action.marketCountryCode);
+      if (!option) throw new LabError("Choose a country listed for this exact lab.", 409, "LAB_COUNTRY_PROFILE_PENDING");
+      if (!action.referenceOnly && (option.status !== "configured" || option.revision !== action.profileRevision)) throw new LabError("This country profile is unavailable or changed. Reload before creating its price sheet.", 409, "LAB_COUNTRY_PROFILE_PENDING");
+      if (action.referenceOnly && !option.catalogProductIds.length) throw new LabError("This country has no confirmed reference catalog for this lab. Browse the pending profile without creating a price sheet.", 409, "LAB_COUNTRY_PROFILE_PENDING");
+      marketContext = { marketCountryCode: action.marketCountryCode, profileRevision: action.referenceOnly ? null : option.revision, referenceOnly: action.referenceOnly === true, catalogProductIds: [...option.catalogProductIds] };
+      selectedCatalog = workspace.catalog.filter(p => marketContext!.catalogProductIds.includes(p.id));
+    }
     if (workspace.priceSheets.length >= 200) throw new LabError("This studio has reached the 200 price sheet limit.");
     const markupPercent = action.markupPercent ?? 100, rounding = action.rounding ?? "0.99";
     let starter: ReturnType<typeof resolveStarterCollection> | undefined;
@@ -122,23 +134,27 @@ export async function performLabAction(access: LabAccess, action: LabWorkspaceAc
       const template = starterCollection(action.templateId);
       if (!template || template.version !== action.templateVersion) throw new LabError("This starter collection changed. Refresh its preview before creating a draft.", 409, "LAB_STARTER_VERSION");
       if (lab.status === "paused") throw new LabError("This lab is paused. Choose another lab to start a new collection.", 409, "LAB_NOT_READY");
-      try { starter = resolveStarterCollection(template, workspace.catalog, lab.id, lab.currency, action.finish ?? "", markupPercent, rounding); }
+      try { starter = resolveStarterCollection(template, selectedCatalog, lab.id, lab.currency, action.finish ?? "", markupPercent, rounding); }
       catch (error) { throw new LabError(error instanceof Error ? error.message : "Check the starter pricing settings."); }
       if (!starter.items.length) throw new LabError("No exact, approved print products match this collection and finish yet. Browse the starter now, then create its draft after the lab confirms matching products.", 409, "LAB_STARTER_UNAVAILABLE");
     }
     next = { id, version: 1, name: action.name, labId: lab.id, currency: lab.currency, status: "draft", updatedAt: "", publishedProfileId: null,
       pricing: { markupPercent, rounding },
-      items: starter ? starter.items : action.starter === "popular" ? workspace.catalog.filter(p => p.labId === lab.id && p.popular && p.active).map(p => ({ catalogProductId: p.id, retailCents: p.costCents == null ? 0 : roundedRetailCents(p.costCents, markupPercent, rounding, lab.currency), enabled: true })) : [],
+      ...(marketContext ? { marketContext } : {}), items: starter ? starter.items : action.starter === "popular" ? selectedCatalog.filter(p => p.labId === lab.id && p.popular && p.active).map(p => ({ catalogProductId: p.id, retailCents: p.costCents == null ? 0 : roundedRetailCents(p.costCents, markupPercent, rounding, lab.currency), enabled: true })) : [],
       packages: starter ? starter.packages.filter(pack => pack.available).map(pack => ({ id: randomUUID(), name: pack.name, description: pack.description, retailCents: pack.retailCents!, items: pack.items })) : [], shipping: { mode: "lab", feeCents: 0, title: "Lab shipping" }, terms: "", assignments: [] };
   } else if (action.action === "duplicate") {
     if (workspace.priceSheets.length >= 200) throw new LabError("This studio has reached the 200 price sheet limit.");
     id = randomUUID(); next = { ...current!, id, version: 1, name: action.name, status: "draft", updatedAt: "", assignments: [], publishedProfileId: null };
   } else if (action.action === "save") {
     if (action.sheet.labId !== current!.labId || action.sheet.currency !== current!.currency) throw new LabError("Duplicate the sheet to change its lab or currency.");
+    const before = current!.marketContext, after = action.sheet.marketContext;
+    if (!!before !== !!after || before && after && (before.marketCountryCode !== after.marketCountryCode || before.profileRevision !== after.profileRevision || before.referenceOnly !== after.referenceOnly || before.catalogProductIds.length !== after.catalogProductIds.length || before.catalogProductIds.some(id => !after.catalogProductIds.includes(id)))) throw new LabError("The saved country profile cannot be changed or removed. Create a separate price sheet for another country.", 409, "LAB_COUNTRY_CONTEXT_IMMUTABLE");
     const validGalleries = new Set(workspace.galleries.map(g => `${g.kind}:${g.id}`));
     if (action.sheet.assignments.some(g => !validGalleries.has(`${g.kind}:${g.id}`))) throw new LabError("A selected gallery does not belong to your studio.", 403, "LAB_GALLERY_SCOPE");
     validateSheetCatalog(action.sheet, workspace.labs.find(l => l.id === action.sheet.labId), workspace.catalog);
-    next = action.sheet;
+    // Persist the server-owned context byte-for-byte even if a browser merely
+    // reordered the equivalent allowed-ID set in its save payload.
+    next = { ...action.sheet, ...(before ? { marketContext: { ...before, catalogProductIds: [...before.catalogProductIds] } } : {}) };
   } else if (action.action === "publish") {
     assertPublicationReady(current!, workspace.labs.find(l => l.id === current!.labId)!, workspace.catalog);
     // No browser action or environment flag can activate unsupported lab
@@ -146,12 +162,15 @@ export async function performLabAction(access: LabAccess, action: LabWorkspaceAc
     // mapper remains an internal future-integration contract only.
     assertLabFulfillmentIntegrated();
   }
-  const mutation = await access.service.rpc("save_lab_price_sheet", {
+  const mutation = action.action === "create" && next?.marketContext ? await access.service.rpc("create_country_lab_price_sheet", { p_user_id: access.userId, p_id: id, p_document: labSheetDocument(next) }) : await access.service.rpc("save_lab_price_sheet", {
     p_user_id: access.userId, p_id: id,
     p_expected_version: action.action === "save" || action.action === "delete" ? action.expectedVersion : 0,
     p_document: next ? labSheetDocument(next) : {}, p_action: action.action === "delete" ? "delete" : action.action === "save" ? "save" : "create",
   });
-  if (mutation.error) databaseError(mutation.error);
+  if (mutation.error) {
+    if (/LAB_COUNTRY_PROFILE/.test(mutation.error.message || "")) throw new LabError("The selected country profile or catalog changed. Reload and review it before creating this draft.", 409, "LAB_COUNTRY_PROFILE_PENDING");
+    databaseError(mutation.error);
+  }
   const updated = await loadLabWorkspace(access);
   return { workspace: updated, sheet: updated.priceSheets.find(s => s.id === id) };
 }

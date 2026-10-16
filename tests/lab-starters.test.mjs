@@ -147,7 +147,7 @@ function serverFor(db) {
     try { const result = await db.transaction(async tx => { await tx.exec('set local role service_role'); return tx.query('select save_lab_price_sheet($1,$2,$3,$4::jsonb,$5) as value', [args.p_user_id, args.p_id, args.p_expected_version, JSON.stringify(args.p_document), args.p_action]); }); return { data: result.rows[0].value, error: null }; }
     catch (error) { return { data: null, error: { code: error.code, message: error.message } }; }
   } };
-  const server = load('lib/labs/server.ts', { 'node:crypto': crypto, './validation': validation, './money': money, './starters': starters, '@/lib/dashboard-auth': {}, '@/lib/rate-limit': {} });
+  const server = load('lib/labs/server.ts', { 'node:crypto': crypto, './validation': validation, './money': money, './starters': starters, './country-profiles': { loadLabCountryProfiles: async () => ({ available: false, options: [] }) }, '@/lib/dashboard-auth': {}, '@/lib/rate-limit': {} });
   return { server, access: { service, userId: LAB_FIXTURE.owner, photographerId: LAB_FIXTURE.photographer } };
 }
 

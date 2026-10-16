@@ -81,7 +81,7 @@ function authHarness({ user = { id: id(8) }, mfa = true, allowed = true, studio 
   const query = { select() { return this; }, eq() { return this; }, maybeSingle: async () => ({ data: studio, error: null }) };
   const service = { from: name => { calls.push(name); if (schemaError && name === 'studio_labs') return { select() { return this; }, order() { return Promise.resolve({ data: null, error: { code: '42P01' } }); } }; return query; } };
   const server = load('lib/labs/server.ts', {
-    'node:crypto': crypto, './validation': validation, './money': money, './starters': starters,
+    'node:crypto': crypto, './validation': validation, './money': money, './starters': starters, './country-profiles': { loadLabCountryProfiles: async () => ({ available: false, options: [] }) },
     '@/lib/dashboard-auth': { resolveDashboardAuth: async () => ({ user, mfaSatisfied: mfa }), createDashboardServiceClient: () => service },
     '@/lib/rate-limit': { rateLimit: async (key, config) => { calls.push({ key, config }); return { allowed, unavailable: !allowed }; } },
   });

@@ -317,7 +317,7 @@ test('rehearsal allocation and receipt reuse limits are enforced in SQL while su
 });
 
 const starters = load('lib/labs/starters.ts', { './money': money });
-const labServer = load('lib/labs/server.ts', { 'node:crypto': crypto, './validation': validation, './money': money, './starters': starters, '@/lib/dashboard-auth': {}, '@/lib/rate-limit': {} });
+const labServer = load('lib/labs/server.ts', { 'node:crypto': crypto, './validation': validation, './money': money, './starters': starters, './country-profiles': { loadLabCountryProfiles: async () => ({ available: false, options: [] }) }, '@/lib/dashboard-auth': {}, '@/lib/rate-limit': {} });
 function serviceFor(db, record = []) {
   const functions = {
     create_in_house_test_gallery: ['p_user_id', 'p_request_id', 'p_sheet_id', 'p_expected_sheet_version', 'p_entry_id', 'p_name', 'p_token_hash', 'p_assets'],

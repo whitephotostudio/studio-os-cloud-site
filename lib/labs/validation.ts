@@ -10,6 +10,7 @@ const uuid = z.string().uuid();
 const cents = z.number().int().min(0).max(100_000_000);
 const name = z.string().trim().min(1).max(100);
 const gallery = z.object({ kind: z.enum(["school", "project"]), id: uuid }).strict();
+const marketContext = z.object({ marketCountryCode: z.string().regex(/^[A-Z]{2}$/), profileRevision: z.number().int().min(1).max(1_000_000_000).nullable(), referenceOnly: z.boolean(), catalogProductIds: z.array(uuid).max(500).refine(v => new Set(v).size === v.length) }).strict().refine(v => v.referenceOnly ? v.profileRevision === null : v.profileRevision !== null);
 const sheet = z.object({
   id: uuid, version: z.number().int().min(1).max(2_000_000_000), name,
   labId: uuid, currency: z.string().refine(isLabCurrency), status: z.enum(["draft", "published"]),
@@ -21,12 +22,14 @@ const sheet = z.object({
   }).strict()).max(100),
   shipping: z.object({ mode: z.enum(["lab", "custom", "pickup"]), feeCents: cents, title: z.string().trim().max(100) }).strict(),
   terms: z.string().trim().max(10_000), assignments: z.array(gallery).max(200),
+  marketContext: marketContext.optional(),
 }).strict();
 
 const action = z.discriminatedUnion("action", [
   z.object({ action: z.literal("create"), labId: uuid, name, starter: z.enum(["popular", "blank"]),
     templateId: z.string().trim().min(1).max(80).optional(), templateVersion: z.number().int().min(1).max(1000).optional(),
     finish: z.string().trim().min(1).max(100).optional(), markupPercent: z.number().min(0).max(10_000).optional(), rounding: z.enum(["none", "nearest-dollar", "0.99"]).optional(),
+    marketCountryCode: z.string().regex(/^[A-Z]{2}$/).optional(), profileRevision: z.number().int().min(1).max(1_000_000_000).nullable().optional(), referenceOnly: z.boolean().optional(),
   }).strict(),
   z.object({ action: z.literal("save"), sheet, expectedVersion: z.number().int().min(1) }).strict(),
   z.object({ action: z.literal("duplicate"), id: uuid, name }).strict(),
@@ -43,6 +46,7 @@ export function parseLabAction(value: unknown): LabWorkspaceAction {
   if (!parsed.success) throw new LabError("The lab workspace request is invalid. Refresh and check the selected products, prices and quantities.");
   const result = parsed.data;
   if (result.action === "create") {
+    if (result.marketCountryCode !== undefined ? result.profileRevision === undefined || result.referenceOnly === undefined || (result.referenceOnly ? result.profileRevision !== null : result.profileRevision === null) : result.profileRevision !== undefined || result.referenceOnly !== undefined) throw new LabError("Select the exact country profile or explicitly choose reference-only prices.");
     if (result.templateId && (result.starter !== "blank" || !result.templateVersion || !result.finish)) throw new LabError("Choose a starter version and print finish before creating a collection.");
     if (!result.templateId && (result.templateVersion !== undefined || result.finish !== undefined)) throw new LabError("Choose a starter collection before selecting its version or finish.");
   }
@@ -69,6 +73,7 @@ export function validateSheetCatalog(value: LabPriceSheet, lab: Lab | undefined,
   if (!lab || value.labId !== lab.id || !isLabCurrency(value.currency) || value.currency !== lab.currency) throw new LabError("The selected lab or currency is unavailable.");
   const products = new Map(catalog.filter(p => p.labId === lab.id).map(p => [p.id, p]));
   const selected = [...value.items.map(i => i.catalogProductId), ...value.packages.flatMap(p => p.items.map(i => i.catalogProductId))];
+  if (value.marketContext && selected.some(id => !value.marketContext!.catalogProductIds.includes(id))) throw new LabError("This product is outside the saved country profile. Start a separate price sheet to change its market.", 403, "LAB_CATALOG_SCOPE");
   if (selected.some(id => !products.has(id))) throw new LabError("A selected product does not belong to this lab.", 403, "LAB_CATALOG_SCOPE");
   return products;
 }
@@ -100,5 +105,5 @@ export function roundedRetailCents(costCents: number, markupPercent: number, rou
 /** Never persist client status, owner, catalog costs or publication authority. */
 export function labSheetDocument(value: LabPriceSheet) {
   return { name: value.name, labId: value.labId, currency: value.currency, pricing: value.pricing,
-    items: value.items, packages: value.packages, shipping: value.shipping, terms: value.terms, assignments: value.assignments };
+    items: value.items, packages: value.packages, shipping: value.shipping, terms: value.terms, assignments: value.assignments, ...(value.marketContext ? { marketContext: value.marketContext } : {}) };
 }

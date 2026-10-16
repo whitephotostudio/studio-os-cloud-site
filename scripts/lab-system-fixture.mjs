@@ -71,7 +71,7 @@ function fixtureUser(id) {
   return { id, aud: 'authenticated', role: 'authenticated', email: fixtureEmails.get(id), email_confirmed_at: '2026-10-15T00:00:00Z', confirmed_at: '2026-10-15T00:00:00Z', created_at: '2026-10-15T00:00:00Z', app_metadata: { provider: 'email', providers: ['email'] }, user_metadata: {}, identities: [], factors: fixtureMfaUsers.has(id) ? [{ id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', factor_type: 'totp', status: 'verified', friendly_name: 'Synthetic local factor', created_at: '2026-10-15T00:00:00Z', updated_at: '2026-10-15T00:00:00Z' }] : [] };
 }
 
-export async function createLabDatabase({ beforeLabOrdersMigration, beforeInHouseMigration, beforeInHouseTestOrdersMigration, includeInHouseTestOrders = true, beforeProductionMigration, includeProductionWorkflow = true, beforeProductionV2Migration, includeProductionV2 = true, beforeConnectorMigration, includeLabConnector = true, beforeSheetLayoutsMigration, includeSheetLayouts = true } = {}) {
+export async function createLabDatabase({ beforeLabOrdersMigration, beforeInHouseMigration, beforeInHouseTestOrdersMigration, includeInHouseTestOrders = true, beforeProductionMigration, includeProductionWorkflow = true, beforeProductionV2Migration, includeProductionV2 = true, beforeConnectorMigration, includeLabConnector = true, beforeSheetLayoutsMigration, includeSheetLayouts = true, beforeCountryProfilesMigration, includeCountryProfiles = true } = {}) {
   const db = new PGlite();
   await db.exec(`
     create role anon; create role authenticated; create role service_role bypassrls;
@@ -150,6 +150,11 @@ export async function createLabDatabase({ beforeLabOrdersMigration, beforeInHous
   if (includeProductionWorkflow && includeProductionV2 && includeSheetLayouts && existsSync(sheetLayoutsMigration)) {
     if (beforeSheetLayoutsMigration) await beforeSheetLayoutsMigration(db);
     await db.exec(readFileSync(sheetLayoutsMigration, 'utf8'));
+  }
+  const countryProfilesMigration = new URL('../supabase/migrations/20261016090000_lab_country_profiles.sql', import.meta.url);
+  if (includeCountryProfiles && existsSync(countryProfilesMigration)) {
+    if (beforeCountryProfilesMigration) await beforeCountryProfilesMigration(db);
+    await db.exec(readFileSync(countryProfilesMigration, 'utf8'));
   }
   return db;
 }
