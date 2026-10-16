@@ -36,16 +36,25 @@ function addSecurityHeaders(response: NextResponse) {
 export async function proxy(request: NextRequest) {
   const ip = getClientIp(request);
   const pathname = request.nextUrl.pathname;
+  const privateProduction = ["/api/dashboard/lab-production", "/api/dashboard/lab-production-assets", "/api/dashboard/lab-production-files", "/api/lab/production", "/api/labs-pilot/production", "/lab/production"].includes(pathname) || pathname.startsWith("/labs-pilot/production/");
+  const finish = (response: NextResponse) => {
+    if (privateProduction) {
+      response.headers.set("Referrer-Policy", "no-referrer");
+      response.headers.set("X-Robots-Tag", "noindex, nofollow");
+      response.headers.set("Cache-Control", "private, no-store");
+    }
+    return addSecurityHeaders(response);
+  };
   // The disposable lab pilot must never expose unrelated commerce, email,
   // school or desktop actions. This runs before any shared-provider helper.
   if (labPilotRequested()) {
-    if (!isLabPilot()) return addSecurityHeaders(NextResponse.json({ ok: false, message: "Lab test configuration unavailable." }, { status: 503 }));
+    if (!isLabPilot()) return finish(NextResponse.json({ ok: false, message: "Lab test configuration unavailable." }, { status: 503 }));
     if (!isLabPilotPath(pathname)) {
       const response = pathname.startsWith("/api/")
         ? NextResponse.json({ ok: false, message: "This test environment is for lab workflows only." }, { status: 404 })
         : NextResponse.redirect(new URL("/labs-pilot", request.url));
       response.headers.set("X-Robots-Tag", "noindex, nofollow");
-      return addSecurityHeaders(response);
+      return finish(response);
     }
   }
   const requestHeaders = new Headers(request.headers);
@@ -57,7 +66,7 @@ export async function proxy(request: NextRequest) {
   if (pinLimit) {
     const response = NextResponse.json({ ok: false, message: pinLimit.message }, { status: pinLimit.status });
     response.headers.set("Retry-After", String(pinLimit.retryAfter));
-    return addSecurityHeaders(response);
+    return finish(response);
   }
   const reservation = portalPinReservationHeader(request);
   if (reservation) requestHeaders.set(PORTAL_PIN_RESERVATION_HEADER, reservation);
@@ -78,7 +87,7 @@ export async function proxy(request: NextRequest) {
         { status: 429 },
       );
       res.headers.set("Retry-After", String(Math.ceil((result.resetAt - Date.now()) / 1000)));
-      return addSecurityHeaders(res);
+      return finish(res);
     }
   }
 
@@ -102,7 +111,7 @@ export async function proxy(request: NextRequest) {
         { status: 429 },
       );
       res.headers.set("Retry-After", String(Math.ceil((result.resetAt - Date.now()) / 1000)));
-      return addSecurityHeaders(res);
+      return finish(res);
     }
   }
 
@@ -117,11 +126,12 @@ export async function proxy(request: NextRequest) {
   if (isLabPilot()) response.headers.set("X-Robots-Tag", "noindex, nofollow");
   response.headers.set("Content-Security-Policy", policy);
   if (pathname.startsWith("/parents") || pathname.startsWith("/api/portal/") || pathname.startsWith("/dashboard") ||
-      pathname.startsWith("/labs-pilot/in-house/") || pathname === "/api/labs-pilot/in-house" ||
+      pathname.startsWith("/labs-pilot/in-house/") || pathname.startsWith("/labs-pilot/production/") || pathname === "/api/labs-pilot/production" ||
+      pathname === "/lab/production" || pathname === "/api/lab/production" || pathname === "/api/labs-pilot/in-house" ||
       pathname === "/api/dashboard/in-house-test-orders" || pathname === "/api/dashboard/in-house-test-files") {
     response.headers.set("Referrer-Policy", "no-referrer");
   }
-  return addSecurityHeaders(response);
+  return finish(response);
 }
 
 export const config = {

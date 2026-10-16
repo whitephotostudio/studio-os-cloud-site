@@ -71,7 +71,7 @@ function fixtureUser(id) {
   return { id, aud: 'authenticated', role: 'authenticated', email: fixtureEmails.get(id), email_confirmed_at: '2026-10-15T00:00:00Z', confirmed_at: '2026-10-15T00:00:00Z', created_at: '2026-10-15T00:00:00Z', app_metadata: { provider: 'email', providers: ['email'] }, user_metadata: {}, identities: [], factors: fixtureMfaUsers.has(id) ? [{ id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', factor_type: 'totp', status: 'verified', friendly_name: 'Synthetic local factor', created_at: '2026-10-15T00:00:00Z', updated_at: '2026-10-15T00:00:00Z' }] : [] };
 }
 
-export async function createLabDatabase({ beforeLabOrdersMigration, beforeInHouseMigration, beforeInHouseTestOrdersMigration, includeInHouseTestOrders = true } = {}) {
+export async function createLabDatabase({ beforeLabOrdersMigration, beforeInHouseMigration, beforeInHouseTestOrdersMigration, includeInHouseTestOrders = true, beforeProductionMigration, includeProductionWorkflow = true } = {}) {
   const db = new PGlite();
   await db.exec(`
     create role anon; create role authenticated; create role service_role bypassrls;
@@ -133,6 +133,9 @@ export async function createLabDatabase({ beforeLabOrdersMigration, beforeInHous
   const inHouseTestOrdersMigration = new URL('../supabase/migrations/20261016040000_in_house_test_order_loop.sql', import.meta.url);
   if (beforeInHouseTestOrdersMigration) await beforeInHouseTestOrdersMigration(db);
   if (includeInHouseTestOrders && existsSync(inHouseTestOrdersMigration)) await db.exec(readFileSync(inHouseTestOrdersMigration, 'utf8'));
+  const productionMigration = new URL('../supabase/migrations/20261016050000_lab_production_workflow.sql', import.meta.url);
+  if (beforeProductionMigration) await beforeProductionMigration(db);
+  if (includeProductionWorkflow && existsSync(productionMigration)) await db.exec(readFileSync(productionMigration, 'utf8'));
   return db;
 }
 
@@ -201,21 +204,22 @@ export async function createLabFixture({ port = 55471, pilotHttp = false } = {})
         if (claims?.role !== 'service_role') { send(403, { statusCode: '403', error: 'Forbidden', message: 'Private fixture storage requires service authentication' }); return; }
         const storagePath = decodeURIComponent(url.pathname.slice('/storage/v1/object/'.length)).replace(/^authenticated\//, '');
         const [bucket, ...segments] = storagePath.split('/');
-        if (bucket !== 'lab-production-files' || segments.some(part => !part || part === '.' || part === '..' || part.includes('\\'))) { send(400, { statusCode: '400', error: 'Invalid path', message: 'Use the private fixture bucket and a normalized key' }); return; }
+        if (!['lab-production-files', 'lab-production-workflow-files'].includes(bucket) || segments.some(part => !part || part === '.' || part === '..' || part.includes('\\'))) { send(400, { statusCode: '400', error: 'Invalid path', message: 'Use the private fixture bucket and a normalized key' }); return; }
         const key = segments.join('/');
+        const objectKey = `${bucket}/${key}`;
         if (request.method === 'POST' && key) {
-          if (storageFiles.has(key) && request.headers['x-upsert'] !== 'true') { send(409, { statusCode: '409', error: 'Duplicate', message: 'Object already exists' }); return; }
-          storageFiles.set(key, { bytes: raw, contentType: request.headers['content-type'] || 'application/octet-stream' });
+          if (storageFiles.has(objectKey) && request.headers['x-upsert'] !== 'true') { send(409, { statusCode: '409', error: 'Duplicate', message: 'Object already exists' }); return; }
+          storageFiles.set(objectKey, { bytes: raw, contentType: request.headers['content-type'] || 'application/octet-stream' });
           send(200, { Key: `${bucket}/${key}`, Id: 'synthetic-local-object' }); return;
         }
         if (request.method === 'GET' && key) {
-          const file = storageFiles.get(key);
+          const file = storageFiles.get(objectKey);
           if (!file) { send(404, { statusCode: '404', error: 'Not Found', message: 'Object not found' }); return; }
           response.writeHead(200, { 'content-type': file.contentType, 'content-length': file.bytes.length, 'cache-control': 'private, no-store' }); response.end(file.bytes); return;
         }
         if (request.method === 'DELETE' && !key) {
           const body = raw.length ? JSON.parse(raw.toString('utf8')) : {};
-          for (const prefix of body.prefixes || []) storageFiles.delete(prefix);
+          for (const prefix of body.prefixes || []) storageFiles.delete(`${bucket}/${prefix}`);
           send(200, (body.prefixes || []).map(name => ({ name }))); return;
         }
         send(400, { statusCode: '400', error: 'Unsupported fixture storage operation' }); return;

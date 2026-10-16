@@ -83,3 +83,14 @@ test('in-house order rehearsal permits only its exact APIs, fixed sample and UUI
     assert.equal(isLabPilotPath(path), false, path);
   }
 });
+
+test('photo production opens only its exact isolated routes and UUID private galleries', () => {
+  const { isLabPilotPath } = fixture();
+  for (const path of ['/dashboard/labs/production', '/lab/production', '/api/lab/production', '/api/dashboard/lab-production',
+    '/api/dashboard/lab-production-assets', '/api/dashboard/lab-production-files', '/api/labs-pilot/production',
+    '/labs-pilot/production/11111111-1111-4111-8111-111111111111']) assert.equal(isLabPilotPath(path), true, path);
+  for (const path of ['/lab/production-other', '/api/lab/production-other', '/api/lab/production/other',
+    '/api/dashboard/lab-production/other', '/api/dashboard/lab-production-assets/other', '/api/dashboard/lab-production-files/other',
+    '/api/labs-pilot/production/other', '/labs-pilot/production/guess', '/labs-pilot/production/11111111-1111-4111-8111-111111111111/other',
+    '/dashboard/schools', '/api/dashboard/packages', '/api/stripe/checkout']) assert.equal(isLabPilotPath(path), false, path);
+});

@@ -78,7 +78,9 @@ const nextConfig: NextConfig = {
       source: "/dashboard/:path*",
       headers: [{ key: "X-Robots-Tag", value: "noindex, nofollow" }, { key: "Referrer-Policy", value: "no-referrer" }],
     },
-    ...["/api/dashboard/in-house-test-orders", "/api/dashboard/in-house-test-files", "/api/labs-pilot/in-house", "/labs-pilot/in-house/:path*"].map(source => ({
+    ...["/api/dashboard/in-house-test-orders", "/api/dashboard/in-house-test-files", "/api/labs-pilot/in-house", "/labs-pilot/in-house/:path*",
+      "/api/dashboard/lab-production", "/api/dashboard/lab-production-assets", "/api/dashboard/lab-production-files", "/api/lab/production", "/lab/production",
+      "/api/labs-pilot/production", "/labs-pilot/production/:path*"].map(source => ({
       source,
       headers: [{ key: "X-Robots-Tag", value: "noindex, nofollow" }, { key: "Referrer-Policy", value: "no-referrer" }],
     })),

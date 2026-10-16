@@ -16,7 +16,7 @@ export const labOrderStatusLabels: Record<LabOrderStatus, string> = { submitted:
 const date = (value: string) => new Intl.DateTimeFormat("en-CA", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
 const shortId = (id: string) => id.slice(0, 8).toUpperCase();
 
-export function LabOrdersWorkspaceView({ audience }: { audience: "lab" | "studio" }) {
+export function LabOrdersWorkspaceView({ audience, productionEnabled = false }: { audience: "lab" | "studio"; productionEnabled?: boolean }) {
   const endpoint = audience === "lab" ? "/api/lab/orders" : "/api/dashboard/lab-orders";
   const [workspace, setWorkspace] = useState<LabOrdersWorkspace | null>(null);
   const [loading, setLoading] = useState(true);
@@ -87,6 +87,7 @@ export function LabOrdersWorkspaceView({ audience }: { audience: "lab" | "studio
   return <div className={audience === "lab" ? styles.portal : ""}>
     {audience === "lab" && <div className={styles.portalBar}><Link href="/lab" className={styles.wordmark}>STUDIO OS<span>LAB PORTAL</span></Link><div><ShieldCheck size={16} /><span>Private lab workspace</span></div><div className={styles.portalAccount}><Link href="/dashboard/labs/orders">Studio workspace <ArrowRight size={14} /></Link><button type="button" onClick={() => void signOut()} disabled={signingOut}>{signingOut ? "Signing out…" : "Sign out"}</button></div></div>}
     <main className={styles.page}>
+      {productionEnabled && <nav className={styles.localNav} aria-label="New production workflow"><Link href={audience === "lab" ? "/lab/production" : "/dashboard/labs/production"}><ArrowRight size={14} />Photo production · approval, crops & colour review</Link></nav>}
       {audience === "studio" && <nav className={styles.localNav} aria-label="Production workspaces"><Link href="/dashboard/labs"><ArrowLeft size={14} /> Labs & price sheets</Link><Link href="/dashboard/packages">In-house / Self-fulfillment <ArrowRight size={14} /></Link></nav>}
       <header className={styles.header}><div><div className={styles.eyebrow}>{audience === "lab" ? "ORDERS, READY FOR YOUR TEAM" : "YOUR STUDIO. YOUR PRODUCTION PARTNERS."}</div><h1>{audience === "lab" ? "Lab receiving" : "Partner lab orders"}</h1><p>{audience === "lab" ? "Receive final files, review each order, and keep studios informed as work moves forward." : "Send final print files to a ready lab and follow the order from submission to delivery."}</p></div><div className={styles.actions}><button className={styles.secondary} onClick={() => void refresh()} disabled={loading || refreshing}><RefreshCw size={15} className={refreshing ? styles.spin : ""} />Refresh</button>{audience === "studio" && <button className={styles.primary} onClick={() => setShowCompose(true)} disabled={loading || !readyLabs.length}><Plus size={16} />New lab order</button>}</div></header>
       {error && <div role="alert" className={styles.error}><span>{error}</span><button className={styles.iconButton} aria-label="Dismiss error" onClick={() => setError("")}><X size={17} /></button></div>}
