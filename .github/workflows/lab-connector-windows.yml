@@ -1,0 +1,30 @@
+name: Windows lab connector checks
+
+on:
+  push:
+    branches: [codex/lab-system-gta-20261015]
+    paths:
+      - tools/lab-connector/**
+      - .github/workflows/lab-connector-windows.yml
+
+permissions:
+  contents: read
+
+jobs:
+  connector:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        shell: [powershell, pwsh]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+      - name: Exercise connector with synthetic files only
+        shell: ${{ matrix.shell }}
+        run: '& ./tools/lab-connector/tests/connector.test.ps1'
