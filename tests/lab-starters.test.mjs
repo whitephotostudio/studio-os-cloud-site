@@ -131,7 +131,7 @@ test('bundled library renders every starter before catalog loading and makes no 
   const html = renderToStaticMarkup(React.createElement(component.LabStarterLibrary, { workspace: null, loading: true, busy: false, onCreate() { throw Error('Initial rendering cannot create a sheet'); } }));
   for (const entry of starters.LAB_STARTER_COLLECTIONS) assert.ok(html.includes(entry.name.replaceAll('&', '&amp;')));
   assert.match(html, /More collections/);
-  assert.match(html, /measured sales rankings/);
+  assert.match(html, /Suggested collections based on published studio menus/);
   assert.doesNotMatch(html, /\$\d|disabled=/);
 });
 

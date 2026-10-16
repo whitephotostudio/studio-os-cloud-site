@@ -1,3 +1,5 @@
+import type { InHousePriceSheet } from "./in-house-types";
+
 /** Shared browser/server contracts. Catalog costs are never accepted from a save request. */
 export type LabCategory = "prints" | "fine_art" | "canvas" | "metal";
 export type LabRounding = "none" | "nearest-dollar" | "0.99";
@@ -80,6 +82,8 @@ export type LabWorkspace = {
   galleries: LabGallery[];
   /** Versioned, lab-independent blueprints. Older clients may ignore this field. */
   starterCollections?: LabStarterCollection[];
+  /** Owner-private retail copies; never exposed through the partner lab directory. */
+  inHousePriceSheets?: InHousePriceSheet[];
 };
 
 export type LabStarterSize = { id: string; widthInches: number; heightInches: number; label: string };

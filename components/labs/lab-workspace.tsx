@@ -9,6 +9,7 @@ import type { GalleryRef, LabApiResponse, LabCatalogProduct, LabCategory, LabPri
 import { currencyMinorUnits, currencyScale, formatCurrency, formatCurrencyAmount, parseCurrencyAmount, roundedLabRetail } from "@/lib/labs/money";
 import { LabDialog } from "./lab-dialog";
 import { LabStarterLibrary } from "./lab-starter-library";
+import { InHousePriceSheets } from "./in-house-price-sheets";
 import styles from "./labs.module.css";
 
 const categories: { id: LabCategory; label: string; subtitle: string; art: string }[] = [
@@ -145,6 +146,7 @@ export function LabWorkspaceView() {
   return <main className={styles.page}>
     <div className={styles.pageHeader}><div><div className={styles.eyebrow}>YOUR STUDIO, CONNECTED</div><h1>Labs & price sheets</h1><p>Thoughtful products. Your prices. One connected workflow.</p></div><div className={styles.headerActions}><Link className={styles.importLink} href="/dashboard/labs/catalog" onClick={event => { if (dirty) { event.preventDefault(); guard(() => router.push("/dashboard/labs/catalog")); } }}><FileUp size={15} />Import lab catalog</Link><button className={styles.primary} onClick={() => guard(() => setModal("create"))} disabled={busy || !workspace.labs.length}><Plus size={17} /> New price sheet</button></div></div>
     {starters}
+    <InHousePriceSheets sheets={workspace.inHousePriceSheets ?? []} beforeOpen={guard} onSheetsChange={inHousePriceSheets => setWorkspace(current => current ? { ...current, inHousePriceSheets } : current)} />
     {error && <div role="alert" className={styles.error}><span>{error}</span><button className={styles.iconButton} aria-label="Dismiss error" onClick={() => setError("")}><X size={17} /></button></div>}
     {notice && <div role="status" className={styles.notice}><CheckCircle2 size={18} />{notice}</div>}
     <section className={styles.directory} aria-labelledby="lab-directory-title">

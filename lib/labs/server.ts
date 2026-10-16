@@ -7,6 +7,7 @@ import type { Lab, LabCatalogProduct, LabGallery, LabPriceSheet, LabWorkspace, L
 import { LabError, assertLabFulfillmentIntegrated, assertPublicationReady, labSheetDocument, roundedRetailCents, validateSheetCatalog } from "./validation";
 import { isLabCurrency } from "./money";
 import { LAB_STARTER_COLLECTIONS, resolveStarterCollection, starterCollection } from "./starters";
+import type { InHousePriceSheet } from "./in-house-types";
 
 type Row = Record<string, unknown>;
 export type LabAccess = { service: SupabaseClient; userId: string; photographerId: string };
@@ -67,11 +68,31 @@ export function sheetFromRow(row: Row): LabPriceSheet {
   return { ...document, id: String(row.id), version: Number(row.version), name: String(row.name), labId: String(row.lab_id), currency: String(row.currency), status: row.status as LabPriceSheet["status"], updatedAt: String(row.updated_at), publishedProfileId: row.published_profile_id == null ? null : String(row.published_profile_id) };
 }
 
+export function inHouseSheetFromRow(row: Row): InHousePriceSheet {
+  const document = row.document as Omit<InHousePriceSheet, "id" | "version" | "status" | "fulfillment" | "updatedAt">;
+  return { ...document, id: String(row.id), version: Number(row.version), name: String(row.name), studioName: String(row.studio_name),
+    currency: String(row.currency), status: "draft", fulfillment: "in_house", updatedAt: new Date(String(row.updated_at)).toISOString() };
+}
+
+/** An absent additive table during rollout does not interrupt the existing lab workspace. */
+export async function loadInHousePriceSheets(access: LabAccess, allowMissingTable = false): Promise<InHousePriceSheet[]> {
+  const result = await access.service.from("in_house_price_sheets").select("*").eq("photographer_id", access.photographerId)
+    .order("updated_at", { ascending: false }).order("id").limit(200);
+  if (result.error) {
+    const missing = result.error.code === "42P01" || result.error.code === "PGRST205" && /in_house_price_sheets/.test(result.error.message || "");
+    if (allowMissingTable && missing) return [];
+    throw new LabError("Your private in-house test copies are temporarily unavailable. Current school prices have not changed.", 503, "IN_HOUSE_UNAVAILABLE");
+  }
+  if (!Array.isArray(result.data)) throw new LabError("Your private in-house test copies could not be loaded completely.", 503, "IN_HOUSE_UNAVAILABLE");
+  return result.data.map(inHouseSheetFromRow);
+}
+
 export async function loadLabWorkspace(access: LabAccess): Promise<LabWorkspace> {
   const { service, photographerId } = access;
-  const [labs, catalog, ...results] = await Promise.all([
+  const [labs, catalog, inHousePriceSheets, ...results] = await Promise.all([
     readLabRowsInPages((from, to) => service.from("studio_labs").select("*").order("name").order("id").range(from, to), LAB_DIRECTORY_MAX_ROWS),
     readLabRowsInPages((from, to) => service.from("studio_lab_catalog").select("*").order("lab_id").order("category").order("width_inches").order("height_inches").order("id").range(from, to), LAB_CATALOG_MAX_ROWS),
+    loadInHousePriceSheets(access, true),
     service.from("lab_price_sheets").select("*").eq("photographer_id", photographerId).order("updated_at", { ascending: false }).limit(200),
     service.from("schools").select("id,school_name,package_profile_id").eq("photographer_id", photographerId).order("school_name").limit(1000),
     service.from("projects").select("id,title,package_profile_id").eq("photographer_id", photographerId).eq("workflow_type", "event").order("title").limit(1000),
@@ -82,7 +103,7 @@ export async function loadLabWorkspace(access: LabAccess): Promise<LabWorkspace>
     ...(schools.data ?? []).map(row => ({ kind: "school" as const, id: String(row.id), name: String(row.school_name || "School"), currentProfileId: row.package_profile_id == null ? null : String(row.package_profile_id) })),
     ...(projects.data ?? []).map(row => ({ kind: "project" as const, id: String(row.id), name: String(row.title || "Project"), currentProfileId: row.package_profile_id == null ? null : String(row.package_profile_id) })),
   ];
-  return { labs: labs.map(labFromRow), catalog: catalog.map(catalogFromRow), priceSheets: (sheets.data ?? []).map(sheetFromRow), galleries, starterCollections: LAB_STARTER_COLLECTIONS };
+  return { labs: labs.map(labFromRow), catalog: catalog.map(catalogFromRow), priceSheets: (sheets.data ?? []).map(sheetFromRow), galleries, starterCollections: LAB_STARTER_COLLECTIONS, inHousePriceSheets };
 }
 
 export async function performLabAction(access: LabAccess, action: LabWorkspaceAction) {

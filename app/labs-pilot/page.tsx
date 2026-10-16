@@ -10,7 +10,7 @@ export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
   title: "Lab pilot",
-  description: "Isolated Studio OS lab workflow test with sample data.",
+  description: "Isolated Studio OS testing for sample lab orders and private retail-price drafts.",
   robots: { index: false, follow: false },
 };
 
@@ -25,9 +25,9 @@ export default function LabsPilotPage() {
       </header>
 
       <section className={styles.hero}>
-        <div className={styles.eyebrow}><FlaskConical size={16} aria-hidden="true" /> Isolated sample test</div>
+        <div className={styles.eyebrow}><FlaskConical size={16} aria-hidden="true" /> Isolated test environment</div>
         <h1>Try both sides of a lab order.</h1>
-        <p>Use the separate photographer and lab test credentials supplied to you. This pilot uses its own sample data. GTA production is disabled, and this environment does not collect payments or send real production orders.</p>
+        <p>Use the separate photographer and lab test credentials supplied to you. Test orders use sample photos and products. You can also review private copies of your studio’s retail prices; editing these drafts leaves your original price profiles and current school prices unchanged. GTA production is disabled, and this environment does not collect payments or send real production orders.</p>
         <div className={styles.pills}><span>Sample files only</span><span>Separate test accounts</span><span>No card charges</span></div>
       </section>
 
@@ -38,7 +38,7 @@ export default function LabsPilotPage() {
           <h2>Build and send a test order</h2>
           <ol className={styles.steps}>
             <li>Sign in with the supplied photographer test account.</li>
-            <li>Explore the sample lab and price sheets, then open <strong>Lab orders</strong>.</li>
+            <li>Review the sample lab price sheets or your private in-house test copies. Open <strong>Lab orders</strong> to test sample lab products.</li>
             <li>Choose a sample product, upload the sample JPEG, and submit a test order.</li>
             <li>Return after the lab updates it to check the order timeline.</li>
           </ol>
@@ -76,7 +76,7 @@ export default function LabsPilotPage() {
         <LabPilotMfa />
       </section>
 
-      <footer className={styles.footer}>Sample workflow only. Use the supplied test accounts and sample files. Real customer photos, GTA operations, existing price lists, and paid checkout are outside this pilot.</footer>
+      <footer className={styles.footer}>Use the supplied test accounts and sample photos for test orders. Private retail-price copies are drafts; your original price profiles and current school prices remain unchanged. GTA production and paid checkout are disabled.</footer>
     </main>
   );
 }

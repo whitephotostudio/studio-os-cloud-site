@@ -71,7 +71,7 @@ function fixtureUser(id) {
   return { id, aud: 'authenticated', role: 'authenticated', email: fixtureEmails.get(id), email_confirmed_at: '2026-10-15T00:00:00Z', confirmed_at: '2026-10-15T00:00:00Z', created_at: '2026-10-15T00:00:00Z', app_metadata: { provider: 'email', providers: ['email'] }, user_metadata: {}, identities: [], factors: fixtureMfaUsers.has(id) ? [{ id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', factor_type: 'totp', status: 'verified', friendly_name: 'Synthetic local factor', created_at: '2026-10-15T00:00:00Z', updated_at: '2026-10-15T00:00:00Z' }] : [] };
 }
 
-export async function createLabDatabase({ beforeLabOrdersMigration } = {}) {
+export async function createLabDatabase({ beforeLabOrdersMigration, beforeInHouseMigration } = {}) {
   const db = new PGlite();
   await db.exec(`
     create role anon; create role authenticated; create role service_role bypassrls;
@@ -127,6 +127,9 @@ export async function createLabDatabase({ beforeLabOrdersMigration } = {}) {
     // Explicit ordinary-print fixtures only; product migrations never backfill real catalogs.
     await db.query('update studio_lab_catalog set prints_per_unit=1 where id=any($1::uuid[])', [[LAB_FIXTURE.productA, LAB_FIXTURE.productB, LAB_FIXTURE.orderProduct, LAB_FIXTURE.foreignProduct]]);
   }
+  const inHouseMigration = new URL('../supabase/migrations/20261016030000_in_house_price_sheets.sql', import.meta.url);
+  if (beforeInHouseMigration) await beforeInHouseMigration(db);
+  if (existsSync(inHouseMigration)) await db.exec(readFileSync(inHouseMigration, 'utf8'));
   return db;
 }
 

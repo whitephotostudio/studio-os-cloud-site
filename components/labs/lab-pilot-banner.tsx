@@ -7,7 +7,7 @@ export function LabPilotBanner() {
 
   return (
     <aside className={styles.banner} aria-label="Lab pilot environment">
-      <span><strong>Isolated lab pilot</strong> · Sample data only · GTA and payments disabled</span>
+      <span><strong>Lab test environment</strong> · GTA and payments disabled</span>
       <Link href="/labs-pilot">Test instructions</Link>
     </aside>
   );
