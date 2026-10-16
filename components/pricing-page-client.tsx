@@ -108,8 +108,8 @@ const studioPlanFeatures = [
   "Full Studio OS workflow",
   "Online school and event booking links",
   "Automatic booking-to-student-roster workflow",
-  "Direct camera tethering",
-  "Advanced school shooting tools",
+  "Direct desktop camera tethering",
+  "Advanced desktop school shooting tools",
   "AI backdrop cleanup and replacement in the app",
   "Client backdrop preview gallery online",
   "Set free and premium backdrop prices",
@@ -143,18 +143,19 @@ const plans: PricingPlan[] = [
     name: "Web Gallery Plan",
     price: "$49",
     billing: "Billed monthly",
-    badge: "Online Gallery Tools Only",
+    badge: "Galleries + Free Phone App",
     description:
-      "A clean web-only plan for photographers who want polished galleries, online viewing, delivery, and ordering without the Studio OS app.",
+      "Polished online galleries, viewing, delivery, and ordering, with free Studio OS Mobile access for your phone.",
     included: [
       "Web gallery access",
       "Online photo viewing",
       "Photo delivery",
       "Ordering workflow",
+      "Free Studio OS Mobile access",
     ],
     notIncluded: [
-      "Studio OS app access",
-      "School shooting tools",
+      "Studio OS desktop app access",
+      "Desktop school shooting tools",
       "Online booking with automatic student rosters",
       "Photography keys",
       "Backdrop upsell tools",
@@ -165,22 +166,22 @@ const plans: PricingPlan[] = [
     icon: Globe2,
   },
   {
-    eyebrow: "Unlock the Studio OS App",
+    eyebrow: "Unlock Desktop Production",
     code: "core",
     name: "App Plan",
     price: "$99",
     billing: "Billed monthly",
     badge: "1 Photography Key Included",
     description:
-      "Built for school and studio photographers who want the Studio OS app, faster production, and new upsell opportunities without jumping to the largest plan.",
+      "Built for school and studio photographers who want the Studio OS desktop app, faster production, and new upsell opportunities without jumping to the largest plan.",
     included: [
       "Everything in Web Gallery",
-      "Studio OS app access",
+      "Studio OS desktop app access",
       "1 Photography Key",
       "Online school and event booking links",
       "Automatic booking-to-student-roster workflow",
-      "Direct camera tethering",
-      "School photography workflow tools",
+      "Direct desktop camera tethering",
+      "Desktop school photography workflow tools",
       "AI backdrop cleanup and replacement in the app",
       "Client backdrop preview gallery online",
       "Set free and premium backdrop prices",
@@ -265,7 +266,7 @@ export function PricingPageClient({ catalog, initialInterval = "month" }: { cata
                 locally, and manages production.
               </p>
               <div className="mt-8 flex flex-wrap justify-center gap-3">
-                {[`${FREE_TRIAL_DAYS}-day launch trial`, "Studio workflow included", catalog.localizedSubscriptionsEnabled ? "USD / CAD subscriptions" : `Subscriptions in ${catalog.currency.toUpperCase()}`].map((label) => (
+                {[`${FREE_TRIAL_DAYS}-day launch trial`, "Free phone app on every plan", catalog.localizedSubscriptionsEnabled ? "USD / CAD subscriptions" : `Subscriptions in ${catalog.currency.toUpperCase()}`].map((label) => (
                   <span
                     key={label}
                     className="marketing-kicker rounded-full border border-white/15 bg-white/10 px-4 py-2 text-white/75 backdrop-blur"
@@ -301,7 +302,7 @@ export function PricingPageClient({ catalog, initialInterval = "month" }: { cata
                   <CalendarCheck2 className="h-5 w-5" />
                 </span>
                 <div>
-                  <h2 className="marketing-card-title text-[1.15rem]">Online booking is included with the Studio OS app workflow.</h2>
+                  <h2 className="marketing-card-title text-[1.15rem]">Online booking is included with Core and Studio.</h2>
                   <p className="marketing-body mt-2 text-[1rem] leading-7 text-neutral-600">
                     {newOffer ? "Core" : "App"} and Studio plans let you create school booking links that build a student roster, or event links that build an attendee booking list.
                   </p>
@@ -379,6 +380,15 @@ export function PricingPageClient({ catalog, initialInterval = "month" }: { cata
                 </Reveal>
               );
             })}
+          </div>
+
+          <div className="mt-6 rounded-2xl border border-neutral-200 bg-white px-6 py-5">
+            <h2 className="marketing-card-title text-[1.15rem]">Studio OS Mobile is free for everyone</h2>
+            <p className="marketing-body mt-2 text-[1rem] leading-7 text-neutral-600">
+              Every photographer account can use the phone app, including Gallery, Core, and Studio.
+              No mobile add-on or desktop photography key is required. Existing cloud subscription,
+              AI credit, and order charges still apply. <Link href="/mobile-app" className="underline">See the free phone app</Link>.
+            </p>
           </div>
 
           <div className="mt-6 rounded-2xl border border-neutral-200 bg-neutral-50 px-6 py-5">
