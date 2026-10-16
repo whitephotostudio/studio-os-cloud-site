@@ -223,6 +223,7 @@ test('actual proxy replaces caller reservation headers and uses only the store-v
     if(name==='next/server')return{NextResponse};
     if(name==='@/lib/portal-pin-rate-limit')return f;
     if(name==='@/lib/rate-limit')return{getClientIp:()=> 'synthetic-proxy-ip',rateLimit:async(key,config)=>{general.push({key,config});return{allowed:true};}};
+    if(name==='@/lib/labs/pilot')return{labPilotRequested:()=>false,isLabPilot:()=>false};
     if(name==='@/lib/parent-gallery-session')return{parentSessionRateBudgetKey:async request=>request.headers.get('x-synthetic-registered-lane')==='yes'?'parent-session:validated-test-key':null};
     if(name==='@/lib/content-security-policy')return{contentSecurityPolicy:()=>"default-src 'self'"};
     return require(name);

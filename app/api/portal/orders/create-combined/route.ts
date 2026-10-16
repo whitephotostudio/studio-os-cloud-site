@@ -2,6 +2,7 @@ import { runParentGallerySessionRoute, parentGalleryRateKey } from "@/lib/parent
 import { resolveSchoolOrderMediaReferences } from "@/lib/school-order-media";
 import { randomUUID } from "node:crypto";
 import { checkoutAttemptIdentity } from "@/lib/checkout-attempt";
+import { labCheckoutIssue } from "@/lib/lab-checkout-policy";
 // POST /api/portal/orders/create-combined
 //
 // Multi-student / cross-year combined checkout.  Companion to the legacy
@@ -433,6 +434,9 @@ export async function POST(request: NextRequest) {
         );
       }
     }
+
+    const labIssue = labCheckoutIssue(Array.from(packageMap.values()));
+    if (labIssue) return NextResponse.json({ ok: false, message: labIssue }, { status: 409 });
 
     // A sibling's print cannot unlock a retouching-only order for another student.
     for (const group of resolvedGroups) {

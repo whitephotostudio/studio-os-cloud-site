@@ -23,8 +23,8 @@ type StudioAppSignInStatus = {
 // same constants and stay in sync.
 const REMEMBER_ME_KEY = "studio-os-remember-me";
 const REMEMBERED_EMAIL_KEY = "studio-os-last-email";
-export const TRANSIENT_SESSION_FLAG = "studio-os-transient-session";
-export const SESSION_STARTED_FLAG = "studio-os-session-started";
+const TRANSIENT_SESSION_FLAG = "studio-os-transient-session";
+const SESSION_STARTED_FLAG = "studio-os-session-started";
 
 export default function SignInPage() {
   const formReady = useAuthFormReady();

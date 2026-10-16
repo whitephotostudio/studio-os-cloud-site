@@ -1,0 +1,46 @@
+name: Windows lab connector checks
+
+on:
+  push:
+    branches: [codex/lab-system-gta-20261015]
+    paths:
+      - tools/lab-connector/**
+      - .github/workflows/lab-connector-windows.yml
+
+permissions:
+  contents: read
+
+jobs:
+  connector:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+      - name: Exercise connector in Windows PowerShell 5.1
+        shell: powershell
+        run: '& ./tools/lab-connector/tests/connector.test.ps1'
+      - name: Exercise connector in PowerShell 7
+        shell: pwsh
+        run: '& ./tools/lab-connector/tests/connector.test.ps1'
+      - name: Exercise real loopback HTTP in Windows PowerShell 5.1
+        shell: powershell
+        run: '& ./tools/lab-connector/tests/transport.test.ps1 -IncludeTimeout'
+      - name: Exercise real loopback HTTP in PowerShell 7
+        shell: pwsh
+        run: '& ./tools/lab-connector/tests/transport.test.ps1'
+      - name: Render the real Windows helper GUI without polling
+        shell: powershell
+        run: '& ./tools/lab-connector/tests/ui.test.ps1'
+      - name: Save Windows helper GUI proof
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-lab-helper-ui
+          path: artifacts/lab-connector/windows-helper-*.png
+          if-no-files-found: error
+          retention-days: 7

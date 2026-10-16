@@ -32,6 +32,9 @@ const excludedPathPrefixes = [
   "/g/",
   "/m",
   "/schools/",
+  "/labs-pilot/in-house/",
+  "/labs-pilot/production/",
+  "/labs-pilot/production-v2/",
 ];
 
 function currentAnonymousVisitorId() {
@@ -112,6 +115,7 @@ export function MarketingEventTracker() {
 
   useEffect(() => {
     const handleClick = (event: MouseEvent) => {
+      if (window.location.pathname.startsWith("/labs-pilot/in-house/") || (window.location.pathname.startsWith("/labs-pilot/production/") || window.location.pathname.startsWith("/labs-pilot/production-v2/"))) return;
       if (!(event.target instanceof Element)) return;
 
       const element = event.target.closest<HTMLElement>(

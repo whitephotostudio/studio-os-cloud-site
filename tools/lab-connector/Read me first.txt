@@ -1,0 +1,69 @@
+STUDIO OS LAB PILOT - WINDOWS TEST HELPER
+
+This is an unsigned pilot helper, not a printer driver or a live print service.
+Use Windows 10/11 and the lab's ordinary Windows user account. No administrator
+account, Adobe subscription, AI subscription or Mac is required for the helper.
+Your lab may use its existing licensed colour editor for manual colour work.
+
+1. Extract the ZIP to a local folder. Keep all files together.
+2. Double-click Start-Studio-OS-Lab.cmd.
+   If Windows blocks the downloaded ZIP, review the included scripts and use
+   Properties > Unblock on the ZIP before extracting. Do not weaken the
+   computer-wide execution policy. An IT-managed PC may need its administrator
+   to approve the unsigned pilot scripts.
+3. Sign in to the receiving lab portal with two-step verification:
+   https://studio-os-labs-pilot.vercel.app/lab/production-v2
+4. Under Windows test helper, name this PC and create a pairing code.
+   Paste it into the helper within 10 minutes and click Connect. The connection
+   step folds away after pairing. Never send account passwords.
+5. Accept a synthetic test order. Review all three crops. Complete any requested
+   colour work and review each final print. Start preparation and choose
+   Stage on Windows test helper in the portal. Then click Check for orders in the helper.
+6. When Files received appears, click Open files to inspect the complete job. It contains manifest.json,
+   an 8x10 paper JPEG and a 10x7 paper JPEG with independently reviewed 5x7s.
+   Each is sRGB at 300 pixels per inch. The manifest gives required paper copies.
+
+PRINTING IS DISABLED. The helper only stages files for review and sends a
+staged_for_review receipt. This receipt does not mean a printer received or
+printed anything. Never choose the review directory as a printer hot folder.
+The helper has no setting, driver call or operation to send files to a printer.
+
+Restarting the helper reuses the sealed job identity. It checks fingerprints
+before reusing files and retries an unconfirmed receipt. It does not make
+another paper copy. If a job is corrupted, it stops. Do not manually replace
+reviewed files; create a linked reprint from the portal instead.
+
+THE SIMPLE HELPER SCREEN
+Connect this PC: first-time setup; paste the code from the lab portal.
+Ready to check: this PC has a saved pairing, but its current connection has
+not been checked yet. Click Check for orders.
+Connected: the portal confirmed pairing. Check for an order to begin.
+Waiting for orders: the latest check succeeded; no new order is ready.
+Files received: the files passed their checks and the cloud acknowledged
+staging. Click Open files. This never means that paper was printed.
+Needs attention: a request failed. Existing files and pending requests remain.
+Open Details to see the cause and the review folder. Click Try again when ready.
+Automatic checking pauses after an error; enable it again after a successful retry.
+
+Automatic checking starts OFF on each launch. If enabled, it runs every
+30 seconds while the helper is open. Close the window to stop checking.
+Offline or failed requests stay pending and can be retried.
+
+Local files: %LOCALAPPDATA%\Studio OS Lab Pilot
+The pairing secret is protected using Windows DPAPI for the current user.
+Review JPEGs remain local private working files; use an access-controlled PC
+and disk encryption. Revoke an old PC in the portal before replacing it.
+Device access expires after 90 days. There is no unattended Windows service.
+The helper deliberately keeps an existing pairing when a new code is entered.
+For a replacement, reconcile pending jobs with the lab operator first, then
+revoke the old device in the portal. Retain the old pairing.dpapi by renaming
+it inside the private local folder before pairing again. An uncertain old
+dispatch stays locked; use a linked reprint instead of silently resending it.
+
+BEFORE GTA CAN USE REAL CUSTOMER ORDERS
+Confirm GTA's catalog/product codes/currency, paper sizes and finishes,
+cropping/colour responsibilities and service charges, actual Windows/printer
+software, lab billing agreement and customer delivery rules. Agree a printer
+adapter and test on GTA's real machine with an operator. Check the physical
+paper and colour output. Live payment, direct printing and GTA intake remain
+disabled until those separate acceptance steps are completed.
