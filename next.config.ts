@@ -47,13 +47,13 @@ const nextConfig: NextConfig = {
         // analytics) but strips the path/query when going cross-origin, so
         // we don't leak order IDs or PINs to third parties.
         { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
-        // Deny access to powerful APIs the site never uses. Narrow scope
-        // reduces supply-chain blast-radius if a dependency tries to
-        // silently use them.
+        // The mobile scanner/capture flow needs same-origin camera access.
+        // Keep it available across SPA entry pages; browser consent is still
+        // required. Other unused device APIs stay disabled.
         {
           key: "Permissions-Policy",
           value:
-            "camera=(), microphone=(), geolocation=(), payment=(self), usb=(), magnetometer=(), gyroscope=(), accelerometer=(), interest-cohort=()",
+            "camera=(self), microphone=(), geolocation=(), payment=(self), usb=(), magnetometer=(), gyroscope=(), accelerometer=(), interest-cohort=()",
         },
 
       ],
