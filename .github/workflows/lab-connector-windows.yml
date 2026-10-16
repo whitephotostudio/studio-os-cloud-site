@@ -14,10 +14,6 @@ jobs:
   connector:
     runs-on: windows-latest
     timeout-minutes: 10
-    strategy:
-      fail-fast: false
-      matrix:
-        shell: [powershell, pwsh]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -25,6 +21,9 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '24'
-      - name: Exercise connector with synthetic files only
-        shell: ${{ matrix.shell }}
+      - name: Exercise connector in Windows PowerShell 5.1
+        shell: powershell
+        run: '& ./tools/lab-connector/tests/connector.test.ps1'
+      - name: Exercise connector in PowerShell 7
+        shell: pwsh
         run: '& ./tools/lab-connector/tests/connector.test.ps1'
