@@ -10,9 +10,10 @@ try {
  const sums=[];
  for(const name of files){const bytes=await fs.readFile(path.join(root,'tools/lab-connector',name));await fs.writeFile(path.join(temporary,name),bytes);sums.push(`${crypto.createHash('sha256').update(bytes).digest('hex')}  ${name}`);}
  await fs.writeFile(path.join(temporary,'SHA256SUMS.txt'),sums.join('\r\n')+'\r\n');
+ for(const name of [...files,'SHA256SUMS.txt']){await fs.chmod(path.join(temporary,name),0o644);await fs.utimes(path.join(temporary,name),new Date('2000-01-01T00:00:00Z'),new Date('2000-01-01T00:00:00Z'));}
  const folder=path.join(root,'public/downloads');await fs.mkdir(folder,{recursive:true});
  const output=path.join(folder,'studio-os-lab-helper-windows.zip');await fs.rm(output,{force:true});
- execFileSync('zip',['-X','-q',output,...files,'SHA256SUMS.txt'],{cwd:temporary});
+ execFileSync('zip',['-X','-q',output,...files,'SHA256SUMS.txt'],{cwd:temporary,env:{...process.env,TZ:'UTC'}});
  const archive=await fs.readFile(output),digest=crypto.createHash('sha256').update(archive).digest('hex');
  await fs.writeFile(output+'.sha256',`${digest}  studio-os-lab-helper-windows.zip\n`);
  // Import the exact archive into the server function. Serverless file tracing
