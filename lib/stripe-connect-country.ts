@@ -1,6 +1,7 @@
 import { isSupportedOrderCurrency } from "./order-currency";
 
-export type BusinessCountry = "CA" | "US";
+export const SUPPORTED_BUSINESS_COUNTRIES = ["CA", "US", "AU", "GB"] as const;
+export type BusinessCountry = typeof SUPPORTED_BUSINESS_COUNTRIES[number];
 
 export class ConnectProfileError extends Error {
   constructor(message: string, public readonly status = 400) { super(message); }
@@ -8,10 +9,10 @@ export class ConnectProfileError extends Error {
 
 export function normalizeBusinessCountry(value: unknown): BusinessCountry | null {
   if (value == null || value === "") return null;
-  if (typeof value !== "string") throw new ConnectProfileError("Choose Canada or the United States as your business country.");
+  if (typeof value !== "string") throw new ConnectProfileError("Choose Canada, the United States, Australia or the United Kingdom as your business country.");
   const country = value.trim().toUpperCase();
-  if (country !== "CA" && country !== "US") throw new ConnectProfileError("Choose Canada or the United States as your business country.");
-  return country;
+  if (!(SUPPORTED_BUSINESS_COUNTRIES as readonly string[]).includes(country)) throw new ConnectProfileError("Choose Canada, the United States, Australia or the United Kingdom as your business country.");
+  return country as BusinessCountry;
 }
 
 export function normalizeSelectedSalesCurrency(value: unknown): string | null {

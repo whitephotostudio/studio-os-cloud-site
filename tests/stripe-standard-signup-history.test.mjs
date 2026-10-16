@@ -13,3 +13,8 @@ test('missing history RPC cannot reinterpret a born-Standard photographer as Exp
 test('additive-column compatibility still checks the original migration marker before fallback',async()=>{const api=load(live);await assert.rejects(api.resolveOrderPaymentAccount(db({error:{code:'PGRST202'},missingNewestColumn:true,migratedAt:'2026-10-15'}),{photographerId:'owner',orderId:'order'}),/original Stripe/);});
 test('saved Standard payments remain readable independently of current creation or migration environment',async()=>{const api=load({}),service=db();assert.equal(await api.resolveOrderPaymentAccount(service,{photographerId:'owner',orderId:'old',expectedAccount:'acct_newsignup',livemode:true}),'acct_newsignup');assert.equal(service.calls.length,1);});
 test('unsupported new-signup currency is rejected before any payment reservation',async()=>{const api=load(live),service=db();await assert.rejects(api.getCheckoutRouting(service,{photographerId:'new-owner',currency:'eur'}),/currency/);assert.equal(service.calls.length,1);});
+
+
+test('four supported sales currencies use the verified saved Standard signup origin',async()=>{
+ for(const currency of ['cad','usd','aud','gbp']){const api=load(live),service=db();assert.deepEqual(await api.getCheckoutRouting(service,{photographerId:'new-owner',currency}),route());assert.equal(service.calls[0].params.p_currency,currency);}
+});

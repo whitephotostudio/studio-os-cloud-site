@@ -9,5 +9,6 @@ export function publicPricingMarket(country: unknown, visitorCountry: unknown) {
   if (explicit) return explicit;
 
   const visitor = typeof visitorCountry === "string" ? visitorCountry.trim().toUpperCase() : "";
-  return subscriptionPricingMarket(visitor === "CA" ? "CA" : "US");
+  return SUBSCRIPTION_PRICING_MARKETS.find(market => market.country === visitor)
+    ?? subscriptionPricingMarket("US");
 }

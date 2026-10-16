@@ -18,7 +18,7 @@ function harness({ profile = 'gallery_v2', stripeConnectUrl = null, expectedPlan
     billingCatalog: { pricingProfile: profile, currency: 'cad', galleryStoragePolicy: 'existing',
       plans: Object.values(getPlanDefinitions(profile)), annualDiscountPercent: 10,
       extraDesktopKeyMonthlyCents: 5500, extraDesktopKeyAnnualCents: 59400, creditPacks: [] }, ...state };
-  const injected = new Set(), calls = [], errors = [];
+  const injected = new Set(), calls = [], errors = [], stateUpdates = {};
   let initializedStateName;
   const compiled = ts.transpileModule(settingsSource, {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX },
@@ -45,7 +45,7 @@ function harness({ profile = 'gallery_v2', stripeConnectUrl = null, expectedPlan
   const react = { useState: initial => {
     const stateName = initializedStateName;
     initializedStateName = undefined;
-    return [typeof initial === 'function' ? initial() : initial, value => { if (stateName === 'error') errors.push(value); }];
+    return [typeof initial === 'function' ? initial() : initial, value => { if (stateName) stateUpdates[stateName] = value; if (stateName === 'error') errors.push(value); }];
   },
     useEffect() {}, useCallback: callback => callback, useMemo: factory => factory(), useRef: initial => ({ current: initial }) };
   const browser = { location: { href: 'https://example.invalid/dashboard/settings' } };
@@ -92,7 +92,7 @@ function harness({ profile = 'gallery_v2', stripeConnectUrl = null, expectedPlan
   assert.equal(saveButtons[0].props.disabled, expectedPlanDisabled);
   const connectLabels=['Open Stripe Dashboard','Manage Stripe','Continue Stripe setup','Connect Stripe'];
   const connectButtons=nodes(tree).filter(node=>node.type==='button'&&nodes(node.props.children).some(child=>typeof child==='string'&&connectLabels.includes(child)));
-  return { calls, errors, browser, renderedNodes:nodes(tree), connectLabels:connectButtons.map(node=>nodes(node.props.children).find(child=>typeof child==='string'&&connectLabels.includes(child))),connect:()=>{assert.ok(connectButtons.length);return connectButtons[0].props.onClick();},save: () => saveButtons[0].props.onClick() };
+  return { calls, errors, stateUpdates, browser, renderedNodes:nodes(tree), connectLabels:connectButtons.map(node=>nodes(node.props.children).find(child=>typeof child==='string'&&connectLabels.includes(child))),connect:()=>{assert.ok(connectButtons.length);return connectButtons[0].props.onClick();},save: () => saveButtons[0].props.onClick() };
 }
 
 test('existing V2 and legacy subscriptions post key-only changes without upgrading their base plan', async () => {
@@ -178,4 +178,15 @@ test('unverified existing subscription currency blocks actual plan and key mutat
  assert.ok(nodes.some(n=>typeof n==='string'&&n==='Currency needs verification'));
  const portal=nodes.find(n=>n.type==='button'&&n.props.children==='Open billing portal');assert.equal(portal.props.disabled,false);
  const credits=nodes.find(n=>n.type==='button'&&n.props.children==='Buy credits');assert.equal(credits.props.disabled,false);await credits.props.onClick();assert.deepEqual(h.calls,[{action:'buy_credits',packCode:'background_credits_250'}]);
+});
+
+
+test('Settings offers Australian and UK legal countries and defaults unsaved sales currency without overriding an explicit selection',()=>{
+ for(const [country,currency]of [['CA','cad'],['US','usd'],['AU','aud'],['GB','gbp']]){
+  for(const salesCurrencyConfigured of [false,true]){
+   const h=harness({businessCountry:'',billingCurrency:'eur',salesCurrencyConfigured});const select=h.renderedNodes.find(node=>node.type==='select'&&node.props['aria-label']==='Business country');assert.ok(select);
+   const options=select.props.children.filter(node=>node?.type==='option');assert.ok(options.some(option=>option.props.value===country));select.props.onChange({target:{value:country}});assert.equal(h.stateUpdates.businessCountry,country);
+   assert.equal(h.stateUpdates.billingCurrency,salesCurrencyConfigured?undefined:currency);
+  }
+ }
 });

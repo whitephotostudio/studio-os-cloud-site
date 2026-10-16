@@ -26,7 +26,7 @@ function fixture(options={}) {
  const service={from(table){let conditions=[];const query={select(){return query},eq(key,value){conditions.push([key,value]);return query},maybeSingle:run,single:run};async function run(){if(options.schemaMissing&&table==='photographer_stripe_standard_signups')return {data:null,error:{code:'42P01'}};const row=table==='photographers'?photographer:intent;return {data:row&&conditions.every(([key,value])=>row[key]===value)?structuredClone(row):null,error:null};}return query;},async rpc(name,args){calls.push({rpc:name,args});
    if(name==='get_photographer_standard_signup_eligibility')return {data:{eligible:options.eligible!==false,reason:options.reason||'new'},error:null};
    if(name==='reserve_photographer_standard_signup'){
-    if(!intent)intent={id:'signup',photographer_id:photographer.id,actor_user_id:'owner',platform_account_id:'acct_sandbox',country:args.p_country,livemode:false,status:'creating',stripe_account_id:null,attempted_at:new Date(Date.now()-(options.age||0)).toISOString(),creation_params:structuredClone(args.p_creation_params),request_hash:args.p_request_hash,idempotency_key:'studio-os-standard-signup-signup'};
+    if(!intent)intent={id:'signup',photographer_id:photographer.id,actor_user_id:'owner',platform_account_id:'acct_sandbox',country:args.p_country,livemode:false,status:'creating',stripe_account_id:null,allowed_currencies:options.allowedCurrencies||['cad','usd','aud','gbp'],attempted_at:new Date(Date.now()-(options.age||0)).toISOString(),creation_params:structuredClone(args.p_creation_params),request_hash:args.p_request_hash,idempotency_key:'studio-os-standard-signup-signup'};
     intent.provider_request_hash=api.standardSignupParamsHash({...intent.creation_params,'metadata[standard_signup_id]':intent.id});
     return {data:structuredClone(intent),error:null};}
    if(name==='record_photographer_standard_signup_account'){if(saveFailure){saveFailure=false;return {error:Error('lost database save'),data:null};}intent.stripe_account_id=args.p_account.id;intent.status='registered';return {data:structuredClone(intent),error:null};}
@@ -42,11 +42,11 @@ function fixture(options={}) {
    throw Error(path);
   }}});
  const request={url:'http://localhost:55430/api/stripe/connect',headers:new Headers({origin:'http://localhost:55430'})};
- const start=()=>api.startStandardSignup(service,{request,photographer,userId:'owner',email:photographer.billing_email,country:photographer.business_country});
+ const start=()=>api.startStandardSignup(service,{request,photographer,userId:'owner',email:photographer.billing_email,country:photographer.business_country,salesCurrency:options.salesCurrency});
  return {api,service,photographer,calls,start,request,get intent(){return intent},get provider(){return provider}};
 }
-test('CA and US signup persists pending ownership before exposing a hosted link and never selects unfinished account',async()=>{
- for(const country of ['CA','US']){const f=fixture({country});const result=await f.start();assert.equal(result.stripeAccountId,null);assert.equal(result.stripePendingAccountId,'acct_new');assert.equal(f.intent.stripe_account_id,'acct_new');assert.equal(f.photographer.stripe_account_id,null);assert.equal(f.calls.filter(c=>c.path==='accounts').length,1);assert.ok(f.calls.findIndex(c=>c.rpc==='record_photographer_standard_signup_account')<f.calls.findIndex(c=>c.path==='account_links'));}
+test('all four country signups persist pending ownership before exposing a hosted link and never selects unfinished account',async()=>{
+ for(const country of ['CA','US','AU','GB']){const f=fixture({country});const result=await f.start();assert.equal(result.stripeAccountId,null);assert.equal(result.stripePendingAccountId,'acct_new');assert.equal(f.intent.stripe_account_id,'acct_new');assert.equal(f.photographer.stripe_account_id,null);assert.equal(f.calls.filter(c=>c.path==='accounts').length,1);assert.ok(f.calls.findIndex(c=>c.rpc==='record_photographer_standard_signup_account')<f.calls.findIndex(c=>c.path==='account_links'));}
 });
 test('lost account creation and lost database save reuse exact frozen body and idempotency despite profile changes',async()=>{
  for(const failure of ['lost','saveFailure']){const f=fixture({[failure]:true});await assert.rejects(f.start());f.photographer.business_name='Edited studio';f.photographer.billing_email='edited@example.test';await f.start();const creates=f.calls.filter(c=>c.path==='accounts');assert.equal(creates.length,2);assert.equal(creates[0].body,creates[1].body);assert.equal(creates[0].key,creates[1].key);assert.equal(f.intent.stripe_account_id,'acct_new');}
@@ -136,4 +136,15 @@ test('connect preflight selects the intended payment mode and keeps legacy featu
  process.env.STRIPE_STANDARD_NEW_ACCOUNTS_ENABLED='false';delete process.env.STUDIO_STANDARD_SANDBOX_EXPECTED_PLATFORM_ACCOUNT_ID;
  const legacy=fixture({existing:'acct_old',schemaMissing:true});await legacy.api.assertStandardSignupConnectAllowed(legacy.service,{photographer:legacy.photographer,userId:'owner'});assert.equal(legacy.calls.length,0);
  legacy.photographer.stripe_account_history_required=true;await assert.rejects(legacy.api.assertStandardSignupConnectAllowed(legacy.service,{photographer:legacy.photographer,userId:'owner'}));assert.equal(legacy.calls.length,0);
+});
+
+
+test('new regional signup accepts its supported sales currency and rejects an unsupported scope before creating a provider account',async()=>{
+ for(const [country,salesCurrency]of [['AU','aud'],['GB','gbp']]){const f=fixture({country,salesCurrency});await f.start();assert.equal(f.intent.country,country);assert.deepEqual(f.intent.allowed_currencies,['cad','usd','aud','gbp']);assert.equal(f.provider.country,country);}
+ for(const salesCurrency of ['eur','jpy']){const f=fixture({country:'AU',salesCurrency});await assert.rejects(f.start(),/CAD, USD, AUD or GBP/);assert.equal(f.calls.some(c=>c.path==='accounts'),false);assert.equal(f.calls.some(c=>c.rpc==='reserve_photographer_standard_signup'),false);}
+});
+
+test('historical CA and US signup scope remains unchanged and cannot be forged for a regional country',async()=>{
+ for(const country of ['CA','US']){const f=fixture({country,allowedCurrencies:['cad','usd'],ready:true});await f.start();const frozen=structuredClone(f.intent.allowed_currencies);process.env.STRIPE_STANDARD_NEW_ACCOUNTS_ENABLED='false';await f.start();assert.deepEqual(f.intent.allowed_currencies,frozen);process.env.STRIPE_STANDARD_NEW_ACCOUNTS_ENABLED='true';}
+ for(const options of [{country:'AU',allowedCurrencies:['cad','usd']},{country:'GB',allowedCurrencies:['cad','usd']},{allowedCurrencies:['cad','usd','eur','gbp']},{allowedCurrencies:['cad','usd','aud','aud']}]){const f=fixture(options);await assert.rejects(f.start(),/original Stripe account request/);assert.equal(f.calls.some(c=>c.path==='accounts'),false);}
 });

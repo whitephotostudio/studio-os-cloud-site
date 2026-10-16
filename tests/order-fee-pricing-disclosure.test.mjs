@@ -258,8 +258,8 @@ test('all-order public schemas match card prices and order fees without old exem
 });
 
 
-for (const [country, currency, available] of [['CA','cad',true],['US','usd',true],['AU','aud',false],['GB','gbp',false]]) {
-  for (const interval of ['month','year']) test(`localized public ${country} ${interval} prices retain exact amounts and supported-country purchase boundaries`, () => {
+for (const [country, currency] of [['CA','cad'],['US','usd'],['AU','aud'],['GB','gbp']]) {
+  for (const interval of ['month','year']) test(`localized public ${country} ${interval} prices retain exact amounts and signup selections`, () => {
     const env = {STUDIO_GALLERY_PRICING_V3_ENABLED:'1',STUDIO_LOCAL_SUBSCRIPTIONS_ENABLED:'1'};
     const html = serverHtml(surfaces[0], interval, env, currency), rendered = text(html);
     assert.match(html, /aria-label="Subscription pricing country"/);
@@ -270,16 +270,14 @@ for (const [country, currency, available] of [['CA','cad',true],['US','usd',true
       const formatted = new Intl.NumberFormat('en-CA',{style:'currency',currency:currency.toUpperCase(),minimumFractionDigits:interval==='year'?2:0,maximumFractionDigits:2}).format(amounts[index]/100);
       assert.ok(text(card).includes(formatted), `${name} exact ${currency} amount`);
       assert.ok(text(card).includes(`${index===0?'0.55':'0.45'} per paid order`));
-      if (available) assert.ok(decode(card).includes(`/sign-up?plan=${['starter','core','studio'][index]}&interval=${interval}&country=${country}`));
-      else { assert.doesNotMatch(card,/href="\/sign-up/); assert.match(text(card),/Pricing preview/); }
+      assert.ok(decode(card).includes(`/sign-up?plan=${['starter','core','studio'][index]}&interval=${interval}&country=${country}`));
     }
     assert.match(rendered,new RegExp(`Subscription prices are in ${currency.toUpperCase()}`));
     assert.match(rendered,/AI background credits are sold separately in CAD/);
-    if (!available) {assert.match(rendered,/merchant onboarding and customer ordering.*not available yet/i);assert.doesNotMatch(html,/href="\/sign-up/);}
+    assert.doesNotMatch(rendered, /Pricing preview|not available yet/i);
   });
-  test(`localized structured offers for ${country} match the shown currency or omit unavailable purchasing`, () => {
+  test(`localized structured offers for ${country} match the shown purchasable currency`, () => {
     const html=serverHtml({path:'components/json-ld.tsx',exportName:'PricingJsonLd',props:{}},'month',{STUDIO_GALLERY_PRICING_V3_ENABLED:'1',STUDIO_LOCAL_SUBSCRIPTIONS_ENABLED:'1'},currency);
-    if(!available){assert.equal(html,'');return;}
     const schema=JSON.parse(html.match(/<script\b[^>]*>([\s\S]*?)<\/script>/)[1]);
     assert.equal(schema.offers.priceCurrency,currency.toUpperCase());
     assert.deepEqual(schema.offers.offers.map(o=>[o.price,o.priceCurrency]),[['59.00',currency.toUpperCase()],['99.00',currency.toUpperCase()],['199.00',currency.toUpperCase()]]);
@@ -287,9 +285,9 @@ for (const [country, currency, available] of [['CA','cad',true],['US','usd',true
 }
 test('localized selector stays absent with the release disabled',()=>{const html=serverHtml(surfaces[0],'month',{STUDIO_GALLERY_PRICING_V3_ENABLED:'1'});assert.doesNotMatch(html,/Subscription pricing country/);assert.match(text(html),/Subscriptions in CAD/);});
 
-test('localized free-trial signup keeps the selected US or Canada pricing country', () => {
+test('localized free-trial signup keeps the selected pricing country in all four markets', () => {
   const env = {STUDIO_GALLERY_PRICING_V3_ENABLED: '1', STUDIO_LOCAL_SUBSCRIPTIONS_ENABLED: 'true'};
-  for (const [currency, country] of [['usd', 'US'], ['cad', 'CA']]) {
+  for (const [currency, country] of [['usd', 'US'], ['cad', 'CA'], ['aud', 'AU'], ['gbp', 'GB']]) {
     const html = serverHtml(surfaces[0], 'month', env, currency);
     const trial = planCard(html, 'Free Trial');
     assert.ok(trial.includes(`href="/sign-up?country=${country}"`));

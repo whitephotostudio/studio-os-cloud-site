@@ -110,12 +110,12 @@ function releaseFixture(options={}) {
       assert.equal(url.origin,`https://${scope.projectRef}.supabase.co`);
       if(url.pathname==='/rest/v1/')data=schema;
       else if(url.pathname==='/rest/v1/rpc/stripe_account_history_schema_status')data={version:'20261015010000',history_schema_present:true,reservation_guard_present:true,...options.protections};
-      else if(url.pathname==='/rest/v1/rpc/stripe_standard_signup_schema_status')data={version:'20261015020000',signup_schema_present:true,
+      else if(url.pathname==='/rest/v1/rpc/stripe_standard_signup_schema_status')data={version:'20261016010000',regional_markets_present:true,signup_schema_present:true,
         history_required_guard_present:true,legacy_creation_barrier_present:true,service_only_rpcs:true,service_only_tables:true,...options.signupProtections};
       else if(url.pathname==='/rest/v1/stripe_standard_signup_release_controls'){
         assert.equal(url.searchParams.get('release_key'),'eq.standard-signup-v1');
         data=options.signupRows??[{release_key:'standard-signup-v1',platform_account_id:scope.platformAccountId,project_ref:scope.projectRef,
-          enabled:true,enrollment_starts_at:new Date(Date.now()-3600000).toISOString(),allowed_countries:['CA','US'],allowed_currencies:['cad','usd'],...options.signupControl}];
+          enabled:true,enrollment_starts_at:new Date(Date.now()-3600000).toISOString(),allowed_countries:['CA','US','AU','GB'],allowed_currencies:['cad','usd','aud','gbp'],...options.signupControl}];
       }
       else if(url.pathname==='/rest/v1/photographers' && url.searchParams.has('id'))data=options.photographers??[{id:scope.photographerId,user_id:scope.userId,
         stripe_connected_account_id:scope.expressAccountId,stripe_account_id:scope.expressAccountId,stripe_standard_migrated_at:null}];
@@ -142,6 +142,7 @@ test('new Standard flag independently forces schema, service-only permissions, e
     control:{migration_enabled:false,checkout_enabled:false,reservation_required:false,activation_enabled:false}});
   await f.run();
   const result=f.logs.find(line=>line.check==='stripe-standard-new-signup-release');
+  assert.deepEqual(result.allowedCountries,['CA','US','AU','GB']);assert.deepEqual(result.allowedCurrencies,['cad','usd','aud','gbp']);
   assert.equal(result.creationFlag,true);assert.equal(result.creationControl,true);assert.equal(result.serviceOnlyPermissions,true);
   assert.equal(result.legacyCreationBarrier,true);assert.equal(result.immutableHistoryRequired,true);
   assert.equal(result.existingMerchantRoutingChanged,false);assert.equal(result.financialMutations,0);assert.equal(result.databaseMutations,0);
@@ -176,11 +177,11 @@ test('new Standard signup audit fails closed for wrong platform/project/app/mode
 test('new Standard signup creation requires its exact enabled control, proven schema guards and six service-only RPCs',async()=>{
   const invalidControls=[{enabled:false},{enabled:'true'},{release_key:'whitephoto-20261015'},{platform_account_id:'acct_foreign'},
     {project_ref:'foreign'},{allowed_countries:['CA']},{allowed_countries:['CA','CA']},{allowed_countries:['CA','US','GB']},
-    {allowed_currencies:['cad']},{allowed_currencies:['cad','eur']},{enrollment_starts_at:null},{enrollment_starts_at:'invalid'},
+    {allowed_currencies:['cad']},{allowed_currencies:['cad','usd']},{allowed_currencies:['cad','eur']},{allowed_currencies:['cad','usd','aud','aud']},{enrollment_starts_at:null},{enrollment_starts_at:'invalid'},
     {enrollment_starts_at:new Date(Date.now()+86400000).toISOString()}];
   for(const options of [...invalidControls.map(signupControl=>({signupControl})),{signupRows:[]},{signupRows:[{},{}]},
-    ...['signup_schema_present','history_required_guard_present','legacy_creation_barrier_present','service_only_rpcs','service_only_tables'].map(key=>({signupProtections:{[key]:false}})),
-    {signupProtections:{version:'old'}},...['stripe_standard_signup_params_hash','record_photographer_standard_signup_account','activate_photographer_standard_signup']
+    ...['regional_markets_present','signup_schema_present','history_required_guard_present','legacy_creation_barrier_present','service_only_rpcs','service_only_tables'].map(key=>({signupProtections:{[key]:false}})),
+    {signupProtections:{version:'old'}},{signupProtections:{version:'20261015020000'}},...['stripe_standard_signup_params_hash','record_photographer_standard_signup_account','activate_photographer_standard_signup']
       .map(missingRpc=>({missingRpc})),{protections:{reservation_guard_present:false}}]) {
     const f=releaseFixture({...options,env:{STRIPE_STANDARD_NEW_ACCOUNTS_ENABLED:'true'}});
     await assert.rejects(()=>verifyStandardSignupRelease(f.env,f.fetcher),/signup|history/);
@@ -513,4 +514,14 @@ test('fresh final v1 and v2 scope GETs independently reject drift after both end
     const f=configurationFixture(options);await assert.rejects(f.run);assert.equal(f.writes.length,2);
     assert.equal(f.logs.some(row=>row.check==='stripe-standard-webhook-subscriptions-configured'),false);
   }
+});
+
+
+test('regional compatibility audit permits unchanged legacy enrollment only while creation is disabled',async()=>{
+ const f=releaseFixture({env:{STUDIO_STANDARD_SIGNUP_RELEASE_VERIFY:'1',STRIPE_STANDARD_NEW_ACCOUNTS_ENABLED:'false'},signupControl:{allowed_countries:['CA','US'],allowed_currencies:['cad','usd']}});
+ await verifyStandardSignupRelease(f.env,f.fetcher,line=>f.logs.push(JSON.parse(line)));assert.deepEqual(f.logs[0].allowedCountries,['CA','US']);assert.equal(f.logs[0].creationFlag,false);
+ for(const signupControl of [{allowed_countries:['CA','US'],allowed_currencies:['cad','usd','aud','gbp']},{allowed_countries:['CA','US','AU','GB'],allowed_currencies:['cad','usd']}]){
+  const mismatch=releaseFixture({env:{STUDIO_STANDARD_SIGNUP_RELEASE_VERIFY:'1',STRIPE_STANDARD_NEW_ACCOUNTS_ENABLED:'false'},signupControl});await assert.rejects(()=>verifyStandardSignupRelease(mismatch.env,mismatch.fetcher),/coverage is unverified/);
+ }
+ const enabled=releaseFixture({env:{STRIPE_STANDARD_NEW_ACCOUNTS_ENABLED:'true'},signupControl:{allowed_countries:['CA','US'],allowed_currencies:['cad','usd']}});await assert.rejects(()=>verifyStandardSignupRelease(enabled.env,enabled.fetcher),/coverage is unverified/);
 });

@@ -241,7 +241,7 @@ export default function SignUpClient({ catalog }: { catalog: PricingCatalogSnaps
               </div>
             ) : null}
 
-            {catalog.localizedSubscriptionsEnabled ? <p className="mt-5 text-sm leading-6 text-neutral-600">Subscription preview: {market.label} · {market.currency.toUpperCase()}. Your saved business country determines new subscription currency; existing subscriptions keep their current currency. AI credit packs remain in CAD.</p> : null}
+            {catalog.localizedSubscriptionsEnabled ? <p className="mt-5 text-sm leading-6 text-neutral-600">Subscription pricing: {market.label} · {market.currency.toUpperCase()}. Your saved business country determines new subscription currency; existing subscriptions keep their current currency. AI credit packs remain in CAD.</p> : null}
             <div className="mt-8 text-sm text-neutral-500">
               Need to compare packages first?{" "}
               <Link href={catalog.localizedSubscriptionsEnabled ? `/pricing?country=${market.country}` : "/pricing"} className="font-medium text-neutral-950 underline underline-offset-4">

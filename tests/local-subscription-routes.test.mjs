@@ -45,7 +45,7 @@ function fixture({country='US', savedSubscription=false, unavailable=false, subs
 }
 
 test('subscription endpoint uses saved country, ignoring posted currency and sales currency',async()=>{
-  for(const[country,expected]of[['CA','cad'],['US','usd']]){
+  for(const[country,expected]of[['CA','cad'],['US','usd'],['AU','aud'],['GB','gbp']]){
     const f=fixture({country});
     const response=await f.invoke({currency:'gbp',subscriptionCurrency:'aud',businessCountry:'AU'});
     assert.equal(response.status,200);assert.equal((await response.json()).subscriptionCurrency,expected);
@@ -59,19 +59,11 @@ test('missing business country fails before creating customer or subscription Ch
   assert.deepEqual(f.calls.map(([type])=>type),['resolve']);
 });
 
-test('AU and UK previews cannot sell subscriptions before merchant-country rollout',async()=>{
-  for(const country of ['AU','GB']){
-    const f=fixture({country});const response=await f.invoke({});
-    assert.equal(response.status,409);assert.match((await response.json()).message,/payment rollout/);
-    assert.deepEqual(f.calls.map(([type])=>type),['resolve']);
-  }
-});
-
-test('a canceled old subscription id cannot bypass deferred-country enrollment',async()=>{
+test('a canceled regional subscription starts a fresh Checkout and never updates the old contract',async()=>{
   for(const country of ['AU','GB'])for(const subscriptionStatus of ['canceled','incomplete_expired']){
     const f=fixture({country,savedSubscription:true,subscriptionStatus});const response=await f.invoke({});
-    assert.equal(response.status,409);assert.match((await response.json()).message,/payment rollout/);
-    assert.deepEqual(f.calls.map(([type])=>type),['resolve']);
+    assert.equal(response.status,200);assert.ok(f.calls.some(([type])=>type==='subscribe'));
+    assert.equal(f.calls.some(([type])=>type==='update'),false);
   }
 });
 
