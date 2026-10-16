@@ -21,6 +21,8 @@ import {
   UserRound,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import MobileUsbCamera from "@/components/mobile-usb-camera";
+import { prepareDslrPhoto, type UsbCaptureTarget } from "@/lib/mobile-usb-camera";
 import { proxiedPhotoUrl } from "@/lib/photo-url";
 import {
   addCapture,
@@ -122,6 +124,10 @@ export default function CapturePage() {
   const [loadingStudents, setLoadingStudents] = useState(false);
 
   const [active, setActive] = useState<StudentRow | null>(null);
+  const [ownerId, setOwnerId] = useState<string | null>(null);
+  const [scanDslr, setScanDslr] = useState(false);
+  const [isImporting, setIsImporting] = useState(false);
+  const [visible, setVisible] = useState(true);
   const [manualPin, setManualPin] = useState("");
   const [cameraError, setCameraError] = useState("");
   const [flash, setFlash] = useState(false);
@@ -146,12 +152,16 @@ export default function CapturePage() {
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const controlsRef = useRef<IScannerControls | null>(null);
+  const scannerRunRef = useRef(0);
   const dslrInputRef = useRef<HTMLInputElement | null>(null);
+  const pickerTargetRef = useRef<UsbCaptureTarget | null>(null);
   const activeRef = useRef<StudentRow | null>(null);
   const studentsRef = useRef<StudentRow[]>([]);
   const lastScanRef = useRef<{ token: string; at: number }>({ token: "", at: 0 });
-  activeRef.current = active;
-  studentsRef.current = students;
+  useEffect(() => {
+    activeRef.current = active;
+    studentsRef.current = students;
+  }, [active, students]);
 
   // Load the photographer's schools.
   useEffect(() => {
@@ -161,6 +171,7 @@ export default function CapturePage() {
         data: { user },
       } = await supabase.auth.getUser();
       if (!user || cancelled) return;
+      setOwnerId(user.id);
       const { data: pg } = await supabase
         .from("photographers")
         .select("id")
@@ -188,6 +199,7 @@ export default function CapturePage() {
   useEffect(() => {
     try {
       const saved = window.localStorage.getItem("capture-mode");
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- restore the external persisted preference after hydration
       if (saved === "dslr" || saved === "phone") setMode(saved);
     } catch {
       /* ignore */
@@ -204,21 +216,23 @@ export default function CapturePage() {
   // Background upload pump + queue counter.
   const refreshQueue = useCallback(async () => {
     try {
-      setPending((await allCaptures()).length);
+      setPending((await allCaptures()).filter((record) => !record.ownerId || record.ownerId === ownerId).length);
     } catch {
       /* ignore */
     }
-  }, []);
+  }, [ownerId]);
   const pump = useCallback(() => {
     void processCaptureQueue({
+      ownerId: ownerId ?? undefined,
       onChange: refreshQueue,
       onUploaded: () => {
         setUploaded((n) => n + 1);
         void refreshQueue();
       },
     });
-  }, [refreshQueue]);
+  }, [refreshQueue, ownerId]);
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- subscribe to the durable external upload queue
     void refreshQueue();
     const id = window.setInterval(pump, 2500);
     window.addEventListener("online", pump);
@@ -245,12 +259,14 @@ export default function CapturePage() {
     );
     if (!match || activeRef.current?.id === match.id) return;
     setActive(match);
+    setScanDslr(false);
     setFlash(true);
     window.setTimeout(() => setFlash(false), 320);
     navigator.vibrate?.(40);
   }, []);
 
   const startScanner = useCallback(async () => {
+    const run = ++scannerRunRef.current;
     setCameraError("");
     const video = videoRef.current;
     if (!video) return;
@@ -267,7 +283,7 @@ export default function CapturePage() {
         delayBetweenScanAttempts: 120,
         delayBetweenScanSuccess: 800,
       });
-      controlsRef.current = await reader.decodeFromConstraints(
+      const controls = await reader.decodeFromConstraints(
         {
           video: {
             facingMode: { ideal: "environment" },
@@ -277,10 +293,13 @@ export default function CapturePage() {
         },
         video,
         (result) => {
-          if (result) handleToken(result.getText());
+          if (run === scannerRunRef.current && result) handleToken(result.getText());
         },
       );
+      if (run !== scannerRunRef.current) { controls.stop(); return; }
+      controlsRef.current = controls;
     } catch (e) {
+      if (run !== scannerRunRef.current) return;
       setCameraError(
         e instanceof Error
           ? e.message
@@ -290,6 +309,7 @@ export default function CapturePage() {
   }, [handleToken]);
 
   const stopScanner = useCallback(() => {
+    scannerRunRef.current += 1;
     try {
       controlsRef.current?.stop();
     } catch {
@@ -302,10 +322,24 @@ export default function CapturePage() {
   }, []);
 
   useEffect(() => {
-    if (step !== "capture") return;
+    if (step !== "capture" || !visible || isImporting || (mode === "dslr" && !scanDslr)) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- start the external camera and report permission failures
     void startScanner();
     return () => stopScanner();
-  }, [step, startScanner, stopScanner]);
+  }, [step, mode, scanDslr, visible, isImporting, startScanner, stopScanner]);
+
+  useEffect(() => {
+    const changed = () => setVisible(document.visibilityState !== "hidden");
+    document.addEventListener("visibilitychange", changed);
+    return () => document.removeEventListener("visibilitychange", changed);
+  }, []);
+
+  useEffect(() => {
+    const input = dslrInputRef.current;
+    const cancel = () => { pickerTargetRef.current = null; setIsImporting(false); };
+    input?.addEventListener("cancel", cancel);
+    return () => input?.removeEventListener("cancel", cancel);
+  }, [step, mode]);
 
   // Load the locked student's existing photos for the review + delete strip.
   const loadStudentPhotos = useCallback(
@@ -338,6 +372,7 @@ export default function CapturePage() {
   // Refresh the strip when the active student changes or a capture uploads.
   useEffect(() => {
     if (!active) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- discard the external photo results when the selected student changes
       setStudentPhotos([]);
       return;
     }
@@ -362,6 +397,7 @@ export default function CapturePage() {
     const m = findStudentByToken(manualPin, students);
     if (m) {
       setActive(m);
+      setScanDslr(false);
       setManualPin("");
     }
   }
@@ -374,6 +410,7 @@ export default function CapturePage() {
     if (!blob) return;
     const rec: CaptureRecord = {
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      ownerId: ownerId ?? undefined,
       schoolId: school.id,
       studentId: student.id,
       studentName: fullName(student),
@@ -396,18 +433,16 @@ export default function CapturePage() {
   // Connect deposited them) for the locked student — same offline queue + R2
   // upload as a phone capture, just sourced from files instead of the camera.
   async function importDslrPhotos(files: FileList | null) {
-    const student = active;
-    if (!files || files.length === 0 || !student || !school) return;
+    const target = pickerTargetRef.current;
+    if (!files || files.length === 0 || !target) { setIsImporting(false); return; }
     let added = 0;
+    try {
     for (const file of Array.from(files)) {
       if (!file.type.startsWith("image/")) continue;
       const rec: CaptureRecord = {
+        ...target,
         id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        schoolId: school.id,
-        studentId: student.id,
-        studentName: fullName(student),
-        className: clean(student.class_name),
-        blob: file,
+        blob: await prepareDslrPhoto(file),
         createdAt: Date.now() + added,
         status: "pending",
         attempts: 0,
@@ -415,10 +450,16 @@ export default function CapturePage() {
       await addCapture(rec);
       added += 1;
     }
+    } catch (cause) {
+      setCameraError(cause instanceof Error ? cause.message : "Could not import the photo. Try a JPEG copy.");
+    } finally {
+      setIsImporting(false);
+      pickerTargetRef.current = null;
+    }
     if (dslrInputRef.current) dslrInputRef.current.value = "";
     if (added === 0) return;
     setSessionCount((n) => n + added);
-    setPerStudent((m) => ({ ...m, [student.id]: (m[student.id] ?? 0) + added }));
+    setPerStudent((m) => ({ ...m, [target.studentId]: (m[target.studentId] ?? 0) + added }));
     setFlash(true);
     window.setTimeout(() => setFlash(false), 140);
     void refreshQueue();
@@ -511,6 +552,7 @@ export default function CapturePage() {
             <button
               key={s.id}
               type="button"
+              disabled={loadingStudents}
               onClick={() => void chooseSchool(s)}
               style={{
                 display: "flex",
@@ -545,11 +587,15 @@ export default function CapturePage() {
 
   // ── Capture ──
   const activeCount = active ? perStudent[active.id] ?? 0 : 0;
+  const captureTarget: UsbCaptureTarget | null = active && school && ownerId ? {
+    ownerId, schoolId: school.id, studentId: active.id, studentName: fullName(active), className: clean(active.class_name),
+  } : null;
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
         <button
           type="button"
+          disabled={isImporting}
           onClick={() => {
             stopScanner();
             setStep("pick");
@@ -589,13 +635,14 @@ export default function CapturePage() {
       <div style={{ display: "flex", gap: 6, background: "#f3f4f6", borderRadius: 12, padding: 4 }}>
         {([
           { key: "phone", label: "Phone camera", icon: <Camera size={15} /> },
-          { key: "dslr", label: "DSLR import", icon: <Images size={15} /> },
+          { key: "dslr", label: "DSLR / import", icon: <Images size={15} /> },
         ] as const).map((opt) => {
           const on = mode === opt.key;
           return (
             <button
               key={opt.key}
               type="button"
+              disabled={isImporting}
               onClick={() => setMode(opt.key)}
               style={{
                 flex: 1,
@@ -621,6 +668,19 @@ export default function CapturePage() {
         })}
       </div>
 
+      {mode === "dslr" ? <>
+        <MobileUsbCamera ownerId={ownerId} target={captureTarget} onBusyChange={setIsImporting} onQueued={(target, count) => {
+          setSessionCount((current) => current + count);
+          setPerStudent((current) => ({ ...current, [target.studentId]: (current[target.studentId] ?? 0) + count }));
+          void refreshQueue();
+          pump();
+        }} />
+        <div style={{ padding: 12, borderRadius: 12, background: active ? "#f0fdf4" : "#f3f4f6", color: "#111827", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+          <div style={{ fontWeight: 800, fontSize: 13 }}>{active ? `${fullName(active)} · ${activeCount} photos` : "Select the student using Scan QR or their PIN"}</div>
+          <button type="button" disabled={isImporting} onClick={() => setScanDslr((current) => !current)} style={{ border: "1px solid #d1d5db", borderRadius: 9, padding: "9px", background: "#fff", color: "#111827", fontWeight: 800, whiteSpace: "nowrap" }}>{scanDslr ? "Stop scan" : "Scan QR"}</button>
+        </div>
+      </> : null}
+
       <style
         dangerouslySetInnerHTML={{
           __html:
@@ -629,7 +689,7 @@ export default function CapturePage() {
         }}
       />
       {/* Camera */}
-      <div
+      {mode === "phone" || scanDslr ? <div
         style={{
           position: "relative",
           borderRadius: 18,
@@ -707,7 +767,7 @@ export default function CapturePage() {
         {flash ? (
           <div style={{ position: "absolute", inset: 0, background: "rgba(255,255,255,0.55)" }} />
         ) : null}
-      </div>
+      </div> : null}
 
       {scanInfo && !scanInfo.matched ? (
         <div
@@ -734,6 +794,7 @@ export default function CapturePage() {
       {/* Manual PIN fallback */}
       <div style={{ display: "flex", gap: 8 }}>
         <input
+          disabled={isImporting}
           value={manualPin}
           onChange={(e) => setManualPin(e.target.value)}
           inputMode="numeric"
@@ -754,6 +815,7 @@ export default function CapturePage() {
         />
         <button
           type="button"
+          disabled={isImporting}
           onClick={applyManualPin}
           style={{
             borderRadius: 12,
@@ -807,8 +869,15 @@ export default function CapturePage() {
           />
           <button
             type="button"
-            onClick={() => dslrInputRef.current?.click()}
-            disabled={!active}
+            onClick={() => {
+              if (!captureTarget) return;
+              pickerTargetRef.current = { ...captureTarget };
+              stopScanner();
+              setScanDslr(false);
+              setIsImporting(true);
+              dslrInputRef.current?.click();
+            }}
+            disabled={!captureTarget || isImporting}
             style={{
               width: "100%",
               borderRadius: 16,
@@ -826,11 +895,11 @@ export default function CapturePage() {
             }}
           >
             <Images size={20} />
-            {active ? `Import photos for ${fullName(active)}` : "Scan a student first"}
+            {isImporting ? "Importing…" : active ? `Import from Photos / Files for ${fullName(active)}` : "Scan a student first"}
           </button>
           <div style={{ fontSize: 12, color: "#6b7280", fontWeight: 600, textAlign: "center", lineHeight: 1.5 }}>
-            Your DSLR&apos;s shots arrive in this phone&apos;s Photos via Canon Camera
-            Connect. Scan the student, tap Import, and pick their latest photos.
+            You can also transfer with your camera&apos;s own app, then choose photos
+            already saved to Photos or Files. Confirm the student before importing.
           </div>
         </>
       )}
