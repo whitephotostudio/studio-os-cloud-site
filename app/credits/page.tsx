@@ -1,4 +1,5 @@
 "use client";
+import { nativeBillingActionBlocked } from "@/lib/native-companion";
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -69,6 +70,10 @@ export default function CreditsPage() {
   }, [refresh]);
 
   async function buyCredits(pack: Pack) {
+    if (nativeBillingActionBlocked("buy_credits")) {
+      setError("Purchases are unavailable in the iPhone companion app.");
+      return;
+    }
     if (submitting.current) return;
     submitting.current = true;
     setBusy(pack.code);

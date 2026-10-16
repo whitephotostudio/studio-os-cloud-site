@@ -77,7 +77,7 @@ function FooterColumn({
 
 export function SiteFooter() {
   return (
-    <footer className="border-t border-neutral-200 bg-white text-neutral-950">
+    <><footer data-native-hide="marketing" className="border-t border-neutral-200 bg-white text-neutral-950">
       <div className="mx-auto max-w-7xl px-4 py-12 sm:px-6 lg:px-8">
         <div className="grid gap-10 sm:grid-cols-2 lg:grid-cols-[1.35fr_repeat(5,1fr)]">
           <div>
@@ -107,5 +107,8 @@ export function SiteFooter() {
         © 2026 Studio OS Cloud. All rights reserved.
       </div>
     </footer>
+    <footer className="native-companion-only border-t border-neutral-200 bg-white p-4 text-center text-sm text-neutral-600">
+      <Link href="/privacy">Privacy</Link>{" · "}<Link href="/terms">Terms</Link>{" · "}<Link href="/contact">Support</Link>
+    </footer></>
   );
 }

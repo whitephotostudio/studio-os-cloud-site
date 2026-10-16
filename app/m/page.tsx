@@ -368,6 +368,7 @@ export default function MobileHomePage() {
           <Link
             key={tile.href}
             href={tile.href}
+            data-native-purchase={tile.href === "/dashboard" ? "desktop" : undefined}
             style={{
               background: "#fff",
               border: "1px solid #e5e7eb",

@@ -22,6 +22,26 @@ private final class StudioOSCameraMessageGuard: NSObject, WKScriptMessageHandler
 
 final class StudioOSBridgeViewController: CAPBridgeViewController {
     private var cameraMessageGuard: StudioOSCameraMessageGuard?
+    private var companionUIDelegate: StudioOSCompanionUIDelegate?
+
+    override func webView(with frame: CGRect, configuration: WKWebViewConfiguration) -> WKWebView {
+        let source = """
+        (() => {
+          window.__STUDIO_OS_NATIVE__ = true;
+          const mark = () => {
+            if (!document.documentElement) return false;
+            document.documentElement.classList.add("studio-os-native");
+            return true;
+          };
+          if (!mark()) {
+            const observer = new MutationObserver(() => { if (mark()) observer.disconnect(); });
+            observer.observe(document, { childList: true });
+          }
+        })();
+        """
+        configuration.userContentController.addUserScript(WKUserScript(source: source, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        return super.webView(with: frame, configuration: configuration)
+    }
     override func capacitorDidLoad() {
         guard let bridge = bridge as? CapacitorBridge else { return }
         let handler = bridge.webViewDelegationHandler
@@ -30,5 +50,10 @@ final class StudioOSBridgeViewController: CAPBridgeViewController {
         handler.contentController.add(guardHandler, name: "bridge")
         cameraMessageGuard = guardHandler
         bridge.registerPluginInstance(StudioOSCameraPlugin())
+        let companion = StudioOSCompanionPlugin()
+        bridge.registerPluginInstance(companion)
+        let uiDelegate = StudioOSCompanionUIDelegate(original: webView?.uiDelegate, companion: companion)
+        companionUIDelegate = uiDelegate
+        webView?.uiDelegate = uiDelegate
     }
 }

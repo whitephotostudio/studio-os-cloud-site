@@ -169,6 +169,20 @@ that old card photos are not offered for import and that Busy clears after Stop.
 
 ## Troubleshooting
 
+### iPhone companion release (build 9)
+
+The iPhone app signs in to existing Studio OS accounts. Native navigation,
+new-window handling and SPA URL changes block platform subscription and AI-credit
+purchase routes. Web UI guards hide these offers and refuse native billing
+requests before network access. Account settings, merchant Connect and customer
+photo orders retain their own flows. Marketing page-view/click tracking is
+disabled in the native iPhone app. The camera implementation is unchanged from
+build 8; physical camera acceptance is still required before public release.
+
+Run `mobile/ios/Tests/test-native-companion-policy.sh` and
+`node --test tests/native-companion.test.mjs` for the shared navigation fixtures
+and executable web billing/marketing checks.
+
 - **`pod install` fails** → `sudo gem install cocoapods` then `cd ios/App && pod install`.
 - **"Untrusted Developer" on iPhone** → Settings → General → VPN & Device
   Management → trust your certificate.
