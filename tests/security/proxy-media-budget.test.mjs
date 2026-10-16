@@ -67,6 +67,59 @@ function fixture() {
   return { ...proxy, limiter, counters, request, advance: ms => { now += ms; } };
 }
 
+function permissions(header) {
+  assert.ok(header, 'response must declare its device permissions');
+  return new Map(header.split(',').map(part => {
+    const split = part.indexOf('=');
+    assert.ok(split > 0);
+    return [part.slice(0, split).trim(), part.slice(split + 1).trim()];
+  }));
+}
+
+test('actual Next global headers permit same-origin camera across SPA entry documents without enabling unused APIs', async () => {
+  const config = load('next.config.ts').default;
+  const rules = await config.headers();
+  const global = rules.find(rule => rule.source === '/(.*)');
+  assert.ok(global, 'all initial documents need camera permission before client navigation to Capture');
+  const headers = new Headers(global.headers.map(({ key, value }) => [key, value]));
+  const policy = permissions(headers.get('permissions-policy'));
+  assert.equal(policy.get('camera'), '(self)');
+  for (const feature of ['microphone', 'geolocation', 'usb', 'magnetometer', 'gyroscope', 'accelerometer']) {
+    assert.equal(policy.get(feature), '()', feature);
+  }
+  assert.equal(policy.get('payment'), '(self)');
+  assert.equal(headers.get('x-frame-options'), 'DENY');
+});
+
+test('actual proxy GET and HEAD preserve camera permission on every entry to the mobile capture flow', async () => {
+  const f = fixture();
+  for (const path of ['/mobile-app', '/m', '/m/capture', '/sign-in']) {
+    for (const method of ['GET', 'HEAD']) {
+      const response = await f.proxy(f.request(path, { method }));
+      assert.equal(response.status, 200, `${method} ${path}`);
+      const policy = permissions(response.headers.get('permissions-policy'));
+      assert.equal(policy.get('camera'), '(self)', `${method} ${path}`);
+      assert.equal(policy.get('microphone'), '()');
+      assert.equal(policy.get('geolocation'), '()');
+      assert.equal(response.headers.get('x-frame-options'), 'DENY');
+      assert.equal(response.headers.get('x-content-type-options'), 'nosniff');
+    }
+  }
+});
+
+test('rate-limited entry responses retain camera policy and frame protections', async () => {
+  const f = fixture();
+  for (let i = 0; i < 10; i += 1) assert.equal((await f.proxy(f.request('/forgot-password'))).status, 200);
+  const response = await f.proxy(f.request('/forgot-password'));
+  assert.equal(response.status, 429);
+  const policy = permissions(response.headers.get('permissions-policy'));
+  assert.equal(policy.get('camera'), '(self)');
+  assert.equal(policy.get('microphone'), '()');
+  assert.equal(policy.get('geolocation'), '()');
+  assert.equal(response.headers.get('x-frame-options'), 'DENY');
+  assert.ok(Number(response.headers.get('retry-after')) > 0);
+});
+
 test('Next matches every private media extension while public assets remain excluded', () => {
   const f = fixture();
   for (const path of ['/api/r2/img/projects/fixture/photo.jpg', '/api/r2/img/projects/fixture/photo.JPG',
