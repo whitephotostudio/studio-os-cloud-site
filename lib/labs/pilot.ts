@@ -25,6 +25,9 @@ const PILOT_EXACT_PATHS = new Set([
   "/api/labs-pilot/in-house", "/labs-pilot/in-house/sample-photo",
   "/api/dashboard/lab-production", "/api/dashboard/lab-production-assets", "/api/dashboard/lab-production-files",
   "/api/lab/production", "/api/labs-pilot/production",
+  "/api/dashboard/lab-production-v2", "/api/dashboard/lab-production-v2-assets", "/api/dashboard/lab-production-v2-files",
+  "/api/lab/production-v2", "/api/labs-pilot/production-v2", "/lab/production-v2",
+  "/api/dashboard/lab-connectors", "/api/lab-connector", "/labs-pilot/connector-download", "/labs-pilot/gta-demo",
   "/api/dashboard/lab-order-assets", "/api/lab/orders", "/api/dashboard/mfa",
   "/api/dashboard/agreement/status", "/api/dashboard/agreement/accept",
   "/api/csp-report", "/manifest.webmanifest",
@@ -39,5 +42,5 @@ export function isLabPilotPath(pathname: string): boolean {
   const path = pathname.length > 1 && pathname.endsWith("/") ? pathname.slice(0, -1) : pathname;
   return PILOT_EXACT_PATHS.has(path) || path === "/dashboard/labs" ||
     path.startsWith("/dashboard/labs/") || path.startsWith("/api/lab/orders/") ||
-    /^\/labs-pilot\/(?:in-house|production)\/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(path);
+    /^\/labs-pilot\/(?:in-house|production|production-v2)\/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(path);
 }

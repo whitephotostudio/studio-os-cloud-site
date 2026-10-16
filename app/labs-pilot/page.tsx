@@ -29,6 +29,7 @@ export default function LabsPilotPage() {
         <h1>Try both sides of a lab order.</h1>
         <p>Use the separate photographer and lab test credentials supplied to you. Test orders use sample photos and products. You can also review private copies of your studio’s retail prices; editing these drafts leaves your original price profiles and current school prices unchanged. GTA production is disabled, and this environment does not collect payments or send real production orders.</p>
         <div className={styles.pills}><span>Sample files only</span><span>Separate test accounts</span><span>No card charges</span></div>
+        <Link className={styles.quietLink} style={{ marginTop: 18 }} href="/labs-pilot/gta-demo">GTA meeting rehearsal guide <ArrowRight size={16} aria-hidden="true" /></Link>
       </section>
 
       <div className={styles.roleGrid}>
@@ -46,6 +47,7 @@ export default function LabsPilotPage() {
           <Link className={styles.secondary} href="/dashboard/labs/orders">Go directly to lab orders</Link>
           <Link className={styles.secondary} href="/dashboard/labs/in-house">Test your own in-house prices and receiving queue</Link>
           <Link className={styles.secondary} href="/dashboard/labs/production">Use private photos with production approval and crops</Link>
+          <Link className={styles.secondary} href="/dashboard/labs/production-v2">Choose different photos for each print and test Windows handoff</Link>
         </section>
 
         <section className={styles.card}>
@@ -58,6 +60,7 @@ export default function LabsPilotPage() {
             <li>Open the lab portal to review the order and download its sample file.</li>
             <li>Accept or decline it, then test the available production and delivery updates.</li>
           </ol>
+          <Link className={styles.secondary} href="/lab/production-v2">Receive and review three-print test jobs</Link>
           <Link className={styles.primary} href="/lab">Open lab portal <ArrowRight size={17} aria-hidden="true" /></Link>
           <a className={styles.secondary} href="#mfa">Set up lab authenticator first</a>
         </section>

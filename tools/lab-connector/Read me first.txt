@@ -41,6 +41,11 @@ The pairing secret is protected using Windows DPAPI for the current user.
 Review JPEGs remain local private working files; use an access-controlled PC
 and disk encryption. Revoke an old PC in the portal before replacing it.
 Device access expires after 90 days. There is no unattended Windows service.
+The helper deliberately keeps an existing pairing when a new code is entered.
+For a replacement, reconcile pending jobs with the lab operator first, then
+revoke the old device in the portal. Retain the old pairing.dpapi by renaming
+it inside the private local folder before pairing again. An uncertain old
+dispatch stays locked; use a linked reprint instead of silently resending it.
 
 BEFORE GTA CAN USE REAL CUSTOMER ORDERS
 Confirm GTA's catalog/product codes/currency, paper sizes and finishes,

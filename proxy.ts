@@ -36,7 +36,7 @@ function addSecurityHeaders(response: NextResponse) {
 export async function proxy(request: NextRequest) {
   const ip = getClientIp(request);
   const pathname = request.nextUrl.pathname;
-  const privateProduction = ["/api/dashboard/lab-production", "/api/dashboard/lab-production-assets", "/api/dashboard/lab-production-files", "/api/lab/production", "/api/labs-pilot/production", "/lab/production"].includes(pathname) || pathname.startsWith("/labs-pilot/production/");
+  const privateProduction = ["/api/dashboard/lab-production", "/api/dashboard/lab-production-assets", "/api/dashboard/lab-production-files", "/api/lab/production", "/api/labs-pilot/production", "/lab/production", "/api/dashboard/lab-production-v2", "/api/dashboard/lab-production-v2-assets", "/api/dashboard/lab-production-v2-files", "/api/lab/production-v2", "/api/labs-pilot/production-v2", "/lab/production-v2", "/api/dashboard/lab-connectors", "/api/lab-connector", "/labs-pilot/connector-download", "/labs-pilot/gta-demo"].includes(pathname) || (pathname.startsWith("/labs-pilot/production/") || pathname.startsWith("/labs-pilot/production-v2/"));
   const finish = (response: NextResponse) => {
     if (privateProduction) {
       response.headers.set("Referrer-Policy", "no-referrer");
@@ -126,7 +126,7 @@ export async function proxy(request: NextRequest) {
   if (isLabPilot()) response.headers.set("X-Robots-Tag", "noindex, nofollow");
   response.headers.set("Content-Security-Policy", policy);
   if (pathname.startsWith("/parents") || pathname.startsWith("/api/portal/") || pathname.startsWith("/dashboard") ||
-      pathname.startsWith("/labs-pilot/in-house/") || pathname.startsWith("/labs-pilot/production/") || pathname === "/api/labs-pilot/production" ||
+      pathname.startsWith("/labs-pilot/in-house/") || (pathname.startsWith("/labs-pilot/production/") || pathname.startsWith("/labs-pilot/production-v2/")) || pathname === "/api/labs-pilot/production" ||
       pathname === "/lab/production" || pathname === "/api/lab/production" || pathname === "/api/labs-pilot/in-house" ||
       pathname === "/api/dashboard/in-house-test-orders" || pathname === "/api/dashboard/in-house-test-files") {
     response.headers.set("Referrer-Policy", "no-referrer");

@@ -71,7 +71,7 @@ function fixtureUser(id) {
   return { id, aud: 'authenticated', role: 'authenticated', email: fixtureEmails.get(id), email_confirmed_at: '2026-10-15T00:00:00Z', confirmed_at: '2026-10-15T00:00:00Z', created_at: '2026-10-15T00:00:00Z', app_metadata: { provider: 'email', providers: ['email'] }, user_metadata: {}, identities: [], factors: fixtureMfaUsers.has(id) ? [{ id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', factor_type: 'totp', status: 'verified', friendly_name: 'Synthetic local factor', created_at: '2026-10-15T00:00:00Z', updated_at: '2026-10-15T00:00:00Z' }] : [] };
 }
 
-export async function createLabDatabase({ beforeLabOrdersMigration, beforeInHouseMigration, beforeInHouseTestOrdersMigration, includeInHouseTestOrders = true, beforeProductionMigration, includeProductionWorkflow = true } = {}) {
+export async function createLabDatabase({ beforeLabOrdersMigration, beforeInHouseMigration, beforeInHouseTestOrdersMigration, includeInHouseTestOrders = true, beforeProductionMigration, includeProductionWorkflow = true, beforeProductionV2Migration, includeProductionV2 = true, beforeConnectorMigration, includeLabConnector = true } = {}) {
   const db = new PGlite();
   await db.exec(`
     create role anon; create role authenticated; create role service_role bypassrls;
@@ -136,6 +136,16 @@ export async function createLabDatabase({ beforeLabOrdersMigration, beforeInHous
   const productionMigration = new URL('../supabase/migrations/20261016050000_lab_production_workflow.sql', import.meta.url);
   if (beforeProductionMigration) await beforeProductionMigration(db);
   if (includeProductionWorkflow && existsSync(productionMigration)) await db.exec(readFileSync(productionMigration, 'utf8'));
+  const productionV2Migration = new URL('../supabase/migrations/20261016060000_lab_production_v2.sql', import.meta.url);
+  if (includeProductionWorkflow && includeProductionV2 && existsSync(productionV2Migration)) {
+    if (beforeProductionV2Migration) await beforeProductionV2Migration(db);
+    await db.exec(readFileSync(productionV2Migration, 'utf8'));
+  }
+  const connectorMigration = new URL('../supabase/migrations/20261016070000_lab_connector.sql', import.meta.url);
+  if (includeProductionWorkflow && includeProductionV2 && includeLabConnector && existsSync(connectorMigration)) {
+    if (beforeConnectorMigration) await beforeConnectorMigration(db);
+    await db.exec(readFileSync(connectorMigration, 'utf8'));
+  }
   return db;
 }
 
@@ -204,7 +214,7 @@ export async function createLabFixture({ port = 55471, pilotHttp = false } = {})
         if (claims?.role !== 'service_role') { send(403, { statusCode: '403', error: 'Forbidden', message: 'Private fixture storage requires service authentication' }); return; }
         const storagePath = decodeURIComponent(url.pathname.slice('/storage/v1/object/'.length)).replace(/^authenticated\//, '');
         const [bucket, ...segments] = storagePath.split('/');
-        if (!['lab-production-files', 'lab-production-workflow-files'].includes(bucket) || segments.some(part => !part || part === '.' || part === '..' || part.includes('\\'))) { send(400, { statusCode: '400', error: 'Invalid path', message: 'Use the private fixture bucket and a normalized key' }); return; }
+        if (!['lab-production-files', 'lab-production-workflow-files', 'lab-production-v2-files', 'lab-connector-files'].includes(bucket) || segments.some(part => !part || part === '.' || part === '..' || part.includes('\\'))) { send(400, { statusCode: '400', error: 'Invalid path', message: 'Use the private fixture bucket and a normalized key' }); return; }
         const key = segments.join('/');
         const objectKey = `${bucket}/${key}`;
         if (request.method === 'POST' && key) {

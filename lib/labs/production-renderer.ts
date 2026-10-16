@@ -101,6 +101,18 @@ export async function packProductionPair(bytes: Buffer, asset: ProductionAsset):
     .withIccProfile("srgb").jpeg({ quality: 95, chromaSubsampling: "4:4:4" }).toBuffer());
 }
 
+/** V2 keeps the two reviewed prints independent until the paper is assembled. */
+export async function packProductionDistinctPair(left: { bytes: Buffer; asset: ProductionAsset }, right: { bytes: Buffer; asset: ProductionAsset }): Promise<Buffer> {
+  await Promise.all([verifyProductionFinal(left.bytes, left.asset, "5x7"), verifyProductionFinal(right.bytes, right.asset, "5x7")]);
+  for (const quality of [95, 90, 85, 80, 75]) {
+    const result = productionJpegDensity(await sharp({ create: { width: 3000, height: 2100, channels: 3, background: "white" } })
+      .composite([{ input: left.bytes, left: 0, top: 0 }, { input: right.bytes, left: 1500, top: 0 }])
+      .withIccProfile("srgb").jpeg({ quality, chromaSubsampling: "4:4:4" }).toBuffer());
+    if (result.length <= PRODUCTION_MAX_BYTES) return result;
+  }
+  throw new LabError("The reviewed paper file exceeds the private file limit.", 413, "PRODUCTION_FILE_SIZE");
+}
+
 export function requireProductionReady(job: ProductionJob) {
   if (job.holds.length || !["accepted", "in_production", "ready", "completed"].includes(job.status) ||
     !job.photographerApproved || job.lines.length !== 2 || job.lines.some(l => !l.cropApproved || !l.cropAsset || !l.finalAsset || !l.finalReviewedAt ||

@@ -27,3 +27,9 @@ jobs:
       - name: Exercise connector in PowerShell 7
         shell: pwsh
         run: '& ./tools/lab-connector/tests/connector.test.ps1'
+      - name: Exercise real loopback HTTP in Windows PowerShell 5.1
+        shell: powershell
+        run: '& ./tools/lab-connector/tests/transport.test.ps1 -IncludeTimeout'
+      - name: Exercise real loopback HTTP in PowerShell 7
+        shell: pwsh
+        run: '& ./tools/lab-connector/tests/transport.test.ps1'

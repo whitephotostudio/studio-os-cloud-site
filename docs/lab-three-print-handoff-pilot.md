@@ -1,0 +1,19 @@
+# Three-print production and Windows handoff pilot
+
+The additive photographer workspace is `/dashboard/labs/production-v2`; assigned lab receiving is `/lab/production-v2`. Private parent links use `/labs-pilot/production-v2/[galleryId]` with the access capability in the URL fragment. Existing production pages remain available, with navigation links to the new workspace. No existing school or original price profile is migrated or edited by this UI.
+
+Each complete package has three independent positions: one 8×10, 5×7 A and 5×7 B. Parents choose a photo for every position and may repeat a photo intentionally. One to ten package sets repeat that complete configuration. Parent previews are loaded privately once per gallery photo, and choices cannot be submitted until their previews have loaded. Receipts show the saved choices by filename without exposing private source asset metadata.
+
+Photographer order approval, receiver acceptance, cropping, optional lab colour work and final file review stay independent. Existing manual defaults remain in place. Automatic photographer approval only releases photographer order review. Each position has its own original, crop, approved crop, optional corrected derivative and final review. The crop editor uses a fixed print aspect, manual position and zoom, and shows retained resolution; it requires a decoded preview and explicit review. Source changes are available to the photographer before production and only reset the changed print’s reviews. Saved crop and final approvals require their current immutable preview to have loaded.
+
+The lab may upload a same-geometry colour-corrected file, or explicitly acknowledge that it reviewed a crop and no colour change was necessary. This is a human review workflow and does not use a paid AI service. Technical rendering uses sRGB; that conversion is separate from requested lab colour adjustments.
+
+A fully reviewed handoff provides a 2400×3000 8×10 JPEG and a 3000×2100 10×7 sheet containing the separately reviewed 1500×2100 5×7 A and B files, plus individual A/B files and an order manifest. Package quantity repeats those files. A completed manual review does not authorize a physical printer.
+
+Reopening an eligible unsealed job records a reason and clears final approvals while preserving unchanged crop and colour work. A linked full-package reprint creates a separate job with new acceptance and image reviews. It does not cancel or replace any existing queued, claimed or handed-off dispatch; the original stays locked and audited. Both controls require explicit scope acknowledgment and retain their exact request for confirmation retries.
+
+The Windows helper panel pairs one selected authorized destination using a short-lived private code. Codes are only held in the current browser component and are not stored in session storage. Helper access can be revoked; last-seen timestamps are reported without claiming the helper is currently online. Staging requires a fully reviewed in-production job and a separate acknowledgment. The helper downloads rehearsal files into its own review folder; this pilot has no printer hot-folder configuration.
+
+All new orders and helper handoffs stay `testOnly: true`, `payment: test_no_payment` and `printAllowed: false`. Real GTA intake, payment collection and physical printing remain disabled. Lab agreements, real catalog/product mapping, verified payment policy, printer/colour configuration, Windows installation checks and operator sign-off remain prerequisites for live production.
+
+Focused UI regressions cover independent choices, whole package quantities, permission gates, current-preview approval gates, colour acknowledgments, wholesale labels, parent privacy, capability placement, safe reason validation and default pairing authorization. Hosted desktop/mobile and Windows execution evidence must be recorded separately; static UI tests do not prove those outcomes.

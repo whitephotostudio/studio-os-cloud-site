@@ -61,3 +61,17 @@ test('automatic order approval cannot bypass crop, colour, acceptance or final f
   assert.doesNotThrow(() => r.requireProductionReady(ready));
   for (const patch of [{ status: 'submitted' }, { photographerApproved: false }, { holds: ['crop_5x7'] }, { lines: [line('8x10'), { ...line('5x7'), finalReviewedAt: null }] }, { lines: [line('8x10'), { ...line('5x7'), colourCompletedAt: null }] }]) assert.throws(() => r.requireProductionReady({ ...ready, ...patch }), /Complete/);
 });
+
+test('independent 5x7 revisions stay in their own left/right cells until the final 10x7 is assembled', async () => {
+  const make = async color => {
+    const bytes = r.productionJpegDensity(await sharp({ create: { width: 1500, height: 2100, channels: 3, background: color } }).jpeg().toBuffer());
+    return { bytes, asset: { ...await r.inspectProductionImage(bytes), id: crypto.randomUUID(), kind: 'crop', filename: 'reviewed.jpg' } };
+  };
+  const a=await make('#e00000'), b=await make('#0000e0'), changedB=await make('#00b000');
+  const first=await r.packProductionDistinctPair(a,b), revised=await r.packProductionDistinctPair(a,changedB);
+  const pixel=async(bytes,x)=>[...await sharp(bytes).extract({left:x,top:1000,width:1,height:1}).raw().toBuffer()];
+  assert.deepEqual(await pixel(first,700),await pixel(revised,700));
+  assert.ok((await pixel(first,2200))[2]>180);assert.ok((await pixel(revised,2200))[1]>150);
+  const m=await sharp(revised).metadata();assert.equal(m.width,3000);assert.equal(m.height,2100);assert.equal(m.density,300);assert.equal(m.exif,undefined);
+  await assert.rejects(r.packProductionDistinctPair(a,{bytes:changedB.bytes,asset:b.asset}),/integrity/);
+});
