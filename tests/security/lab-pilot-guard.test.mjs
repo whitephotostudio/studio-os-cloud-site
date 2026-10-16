@@ -55,3 +55,15 @@ test('only pilot pages, existing MFA and agreement endpoints, and lab APIs pass 
     assert.equal(isLabPilotPath(path), false, path);
   }
 });
+
+test('private in-house test copies have one exact pilot API while customer pricing and school routes remain closed', () => {
+  const { isLabPilotPath } = fixture();
+  assert.equal(isLabPilotPath('/api/dashboard/in-house-price-sheets'), true);
+  assert.equal(isLabPilotPath('/api/dashboard/in-house-price-sheets/'), true);
+  for (const path of ['/api/dashboard/in-house-price-sheets/other', '/api/dashboard/in-house-price-sheets-other',
+    '/api/dashboard/in-house-price-sheets%2fother', '/api/dashboard/in-house-price-sheets/../schools',
+    '/api/dashboard/schools', '/api/dashboard/packages', '/api/dashboard/package-profiles',
+    '/api/dashboard/orders', '/api/stripe/checkout', '/dashboard/schools', '/dashboard/packages']) {
+    assert.equal(isLabPilotPath(path), false, path);
+  }
+});
