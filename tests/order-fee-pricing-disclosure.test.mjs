@@ -286,3 +286,12 @@ for (const [country, currency, available] of [['CA','cad',true],['US','usd',true
   });
 }
 test('localized selector stays absent with the release disabled',()=>{const html=serverHtml(surfaces[0],'month',{STUDIO_GALLERY_PRICING_V3_ENABLED:'1'});assert.doesNotMatch(html,/Subscription pricing country/);assert.match(text(html),/Subscriptions in CAD/);});
+
+test('localized free-trial signup keeps the selected US or Canada pricing country', () => {
+  const env = {STUDIO_GALLERY_PRICING_V3_ENABLED: '1', STUDIO_LOCAL_SUBSCRIPTIONS_ENABLED: 'true'};
+  for (const [currency, country] of [['usd', 'US'], ['cad', 'CA']]) {
+    const html = serverHtml(surfaces[0], 'month', env, currency);
+    const trial = planCard(html, 'Free Trial');
+    assert.ok(trial.includes(`href="/sign-up?country=${country}"`));
+  }
+});

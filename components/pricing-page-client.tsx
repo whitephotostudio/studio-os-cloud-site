@@ -265,7 +265,7 @@ export function PricingPageClient({ catalog, initialInterval = "month" }: { cata
                 locally, and manages production.
               </p>
               <div className="mt-8 flex flex-wrap justify-center gap-3">
-                {[`${FREE_TRIAL_DAYS}-day launch trial`, "Studio workflow included", `Subscriptions in ${catalog.currency.toUpperCase()}`].map((label) => (
+                {[`${FREE_TRIAL_DAYS}-day launch trial`, "Studio workflow included", catalog.localizedSubscriptionsEnabled ? "USD / CAD subscriptions" : `Subscriptions in ${catalog.currency.toUpperCase()}`].map((label) => (
                   <span
                     key={label}
                     className="marketing-kicker rounded-full border border-white/15 bg-white/10 px-4 py-2 text-white/75 backdrop-blur"
@@ -278,6 +278,9 @@ export function PricingPageClient({ catalog, initialInterval = "month" }: { cata
           </Reveal>
 
           {catalog.localizedSubscriptionsEnabled ? <div className="mt-6 rounded-2xl border border-neutral-200 bg-white p-5">
+            <p className="mb-4 text-sm leading-6 text-neutral-600">
+              US businesses pay in USD. Businesses in Canada pay in CAD. The plan amounts are the same in both currencies.
+            </p>
             <label className="block text-sm font-semibold text-neutral-800">
               Subscription pricing country
               <select aria-label="Subscription pricing country" value={market.country}
@@ -471,7 +474,9 @@ function PricingCard({
   const previewOnly = Boolean(catalog.localizedSubscriptionsEnabled && !market.orderingAvailable);
   const href = planCode
     ? `/sign-up?plan=${planCode}&interval=${billingInterval}${catalog.localizedSubscriptionsEnabled ? `&country=${market.country}` : ""}`
-    : plan.href;
+    : catalog.localizedSubscriptionsEnabled && plan.href === "/sign-up"
+      ? `/sign-up?country=${market.country}`
+      : plan.href;
   const isAnnualPlan = Boolean(planCode && billingInterval === "year");
 
   return (
