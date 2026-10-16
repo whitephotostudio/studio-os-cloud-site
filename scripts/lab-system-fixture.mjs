@@ -71,7 +71,7 @@ function fixtureUser(id) {
   return { id, aud: 'authenticated', role: 'authenticated', email: fixtureEmails.get(id), email_confirmed_at: '2026-10-15T00:00:00Z', confirmed_at: '2026-10-15T00:00:00Z', created_at: '2026-10-15T00:00:00Z', app_metadata: { provider: 'email', providers: ['email'] }, user_metadata: {}, identities: [], factors: fixtureMfaUsers.has(id) ? [{ id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', factor_type: 'totp', status: 'verified', friendly_name: 'Synthetic local factor', created_at: '2026-10-15T00:00:00Z', updated_at: '2026-10-15T00:00:00Z' }] : [] };
 }
 
-export async function createLabDatabase({ beforeLabOrdersMigration, beforeInHouseMigration, beforeInHouseTestOrdersMigration, includeInHouseTestOrders = true, beforeProductionMigration, includeProductionWorkflow = true, beforeProductionV2Migration, includeProductionV2 = true, beforeConnectorMigration, includeLabConnector = true, beforeSheetLayoutsMigration, includeSheetLayouts = true, beforeCountryProfilesMigration, includeCountryProfiles = true, beforeLabSetupMigration, includeLabSetup = true } = {}) {
+export async function createLabDatabase({ beforeLabOrdersMigration, beforeInHouseMigration, beforeInHouseTestOrdersMigration, includeInHouseTestOrders = true, beforeProductionMigration, includeProductionWorkflow = true, beforeProductionV2Migration, includeProductionV2 = true, beforeConnectorMigration, includeLabConnector = true, beforeSheetLayoutsMigration, includeSheetLayouts = true, beforeCountryProfilesMigration, includeCountryProfiles = true, beforeLabSetupMigration, includeLabSetup = true, beforeLabSetupConflictResponseMigration, includeLabSetupConflictResponse = true, beforeLabPlanningConflictResponsesMigration, includeLabPlanningConflictResponses = true } = {}) {
   const db = new PGlite();
   await db.exec(`
     create role anon; create role authenticated; create role service_role bypassrls;
@@ -160,6 +160,16 @@ export async function createLabDatabase({ beforeLabOrdersMigration, beforeInHous
   if (includeLabSetup && existsSync(labSetupMigration)) {
     if (beforeLabSetupMigration) await beforeLabSetupMigration(db);
     await db.exec(readFileSync(labSetupMigration, 'utf8'));
+    const setupConflictMigration = new URL('../supabase/migrations/20261016100100_lab_setup_conflict_response.sql', import.meta.url);
+    if (includeLabSetupConflictResponse && existsSync(setupConflictMigration)) {
+      if (beforeLabSetupConflictResponseMigration) await beforeLabSetupConflictResponseMigration(db);
+      await db.exec(readFileSync(setupConflictMigration, 'utf8'));
+    }
+  }
+  const planningConflictsMigration = new URL('../supabase/migrations/20261016100200_lab_planning_conflict_responses.sql', import.meta.url);
+  if (includeProductionWorkflow && includeProductionV2 && includeSheetLayouts && includeCountryProfiles && includeLabPlanningConflictResponses && existsSync(planningConflictsMigration)) {
+    if (beforeLabPlanningConflictResponsesMigration) await beforeLabPlanningConflictResponsesMigration(db);
+    await db.exec(readFileSync(planningConflictsMigration, 'utf8'));
   }
   return db;
 }
@@ -315,7 +325,8 @@ export async function createLabFixture({ port = 55471, pilotHttp = false } = {})
       }
       send(200, data.rows, { 'content-range': data.count ? `0-${data.count - 1}/${data.count}` : '*/0' });
     } catch (error) {
-      send(error.code === '42501' ? 403 : 400, { code: error.code || 'FIXTURE_ERROR', message: error.message, details: error.detail || null, hint: error.hint || null });
+      const customStatus = /^PT([1-5][0-9]{2})$/.exec(error.code || '');
+      send(customStatus ? Number(customStatus[1]) : error.code === '42501' ? 403 : 400, { code: error.code || 'FIXTURE_ERROR', message: error.message, details: error.detail || null, hint: error.hint || null });
     }
   });
   await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, '127.0.0.1', resolve); });

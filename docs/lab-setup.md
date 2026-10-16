@@ -30,4 +30,6 @@ The additive `20261016100000_lab_setup_drafts.sql` migration creates a current d
 
 Pending browser requests are scoped to both account and lab and retained for retry. Sign-out or account changes clear the visible workspace. A lab switch or reload asks before discarding local edits. A failed schema load does not fall back to writing an active catalog.
 
+The additive `100100` and `100200` conflict-response migrations preserve the existing function bodies and grants while returning final business conflicts as `PT409`. Custom `40001` errors trigger an automatic retry loop in the pilot's PostgREST version. Setup, sheet-layout and country-profile conflicts therefore return promptly as HTTP 409. These patches change no stored rows or previously applied migrations.
+
 The pilot remains isolated from the main Studio OS database. Use the supplied sample lab owner account for testing; GTA has no connected owner account or confirmed current catalog. Do not add permission grants or fictional GTA data to make a demonstration appear live.
