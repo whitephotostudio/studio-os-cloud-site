@@ -2501,7 +2501,7 @@ export default function SettingsPage() {
         </div>
 
         {/* ── Row 5: Studio OS App beta rollout ─────────────────────── */}
-        <div style={{ display: "grid", gap: 20, gridTemplateColumns: "1.2fr 0.8fr", marginTop: 20 }}>
+        <div data-native-purchase="desktop-app-access" style={{ display: "grid", gap: 20, gridTemplateColumns: "1.2fr 0.8fr", marginTop: 20 }}>
           <div style={cardStyle}>
             <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 20 }}>
               <div style={{ width: 54, height: 54, borderRadius: 16, background: "#eef2ff", display: "grid", placeItems: "center" }}>

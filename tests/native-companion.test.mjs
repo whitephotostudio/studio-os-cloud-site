@@ -235,6 +235,41 @@ test("settings hides every platform purchase button while merchant Connect contr
   assert.match(css, /\.studio-os-native\s+\.native-companion-only\s*\{\s*display:\s*block\s*;/);
 });
 
+test("real desktop entitlement upsell messages are contained by the hidden desktop-app-access panel", () => {
+  const cache = new Map();
+  function load(file) {
+    if (cache.has(file)) return cache.get(file);
+    const exports = {}; cache.set(file, exports);
+    vm.runInNewContext(compile(read(file)), { exports, Date, process: { env: {} }, require: name => {
+      if (name === "@/lib/dashboard-auth") return { createDashboardServiceClient: () => { throw new Error("No database needed for entitlement checks"); } };
+      assert.ok(["@/lib/subscription-access", "@/lib/studio-pricing", "@/lib/trial-config"].includes(name), name);
+      return load(`${name.slice(2)}.ts`);
+    } });
+    return exports;
+  }
+  const app = load("lib/studio-os-app.ts");
+  for (const plan of ["starter", "core"]) {
+    const entitlement = app.resolveStudioAppEntitlement({ subscription_plan_code: plan, subscription_status: "active", is_platform_admin: false, extra_desktop_keys: 0 }, { release_state: "public", mac_download_url: "https://downloads.invalid/app.dmg", windows_download_url: null });
+    assert.match(entitlement.message, /Upgrade to/, `real ${plan} backend message includes the upsell`);
+  }
+  const file = "app/dashboard/settings/page.tsx", source = read(file);
+  const ast = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  let checked = 0;
+  function visit(node) {
+    if (ts.isJsxExpression(node) && node.expression?.getText(ast) === "studioApp.entitlement.message") {
+      let hidden = false;
+      for (let parent = node.parent; parent; parent = parent.parent) {
+        if (!ts.isJsxElement(parent)) continue;
+        hidden ||= parent.openingElement.attributes.properties.some(attribute => ts.isJsxAttribute(attribute) && attribute.name.getText(ast) === "data-native-purchase" && attribute.initializer?.text === "desktop-app-access");
+      }
+      assert.equal(hidden, true, "the reachable entitlement message must be hidden with the whole desktop app panel");
+      checked += 1;
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(ast); assert.equal(checked, 1);
+});
+
 function trackerHarness(native) {
   const effects = [], exports = {}, listeners = new Map(), storage = new Map();
   const calls = { storageReads: 0, storageWrites: 0, beacons: [], fetches: [], gtag: [], va: [], uuids: 0 };
