@@ -14,11 +14,12 @@ Your lab may use its existing licensed colour editor for manual colour work.
 3. Sign in to the receiving lab portal with two-step verification:
    https://studio-os-labs-pilot.vercel.app/lab/production-v2
 4. Under Windows test helper, name this PC and create a pairing code.
-   Paste it into the helper within 10 minutes. Never send account passwords.
+   Paste it into the helper within 10 minutes and click Connect. The connection
+   step folds away after pairing. Never send account passwords.
 5. Accept a synthetic test order. Review all three crops. Complete any requested
    colour work and review each final print. Start preparation and choose
-   Stage on Windows test helper in the portal. Then check for a test job here.
-6. Open review folder to inspect the complete job. It contains manifest.json,
+   Stage on Windows test helper in the portal. Then click Check for orders in the helper.
+6. When Files received appears, click Open files to inspect the complete job. It contains manifest.json,
    an 8x10 paper JPEG and a 10x7 paper JPEG with independently reviewed 5x7s.
    Each is sRGB at 300 pixels per inch. The manifest gives required paper copies.
 
@@ -31,6 +32,18 @@ Restarting the helper reuses the sealed job identity. It checks fingerprints
 before reusing files and retries an unconfirmed receipt. It does not make
 another paper copy. If a job is corrupted, it stops. Do not manually replace
 reviewed files; create a linked reprint from the portal instead.
+
+THE SIMPLE HELPER SCREEN
+Connect this PC: first-time setup; paste the code from the lab portal.
+Ready to check: this PC has a saved pairing, but its current connection has
+not been checked yet. Click Check for orders.
+Connected: the portal confirmed pairing. Check for an order to begin.
+Waiting for orders: the latest check succeeded; no new order is ready.
+Files received: the files passed their checks and the cloud acknowledged
+staging. Click Open files. This never means that paper was printed.
+Needs attention: a request failed. Existing files and pending requests remain.
+Open Details to see the cause and the review folder. Click Try again when ready.
+Automatic checking pauses after an error; enable it again after a successful retry.
 
 Automatic checking starts OFF on each launch. If enabled, it runs every
 30 seconds while the helper is open. Close the window to stop checking.

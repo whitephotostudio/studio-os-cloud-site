@@ -10,8 +10,9 @@ function load(file, deps = {}) {
   const code = ts.transpileModule(fs.readFileSync(new URL('../' + file, import.meta.url), 'utf8'), { fileName: file, compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true, jsx: ts.JsxEmit.ReactJSX } }).outputText;
   const exports = {}; new Function('require', 'exports', code)(name => { if (!(name in deps)) throw Error(`Missing dependency ${name}`); return deps[name]; }, exports); return exports;
 }
+const guidance = load('lib/labs/production-v2-guidance.ts');
 const money = load('lib/labs/money.ts'), labels = load('components/labs/production-labels.ts'), slotLabels = load('components/labs/production-v2-labels.ts'), slotTypes = load('lib/labs/production-v2-types.ts');
-const deps = { react: React, 'react/jsx-runtime': jsxRuntime, 'lucide-react': icons, 'next/link': ({ children, href, ...props }) => React.createElement('a', { href, ...props }, children), 'next/image': ({ unoptimized, ...props }) => React.createElement('img', props), '@/lib/labs/money': money, '@/lib/labs/production-v2-types': slotTypes, './production.module.css': {}, './production-v2.module.css': {}, './production-labels': labels, './production-v2-labels': slotLabels, '@/lib/supabase/client': { createClient() { throw Error('Render cannot read accounts'); } }, './production-client': { productionFetch() { throw Error('Render cannot request private data'); } }, './production-v2-client': { productionV2Request() { throw Error('Render cannot mutate jobs'); } } };
+const deps = { react: React, 'react/jsx-runtime': jsxRuntime, 'lucide-react': icons, 'next/link': ({ children, href, ...props }) => React.createElement('a', { href, ...props }, children), 'next/image': ({ unoptimized, ...props }) => React.createElement('img', props), '@/lib/labs/money': money, '@/lib/labs/production-v2-types': slotTypes, './production.module.css': {}, './production-v2.module.css': {}, './production-v2-guided.module.css': {}, './production-connectors.module.css': {}, '@/lib/labs/production-v2-guidance': guidance, './production-labels': labels, './production-v2-labels': slotLabels, '@/lib/supabase/client': { createClient() { throw Error('Render cannot read accounts'); } }, './production-client': { productionFetch() { throw Error('Render cannot request private data'); } }, './production-v2-client': { productionV2Request() { throw Error('Render cannot mutate jobs'); } } };
 const crop = load('components/labs/production-crop-editor.tsx', deps), connectors = load('components/labs/production-connectors.tsx', deps);
 const owner = load('components/labs/production-v2-workspace.tsx', { ...deps, './production-crop-editor': crop, './production-connectors': connectors });
 const parent = load('components/labs/production-v2-gallery.tsx', deps);
@@ -36,11 +37,13 @@ test('package quantity permits only 1 through 10 complete sets', () => {
 test('independent slot reviews expose all three sources and keep automatic order release separate from image work', () => {
   const html = detail(job({ photographerApproved: true, policy: { autoApprove: true, cropResponsibility: 'lab', labColourCorrection: true }, holds: ['crop_5x7-a','colour_5x7-b','final_review_8x10'] }));
   for (const label of ['8×10 · 2 copies', '5×7 A · 2 copies', '5×7 B · 2 copies', 'Synthetic-private-original-5x7-a.jpg', 'Synthetic-private-original-5x7-b.jpg', 'Automatically approved', '0/3 crops', 'Review and approve the 5×7 A crop', 'Complete 5×7 B lab colour review', 'Review the 8×10 final print file']) assert.ok(html.includes(label), label);
-  assert.match(html, /disabled=""[^>]*>Start production preparation/);
+  assert.doesNotMatch(html, />Start production preparation</);
+  assert.equal((html.match(/aria-label="[^"]+ print review"/g) || []).length, 1);
+  assert.match(html, /NEXT STEP/);
   assert.doesNotMatch(html, /Approve order for production review/);
 });
 test('source replacement and crop controls follow permissions and close after dispatch is sealed', () => {
-  assert.match(detail(job()), /Choose another gallery photo for 5×7 A/);
+  assert.match(detail(job()), /Choose another gallery photo for 8×10/);
   const viewer = detail(job({ canReceive: false, canApproveOrder: false, canCrop: false, canChangeSource: false }));
   assert.doesNotMatch(viewer, /Change 5×7 A photo|Choose another gallery photo|Start production preparation|Accept job for review|Approve order for/);
   assert.match(viewer, /85\.98/);
@@ -48,26 +51,37 @@ test('source replacement and crop controls follow permissions and close after di
   assert.doesNotMatch(sealed, /Choose another gallery photo|Crop 5×7 A|Approve saved 5×7 A crop/);
   assert.match(sealed, /Create linked full-package reprint/);
 });
-test('saved crop and final approvals are disabled until the current immutable preview has actually loaded', () => {
-  const value = job(); value.slots = value.slots.map(slot => ({ ...slot, cropAsset: asset(`crop-${slot.id}`) }));
-  const html = detail(value);
-  for (const label of ['8×10','5×7 A','5×7 B']) assert.ok(new RegExp(`disabled=""[^>]*>Approve saved ${label} crop`).test(html), label);
-  value.slots = value.slots.map(slot => ({ ...slot, cropApproved: true }));
-  const finalHtml = detail(value);
-  assert.match(finalHtml, /disabled=""[^>]*>[\s\S]*?Approve 5×7 A final print file/);
+test('only the focused saved crop and final file can be approved, after its own preview loads', () => {
+  for (const id of ['8x10', '5x7-a', '5x7-b']) {
+    const value = job({ photographerApproved: true });
+    value.slots = value.slots.map(slot => ({ ...slot, cropAsset: asset(`crop-${slot.id}`) }));
+    value.slots.sort((a, b) => Number(b.id === id) - Number(a.id === id));
+    const label = slotLabels.productionV2SlotLabel(id), html = detail(value);
+    assert.ok(new RegExp(`disabled=""[^>]*>Approve saved ${label} crop`).test(html), label);
+    assert.equal((html.match(/>Approve saved [^<]+ crop/g) || []).length, 1);
+    value.slots = value.slots.map(slot => ({ ...slot, cropApproved: true }));
+    const finalHtml = detail(value);
+    assert.ok(new RegExp(`disabled=""[^>]*>Approve ${label} final print file`).test(finalHtml), label);
+  }
 });
-test('each colour slot offers unchanged-geometry correction and separate unchecked no-change review', () => {
-  const value = job({ policy: { autoApprove: false, cropResponsibility: 'photographer', labColourCorrection: true } });
-  value.slots = value.slots.map(slot => ({ ...slot, cropApproved: true, cropAsset: asset(`crop-${slot.id}`, slot.widthInches * 300, slot.heightInches * 300) }));
-  const html = detail(value);
-  for (const label of ['Upload corrected 5×7 A file', 'Upload corrected 5×7 B file', 'Save 5×7 A no-change review', 'Save 5×7 B no-change review', 'Production files use sRGB', 'keep this print’s 1500 × 2100 pixels unchanged']) assert.ok(html.includes(label), label);
-  assert.match(html, /disabled=""[^>]*>Save 5×7 A no-change review/);
+test('each focused colour slot retains external correction and a separate unchecked no-change review', () => {
+  for (const id of ['5x7-a', '5x7-b']) {
+    const value = job({ photographerApproved: true, policy: { autoApprove: false, cropResponsibility: 'photographer', labColourCorrection: true } });
+    value.slots = value.slots.map(slot => ({ ...slot, cropApproved: true, cropAsset: asset(`crop-${slot.id}`, slot.widthInches * 300, slot.heightInches * 300) }));
+    value.slots.sort((a, b) => Number(b.id === id) - Number(a.id === id));
+    const html = detail(value), label = slotLabels.productionV2SlotLabel(id);
+    for (const text of [`Upload corrected ${label} file`, `Save ${label} no-change review`, 'Production files use sRGB', 'keep this print’s 1500 × 2100 pixels unchanged', 'Colour needs a correction']) assert.ok(html.includes(text), text);
+    assert.ok(new RegExp(`disabled=""[^>]*>Save ${label} no-change review`).test(html));
+  }
 });
-test('reviewed handoff names distinct A and B files and combined sheet while staging is explicitly acknowledged', () => {
-  const value = job({ status: 'in_production', photographerApproved: true, holds: [] }); value.slots = value.slots.map(slot => ({ ...slot, cropApproved: true, finalReviewedAt: stamp, finalAsset: asset(`final-${slot.id}`) }));
+test('reviewed handoff keeps distinct paper downloads in collapsed details and requires acknowledgment', () => {
+  const value = job({ status: 'in_production', photographerApproved: true, holds: [] }); value.slots = value.slots.map(slot => { const final = asset(`final-${slot.id}`); return { ...slot, cropAsset: final, cropApproved: true, finalReviewedAt: stamp, finalAsset: final }; });
   const html = detail(value);
   for (const label of ['5×7 A file', '5×7 B file', '10×7 sheet · A + B', 'left and right cells keep the independent 5×7 A and B renders', 'does not print them', 'Physical printing disabled']) assert.ok(html.includes(label), label);
   assert.match(html, /disabled=""[^>]*>Stage on Windows test helper/);
+  assert.match(html, /<details[^>]*><summary>Order details, files &amp; history/);
+  assert.doesNotMatch(html, /<details[^>]*open=""/);
+  assert.ok(html.indexOf('Order details, files &amp; history') < html.indexOf('Order manifest'));
 });
 test('public receipt shows all three public filename choices and no private source or receiver controls', () => {
   const value = job(); const receipt = { ...value, printSlots: value.slots.map(slot => ({ slotId: slot.id, photoId: slot.photoId, filename: `Parent-choice-${slot.id}.jpg` })) };
