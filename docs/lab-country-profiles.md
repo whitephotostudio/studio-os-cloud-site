@@ -10,7 +10,7 @@ Before any option is shown as configured, the server validates the complete vers
 
 ## Loading a future profile
 
-This release intentionally exposes no browser upload or approval route. Operations use the trusted server helper `appendLabCountryProfile` in `lib/labs/country-profiles.ts`. Do not write the registry table directly or copy a fictional provider configuration into production.
+The lab-owner screen at `/lab/setup` can stage a catalog and service proposal for review, as described in [Private lab setup](lab-setup.md). It does not write to this approved registry. Operations use the trusted server helper `appendLabCountryProfile` in `lib/labs/country-profiles.ts`; there is no browser approval route. Do not write the registry table directly or copy a fictional provider configuration into production.
 
 1. Obtain the actual lab's products, SKUs, exact dimensions, accepted files/papers, crop/colour services, delivery destinations and currency. Keep its intake disabled during setup.
 2. Load a fresh authorized lab and catalog snapshot through the service client. Review the actual account's platform-administrator authorization; a lab owner cannot approve their own production profile through this registry RPC.

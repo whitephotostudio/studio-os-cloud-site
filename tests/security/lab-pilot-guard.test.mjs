@@ -94,3 +94,15 @@ test('photo production opens only its exact isolated routes and UUID private gal
     '/api/labs-pilot/production/other', '/labs-pilot/production/guess', '/labs-pilot/production/11111111-1111-4111-8111-111111111111/other',
     '/dashboard/schools', '/api/dashboard/packages', '/api/stripe/checkout']) assert.equal(isLabPilotPath(path), false, path);
 });
+
+test('lab setup opens only the exact setup page and API, preserving school and payment gates', () => {
+  const { isLabPilotPath } = fixture();
+  for (const path of ['/lab/setup', '/lab/setup/', '/api/lab/setup', '/api/lab/setup/']) {
+    assert.equal(isLabPilotPath(path), true, path);
+  }
+  for (const path of ['/lab/setup-other', '/lab/setup/other', '/api/lab/setup/other',
+    '/api/lab/setup-other', '/api/lab/setup/../orders', '/api/lab/setup%2fother',
+    '/api/dashboard/schools', '/dashboard/schools', '/api/dashboard/packages', '/api/stripe/checkout']) {
+    assert.equal(isLabPilotPath(path), false, path);
+  }
+});

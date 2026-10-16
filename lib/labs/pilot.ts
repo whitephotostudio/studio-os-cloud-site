@@ -18,7 +18,7 @@ export function isLabPilot(): boolean {
 }
 
 const PILOT_EXACT_PATHS = new Set([
-  "/labs-pilot", "/labs-pilot/sample-file", "/lab", "/lab/production", "/sign-in",
+  "/labs-pilot", "/labs-pilot/sample-file", "/lab", "/lab/production", "/lab/setup", "/api/lab/setup", "/sign-in",
   "/api/dashboard/labs", "/api/dashboard/lab-catalog", "/api/dashboard/lab-orders",
   "/api/dashboard/in-house-price-sheets",
   "/api/dashboard/in-house-test-orders", "/api/dashboard/in-house-test-files",

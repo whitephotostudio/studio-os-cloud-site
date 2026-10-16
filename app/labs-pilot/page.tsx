@@ -62,6 +62,7 @@ export default function LabsPilotPage() {
           </ol>
           <Link className={styles.secondary} href="/lab/production-v2">Receive and review three-print test jobs</Link>
           <Link className={styles.primary} href="/lab">Open lab portal <ArrowRight size={17} aria-hidden="true" /></Link>
+          <Link className={styles.secondary} href="/lab/setup">Set up your lab catalog, paper & services</Link>
           <a className={styles.secondary} href="#mfa">Set up lab authenticator first</a>
         </section>
       </div>
