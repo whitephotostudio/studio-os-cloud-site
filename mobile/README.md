@@ -88,9 +88,9 @@ has unpatched advisories. Native artwork is regenerated only when you run this c
    and get Studio OS on their phone — no App Store review needed for internal
    testers.
 
-For a **public App Store** release later, you'll add the Phase 2 native features
-below (a pure web wrapper risks rejection under Apple guideline 4.2; push
-notifications + Face ID + native capture comfortably clear that bar).
+For a **public App Store** release, submit a tested native build with accurate
+review access and privacy information. Native functionality and passing local
+checks do not guarantee Apple approval.
 
 ---
 
@@ -98,7 +98,7 @@ notifications + Face ID + native capture comfortably clear that bar).
 
 | You changed… | What to do |
 | --- | --- |
-| `/m` pages, dashboard UI, features, copy | Just `git push` the web app. The iOS app updates on next open. **No resubmission.** |
+| `/m` pages, dashboard UI, features, copy | Follow the repository’s guarded production deployment workflow. The installed app loads the deployed site; native binary changes still need a new submission. |
 | App icon, splash, plugins, permissions, Capacitor version | `npm run sync` → archive → upload a new build to TestFlight/App Store. |
 
 ---
@@ -169,15 +169,18 @@ that old card photos are not offered for import and that Busy clears after Stop.
 
 ## Troubleshooting
 
-### iPhone companion release (build 9)
+### iPhone companion release (build 10)
 
 The iPhone app signs in to existing Studio OS accounts. Native navigation,
 new-window handling and SPA URL changes block platform subscription and AI-credit
 purchase routes. Web UI guards hide these offers and refuse native billing
 requests before network access. Account settings, merchant Connect and customer
 photo orders retain their own flows. Marketing page-view/click tracking is
-disabled in the native iPhone app. The camera implementation is unchanged from
-build 8; physical camera acceptance is still required before public release.
+disabled in the native iPhone app. Build 10 adds the required privacy manifest
+for the storage-space check before receiving a photo and resumes queued generic
+camera transfers when their shutter command completes. The Canon adapter is
+unchanged from build 8; physical camera acceptance is still required before
+public release.
 
 Run `mobile/ios/Tests/test-native-companion-policy.sh` and
 `node --test tests/native-companion.test.mjs` for the shared navigation fixtures

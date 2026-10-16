@@ -213,6 +213,9 @@ public final class StudioOSCameraPlugin: CAPPlugin, CAPBridgedPlugin, ICDeviceBr
                     guard let self = self, self.generation == session else { return }
                     guard self.succeeded(result) else { return }
                     self.captureCall = nil; call.resolve(["dispatched": true])
+                    // A camera may announce its JPEG before InitiateCapture's
+                    // response. Resume a transfer queued while the command ran.
+                    self.startTransfer()
                 }
             }
         }
