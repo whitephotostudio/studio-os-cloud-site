@@ -83,6 +83,7 @@ const nextConfig: NextConfig = {
       "/api/labs-pilot/production", "/labs-pilot/production/:path*",
       "/api/dashboard/lab-production-v2", "/api/dashboard/lab-production-v2-assets", "/api/dashboard/lab-production-v2-files",
       "/api/lab/production-v2", "/api/labs-pilot/production-v2", "/labs-pilot/production-v2/:path*", "/lab/production-v2",
+      "/dashboard/labs/sheets", "/lab/sheets", "/api/dashboard/lab-sheets", "/api/lab/sheets",
       "/api/dashboard/lab-connectors", "/api/lab-connector", "/labs-pilot/connector-download", "/labs-pilot/gta-demo"].map(source => ({
       source,
       headers: [{ key: "X-Robots-Tag", value: "noindex, nofollow" }, { key: "Referrer-Policy", value: "no-referrer" }],

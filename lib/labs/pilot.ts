@@ -27,6 +27,7 @@ const PILOT_EXACT_PATHS = new Set([
   "/api/lab/production", "/api/labs-pilot/production",
   "/api/dashboard/lab-production-v2", "/api/dashboard/lab-production-v2-assets", "/api/dashboard/lab-production-v2-files",
   "/api/lab/production-v2", "/api/labs-pilot/production-v2", "/lab/production-v2",
+  "/api/dashboard/lab-sheets", "/api/lab/sheets", "/lab/sheets",
   "/api/dashboard/lab-connectors", "/api/lab-connector", "/labs-pilot/connector-download", "/labs-pilot/gta-demo",
   "/api/dashboard/lab-order-assets", "/api/lab/orders", "/api/dashboard/mfa",
   "/api/dashboard/agreement/status", "/api/dashboard/agreement/accept",
