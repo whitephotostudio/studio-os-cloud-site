@@ -71,7 +71,7 @@ function fixtureUser(id) {
   return { id, aud: 'authenticated', role: 'authenticated', email: fixtureEmails.get(id), email_confirmed_at: '2026-10-15T00:00:00Z', confirmed_at: '2026-10-15T00:00:00Z', created_at: '2026-10-15T00:00:00Z', app_metadata: { provider: 'email', providers: ['email'] }, user_metadata: {}, identities: [], factors: fixtureMfaUsers.has(id) ? [{ id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', factor_type: 'totp', status: 'verified', friendly_name: 'Synthetic local factor', created_at: '2026-10-15T00:00:00Z', updated_at: '2026-10-15T00:00:00Z' }] : [] };
 }
 
-export async function createLabDatabase({ beforeLabOrdersMigration, beforeInHouseMigration } = {}) {
+export async function createLabDatabase({ beforeLabOrdersMigration, beforeInHouseMigration, beforeInHouseTestOrdersMigration, includeInHouseTestOrders = true } = {}) {
   const db = new PGlite();
   await db.exec(`
     create role anon; create role authenticated; create role service_role bypassrls;
@@ -130,6 +130,9 @@ export async function createLabDatabase({ beforeLabOrdersMigration, beforeInHous
   const inHouseMigration = new URL('../supabase/migrations/20261016030000_in_house_price_sheets.sql', import.meta.url);
   if (beforeInHouseMigration) await beforeInHouseMigration(db);
   if (existsSync(inHouseMigration)) await db.exec(readFileSync(inHouseMigration, 'utf8'));
+  const inHouseTestOrdersMigration = new URL('../supabase/migrations/20261016040000_in_house_test_order_loop.sql', import.meta.url);
+  if (beforeInHouseTestOrdersMigration) await beforeInHouseTestOrdersMigration(db);
+  if (includeInHouseTestOrders && existsSync(inHouseTestOrdersMigration)) await db.exec(readFileSync(inHouseTestOrdersMigration, 'utf8'));
   return db;
 }
 
@@ -150,8 +153,12 @@ export async function seedLegacyLabCanaries(db) {
 }
 
 /** A deliberately small PostgREST adapter; all mutations/RPCs execute real SQL. */
-export async function createLabFixture({ port = 55471 } = {}) {
+export async function createLabFixture({ port = 55471, pilotHttp = false } = {}) {
   const db = await createLabDatabase({ beforeLabOrdersMigration: seedLegacyLabCanaries });
+  if (pilotHttp) {
+    await db.exec("set studio_os.lab_pilot_project_ref='lgwmxqjwgkzktikhkebp';");
+    await db.exec(readFileSync(new URL('./lab-pilot-rate-limit.sql', import.meta.url), 'utf8'));
+  }
   const requests = [];
   const storageFiles = new Map();
   const anonKey = fixtureToken(null, 'anon');
@@ -293,7 +300,9 @@ async function main() {
   const options = new Set(process.argv.slice(2));
   const port = Number(process.argv.find(value => value.startsWith('--port='))?.split('=')[1] || 55471);
   const appPort = Number(process.argv.find(value => value.startsWith('--app-port='))?.split('=')[1] || 55472);
-  const fixture = await createLabFixture({ port });
+  const pilotHttp = options.has('--pilot-http');
+  if (pilotHttp && !options.has('--app')) throw Error('Synthetic pilot HTTP mode requires the local Next app.');
+  const fixture = await createLabFixture({ port, pilotHttp });
   console.log(`Synthetic local lab database: ${fixture.url}`);
   let app;
   if (options.has('--app')) {
@@ -301,11 +310,17 @@ async function main() {
     if (localEnvFiles.length) { await fixture.close(); throw Error('Use a clean worktree without environment files for the synthetic lab fixture.'); }
     const inherited = Object.fromEntries(['PATH', 'HOME', 'TMPDIR', 'USER', 'SHELL', 'TERM'].filter(key => process.env[key]).map(key => [key, process.env[key]]));
     // Webpack supports this workspace's deliberately shared node_modules symlink.
-    app = spawn(process.execPath, [resolve(repository, 'node_modules/next/dist/bin/next'), 'dev', '--webpack', '--hostname', '127.0.0.1', '--port', String(appPort)], { cwd: repository, stdio: 'inherit', env: { ...inherited, NEXT_PUBLIC_SUPABASE_URL: fixture.url, NEXT_PUBLIC_SUPABASE_ANON_KEY: fixture.anonKey, SUPABASE_SERVICE_ROLE_KEY: fixture.serviceKey } });
+    const pilotEnv = pilotHttp ? {
+      STUDIO_OS_LAB_PILOT: '1', RATE_LIMIT_KEY_PREFIX: 'synthetic-pilot-http',
+      STUDIO_OS_SYNTHETIC_LAB_HTTP: '1', STUDIO_OS_SYNTHETIC_LAB_FIXTURE_URL: fixture.url,
+      NODE_OPTIONS: `--require=${resolve(repository, 'scripts/lab-pilot-fixture-fetch.cjs')}`,
+    } : {};
+    app = spawn(process.execPath, [resolve(repository, 'node_modules/next/dist/bin/next'), 'dev', '--webpack', '--hostname', '127.0.0.1', '--port', String(appPort)], { cwd: repository, stdio: 'inherit', env: { ...inherited, ...pilotEnv, NEXT_PUBLIC_SUPABASE_URL: pilotHttp ? 'https://lgwmxqjwgkzktikhkebp.supabase.co' : fixture.url, NEXT_PUBLIC_SUPABASE_ANON_KEY: fixture.anonKey, SUPABASE_SERVICE_ROLE_KEY: fixture.serviceKey } });
     app.once('exit', async code => { await fixture.close(); process.exit(code || 0); });
     // Next dev canonicalizes request.url to localhost; its same-origin guard
     // must see the same hostname in the browser Origin header.
-    console.log(`Sign in: http://localhost:${appPort}/sign-in?redirect=/dashboard/labs`);
+    if (pilotHttp) console.log(`HTTP-only synthetic pilot: http://localhost:${appPort}. Use fixture Bearer tokens; do not use browser sign-in in this mode. All server provider requests stay on loopback.`);
+    else console.log(`Sign in: http://localhost:${appPort}/sign-in?redirect=/dashboard/labs`);
     console.log(`Synthetic account: owner@lab.example.test / ${LAB_FIXTURE.password}`);
     console.log(`Synthetic platform admin with fixture AAL2: admin@lab.example.test / ${LAB_FIXTURE.password}`);
     console.log(`Synthetic lab portal with fixture AAL2: labowner@lab.example.test, operator@lab.example.test, viewer@lab.example.test, foreignlab@lab.example.test / ${LAB_FIXTURE.password}`);

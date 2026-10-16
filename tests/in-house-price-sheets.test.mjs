@@ -132,7 +132,8 @@ function serviceFor(db) {
 }
 
 test('backend copy import/save/reload returns owner-scoped sheets and handles rolling missing schema only', async () => {
-  const db = await createLabDatabase();
+  // Reproduce the original price-copy rollout before the later test-order FK exists.
+  const db = await createLabDatabase({ includeInHouseTestOrders: false });
   try {
     const access = { service: serviceFor(db), userId: LAB_FIXTURE.owner, photographerId: LAB_FIXTURE.photographer };
     const first = await inHouseServer.performInHousePriceSheetAction(access, action());

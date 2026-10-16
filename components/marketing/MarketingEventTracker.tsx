@@ -32,6 +32,7 @@ const excludedPathPrefixes = [
   "/g/",
   "/m",
   "/schools/",
+  "/labs-pilot/in-house/",
 ];
 
 function currentAnonymousVisitorId() {
@@ -112,6 +113,7 @@ export function MarketingEventTracker() {
 
   useEffect(() => {
     const handleClick = (event: MouseEvent) => {
+      if (window.location.pathname.startsWith("/labs-pilot/in-house/")) return;
       if (!(event.target instanceof Element)) return;
 
       const element = event.target.closest<HTMLElement>(

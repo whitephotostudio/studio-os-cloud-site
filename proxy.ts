@@ -116,7 +116,9 @@ export async function proxy(request: NextRequest) {
   const response = NextResponse.next({ request: { headers: requestHeaders } });
   if (isLabPilot()) response.headers.set("X-Robots-Tag", "noindex, nofollow");
   response.headers.set("Content-Security-Policy", policy);
-  if (pathname.startsWith("/parents") || pathname.startsWith("/api/portal/") || pathname.startsWith("/dashboard")) {
+  if (pathname.startsWith("/parents") || pathname.startsWith("/api/portal/") || pathname.startsWith("/dashboard") ||
+      pathname.startsWith("/labs-pilot/in-house/") || pathname === "/api/labs-pilot/in-house" ||
+      pathname === "/api/dashboard/in-house-test-orders" || pathname === "/api/dashboard/in-house-test-files") {
     response.headers.set("Referrer-Policy", "no-referrer");
   }
   return addSecurityHeaders(response);

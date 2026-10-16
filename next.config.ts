@@ -78,6 +78,10 @@ const nextConfig: NextConfig = {
       source: "/dashboard/:path*",
       headers: [{ key: "X-Robots-Tag", value: "noindex, nofollow" }, { key: "Referrer-Policy", value: "no-referrer" }],
     },
+    ...["/api/dashboard/in-house-test-orders", "/api/dashboard/in-house-test-files", "/api/labs-pilot/in-house", "/labs-pilot/in-house/:path*"].map(source => ({
+      source,
+      headers: [{ key: "X-Robots-Tag", value: "noindex, nofollow" }, { key: "Referrer-Policy", value: "no-referrer" }],
+    })),
     {
       source: "/m/:path*",
       headers: [{ key: "X-Robots-Tag", value: "noindex, nofollow" }, { key: "Referrer-Policy", value: "no-referrer" }],

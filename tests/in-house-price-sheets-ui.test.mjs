@@ -16,6 +16,7 @@ function load(file, deps = {}) {
 const money = load('lib/labs/money.ts');
 const ui = load('components/labs/in-house-price-sheets.tsx', {
   react: React, 'react/jsx-runtime': jsxRuntime, 'lucide-react': icons, '@/lib/labs/money': money,
+  'next/link': ({ children, href, ...props }) => React.createElement('a', { href, ...props }, children),
   '@/lib/supabase/client': { createClient() { throw Error('Rendering must not fetch or mutate private sheets'); } },
   './lab-dialog': { LabDialog({ children }) { return React.createElement('div', null, children); } },
   './labs.module.css': { default: {} }, './in-house-price-sheets.module.css': { default: {} },
@@ -38,6 +39,13 @@ test('empty in-house section does not invent products or show local file paths',
   const html = renderToStaticMarkup(React.createElement(ui.InHousePriceSheets, { sheets: [], onSheetsChange() {} }));
   assert.match(html, /Bring your in-house prices here/);
   assert.doesNotMatch(html, /\/Users\/|\.json|\.csv|\$[0-9]|Upload/);
+});
+
+test('private order links appear only when the server enables the isolated pilot', () => {
+  const props = { sheets: [fixture()], onSheetsChange() {} };
+  assert.doesNotMatch(renderToStaticMarkup(React.createElement(ui.InHousePriceSheets, props)), /Start private order test|\/dashboard\/labs\/in-house/);
+  const enabled = renderToStaticMarkup(React.createElement(ui.InHousePriceSheets, { ...props, orderTestsEnabled: true }));
+  assert.match(enabled, /Start private order test/); assert.match(enabled, /\/dashboard\/labs\/in-house\?sheet=sheet-test/);
 });
 
 test('contents retain explicitly recorded wallet, digital, quantities and false or zero options without inferred units', () => {

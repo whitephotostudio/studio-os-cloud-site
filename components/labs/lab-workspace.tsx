@@ -46,7 +46,7 @@ function MoneyInput({ cents, onChange, label, currency }: { cents: number; onCha
     onBlur={() => { setFocused(false); setValue(formatCurrencyAmount(cents, currency)); }} /></div>;
 }
 
-export function LabWorkspaceView() {
+export function LabWorkspaceView({ inHouseOrderTests = false }: { inHouseOrderTests?: boolean } = {}) {
   const router = useRouter();
   const [workspace, setWorkspace] = useState<LabWorkspace | null>(null);
   const [draft, setDraft] = useState<LabPriceSheet | null>(null);
@@ -146,7 +146,8 @@ export function LabWorkspaceView() {
   return <main className={styles.page}>
     <div className={styles.pageHeader}><div><div className={styles.eyebrow}>YOUR STUDIO, CONNECTED</div><h1>Labs & price sheets</h1><p>Thoughtful products. Your prices. One connected workflow.</p></div><div className={styles.headerActions}><Link className={styles.importLink} href="/dashboard/labs/catalog" onClick={event => { if (dirty) { event.preventDefault(); guard(() => router.push("/dashboard/labs/catalog")); } }}><FileUp size={15} />Import lab catalog</Link><button className={styles.primary} onClick={() => guard(() => setModal("create"))} disabled={busy || !workspace.labs.length}><Plus size={17} /> New price sheet</button></div></div>
     {starters}
-    <InHousePriceSheets sheets={workspace.inHousePriceSheets ?? []} beforeOpen={guard} onSheetsChange={inHousePriceSheets => setWorkspace(current => current ? { ...current, inHousePriceSheets } : current)} />
+    <InHousePriceSheets sheets={workspace.inHousePriceSheets ?? []} beforeOpen={guard} onSheetsChange={inHousePriceSheets => setWorkspace(current => current ? { ...current, inHousePriceSheets } : current)} orderTestsEnabled={inHouseOrderTests} />
+    {inHouseOrderTests && <nav className={styles.headerActions} aria-label="In-house orders" style={{ marginBottom: 24 }}><Link className={styles.importLink} href="/dashboard/labs/in-house"><ArrowRight size={15} />Private in-house order test</Link></nav>}
     {error && <div role="alert" className={styles.error}><span>{error}</span><button className={styles.iconButton} aria-label="Dismiss error" onClick={() => setError("")}><X size={17} /></button></div>}
     {notice && <div role="status" className={styles.notice}><CheckCircle2 size={18} />{notice}</div>}
     <section className={styles.directory} aria-labelledby="lab-directory-title">

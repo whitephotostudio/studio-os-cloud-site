@@ -32,7 +32,7 @@ Save requests require every existing entry ID exactly once. The SQL function loc
 
 Original names, entry ordering, contents, options, source snapshot/hash, studio identity, currency, warnings and tax settings stay frozen. Source tax settings are displayed for reference; this preview does not calculate or collect tax. Stale saves return HTTP `409` with `IN_HOUSE_VERSION_CONFLICT`; the editor retains unsaved input and offers an explicit discard-and-reload action.
 
-Every copy remains `status: "draft"` and `fulfillment: "in_house"`. There is no assignment, publication, customer checkout or order-routing action for these copies. Copied retail prices are not wholesale catalog costs, and no lab SKU, cost, markup, profit or production mapping is inferred. The separate sample lab-order workflow continues to use its approved synthetic catalog.
+Every copy remains `status: "draft"` and `fulfillment: "in_house"`. The copy editor has no assignment, publication, customer checkout or external order-routing action. An explicitly selected active print package can be frozen into a separate, private, no-payment test gallery in the isolated pilot; see [Private in-house order rehearsal](./in-house-test-orders.md). Creating that test gallery does not publish or reassign the copy. Copied retail prices are not wholesale catalog costs, and no lab SKU, cost, markup, profit or production mapping is inferred. The separate partner-lab sample workflow continues to use its approved synthetic catalog.
 
 ## Additive rollout and verification
 

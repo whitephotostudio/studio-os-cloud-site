@@ -44,6 +44,7 @@ export default function LabsPilotPage() {
           </ol>
           <Link className={styles.primary} href="/dashboard/labs">Open photographer workspace <ArrowRight size={17} aria-hidden="true" /></Link>
           <Link className={styles.secondary} href="/dashboard/labs/orders">Go directly to lab orders</Link>
+          <Link className={styles.secondary} href="/dashboard/labs/in-house">Test your own in-house prices and receiving queue</Link>
         </section>
 
         <section className={styles.card}>

@@ -67,3 +67,19 @@ test('private in-house test copies have one exact pilot API while customer prici
     assert.equal(isLabPilotPath(path), false, path);
   }
 });
+
+test('in-house order rehearsal permits only its exact APIs, fixed sample and UUID parent gallery path', () => {
+  const { isLabPilotPath } = fixture();
+  const gallery = '/labs-pilot/in-house/11111111-1111-4111-8111-111111111111';
+  for (const path of ['/api/dashboard/in-house-test-orders', '/api/dashboard/in-house-test-files',
+    '/api/labs-pilot/in-house', '/labs-pilot/in-house/sample-photo', gallery, gallery + '/']) {
+    assert.equal(isLabPilotPath(path), true, path);
+  }
+  for (const path of ['/api/dashboard/in-house-test-orders-other', '/api/dashboard/in-house-test-orders/other',
+    '/api/dashboard/in-house-test-files/other', '/api/labs-pilot/in-house/other',
+    '/labs-pilot/in-house/guess', '/labs-pilot/in-house/sample-photo/other', gallery + '/other',
+    '/labs-pilot/in-house/%2e%2e/admin', gallery + '?access=secret',
+    '/api/dashboard/schools', '/api/dashboard/packages', '/api/stripe/checkout']) {
+    assert.equal(isLabPilotPath(path), false, path);
+  }
+});

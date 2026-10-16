@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { ArrowRight, Check, CheckCircle2, House, Loader2, LockKeyhole, Package, RefreshCw } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import type { InHousePriceSheet, InHousePriceSheetEntry } from "@/lib/labs/in-house-types";
@@ -9,7 +10,7 @@ import { LabDialog } from "./lab-dialog";
 import common from "./labs.module.css";
 import styles from "./in-house-price-sheets.module.css";
 
-type Props = { sheets: InHousePriceSheet[]; beforeOpen?: (open: () => void) => void; onSheetsChange: (sheets: InHousePriceSheet[]) => void };
+type Props = { sheets: InHousePriceSheet[]; beforeOpen?: (open: () => void) => void; onSheetsChange: (sheets: InHousePriceSheet[]) => void; orderTestsEnabled?: boolean };
 type SavedChanges = { action: "save"; id: string; expectedVersion: number; name: string; entries: { id: string; retailCents: number; active: boolean }[] };
 type Response = { ok: boolean; message?: string; sheets?: InHousePriceSheet[]; sheet?: InHousePriceSheet };
 const sections = [{ id: "individual", label: "Individual sizes" }, { id: "package", label: "Packages" }, { id: "specialty", label: "Specialty products" }] as const;
@@ -41,7 +42,7 @@ async function request(changes?: SavedChanges): Promise<Response> {
   return result;
 }
 
-export function InHousePriceSheets({ sheets, beforeOpen, onSheetsChange }: Props) {
+export function InHousePriceSheets({ sheets, beforeOpen, onSheetsChange, orderTestsEnabled = false }: Props) {
   const [selected, setSelected] = useState<InHousePriceSheet | null>(null);
   const open = (sheet: InHousePriceSheet) => beforeOpen ? beforeOpen(() => setSelected(sheet)) : setSelected(sheet);
   return <section className={styles.section} aria-labelledby="in-house-prices-title">
@@ -52,6 +53,7 @@ export function InHousePriceSheets({ sheets, beforeOpen, onSheetsChange }: Props
       <div className={styles.counts}>{sections.map(section => <span key={section.id}><strong>{sheet.entries.filter(entry => entry.section === section.id).length}</strong> {section.label.toLowerCase()}</span>)}</div>
       <p className={styles.cardNote}>{sheet.currency} retail prices · Internal cost not set</p>
       <button type="button" className={styles.open} onClick={() => open(sheet)}>View & test prices <ArrowRight size={15} /></button>
+      {orderTestsEnabled && <Link className={styles.open} href={`/dashboard/labs/in-house?sheet=${encodeURIComponent(sheet.id)}`}>Start private order test <ArrowRight size={15} /></Link>}
     </article>)}</div> : <div className={styles.empty}><House size={23} /><div><h3>Bring your in-house prices here</h3><p>A private copy of your Studio OS price profile can appear here with its original prices and package contents. Connected lab catalogs remain separate.</p></div></div>}
     {sheets.length > 0 && <p className={styles.footnote}>These are private test copies. Saving here updates this copy only. Current schools, original price profiles and existing orders keep their pricing.</p>}
     {selected && <InHousePriceSheetEditor initialSheet={selected} onClose={() => setSelected(null)} onSaved={onSheetsChange} />}
