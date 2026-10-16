@@ -62,6 +62,15 @@ try {
     $script:NetworkCalls = 0
     function Invoke-StudioHttp { $script:NetworkCalls++; throw 'Network calls are forbidden in this fixture.' }
 
+    Invoke-Test 'Core and GUI scripts parse under the current Windows PowerShell runtime' {
+        foreach ($filename in @('StudioOsLab.Core.ps1','StudioOsLab.ps1')) {
+            $path = Join-Path (Split-Path $PSScriptRoot -Parent) $filename
+            $tokens = $null; $parseErrors = $null
+            [Management.Automation.Language.Parser]::ParseFile($path,[ref]$tokens,[ref]$parseErrors) | Out-Null
+            Assert-Test (@($parseErrors).Count -eq 0) ('The '+$filename+' AST must parse without launching the GUI.')
+        }
+    }
+
     Invoke-Test 'generated JPEG fixtures decode at the exact dimensions and 300ppi' {
         $m = New-TestManifest ([Guid]::NewGuid().ToString())
         Assert-StudioJpeg $script:Paper8 $m.sheets[0]
@@ -175,6 +184,61 @@ try {
         $script:JunctionReview = $review
         Assert-TestThrows { Initialize-StudioRoot $normal } 'A nested review junction must fail.'
         Assert-Test (@(Get-ChildItem -LiteralPath $target).Count -eq 0) 'No files were written through a junction.'
+    }
+
+    Invoke-Test 'a lost receipt response is retried from exact local files and a durable acknowledgement stops retries' {
+        $script:ReceiptAttempts = 0; $script:SimulateLostReceipt = $true
+        function Invoke-StudioJson([string]$Method,[string]$Query,$Credential,$Body=$null) {
+            Assert-Test ($Method -ceq 'POST' -and $Query -ceq '/api/lab-connector') 'Only the local receipt stub is invoked.'
+            Assert-Test ($Body.action -ceq 'receipt') 'No pairing or download request is made.'
+            Assert-Test ($Body.receipt.state -ceq 'staged_for_review') 'The helper does not claim printing.'
+            Assert-Test (@($Body.receipt.files).Count -eq 2) 'Both exact local paper fingerprints are resent.'
+            $script:ReceiptAttempts++
+            if ($script:SimulateLostReceipt) { throw 'Simulated lost receipt response.' }
+            return [pscustomobject]@{ok=$true;id=$Body.dispatchId;state='staged_for_review';printAllowed=$false}
+        }
+        $fakeCredential = [pscustomobject]@{id=[Guid]::NewGuid().ToString();token=('a'*64)}
+        $ack = Join-Path $script:AtomicFinal 'cloud-receipt.json'
+        Assert-TestThrows { Send-StudioPendingReceipts $root $fakeCredential } 'An unconfirmed cloud response cannot create a durable acknowledgement.'
+        Assert-Test (!(Test-Path -LiteralPath $ack)) 'A lost response stays pending.'
+        Assert-Test ($script:ReceiptAttempts -eq 1) 'There was one bounded initial receipt attempt.'
+        $script:SimulateLostReceipt = $false
+        Send-StudioPendingReceipts $root $fakeCredential
+        Assert-Test (Test-Path -LiteralPath $ack -PathType Leaf) 'The confirmed response is saved durably.'
+        Assert-Test ($script:ReceiptAttempts -eq 2) 'A restarted pending scan retried exactly once.'
+        Send-StudioPendingReceipts $root $fakeCredential
+        Assert-Test ($script:ReceiptAttempts -eq 2) 'Later scans do not resend an acknowledged receipt.'
+    }
+
+    Invoke-Test 'invalid or replacement pairing codes never replace an active encrypted identity' {
+        $pairedRoot = Join-Path $testRoot 'active-pairing'; Initialize-StudioRoot $pairedRoot
+        $activePath = Join-Path $pairedRoot 'pairing.dpapi'; $active = New-StudioSecret ('a'*32)
+        $active.paired = $true; $active.pairCode = ''; Save-StudioSecret $activePath $active
+        $fingerprint = Get-StudioHash ([IO.File]::ReadAllBytes($activePath)); $script:PairAttempts = 0
+        function Invoke-StudioJson { $script:PairAttempts++; throw 'An active connection must not attempt replacement pairing.' }
+        Assert-TestThrows { Connect-StudioPc $pairedRoot 'invalid' } 'An invalid code fails without changing active credentials.'
+        Assert-TestThrows { Connect-StudioPc $pairedRoot ('b'*32) } 'A valid new code cannot silently replace an active connection.'
+        Assert-Test ((Get-StudioHash ([IO.File]::ReadAllBytes($activePath))) -ceq $fingerprint) 'The existing encrypted identity is byte-exact.'
+        Assert-Test ((Read-StudioSecret $activePath).id -ceq $active.id) 'The original active device remains selected.'
+        Assert-Test ($script:PairAttempts -eq 0) 'Replacement is blocked before any network request.'
+    }
+
+    Invoke-Test 'offline pairing retries retain the pending device identity without creating active credentials' {
+        $pendingRoot = Join-Path $testRoot 'pending-pairing'; $script:PendingPairBodies = @()
+        function Invoke-StudioJson([string]$Method,[string]$Query,$Credential,$Body=$null) {
+            $script:PendingPairBodies += [pscustomobject]@{id=$Body.deviceId;token=$Body.deviceToken}
+            throw 'Simulated offline pairing response.'
+        }
+        Assert-TestThrows { Connect-StudioPc $pendingRoot ('c'*32) } 'An offline response leaves pairing pending.'
+        $pendingPath = Join-Path $pendingRoot 'pending-pairing.dpapi'
+        $pending = Read-StudioSecret $pendingPath
+        Assert-Test ($null -ne $pending -and !$pending.paired) 'The generated pending identity is durable and encrypted.'
+        Assert-Test (!(Test-Path -LiteralPath (Join-Path $pendingRoot 'pairing.dpapi'))) 'No unconfirmed active credential is created.'
+        Assert-TestThrows { Connect-StudioPc $pendingRoot ('c'*32) } 'Retry still reports the missing confirmation.'
+        $retried = Read-StudioSecret $pendingPath
+        Assert-Test ($retried.id -ceq $pending.id -and $retried.token -ceq $pending.token) 'The same pending identity is retained on retry.'
+        Assert-Test ($script:PendingPairBodies.Count -eq 2) 'There are two bounded pairing attempts.'
+        Assert-Test ($script:PendingPairBodies[0].id -ceq $script:PendingPairBodies[1].id -and $script:PendingPairBodies[0].token -ceq $script:PendingPairBodies[1].token) 'Both attempts use one exact device identity.'
     }
 
     Invoke-Test 'DPAPI credentials round-trip and never persist the bearer token as plaintext' {

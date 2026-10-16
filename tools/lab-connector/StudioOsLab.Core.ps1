@@ -20,6 +20,7 @@ function Assert-StudioSafePath([string]$Path) {
     }
 }
 function Initialize-StudioRoot([string]$Root) {
+    if ([IO.Path]::GetFullPath($Root).StartsWith('\\')) { throw 'Use a private local disk folder, not a network share.' }
     Assert-StudioSafePath $Root
     [IO.Directory]::CreateDirectory($Root) | Out-Null
     foreach ($name in @('Review only','Preparing')) {
@@ -39,7 +40,7 @@ function Save-StudioSecret([string]$Path,$Credential) {
     $temporary = $Path + '.new'
     if (Test-Path -LiteralPath $temporary) { Assert-StudioSafePath $temporary; [IO.File]::Delete($temporary) }
     Write-StudioNewFile $temporary $protected
-    if (Test-Path -LiteralPath $Path) { [IO.File]::Replace($temporary,$Path,$null) } else { [IO.File]::Move($temporary,$Path) }
+    if (Test-Path -LiteralPath $Path) { [IO.File]::Replace($temporary,$Path,[NullString]::Value) } else { [IO.File]::Move($temporary,$Path) }
 }
 function Read-StudioSecret([string]$Path) {
     Assert-StudioSafePath $Path
@@ -65,17 +66,23 @@ function Invoke-StudioHttp([string]$Method,[string]$Query,$Credential,$Body=$nul
     if ($null -ne $Credential) { $message.Headers.Authorization = [Net.Http.Headers.AuthenticationHeaderValue]::new('Bearer',($Credential.id+'.'+$Credential.token)) }
     if ($null -ne $Body) { $message.Content = [Net.Http.StringContent]::new(($Body | ConvertTo-Json -Depth 16 -Compress),[Text.Encoding]::UTF8,'application/json') }
     $response = $null; $stream = $null; $buffer = [IO.MemoryStream]::new()
+    $cancel = [Threading.CancellationTokenSource]::new(45000); $watch = [Diagnostics.Stopwatch]::StartNew()
     try {
-        $response = $client.SendAsync($message,[Net.Http.HttpCompletionOption]::ResponseHeadersRead).GetAwaiter().GetResult()
+        $response = $client.SendAsync($message,[Net.Http.HttpCompletionOption]::ResponseHeadersRead,$cancel.Token).GetAwaiter().GetResult()
         if ([int]$response.StatusCode -ne 200) { throw ('Studio OS returned HTTP '+[int]$response.StatusCode+'. Nothing was printed. Retry or check pairing in the portal.') }
         if ($response.Content.Headers.ContentLength -gt $Maximum) { throw 'The file exceeds the helper limit.' }
         $stream = $response.Content.ReadAsStreamAsync().GetAwaiter().GetResult(); $chunk = New-Object byte[] 65536
-        while (($n = $stream.Read($chunk,0,$chunk.Length)) -gt 0) {
+        while ($true) {
+            $remaining = 45000 - [int]$watch.ElapsedMilliseconds
+            if ($remaining -le 0) { throw 'The transfer timed out. Retry the same test job.' }
+            $read = $stream.ReadAsync($chunk,0,$chunk.Length,$cancel.Token)
+            if (!$read.Wait($remaining)) { $cancel.Cancel(); throw 'The transfer timed out. Retry the same test job.' }
+            $n = $read.GetAwaiter().GetResult(); if ($n -eq 0) { break }
             if ($buffer.Length + $n -gt $Maximum) { throw 'The file exceeds the helper limit.' }
             $buffer.Write($chunk,0,$n)
         }
         return ,$buffer.ToArray()
-    } finally { if ($stream) { $stream.Dispose() }; if ($response) { $response.Dispose() }; $buffer.Dispose(); $message.Dispose(); $client.Dispose(); $handler.Dispose() }
+    } finally { $cancel.Cancel(); if ($stream) { $stream.Dispose() }; if ($response) { $response.Dispose() }; $buffer.Dispose(); $message.Dispose(); $client.Dispose(); $handler.Dispose(); $cancel.Dispose(); $watch.Stop() }
 }
 function Invoke-StudioJson([string]$Method,[string]$Query,$Credential,$Body=$null) {
     $bytes = Invoke-StudioHttp $Method $Query $Credential $Body 50000
@@ -86,12 +93,15 @@ function Connect-StudioPc([string]$Root,[string]$Code) {
     Initialize-StudioRoot $Root
     $codeClean = $Code.Replace('-','').Trim().ToLowerInvariant()
     if ($codeClean -cnotmatch '^[a-f0-9]{32}$') { throw 'Copy the complete pairing code from the portal. It expires after 10 minutes.' }
-    $path = Join-Path $Root 'pairing.dpapi'; $c = Read-StudioSecret $path
-    if ($null -eq $c -or $c.pairCode -cne $codeClean -or $c.paired) { $c = New-StudioSecret $codeClean; Save-StudioSecret $path $c }
+    $path = Join-Path $Root 'pairing.dpapi'; $active = Read-StudioSecret $path
+    if ($null -ne $active -and $active.paired) { throw 'This PC is already paired. Its working connection was kept. Use the portal to revoke old access and ask the operator to reconcile its pending jobs before replacing it.' }
+    $pendingPath = Join-Path $Root 'pending-pairing.dpapi'; $c = Read-StudioSecret $pendingPath
+    if ($null -eq $c -or $c.pairCode -cne $codeClean) { $c = New-StudioSecret $codeClean; Save-StudioSecret $pendingPath $c }
     # Persist the device identity before sending. A lost response retries the same identity.
     $result = Invoke-StudioJson 'POST' '/api/lab-connector' $null @{action='pair';pairCode=$codeClean;deviceId=$c.id;deviceToken=$c.token}
     if ($result.device.id -cne $c.id -or $result.device.printAllowed -ne $false -or $result.device.testOnly -ne $true) { throw 'The pairing response is invalid.' }
     $c.paired = $true; $c.pairCode = ''; Save-StudioSecret $path $c
+    Assert-StudioSafePath $pendingPath; [IO.File]::Delete($pendingPath)
     return $result.device.name
 }
 function Assert-StudioManifest($M,[string]$DispatchId) {
