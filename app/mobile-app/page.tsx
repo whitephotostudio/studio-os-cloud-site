@@ -17,7 +17,7 @@ import { SiteHeader } from "@/components/site-header";
 export const metadata: Metadata = {
   title: "Studio OS Mobile App for Photographers",
   description:
-    "Use Studio OS Mobile on iPhone to sign in, view schools and events, check orders, and manage gallery access from the field.",
+    "Studio OS Mobile is free for every photographer account, including Gallery. Use your iPhone to check jobs, orders, and gallery access from the field.",
   alternates: {
     canonical: "https://www.studiooscloud.com/mobile-app",
   },
@@ -73,7 +73,7 @@ export default function MobileAppPage() {
             <div className="flex flex-col justify-center">
               <div className="inline-flex w-fit items-center gap-2 rounded-full border border-white/15 bg-white/10 px-4 py-2 text-sm font-semibold text-white">
                 <Smartphone className="h-4 w-4 text-red-400" />
-                Studio OS Mobile
+                Studio OS Mobile · Free for everyone
               </div>
               <h1 className="mt-7 max-w-3xl text-4xl font-black leading-[1.03] sm:text-6xl">
                 Control schools and events from your iPhone.
@@ -102,8 +102,10 @@ export default function MobileAppPage() {
               </div>
 
               <p className="mt-5 max-w-2xl text-sm leading-6 text-neutral-400">
-                The mobile web app works now. The native iOS app can be added here
-                once it is approved through TestFlight or the App Store.
+                Free for every photographer account, including Gallery, Core, and
+                Studio. No mobile add-on or desktop photography key is required.
+                Sign in with your Studio OS account; existing cloud subscription,
+                AI credit, and order charges still apply.
               </p>
             </div>
 
@@ -184,9 +186,10 @@ export default function MobileAppPage() {
                 Built for photographers in the field
               </h2>
               <p className="mt-4 text-base leading-7 text-neutral-600">
-                Studio OS Mobile is the quick-control companion for the web
-                dashboard. It is not replacing the desktop production app; it is
-                for fast checks and simple changes from a phone.
+                Studio OS Mobile connects your phone to your Studio OS Cloud
+                account for fast checks and simple changes in the field. Phone
+                access is free on every plan. Desktop production tools remain
+                part of the Core and Studio plans.
               </p>
             </div>
 
@@ -219,9 +222,9 @@ export default function MobileAppPage() {
                 Install on iPhone today
               </h2>
               <p className="mt-4 text-base leading-7 text-neutral-600">
-                Until the native iOS app is live in TestFlight or the App Store,
-                photographers can install the mobile web app from Safari. It opens
-                from the Home Screen like an app and keeps them signed in.
+                Install the free mobile web app from Safari while Apple reviews
+                the App Store release. It opens from the Home Screen like an app
+                and keeps you signed in.
               </p>
               <Link
                 href="/m"
@@ -258,26 +261,25 @@ export default function MobileAppPage() {
             <div className="grid gap-8 lg:grid-cols-[0.9fr_1.1fr]">
               <div>
                 <h2 className="text-3xl font-black sm:text-4xl">
-                  Native iOS app distribution
+                  Free iPhone app
                 </h2>
                 <p className="mt-4 text-base leading-7 text-neutral-600">
-                  The iPhone build is ready for internal testing. For every
-                  photographer to download it from this website, the public page
-                  should link to TestFlight first, then the App Store when Apple
-                  approves the release.
+                  Studio OS Mobile has been submitted to Apple for review. Once
+                  approved, the App Store download will be free for everyone.
+                  A Studio OS photographer account is required to sign in.
                 </p>
               </div>
 
               <div className="grid gap-4 sm:grid-cols-2">
                 <DownloadOption
                   title="TestFlight beta"
-                  detail="Invite photographers before the public App Store release."
+                  detail="Invited testers can try the iPhone app before its public release."
                   href={testFlightUrl}
                   emptyLabel="TestFlight link coming soon"
                 />
                 <DownloadOption
                   title="App Store"
-                  detail="Public iPhone download once the app is approved."
+                  detail="Free public iPhone download once Apple approves the app."
                   href={appStoreUrl}
                   emptyLabel="App Store release coming soon"
                 />
