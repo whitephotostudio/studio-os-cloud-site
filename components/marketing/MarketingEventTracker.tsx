@@ -2,6 +2,7 @@
 
 import { useEffect } from "react";
 import { usePathname } from "next/navigation";
+import { isNativeCompanion } from "@/lib/native-companion";
 
 type MarketingEventPayload = {
   event: string;
@@ -101,6 +102,7 @@ export function MarketingEventTracker() {
   const pathname = usePathname();
 
   useEffect(() => {
+    if (isNativeCompanion()) return;
     if (!pathname || !shouldTrackPath(pathname)) return;
     sendJson(activityEndpoint, {
       type: "page_view",
@@ -111,6 +113,7 @@ export function MarketingEventTracker() {
   }, [pathname]);
 
   useEffect(() => {
+    if (isNativeCompanion()) return;
     const handleClick = (event: MouseEvent) => {
       if (!(event.target instanceof Element)) return;
 

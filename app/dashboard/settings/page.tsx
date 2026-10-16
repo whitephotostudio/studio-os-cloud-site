@@ -33,6 +33,7 @@ import { WhatsNewDot, useIsFeatureNew } from "@/components/whats-new-dot";
 import { ProofWatermarkOverlay } from "@/components/parents/proof-watermark-overlay";
 import { normalizeProofWatermarkOpacity, proofWatermarkOpacity } from "@/lib/proof-watermark";
 import { StripeStandardMigration } from "@/components/dashboard/stripe-standard-migration";
+import { nativeBillingActionBlocked } from "@/lib/native-companion";
 
 type StripeStatus = {
   ok: boolean;
@@ -1179,6 +1180,10 @@ export default function SettingsPage() {
     payload: Record<string, unknown>,
     fallbackNotice: string,
   ) {
+    if (nativeBillingActionBlocked(payload.action)) {
+      setError("Purchases are unavailable in the iPhone companion app.");
+      return;
+    }
     setBillingBusyAction(actionKey);
     setError(null);
     setNotice(null);
@@ -1957,7 +1962,7 @@ export default function SettingsPage() {
         </div>
 
         {/* ── Payment method card ─────────────────────────────────────── */}
-        <div style={{ marginTop: 20 }}>
+        <div data-native-purchase="platform-billing" style={{ marginTop: 20 }}>
           <div style={cardStyle}>
             <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 20 }}>
               <div style={{ width: 54, height: 54, borderRadius: 16, background: "#fdf4ff", display: "grid", placeItems: "center" }}>
@@ -2040,7 +2045,7 @@ export default function SettingsPage() {
         </div>
 
         {/* ── Row 3: Billing controls + status ────────────────────────── */}
-        <div style={{ display: "grid", gap: 20, gridTemplateColumns: "1.25fr 0.95fr", marginTop: 20 }}>
+        <div data-native-purchase="subscription" style={{ display: "grid", gap: 20, gridTemplateColumns: "1.25fr 0.95fr", marginTop: 20 }}>
           <div style={cardStyle}>
             <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 20 }}>
               <div style={{ width: 54, height: 54, borderRadius: 16, background: "#eff6ff", display: "grid", placeItems: "center" }}>
@@ -2353,7 +2358,7 @@ export default function SettingsPage() {
         </div>
 
         {/* ── Row 4: Credits + invoices ──────────────────────────────── */}
-        <div style={{ display: "grid", gap: 20, gridTemplateColumns: "1fr 1fr", marginTop: 20 }}>
+        <div data-native-purchase="credits" style={{ display: "grid", gap: 20, gridTemplateColumns: "1fr 1fr", marginTop: 20 }}>
           <div style={cardStyle}>
             <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 20 }}>
               <div style={{ width: 54, height: 54, borderRadius: 16, background: "#ecfeff", display: "grid", placeItems: "center" }}>
@@ -2496,7 +2501,7 @@ export default function SettingsPage() {
         </div>
 
         {/* ── Row 5: Studio OS App beta rollout ─────────────────────── */}
-        <div style={{ display: "grid", gap: 20, gridTemplateColumns: "1.2fr 0.8fr", marginTop: 20 }}>
+        <div data-native-purchase="desktop-app-access" style={{ display: "grid", gap: 20, gridTemplateColumns: "1.2fr 0.8fr", marginTop: 20 }}>
           <div style={cardStyle}>
             <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 20 }}>
               <div style={{ width: 54, height: 54, borderRadius: 16, background: "#eef2ff", display: "grid", placeItems: "center" }}>
@@ -2769,7 +2774,7 @@ export default function SettingsPage() {
                 includes for the desktop app, and how many photography
                 keys are bundled. The bottom note carries the upgrade
                 rule that doesn't fit cleanly inside a column. */}
-            <div style={{ marginTop: 14 }}>
+            <div data-native-purchase="desktop-plan-comparison" style={{ marginTop: 14 }}>
               <div
                 style={{
                   fontSize: 11,

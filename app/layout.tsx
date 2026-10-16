@@ -5,6 +5,7 @@ import { OrganizationJsonLd, WebSiteJsonLd } from "@/components/json-ld";
 import { MarketingEventTracker } from "@/components/marketing/MarketingEventTracker";
 import { headers } from "next/headers";
 import { CspNonceProvider } from "@/components/csp-nonce";
+import { NativeCompanionGuard } from "@/components/native-companion-guard";
 
 // A nonce must be generated for the same response as the HTML, never reused
 // from a static page cache. Image/asset caches remain independent.
@@ -131,7 +132,7 @@ export const metadata: Metadata = {
 export default async function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   const nonce = (await headers()).get("x-nonce") ?? undefined;
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
       <head>
         <CspNonceProvider nonce={nonce}>
           <OrganizationJsonLd />
@@ -140,6 +141,7 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
       </head>
       <body className={`${geistSans.variable} ${geistMono.variable} ${fraunces.variable} antialiased`}>
         <CspNonceProvider nonce={nonce}>
+          <NativeCompanionGuard />
           <MarketingEventTracker />
           {children}
         </CspNonceProvider>

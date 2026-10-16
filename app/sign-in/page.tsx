@@ -657,7 +657,7 @@ export default function SignInPage() {
                     </button>
                   </form>
 
-                  <div className="mt-6 text-sm text-neutral-600">
+                  <div data-native-purchase="signup" className="mt-6 text-sm text-neutral-600">
                     New to Studio OS Cloud?{" "}
                     <Link href="/sign-up" className="sign-motion-link font-medium text-black underline underline-offset-4">
                       Create an account

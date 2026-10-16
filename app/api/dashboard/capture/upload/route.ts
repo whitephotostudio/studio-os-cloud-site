@@ -5,6 +5,7 @@ import {
 } from "@/lib/dashboard-auth";
 import { r2Upload } from "@/lib/r2";
 import { guardAgreement } from "@/lib/require-agreement";
+import { usbCaptureUploadFileName } from "@/lib/capture-upload-id";
 import sharp from "sharp";
 
 export const dynamic = "force-dynamic";
@@ -81,6 +82,12 @@ export async function POST(request: NextRequest) {
   const file = formData.get("file") as File | null;
   const schoolId = clean(formData.get("schoolId") as string | null);
   const studentId = clean(formData.get("studentId") as string | null);
+  let retryFileName: string | null;
+  try {
+    retryFileName = usbCaptureUploadFileName(formData.get("captureId"), auth.user.id);
+  } catch {
+    return NextResponse.json({ error: "Invalid capture identifier." }, { status: 400 });
+  }
 
   if (!file) {
     return NextResponse.json({ error: "file is required" }, { status: 400 });
@@ -156,7 +163,7 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const fileName = `capture_${Date.now()}_${Math.random()
+  const fileName = retryFileName ?? `capture_${Date.now()}_${Math.random()
     .toString(36)
     .slice(2, 8)}.jpg`;
   const key = `${schoolBaseId}/${className}/${folderName}/${fileName}`;
