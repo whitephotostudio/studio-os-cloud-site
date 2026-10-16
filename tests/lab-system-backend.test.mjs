@@ -14,6 +14,7 @@ function load(file, deps = {}) {
   return exports;
 }
 const money = load('lib/labs/money.ts');
+const starters = load('lib/labs/starters.ts', { './money': money });
 const validation = load('lib/labs/validation.ts', { zod: { z }, './money': money });
 const id = n => `30000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 const sheet = () => ({ id: id(1), version: 2, name: 'Pilot', labId: id(2), currency: 'CAD', status: 'draft', updatedAt: '', publishedProfileId: null,
@@ -80,7 +81,7 @@ function authHarness({ user = { id: id(8) }, mfa = true, allowed = true, studio 
   const query = { select() { return this; }, eq() { return this; }, maybeSingle: async () => ({ data: studio, error: null }) };
   const service = { from: name => { calls.push(name); if (schemaError && name === 'studio_labs') return { select() { return this; }, order() { return Promise.resolve({ data: null, error: { code: '42P01' } }); } }; return query; } };
   const server = load('lib/labs/server.ts', {
-    'node:crypto': crypto, './validation': validation, './money': money,
+    'node:crypto': crypto, './validation': validation, './money': money, './starters': starters,
     '@/lib/dashboard-auth': { resolveDashboardAuth: async () => ({ user, mfaSatisfied: mfa }), createDashboardServiceClient: () => service },
     '@/lib/rate-limit': { rateLimit: async (key, config) => { calls.push({ key, config }); return { allowed, unavailable: !allowed }; } },
   });

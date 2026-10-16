@@ -14,6 +14,7 @@ function load(file, deps = {}) {
   return exports;
 }
 const money = load('lib/labs/money.ts');
+const starters = load('lib/labs/starters.ts', { './money': money });
 const validation = load('lib/labs/validation.ts', { zod: { z }, './money': money });
 const owner = '40000000-0000-4000-8000-000000000001';
 const labId = n => `50000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
@@ -40,7 +41,7 @@ function fixture({ admin = true, count = 2507, failTable, failOffset = 1000 } = 
   } };
   const auth = { resolveDashboardAuth: async () => ({ user: { id: owner }, mfaSatisfied: true }), createDashboardServiceClient: () => service };
   const rates = { rateLimit: async () => ({ allowed: true }) };
-  const server = load('lib/labs/server.ts', { 'node:crypto': crypto, './validation': validation, './money': money, '@/lib/dashboard-auth': auth, '@/lib/rate-limit': rates });
+  const server = load('lib/labs/server.ts', { 'node:crypto': crypto, './validation': validation, './money': money, './starters': starters, '@/lib/dashboard-auth': auth, '@/lib/rate-limit': rates });
   const route = load('app/api/dashboard/lab-catalog/route.ts', {
     'next/server': { NextResponse: { json: (body, options) => Response.json(body, options) } }, 'node:crypto': crypto, zod: { z },
     '@/lib/dashboard-auth': auth, '@/lib/rate-limit': rates, '@/lib/require-agreement': { guardAgreement: async () => ({ ok: true }) },

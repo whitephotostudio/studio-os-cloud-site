@@ -8,6 +8,7 @@ import { createClient } from "@/lib/supabase/client";
 import type { GalleryRef, LabApiResponse, LabCatalogProduct, LabCategory, LabPriceSheet, LabPriceSheetPackage, LabRounding, LabWorkspace, LabWorkspaceAction } from "@/lib/labs/types";
 import { currencyMinorUnits, currencyScale, formatCurrency, formatCurrencyAmount, parseCurrencyAmount, roundedLabRetail } from "@/lib/labs/money";
 import { LabDialog } from "./lab-dialog";
+import { LabStarterLibrary } from "./lab-starter-library";
 import styles from "./labs.module.css";
 
 const categories: { id: LabCategory; label: string; subtitle: string; art: string }[] = [
@@ -136,12 +137,14 @@ export function LabWorkspaceView() {
   const cities = Array.from(new Set(workspace?.labs.filter(entry => !directoryCountry || entry.countryCode === directoryCountry).map(entry => entry.city).filter(Boolean) ?? [])).sort();
   const directoryLabs = workspace?.labs.filter(entry => (!directoryCountry || entry.countryCode === directoryCountry) && (!directoryCity || entry.city === directoryCity) && `${entry.name} ${entry.city} ${entry.region} ${entry.description}`.toLowerCase().includes(directoryQuery.toLowerCase())) ?? [];
   const save = () => { if (draft) void mutate({ action: "save", sheet: draft, expectedVersion: draft.version }, "Price sheet saved. Your changes are ready when you return."); };
+  const starters = <LabStarterLibrary workspace={workspace} initialLabId={selectedLabId || lab?.id} loading={loading} busy={busy} error={error} beforeOpen={guard} onCreate={action => mutate(action, "Your new starter collection is saved as a draft. All prices and packages are editable; current schools and price lists are unchanged.")} />;
 
-  if (loading) return <main className={styles.page}><div className={styles.loading}><Loader2 className={styles.spin} size={25} /><h1>Opening your lab workspace</h1><p>Getting your saved price sheets.</p></div></main>;
-  if (!workspace) return <main className={styles.page}><div className={styles.empty}><Store size={34} /><h1>Labs & price sheets</h1><p role="alert">{error || "Your lab workspace could not be loaded."}</p><div className={styles.actions}><button className={styles.primary} onClick={() => void load()}>Try again</button><Link className={styles.secondary} href="/sign-in?redirect=%2Fdashboard%2Flabs">Sign in</Link></div></div></main>;
+  if (loading) return <main className={styles.page}><div className={styles.pageHeader}><div><h1>Labs & price sheets</h1><p>Browse built-in collections while your saved workspace opens.</p></div></div>{starters}<div className={styles.loading}><Loader2 className={styles.spin} size={25} /><h2>Opening your lab workspace</h2><p>Getting your saved price sheets.</p></div></main>;
+  if (!workspace) return <main className={styles.page}><div className={styles.pageHeader}><div><h1>Labs & price sheets</h1><p>Your built-in collections are ready to browse.</p></div></div>{starters}<div className={styles.empty}><Store size={34} /><h2>Open your saved workspace</h2><p role="alert">{error || "Your lab workspace could not be loaded."}</p><div className={styles.actions}><button className={styles.primary} onClick={() => void load()}>Try again</button><Link className={styles.secondary} href="/sign-in?redirect=%2Fdashboard%2Flabs">Sign in</Link></div></div></main>;
 
   return <main className={styles.page}>
     <div className={styles.pageHeader}><div><div className={styles.eyebrow}>YOUR STUDIO, CONNECTED</div><h1>Labs & price sheets</h1><p>Thoughtful products. Your prices. One connected workflow.</p></div><div className={styles.headerActions}><Link className={styles.importLink} href="/dashboard/labs/catalog" onClick={event => { if (dirty) { event.preventDefault(); guard(() => router.push("/dashboard/labs/catalog")); } }}><FileUp size={15} />Import lab catalog</Link><button className={styles.primary} onClick={() => guard(() => setModal("create"))} disabled={busy || !workspace.labs.length}><Plus size={17} /> New price sheet</button></div></div>
+    {starters}
     {error && <div role="alert" className={styles.error}><span>{error}</span><button className={styles.iconButton} aria-label="Dismiss error" onClick={() => setError("")}><X size={17} /></button></div>}
     {notice && <div role="status" className={styles.notice}><CheckCircle2 size={18} />{notice}</div>}
     <section className={styles.directory} aria-labelledby="lab-directory-title">

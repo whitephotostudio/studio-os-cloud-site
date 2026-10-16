@@ -35,6 +35,8 @@ export type LabCatalogProduct = {
   widthInches: number;
   heightInches: number;
   costSource: "lab_confirmed" | "lab_upload" | "screenshot_reference" | "not_provided";
+  /** Physical print pieces in one priced catalog unit; null means unspecified. */
+  printsPerUnit?: number | null;
 };
 
 export type LabPriceSheetItem = {
@@ -76,10 +78,20 @@ export type LabWorkspace = {
   catalog: LabCatalogProduct[];
   priceSheets: LabPriceSheet[];
   galleries: LabGallery[];
+  /** Versioned, lab-independent blueprints. Older clients may ignore this field. */
+  starterCollections?: LabStarterCollection[];
+};
+
+export type LabStarterSize = { id: string; widthInches: number; heightInches: number; label: string };
+export type LabStarterCollection = {
+  id: string; version: number; name: string; audience: string; description: string;
+  sizes: LabStarterSize[];
+  packages: { id: string; name: string; description: string; items: { sizeId: string; quantity: number }[] }[];
+  notes: string[]; sourceUrls: string[];
 };
 
 export type LabWorkspaceAction =
-  | { action: "create"; labId: string; name: string; starter: "popular" | "blank" }
+  | { action: "create"; labId: string; name: string; starter: "popular" | "blank"; templateId?: string; templateVersion?: number; finish?: string; markupPercent?: number; rounding?: LabRounding }
   | { action: "save"; sheet: LabPriceSheet; expectedVersion: number }
   | { action: "duplicate"; id: string; name: string }
   | { action: "delete"; id: string; expectedVersion: number }

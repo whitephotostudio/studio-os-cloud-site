@@ -96,11 +96,12 @@ test('actual Next catalog preview/import requires admin MFA and rejects partial 
   const created = await call({ action: 'createLab', name: 'HTTP synthetic catalog lab', countryCode: 'CA', city: 'Fixture city', region: 'Fixture region', currency: 'CAD' });
   assert.equal(created.status, 200, JSON.stringify(created.body));
   const labId = created.body.labId;
-  const csv = 'sku,name,category,size,finish,wholesale_price,currency,popular\r\nHTTP-5X7,HTTP Print,Prints,5x7,Lustre,2.40,CAD,yes\r\nHTTP-8X10,HTTP Large Print,Prints,8x10,Lustre,6.40,CAD,yes\r\n';
+  const csv = 'sku,name,category,size,finish,wholesale_price,currency,popular,prints_per_unit\r\nHTTP-5X7,HTTP Print,Prints,5x7,Lustre,2.40,CAD,yes,1\r\nHTTP-8X10,HTTP Pair of 8x10 Prints,Prints,8x10,Lustre,6.40,CAD,yes,2\r\n';
   const preview = await call({ action: 'preview', labId, csv });
   assert.equal(preview.status, 200, JSON.stringify(preview.body));
   assert.equal(preview.body.preview.rows.length, 2);
   assert.deepEqual(preview.body.preview.issues, []);
+  assert.deepEqual(preview.body.preview.rows.map(row => row.printsPerUnit), [1, 2]);
   const requestId = randomUUID(), command = { action: 'import', labId, csv, expectedVersion: 0, requestId, sourceName: 'Synthetic catalog.csv' };
   const imported = await call(command);
   assert.equal(imported.status, 200, JSON.stringify(imported.body));
@@ -120,4 +121,6 @@ test('actual Next catalog preview/import requires admin MFA and rejects partial 
   const products = workspace.body.workspace.catalog.filter(product => product.labId === labId);
   assert.equal(products.length, 2);
   assert.equal(products.every(product => !product.verified && product.costSource === 'lab_upload'), true);
+  assert.equal(products.find(product => product.sku === 'HTTP-5X7').printsPerUnit, 1);
+  assert.equal(products.find(product => product.sku === 'HTTP-8X10').printsPerUnit, 2);
 });

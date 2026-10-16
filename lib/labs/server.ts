@@ -6,6 +6,7 @@ import { rateLimit } from "@/lib/rate-limit";
 import type { Lab, LabCatalogProduct, LabGallery, LabPriceSheet, LabWorkspace, LabWorkspaceAction } from "./types";
 import { LabError, assertLabFulfillmentIntegrated, assertPublicationReady, labSheetDocument, roundedRetailCents, validateSheetCatalog } from "./validation";
 import { isLabCurrency } from "./money";
+import { LAB_STARTER_COLLECTIONS, resolveStarterCollection, starterCollection } from "./starters";
 
 type Row = Record<string, unknown>;
 export type LabAccess = { service: SupabaseClient; userId: string; photographerId: string };
@@ -59,7 +60,7 @@ export function labFromRow(row: Row): Lab {
   return { id: String(row.id), slug: String(row.slug), name: String(row.name), location: String(row.location), countryCode: String(row.country_code || ""), city: String(row.city || ""), region: String(row.region || ""), currency: String(row.currency), status: row.status as Lab["status"], intakeEnabled: row.intake_enabled === true, catalogVerified: row.catalog_verified === true, description: String(row.description || "") };
 }
 export function catalogFromRow(row: Row): LabCatalogProduct {
-  return { id: String(row.id), labId: String(row.lab_id), category: row.category as LabCatalogProduct["category"], name: String(row.name), size: String(row.size), finish: String(row.finish), costCents: row.cost_cents == null ? null : Number(row.cost_cents), currency: String(row.currency), sku: row.sku == null ? null : String(row.sku), verified: row.verified === true, active: row.active === true, popular: row.popular === true, widthInches: Number(row.width_inches), heightInches: Number(row.height_inches), costSource: row.cost_source as LabCatalogProduct["costSource"] };
+  return { id: String(row.id), labId: String(row.lab_id), category: row.category as LabCatalogProduct["category"], name: String(row.name), size: String(row.size), finish: String(row.finish), costCents: row.cost_cents == null ? null : Number(row.cost_cents), currency: String(row.currency), sku: row.sku == null ? null : String(row.sku), verified: row.verified === true, active: row.active === true, popular: row.popular === true, widthInches: Number(row.width_inches), heightInches: Number(row.height_inches), costSource: row.cost_source as LabCatalogProduct["costSource"], printsPerUnit: row.prints_per_unit == null ? null : Number(row.prints_per_unit) };
 }
 export function sheetFromRow(row: Row): LabPriceSheet {
   const document = row.document as Omit<LabPriceSheet, "id" | "version" | "status" | "updatedAt" | "publishedProfileId">;
@@ -81,7 +82,7 @@ export async function loadLabWorkspace(access: LabAccess): Promise<LabWorkspace>
     ...(schools.data ?? []).map(row => ({ kind: "school" as const, id: String(row.id), name: String(row.school_name || "School"), currentProfileId: row.package_profile_id == null ? null : String(row.package_profile_id) })),
     ...(projects.data ?? []).map(row => ({ kind: "project" as const, id: String(row.id), name: String(row.title || "Project"), currentProfileId: row.package_profile_id == null ? null : String(row.package_profile_id) })),
   ];
-  return { labs: labs.map(labFromRow), catalog: catalog.map(catalogFromRow), priceSheets: (sheets.data ?? []).map(sheetFromRow), galleries };
+  return { labs: labs.map(labFromRow), catalog: catalog.map(catalogFromRow), priceSheets: (sheets.data ?? []).map(sheetFromRow), galleries, starterCollections: LAB_STARTER_COLLECTIONS };
 }
 
 export async function performLabAction(access: LabAccess, action: LabWorkspaceAction) {
@@ -94,10 +95,20 @@ export async function performLabAction(access: LabAccess, action: LabWorkspaceAc
     const lab = workspace.labs.find(l => l.id === action.labId);
     if (!lab || !isLabCurrency(lab.currency)) throw new LabError("Choose an available lab with a supported currency.");
     if (workspace.priceSheets.length >= 200) throw new LabError("This studio has reached the 200 price sheet limit.");
+    const markupPercent = action.markupPercent ?? 100, rounding = action.rounding ?? "0.99";
+    let starter: ReturnType<typeof resolveStarterCollection> | undefined;
+    if (action.templateId) {
+      const template = starterCollection(action.templateId);
+      if (!template || template.version !== action.templateVersion) throw new LabError("This starter collection changed. Refresh its preview before creating a draft.", 409, "LAB_STARTER_VERSION");
+      if (lab.status === "paused") throw new LabError("This lab is paused. Choose another lab to start a new collection.", 409, "LAB_NOT_READY");
+      try { starter = resolveStarterCollection(template, workspace.catalog, lab.id, lab.currency, action.finish ?? "", markupPercent, rounding); }
+      catch (error) { throw new LabError(error instanceof Error ? error.message : "Check the starter pricing settings."); }
+      if (!starter.items.length) throw new LabError("No exact, approved print products match this collection and finish yet. Browse the starter now, then create its draft after the lab confirms matching products.", 409, "LAB_STARTER_UNAVAILABLE");
+    }
     next = { id, version: 1, name: action.name, labId: lab.id, currency: lab.currency, status: "draft", updatedAt: "", publishedProfileId: null,
-      pricing: { markupPercent: 100, rounding: "0.99" },
-      items: action.starter === "popular" ? workspace.catalog.filter(p => p.labId === lab.id && p.popular && p.active).map(p => ({ catalogProductId: p.id, retailCents: p.costCents == null ? 0 : roundedRetailCents(p.costCents, 100, "0.99", lab.currency), enabled: true })) : [],
-      packages: [], shipping: { mode: "lab", feeCents: 0, title: "Lab shipping" }, terms: "", assignments: [] };
+      pricing: { markupPercent, rounding },
+      items: starter ? starter.items : action.starter === "popular" ? workspace.catalog.filter(p => p.labId === lab.id && p.popular && p.active).map(p => ({ catalogProductId: p.id, retailCents: p.costCents == null ? 0 : roundedRetailCents(p.costCents, markupPercent, rounding, lab.currency), enabled: true })) : [],
+      packages: starter ? starter.packages.filter(pack => pack.available).map(pack => ({ id: randomUUID(), name: pack.name, description: pack.description, retailCents: pack.retailCents!, items: pack.items })) : [], shipping: { mode: "lab", feeCents: 0, title: "Lab shipping" }, terms: "", assignments: [] };
   } else if (action.action === "duplicate") {
     if (workspace.priceSheets.length >= 200) throw new LabError("This studio has reached the 200 price sheet limit.");
     id = randomUUID(); next = { ...current!, id, version: 1, name: action.name, status: "draft", updatedAt: "", assignments: [], publishedProfileId: null };

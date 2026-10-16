@@ -45,6 +45,25 @@ test("header mapping supports nonstandard lab columns and bounded explicit dimen
   assert.throws(() => parseCatalogCsv("sku,name\n" + Array.from({length: 2001}, (_, i) => `${i},Print`).join("\n")), /2,000/);
 });
 
+test("physical print pieces per priced unit are explicit optional integers, never guessed from names or blank cells", () => {
+  const header = "sku,name,category,size,finish,wholesale_price,currency,popular,prints_per_unit\n";
+  const row = count => `PAIR,Pair of 5x7 Prints,Prints,5x7,Lustre,4.00,CAD,no,${count}\n`;
+  assert.equal(detectCatalogMapping(header.trim().split(',')).printsPerUnit, 8);
+  for (const count of ['1', '2', '10', '100']) {
+    const result = previewCatalogImport(header + row(count), undefined, 'CAD');
+    assert.deepEqual(result.issues, []);
+    assert.equal(result.rows[0].printsPerUnit, Number(count));
+  }
+  assert.equal(previewCatalogImport(header + row(''), undefined, 'CAD').rows[0].printsPerUnit, null);
+  const oldFile = 'sku,name,category,size,finish,wholesale_price\nPAIR,2 - 5x7 Prints,Prints,5x7,Lustre,4.00\n';
+  assert.equal(previewCatalogImport(oldFile, undefined, 'CAD').rows[0].printsPerUnit, null);
+  for (const count of ['0', '-1', '101', '1.5', '1.0', '01', '1e1', 'one']) {
+    const result = previewCatalogImport(header + row(count), undefined, 'CAD');
+    assert.equal(result.rows.length, 0);
+    assert.ok(result.issues.some(issue => issue.field === 'printsPerUnit'));
+  }
+});
+
 test("international prices stay in exact currency minor units without guessed FX", () => {
   assert.equal(catalogCostMinor("CAD 1,234.50", "CAD"), 123450);
   assert.equal(catalogCostMinor("0.29", "CAD"), 29);

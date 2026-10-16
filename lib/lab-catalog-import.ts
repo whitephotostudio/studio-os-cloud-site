@@ -2,13 +2,13 @@ import { parseCurrencyAmount, isSupportedCurrency } from "./labs/money";
 
 export const CATALOG_IMPORT_MAX_BYTES = 2_000_000;
 export const CATALOG_IMPORT_MAX_ROWS = 2000;
-export const CATALOG_FIELDS = ["sku", "name", "category", "size", "width", "height", "finish", "cost", "currency", "popular"] as const;
+export const CATALOG_FIELDS = ["sku", "name", "category", "size", "width", "height", "finish", "cost", "currency", "popular", "printsPerUnit"] as const;
 export type CatalogField = typeof CATALOG_FIELDS[number];
 export type CatalogMapping = Partial<Record<CatalogField, number>>;
 export type CatalogImportRow = {
   sku: string; name: string; category: "prints" | "fine_art" | "canvas" | "metal";
   size: string; finish: string; costCents: number; currency: string;
-  widthInches: number; heightInches: number; popular: boolean;
+  widthInches: number; heightInches: number; popular: boolean; printsPerUnit: number | null;
 };
 export type CatalogIssue = { row: number; field: string; message: string };
 export type CatalogPreview = { headers: string[]; mapping: CatalogMapping; rows: CatalogImportRow[]; issues: CatalogIssue[]; sourceRowCount: number };
@@ -68,6 +68,7 @@ const aliases: Record<CatalogField, string[]> = {
   finish: ["finish", "paper", "surface", "papertype"],
   cost: ["wholesaleprice", "labcost", "cost", "price", "unitprice"],
   currency: ["currency", "currencycode"], popular: ["popular", "bestseller", "recommended"],
+  printsPerUnit: ["printsperunit", "printpiecesperunit", "piecesperunit"],
 };
 export function detectCatalogMapping(headers: string[]): CatalogMapping {
   return Object.fromEntries(CATALOG_FIELDS.flatMap(field => {
@@ -136,9 +137,11 @@ export function previewCatalogImport(text: string, mapping: CatalogMapping | und
     if (!(widthInches > 0 && widthInches <= 120 && heightInches > 0 && heightInches <= 120)) add(line, "size", "Use positive inch dimensions up to 120, such as 8x10. Convert metric sizes explicitly before importing.");
     const popular = get("popular").toLowerCase();
     if (popular && !["true", "false", "yes", "no", "1", "0"].includes(popular)) add(line, "popular", "Use yes/no or true/false for popular products.");
-    if (before === issues.length) rows.push({ sku, name, category: category!, size: `${widthInches}x${heightInches}`, finish, costCents: costCents!, currency, widthInches, heightInches, popular: ["true", "yes", "1"].includes(popular) });
+    const pieces = get("printsPerUnit");
+    if (pieces && !/^([1-9]|[1-9][0-9]|100)$/.test(pieces)) add(line, "printsPerUnit", "Use a whole print-piece count from 1 to 100 per priced unit, or leave blank when unspecified.");
+    if (before === issues.length) rows.push({ sku, name, category: category!, size: `${widthInches}x${heightInches}`, finish, costCents: costCents!, currency, widthInches, heightInches, popular: ["true", "yes", "1"].includes(popular), printsPerUnit: pieces ? Number(pieces) : null });
   });
   return { headers, mapping: chosen, rows, issues, sourceRowCount: table.length - 1 };
 }
 
-export const CATALOG_TEMPLATE = "sku,name,category,size,finish,wholesale_price,currency,popular\r\nYOUR-4X6-LUSTRE,4x6 Print,Prints,4x6,Lustre,2.40,CAD,yes\r\n";
+export const CATALOG_TEMPLATE = "sku,name,category,size,finish,wholesale_price,currency,popular,prints_per_unit\r\nYOUR-4X6-LUSTRE,4x6 Print,Prints,4x6,Lustre,2.40,CAD,yes,1\r\n";

@@ -24,7 +24,10 @@ const sheet = z.object({
 }).strict();
 
 const action = z.discriminatedUnion("action", [
-  z.object({ action: z.literal("create"), labId: uuid, name, starter: z.enum(["popular", "blank"]) }).strict(),
+  z.object({ action: z.literal("create"), labId: uuid, name, starter: z.enum(["popular", "blank"]),
+    templateId: z.string().trim().min(1).max(80).optional(), templateVersion: z.number().int().min(1).max(1000).optional(),
+    finish: z.string().trim().min(1).max(100).optional(), markupPercent: z.number().min(0).max(10_000).optional(), rounding: z.enum(["none", "nearest-dollar", "0.99"]).optional(),
+  }).strict(),
   z.object({ action: z.literal("save"), sheet, expectedVersion: z.number().int().min(1) }).strict(),
   z.object({ action: z.literal("duplicate"), id: uuid, name }).strict(),
   z.object({ action: z.literal("delete"), id: uuid, expectedVersion: z.number().int().min(1) }).strict(),
@@ -39,6 +42,10 @@ export function parseLabAction(value: unknown): LabWorkspaceAction {
   const parsed = action.safeParse(value);
   if (!parsed.success) throw new LabError("The lab workspace request is invalid. Refresh and check the selected products, prices and quantities.");
   const result = parsed.data;
+  if (result.action === "create") {
+    if (result.templateId && (result.starter !== "blank" || !result.templateVersion || !result.finish)) throw new LabError("Choose a starter version and print finish before creating a collection.");
+    if (!result.templateId && (result.templateVersion !== undefined || result.finish !== undefined)) throw new LabError("Choose a starter collection before selecting its version or finish.");
+  }
   if (result.action === "save") {
     if (result.sheet.version !== result.expectedVersion) throw new LabError("The sheet changed. Refresh before saving.", 409, "LAB_VERSION_CONFLICT");
     validateSheetStructure(result.sheet);

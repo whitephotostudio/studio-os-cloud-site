@@ -120,6 +120,13 @@ export async function createLabDatabase({ beforeLabOrdersMigration } = {}) {
   if (beforeLabOrdersMigration) await beforeLabOrdersMigration(db);
   const ordersMigration = new URL('../supabase/migrations/20261015220000_lab_orders.sql', import.meta.url);
   if (existsSync(ordersMigration)) await db.exec(readFileSync(ordersMigration, 'utf8'));
+  await db.exec(readFileSync(new URL('../supabase/migrations/20261016010000_lab_business_conflicts.sql', import.meta.url), 'utf8'));
+  const sellUnitsMigration = new URL('../supabase/migrations/20261016020000_lab_catalog_sell_units.sql', import.meta.url);
+  if (existsSync(sellUnitsMigration)) {
+    await db.exec(readFileSync(sellUnitsMigration, 'utf8'));
+    // Explicit ordinary-print fixtures only; product migrations never backfill real catalogs.
+    await db.query('update studio_lab_catalog set prints_per_unit=1 where id=any($1::uuid[])', [[LAB_FIXTURE.productA, LAB_FIXTURE.productB, LAB_FIXTURE.orderProduct, LAB_FIXTURE.foreignProduct]]);
+  }
   return db;
 }
 
