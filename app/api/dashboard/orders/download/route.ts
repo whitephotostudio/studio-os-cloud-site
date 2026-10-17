@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
+import { parseCollageOrderSnapshot, renderCollageOrderSnapshot } from "@/lib/collage-production";
+import { currentProductionOrders, productionFinancialRevision } from "@/lib/order-automation-auth";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   createDashboardServiceClient,
@@ -386,6 +388,7 @@ type OrderDisplayItem = {
   quantity: number;
   backdrop?: CartSnapshotBackdropLike | null;
   orientation?: "portrait" | "landscape";
+  collage?: unknown;
 };
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -401,12 +404,13 @@ function resolveOrderDisplayItems(order: any): OrderDisplayItem[] {
     : dbItems;
 
   if (sourceItems.length > 0) {
-    return sourceItems.map((item: { product_name?: string; quantity?: number; sku?: string; backdrop?: CartSnapshotBackdropLike | null; orientation?: "portrait" | "landscape" }, index: number) => ({
+    return sourceItems.map((item: { product_name?: string; quantity?: number; sku?: string; backdrop?: CartSnapshotBackdropLike | null; orientation?: "portrait" | "landscape"; collage_snapshot?: unknown }, index: number) => ({
       productName: item.product_name ?? parsedFromNotes[index]?.productName ?? "Item",
-      photoUrl: isPhotoReference(item.sku) ? (item.sku ?? "") : (parsedFromNotes[index]?.photoUrl ?? ""),
+      photoUrl: item.collage_snapshot ? `collage:${index}` : isPhotoReference(item.sku) ? (item.sku ?? "") : (parsedFromNotes[index]?.photoUrl ?? ""),
       quantity: item.quantity ?? 1,
       backdrop: item.backdrop ?? null,
       orientation: item.orientation ?? "portrait",
+      collage: item.collage_snapshot,
     }));
   }
   if (parsedFromNotes.length > 0) return parsedFromNotes;
@@ -716,6 +720,16 @@ export async function GET(request: NextRequest) {
       const schoolName = slug(order.school?.school_name, "School");
       const prefix = multiOrder ? `${schoolName}_${studentName}_${order.id.slice(0, 8)}/` : "";
 
+      // Order-item recipes remain authoritative even if a display cart was lost.
+      // The optional-column fallback keeps pre-migration ordinary orders working.
+      const frozen = await service.from("order_items").select("id,collage_snapshot").eq("order_id", order.id).not("collage_snapshot", "is", null);
+      const snapshotHasCollage = cartSnapshotToOrderItems(order.cart_snapshot).some(item => item.collage_snapshot);
+      const missingPreviewColumn = frozen.error && ["42703", "PGRST204"].includes(frozen.error.code);
+      if (frozen.error && (!missingPreviewColumn || snapshotHasCollage)) throw frozen.error;
+      const frozenItems: Array<{ id: string; collage_snapshot: unknown }> = frozen.data ?? [];
+      if (frozenItems.length) {
+        order.items = (order.items ?? []).map((item: { id: string }) => ({ ...item, collage_snapshot: frozenItems.find(row => row.id === item.id)?.collage_snapshot }));
+      }
       const displayItems = resolveOrderDisplayItems(order);
       if (displayItems.length === 0 && clean(order.student?.photo_url)) {
         displayItems.push({
@@ -728,9 +742,39 @@ export async function GET(request: NextRequest) {
       // Download photos FIRST, track URL → local filename mapping
       const photoFileMap = new Map<string, string>();
       const appliedBackdrops = new Set<string>();
+      const collageItems = displayItems.filter(item => item.collage);
+      let collageBefore: Awaited<ReturnType<typeof currentProductionOrders>> | null = null;
+      if (collageItems.length) {
+        try { collageBefore = await currentProductionOrders(user.id, [order.id]); }
+        catch (error) { return NextResponse.json({ ok: false, message: error instanceof Error ? error.message : "Refresh this order's payment before rendering." }, { status: 409 }); }
+      }
+      const frozenCollages = [...frozenItems];
+      if (frozenItems.length !== collageItems.length) return NextResponse.json({ ok: false, message: "This collage order is missing its immutable production recipes. Refresh Orders before downloading." }, { status: 409 });
       let photoIndex = 0;
       for (const item of displayItems) {
         const url = item.photoUrl;
+        if (item.collage) {
+          try {
+            if (item.quantity !== 1) throw Error("Each collage print needs its own immutable selection. Refresh this order before downloading.");
+            const recipe = parseCollageOrderSnapshot(item.collage);
+            const index = frozenCollages.findIndex(row => JSON.stringify(parseCollageOrderSnapshot(row.collage_snapshot)) === JSON.stringify(recipe));
+            if (recipe.photographerId !== pgRow.id || index < 0) throw Error("Collage order and production recipes do not agree.");
+            const [frozen] = frozenCollages.splice(index, 1);
+            const output = await renderCollageOrderSnapshot(frozen.collage_snapshot, service);
+            const fileName = `collage-${frozen.id}-${output.width}x${output.height}-300ppi.png`;
+            zipEntries.push({ name: `${prefix}${fileName}`, data: new Uint8Array(output.bytes) });
+            photoFileMap.set(url, fileName);
+            zipEntries.push({ name: `${prefix}collage-${frozen.id}-production.json`, data: new TextEncoder().encode(JSON.stringify({
+              version: 1, templateVersionId: recipe.templateVersionId, contentHash: recipe.contentHash,
+              sha256: output.sha256, width: output.width, height: output.height, trim: output.trim, bleedPixels: output.bleedPixels,
+              warnings: output.warnings, caption: recipe.caption,
+              placements: recipe.placements.map(p => ({ slotId: p.slotId, mediaId: p.mediaId, zoom: p.zoom, x: p.x, y: p.y })),
+            }, null, 2)) });
+          } catch (error) {
+            return NextResponse.json({ ok: false, message: error instanceof Error ? error.message : "A collage could not be rendered. Keep this order for review." }, { status: 409 });
+          }
+          continue;
+        }
         if (item.backdrop && !url) return NextResponse.json({ ok: false, message: "The selected backdrop needs its original photo and a verified paid cutout. Review the photo in Studio OS, then retry this download." }, { status: 409 });
         if (!url) continue;
         photoIndex++;
@@ -770,6 +814,13 @@ export async function GET(request: NextRequest) {
           if (item.backdrop) return NextResponse.json({ ok: false, message: "The selected backdrop could not be verified. Keep this order for review and retry after its paid cutout is ready." }, { status: 409 });
           console.error(`Error downloading photo ${url}:`, err);
         }
+      }
+
+      if (collageBefore) {
+        let after: Awaited<ReturnType<typeof currentProductionOrders>>;
+        try { after = await currentProductionOrders(user.id, [order.id]); }
+        catch (error) { return NextResponse.json({ ok: false, message: error instanceof Error ? error.message : "Payment changed during rendering. Refresh Orders." }, { status: 409 }); }
+        if (productionFinancialRevision(collageBefore.orders) !== productionFinancialRevision(after.orders)) return NextResponse.json({ ok: false, message: "Payment changed during collage rendering. Refresh Orders before downloading." }, { status: 409 });
       }
 
       // Now build HTML with local file references

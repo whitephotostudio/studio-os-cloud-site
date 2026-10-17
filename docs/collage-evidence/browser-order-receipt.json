@@ -1,0 +1,183 @@
+{
+  "version": 1,
+  "source": "Actual ParentGalleryPage browser checkout against isolated server",
+  "orderId": "9290f057-dd4e-4081-99df-3d393c31e240",
+  "totalCents": 5425,
+  "paymentStatus": "paid",
+  "paidAt": "2026-10-15T01:00:34.673Z",
+  "provider": {
+    "id": "simulated_receipt_cs_fixture_1",
+    "provider": "isolated fake Stripe transport",
+    "notStripeTestMode": true,
+    "amountCents": 5425,
+    "createdAt": "2026-10-15T01:00:34.613Z"
+  },
+  "webhook": {
+    "event_id": "evt_fixture_cs_fixture_1",
+    "status": "processed"
+  },
+  "items": [
+    {
+      "id": "4fed2a4d-c103-455b-99fa-39ae98671350",
+      "quantity": 1,
+      "sku": "01000000-0000-4000-8000-000000000005/Class A/Student 1/pose-1.jpg"
+    },
+    {
+      "id": "74e519b6-556f-440d-acd7-a7d2c56afcf0",
+      "quantity": 1,
+      "sku": null,
+      "templateVersionId": "443de968-de99-45e1-b32f-89705a27ca3a"
+    },
+    {
+      "id": "e7eb5d82-1107-4033-90cd-8c8b1b419715",
+      "quantity": 1,
+      "sku": null,
+      "templateVersionId": "443de968-de99-45e1-b32f-89705a27ca3a"
+    }
+  ],
+  "outputs": [
+    {
+      "itemId": "74e519b6-556f-440d-acd7-a7d2c56afcf0",
+      "file": "browser-production-74e519b6-556f-440d-acd7-a7d2c56afcf0.png",
+      "sha256": "4842634336a408ba1c60edb34bec161c9b764bd1020e50a615c6ad27482b66fb",
+      "width": 3000,
+      "height": 2400,
+      "recipeHash": "b96dae2de10d0500dcc0850df3f96c4491fda0b483be2cd2a81bd1e89791e54b"
+    },
+    {
+      "itemId": "e7eb5d82-1107-4033-90cd-8c8b1b419715",
+      "file": "browser-production-e7eb5d82-1107-4033-90cd-8c8b1b419715.png",
+      "sha256": "b69837eaaf794d89c70f930071bf46b205fcae0915d53aee0244a53bd6489cca",
+      "width": 3000,
+      "height": 2400,
+      "recipeHash": "9faeb0f6f8569deaca6317664e12ee6e2d03b2825af6e2d7b46313298c86f9f1"
+    }
+  ],
+  "archive": {
+    "file": "browser-order-production.zip",
+    "sha256": "8ee6ad41501b915985c50ac8f8231d7f01b0ca8c911dc4a48361fbe82914b76d",
+    "entries": [
+      {
+        "name": "pose-1.jpg",
+        "bytes": 53707,
+        "sha256": "a9d5bc94163ab072d196e1820b04efd334c0fd9a1dccabca7c41e2deeaee79ad"
+      },
+      {
+        "name": "collage-e7eb5d82-1107-4033-90cd-8c8b1b419715-3000x2400-300ppi.png",
+        "bytes": 368791,
+        "sha256": "b69837eaaf794d89c70f930071bf46b205fcae0915d53aee0244a53bd6489cca"
+      },
+      {
+        "name": "collage-e7eb5d82-1107-4033-90cd-8c8b1b419715-production.json",
+        "bytes": 1013,
+        "sha256": "67d959318b056a32dc3b2cfed388ea8be0bd2fe622dcec63a86064b72a60965e",
+        "manifest": {
+          "version": 1,
+          "templateVersionId": "443de968-de99-45e1-b32f-89705a27ca3a",
+          "contentHash": "4e8ae5a9a603ac20fd992452f2273adbc4045f6109052042d0152e51626b258a",
+          "sha256": "b69837eaaf794d89c70f930071bf46b205fcae0915d53aee0244a53bd6489cca",
+          "width": 3000,
+          "height": 2400,
+          "trim": {
+            "width": 3000,
+            "height": 2400
+          },
+          "bleedPixels": 0,
+          "warnings": [],
+          "caption": {
+            "studentName": "Fixture Student One",
+            "schoolName": "",
+            "year": ""
+          },
+          "placements": [
+            {
+              "slotId": "left",
+              "mediaId": "01000000-0000-4000-8000-000000000005/Class A/Student 1/pose-1.jpg",
+              "zoom": 1,
+              "x": 0.5,
+              "y": 0.5
+            },
+            {
+              "slotId": "centre",
+              "mediaId": "01000000-0000-4000-8000-000000000005/Class A/Student 1/pose-2.jpg",
+              "zoom": 1,
+              "x": 0.5,
+              "y": 0.5
+            },
+            {
+              "slotId": "right",
+              "mediaId": "01000000-0000-4000-8000-000000000005/Class A/Student 1/pose-1.jpg",
+              "zoom": 1.2,
+              "x": 0.5,
+              "y": 0.5
+            }
+          ]
+        }
+      },
+      {
+        "name": "collage-74e519b6-556f-440d-acd7-a7d2c56afcf0-3000x2400-300ppi.png",
+        "bytes": 356300,
+        "sha256": "4842634336a408ba1c60edb34bec161c9b764bd1020e50a615c6ad27482b66fb"
+      },
+      {
+        "name": "collage-74e519b6-556f-440d-acd7-a7d2c56afcf0-production.json",
+        "bytes": 1013,
+        "sha256": "09247a58a70c2ec6ef32226e64e3b60aa108d670ea22d5e3a994f568ea13ef22",
+        "manifest": {
+          "version": 1,
+          "templateVersionId": "443de968-de99-45e1-b32f-89705a27ca3a",
+          "contentHash": "4e8ae5a9a603ac20fd992452f2273adbc4045f6109052042d0152e51626b258a",
+          "sha256": "4842634336a408ba1c60edb34bec161c9b764bd1020e50a615c6ad27482b66fb",
+          "width": 3000,
+          "height": 2400,
+          "trim": {
+            "width": 3000,
+            "height": 2400
+          },
+          "bleedPixels": 0,
+          "warnings": [],
+          "caption": {
+            "studentName": "Fixture Student Two",
+            "schoolName": "",
+            "year": ""
+          },
+          "placements": [
+            {
+              "slotId": "left",
+              "mediaId": "01000000-0000-4000-8000-000000000005/Class A/Student 1/pose-3.jpg",
+              "zoom": 1,
+              "x": 0.5,
+              "y": 0.5
+            },
+            {
+              "slotId": "centre",
+              "mediaId": "01000000-0000-4000-8000-000000000005/Class A/Student 1/pose-2.jpg",
+              "zoom": 1,
+              "x": 0.5,
+              "y": 0.5
+            },
+            {
+              "slotId": "right",
+              "mediaId": "01000000-0000-4000-8000-000000000005/Class A/Student 1/pose-3.jpg",
+              "zoom": 1.4,
+              "x": 0.5,
+              "y": 0.5
+            }
+          ]
+        }
+      },
+      {
+        "name": "order-summary.html",
+        "bytes": 8780,
+        "sha256": "ac6dfeddd97ea2dd9ee91920fe26aad2724759f6600e56fd77af2153be7f7f90"
+      }
+    ]
+  },
+  "syntheticFixture": true,
+  "currency": "cad",
+  "limitations": [
+    "Isolated PGlite database, signed fake GoTrue identity provider and local synthetic object storage.",
+    "Payment transport was simulated, not Stripe test mode; the real signed webhook handler processed the event.",
+    "No installed desktop build, real charge, production migration, deployment, customer data or printer action."
+  ]
+}

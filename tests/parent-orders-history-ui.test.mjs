@@ -5,6 +5,7 @@ import { createRequire } from 'node:module';
 import { renderToStaticMarkup } from 'react-dom/server';
 import ts from 'typescript';
 import { formatOrderMoney } from '../lib/order-money.ts';
+import { cartSnapshotToOrderItems } from '../lib/order-display.ts';
 import { parentPortalFetch, parentSessionPin } from '../lib/parent-gallery-session-client.ts';
 
 const require = createRequire(import.meta.url);
@@ -24,7 +25,7 @@ function fixture(rows, extraStates = [], extraProps = {}) {
     useRef(initial) { const index = cursor++; if (!(index in states)) states[index] = { current: initial }; return states[index]; },
     useMemo(fn) { return fn(); }, useEffect() {},
   }, 'react/jsx-runtime': require('react/jsx-runtime'), '@/lib/order-money': { formatOrderMoney },
-    '@/lib/parent-gallery-session-client': { parentPortalFetch } };
+    '@/lib/parent-gallery-session-client': { parentPortalFetch }, '@/lib/order-display': { cartSnapshotToOrderItems } };
   const exports = {};
   new Function('require', 'exports', compiled)(name => { if (!dependencies[name]) throw Error(name); return dependencies[name]; }, exports);
   const props = { pin: '1234', email: 'parent@example.test', schoolId: 'school',
@@ -117,4 +118,26 @@ test('busy confirmation prevents repeat actions, failures keep the checkout revi
   assert.equal(f.states[0].length, 1); assert.equal(f.states[5], false);
   assert.match(f.markup(), /role="alert"/); assert.match(f.markup(), /Payment processing/);
   button(f.render(), 'Keep checkout').props.onClick(); assert.equal(f.states[4], null); assert.equal(f.states[0].length, 1);
+});
+
+
+test('history labels each finished collage copy and reorders its complete immutable nested selections', () => {
+  const recipe = crop => ({ version: 1, templateVersionId: '11111111-1111-4111-8111-111111111111',
+    caption: { studentName: 'Example Student', schoolName: 'Example School', year: '2026' },
+    placements: ['left', 'centre', 'right'].map(slotId => ({ slotId, mediaId: 'schools/student/portrait.jpg', zoom: 1.5, x: crop, y: .6, mediaKey: 'schools/student/portrait.jpg' })),
+    design: { immutable: 'saved design' }, contentHash: 'saved-content-hash' });
+  const snapshot = [{ packageId: 'pkg', packageName: 'Mixed keepsakes', quantity: 1,
+    slots: [{ label: 'Ordinary 5x7', assignedImageUrl: 'schools/student/ordinary.jpg' },
+      { label: 'Keepsake copy one', assignedImageUrl: null, collage: recipe(.2) },
+      { label: 'Keepsake copy two', assignedImageUrl: null, collage: recipe(.8) }] }];
+  const before = JSON.stringify(snapshot), calls = [];
+  const f = fixture([{ ...paid, cartSnapshot: snapshot }], [], { onReorder: (saved, id) => calls.push({ saved, id }) });
+  const html = f.markup();
+  assert.match(html, /Collage print 1: Keepsake copy one/); assert.match(html, /Collage print 2: Keepsake copy two/);
+  assert.equal((html.match(/photos and crops saved with this order/g) || []).length, 2);
+  button(f.render(), 'Reorder these items').props.onClick();
+  assert.equal(calls.length, 1); assert.equal(calls[0].id, paid.id); assert.deepEqual(calls[0].saved, snapshot);
+  assert.equal(calls[0].saved[0].slots[1].collage.placements.length, 3);
+  assert.equal(calls[0].saved[0].slots[2].collage.placements[0].x, .8);
+  assert.equal(JSON.stringify(snapshot), before, 'History display and reorder never rewrite the paid snapshot');
 });

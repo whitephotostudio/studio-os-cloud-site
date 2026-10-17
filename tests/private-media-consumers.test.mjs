@@ -222,7 +222,11 @@ test("dashboard order downloads sign bare durable photo keys before fetching", (
     displayItemsSection,
     /dbItems\.filter\(\(item: \{ sku\?: string \}\) => isPhotoReference\(item\.sku\)\)/,
   );
-  assert.match(displayItemsSection, /photoUrl: isPhotoReference\(item\.sku\)/);
+  assert.match(
+    displayItemsSection,
+    /photoUrl:\s*item\.collage_snapshot\s*\?\s*`collage:\$\{index\}`\s*:\s*isPhotoReference\(item\.sku\)/,
+  );
+  assert.match(displayItemsSection, /collage: item\.collage_snapshot/);
   assert.doesNotMatch(displayItemsSection, /isWebImageUrl\(item\.sku\)/);
 });
 

@@ -7,6 +7,7 @@ export type PackageItemValue =
       size?: string | null;
       finish?: string | null;
       composite?: boolean | null;
+      collage?: { templateVersionId: string } | null;
     };
 
 export type PackageCategory =
@@ -145,6 +146,12 @@ export function getPackageCategory(pkg: PackageCategoryInput): PackageCategory {
   const explicitCategory = getExplicitCategory(rawCategory);
   const searchText = buildSearchText(pkg);
 
+  // A collage configuration is a physical print role. Product/design names
+  // remain free text, including words such as digital, canvas or wallet.
+  if ((pkg.items ?? []).some(item => typeof item !== "string" && item.collage != null)) {
+    return explicitCategory ?? "package";
+  }
+
   if (explicitCategory && explicitCategory !== "package") {
     return explicitCategory;
   }
@@ -191,8 +198,8 @@ export function getGalleryPackageCategory(pkg: PackageCategoryInput): PackageCat
     const contents = (pkg.items ?? []).map((item) => ({
       label: typeof item === "string"
         ? item
-        : [item.name, item.type, item.size, item.finish].filter(Boolean).join(" "),
-      role: typeof item !== "string" && item.composite ? "composite" : "portrait",
+        : item.collage ? clean(item.size) || "Collage print" : [item.name, item.type, item.size, item.finish].filter(Boolean).join(" "),
+      role: typeof item !== "string" && item.collage ? "collage" : typeof item !== "string" && item.composite ? "composite" : "portrait",
     })).filter((item) => clean(item.label));
     if (new Set(contents.map((item) => item.role)).size > 1) return "package";
     const formats = new Set<string>();

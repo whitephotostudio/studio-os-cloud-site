@@ -43,6 +43,7 @@ const NAV_ITEMS = [
   { href: "/dashboard/calendar", label: "Calendar", match: /^\/dashboard\/calendar/ },
   { href: "/dashboard/orders", label: "Orders", match: /^\/dashboard\/orders/ },
   { href: "/dashboard/packages", label: "Packages", match: /^\/dashboard\/packages/ },
+  { href: "/dashboard/collages", label: "Collage Studio · Preview", match: /^\/dashboard\/collages/ },
   // 2026-04-25: Backdrops was reachable only by typing the URL.  Surface it
   // between Packages and Settings so photographers can always find their
   // backdrop catalog + the new Supports landscape tickbox.

@@ -1,0 +1,259 @@
+{
+  "root": "/Users/harout/Downloads/Projects/studio-os-order-automation-v2-20260930",
+  "validatedSource": "/Users/harout/Downloads/Projects/studio-os-collage-desktop-stage2-validation-20261014",
+  "files": [
+    {
+      "path": "docs/collage-desktop-preview.md",
+      "status": "added",
+      "beforeSha256": null,
+      "afterSha256": "61e0e599b02db070e6ed2165609e49e2919bf3ba7b400fdae897ffbdb05054dc",
+      "beforeMode": null,
+      "afterMode": "100644"
+    },
+    {
+      "path": "lib/models/collage_commerce.dart",
+      "status": "added",
+      "beforeSha256": null,
+      "afterSha256": "1d53cbf40fc8125d07fc61caa6f83d89ef0e99df94b757b03ca81fcdafcb5232",
+      "beforeMode": null,
+      "afterMode": "100644"
+    },
+    {
+      "path": "lib/models/collage_template.dart",
+      "status": "added",
+      "beforeSha256": null,
+      "afterSha256": "91a1870eb6a4fde6a0d8c24ffbdfccf0db3f21d1cd84a2ce2fd00f0d9e4b2893",
+      "beforeMode": null,
+      "afterMode": "100644"
+    },
+    {
+      "path": "lib/screens/collages_screen.dart",
+      "status": "added",
+      "beforeSha256": null,
+      "afterSha256": "0eccd6dcb1f240a38aa9d90c4f70ec599f29d057ccb2373345682dc177c66390",
+      "beforeMode": null,
+      "afterMode": "100644"
+    },
+    {
+      "path": "lib/screens/home_screen.dart",
+      "status": "modified",
+      "beforeSha256": "f421687144d6c01d501209a58c7036aa120f4d7bf6c15987c6d4a99d44c05da5",
+      "afterSha256": "85240d51385117990f22de4b68d8ae2ec580810f66a44cc50795037601feb989",
+      "beforeMode": "100755",
+      "afterMode": "100755"
+    },
+    {
+      "path": "lib/screens/orders_screen.dart",
+      "status": "modified",
+      "beforeSha256": "3ec8920691b2358363e2f843ce585171e2454689fd5c976514672e008780e3c6",
+      "afterSha256": "84cce1b7515d1432333470e8071255e9746ea7b145fcd75ebf7ae056afed5ece",
+      "beforeMode": "100755",
+      "afterMode": "100755"
+    },
+    {
+      "path": "lib/services/collage_cloud_service.dart",
+      "status": "added",
+      "beforeSha256": null,
+      "afterSha256": "598aa7f4f83eb903939c175dff113c9b33b955d26b1da076015ba3a9d2fcac35",
+      "beforeMode": null,
+      "afterMode": "100644"
+    },
+    {
+      "path": "lib/services/collage_commerce_service.dart",
+      "status": "added",
+      "beforeSha256": null,
+      "afterSha256": "90d3a2409b612490cef3d1cc79ccfc495d15fa317c14b306137ecb0da44235e9",
+      "beforeMode": null,
+      "afterMode": "100644"
+    },
+    {
+      "path": "lib/services/collage_production_service.dart",
+      "status": "added",
+      "beforeSha256": null,
+      "afterSha256": "c43ca62ae733bdcb4b4ab76447e65d1821f06cbb8b14ad135bd4f18570fd251e",
+      "beforeMode": null,
+      "afterMode": "100644"
+    },
+    {
+      "path": "lib/services/collage_renderer.dart",
+      "status": "added",
+      "beforeSha256": null,
+      "afterSha256": "cf4bd2831c7ca1d44aacc2222191cb491f481ecf43f0167509360dd574cda3d0",
+      "beforeMode": null,
+      "afterMode": "100644"
+    },
+    {
+      "path": "lib/services/order_auto_match_service.dart",
+      "status": "modified",
+      "beforeSha256": "1b9408ccb019e559710dfd3b633a94dce899c1101384853c838bc7c612d8760d",
+      "afterSha256": "ab67e2d7fb09a562ca2b5b9f9f9804e83053197d69a90d68a0d43f2e52419a60",
+      "beforeMode": "100755",
+      "afterMode": "100755"
+    },
+    {
+      "path": "lib/services/package_sync_service.dart",
+      "status": "modified",
+      "beforeSha256": "fe4f7069dc5c344ee9b8e0ff08f371a62031031980494d8b32cd5fdafc4cb9aa",
+      "afterSha256": "2a56844d0e5e8b34eac4a813ebda3e76591af9ecdf27045348e58f02f973487b",
+      "beforeMode": "100755",
+      "afterMode": "100755"
+    },
+    {
+      "path": "lib/services/supabase_sync.dart",
+      "status": "modified",
+      "beforeSha256": "1039b07ddb20bda75136bdaf0c7824d6321efac6495f52b7f71614009b1bc99c",
+      "afterSha256": "f249ee2d5cba91e6cb5d4d25521bef20266ab9e5e2bc410a644f9379e23d98be",
+      "beforeMode": "100755",
+      "afterMode": "100755"
+    },
+    {
+      "path": "lib/storage/collage_store.dart",
+      "status": "added",
+      "beforeSha256": null,
+      "afterSha256": "4ff84017b4ef4fad29097ba83845b5a2c87132132bd4eac9e82eed65043c89dd",
+      "beforeMode": null,
+      "afterMode": "100644"
+    },
+    {
+      "path": "lib/widgets/collage_commerce_panel.dart",
+      "status": "added",
+      "beforeSha256": null,
+      "afterSha256": "3dc3339b60b701fe24baf52185c62912b584d208c2d1a113c373a2805b858f66",
+      "beforeMode": null,
+      "afterMode": "100644"
+    },
+    {
+      "path": "test/collage_catalog_sync_test.dart",
+      "status": "added",
+      "beforeSha256": null,
+      "afterSha256": "73bb30c1605d475718c5b20275ca0eaad1da24be7bed7c06bbbfd91d91d1a247",
+      "beforeMode": null,
+      "afterMode": "100644"
+    },
+    {
+      "path": "test/collage_cloud_service_test.dart",
+      "status": "added",
+      "beforeSha256": null,
+      "afterSha256": "98f2aee8d1d1412546413b9b25cdd239dbe9ccecc7b4eea47f1a92d05be89571",
+      "beforeMode": null,
+      "afterMode": "100644"
+    },
+    {
+      "path": "test/collage_commerce_panel_test.dart",
+      "status": "added",
+      "beforeSha256": null,
+      "afterSha256": "6fa7c627243d0bdb411d021faf8a6630afdc830673356424f7f53658d1578934",
+      "beforeMode": null,
+      "afterMode": "100644"
+    },
+    {
+      "path": "test/collage_commerce_service_test.dart",
+      "status": "added",
+      "beforeSha256": null,
+      "afterSha256": "ba6f9ecabe07ef92ea9f720e35d9628f106e884363528967a4db978cce1773aa",
+      "beforeMode": null,
+      "afterMode": "100644"
+    },
+    {
+      "path": "test/collage_order_safety_test.dart",
+      "status": "added",
+      "beforeSha256": null,
+      "afterSha256": "caaddd20b02c4d707f0ea924b88c242bee02f9702a10ecdc8d156a70131b3194",
+      "beforeMode": null,
+      "afterMode": "100644"
+    },
+    {
+      "path": "test/collage_production_service_test.dart",
+      "status": "added",
+      "beforeSha256": null,
+      "afterSha256": "e756665c67c04f35512f7bf5c56b8234c67000c50db477d91fbca9b88f42c015",
+      "beforeMode": null,
+      "afterMode": "100644"
+    },
+    {
+      "path": "test/collage_renderer_test.dart",
+      "status": "added",
+      "beforeSha256": null,
+      "afterSha256": "c6d0fe18dfe963f0344e2cba34b17f218dc235d2bead43a2b30b6ef0cb8af4a0",
+      "beforeMode": null,
+      "afterMode": "100644"
+    },
+    {
+      "path": "test/collage_store_test.dart",
+      "status": "added",
+      "beforeSha256": null,
+      "afterSha256": "a2ac866d4be266ee596178f9810bb688fb92cbc59aac48462cbf7657ddce82a1",
+      "beforeMode": null,
+      "afterMode": "100644"
+    },
+    {
+      "path": "test/collage_template_test.dart",
+      "status": "added",
+      "beforeSha256": null,
+      "afterSha256": "43905431600818d29e698f93b22d44a6b867f3a715b5f0d523c1e74fade20c5a",
+      "beforeMode": null,
+      "afterMode": "100644"
+    },
+    {
+      "path": "test/collages_screen_test.dart",
+      "status": "added",
+      "beforeSha256": null,
+      "afterSha256": "e7b1bbdb98238b6e8565aef0222b5f6e02fdb69506025d993481cf58c7d54324",
+      "beforeMode": null,
+      "afterMode": "100644"
+    },
+    {
+      "path": "tool/collage_native_e2e_driver_test.dart",
+      "status": "added",
+      "beforeSha256": null,
+      "afterSha256": "39b45b32d57c7e5c5b4bf99b1e9299925d1182df0db11c3afe9274ec46ab8a4c",
+      "beforeMode": null,
+      "afterMode": "100644"
+    }
+  ],
+  "activeSourceDifferencesPreserved": [
+    "lib/screens/orders_screen.dart"
+  ],
+  "validationSourceScope": {
+    "activeSource": "/Users/harout/Downloads/Projects/studio-os-order-automation-v2-20260930",
+    "baseline": "stage2-backup before20 overlay; stage2 nine-path overlay",
+    "excludedUnrelatedConcurrentFiles": [
+      "lib/services/order_photo_save_watcher.dart",
+      "test/order_retouching_auto_save_test.dart",
+      "test/order_photo_save_watcher_test.dart"
+    ],
+    "unchangedCurrentDependencies": [
+      "lib/storage/order_retouching_store.dart",
+      "lib/storage/order_photo_edit_store.dart",
+      "lib/storage/local_store.dart"
+    ],
+    "note": "Active concurrent Orders edits are preserved; only the isolated snapshot restores pre-external Orders source."
+  },
+  "evidence": [
+    "evidence/collages-native-graduation.png",
+    "evidence/native-commerce-controls.png",
+    "../../docs/collage-evidence/native-production-receipt.json"
+  ],
+  "validation": {
+    "testsPassed": 1911,
+    "testsSkipped": 4,
+    "finalFullSuite": "passed on isolated reviewed source",
+    "testArgs": "--no-pub --dart-define=STUDIO_OS_EDITION=live-v2 --concurrency=2",
+    "fullSuiteLog": "/tmp/studio-os-collage-desktop-stage2-isolated-full.txt",
+    "wholeLibraryAndTenCollageTestsAndDriverAnalysis": "No issues found",
+    "finalAnalysisLog": "/tmp/studio-os-collage-desktop-stage2-isolated-final-analysis.txt",
+    "freshActiveWholeLibraryAnalysis": "No issues found",
+    "freshActiveAnalysisLog": "/tmp/studio-os-collage-desktop-stage2-active-final-analysis.txt",
+    "focusedCollageTestsPassed": 55,
+    "nativePublishAndExactBrowserPaidOrderProduction": "passed with simulated provider transports",
+    "installedSignedAppOrLiveProviderVerified": false
+  },
+  "patchSha256": "097013ed3dc10fd37c1d038318e9095a90aff6b14a264e20b6538c1e043d7a3e",
+  "review": {
+    "baselineCommit": "d6934fcf237380a5f10459870d5f4be4cd9f10ad",
+    "stageOneCommit": "86c48df8b943eb8d8c0190eaae6d7d064c105028",
+    "implementationCommit": "2ecdcb3c948e29260327030ef8c03514712df093",
+    "patchSha256": "097013ed3dc10fd37c1d038318e9095a90aff6b14a264e20b6538c1e043d7a3e",
+    "appliedToCapturedBaselineAndAllHashesAndModesVerified": true
+  }
+}

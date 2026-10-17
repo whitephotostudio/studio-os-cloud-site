@@ -1,0 +1,65 @@
+.studio { padding: clamp(18px, 3vw, 42px); color: #172033; max-width: 1600px; margin: auto; }
+.header { display: flex; align-items: center; justify-content: space-between; gap: 24px; margin-bottom: 22px; flex-wrap: wrap; }
+.header a { color: #536077; font-size: 13px; }
+.header h1 { font-size: clamp(24px, 3vw, 34px); letter-spacing: -.035em; margin: 8px 0; line-height: 1.15; }
+.header p { color: #626d80; font-size: 14px; }
+.eyebrow { letter-spacing: .12em; font-size: 10px !important; margin: 20px 0 8px; font-weight: 700; }
+.studio button, .button { display: inline-flex; align-items: center; justify-content: center; font: inherit; font-size: 12px; font-weight: 600; padding: 10px 13px; border: 1px solid #d4dbe5; border-radius: 8px; background: white; color: #172033; cursor: pointer; text-decoration: none; }
+.studio button:hover, .button:hover { background: #f0f3f8; }
+.studio button:disabled { opacity: .45; cursor: not-allowed; }
+.studio button:focus-visible, .button:focus-within { outline: 3px solid #708ef7; outline-offset: 3px; }
+.button input { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; }
+.actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.banner { background: #edf2ff; border: 1px solid #dae4ff; border-radius: 10px; padding: 13px 16px; font-size: 12px; line-height: 1.6; margin-bottom: 22px; color: #35466f; }
+.error, .notice { border-radius: 8px; padding: 12px; font-size: 13px; }
+.error { background: #ffeded; color: #9b2323; }
+.notice { background: #e9f7ee; color: #23643c; }
+.workspace { display: grid; grid-template-columns: 320px minmax(0, 1fr); gap: 24px; align-items: start; }
+.panel, .previewPanel { background: #fff; border: 1px solid #e2e6ec; border-radius: 16px; padding: 22px; min-width: 0; }
+.panel h2 { font-size: 14px; margin: 23px 0 12px; }
+.studio label:not(.button) { display: flex; flex-direction: column; gap: 6px; font-size: 11px; font-weight: 600; margin-top: 14px; color: #536077; }
+.studio input:not([type=file]), .studio select { width: 100%; min-width: 0; box-sizing: border-box; padding: 9px 10px; border: 1px solid #d9dfe8; border-radius: 7px; font: inherit; font-size: 13px; background: #fff; color: #172033; }
+.studio input[type=color] { height: 38px; padding: 4px; }
+.studio input[type=range] { padding: 8px 0; }
+.pair { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; }
+.pair + .actions { margin-top: 14px; }
+.help { font-size: 12px; line-height: 1.7; color: #6e788a; }
+.tabs { display: flex; gap: 4px; padding: 4px; background: #f1f3f7; border-radius: 10px; }
+.tabs button { flex: 1; padding: 8px; border: 0; background: transparent; font-size: 11px; }
+.tabs button[aria-pressed=true] { background: #fff; box-shadow: 0 1px 5px #17203315; }
+.previewHeading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; gap: 12px; }
+.previewHeading h2 { font-size: 15px; margin: 0; }
+.previewHeading span { font-size: 12px; color: #69758a; }
+.paper { position: relative; max-width: 760px; margin: auto; background: white; box-shadow: 0 5px 24px #1720331a; }
+.canvas canvas { display: block; width: 100%; height: auto; }
+.slots { position: absolute; inset: 0; pointer-events: none; }
+.slots button { position: absolute; border-radius: 0; pointer-events: auto; background: transparent; padding: 0; align-items: flex-start; justify-content: flex-start; }
+.slots button:hover { background: #779aff12; }
+.slot { border: 1px dashed #56678470 !important; }
+.activeSlot { border: 2px solid #4268d8 !important; z-index: 1; }
+.slots span { font-size: 10px; color: #fff; background: #263a61d9; padding: 5px 7px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.captionFields { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; margin-top: 18px; }
+.photoList { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 14px; }
+.photoList button { padding: 5px; display: flex; flex-direction: column; min-width: 0; }
+.photoList button[aria-pressed=true] { border-color: #4268d8; box-shadow: 0 0 0 1px #4268d8; }
+.photoList img { width: 100%; height: 100px; object-fit: contain; background: #edf0f5; border-radius: 4px; }
+.photoList span { font-size: 10px; display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; padding-top: 4px; }
+.checklist { list-style: none; padding: 12px 0 0; font-size: 12px; }
+.checklist li { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; padding: 8px 0; border-bottom: 1px solid #edf0f5; overflow-wrap: anywhere; }
+.warning { color: #a75e09; }
+.exportRow { display: flex; align-items: center; justify-content: space-between; gap: 20px; margin-top: 18px; }
+.exportRow .help { max-width: 360px; margin: 0; }
+.studio .primary { background: #172033; color: #fff; border-color: #172033; flex-shrink: 0; }
+@media (max-width: 1100px) { .workspace { grid-template-columns: 270px minmax(0, 1fr); gap: 14px; } .panel, .previewPanel { padding: 16px; } .captionFields { grid-template-columns: 1fr; gap: 0; } .exportRow { flex-wrap: wrap; } }
+@media (max-width: 760px) { .workspace { grid-template-columns: 1fr; } .previewPanel { grid-row: 1; } .studio { padding: 16px; } .header { gap: 8px; } .header h1 { font-size: 26px; } .captionFields { grid-template-columns: 1fr; } }
+
+.parentPicker { color: #e2e8f0; min-width: 0; }
+.parentPicker .help { color: #a9b8cd; }
+.parentPicker .paper { max-width: 520px; }
+.parentPicker .photoList { grid-template-columns: repeat(auto-fill, minmax(80px, 1fr)); max-height: 290px; overflow: auto; }
+.parentPicker .photoList img { height: 90px; }
+.parentPicker label { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; font-size: 12px; }
+.parentPicker input, .parentPicker select { min-width: 0; width: 100%; padding: 8px; box-sizing: border-box; background: white; color: #172033; border: 1px solid #d9dfe8; border-radius: 6px; }
+.parentPicker button { border: 1px solid #64748b; border-radius: 6px; background: white; color: #172033; cursor: pointer; }
+.parentPicker button:focus-visible { outline: 3px solid #4ade80; }
+.parentPicker .slots button { background: transparent; border-radius: 0; }

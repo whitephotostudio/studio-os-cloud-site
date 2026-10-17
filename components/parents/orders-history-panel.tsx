@@ -9,6 +9,7 @@
 import { parentPortalFetch as fetch } from "@/lib/parent-gallery-session-client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { cartSnapshotToOrderItems } from "@/lib/order-display";
 import { formatOrderMoney } from "@/lib/order-money";
 
 export type OrderHistoryItem = {
@@ -536,6 +537,7 @@ export default function OrdersHistoryPanel({
                     {expanded ? "Hide details" : "View details"}
                   </button>
 
+                  {cartSnapshotToOrderItems(order.cartSnapshot).filter(item => item.collage_snapshot).map((item, index) => <p key={`collage-${index}`} style={{ fontSize: 12, color: tone.mutedText }}>Collage print {index + 1}: {item.product_name} · photos and crops saved with this order.</p>)}
                   {expanded && (
                     <div
                       style={{

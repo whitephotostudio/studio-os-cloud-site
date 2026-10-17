@@ -31,10 +31,17 @@ function fixture({ composite = null, selected = true, throwComposite = false } =
   const calls = [];
   const service = { from(table) {
     let update = null;
+    const excludedNullFields = [];
     const rows = () => table === 'orders' ? [order] : table === 'photographers' ? [{ id: photographer, business_name: 'Fixture Studio' }]
       : table === 'order_items' ? [item] : assert.fail(`Unexpected table: ${table}`);
-    const execute = single => { if (update) calls.push({ update: table, value: update }); return { data: single ? rows()[0] : rows(), error: null }; };
-    const chain = { select() { return chain; }, eq() { return chain; }, in() { return chain; }, update(value) { update = value; return chain; },
+    const execute = single => {
+      if (update) calls.push({ update: table, value: update });
+      const matching = rows().filter(row => excludedNullFields.every(field => row[field] != null));
+      return { data: single ? matching[0] : matching, error: null };
+    };
+    const chain = { select() { return chain; }, eq() { return chain; }, in() { return chain; },
+      not(field, operator, value) { assert.equal(operator, 'is'); assert.equal(value, null); excludedNullFields.push(field); return chain; },
+      update(value) { update = value; return chain; },
       maybeSingle: async () => execute(true), then: resolve => resolve(execute(false)) };
     return chain;
   } };
@@ -48,6 +55,16 @@ function fixture({ composite = null, selected = true, throwComposite = false } =
     '@/lib/digital-entitlement-payment': load('lib/digital-entitlement-payment.ts'),
     '@/lib/digital-product-label': load('lib/digital-product-label.ts'),
     '@/lib/backdrop-composites': compositeModule,
+    // Existing ordinary/backdrop deliveries must never enter collage rendering
+    // or its separate paid-production path merely because the route imports it.
+    '@/lib/collage-production': {
+      parseCollageOrderSnapshot: () => assert.fail('Ordinary delivery cannot acquire a collage recipe'),
+      renderCollageOrderSnapshot: () => assert.fail('Ordinary delivery cannot render a collage'),
+    },
+    '@/lib/order-automation-auth': {
+      currentProductionOrders: () => assert.fail('Ordinary delivery must preserve its existing authorization path'),
+      productionFinancialRevision: () => assert.fail('Ordinary delivery has no collage production revision'),
+    },
     '@/lib/dashboard-auth': { resolveDashboardAuth: async () => ({ user: { id: studio }, mfaSatisfied: true }), createDashboardServiceClient: () => service },
     '@/lib/event-gallery-downloads': { buildArchiveBaseName: (value, fallback) => value || fallback },
     '@/lib/storage-folder': { buildSchoolCandidateFolders: () => [], loadFolderMediaRows: async () => [] },
