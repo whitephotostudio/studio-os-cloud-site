@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { hasStorageCredentials, storageRegionForUrl } from "@/lib/storage-regions";
 
 export const dynamic = "force-dynamic";
 
@@ -7,8 +8,6 @@ const SUPABASE_URL = (
   process.env.SUPABASE_URL ||
   ""
 ).replace(/\/$/, "");
-const R2_ACCOUNT_ID = process.env.R2_ACCOUNT_ID || "";
-const R2_BUCKET = process.env.R2_BUCKET_NAME || "whitephoto-media";
 
 function clean(value: string | null | undefined) {
   return (value ?? "").trim();
@@ -83,11 +82,14 @@ function isAllowedDownloadUrl(target: URL) {
 }
 
 function isAllowedSignedR2Url(target: URL) {
-  if (!R2_ACCOUNT_ID || !R2_BUCKET) return false;
   if (target.protocol !== "https:") return false;
-  if (target.host !== `${R2_ACCOUNT_ID}.r2.cloudflarestorage.com`) return false;
+  // Only a presigned URL on one of our own configured storage regions
+  // (exact host and bucket) may be proxied — never an arbitrary provider URL.
+  const region = storageRegionForUrl(target);
+  if (!region || !hasStorageCredentials(region)) return false;
+  if (target.host !== region.host) return false;
 
-  const pathPrefix = `/${R2_BUCKET}/`;
+  const pathPrefix = `/${region.bucket}/`;
   if (!target.pathname.startsWith(pathPrefix)) return false;
 
   return (

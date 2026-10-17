@@ -9,40 +9,60 @@ import {
 } from "@aws-sdk/client-s3";
 import { signedR2MediaUrl } from "@/lib/r2-media-token";
 import { schoolPhotoFamilyForKey } from "@/lib/school-photo-deletions";
+import {
+  currentStorageRegion,
+  defaultStorageRegion,
+  hasStorageCredentials,
+  type StorageRegion,
+} from "@/lib/storage-regions";
 
-function env(name: string) {
-  const value = process.env[name];
-  if (!value) throw new Error(`Missing env var: ${name}`);
-  return value;
-}
+export type { StorageRegion } from "@/lib/storage-regions";
 
-let _client: S3Client | null = null;
+const clients = new Map<string, S3Client>();
 let _missingConfigWarned = false;
 
 /**
- * Returns a singleton S3-compatible client configured for Cloudflare R2.
+ * Returns a cached S3-compatible client for a storage region.
+ *
+ * Without an argument this is the DEFAULT region's client (matching the
+ * `R2_BUCKET` constant), not the request-context region: raw command call
+ * sites that pair `getR2Client()` with `R2_BUCKET` therefore stay consistent.
+ * Region-aware code passes the photographer's region explicitly (or uses the
+ * higher-level helpers below, which honour the request context).
  * Server-side only — do not import in client components.
  */
-export function getR2Client() {
-  if (!_client) {
-    _client = new S3Client({
-      region: "auto",
-      endpoint: `https://${env("R2_ACCOUNT_ID")}.r2.cloudflarestorage.com`,
-      credentials: {
-        accessKeyId: env("R2_ACCESS_KEY_ID"),
-        secretAccessKey: env("R2_SECRET_ACCESS_KEY"),
-      },
-    });
+export function getR2Client(region: StorageRegion = defaultStorageRegion()) {
+  let client = clients.get(region.code);
+  if (!client) {
+    client =
+      region.provider === "r2"
+        ? new S3Client({
+            region: "auto",
+            endpoint: region.endpoint,
+            credentials: { accessKeyId: region.accessKeyId, secretAccessKey: region.secretAccessKey },
+          })
+        : new S3Client({
+            region: region.signingRegion,
+            endpoint: region.endpoint,
+            forcePathStyle: region.pathStyle,
+            credentials: { accessKeyId: region.accessKeyId, secretAccessKey: region.secretAccessKey },
+            // Backblaze/Wasabi do not accept the SDK's newer default request
+            // checksums (x-amz-checksum-crc32 / aws-chunked trailers).
+            requestChecksumCalculation: "WHEN_REQUIRED",
+            responseChecksumValidation: "WHEN_REQUIRED",
+          });
+    clients.set(region.code, client);
   }
-  return _client;
+  return client;
 }
 
-export function hasR2Config() {
-  return Boolean(
-    process.env.R2_ACCOUNT_ID &&
-      process.env.R2_ACCESS_KEY_ID &&
-      process.env.R2_SECRET_ACCESS_KEY,
-  );
+/** Client plus bucket for one region, for raw SDK commands. */
+export function storageClientFor(region: StorageRegion = currentStorageRegion()) {
+  return { client: getR2Client(region), bucket: region.bucket, region };
+}
+
+export function hasR2Config(region: StorageRegion = defaultStorageRegion()) {
+  return hasStorageCredentials(region);
 }
 
 function warnMissingR2ConfigOnce() {
@@ -51,7 +71,15 @@ function warnMissingR2ConfigOnce() {
   console.warn("R2 cleanup skipped because R2 env vars are missing.");
 }
 
-export const R2_BUCKET = process.env.R2_BUCKET_NAME || "whitephoto-media";
+/** Bucket of the default storage region (pairs with `getR2Client()`). */
+export const R2_BUCKET = defaultStorageRegion().bucket;
+
+/** Bucket of the request-context region (or default). */
+export function storageBucket(region: StorageRegion = currentStorageRegion()) {
+  return region.bucket;
+}
+
+type RegionOption = { region?: StorageRegion };
 
 type R2FolderImage = {
   key: string;
@@ -90,7 +118,7 @@ export async function r2Upload(
   body: Buffer | Uint8Array,
   contentType: string,
   cacheControl = "public, max-age=31536000",
-  options?: { allowCloudCreditOutput?: boolean; allowVerifiedCutout?: boolean },
+  options?: { allowCloudCreditOutput?: boolean; allowVerifiedCutout?: boolean } & RegionOption,
 ) {
   if (key.split("/").filter(Boolean)[0] === "credits" && !options?.allowCloudCreditOutput) {
     throw new Error("Cloud credit outputs require their owned processing job.");
@@ -98,10 +126,10 @@ export async function r2Upload(
   if (key.split("/").filter(Boolean)[0] === "nobg-photos" && !options?.allowVerifiedCutout) throw new Error("Managed cutout uploads require verified paid access.");
   if (key.split("/").filter(Boolean)[0] === "credit-staging") throw new Error("Cutout staging requires its private upload ticket.");
   if (key.split("/")[0] === "order-automation") throw new Error("Order production storage requires its private adapter.");
-  const client = getR2Client();
+  const { client, bucket } = storageClientFor(options?.region);
   await client.send(
     new PutObjectCommand({
-      Bucket: R2_BUCKET,
+      Bucket: bucket,
       Key: key,
       Body: body,
       ContentType: contentType,
@@ -116,20 +144,20 @@ export async function r2Upload(
  * `CopySource` must be the URL-encoded `{bucket}/{key}` — keys can contain
  * spaces (e.g. class "SK A"), so each path segment is percent-encoded.
  */
-export async function r2Copy(srcKey: string, destKey: string) {
+export async function r2Copy(srcKey: string, destKey: string, options: RegionOption = {}) {
   if ([srcKey,destKey].some(key=>key.split("/")[0]==="order-automation")) throw new Error("Private production objects cannot be copied by generic storage.");
   if ([srcKey,destKey].some(key=>key.split("/").filter(Boolean)[0]==="credits")) throw new Error("Cloud credit outputs cannot be moved by generic storage operations.");
   if ([srcKey,destKey].some(key=>key.split("/").filter(Boolean)[0]==="credit-staging")) throw new Error("Cutout staging cannot be copied by generic storage operations.");
   if ([srcKey,destKey].some(key=>key.split("/").filter(Boolean)[0]==="nobg-photos")) throw new Error("Managed cutouts must be uploaded with their paid photo proof when moving to a new folder.");
-  const client = getR2Client();
-  const encodedSource = `${R2_BUCKET}/${srcKey
+  const { client, bucket } = storageClientFor(options.region);
+  const encodedSource = `${bucket}/${srcKey
     .split("/")
     .filter(Boolean)
     .map((segment) => encodeURIComponent(segment))
     .join("/")}`;
   await client.send(
     new CopyObjectCommand({
-      Bucket: R2_BUCKET,
+      Bucket: bucket,
       CopySource: encodedSource,
       Key: destKey,
     }),
@@ -139,15 +167,15 @@ export async function r2Copy(srcKey: string, destKey: string) {
 /**
  * Download a file from R2.  Returns the body as a Buffer.
  */
-export async function r2Download(key: string, options: { allowVerifiedCutout?: boolean; allowCutoutStaging?: boolean; maxBytes?: number } = {}): Promise<Buffer> {
+export async function r2Download(key: string, options: { allowVerifiedCutout?: boolean; allowCutoutStaging?: boolean; maxBytes?: number } & RegionOption = {}): Promise<Buffer> {
   if (key.split("/")[0] === "order-automation") throw new Error("Private production storage requires its adapter.");
   if (key.split("/").filter(Boolean)[0]==="credits") throw new Error("Cloud credit outputs require their owned job result.");
   if (key.split("/").filter(Boolean)[0]==="nobg-photos" && !options.allowVerifiedCutout) throw new Error("Managed cutouts require verified paid access.");
   if (key.split("/").filter(Boolean)[0]==="credit-staging" && !options.allowCutoutStaging) throw new Error("Cutout staging is private and cannot be used as a photo.");
-  const client = getR2Client();
+  const { client, bucket } = storageClientFor(options.region);
   const res = await client.send(
     new GetObjectCommand({
-      Bucket: R2_BUCKET,
+      Bucket: bucket,
       Key: key,
     }), { abortSignal: AbortSignal.timeout(30000) },
   );
@@ -162,14 +190,14 @@ export async function r2Download(key: string, options: { allowVerifiedCutout?: b
 /**
  * Delete a file from R2.
  */
-export async function r2Delete(key: string, options: { allowCutoutStaging?: boolean } = {}) {
+export async function r2Delete(key: string, options: { allowCutoutStaging?: boolean } & RegionOption = {}) {
   if (key.split("/")[0] === "order-automation") throw new Error("Private production storage requires its adapter.");
   if (key.split("/").filter(Boolean)[0]==="credits") throw new Error("Cloud credit outputs cannot be deleted by generic storage operations.");
   if (key.split("/").filter(Boolean)[0]==="credit-staging" && !options.allowCutoutStaging) throw new Error("Cutout staging cleanup requires its owner.");
-  const client = getR2Client();
+  const { client, bucket } = storageClientFor(options.region);
   await client.send(
     new DeleteObjectCommand({
-      Bucket: R2_BUCKET,
+      Bucket: bucket,
       Key: key,
     }),
   );
@@ -179,18 +207,18 @@ export async function r2Delete(key: string, options: { allowCutoutStaging?: bool
  * Delete ALL files under a given prefix (folder) in R2.
  * R2 supports up to 1000 deletes per batch request.
  */
-export async function r2DeletePrefix(prefix: string) {
+export async function r2DeletePrefix(prefix: string, options: RegionOption = {}) {
   if (prefix.split("/")[0] === "order-automation") throw new Error("Private production storage cannot be deleted generically.");
   if (prefix.split("/").filter(Boolean)[0]==="credits") throw new Error("Cloud credit outputs cannot be deleted by generic storage operations.");
   if (prefix.split("/").filter(Boolean)[0]==="credit-staging") throw new Error("Cutout staging cleanup requires its owner.");
-  const client = getR2Client();
+  const { client, bucket } = storageClientFor(options.region);
   let continuationToken: string | undefined;
   let totalDeleted = 0;
 
   do {
     const list = await client.send(
       new ListObjectsV2Command({
-        Bucket: R2_BUCKET,
+        Bucket: bucket,
         Prefix: prefix,
         MaxKeys: 1000,
         ContinuationToken: continuationToken,
@@ -202,7 +230,7 @@ export async function r2DeletePrefix(prefix: string) {
 
     await client.send(
       new DeleteObjectsCommand({
-        Bucket: R2_BUCKET,
+        Bucket: bucket,
         Delete: {
           Objects: objects.map((o) => ({ Key: o.Key! })),
           Quiet: true,
@@ -232,7 +260,7 @@ export function r2VariantKeys(key: string) {
   );
 }
 
-export async function r2DeleteWithVariants(keys: string[]) {
+export async function r2DeleteWithVariants(keys: string[], options: RegionOption = {}) {
   const normalizedKeys = Array.from(
     new Set(
       keys
@@ -246,14 +274,14 @@ export async function r2DeleteWithVariants(keys: string[]) {
   if (normalizedKeys.some(key=>key.split("/")[0]==="credits")) throw new Error("Cloud credit outputs cannot be deleted by generic storage operations.");
   if (normalizedKeys.some(key=>key.split("/")[0]==="credit-staging")) throw new Error("Cutout staging cleanup requires its owner.");
 
-  const client = getR2Client();
+  const { client, bucket } = storageClientFor(options.region);
   let totalDeleted = 0;
 
   for (let index = 0; index < normalizedKeys.length; index += 1000) {
     const batch = normalizedKeys.slice(index, index + 1000);
     await client.send(
       new DeleteObjectsCommand({
-        Bucket: R2_BUCKET,
+        Bucket: bucket,
         Delete: {
           Objects: batch.map((key) => ({ Key: key })),
           Quiet: true,
@@ -266,15 +294,16 @@ export async function r2DeleteWithVariants(keys: string[]) {
   return totalDeleted;
 }
 
-export async function r2DeleteWithVariantsBestEffort(keys: string[]) {
+export async function r2DeleteWithVariantsBestEffort(keys: string[], options: RegionOption = {}) {
   if (!keys.length) return 0;
-  if (!hasR2Config()) {
+  const region = options.region ?? currentStorageRegion();
+  if (!hasR2Config(region)) {
     warnMissingR2ConfigOnce();
     return 0;
   }
 
   try {
-    return await r2DeleteWithVariants(keys);
+    return await r2DeleteWithVariants(keys, { region });
   } catch (error) {
     console.warn("Failed to delete R2 files with variants:", error);
     return 0;
@@ -283,20 +312,20 @@ export async function r2DeleteWithVariantsBestEffort(keys: string[]) {
 
 export async function listR2FolderImages(
   prefix: string,
-  options?: { ttlSeconds?: number; photographerId?: string | null },
+  options?: { ttlSeconds?: number; photographerId?: string | null } & RegionOption,
 ): Promise<R2FolderImage[]> {
   const normalizedPrefix = normalizePrefix(prefix);
   if (!normalizedPrefix) return [];
   const ttlSeconds = options?.ttlSeconds ?? 60 * 60;
 
-  const client = getR2Client();
+  const { client, bucket } = storageClientFor(options?.region);
   const results: R2FolderImage[] = [];
   let continuationToken: string | undefined;
 
   do {
     const page = await client.send(
       new ListObjectsV2Command({
-        Bucket: R2_BUCKET,
+        Bucket: bucket,
         Prefix: `${normalizedPrefix}/`,
         MaxKeys: 1000,
         ContinuationToken: continuationToken,
@@ -331,19 +360,19 @@ export async function listR2FolderImages(
  * rollups; preview and thumbnail derivatives are excluded. */
 export async function countR2FolderImages(
   prefix: string,
-  options?: { excludedFamilies?: ReadonlySet<string> },
+  options?: { excludedFamilies?: ReadonlySet<string> } & RegionOption,
 ): Promise<number> {
   const normalizedPrefix = normalizePrefix(prefix);
   if (!normalizedPrefix) return 0;
 
-  const client = getR2Client();
+  const { client, bucket } = storageClientFor(options?.region);
   let count = 0;
   let continuationToken: string | undefined;
 
   do {
     const page = await client.send(
       new ListObjectsV2Command({
-        Bucket: R2_BUCKET,
+        Bucket: bucket,
         Prefix: `${normalizedPrefix}/`,
         MaxKeys: 1000,
         ContinuationToken: continuationToken,

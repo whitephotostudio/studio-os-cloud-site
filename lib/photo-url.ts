@@ -1,10 +1,44 @@
 // Shared photo-URL helper for the mobile (/m) pages.
 //
-// Studio OS photos live in Cloudflare R2. The OLD public host (pub-*.r2.dev) is
-// dead, and direct bucket URLs (*.r2.cloudflarestorage.com) are signed/expiring.
+// Studio OS photos live in S3-compatible storage (Cloudflare R2 originally, now
+// regional Backblaze B2 / Wasabi / AWS buckets). The OLD public host
+// (pub-*.r2.dev) is dead, and direct bucket URLs are signed/expiring.
 // So — exactly like the desktop dashboard — we route every image through the
 // same-origin proxy /api/r2/img/<key>, which serves the object reliably.
 
+// NOTE: this file is imported directly by Node test files, so it must stay
+// free of path-alias imports. The storage host rules mirror lib/storage-hosts.ts.
+const KNOWN_STORAGE_HOST_PATTERN =
+  /(^|\.)(r2\.cloudflarestorage\.com|r2\.dev|backblazeb2\.com|wasabisys\.com|amazonaws\.com)$/i;
+
+function safeDecode(value: string) {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+/** Object key of a direct storage URL (legacy public or signed bucket URL). */
+function storageKeyFromUrl(value: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    return "";
+  }
+  const host = parsed.host.toLowerCase();
+  if (!KNOWN_STORAGE_HOST_PATTERN.test(host)) return "";
+  const path = parsed.pathname.replace(/^\/+/, "");
+  if (!path) return "";
+  if (/\.r2\.dev$/.test(host)) return safeDecode(path);
+  // Path-style endpoints (<account>.r2.cloudflarestorage.com, s3.<region>.<provider>)
+  // carry the bucket as the first path segment; bucket sub-domains do not.
+  const pathStyle = /\.r2\.cloudflarestorage\.com$/.test(host) ? host.split(".").length === 4 : host.startsWith("s3.");
+  if (!pathStyle) return safeDecode(path);
+  const slash = path.indexOf("/");
+  return slash >= 0 ? safeDecode(path.slice(slash + 1)) : "";
+}
 export const LEGACY_PRIVATE_STORAGE_BUCKETS = ["photos", "thumbs", "nobg-photos"] as const;
 export type LegacyPrivateStorageReference = { bucket: typeof LEGACY_PRIVATE_STORAGE_BUCKETS[number]; key: string };
 
@@ -51,14 +85,8 @@ function r2KeyFromBrowserUrl(url: string): string {
     if (parsed.pathname.startsWith("/api/r2/img/")) {
       return decodeURIComponent(parsed.pathname.slice("/api/r2/img/".length));
     }
-    if (/\.r2\.dev$/i.test(parsed.host)) {
-      return decodeURIComponent(parsed.pathname.replace(/^\/+/, ""));
-    }
-    if (/\.r2\.cloudflarestorage\.com$/i.test(parsed.host)) {
-      const stripped = parsed.pathname.replace(/^\/+/, "");
-      const slash = stripped.indexOf("/");
-      return slash >= 0 ? decodeURIComponent(stripped.slice(slash + 1)) : "";
-    }
+    const storageKey = storageKeyFromUrl(parsed.href);
+    if (storageKey) return storageKey;
   } catch {
     return "";
   }

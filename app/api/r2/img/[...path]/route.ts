@@ -8,6 +8,7 @@ import { r2Download } from "@/lib/r2";
 import { isServerOnlyR2Key, normalizeR2Key } from "@/lib/r2-access-security";
 import { verifyR2MediaToken } from "@/lib/r2-media-token";
 import { resolveR2MediaOwnership } from "@/lib/r2-media-ownership";
+import { enterPhotographerStorage, selectPhotographerStorage } from "@/lib/photographer-storage";
 import { CreditCutoutAccessError, isManagedCutoutKey, readPaidCutout, signVerifiedCutout } from "@/lib/credit-cutout-access";
 import {
   loadSchoolPhotoTombstones,
@@ -74,11 +75,9 @@ export async function GET(
 
     const service = createDashboardServiceClient();
 
-    const { data: photographerRow, error: photographerError } = await service
-      .from("photographers")
-      .select("id")
-      .eq(grantedOwner ? "id" : "user_id", grantedOwner || userId)
-      .maybeSingle();
+    const { data: photographerRow, error: photographerError } = grantedOwner
+      ? await selectPhotographerStorage(service, "id", grantedOwner)
+      : await selectPhotographerStorage(service, "user_id", userId!);
 
     if (photographerError) throw photographerError;
     if (!photographerRow?.id) {
@@ -89,6 +88,8 @@ export async function GET(
     }
 
     const photographerId = clean(photographerRow.id);
+    // Reads and signed redirects target the owner's storage region.
+    const region = enterPhotographerStorage(photographerRow);
     const ownership = await resolveR2MediaOwnership(service, storagePath, photographerId);
     if (!ownership.owned) {
       return NextResponse.json({ ok: false, message: "Not authorized for this image." }, { status: 403 });
@@ -138,7 +139,7 @@ export async function GET(
         // native runtime is unavailable, normal previews must still redirect
         // to the existing R2 object instead of failing while this route loads.
         const { default: sharp } = await import("sharp");
-        const original = verifiedCutout ?? await r2Download(storagePath);
+        const original = verifiedCutout ?? await r2Download(storagePath, { region });
         const resized = await sharp(original)
           .rotate()
           .resize({ width: thumbWidth, withoutEnlargement: true })
@@ -159,7 +160,7 @@ export async function GET(
 
     // ── Generate a short-lived signed URL (5 min — browser cache will
     //    hide the redirect on subsequent requests) and 302 to it. ──
-    const signedUrl = verifiedCutout ? signVerifiedCutout(storagePath) : r2PresignedGetUrl(storagePath, 60 * 5);
+    const signedUrl = verifiedCutout ? signVerifiedCutout(storagePath) : r2PresignedGetUrl(storagePath, 60 * 5, { region });
     if (!signedUrl) {
       return NextResponse.json(
         { ok: false, message: "R2 not configured." },

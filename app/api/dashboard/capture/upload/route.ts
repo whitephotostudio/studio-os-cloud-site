@@ -7,6 +7,7 @@ import { r2Upload } from "@/lib/r2";
 import { guardAgreement } from "@/lib/require-agreement";
 import { usbCaptureUploadFileName } from "@/lib/capture-upload-id";
 import sharp from "sharp";
+import { enterPhotographerStorage, selectPhotographerStorage } from "@/lib/photographer-storage";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -60,17 +61,15 @@ export async function POST(request: NextRequest) {
   const guard = await guardAgreement({ service, userId: auth.user.id });
   if (!guard.ok) return NextResponse.json(guard.body, { status: guard.status });
 
-  const { data: photographer, error: photographerError } = await service
-    .from("photographers")
-    .select("id")
-    .eq("user_id", auth.user.id)
-    .maybeSingle<{ id: string }>();
+  const { data: photographer, error: photographerError } = await selectPhotographerStorage(service, "user_id", auth.user.id);
   if (photographerError || !photographer?.id) {
     return NextResponse.json(
       { error: "Photographer profile not found." },
       { status: 403 },
     );
   }
+  // Captured photos land in the photographer's own storage region.
+  const region = enterPhotographerStorage(photographer);
 
   let formData: FormData;
   try {
@@ -170,7 +169,7 @@ export async function POST(request: NextRequest) {
 
   let publicUrl: string;
   try {
-    publicUrl = await r2Upload(key, jpeg, "image/jpeg");
+    publicUrl = await r2Upload(key, jpeg, "image/jpeg", undefined, { region });
   } catch (error) {
     console.error("[capture/upload] r2Upload failed", error);
     return NextResponse.json(

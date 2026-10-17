@@ -3,13 +3,14 @@ import {
   createDashboardServiceClient,
   resolveDashboardAuth,
 } from "@/lib/dashboard-auth";
-import { r2Upload } from "@/lib/r2";
+import { r2Upload, type StorageRegion } from "@/lib/r2";
 import { guardAgreement } from "@/lib/require-agreement";
 import sharp from "sharp";
 import { assertKeyOwnedByPhotographer } from "@/lib/upload-ownership";
 import { createHash } from "node:crypto";
 import { assertPaidCutoutUpload, CreditCutoutAccessError, isManagedCutoutKey, linkPaidCutoutObject, MAX_MANAGED_CUTOUT_BYTES } from "@/lib/credit-cutout-access";
 import { cleanOwnedCutoutStaging, CreditCutoutStagingError, readOwnedCutoutStaging } from "@/lib/credit-cutout-staging";
+import { enterPhotographerStorage, selectPhotographerStorage } from "@/lib/photographer-storage";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -93,17 +94,14 @@ export async function POST(request: NextRequest) {
     }
   } catch { return NextResponse.json({ error: "Invalid upload request." }, { status: 400 }); }
   let uploadKey = clean(key);
+  let region: StorageRegion | undefined;
 
   // Confirm the uploaded key lives inside a namespace this photographer owns.
   // Without this, any signed-in photographer could overwrite files belonging
   // to another studio by forging the `key` form field.
   try {
     const service = createDashboardServiceClient();
-    const { data: photographerRow, error: photographerError } = await service
-      .from("photographers")
-      .select("id")
-      .eq("user_id", auth.user.id)
-      .maybeSingle();
+    const { data: photographerRow, error: photographerError } = await selectPhotographerStorage(service, "user_id", auth.user.id);
 
     if (photographerError || !photographerRow?.id) {
       return NextResponse.json(
@@ -111,6 +109,8 @@ export async function POST(request: NextRequest) {
         { status: 403 },
       );
     }
+    // Uploads land in the photographer's own storage region.
+    region = enterPhotographerStorage(photographerRow);
 
     const ownership = await assertKeyOwnedByPhotographer(
       service,
@@ -172,7 +172,7 @@ export async function POST(request: NextRequest) {
     }
 
     const publicUrl = await r2Upload(uploadKey, uploadBuffer, contentType,
-      cutoutHash ? "private, no-store" : "public, max-age=31536000", cutoutHash ? { allowVerifiedCutout: true } : undefined);
+      cutoutHash ? "private, no-store" : "public, max-age=31536000", cutoutHash ? { allowVerifiedCutout: true, region } : { region });
     if (cutoutHash) await linkPaidCutoutObject(createDashboardServiceClient(), auth.user.id, uploadKey, originalHash, cutoutHash);
     if (cutoutHash && !file) await cleanOwnedCutoutStaging(auth.user.id, [stagingKey]);
     return NextResponse.json({ ok: true, publicUrl, key: uploadKey, contentType });

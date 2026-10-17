@@ -42,6 +42,10 @@ function uploadRoute({ userId = owner } = {}) {
     "@/lib/require-agreement": { guardAgreement: async () => ({ ok: true }) },
     "@/lib/capture-upload-id": { usbCaptureUploadFileName },
     "@/lib/r2": { r2Upload: async (key, bytes, mimeType) => { uploaded.push({ key, bytes, mimeType }); return `https://photos.invalid/${key}`; } },
+    "@/lib/photographer-storage": {
+      selectPhotographerStorage: async (client, field, value) => client.from("photographers").select("id, storage_region").eq(field, value).maybeSingle(),
+      enterPhotographerStorage: () => ({ code: "fixture" }),
+    },
     sharp: () => {
       const image = { rotate: () => image, resize: () => image, jpeg: () => image, toBuffer: async () => Buffer.from([255, 216, 255, 217]) };
       return image;

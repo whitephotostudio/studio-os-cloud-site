@@ -94,8 +94,12 @@ function r2KeyFromAnyUrlLocal(input: string | null | undefined): string {
     if (/\.r2\.dev$/i.test(parsed.host)) {
       return decodeURIComponent(parsed.pathname.replace(/^\/+/, ""));
     }
-    if (/\.r2\.cloudflarestorage\.com$/i.test(parsed.host)) {
+    // Signed bucket URLs (keep in sync with lib/storage-hosts.ts): path-style
+    // hosts carry the bucket as the first segment.
+    if (/(^|\.)(r2\.cloudflarestorage\.com|backblazeb2\.com|wasabisys\.com|amazonaws\.com)$/i.test(parsed.host)) {
+      const pathStyle = /\.r2\.cloudflarestorage\.com$/i.test(parsed.host) ? parsed.host.split(".").length === 4 : /^s3\./i.test(parsed.host);
       const stripped = parsed.pathname.replace(/^\/+/, "");
+      if (!pathStyle) return decodeURIComponent(stripped);
       const slash = stripped.indexOf("/");
       return slash >= 0 ? decodeURIComponent(stripped.slice(slash + 1)) : "";
     }

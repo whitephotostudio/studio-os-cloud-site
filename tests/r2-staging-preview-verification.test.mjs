@@ -12,13 +12,24 @@ const env = { STUDIO_R2_STAGING_PREVIEW_VERIFY: '1', VERCEL_ENV: 'preview',
 const ids = ['00000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000002',
   '00000000-0000-4000-8000-000000000003', '00000000-0000-4000-8000-000000000004'];
 const secretFailure = `${env.R2_ACCESS_KEY_ID} ${env.R2_SECRET_ACCESS_KEY} https://private.invalid/?secret=hidden`;
-const signerSource = readFileSync(new URL('../lib/r2-signed-urls.ts', import.meta.url), 'utf8');
-const signerCode = ts.transpileModule(signerSource, { compilerOptions: {
+const transpile = file => ts.transpileModule(readFileSync(new URL(`../${file}`, import.meta.url), 'utf8'), { compilerOptions: {
   module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022,
 } }).outputText;
+const signerCode = transpile('lib/r2-signed-urls.ts');
+const storageHostsCode = transpile('lib/storage-hosts.ts');
+const storageRegionsCode = transpile('lib/storage-regions.ts');
+// The signer resolves its bucket/host/keys through lib/storage-regions.ts,
+// which reads the same R2_* variables as before for the legacy region.
 function signerFor(credentials) {
-  const exports = {};
-  new Function('require', 'exports', 'process', signerCode)(createRequire(import.meta.url), exports, { env: credentials });
+  const nodeRequire = createRequire(import.meta.url);
+  const loadModule = (code, modules) => {
+    const exports = {};
+    new Function('require', 'exports', 'process', code)(name => modules[name] ?? nodeRequire(name), exports, { env: credentials });
+    return exports;
+  };
+  const storageHosts = loadModule(storageHostsCode, {});
+  const storageRegions = loadModule(storageRegionsCode, { '@/lib/storage-hosts': storageHosts });
+  const exports = loadModule(signerCode, { '@/lib/storage-hosts': storageHosts, '@/lib/storage-regions': storageRegions });
   return exports.r2PresignedPutUrl;
 }
 function safeError(error) {

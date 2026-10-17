@@ -14,7 +14,7 @@ export function contentSecurityPolicy(nonce: string, development = false): strin
     "media-src 'self' data: blob: https:",
     "worker-src 'self' blob:",
     // Stripe.js/Checkout/Link origins follow Stripe's integration security guide.
-    `connect-src 'self' https://*.supabase.co wss://*.supabase.co https://*.r2.cloudflarestorage.com https://*.r2.dev https://api.stripe.com https://checkout.stripe.com https://maps.googleapis.com https://link.com https://*.link.com${development ? " ws: http://localhost:* http://127.0.0.1:*" : ""}`,
+    `connect-src 'self' https://*.supabase.co wss://*.supabase.co https://*.r2.cloudflarestorage.com https://*.r2.dev https://*.backblazeb2.com https://*.wasabisys.com https://*.amazonaws.com https://api.stripe.com https://checkout.stripe.com https://maps.googleapis.com https://link.com https://*.link.com${development ? " ws: http://localhost:* http://127.0.0.1:*" : ""}`,
     "frame-src 'self' https://www.youtube-nocookie.com https://www.youtube.com https://js.stripe.com https://*.js.stripe.com https://hooks.stripe.com https://checkout.stripe.com https://link.com https://*.link.com",
     "report-uri /api/csp-report",
     ...(!development ? ["upgrade-insecure-requests"] : []),
