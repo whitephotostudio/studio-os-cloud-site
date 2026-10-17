@@ -20,7 +20,7 @@ const r2SecurityModuleUrl = `data:text/javascript;base64,${Buffer.from(ts.transp
 const r2TokenModuleUrl = `data:text/javascript;base64,${Buffer.from(ts.transpileModule(source("lib/r2-media-token.ts").replace('from "@/lib/r2-access-security"', `from "${r2SecurityModuleUrl}"`), { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText).toString("base64")}`;
 const executableStorageImagesSource = ts.transpileModule(
   storageImagesSource.replace(
-    'import { r2KeyFromAnyUrl } from "./r2-signed-urls";',
+    'import { r2KeyFromAnyUrl } from "@/lib/storage-hosts";',
     [
       "const r2PresignedGetUrl = () => '';",
       "const r2KeyFromAnyUrl = () => null;",

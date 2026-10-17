@@ -105,8 +105,11 @@ test("parent portal signs backdrop references and generic downloads reject publi
 });
 
 test("order history refreshes legacy media while new orders store durable keys", () => {
-  assert.match(privateMediaSource, /\.r2\\\.dev\$\/i/);
-  assert.match(privateMediaSource, /\.r2\\\.cloudflarestorage\\\.com\$\/i/);
+  // Direct storage references cover every configured provider host
+  // (Cloudflare R2, Backblaze B2, Wasabi, AWS S3), not only the original R2 pool.
+  assert.match(privateMediaSource, /r2\\\.dev\|backblazeb2\\\.com\|wasabisys\\\.com\|amazonaws\\\.com/);
+  assert.match(privateMediaSource, /r2\\\.cloudflarestorage\\\.com/);
+  assert.match(privateMediaSource, /DIRECT_STORAGE_HOST\.test\(parsed\.host\)/);
   assert.match(privateMediaSource, /r2KeyFromAnyUrl\(value\)/);
   assert.match(privateMediaSource, /return safeR2Key\(raw\) \|\| raw/);
   assert.match(orderHistorySource, /canonicalPortalOrderSnapshot\(/);

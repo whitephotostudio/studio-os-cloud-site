@@ -16,21 +16,31 @@ export class R2StagingPreviewVerificationError extends Error {}
 function fail(message) { throw new R2StagingPreviewVerificationError(message); }
 
 async function productionRuntime(env, timeoutSignal) {
-  const [sdk, tsModule, signerSource] = await Promise.all([
+  const [sdk, tsModule, signerSource, storageHostsSource, storageRegionsSource] = await Promise.all([
     import('@aws-sdk/client-s3'), import('typescript'),
     readFile(new URL('../lib/r2-signed-urls.ts', import.meta.url), 'utf8'),
+    readFile(new URL('../lib/storage-hosts.ts', import.meta.url), 'utf8'),
+    readFile(new URL('../lib/storage-regions.ts', import.meta.url), 'utf8'),
   ]);
   const ts = tsModule.default ?? tsModule;
-  const code = ts.transpileModule(signerSource, {
+  const transpile = source => ts.transpileModule(source, {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
   }).outputText;
-  const signer = {};
-  // Use the exact committed signer without changing process.env or loading
-  // any Supabase, Stripe, provider or runtime-route module.
-  new Function('require', 'exports', 'process', code)(require, signer, { env: {
+  const fixtureProcess = { env: {
     R2_ACCOUNT_ID: env.R2_ACCOUNT_ID, R2_ACCESS_KEY_ID: env.R2_ACCESS_KEY_ID,
     R2_SECRET_ACCESS_KEY: env.R2_SECRET_ACCESS_KEY, R2_BUCKET_NAME: env.R2_BUCKET_NAME,
-  } });
+  } };
+  // Use the exact committed signer (and its storage-region registry) without
+  // changing process.env or loading any Supabase, Stripe, provider or
+  // runtime-route module.
+  const loadModule = (source, modules) => {
+    const exports = {};
+    new Function('require', 'exports', 'process', transpile(source))(name => modules[name] ?? require(name), exports, fixtureProcess);
+    return exports;
+  };
+  const storageHosts = loadModule(storageHostsSource, {});
+  const storageRegions = loadModule(storageRegionsSource, { '@/lib/storage-hosts': storageHosts });
+  const signer = loadModule(signerSource, { '@/lib/storage-hosts': storageHosts, '@/lib/storage-regions': storageRegions });
   const bucket = env.R2_BUCKET_NAME || 'whitephoto-media';
   // Same configuration as lib/r2.ts getR2Client(). All commands below are
   // confined to random objects created by this single build invocation.

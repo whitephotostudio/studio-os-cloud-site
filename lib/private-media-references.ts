@@ -19,6 +19,9 @@ function isBareMediaKey(value: string) {
   );
 }
 
+// Direct storage hosts (keep in sync with lib/storage-hosts.ts): Cloudflare R2, Backblaze B2, Wasabi, AWS S3.
+const DIRECT_STORAGE_HOST = /(^|\.)(r2\.cloudflarestorage\.com|r2\.dev|backblazeb2\.com|wasabisys\.com|amazonaws\.com)$/i;
+
 function isRecognizedR2Reference(value: string) {
   if (isBareMediaKey(value) || value.startsWith("/api/r2/img/")) return true;
 
@@ -26,8 +29,7 @@ function isRecognizedR2Reference(value: string) {
     const parsed = new URL(value);
     return (
       parsed.pathname.startsWith("/api/r2/img/") ||
-      /\.r2\.dev$/i.test(parsed.host) ||
-      /\.r2\.cloudflarestorage\.com$/i.test(parsed.host)
+      DIRECT_STORAGE_HOST.test(parsed.host)
     );
   } catch {
     return false;

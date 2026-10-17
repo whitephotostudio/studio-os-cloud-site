@@ -1,12 +1,17 @@
 import { createHash, createHmac } from "crypto";
+import { currentStorageRegion, hasStorageCredentials, type StorageRegion } from "@/lib/storage-regions";
 
-// 2026-04-30 — Cloudflare R2 SigV4 query-string presigner.
+// 2026-04-30 — SigV4 query-string presigner for S3-compatible storage.
 //
 // We migrated off public R2 URLs after the bucket's public dev URL
 // (pub-481e5f05e38c4bde98f61e0bcc309728.r2.dev) stopped serving
 // `whitephoto-media` content.  Every gallery image now resolves
 // through a short-lived presigned GET URL generated server-side by
 // this helper.
+//
+// 2026-10-17 — URLs are signed against the photographer's storage region
+// (Cloudflare R2, Backblaze B2, Wasabi or AWS S3; see lib/storage-regions.ts).
+// Callers pass `region` explicitly or rely on the request context.
 //
 // Why hand-rolled and not @aws-sdk/s3-request-presigner: keeping the
 // dependency surface tight.  The presigner package would be ~20MB of
@@ -17,15 +22,7 @@ import { createHash, createHmac } from "crypto";
 // Server-side ONLY.  Never import from a client component — the
 // secret access key would leak into the browser bundle.
 
-const R2_ACCOUNT_ID = process.env.R2_ACCOUNT_ID || "";
-const R2_BUCKET = process.env.R2_BUCKET_NAME || "whitephoto-media";
-const R2_ACCESS_KEY_ID = process.env.R2_ACCESS_KEY_ID || "";
-const R2_SECRET_ACCESS_KEY = process.env.R2_SECRET_ACCESS_KEY || "";
-const R2_REGION = "auto";
-
-function hasR2Secrets() {
-  return Boolean(R2_ACCOUNT_ID && R2_ACCESS_KEY_ID && R2_SECRET_ACCESS_KEY);
-}
+export type PresignRegionOption = { region?: StorageRegion };
 
 function sha256Hex(value: string | Buffer) {
   return createHash("sha256").update(value).digest("hex");
@@ -74,12 +71,13 @@ function r2PresignedUrl(
   key: string,
   expiresInSeconds: number,
   uploadHeaders?: { contentLength: number; contentType: string },
+  region: StorageRegion = currentStorageRegion(),
 ): string {
   if (!key) return "";
-  if (!hasR2Secrets()) {
+  if (!hasStorageCredentials(region)) {
     console.error(
-      "[r2-signed-urls] R2 secrets missing — cannot presign URL.  " +
-        "Set R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY.",
+      `[r2-signed-urls] Storage secrets missing for region "${region.code}" — cannot presign URL.  ` +
+        "Set R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY (or the STORAGE_REGION_* variables).",
     );
     return "";
   }
@@ -87,11 +85,11 @@ function r2PresignedUrl(
   const now = new Date();
   const stamp = amzDate(now);
   const date = dateStamp(now);
-  const credentialScope = `${date}/${R2_REGION}/s3/aws4_request`;
-  const credential = `${R2_ACCESS_KEY_ID}/${credentialScope}`;
+  const credentialScope = `${date}/${region.signingRegion}/s3/aws4_request`;
+  const credential = `${region.accessKeyId}/${credentialScope}`;
 
-  const host = `${R2_ACCOUNT_ID}.r2.cloudflarestorage.com`;
-  const canonicalUri = `/${R2_BUCKET}/${encodePath(key)}`;
+  const host = region.host;
+  const canonicalUri = `/${region.bucket}/${encodePath(key)}`;
   const headerEntries: Array<[string, string]> = uploadHeaders
     ? [["content-length", String(uploadHeaders.contentLength)], ["content-type", uploadHeaders.contentType], ["host", host]]
     : [["host", host]];
@@ -128,8 +126,8 @@ function r2PresignedUrl(
     sha256Hex(canonicalRequest),
   ].join("\n");
 
-  const kDate = hmac("AWS4" + R2_SECRET_ACCESS_KEY, date);
-  const kRegion = hmac(kDate, R2_REGION);
+  const kDate = hmac("AWS4" + region.secretAccessKey, date);
+  const kRegion = hmac(kDate, region.signingRegion);
   const kService = hmac(kRegion, "s3");
   const kSigning = hmac(kService, "aws4_request");
   const signature = createHmac("sha256", kSigning)
@@ -142,7 +140,7 @@ function r2PresignedUrl(
 export function r2PresignedGetUrl(
   key: string,
   expiresInSeconds = 60 * 60,
-  options: { allowCloudCreditOutput?: boolean; allowVerifiedCutout?: boolean; allowOrderAutomation?: boolean } = {},
+  options: { allowCloudCreditOutput?: boolean; allowVerifiedCutout?: boolean; allowOrderAutomation?: boolean } & PresignRegionOption = {},
 ): string {
   // Generic galleries and legacy user-controlled metadata cannot grant access
   // to platform AI outputs. Only the gateway enables this after job ownership.
@@ -150,7 +148,7 @@ export function r2PresignedGetUrl(
   if (key.split("/").filter(Boolean)[0] === "credits" && !options.allowCloudCreditOutput) return "";
   if (key.split("/").filter(Boolean)[0] === "nobg-photos" && !options.allowVerifiedCutout) return "";
   if (key.split("/").filter(Boolean)[0] === "credit-staging") return "";
-  return r2PresignedUrl("GET", key, expiresInSeconds);
+  return r2PresignedUrl("GET", key, expiresInSeconds, undefined, options.region);
 }
 
 /**
@@ -161,69 +159,30 @@ export function r2PresignedGetUrl(
 export function r2PresignedPutUrl(
   key: string,
   expiresInSeconds = 15 * 60,
-  options: { allowCutoutStaging?: boolean; allowOrderAutomation?: boolean; contentLength?: number; contentType?: string } = {},
+  options: { allowCutoutStaging?: boolean; allowOrderAutomation?: boolean; contentLength?: number; contentType?: string } & PresignRegionOption = {},
 ): string {
   if (["credits", "nobg-photos"].includes(key.split("/").filter(Boolean)[0])) return "";
   if (key.split("/").filter(Boolean)[0] === "order-automation") {
     if (!options.allowOrderAutomation || !Number.isSafeInteger(options.contentLength) || !options.contentLength || options.contentLength < 1 || options.contentLength > 256*1024*1024 || !["image/jpeg", "application/zip"].includes(options.contentType || "")) return "";
-    return r2PresignedUrl("PUT", key, Math.min(expiresInSeconds, 120), { contentLength: options.contentLength, contentType: options.contentType! });
+    return r2PresignedUrl("PUT", key, Math.min(expiresInSeconds, 120), { contentLength: options.contentLength, contentType: options.contentType! }, options.region);
   }
   if (key.split("/").filter(Boolean)[0] === "credit-staging") {
     if (!options.allowCutoutStaging || !Number.isSafeInteger(options.contentLength) || !options.contentLength ||
       options.contentLength < 1 || options.contentLength > 25 * 1024 * 1024 || !options.contentType || !/^[a-z0-9-]+\/[a-z0-9.+-]+$/.test(options.contentType)) return "";
-    return r2PresignedUrl("PUT", key, Math.min(expiresInSeconds, 120), { contentLength: options.contentLength, contentType: options.contentType });
+    return r2PresignedUrl("PUT", key, Math.min(expiresInSeconds, 120), { contentLength: options.contentLength, contentType: options.contentType }, options.region);
   }
   if (!Number.isSafeInteger(options.contentLength) || !options.contentLength ||
       options.contentLength < 1 || options.contentLength > 250 * 1024 * 1024 ||
       !options.contentType || !/^[a-z0-9-]+\/[a-z0-9.+-]+$/.test(options.contentType)) return "";
   return r2PresignedUrl("PUT", key, expiresInSeconds, {
     contentLength: options.contentLength, contentType: options.contentType,
-  });
+  }, options.region);
 }
 
 
-/**
- * Convenience: extract the storage key from any of the URL shapes we
- * historically stored — full R2 public URL, public Supabase URL, or
- * a bare object key.  Lets call sites pass whatever's in the DB.
- */
-export function r2KeyFromAnyUrl(input: string | null | undefined): string {
-  const value = (input ?? "").trim();
-  if (!value) return "";
-
-  // Already a bare key (no scheme)?  This includes our new
-  // `/api/r2/img/<path>` proxy URLs — strip that prefix so the key
-  // reflects the underlying storage path.
-  if (!/^https?:\/\//i.test(value)) {
-    const stripped = value.replace(/^\/+/, "");
-    if (stripped.startsWith("api/r2/img/")) {
-      return decodeURIComponent(stripped.slice("api/r2/img/".length));
-    }
-    return decodeURIComponent(stripped);
-  }
-
-  try {
-    const parsed = new URL(value);
-    // Our own proxy URL: <site>/api/r2/img/<key>
-    if (parsed.pathname.startsWith("/api/r2/img/")) {
-      return decodeURIComponent(parsed.pathname.slice("/api/r2/img/".length));
-    }
-    // R2 public dev URL: pub-XXXX.r2.dev/<key>
-    if (/\.r2\.dev$/i.test(parsed.host)) {
-      return decodeURIComponent(parsed.pathname.replace(/^\/+/, ""));
-    }
-    // R2 S3 endpoint (rare for stored URLs but supported): <accountId>.r2.cloudflarestorage.com/<bucket>/<key>
-    if (/\.r2\.cloudflarestorage\.com$/i.test(parsed.host)) {
-      const stripped = parsed.pathname.replace(/^\/+/, "");
-      const slash = stripped.indexOf("/");
-      return slash >= 0 ? decodeURIComponent(stripped.slice(slash + 1)) : "";
-    }
-    // Custom domain pointing at R2 bucket — assume path is the key.
-    return decodeURIComponent(parsed.pathname.replace(/^\/+/, ""));
-  } catch {
-    return "";
-  }
-}
+// `r2KeyFromAnyUrl` lives in the client-safe module so browser bundles never
+// pull this server-only signer (and its request-context dependency) in.
+export { r2KeyFromAnyUrl } from "@/lib/storage-hosts";
 
 /**
  * Batch-presign helper.  Useful for galleries where we generate
@@ -233,13 +192,14 @@ export function r2KeyFromAnyUrl(input: string | null | undefined): string {
 export function r2PresignBatch(
   keys: Array<string | null | undefined>,
   expiresInSeconds = 60 * 60,
+  options: PresignRegionOption = {},
 ): Record<string, string> {
   const out: Record<string, string> = {};
   for (const raw of keys) {
     const key = (raw ?? "").trim();
     if (!key) continue;
     if (out[key]) continue; // dedup
-    out[key] = r2PresignedGetUrl(key, expiresInSeconds);
+    out[key] = r2PresignedGetUrl(key, expiresInSeconds, { region: options.region });
   }
   return out;
 }

@@ -15,7 +15,11 @@ function load(path, modules = {}) {
   new Function('require', 'exports', 'process', code)(name => modules[name] ?? require(name), exports, { env: credentials });
   return exports;
 }
-const signer = load('lib/r2-signed-urls.ts');
+const storageHosts = load('lib/storage-hosts.ts');
+const storageRegions = load('lib/storage-regions.ts', { '@/lib/storage-hosts': storageHosts });
+const signer = load('lib/r2-signed-urls.ts', { '@/lib/storage-hosts': storageHosts, '@/lib/storage-regions': storageRegions });
+// The gateway signs every grant for the photographer's storage region.
+const fixtureRegion = storageRegions.defaultStorageRegion();
 const ownership = load('lib/r2-access-security.ts');
 const key = 'projects/11111111-1111-4111-8111-111111111111/albums/main/photo 1.jpg';
 const hmac = (key, value) => createHmac('sha256', key).update(value).digest();
@@ -73,6 +77,7 @@ test('gateway keeps tenant authorization and passes exact validated headers to s
     '@/lib/dashboard-auth': { resolveDashboardAuth: async () => ({ user: { id: 'user' }, mfaSatisfied: true }), createDashboardServiceClient: () => service },
     '@/lib/require-agreement': { guardAgreement: async () => ({ ok: true }) },
     '@/lib/r2': {}, '@/lib/r2-access-security': ownership,
+    '@/lib/photographer-storage': { selectPhotographerStorage: async (client, field, value) => client.from('photographers').select('id').eq(field, value).maybeSingle(), enterPhotographerStorage: () => fixtureRegion },
     '@/lib/r2-media-ownership': load('lib/r2-media-ownership.ts', { '@/lib/r2-access-security': ownership }),
     '@/lib/r2-signed-urls': { ...signer, r2PresignedPutUrl: (...args) => { calls.push(args); return signer.r2PresignedPutUrl(...args); } },
     '@/lib/rate-limit': { rateLimit: async () => ({ allowed: true }) },
@@ -82,7 +87,7 @@ test('gateway keeps tenant authorization and passes exact validated headers to s
   const result = await route.POST(request({ key, contentLength: 123, contentType: 'image/jpeg' }));
   assert.equal(result.status, 200);
   const body = await result.json();
-  assert.deepEqual(calls, [[key, 900, { contentLength: 123, contentType: 'image/jpeg' }]]);
+  assert.deepEqual(calls, [[key, 900, { contentLength: 123, contentType: 'image/jpeg', region: fixtureRegion }]]);
   assert.equal(validUploadSignature(body.url, 123, body.headers['content-type']), true);
   assert.equal((await route.POST(request({ key: key.replace(key.split('/')[1], '22222222-2222-4222-8222-222222222222'), contentLength: 123, contentType: 'image/jpeg' }))).status, 403);
   assert.equal((await route.POST(request({ key, contentLength: 0, contentType: 'image/jpeg' }))).status, 400);

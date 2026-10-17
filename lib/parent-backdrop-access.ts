@@ -49,7 +49,13 @@ function referenceWithoutSignature(value: string | null | undefined) {
     if (path.startsWith("/api/r2/img/")) return path.slice("/api/r2/img/".length);
     const storage = path.match(/^\/storage\/v1\/(?:object|render\/image)\/(?:public|sign)\/[^/]+\/(.+)$/);
     if (storage && /\.supabase\.co$/.test(url.hostname)) return storage[1];
-    if (/\.r2\.cloudflarestorage\.com$/.test(url.hostname)) return path.split("/").slice(2).join("/");
+    // Signed bucket URLs (R2 / Backblaze / Wasabi / AWS; keep in sync with
+    // lib/storage-hosts.ts) address the bucket in the path on `s3.` and
+    // `<account>.r2.cloudflarestorage.com` hosts, so the key follows it.
+    if (/(^|\.)(r2\.cloudflarestorage\.com|backblazeb2\.com|wasabisys\.com|amazonaws\.com)$/i.test(url.hostname)) {
+      const pathStyle = /\.r2\.cloudflarestorage\.com$/i.test(url.hostname) ? url.hostname.split(".").length === 4 : /^s3\./i.test(url.hostname);
+      return path.split("/").slice(pathStyle ? 2 : 1).join("/");
+    }
   } catch { /* Unknown URL shapes match only their exact reference. */ }
   return candidate;
 }

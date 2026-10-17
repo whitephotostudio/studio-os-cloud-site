@@ -45,6 +45,7 @@ async function fixture() {
     '@/lib/dashboard-auth':{resolveDashboardAuth:async()=>({user:{id:user},mfaSatisfied:true}),createDashboardServiceClient:()=>service},
     '@/lib/r2':{listR2FolderImages:async prefix=>{calls.push({listed:prefix});return [{key:`${prefix.replace(/\/$/,'')}/photo.jpg`,url:'fixture',name:'photo.jpg'}];}},
     '@/lib/require-agreement':{guardAgreement:async()=>({ok:true})},
+    '@/lib/photographer-storage':{selectPhotographerStorage:async(client,field,value)=>client.from('photographers').select('id').eq(field,value).maybeSingle(),enterPhotographerStorage:()=>({code:'fixture'})},
     '@/lib/r2-access-security':security,'@/lib/r2-media-ownership':resolver,
     '@/lib/credit-cutout-access':{filterPaidCutoutFiles:async files=>files},
     '@/lib/school-photo-deletions':{filterTombstonedSchoolPhotoAssets:files=>files,loadSchoolPhotoTombstones:async(_,id)=>{calls.push({tombstones:id});return [];},tombstoneFamilySet:()=>new Set()},

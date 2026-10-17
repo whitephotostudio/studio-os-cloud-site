@@ -24,7 +24,9 @@ const security = load('lib/r2-access-security.ts');
 const browser = load('lib/photo-url.ts');
 const tokens = load('lib/r2-media-token.ts', { 'node:crypto': crypto, '@/lib/r2-access-security': security });
 const legacyTokens = load('lib/legacy-storage-token.ts', { 'node:crypto': crypto, '@/lib/photo-url': browser });
-const native = load('lib/r2-signed-urls.ts');
+const storageHosts = load('lib/storage-hosts.ts');
+const storageRegions = load('lib/storage-regions.ts', { '@/lib/storage-hosts': storageHosts });
+const native = load('lib/r2-signed-urls.ts', { '@/lib/storage-hosts': storageHosts, '@/lib/storage-regions': storageRegions });
 const privateMedia = load('lib/private-media-references.ts', { '@/lib/r2-signed-urls': native, '@/lib/photo-url': browser,
   '@/lib/legacy-storage-token': legacyTokens, '@/lib/r2-media-token': tokens });
 const ownership = load('lib/r2-media-ownership.ts', { '@/lib/r2-access-security': security });
@@ -66,6 +68,7 @@ function fixture(options = {}) {
   const route = load('app/api/r2/img/[...path]/route.ts', { 'next/server': {NextResponse}, '@/lib/dashboard-auth': {
     createDashboardServiceClient: () => service, resolveDashboardAuth: async () => ({user:options.signedOut?null:{id:options.userId||'own-user'},mfaSatisfied:options.mfaSatisfied??true}) },
     '@/lib/r2-signed-urls': signer, '@/lib/r2': {r2Download:()=>assert.fail('Unexpected byte read')}, '@/lib/r2-access-security': security,
+    '@/lib/photographer-storage': { selectPhotographerStorage: async (client, field, value) => client.from('photographers').select('id').eq(field, value).maybeSingle(), enterPhotographerStorage: () => ({ code: 'fixture' }) },
     '@/lib/r2-media-token': tokens, '@/lib/r2-media-ownership': ownership, '@/lib/credit-cutout-access': {isManagedCutoutKey:()=>false},
     '@/lib/school-photo-deletions': {schoolPhotoFamilyForKey:()=>null,tombstoneFamilySet:()=>new Set(),loadSchoolPhotoTombstones:async()=>[]},
   });

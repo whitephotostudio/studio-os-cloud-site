@@ -2,9 +2,20 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import ts from "typescript";
-import { r2PresignedGetUrl, r2PresignedPutUrl } from "../../lib/r2-signed-urls.ts";
+import { createRequire } from "node:module";
 
 const source=(name)=>readFileSync(new URL(`../../${name}`,import.meta.url),"utf8");
+const nodeRequire=createRequire(import.meta.url);
+// The signer now resolves its bucket/host/keys through lib/storage-regions.ts.
+function loadModule(name, modules={}, env={}) {
+  const exports={};
+  const compiled=ts.transpileModule(source(name),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
+  new Function("require","exports","process",compiled)(dep=>modules[dep]??nodeRequire(dep),exports,{env});
+  return exports;
+}
+const storageHosts=loadModule("lib/storage-hosts.ts");
+const storageRegions=loadModule("lib/storage-regions.ts",{"@/lib/storage-hosts":storageHosts});
+const { r2PresignedGetUrl, r2PresignedPutUrl }=loadModule("lib/r2-signed-urls.ts",{"@/lib/storage-hosts":storageHosts,"@/lib/storage-regions":storageRegions});
 test("generic signed GET and PUT cannot expose or overwrite a cloud credit output",()=>{
   assert.equal(r2PresignedGetUrl("credits/other-account/job.png"),"");
   assert.equal(r2PresignedPutUrl("credits/other-account/job.png"),"");
@@ -24,7 +35,7 @@ test("generic transformations and destructive operations cannot copy or consume 
     const start=storage.indexOf(`export async function ${name}(`);
     const next=storage.indexOf("export ",start+1);
     const block=storage.slice(start,next<0?undefined:next);
-    assert.ok(block.indexOf('"credits"')<block.indexOf("getR2Client()"),name);
+    assert.ok(block.indexOf('"credits"')<block.indexOf("storageClientFor("),name);
   }
   const ownership=source("lib/upload-ownership.ts");
   assert.match(ownership, /await r2MediaOwnedBy\(service, rawKey, photographerId\)/);
@@ -40,6 +51,7 @@ test("a generic upload cannot overwrite server output; an explicitly owned gatew
     },
     "@/lib/r2-media-token":{signedR2MediaUrl:()=>""},
     "@/lib/school-photo-deletions":{schoolPhotoFamilyForKey:()=>null},
+    "@/lib/storage-regions":loadModule("lib/storage-regions.ts",{"@/lib/storage-hosts":storageHosts},{R2_ACCOUNT_ID:"fixture",R2_ACCESS_KEY_ID:"fixture",R2_SECRET_ACCESS_KEY:"fixture"}),
   };
   const compiled=ts.transpileModule(source("lib/r2.ts"),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
   new Function("require","exports","process",compiled)(name=>modules[name],exports,{env:{R2_ACCOUNT_ID:"fixture",R2_ACCESS_KEY_ID:"fixture",R2_SECRET_ACCESS_KEY:"fixture"}});

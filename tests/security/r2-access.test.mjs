@@ -90,7 +90,8 @@ test("distinguishes database UUIDs from legacy local identifiers", () => {
 
 test("route authenticates, scopes ownership, limits use, and keeps credentials server-side", () => {
   assert.match(routeSource, /resolveDashboardAuth\(request\)/);
-  assert.match(routeSource, /eq\("user_id", auth.user.id\)/);
+  assert.match(routeSource, /selectPhotographerStorage\(service, "user_id", auth.user.id\)/);
+  assert.match(routeSource, /enterPhotographerStorage\(photographer\)/);
   assert.match(routeSource, /await r2MediaOwnedBy\(service, key, photographerId, options\)/);
   assert.match(routeSource, /if \(!key\) return jsonError/);
   assert.doesNotMatch(routeSource, /\.or\(`/);

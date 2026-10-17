@@ -8,6 +8,7 @@ import { guardAgreement } from "@/lib/require-agreement";
 import { isServerOnlyR2Key } from "@/lib/r2-access-security";
 import { resolveR2MediaOwnership } from "@/lib/r2-media-ownership";
 import { filterPaidCutoutFiles } from "@/lib/credit-cutout-access";
+import { enterPhotographerStorage, selectPhotographerStorage } from "@/lib/photographer-storage";
 import {
   filterTombstonedSchoolPhotoAssets,
   loadSchoolPhotoTombstones,
@@ -52,11 +53,7 @@ export async function GET(request: NextRequest) {
   // them enumerate R2 contents for that path.
   try {
     const service = createDashboardServiceClient();
-    const { data: photographerRow, error: photographerError } = await service
-      .from("photographers")
-      .select("id")
-      .eq("user_id", auth.user.id)
-      .maybeSingle();
+    const { data: photographerRow, error: photographerError } = await selectPhotographerStorage(service, "user_id", auth.user.id);
     if (photographerError) throw photographerError;
 
     if (!photographerRow?.id) {
@@ -65,6 +62,8 @@ export async function GET(request: NextRequest) {
         { status: 403 },
       );
     }
+    // Listings read the photographer's own storage region.
+    const region = enterPhotographerStorage(photographerRow);
 
     const ownership = await photographerOwnsFolder(
       service,
@@ -81,7 +80,7 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const files = await filterPaidCutoutFiles(await listR2FolderImages(folderPath), {
+    const files = await filterPaidCutoutFiles(await listR2FolderImages(folderPath, { region }), {
       service, photographerId: photographerRow.id,
     });
     if (!ownership.schoolId) {

@@ -1,4 +1,4 @@
-import { r2KeyFromAnyUrl } from "./r2-signed-urls";
+import { r2KeyFromAnyUrl } from "@/lib/storage-hosts";
 import { legacyStorageProxyUrl, privateSupabaseStorageReference } from "@/lib/photo-url";
 import { signedLegacyStorageUrl } from "@/lib/legacy-storage-token";
 import { signedR2MediaUrl } from "@/lib/r2-media-token";

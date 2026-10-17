@@ -64,6 +64,7 @@ import {
   resolveOrderTotalCents,
 } from "@/lib/order-display";
 import type { CartSnapshotBackdropLike } from "@/lib/order-display";
+import { storageKeyFromUrl } from "@/lib/storage-hosts";
 
 type OrderItem = {
   id?: string;
@@ -485,14 +486,8 @@ function r2KeyFromBrowserUrl(url: string) {
     if (parsed.pathname.startsWith("/api/r2/img/")) {
       return decodeURIComponent(parsed.pathname.slice("/api/r2/img/".length));
     }
-    if (/\.r2\.dev$/i.test(parsed.host)) {
-      return decodeURIComponent(parsed.pathname.replace(/^\/+/, ""));
-    }
-    if (/\.r2\.cloudflarestorage\.com$/i.test(parsed.host)) {
-      const stripped = parsed.pathname.replace(/^\/+/, "");
-      const slash = stripped.indexOf("/");
-      return slash >= 0 ? decodeURIComponent(stripped.slice(slash + 1)) : "";
-    }
+    const storageKey = storageKeyFromUrl(parsed.href);
+    if (storageKey) return storageKey;
   } catch {
     return "";
   }

@@ -75,9 +75,13 @@ function clean(value: string | null | undefined) {
   return (value ?? "").trim();
 }
 
+// Direct storage hosts (keep in sync with lib/storage-hosts.ts): Cloudflare R2,
+// Backblaze B2, Wasabi and AWS S3 bucket endpoints serve signed, expiring URLs.
+const DIRECT_STORAGE_HOST = /(^|\.)(r2\.cloudflarestorage\.com|backblazeb2\.com|wasabisys\.com|amazonaws\.com)$/i;
+
 function isR2CloudflareStorageUrl(value: string) {
   try {
-    return /\.r2\.cloudflarestorage\.com$/i.test(new URL(value).host);
+    return DIRECT_STORAGE_HOST.test(new URL(value).host);
   } catch {
     return false;
   }
@@ -89,7 +93,7 @@ function isKnownStorageUrl(value: string) {
     return (
       parsed.pathname.startsWith("/api/r2/img/") ||
       /\.r2\.dev$/i.test(parsed.host) ||
-      /\.r2\.cloudflarestorage\.com$/i.test(parsed.host) ||
+      DIRECT_STORAGE_HOST.test(parsed.host) ||
       value.includes("/storage/v1/object/public/") ||
       value.includes("/storage/v1/render/image/public/")
     );

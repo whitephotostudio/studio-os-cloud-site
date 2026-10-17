@@ -128,7 +128,7 @@ async function fixture({ failure = null, combined = false, loseProviderResponse 
   });
   const photoUrls = load('lib/photo-url.ts');
   const media = load('lib/private-media-references.ts', {
-    '@/lib/r2-signed-urls': load('lib/r2-signed-urls.ts', { crypto }),
+    '@/lib/r2-signed-urls': load('lib/r2-signed-urls.ts', { crypto, '@/lib/storage-hosts': load('lib/storage-hosts.ts') }),
     '@/lib/photo-url': photoUrls,
     '@/lib/legacy-storage-token': load('lib/legacy-storage-token.ts', { 'node:crypto': crypto, '@/lib/photo-url': photoUrls }),
     '@/lib/r2-media-token': load('lib/r2-media-token.ts', { 'node:crypto': crypto, '@/lib/r2-access-security': load('lib/r2-access-security.ts') }),

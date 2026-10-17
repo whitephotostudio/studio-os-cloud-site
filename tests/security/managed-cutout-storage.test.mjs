@@ -74,6 +74,7 @@ async function fixture(options = {}) {
     listR2FolderImages: async prefix => [...objects.keys()].filter(key => key.startsWith(prefix)).map(key => ({ key, url: '', name: key.split('/').at(-1) })),
     getR2Client: () => ({ send: async command => { calls.push({ sdk: command.input }); return { Contents: [{ Key: key }, { Key: legacy }], IsTruncated: true, NextContinuationToken: 'next-fixture-page' }; } }),
   };
+  r2.storageClientFor = region => ({ client: r2.getR2Client(), bucket: r2.R2_BUCKET, region });
   const signer = {
     r2PresignedGetUrl: (key, ttl, opts) => { signed.push({ key, ttl, opts, method: 'GET' }); return `https://fixture.invalid/${key}?expires=${ttl}`; },
     r2PresignedPutUrl: (key, ttl, opts) => { signed.push({ key, ttl, opts, method: 'PUT' }); return `https://fixture.invalid/${key}?expires=${ttl}`; },
@@ -83,6 +84,7 @@ async function fixture(options = {}) {
   const modules = { 'next/server': next, sharp: { default: sharp }, '@/lib/dashboard-auth': authModule, '@/lib/r2': r2,
     '@/lib/r2-signed-urls': signer, '@/lib/credit-cutout-access': access, '@/lib/credit-cutout-staging': staging,
     '@/lib/upload-ownership': ownership, '@/lib/r2-access-security': security,
+    '@/lib/photographer-storage': { selectPhotographerStorage: async (client, field, value) => client.from('photographers').select('id').eq(field, value).maybeSingle(), enterPhotographerStorage: () => ({ code: 'fixture' }) },
     '@/lib/r2-media-ownership': mediaOwnership, '@/lib/r2-media-token': mediaTokens,
     '@/lib/require-agreement': { guardAgreement: async () => ({ ok: true }) }, '@/lib/rate-limit': { rateLimit: async () => ({ allowed: true }) } };
   const upload = load('app/api/dashboard/upload-to-r2/route.ts', modules);
@@ -99,7 +101,11 @@ async function fixture(options = {}) {
 }
 
 test('generic signing and object transforms cannot grant managed or staging cutouts', async () => {
-  const signed = load('lib/r2-signed-urls.ts', {}, { env: { R2_ACCOUNT_ID: 'fixture', R2_ACCESS_KEY_ID: 'fixture', R2_SECRET_ACCESS_KEY: 'fixture' } });
+  const fixtureEnv = { env: { R2_ACCOUNT_ID: 'fixture', R2_ACCESS_KEY_ID: 'fixture', R2_SECRET_ACCESS_KEY: 'fixture' } };
+  const storageHosts = load('lib/storage-hosts.ts', {}, fixtureEnv);
+  const storageRegions = load('lib/storage-regions.ts', { '@/lib/storage-hosts': storageHosts }, fixtureEnv);
+  const storageModules = { '@/lib/storage-hosts': storageHosts, '@/lib/storage-regions': storageRegions };
+  const signed = load('lib/r2-signed-urls.ts', storageModules, fixtureEnv);
   for (const key of ['nobg-photos/school/photo.png', 'credit-staging/studio/photo.png']) {
     assert.equal(signed.r2PresignedGetUrl(key), ''); assert.equal(signed.r2PresignedPutUrl(key), '');
   }
@@ -109,7 +115,7 @@ test('generic signing and object transforms cannot grant managed or staging cuto
   const stageUrl = signed.r2PresignedPutUrl(stageKey, 600, { allowCutoutStaging: true, contentLength: 50, contentType: 'image/png' });
   assert.equal(new URL(stageUrl).searchParams.get('X-Amz-SignedHeaders'), 'content-length;content-type;host');
   assert.equal(new URL(stageUrl).searchParams.get('X-Amz-Expires'), '120');
-  const storage = load('lib/r2.ts', { '@/lib/r2-signed-urls': signed, '@/lib/r2-media-token': mediaTokens, '@/lib/school-photo-deletions': { schoolPhotoFamilyForKey: () => null } }, { env: {} });
+  const storage = load('lib/r2.ts', { ...storageModules, '@/lib/r2-signed-urls': signed, '@/lib/r2-media-token': mediaTokens, '@/lib/school-photo-deletions': { schoolPhotoFamilyForKey: () => null } }, { env: {} });
   for (const key of ['nobg-photos/school/photo.png', 'credit-staging/studio/photo.png']) {
     await assert.rejects(storage.r2Upload(key, Buffer.from('x'), 'image/png'));
     await assert.rejects(storage.r2Download(key));

@@ -6,7 +6,8 @@ import {
   resolveDashboardAuth,
 } from "@/lib/dashboard-auth";
 import { guardAgreement } from "@/lib/require-agreement";
-import { getR2Client, R2_BUCKET } from "@/lib/r2";
+import { storageClientFor } from "@/lib/r2";
+import { enterPhotographerStorage, selectPhotographerStorage } from "@/lib/photographer-storage";
 import {
   normalizeR2Key,
 } from "@/lib/r2-access-security";
@@ -73,14 +74,12 @@ export async function POST(request: NextRequest) {
   if (!auth.user) return jsonError("Unauthorized", 401);
 
   const service = createDashboardServiceClient();
-  const { data: photographer, error: photographerError } = await service
-    .from("photographers")
-    .select("id")
-    .eq("user_id", auth.user.id)
-    .maybeSingle();
+  const { data: photographer, error: photographerError } = await selectPhotographerStorage(service, "user_id", auth.user.id);
   if (photographerError || !photographer?.id) {
     return jsonError("Photographer profile not found.", 403);
   }
+  // Every grant below is signed for the photographer's own storage region.
+  const region = enterPhotographerStorage(photographer);
 
   const agreement = await guardAgreement({ service, userId: auth.user.id });
   if (!agreement.ok) {
@@ -130,7 +129,7 @@ export async function POST(request: NextRequest) {
         return jsonError("Invalid upload size.", 400);
       }
 
-      const url = r2PresignedPutUrl(key, 15 * 60, { contentLength, contentType });
+      const url = r2PresignedPutUrl(key, 15 * 60, { contentLength, contentType, region });
       if (!url) throw new Error("R2 signing is unavailable");
       return NextResponse.json({
         ok: true,
@@ -148,7 +147,7 @@ export async function POST(request: NextRequest) {
       const key = await authorizeKey(service, photographer.id, body.key);
       if (!key) return jsonError("You cannot download that path.", 403);
       if (isManagedCutoutKey(key)) await readPaidCutout(service, photographer.id, key);
-      const url = isManagedCutoutKey(key) ? signVerifiedCutout(key) : r2PresignedGetUrl(key, 60 * 60);
+      const url = isManagedCutoutKey(key) ? signVerifiedCutout(key) : r2PresignedGetUrl(key, 60 * 60, { region });
       if (!url) throw new Error("R2 signing is unavailable");
       return NextResponse.json({
         ok: true,
@@ -166,8 +165,9 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ ok: true, key, exists: true });
       }
       try {
-        await getR2Client().send(
-          new HeadObjectCommand({ Bucket: R2_BUCKET, Key: key }),
+        const storage = storageClientFor(region);
+        await storage.client.send(
+          new HeadObjectCommand({ Bucket: storage.bucket, Key: key }),
         );
         return NextResponse.json({ ok: true, key, exists: true });
       } catch (error) {
@@ -188,9 +188,10 @@ export async function POST(request: NextRequest) {
         body.continuationToken.length <= 4096
           ? body.continuationToken
           : undefined;
-      const page = await getR2Client().send(
+      const storage = storageClientFor(region);
+      const page = await storage.client.send(
         new ListObjectsV2Command({
-          Bucket: R2_BUCKET,
+          Bucket: storage.bucket,
           Prefix: prefix,
           MaxKeys: MAX_LIST_PAGE_SIZE,
           ContinuationToken: continuationToken,

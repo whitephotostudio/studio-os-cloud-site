@@ -77,7 +77,9 @@ export function createGalleryImageCache({
       const url = new URL(src, origin);
       const redirectsToPrivateStorage = url.pathname.startsWith("/api/r2/img/") ||
         url.pathname.startsWith("/api/storage/legacy-media/");
-      anonymousCors = !redirectsToPrivateStorage && !/\.r2\.cloudflarestorage\.com$/i.test(url.hostname);
+      // Signed bucket URLs of any storage provider (keep in sync with lib/storage-hosts.ts).
+      anonymousCors = !redirectsToPrivateStorage &&
+        !/(^|\.)(r2\.cloudflarestorage\.com|backblazeb2\.com|wasabisys\.com|amazonaws\.com)$/i.test(url.hostname);
     } catch { /* Let the image loader report an invalid URL. */ }
     image.crossOrigin = anonymousCors ? "anonymous" : null;
 
