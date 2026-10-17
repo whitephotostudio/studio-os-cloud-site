@@ -89,3 +89,41 @@ export function isDirectStorageUrl(value: string | null | undefined) {
     return false;
   }
 }
+
+/**
+ * Convenience: extract the storage key from any of the URL shapes we
+ * historically stored — full R2 public URL, public Supabase URL, or
+ * a bare object key.  Lets call sites pass whatever's in the DB.
+ */
+export function r2KeyFromAnyUrl(input: string | null | undefined): string {
+  const value = (input ?? "").trim();
+  if (!value) return "";
+
+  // Already a bare key (no scheme)?  This includes our new
+  // `/api/r2/img/<path>` proxy URLs — strip that prefix so the key
+  // reflects the underlying storage path.
+  if (!/^https?:\/\//i.test(value)) {
+    const stripped = value.replace(/^\/+/, "");
+    if (stripped.startsWith("api/r2/img/")) {
+      return decodeURIComponent(stripped.slice("api/r2/img/".length));
+    }
+    return decodeURIComponent(stripped);
+  }
+
+  try {
+    const parsed = new URL(value);
+    // Our own proxy URL: <site>/api/r2/img/<key>
+    if (parsed.pathname.startsWith("/api/r2/img/")) {
+      return decodeURIComponent(parsed.pathname.slice("/api/r2/img/".length));
+    }
+    // Direct storage URLs: legacy public pub-XXXX.r2.dev/<key>, or a
+    // (signed) bucket endpoint of any configured provider —
+    // <host>/<bucket>/<key> for R2, Backblaze B2, Wasabi and AWS S3.
+    const storageKey = storageKeyFromUrl(value);
+    if (storageKey) return storageKey;
+    // Custom domain pointing at a storage bucket — assume path is the key.
+    return decodeURIComponent(parsed.pathname.replace(/^\/+/, ""));
+  } catch {
+    return "";
+  }
+}

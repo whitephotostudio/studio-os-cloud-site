@@ -125,7 +125,8 @@ test('immutable ownership, unknown objects and provider failures fail closed', a
 
 test('stored URL consumers preserve exact legacy references while using authorized reads', () => {
   const r2 = { r2PresignedGetUrl: value => `https://r2-fixture.invalid/${value}`, r2KeyFromAnyUrl: () => '' };
-  const storage = load('lib/storage-images.ts', { './r2-signed-urls': r2, '@/lib/photo-url': browser, '@/lib/legacy-storage-token': tokens, '@/lib/r2-media-token': r2Tokens });
+  // storage-images reads keys through the client-safe storage-hosts module.
+  const storage = load('lib/storage-images.ts', { '@/lib/storage-hosts': { r2KeyFromAnyUrl: r2.r2KeyFromAnyUrl }, '@/lib/photo-url': browser, '@/lib/legacy-storage-token': tokens, '@/lib/r2-media-token': r2Tokens });
   const privateMedia = load('lib/private-media-references.ts', { '@/lib/r2-signed-urls': r2, '@/lib/photo-url': browser, '@/lib/legacy-storage-token': tokens, '@/lib/r2-media-token': r2Tokens });
   const presented = storage.buildStoredMediaUrls({ storagePath: key, previewUrl: publicUrl, thumbnailUrl: publicUrl });
   assert.match(presented.previewUrl, /^\/api\/storage\/legacy-media\/thumbs\//);
